@@ -1,0 +1,19 @@
+version = "0.0.1"
+name = "Triton"
+description = "Reference body. Retrograde moon of Neptune; nitrogen ice cap and plumes under a 14 microbar atmosphere."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 1.02413e26
+"parent.radius" = 2.4622e7
+"parent.semi_major_axis" = 4.4984e12
+"parent.eccentricity" = 0.0086
+"orbit.semi_major_axis" = 3.5476e8
+"orbit.eccentricity" = 0.00002
+"body.radius" = 1.3534e6
+"body.density" = 2061.0
+"rotation.obliquity" = 157.0
+"atmosphere.surface_pressure" = 1.4
+"atmosphere.composition" = { N2 = 0.9999, CH4 = 0.0001 }
+"atmosphere.bond_albedo" = 0.76
+"volatiles.inventory" = { H2O = 400000.0, N2 = 50.0, CH4 = 2.0 }

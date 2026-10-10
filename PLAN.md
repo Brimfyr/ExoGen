@@ -749,7 +749,7 @@ Starting points, grouped by stage. Textbooks first because they cover most of th
 
 **General.** Melosh, Planetary Surface Processes (2011). Melosh, Impact Cratering: A Geologic Process (1989). Turcotte and Schubert, Geodynamics (3rd ed.). Pierrehumbert, Principles of Planetary Climate (2010). Catling and Kasting, Atmospheric Evolution on Inhabited and Lifeless Worlds (2017).
 
-**Body derivation.** Zeng, Sasselov and Jacobsen 2016 (mass-radius relations). Fortney, Marley and Barnes 2007. Peale, Cassen and Reynolds 1979 (tidal heating). Gladman et al. 1996 (locking time). Williams and Kasting 1997 (energy balance scaling).
+**Body derivation.** Eker et al. 2018 (main-sequence mass–luminosity and mass–radius relations). Zeng, Sasselov and Jacobsen 2016 (mass-radius relations). Fortney, Marley and Barnes 2007. Peale, Cassen and Reynolds 1979 (tidal heating). Gladman et al. 1996 (locking time). Williams and Kasting 1997 (energy balance scaling).
 
 **Cratering.** Neukum, Ivanov and Hartmann 2001 (production function and chronology). Ivanov 2001 (Mars/Moon ratio). Zahnle, Schenk, Levison and Dones 2003 (outer solar system rates). Holsapple 1993 (scaling). Collins, Melosh and Marcus 2005 (impact effects equations). Pike 1977, 1980, 1988 (morphometry: Moon, Mercury). Schenk 2002 (icy satellite morphology transitions). McGetchin, Settle and Head 1973 (ejecta thickness). Fassett and Thomson 2014 (diffusional degradation). Head et al. 2010 (lunar crater database). Robbins and Hynek 2012 (Mars crater database). Melosh and McKinnon 1978 (multi-ring basins).
 

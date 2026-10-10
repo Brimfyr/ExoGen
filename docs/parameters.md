@@ -17,8 +17,8 @@ Revision 0.1, 2026-10-10. This document is the contract for the `params` module 
 | id | unit | kind | default or derivation | source |
 |---|---|---|---|---|
 | star.mass | M_sun | root | 1.0; range 0.08 to 3 | |
-| star.luminosity | L_sun | derived | F1 mass–luminosity relation, then F3 age brightening | Duric 2004 piecewise; Gough 1981 |
-| star.radius | R_sun | derived | F2 | Demircan and Kahraman 1991 |
+| star.luminosity | L_sun | derived | F1 mass–luminosity relation, then F3 age brightening | Eker et al. 2018; Gough 1981 |
+| star.radius | R_sun | derived | F2 | Eker et al. 2018 |
 | star.teff | K | derived | Stefan–Boltzmann from luminosity and radius | |
 | star.spectral_type | text | derived | Lookup from teff; display only | |
 | star.age | Gyr | root | 4.57; warn if above star.main_sequence_lifetime | |
@@ -315,8 +315,8 @@ Each rule is a predicate with a severity (note, warning) and an explanation that
 
 Symbols: G gravitational constant, σ Stefan–Boltzmann, k_B Boltzmann, m_u atomic mass unit. Solar units where stated.
 
-- **F1 Mass–luminosity.** L = 0.23 M^2.3 for M below 0.43; L = M^4 for 0.43 to 2; L = 1.4 M^3.5 for 2 to 55 (solar units). Zero-age value; F3 applies the age correction.
-- **F2 Mass–radius (stars).** R = 1.06 M^0.945 for M below 1.66; R = 1.33 M^0.555 above (Demircan and Kahraman 1991).
+- **F1 Mass–luminosity.** Six-piece fit of Eker et al. 2018, log L = a log M + b (solar units), with (a, b) = (2.028, −0.976) below 0.45 M_sun, (4.572, −0.102) to 0.72, (5.743, −0.007) to 1.05, (4.329, 0.010) to 2.4, (3.967, 0.093) to 7, (2.865, 1.105) to 31; normalised so that one solar mass gives one solar luminosity. This is the reference value at the age fraction of F3.
+- **F2 Mass–radius (stars).** R = 0.438 M² + 0.479 M + 0.075 for 0.18 to 1.5 M_sun (Eker et al. 2018); above 1.5 the radius continues as R(1.5) (M / 1.5)^0.555.
 - **F3 Luminosity history.** L(t) = L_zams / (1 − 0.286 (t / t_ref)) with t_ref = 0.457 x main-sequence lifetime, which reproduces the Sun at 71% of present luminosity at zero age (Gough 1981 form, rescaled by lifetime).
 - **F4 XUV history.** F_xuv ∝ t^−1.23 for t above 0.1 Gyr, saturated before (Ribas et al. 2005), normalised to the present Sun.
 - **F5 Kepler.** P = 2π sqrt(a³ / (G (M_primary + m))).

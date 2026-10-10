@@ -1,0 +1,18 @@
+version = "0.0.1"
+name = "Titan"
+description = "Reference body. 1.47 bar N2 with 5% methane; methane and ethane seas over a water-ice crust."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 5.6834e26
+"parent.radius" = 5.8232e7
+"parent.semi_major_axis" = 1.43353e12
+"parent.eccentricity" = 0.0565
+"orbit.semi_major_axis" = 1.22187e9
+"orbit.eccentricity" = 0.0288
+"body.radius" = 2.5747e6
+"body.density" = 1880.0
+"atmosphere.surface_pressure" = 146700.0
+"atmosphere.composition" = { N2 = 0.95, CH4 = 0.049, H2 = 0.001 }
+"atmosphere.bond_albedo" = 0.22
+"volatiles.inventory" = { H2O = 966000.0, CH4 = 5.0, C2H6 = 2.0 }

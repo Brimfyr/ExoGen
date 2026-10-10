@@ -1,0 +1,15 @@
+version = "0.0.1"
+name = "Pluto"
+description = "Reference body. Nitrogen ice plains and dark tholin regions under a 10 microbar atmosphere. Locked to Charon in reality; Charon is not modelled."
+
+[values]
+"orbit.semi_major_axis" = 5.9064e12
+"orbit.eccentricity" = 0.2488
+"body.radius" = 1.1883e6
+"body.density" = 1854.0
+"rotation.period" = 551856.0
+"rotation.obliquity" = 119.6
+"atmosphere.surface_pressure" = 1.0
+"atmosphere.composition" = { N2 = 0.995, CH4 = 0.005 }
+"atmosphere.bond_albedo" = 0.5
+"volatiles.inventory" = { H2O = 413000.0, N2 = 30.0, CH4 = 5.0 }

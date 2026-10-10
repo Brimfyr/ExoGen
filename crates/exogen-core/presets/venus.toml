@@ -1,0 +1,16 @@
+version = "0.0.1"
+name = "Venus"
+description = "Reference body. 92 bar CO2. Retrograde slow rotation is expressed as an obliquity of 177 degrees; rotation is pinned free because the model has no atmospheric-tide equilibrium."
+
+[values]
+"orbit.semi_major_axis" = 1.08209e11
+"orbit.eccentricity" = 0.0068
+"body.radius" = 6.0518e6
+"body.density" = 5243.0
+"rotation.period" = 20997000.0
+"rotation.obliquity" = 177.36
+"rotation.mode" = "free"
+"atmosphere.surface_pressure" = 9.2e6
+"atmosphere.composition" = { CO2 = 0.965, N2 = 0.035, SO2 = 0.00015 }
+"atmosphere.bond_albedo" = 0.76
+"volatiles.inventory" = {}

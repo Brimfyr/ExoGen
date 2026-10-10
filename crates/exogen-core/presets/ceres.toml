@@ -1,0 +1,14 @@
+version = "0.0.1"
+name = "Ceres"
+description = "Reference body. Largest asteroid; ice-rich interior with bright salt deposits."
+
+[values]
+"orbit.semi_major_axis" = 4.1402e11
+"orbit.eccentricity" = 0.0785
+"body.radius" = 4.697e5
+"body.density" = 2162.0
+"rotation.period" = 32667.0
+"rotation.obliquity" = 4.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+"atmosphere.bond_albedo" = 0.09

@@ -1,0 +1,17 @@
+version = "0.0.1"
+name = "Enceladus"
+description = "Reference body. Small ice moon with a south polar plume; about 16 GW of tidal heating."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 5.6834e26
+"parent.radius" = 5.8232e7
+"parent.semi_major_axis" = 1.43353e12
+"parent.eccentricity" = 0.0565
+"orbit.semi_major_axis" = 2.3802e8
+"orbit.eccentricity" = 0.0047
+"body.radius" = 2.521e5
+"body.density" = 1609.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+"atmosphere.bond_albedo" = 0.81

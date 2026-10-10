@@ -1,0 +1,18 @@
+version = "0.0.1"
+name = "Io"
+description = "Reference body. Innermost Galilean moon; eccentricity pumped by the Laplace resonance drives about 2 W/m2 of tidal heating."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 1.89813e27
+"parent.radius" = 7.1492e7
+"parent.semi_major_axis" = 7.7857e11
+"parent.eccentricity" = 0.0489
+"orbit.semi_major_axis" = 4.217e8
+"orbit.eccentricity" = 0.0041
+"body.radius" = 1.8216e6
+"body.density" = 3528.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = { SO2 = 1.0 }
+"atmosphere.bond_albedo" = 0.52
+"volatiles.inventory" = { SO2 = 1.0 }

@@ -1,0 +1,17 @@
+version = "0.0.1"
+name = "Ganymede"
+description = "Reference body. Largest moon; dark cratered and bright grooved terrains."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 1.89813e27
+"parent.radius" = 7.1492e7
+"parent.semi_major_axis" = 7.7857e11
+"parent.eccentricity" = 0.0489
+"orbit.semi_major_axis" = 1.0704e9
+"orbit.eccentricity" = 0.0013
+"body.radius" = 2.6341e6
+"body.density" = 1936.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+"atmosphere.bond_albedo" = 0.43

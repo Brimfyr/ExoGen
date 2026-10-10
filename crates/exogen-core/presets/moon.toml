@@ -1,0 +1,19 @@
+version = "0.0.1"
+name = "Moon"
+description = "Reference body. Airless, locked to Earth."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 5.9722e24
+"parent.radius" = 6.371e6
+"parent.semi_major_axis" = 1.495978707e11
+"parent.eccentricity" = 0.0167
+"orbit.semi_major_axis" = 3.844e8
+"orbit.eccentricity" = 0.0549
+"body.radius" = 1.7374e6
+"body.density" = 3344.0
+"rotation.obliquity" = 1.54
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+"atmosphere.bond_albedo" = 0.11
+"volatiles.inventory" = {}

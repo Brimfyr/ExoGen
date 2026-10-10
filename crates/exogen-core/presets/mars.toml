@@ -1,0 +1,15 @@
+version = "0.0.1"
+name = "Mars"
+description = "Reference body. 6 mbar CO2, 25 m global water layer as polar ice, 8 m of CO2 ice."
+
+[values]
+"orbit.semi_major_axis" = 2.2794e11
+"orbit.eccentricity" = 0.0934
+"body.radius" = 3.3895e6
+"body.density" = 3934.0
+"rotation.period" = 88642.7
+"rotation.obliquity" = 25.19
+"atmosphere.surface_pressure" = 610.0
+"atmosphere.composition" = { CO2 = 0.9532, N2 = 0.027, Ar = 0.016 }
+"atmosphere.bond_albedo" = 0.25
+"volatiles.inventory" = { H2O = 25.0, CO2 = 8.0 }

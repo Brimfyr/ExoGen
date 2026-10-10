@@ -7,4 +7,18 @@
 //! command-line tool are thin clients over it. See `PLAN.md` and `docs/adr/` in the
 //! repository for the design.
 
+pub mod constants;
+pub mod export;
+pub mod fields;
 pub mod grid;
+pub mod noise;
+pub mod params;
+pub mod presets;
+pub mod project;
+pub mod rng;
+pub mod spharm;
+pub mod stages;
+pub mod validate;
+
+/// Version of the engine, written into project files and sidecars.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

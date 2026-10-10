@@ -1,0 +1,17 @@
+version = "0.0.1"
+name = "Earth"
+description = "Reference body. G2V star at 1 AU, 1.013 bar N2/O2, 2.7 km global ocean layer."
+
+[values]
+"star.mass" = 1.0
+"star.age" = 4.57
+"orbit.semi_major_axis" = 1.495978707e11
+"orbit.eccentricity" = 0.0167
+"body.radius" = 6.371e6
+"body.density" = 5514.0
+"rotation.period" = 86164.1
+"rotation.obliquity" = 23.44
+"atmosphere.surface_pressure" = 101325.0
+"atmosphere.composition" = { N2 = 0.7808, O2 = 0.2095, Ar = 0.0093, CO2 = 0.00042, H2O = 0.004 }
+"atmosphere.bond_albedo" = 0.30
+"volatiles.inventory" = { H2O = 2700.0 }

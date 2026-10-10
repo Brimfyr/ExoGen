@@ -1,0 +1,17 @@
+version = "0.0.1"
+name = "Europa"
+description = "Reference body. Ice shell over a water ocean; about 100 km of H2O."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 1.89813e27
+"parent.radius" = 7.1492e7
+"parent.semi_major_axis" = 7.7857e11
+"parent.eccentricity" = 0.0489
+"orbit.semi_major_axis" = 6.711e8
+"orbit.eccentricity" = 0.0094
+"body.radius" = 1.5608e6
+"body.density" = 3013.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+"atmosphere.bond_albedo" = 0.67

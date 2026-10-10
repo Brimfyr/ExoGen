@@ -1,0 +1,16 @@
+version = "0.0.1"
+name = "Mercury"
+description = "Reference body. Airless, iron-rich. The 3:2 spin-orbit resonance is not modelled, so rotation is pinned free at the observed 58.6 day period; the locking warning is expected."
+
+[values]
+"orbit.semi_major_axis" = 5.7909e10
+"orbit.eccentricity" = 0.2056
+"body.radius" = 2.4397e6
+"body.density" = 5427.0
+"rotation.period" = 5067031.0
+"rotation.obliquity" = 0.03
+"rotation.mode" = "free"
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+"atmosphere.bond_albedo" = 0.088
+"volatiles.inventory" = {}
