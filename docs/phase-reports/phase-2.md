@@ -86,6 +86,17 @@ The Moon's basin count sits below the lunar catalogue's roughly 43 above 300 km 
 - Callisto's 4 Gyr weathering cap leaves an age contrast between its oldest terrain and younger ejecta that the real lag-covered surface does not show; the Phase 4 lag model replaces it.
 - The determinism test holds through all of this: identical loop and finishing hashes on 1 and 4 threads.
 
+## Second revision
+
+A second look at the renders after the review found four more faults, all fixed:
+
+- The map sets in a folder could disagree: the exporter wrote the height maps first, so a run that failed on a file held open by a viewer left a new height map beside old albedo and surface-age maps. The exporter now checks that every output can be opened before it writes any.
+- Wedge patterns radiating from crater centres, read as rays from a point, in both the floor texture and the melt. The texture lattice began at the floor radius, so every floor cell clamped to one lattice row and the pattern depended on azimuth alone. The lattice now covers the whole interior, and a test checks that the floor texture varies with radius.
+- Hard-edged clumps of melt and a hemisphere-scale two-tone from the deep-ejecta unit of the largest basin. Impact melt and deep-sourced material are now continuous layers: melt is a soft fraction, and the deep fraction follows ballistic mixing, all primary ejecta near the rim and all local material at the continuous edge, with later craters inheriting the material they excavate. Basin sculpture is finer and weaker and applies to multi-ring basins only.
+- Rings that were scaled copies of the rim, and too prominent. Each ring now has its own scalloped shape and gaps around the azimuth, degradation widens and lowers it, and ring heights are lower. Fully accurate ring prominence waits for relaxation in Phase 3.
+
+Standard-quality renders now take 25 to 28 s; the finishing pass remains the cost centre and the parallel stamping noted below is the answer.
+
 ## Deferred from the Phase 2 list
 
 - Regolith roughness: the end-members carry a roughness value; the map is exported with the studio set in Phase 7.
