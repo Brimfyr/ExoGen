@@ -9,15 +9,21 @@
 //! and ejecta are added to whatever is there, with a short blend across the rim. Cells under
 //! the continuous ejecta have their surface age reset to the impact time.
 
-use super::morphology::ProfileTable;
+use super::morphology::{CraterClass, Dimensions, ProfileTable};
 use crate::constants::{
-    BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE, OBLIQUE_ASYMMETRY_DEG,
-    OBLIQUE_BUTTERFLY_DEG, OBLIQUE_BUTTERFLY_MAX, OBLIQUE_DOWNRANGE_MAX, OBLIQUE_FORBIDDEN_DEG,
-    OBLIQUE_FORBIDDEN_DEPTH, OBLIQUE_FORBIDDEN_HALF_WIDTH_DEG,
+    BASIN_SCULPTURE, BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE,
+    EJECTA_TEXTURE, FLOOR_TEXTURE, OBLIQUE_ASYMMETRY_DEG, OBLIQUE_BUTTERFLY_DEG,
+    OBLIQUE_BUTTERFLY_MAX, OBLIQUE_DOWNRANGE_MAX, OBLIQUE_FORBIDDEN_DEG, OBLIQUE_FORBIDDEN_DEPTH,
+    OBLIQUE_FORBIDDEN_HALF_WIDTH_DEG, RIM_CRENULATION_COMPLEX, RIM_CRENULATION_SIMPLE,
+    SCULPTURE_AZIMUTH_CELLS, SCULPTURE_RADIAL_CELLS, TEXTURE_AZIMUTH_CELLS, TEXTURE_FADE_RADII,
+    TEXTURE_MIN_CELLS, TEXTURE_RADIAL_CELLS,
 };
+use crate::constants::{MELT_FLOW_RADII, MELT_FLOW_THRESHOLD, MELT_POND_THRESHOLD};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
+use crate::rng::Rng;
+use crate::units::UNIT_IMPACT_MELT;
 
 /// Reusable scratch space for footprints.
 pub struct Stamper {
@@ -105,6 +111,8 @@ pub struct StampParams {
     pub set_age: bool,
     /// Bury the relief already there under the ejecta according to its thickness.
     pub bury: bool,
+    /// Seed of the crater's rim scalloping and texture; zero for a smooth stamp.
+    pub seed: u64,
 }
 
 /// Stamp one crater. Returns the number of cells touched.
@@ -127,6 +135,9 @@ pub fn stamp(
     if stamper.footprint.is_empty() {
         return 0;
     }
+    let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
+    let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
+        .then(|| CraterTexture::new(p.seed, dim));
     let bedrock = layers.bedrock.as_mut_slice();
     // Reference height: area-weighted mean of the pre-impact surface inside the rim; and
     // the azimuthal mean by radius under the ejecta, against which burial damps relief.
@@ -144,7 +155,7 @@ pub fn stamp(
     let mut ring_sum = [0.0f64; BINS];
     let mut ring_area = [0.0f64; BINS];
     for &(idx, r, phi) in &stamper.footprint {
-        let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity) * shape.factor(phi);
         if re <= dim.radius {
             let a = grid.cell_area(grid.cell(idx));
             sum += bedrock[idx] as f64 * a;
@@ -164,10 +175,13 @@ pub fn stamp(
     let ages = layers.surface_age.as_mut_slice();
     let units = layers.unit_id.as_mut_slice();
     for &(idx, r, phi) in &stamper.footprint {
-        let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
-        let v = profile.height(re)
+        let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity) * shape.factor(phi);
+        let mut v = profile.height(re)
             * p.amplitude
             * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
+        if let Some(t) = &texture {
+            v = t.height(re, phi, v);
+        }
         let mut old = bedrock[idx] as f64;
         if p.bury && re > dim.radius && v > 0.0 {
             let b = bin_of(re);
@@ -193,6 +207,9 @@ pub fn stamp(
             } else {
                 p.unit_ejecta
             };
+            if texture.as_ref().is_some_and(|t| t.melt(re, phi)) {
+                units[idx] = UNIT_IMPACT_MELT;
+            }
         }
     }
     stamper.footprint.len()
@@ -233,6 +250,219 @@ fn ejecta_factor(re: f64, radius: f64, phi: f64, azimuth: f64, angle: f64) -> f6
     1.0 + (ejecta_modulation(phi, azimuth, angle) - 1.0) * ramp
 }
 
+/// Value-noise lattice of one crater on (azimuth, ln r/R), periodic around the crater,
+/// hashed once per lattice point and interpolated per cell.
+struct TextureLattice {
+    period: usize,
+    n_r: f64,
+    v0: i64,
+    rows: usize,
+    values: Vec<f32>,
+}
+
+impl TextureLattice {
+    fn new(rng: &Rng, octave: u64, period: u32, n_r: u32, x_min: f64, x_max: f64) -> Self {
+        let v0 = (x_min.ln() * n_r as f64).floor() as i64 - 1;
+        let v1 = (x_max.ln() * n_r as f64).ceil() as i64 + 1;
+        let rows = (v1 - v0 + 1).max(2) as usize;
+        let mut values = Vec::with_capacity(rows * period as usize);
+        for row in 0..rows {
+            let cv = ((v0 + row as i64) as u64) & 0xF_FFFF;
+            for cu in 0..period as u64 {
+                let key = (octave << 40) | (cu << 20) | cv;
+                values.push((2.0 * rng.uniform(key, 0) - 1.0) as f32);
+            }
+        }
+        Self {
+            period: period as usize,
+            n_r: n_r as f64,
+            v0,
+            rows,
+            values,
+        }
+    }
+
+    /// Sample at an azimuth in turns and a log radius.
+    #[inline]
+    fn sample(&self, turns: f64, log_x: f64) -> f64 {
+        let u = turns * self.period as f64;
+        let v = log_x * self.n_r;
+        let (iu, iv) = (u.floor(), v.floor());
+        let smooth = |t: f64| t * t * (3.0 - 2.0 * t);
+        let (su, sv) = (smooth(u - iu), smooth(v - iv));
+        let cu0 = (iu as i64).rem_euclid(self.period as i64) as usize;
+        let cu1 = (cu0 + 1) % self.period;
+        let row = ((iv as i64) - self.v0).clamp(0, self.rows as i64 - 2) as usize;
+        let p = self.period;
+        let (a, b) = (self.values[row * p + cu0], self.values[row * p + cu1]);
+        let (c, d) = (
+            self.values[(row + 1) * p + cu0],
+            self.values[(row + 1) * p + cu1],
+        );
+        let lerp = |a: f32, b: f32, t: f64| a as f64 + (b as f64 - a as f64) * t;
+        lerp(a, b, su) + (lerp(c, d, su) - lerp(a, b, su)) * sv
+    }
+}
+
+/// The texture of one crater: two octaves of hummocks on the ejecta and the floor, and
+/// radial sculpture for basins and peak-ring craters.
+pub struct CraterTexture {
+    dim: Dimensions,
+    hummocks: [TextureLattice; 2],
+    sculpture: Option<[TextureLattice; 2]>,
+}
+
+impl CraterTexture {
+    pub fn new(seed: u64, dim: &Dimensions) -> Self {
+        let rng = Rng::new(seed ^ 0x7E57_A11E);
+        let x_min = if dim.class == CraterClass::Simple {
+            1.0
+        } else {
+            (dim.floor_radius / dim.radius).max(0.05)
+        };
+        let x_max = TEXTURE_FADE_RADII.1 + 0.1;
+        let lattice = |rng: &Rng, octave: u64, n_phi: u32, n_r: u32| {
+            TextureLattice::new(rng, octave, n_phi << octave, n_r << octave, x_min, x_max)
+        };
+        let hummocks = [
+            lattice(&rng, 0, TEXTURE_AZIMUTH_CELLS, TEXTURE_RADIAL_CELLS),
+            lattice(&rng, 1, TEXTURE_AZIMUTH_CELLS, TEXTURE_RADIAL_CELLS),
+        ];
+        let sculpture =
+            matches!(dim.class, CraterClass::MultiRing | CraterClass::PeakRing).then(|| {
+                let rng = Rng::new(seed ^ 0x5C0_1F7E);
+                [
+                    lattice(&rng, 0, SCULPTURE_AZIMUTH_CELLS, SCULPTURE_RADIAL_CELLS),
+                    lattice(&rng, 1, SCULPTURE_AZIMUTH_CELLS, SCULPTURE_RADIAL_CELLS),
+                ]
+            });
+        Self {
+            dim: *dim,
+            hummocks,
+            sculpture,
+        }
+    }
+
+    /// Azimuth in turns and log radius, the lattice coordinates.
+    #[inline]
+    fn coords(phi: f64, x: f64) -> (f64, f64) {
+        let tau = 2.0 * std::f64::consts::PI;
+        (phi.rem_euclid(tau) / tau, x.max(1e-3).ln())
+    }
+
+    /// Two-octave noise in -1 to 1 at an azimuth and a radius in crater radii.
+    #[inline]
+    pub fn noise(&self, phi: f64, x: f64) -> f64 {
+        let (t, l) = Self::coords(phi, x);
+        self.noise_at(t, l)
+    }
+
+    #[inline]
+    fn noise_at(&self, turns: f64, log_x: f64) -> f64 {
+        (self.hummocks[0].sample(turns, log_x) + 0.5 * self.hummocks[1].sample(turns, log_x)) / 1.5
+    }
+
+    /// Whether a cell is impact melt: ponds on the floor of a complex crater or basin, and
+    /// flows just outside the rim, where the texture is high.
+    #[inline]
+    pub fn melt(&self, re: f64, phi: f64) -> bool {
+        let dim = &self.dim;
+        if dim.class == CraterClass::Simple {
+            return false;
+        }
+        let x = re / dim.radius;
+        // The coarse octave alone, so ponds are patches rather than speckles.
+        let (t, l) = Self::coords(phi, x);
+        let n = self.hummocks[0].sample(t, l);
+        if re < dim.floor_radius {
+            n > MELT_POND_THRESHOLD
+        } else if re > dim.radius && x < MELT_FLOW_RADII {
+            n > MELT_FLOW_THRESHOLD
+        } else {
+            false
+        }
+    }
+
+    /// Apply the texture to a profile height at radius `re` and azimuth `phi`: hummocky
+    /// ejecta beyond the rim fading out past the continuous ejecta, radial sculpture for
+    /// basins, and a rough floor inside.
+    #[inline]
+    pub fn height(&self, re: f64, phi: f64, v: f64) -> f64 {
+        let dim = &self.dim;
+        let x = re / dim.radius;
+        if re > dim.radius {
+            let (fade_in, fade_out) = TEXTURE_FADE_RADII;
+            let taper = ((fade_out - x) / (fade_out - fade_in)).clamp(0.0, 1.0);
+            if taper <= 0.0 {
+                return v;
+            }
+            let (t, l) = Self::coords(phi, x);
+            let mut f = 1.0 + EJECTA_TEXTURE * taper * self.noise_at(t, l);
+            if let Some(s) = &self.sculpture {
+                let n = (s[0].sample(t, l) + 0.5 * s[1].sample(t, l)) / 1.5;
+                f *= 1.0 + BASIN_SCULPTURE * taper * n;
+            }
+            v * f.max(0.0)
+        } else if re < dim.floor_radius && dim.class != CraterClass::Simple {
+            let (t, l) = Self::coords(phi, x);
+            v + FLOOR_TEXTURE * dim.depth * self.noise_at(t, l)
+        } else {
+            v
+        }
+    }
+}
+
+/// Scalloping of a rim as a function of azimuth: a few harmonics with seeded phases and
+/// weights, scaled to unit root-mean-square.
+pub fn crenulation(seed: u64, phi: f64) -> f64 {
+    let rng = Rng::new(seed ^ 0xC2E4_0A17);
+    let mut s = 0.0;
+    let mut power = 0.0;
+    for (i, m) in [3.0f64, 5.0, 8.0, 13.0].into_iter().enumerate() {
+        let phase = rng.uniform(i as u64, 0) * 2.0 * std::f64::consts::PI;
+        let w = (0.5 + rng.uniform(i as u64, 1)) / m.sqrt();
+        s += w * (m * phi + phase).cos();
+        power += 0.5 * w * w;
+    }
+    s / power.sqrt()
+}
+
+/// Rim scalloping of one crater, tabulated around the azimuth as a radius factor.
+struct RimShape {
+    table: [f64; 64],
+    flat: bool,
+}
+
+impl RimShape {
+    fn new(seed: u64, dim: &Dimensions, enabled: bool) -> Self {
+        let mut table = [1.0; 64];
+        let flat = seed == 0 || !enabled;
+        if !flat {
+            let amplitude = if dim.class == CraterClass::Simple {
+                RIM_CRENULATION_SIMPLE
+            } else {
+                RIM_CRENULATION_COMPLEX
+            };
+            for (b, t) in table.iter_mut().enumerate() {
+                let phi = b as f64 / 64.0 * 2.0 * std::f64::consts::PI;
+                *t = 1.0 / (1.0 + amplitude * crenulation(seed, phi));
+            }
+        }
+        Self { table, flat }
+    }
+
+    #[inline]
+    fn factor(&self, phi: f64) -> f64 {
+        if self.flat {
+            return 1.0;
+        }
+        let x = phi.rem_euclid(2.0 * std::f64::consts::PI) / (2.0 * std::f64::consts::PI) * 64.0;
+        let i = (x.floor() as usize) % 64;
+        let f = x - x.floor();
+        self.table[i] * (1.0 - f) + self.table[(i + 1) % 64] * f
+    }
+}
+
 /// Parameters of a loop-crater restore at the finishing resolution.
 pub struct RestoreParams {
     pub time_gyr: f32,
@@ -243,6 +473,8 @@ pub struct RestoreParams {
     pub ellipticity: f64,
     /// Weight of the resolved detail: the fraction of the crater that survived the loop.
     pub detail_weight: f64,
+    /// Seed of the crater's rim scalloping and texture; zero for a smooth stamp.
+    pub seed: u64,
 }
 
 /// Relief under ejecta of thickness `thickness` is damped by this factor: depressions fill
@@ -291,24 +523,34 @@ pub fn restore(
     if stamper.footprint.is_empty() {
         return 0;
     }
+    let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
+    let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
+        .then(|| CraterTexture::new(p.seed, dim));
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let bedrock = layers.bedrock.as_mut_slice();
     let ages = layers.surface_age.as_mut_slice();
     let units = layers.unit_id.as_mut_slice();
     for &(idx, r, phi) in &stamper.footprint {
-        let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity) * shape.factor(phi);
         let fine = bedrock[idx] as f64 - base[idx] as f64;
         // 1 inside 0.95 R, 0 outside 1.05 R: the cavity removes the fine relief.
         let cut = ((1.05 - re / dim.radius) / 0.10).clamp(0.0, 1.0);
         let thickness = if re > dim.radius {
-            (fresh.height(re) * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle)).max(0.0)
+            let t = fresh.height(re) * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
+            match &texture {
+                Some(tx) => tx.height(re, phi, t).max(0.0),
+                None => t.max(0.0),
+            }
         } else {
             0.0
         };
         let kept = fine * (1.0 - cut) * burial_factor(fine, thickness);
-        let d = detail.height(re)
+        let mut d = detail.height(re)
             * p.detail_weight
             * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
+        if let Some(t) = &texture {
+            d = t.height(re, phi, d);
+        }
         bedrock[idx] = (base[idx] as f64 + kept + d) as f32;
         if re <= continuous {
             ages[idx] = p.time_gyr;
@@ -317,6 +559,9 @@ pub fn restore(
             } else {
                 p.unit_ejecta
             };
+            if texture.as_ref().is_some_and(|t| t.melt(re, phi)) {
+                units[idx] = UNIT_IMPACT_MELT;
+            }
         }
     }
     stamper.footprint.len()
@@ -356,6 +601,7 @@ mod tests {
             replace_floor: true,
             set_age: true,
             bury: true,
+            seed: 0,
         };
         let touched = stamp(
             &mut layers,
@@ -439,6 +685,7 @@ mod tests {
                 replace_floor: true,
                 set_age: true,
                 bury,
+                seed: 0,
             };
             stamp(
                 &mut layers,
@@ -517,6 +764,7 @@ mod tests {
                 replace_floor: true,
                 set_age: true,
                 bury: true,
+                seed: 0,
             };
             stamp(
                 &mut layers,

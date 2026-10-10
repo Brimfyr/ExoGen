@@ -147,8 +147,22 @@ pub fn reference_checks() -> Vec<Check> {
             "airless stagnant lid keeps craters for its whole age",
         ),
         text("Moon", "materials.bedrock", "anorthosite", ""),
+        text("Moon", "materials.deep_bedrock", "norite", ""),
+        range(
+            "Moon",
+            "surface.solidification_time",
+            0.25,
+            0.35,
+            "record from 4.2 Gyr",
+        ),
         range("Mercury", "cratering.retention_age", 4.0, 5.0, ""),
         text("Mercury", "materials.bedrock", "mercurian_regolith", ""),
+        text(
+            "Mercury",
+            "materials.deep_bedrock",
+            "low_reflectance_material",
+            "",
+        ),
         range(
             "Venus",
             "cratering.retention_age",

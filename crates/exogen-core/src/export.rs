@@ -320,11 +320,26 @@ pub fn export(
     };
     let path = settings.dir.join("sidecar.json");
     let text = serde_json::to_string_pretty(&sidecar)?;
-    std::fs::write(&path, text).map_err(|source| ExportError::Io {
+    retry(|| std::fs::write(&path, &text)).map_err(|source| ExportError::Io {
         path: path.display().to_string(),
         source,
     })?;
     Ok(sidecar)
+}
+
+/// Run a file write, retrying for a couple of seconds: on Windows a viewer or a scanner
+/// can hold a mapping on the file being replaced, which fails the write for a moment.
+fn retry<T, E>(mut f: impl FnMut() -> Result<T, E>) -> Result<T, E> {
+    let mut attempts = 0;
+    loop {
+        match f() {
+            Err(_) if attempts < 10 => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            result => return result,
+        }
+    }
 }
 
 fn min_max(v: &[f32]) -> (f32, f32) {
@@ -350,10 +365,8 @@ fn write_exr_f32(
             FlatSamples::F32(data.to_vec())
         )]),
     );
-    Image::from_layer(layer)
-        .write()
-        .to_file(path)
-        .map_err(|e| ExportError::Exr(e.to_string()))
+    let image = Image::from_layer(layer);
+    retry(|| image.write().to_file(path)).map_err(|e| ExportError::Exr(e.to_string()))
 }
 
 fn write_exr_rgb(
@@ -374,10 +387,8 @@ fn write_exr_rgb(
             AnyChannel::new("B", to_half(&channels[2])),
         ]),
     );
-    Image::from_layer(layer)
-        .write()
-        .to_file(path)
-        .map_err(|e| ExportError::Exr(e.to_string()))
+    let image = Image::from_layer(layer);
+    retry(|| image.write().to_file(path)).map_err(|e| ExportError::Exr(e.to_string()))
 }
 
 fn write_png16(
@@ -399,7 +410,7 @@ fn write_png16(
         pixels,
     )
     .expect("buffer size");
-    img.save(path)?;
+    retry(|| img.save(path))?;
     Ok(())
 }
 
@@ -410,7 +421,7 @@ fn write_png8(path: &Path, width: usize, height: usize, data: &[u8]) -> Result<(
         data.to_vec(),
     )
     .expect("buffer size");
-    img.save(path)?;
+    retry(|| img.save(path))?;
     Ok(())
 }
 
@@ -443,6 +454,6 @@ fn write_png_srgb(
         pixels,
     )
     .expect("buffer size");
-    img.save(path)?;
+    retry(|| img.save(path))?;
     Ok(())
 }

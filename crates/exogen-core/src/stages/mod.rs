@@ -24,8 +24,8 @@ use rayon::prelude::*;
 use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
-    CraterRecord, PopulationConfig, ProfileTable, RestoreParams, StampParams, Stamper, dimensions,
-    ejecta_modulation, restore, sample_population, stamp,
+    CraterRecord, CraterTexture, PopulationConfig, ProfileTable, RestoreParams, StampParams,
+    Stamper, dimensions, ejecta_modulation, restore, sample_population, stamp,
 };
 use crate::fields::{Field, LayerSet};
 use crate::geom::{local_basis, offset};
@@ -33,7 +33,7 @@ use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
 use crate::rng::{Rng, hash_words};
-use crate::units::{UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_EJECTA, UNIT_SECONDARY_FIELD};
+use crate::units::UNIT_SECONDARY_FIELD;
 
 /// Loop steps by quality: preview, standard, high.
 pub const LOOP_STEPS: [usize; 3] = [30, 90, 90];
@@ -161,6 +161,7 @@ impl Runner {
                 "detail.quality",
                 "multiplier.relief",
                 "multiplier.crater_density",
+                "materials.deep_bedrock_depth",
             ]),
             primordial_crust::VERSION,
             impacts::VERSION,
@@ -237,7 +238,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 5;
+pub const FINISH_VERSION: u64 = 7;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -427,18 +428,16 @@ pub fn finish(
                 for (v, s) in detail.values.iter_mut().zip(&smooth.values) {
                     *v -= s;
                 }
+                let deep = impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
                 let params = RestoreParams {
                     time_gyr: c.time_gyr as f32,
-                    unit_floor: if dim.class == crate::crater::CraterClass::MultiRing {
-                        UNIT_BASIN_FLOOR
-                    } else {
-                        UNIT_CRATER_FLOOR
-                    },
-                    unit_ejecta: UNIT_EJECTA,
+                    unit_floor: impacts::floor_unit(dim.class, deep),
+                    unit_ejecta: impacts::ejecta_unit(deep),
                     azimuth: c.azimuth,
                     angle: c.angle,
                     ellipticity: c.ellipticity,
                     detail_weight: 1.0,
+                    seed: c.id,
                 };
                 restore(
                     &mut layers,
@@ -464,14 +463,16 @@ pub fn finish(
                 if table.is_erased() {
                     continue;
                 }
+                let deep = !*secondary
+                    && impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
                 let params = StampParams {
                     time_gyr: c.time_gyr as f32,
                     unit_floor: if *secondary {
                         UNIT_SECONDARY_FIELD
                     } else {
-                        UNIT_CRATER_FLOOR
+                        impacts::floor_unit(dim.class, deep)
                     },
-                    unit_ejecta: UNIT_EJECTA,
+                    unit_ejecta: impacts::ejecta_unit(deep),
                     azimuth: c.azimuth,
                     angle: c.angle,
                     ellipticity: c.ellipticity,
@@ -483,6 +484,7 @@ pub fn finish(
                     replace_floor: true,
                     set_age: true,
                     bury: true,
+                    seed: c.key,
                 };
                 stamp(
                     &mut layers,
@@ -609,22 +611,30 @@ fn sample_secondaries(
         }
         let (east, north) = local_basis(p.center);
         let radius = 0.5 * p.diameter;
-        let clusters = (count / 6).max(1);
+        let groups = (count / SECONDARY_GROUP_SIZE).max(1);
         for j in 0..count as u64 {
-            let cluster = j % clusters as u64;
-            let base = 8 + cluster * 4;
-            let dist = radius * (r_lo + (r_hi - r_lo) * rng.uniform(p.id, base));
-            let phi = 2.0 * std::f64::consts::PI * rng.uniform(p.id, base + 1);
+            let group = j % groups as u64;
+            let rank = (j / groups as u64) as f64;
+            let base = 8 + group * 4;
+            let dist0 = radius * (r_lo + (r_hi - r_lo) * rng.uniform(p.id, base));
+            let phi0 = 2.0 * std::f64::consts::PI * rng.uniform(p.id, base + 1);
+            let chain = rng.uniform(p.id, base + 2) < SECONDARY_CHAIN_FRACTION;
             let draw = 1_000 + j * 4;
-            let jitter_r = 0.15 * radius * (rng.uniform(p.id, draw) - 0.5);
-            let jitter_phi = 0.3 * (rng.uniform(p.id, draw + 1) - 0.5) * radius / dist.max(1.0);
-            let center = offset(
-                p.center,
-                east,
-                north,
-                (dist + jitter_r) / inputs.body_radius,
-                phi + jitter_phi,
-            );
+            // A chain runs outward along the radial from the primary; a cluster scatters
+            // about its centre.
+            let (dist, phi) = if chain {
+                let spacing =
+                    radius * SECONDARY_CHAIN_SPACING * (0.7 + 0.6 * rng.uniform(p.id, draw));
+                let lateral = 0.03 * radius * (rng.uniform(p.id, draw + 1) - 0.5);
+                let d = dist0 + rank * spacing;
+                (d, phi0 + lateral / d.max(1.0))
+            } else {
+                let jitter_r = 0.3 * radius * (rng.uniform(p.id, draw) - 0.5);
+                let jitter_phi =
+                    0.5 * (rng.uniform(p.id, draw + 1) - 0.5) * radius / dist0.max(1.0);
+                (dist0 + jitter_r, phi0 + jitter_phi)
+            };
+            let center = offset(p.center, east, north, dist / inputs.body_radius, phi);
             let u = rng.uniform(p.id, draw + 2);
             let q = (f_hi / f_lo).powf(-slope);
             let diameter = p.diameter * f_lo * (1.0 - u * (1.0 - q)).powf(-1.0 / slope);
@@ -668,6 +678,9 @@ fn ray_field(
         }
         let freshness = (1.0 - age / lifetime).powi(2);
         let radius = 0.5 * c.diameter;
+        // Fresh floors and ejecta are mottled by melt, flows and blocks, and the edge of
+        // the continuous ejecta is ragged.
+        let texture = CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling));
         let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
         // Rays keep a roughly constant linear width, so their angular width shrinks with
         // distance, and large craters' rays are shorter in radii than small craters' rays.
@@ -696,16 +709,22 @@ fn ray_field(
         let ejecta_edge = CONTINUOUS_EJECTA_MULTIPLE * radius;
         for &(idx, r, phi) in &stamper.footprint {
             // Fresh ejecta: full inside the rim, fading to half at the continuous edge.
+            let edge = if r > 0.7 * ejecta_edge && r < 1.3 * ejecta_edge {
+                ejecta_edge * (1.0 + EJECTA_EDGE_RAGGEDNESS * texture.noise(phi, 2.0))
+            } else {
+                ejecta_edge
+            };
             let mut v: f64 = if r <= radius {
                 1.0
-            } else if r <= ejecta_edge {
-                (1.0 - 0.5 * (r - radius) / (ejecta_edge - radius))
+            } else if r <= edge {
+                (1.0 - 0.5 * (r - radius) / (edge - radius))
                     * ejecta_modulation(phi, c.azimuth, c.angle).min(1.0)
+                    * (1.0 + EJECTA_BRIGHTNESS_TEXTURE * texture.noise(phi, r / radius))
             } else {
                 0.0
             };
-            if r > ejecta_edge {
-                let falloff = (ejecta_edge / r).powf(1.2);
+            if r > edge {
+                let falloff = (edge / r).powf(1.2);
                 for &(p, w, l, s) in &ray_params {
                     if r > l {
                         continue;

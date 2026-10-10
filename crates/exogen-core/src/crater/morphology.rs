@@ -62,8 +62,9 @@ pub struct Dimensions {
     pub floor_radius: f64,
     pub peak_height: f64,
     pub peak_radius: f64,
-    pub ring_radius: f64,
-    pub ring_height: f64,
+    /// Ridge rings inside the rim as (radius, height), outermost first.
+    pub rings: [(f64, f64); MAX_RINGS],
+    pub ring_count: usize,
     pub ejecta_radius: f64,
     pub ejecta_exponent: f64,
 }
@@ -86,8 +87,8 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
             floor_radius: 0.0,
             peak_height: 0.0,
             peak_radius: 0.0,
-            ring_radius: 0.0,
-            ring_height: 0.0,
+            rings: [(0.0, 0.0); MAX_RINGS],
+            ring_count: 0,
             ejecta_radius: EJECTA_RADIUS_MULTIPLE * radius,
             ejecta_exponent: EJECTA_EXPONENT,
         },
@@ -104,10 +105,28 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
             } else {
                 (0.0, 0.0)
             };
-            let (ring_radius, ring_height) = match class {
-                CraterClass::PeakRing => (0.5 * radius, 0.3 * depth),
-                CraterClass::MultiRing => (0.5 * radius, 0.25 * depth),
-                _ => (0.0, 0.0),
+            // A peak ring at half the radius; multi-ring basins add a ring for each
+            // sqrt(2) of diameter above the onset, each at 1/sqrt(2) of the last.
+            let mut rings = [(0.0, 0.0); MAX_RINGS];
+            let ring_count = match class {
+                CraterClass::PeakRing => {
+                    rings[0] = (0.5 * radius, RING_HEIGHT_FRACTION * depth);
+                    1
+                }
+                CraterClass::MultiRing => {
+                    let extra = ((diameter / s.multi_ring).ln() / std::f64::consts::SQRT_2.ln())
+                        .floor()
+                        .max(0.0) as usize;
+                    let n = (1 + extra).min(MAX_RINGS);
+                    for (k, ring) in rings.iter_mut().enumerate().take(n) {
+                        *ring = (
+                            radius / std::f64::consts::SQRT_2.powi(k as i32 + 1),
+                            RING_HEIGHT_FRACTION * depth * RING_HEIGHT_DECAY.powi(k as i32),
+                        );
+                    }
+                    n
+                }
+                _ => 0,
             };
             let (ejecta_radius, ejecta_exponent) = if class == CraterClass::MultiRing {
                 (BASIN_EJECTA_RADIUS_MULTIPLE * radius, BASIN_EJECTA_EXPONENT)
@@ -122,8 +141,8 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
                 floor_radius,
                 peak_height,
                 peak_radius,
-                ring_radius,
-                ring_height,
+                rings,
+                ring_count,
                 ejecta_radius,
                 ejecta_exponent,
             }
@@ -187,9 +206,9 @@ pub fn fresh_height(dim: &Dimensions, r: f64) -> f64 {
                 let sigma = 0.5 * dim.peak_radius;
                 h += dim.peak_height * (-(r / sigma).powi(2)).exp();
             }
-            if dim.ring_height > 0.0 {
-                let sigma = 0.07 * rr;
-                h += dim.ring_height * (-((r - dim.ring_radius) / sigma).powi(2)).exp();
+            let sigma = 0.06 * rr;
+            for &(ring_r, ring_h) in dim.rings.iter().take(dim.ring_count) {
+                h += ring_h * (-((r - ring_r) / sigma).powi(2)).exp();
             }
             h
         }
@@ -318,6 +337,17 @@ mod tests {
         let orientale = dimensions(930_000.0, &s);
         assert_eq!(orientale.class, CraterClass::MultiRing);
         assert!(orientale.depth <= MAX_BASIN_DEPTH_LUNAR + 1.0);
+        // Three rings inside the Cordillera rim, at the Outer Rook, Inner Rook and inner
+        // ring radii (620, 480 and 320 km across).
+        assert_eq!(orientale.ring_count, 3);
+        let diameters: Vec<f64> = orientale.rings[..3]
+            .iter()
+            .map(|r| 2.0 * r.0 / 1e3)
+            .collect();
+        for (got, want) in diameters.iter().zip([620.0, 480.0, 320.0]) {
+            assert!((got / want - 1.0).abs() < 0.08, "{diameters:?}");
+        }
+        assert_eq!(schrodinger.ring_count, 1);
     }
 
     #[test]

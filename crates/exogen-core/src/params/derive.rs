@@ -1501,6 +1501,33 @@ pub fn materials_regolith_mix(c: &Ctx) -> Value {
     Value::Map(m)
 }
 
+pub fn materials_deep_bedrock(c: &Ctx) -> Value {
+    let regime = c.str("interior.tectonic_regime");
+    let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
+    let deep = match c.str("body.composition_class") {
+        "iron_rich" => "low_reflectance_material",
+        "rock" => {
+            if airless && regime == "stagnant_lid" {
+                "norite"
+            } else {
+                "basalt"
+            }
+        }
+        "rock_ice" | "ice_dominated" => "water_ice",
+        _ => c.str("materials.bedrock"),
+    };
+    deep.into()
+}
+
+pub fn materials_deep_bedrock_depth(c: &Ctx) -> Value {
+    match c.str("body.composition_class") {
+        "iron_rich" => DEEP_BEDROCK_DEPTH_IRON_RICH,
+        "rock" => DEEP_BEDROCK_DEPTH_ROCK,
+        _ => DEEP_BEDROCK_DEPTH_ICE,
+    }
+    .into()
+}
+
 // ------------------------------------------------------------------ detail, output, seeds
 
 fn quality_index(c: &Ctx) -> usize {

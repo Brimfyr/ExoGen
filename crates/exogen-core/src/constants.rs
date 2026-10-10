@@ -428,6 +428,54 @@ pub const OBLIQUE_BUTTERFLY_DEG: f64 = 15.0;
 pub const OBLIQUE_BUTTERFLY_MAX: f64 = 1.0;
 /// Secondaries strike at low angles along the radial from their primary.
 pub const SECONDARY_IMPACT_ANGLE: f64 = 0.5;
+/// Secondaries come in groups of this size; a group is a radial chain with this fraction,
+/// spaced along the radial by this fraction of the primary radius, otherwise a cluster.
+pub const SECONDARY_GROUP_SIZE: u32 = 8;
+pub const SECONDARY_CHAIN_FRACTION: f64 = 0.6;
+pub const SECONDARY_CHAIN_SPACING: f64 = 0.12;
+/// Multi-ring basins: rings at successive 1/sqrt(2) of the rim radius (Hartmann and Kuiper
+/// 1962), one more for each sqrt(2) of diameter above the onset, at most this many; the
+/// inner rings are lower by this factor each. Orientale has three inside its rim.
+pub const MAX_RINGS: usize = 4;
+pub const RING_HEIGHT_FRACTION: f64 = 0.3;
+pub const RING_HEIGHT_DECAY: f64 = 0.8;
+/// Rim and ring scalloping as a fraction of the radius, and ejecta, basin-sculpture and
+/// floor texture amplitudes. Provisional, to be tuned against imagery in Phase 7.
+pub const RIM_CRENULATION_SIMPLE: f64 = 0.015;
+pub const RIM_CRENULATION_COMPLEX: f64 = 0.035;
+pub const EJECTA_TEXTURE: f64 = 0.5;
+pub const BASIN_SCULPTURE: f64 = 0.5;
+pub const FLOOR_TEXTURE: f64 = 0.04;
+/// Texture lattice: cells around the azimuth and per e-fold of radius, per octave; the
+/// basin sculpture lattice is stretched radially. Craters with fewer footprint cells than
+/// this are stamped without texture.
+pub const TEXTURE_AZIMUTH_CELLS: u32 = 24;
+pub const TEXTURE_RADIAL_CELLS: u32 = 6;
+pub const SCULPTURE_AZIMUTH_CELLS: u32 = 72;
+pub const SCULPTURE_RADIAL_CELLS: u32 = 2;
+pub const TEXTURE_MIN_CELLS: usize = 400;
+/// The ejecta texture fades out between these radii, in crater radii, where the ejecta is
+/// too thin for it to show.
+pub const TEXTURE_FADE_RADII: (f64, f64) = (1.3, 2.0);
+/// Deep bedrock: what craters excavate from below the surface layer. A crater reaches it
+/// when its excavation depth, this fraction of its diameter (Melosh 1989), exceeds the
+/// layer thickness: the anorthositic upper crust of a Moon-like body, the depth of
+/// Mercury's low-reflectance material, or the dirty surface layer of an ice shell.
+/// Provisional: Phase 4 for ice, Phase 7 for the material library.
+pub const EXCAVATION_DEPTH_FRACTION: f64 = 0.1;
+pub const DEEP_BEDROCK_DEPTH_ROCK: f64 = 25_000.0;
+pub const DEEP_BEDROCK_DEPTH_IRON_RICH: f64 = 10_000.0;
+pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
+/// Brightness mottling of fresh ejecta and floors in the ray field, and the raggedness of
+/// the continuous ejecta edge as a fraction of its radius.
+pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.4;
+pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.2;
+/// Impact melt: ponds on the floors of complex craters and basins and flows just outside
+/// the rim, placed where the crater texture exceeds these thresholds (about a fifth of the
+/// floor and a tenth of the near-rim ejecta), out to this many radii.
+pub const MELT_POND_THRESHOLD: f64 = 0.4;
+pub const MELT_FLOW_THRESHOLD: f64 = 0.6;
+pub const MELT_FLOW_RADII: f64 = 1.3;
 /// Rays: length range in radii, count range, and the smallest crater (in finishing cells)
 /// that gets rays.
 pub const RAY_LENGTH_MULTIPLE: (f64, f64) = (6.0, 15.0);

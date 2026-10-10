@@ -14,7 +14,8 @@ pub use production::{
     CraterSample, FluxHistory, PopulationConfig, ProductionFunction, sample_population,
 };
 pub use stamp::{
-    RestoreParams, StampParams, Stamper, burial_factor, ejecta_modulation, restore, stamp,
+    CraterTexture, RestoreParams, StampParams, Stamper, burial_factor, crenulation,
+    ejecta_modulation, restore, stamp,
 };
 
 /// A crater that was emplaced, kept for the sidecar, for rays and secondaries, and for

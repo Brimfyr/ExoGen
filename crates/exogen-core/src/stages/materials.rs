@@ -17,9 +17,11 @@ use rayon::prelude::*;
 
 use crate::fields::{Field, LayerSet};
 use crate::params::ParamGraph;
-use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC};
+use crate::units::{
+    UNIT_CONTINENTAL, UNIT_DEEP_EJECTA, UNIT_DEEP_FLOOR, UNIT_IMPACT_MELT, UNIT_OCEANIC,
+};
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -92,7 +94,33 @@ pub const END_MEMBERS: &[EndMember] = &[
         mature: [0.50, 0.42, 0.20],
         roughness: 0.70,
     },
+    // Lunar lower crust: noritic, darker than the anorthositic highlands even when fresh.
+    EndMember {
+        id: "norite",
+        fresh: [0.24, 0.23, 0.22],
+        mature: [0.11, 0.10, 0.09],
+        roughness: 0.85,
+    },
+    // Mercury's low-reflectance material, excavated by basins and large craters.
+    EndMember {
+        id: "low_reflectance_material",
+        fresh: [0.11, 0.11, 0.12],
+        mature: [0.065, 0.065, 0.07],
+        roughness: 0.85,
+    },
+    // Glassy impact melt on silicate bodies: dark when fresh, buried by regolith with age.
+    EndMember {
+        id: "impact_melt",
+        fresh: [0.13, 0.12, 0.11],
+        mature: [0.09, 0.085, 0.08],
+        roughness: 0.60,
+    },
 ];
+
+/// Ice end-members, whose excavated bright material darkens back to the lag it came from.
+fn is_ice(id: &str) -> bool {
+    id.starts_with("water_ice") || id == "ammonia_water_ice" || id == "rock_ice_mixture"
+}
 
 pub fn end_member(id: &str) -> Option<&'static EndMember> {
     END_MEMBERS.iter().find(|e| e.id == id)
@@ -164,6 +192,28 @@ pub fn albedo(
         fresh: bedrock.fresh,
         mature: mixture_colour(&regolith, 1.0),
     };
+    // What deep craters excavate. Silicates keep their contrast when mature; ice brought
+    // up from under a lag darkens back to the lag.
+    let deep = end_member(graph.str("materials.deep_bedrock")).unwrap_or(bedrock);
+    let deep_pair = Pair {
+        fresh: deep.fresh,
+        mature: if is_ice(deep.id) {
+            base.mature
+        } else {
+            deep.mature
+        },
+    };
+    // Melt: dark glass on silicates, refrozen clean ice on ice shells; either converges on
+    // the regolith as gardening buries it.
+    let melt = end_member("impact_melt").unwrap();
+    let melt_pair = Pair {
+        fresh: if is_ice(deep.id) {
+            deep.fresh
+        } else {
+            melt.fresh
+        },
+        mature: base.mature,
+    };
     let felsic = end_member("felsic").unwrap();
     let basalt = end_member("basalt").unwrap();
     let continental = Pair {
@@ -194,6 +244,8 @@ pub fn albedo(
                 let pair = match units[k] {
                     UNIT_CONTINENTAL => continental,
                     UNIT_OCEANIC => oceanic,
+                    UNIT_DEEP_FLOOR | UNIT_DEEP_EJECTA => deep_pair,
+                    UNIT_IMPACT_MELT => melt_pair,
                     _ => base,
                 };
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);

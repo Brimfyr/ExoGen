@@ -16,9 +16,11 @@ use crate::fields::LayerSet;
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
-use crate::units::{UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_EJECTA};
+use crate::units::{
+    UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_DEEP_EJECTA, UNIT_DEEP_FLOOR, UNIT_EJECTA,
+};
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 6;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -41,7 +43,30 @@ pub struct CraterInputs {
     pub loop_retention_age: f64,
     pub diffusivity_m2_per_myr: f64,
     pub ray_lifetime: f64,
+    /// Thickness of the surface layer above the deep bedrock, metres.
+    pub deep_bedrock_depth: f64,
     pub seed: u64,
+}
+
+/// Whether a crater's excavation reaches below the surface layer into the deep bedrock.
+pub fn reaches_deep_bedrock(diameter: f64, deep_bedrock_depth: f64) -> bool {
+    EXCAVATION_DEPTH_FRACTION * diameter > deep_bedrock_depth
+}
+
+/// Unit of a crater floor by class and excavation.
+pub fn floor_unit(class: crate::crater::CraterClass, deep: bool) -> u16 {
+    if deep {
+        UNIT_DEEP_FLOOR
+    } else if class == crate::crater::CraterClass::MultiRing {
+        UNIT_BASIN_FLOOR
+    } else {
+        UNIT_CRATER_FLOOR
+    }
+}
+
+/// Unit of continuous ejecta by excavation.
+pub fn ejecta_unit(deep: bool) -> u16 {
+    if deep { UNIT_DEEP_EJECTA } else { UNIT_EJECTA }
 }
 
 impl CraterInputs {
@@ -76,6 +101,7 @@ impl CraterInputs {
             },
             diffusivity_m2_per_myr: graph.f64("cratering.diffusivity"),
             ray_lifetime: graph.f64("cratering.ray_fading_timescale"),
+            deep_bedrock_depth: graph.f64("materials.deep_bedrock_depth"),
             seed: graph.f64("seed.cratering") as u64,
         }
     }
@@ -176,15 +202,12 @@ impl ImpactProcess {
         batch.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
         for rec in &batch {
             let dim = dimensions(rec.diameter, &inp.scaling);
+            let deep = reaches_deep_bedrock(rec.diameter, inp.deep_bedrock_depth);
             let table = ProfileTable::new(dim, 0.0);
             let params = StampParams {
                 time_gyr: rec.time_gyr as f32,
-                unit_floor: if dim.class == crate::crater::CraterClass::MultiRing {
-                    UNIT_BASIN_FLOOR
-                } else {
-                    UNIT_CRATER_FLOOR
-                },
-                unit_ejecta: UNIT_EJECTA,
+                unit_floor: floor_unit(dim.class, deep),
+                unit_ejecta: ejecta_unit(deep),
                 azimuth: rec.azimuth,
                 angle: rec.angle,
                 ellipticity: rec.ellipticity,
@@ -192,6 +215,7 @@ impl ImpactProcess {
                 replace_floor: true,
                 set_age: true,
                 bury: true,
+                seed: rec.id,
             };
             stamp(
                 layers,

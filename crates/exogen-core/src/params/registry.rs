@@ -211,6 +211,9 @@ const BEDROCK: &[&str] = &[
     "carbonaceous",
     "sulfur_coated",
     "mercurian_regolith",
+    "norite",
+    "low_reflectance_material",
+    "impact_melt",
 ];
 const END_MEMBER_IDS: &[&str] = BEDROCK;
 const COLOUR_SPACE: &[&str] = &["linear_srgb", "acescg"];
@@ -2062,6 +2065,35 @@ static NODES: &[NodeDef] = &[
         d::materials_regolith_mix,
         "Baseline surface mixture of end-members before deposits. Pin to compose the surface by hand.",
         "",
+    ),
+    derived(
+        "materials.deep_bedrock",
+        "materials",
+        "Deep bedrock",
+        "",
+        1.0,
+        ValueType::Enum(BEDROCK),
+        &[
+            "body.composition_class",
+            "interior.tectonic_regime",
+            "atmosphere.surface_pressure",
+            "materials.bedrock",
+        ],
+        d::materials_deep_bedrock,
+        "What large craters excavate from below the surface layer: noritic lower crust on an airless rocky stagnant lid, low-reflectance material on an iron-rich body, clean ice under the lag of an ice shell, otherwise the bedrock. Pin to choose.",
+        "provisional, Phase 7",
+    ),
+    derived(
+        "materials.deep_bedrock_depth",
+        "materials",
+        "Deep bedrock depth",
+        "km",
+        1e3,
+        f(0.0, 1e6),
+        &["body.composition_class"],
+        d::materials_deep_bedrock_depth,
+        "Thickness of the surface layer: 25 km on rocky bodies, 10 km on iron-rich ones, 0.5 km on ice shells. A crater that excavates a tenth of its diameter deeper than this exposes the deep bedrock.",
+        "Melosh 1989; provisional",
     ),
     root(
         "materials.colour_space",
