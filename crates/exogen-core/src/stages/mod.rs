@@ -24,8 +24,8 @@ use rayon::prelude::*;
 use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
-    CraterRecord, PopulationConfig, ProfileTable, RestoreParams, StampParams, Stamper,
-    dimensions, restore, sample_population, stamp,
+    CraterRecord, PopulationConfig, ProfileTable, RestoreParams, StampParams, Stamper, dimensions,
+    restore, sample_population, stamp,
 };
 use crate::fields::{Field, LayerSet};
 use crate::geom::{local_basis, offset};
@@ -357,6 +357,7 @@ pub fn finish(
         .max(FINISHING_MIN_CELLS * cell);
     let cfg = PopulationConfig {
         pf: inputs.pf,
+        flux: inputs.flux,
         flux_scale: inputs.flux_scale,
         body_radius,
         d_min,
@@ -395,11 +396,7 @@ pub fn finish(
     for (j, (c, _)) in replay.iter().enumerate() {
         events.push((c.time_gyr, 1, c.key, Event::Replay(j)));
     }
-    events.sort_by(|a, b| {
-        a.0.total_cmp(&b.0)
-            .then(a.1.cmp(&b.1))
-            .then(a.2.cmp(&b.2))
-    });
+    events.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
     sink.report(Progress {
         stage: "finishing",
         fraction: 0.3,
@@ -453,8 +450,7 @@ pub fn finish(
             Event::Replay(j) => {
                 let (c, secondary) = &replay[*j];
                 let dim = dimensions(c.diameter, &inputs.scaling);
-                let kappa_t =
-                    inputs.diffusivity_m2_per_myr * (present - c.time_gyr).max(0.0) * 1e3;
+                let kappa_t = inputs.diffusivity_m2_per_myr * (present - c.time_gyr).max(0.0) * 1e3;
                 let table = ProfileTable::new(dim, kappa_t);
                 let params = StampParams {
                     time_gyr: c.time_gyr as f32,
@@ -903,7 +899,10 @@ mod tests {
             }
         }
         assert!(checked > 1_000, "checked {checked} cells");
-        assert_eq!(older, 0, "{older} of {checked} cells older than their crater");
+        assert_eq!(
+            older, 0,
+            "{older} of {checked} cells older than their crater"
+        );
     }
 
     #[test]

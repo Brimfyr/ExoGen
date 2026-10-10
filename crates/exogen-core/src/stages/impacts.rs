@@ -9,8 +9,8 @@
 use crate::constants::*;
 use crate::crater::production::{expected_count_above, poisson};
 use crate::crater::{
-    CraterRecord, ProductionFunction, ProfileTable, Scaling, StampParams, Stamper, dimensions,
-    stamp,
+    CraterRecord, FluxHistory, ProductionFunction, ProfileTable, Scaling, StampParams, Stamper,
+    dimensions, stamp,
 };
 use crate::fields::LayerSet;
 use crate::grid::CubeSphere;
@@ -18,12 +18,14 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::{UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_EJECTA};
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
 pub struct CraterInputs {
     pub pf: ProductionFunction,
+    /// Flux history in time since formation, with the record starting at solidification.
+    pub flux: FluxHistory,
     pub scaling: Scaling,
     pub flux_scale: f64,
     pub body_radius: f64,
@@ -44,8 +46,15 @@ pub struct CraterInputs {
 
 impl CraterInputs {
     pub fn from_graph(graph: &ParamGraph) -> Self {
+        let pf = ProductionFunction::by_name(graph.str("cratering.production_function"));
         Self {
-            pf: ProductionFunction::by_name(graph.str("cratering.production_function")),
+            pf,
+            flux: FluxHistory {
+                steady: pf.chronology.2,
+                early_ratio: graph.f64("cratering.early_flux_ratio"),
+                early_decay: graph.f64("cratering.early_flux_decay"),
+                record_start: graph.f64("surface.solidification_time"),
+            },
             scaling: Scaling {
                 simple_complex: graph.f64("cratering.simple_complex_transition"),
                 peak_ring: graph.f64("cratering.peak_ring_onset"),
@@ -126,10 +135,10 @@ impl ImpactProcess {
         let t_start = t_start.max(cutoff);
         let expected = expected_count_above(
             &inp.pf,
+            &inp.flux,
             inp.flux_scale,
             inp.body_radius,
             self.d_loop,
-            inp.age,
             t_start,
             t_end,
         );
@@ -143,7 +152,11 @@ impl ImpactProcess {
                         .sample_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
                         * 1e3;
                 let center = self.rng.unit_direction(step_index, draw + 1);
-                let time_gyr = t_start + (t_end - t_start) * self.rng.uniform(step_index, draw + 3);
+                let time_gyr = inp.flux.time_at_fraction(
+                    t_start,
+                    t_end,
+                    self.rng.uniform(step_index, draw + 3),
+                );
                 let (azimuth, ellipticity) =
                     if self.rng.uniform(step_index, draw + 4) < inp.oblique_fraction {
                         (
@@ -255,10 +268,10 @@ mod tests {
         let young_expected = seeds as f64
             * expected_count_above(
                 &inp.pf,
+                &inp.flux,
                 inp.flux_scale,
                 inp.body_radius,
                 d_loop,
-                age,
                 age - 1.0,
                 age,
             );
@@ -270,10 +283,10 @@ mod tests {
         let giant_expected = seeds as f64
             * expected_count_above(
                 &inp.pf,
+                &inp.flux,
                 inp.flux_scale,
                 inp.body_radius,
                 700_000.0,
-                age,
                 age - 1.0,
                 age,
             );
@@ -285,10 +298,10 @@ mod tests {
         let basins = seeds as f64
             * expected_count_above(
                 &inp.pf,
+                &inp.flux,
                 inp.flux_scale,
                 inp.body_radius,
                 300_000.0,
-                age,
                 0.0,
                 age,
             );

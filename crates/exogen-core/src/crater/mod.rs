@@ -8,7 +8,9 @@ pub mod production;
 pub mod stamp;
 
 pub use morphology::{CraterClass, Dimensions, ProfileTable, Scaling, dimensions};
-pub use production::{CraterSample, PopulationConfig, ProductionFunction, sample_population};
+pub use production::{
+    CraterSample, FluxHistory, PopulationConfig, ProductionFunction, sample_population,
+};
 pub use stamp::{RestoreParams, StampParams, Stamper, burial_factor, restore, stamp};
 
 /// A crater that was emplaced, kept for the sidecar, for rays and secondaries, and for

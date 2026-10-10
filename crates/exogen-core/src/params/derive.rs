@@ -477,16 +477,6 @@ pub mod physics {
             * (GRAVITY_MOON / g)
             * if icy { TRANSITION_ICE_FACTOR } else { 1.0 }
     }
-
-    /// F31: Neukum chronology N(>= 1 km) per km² at age `t_gyr`.
-    pub fn chronology_n1(t_gyr: f64) -> f64 {
-        NEUKUM_A * ((NEUKUM_B * t_gyr).exp() - 1.0) + NEUKUM_C * t_gyr
-    }
-
-    /// Derivative of the chronology: production rate of 1 km craters per km² per Gyr.
-    pub fn chronology_rate(t_gyr: f64) -> f64 {
-        NEUKUM_A * NEUKUM_B * (NEUKUM_B * t_gyr).exp() + NEUKUM_C
-    }
 }
 
 use physics::*;
@@ -1322,18 +1312,52 @@ pub fn cratering_ray_fading_timescale(c: &Ctx) -> Value {
     .into()
 }
 
+fn production_function(c: &Ctx) -> crate::crater::ProductionFunction {
+    crate::crater::ProductionFunction::by_name(c.str("cratering.production_function"))
+}
+
+/// F31: the early rate at formation relative to the steady rate, from the chronology.
+pub fn cratering_early_flux_ratio(c: &Ctx) -> Value {
+    crate::crater::production::early_flux_ratio(production_function(c).chronology).into()
+}
+
+/// F31: e-folding time of the early bombardment, from the chronology.
+pub fn cratering_early_flux_decay(c: &Ctx) -> Value {
+    (1.0 / production_function(c).chronology.1).into()
+}
+
 pub fn cratering_flux_history(c: &Ctx) -> Value {
-    // Normalised production rate over the body's life: 1 at the present rate.
+    // Production rate over the body's life relative to the present rate.
     let age = c.f64("body.age");
-    let n = 32;
-    let now = chronology_rate(0.0);
+    let flux = crate::crater::FluxHistory {
+        steady: production_function(c).chronology.2,
+        early_ratio: c.f64("cratering.early_flux_ratio"),
+        early_decay: c.f64("cratering.early_flux_decay"),
+        record_start: c.f64("surface.solidification_time"),
+    };
+    let now = flux.rate1(age).max(1e-30);
+    let n = 48;
     let points = (0..=n)
         .map(|k| {
             let t = age * k as f64 / n as f64;
-            (t, chronology_rate(age - t) / now)
+            (t, flux.rate1(t) / now)
         })
         .collect();
     Curve::new(points).into()
+}
+
+/// Time after formation when the crust is solid and rigid enough to keep large relief.
+/// Provisional scaling until the Phase 3 heat budget derives it.
+pub fn surface_solidification_time(c: &Ctx) -> Value {
+    let r = c.f64("body.radius");
+    let ice = if is_icy(c.str("body.composition_class")) {
+        SOLIDIFICATION_ICE_FACTOR
+    } else {
+        1.0
+    };
+    let t = SOLIDIFICATION_REFERENCE_GYR * (r / SOLIDIFICATION_REFERENCE_RADIUS).sqrt() * ice;
+    t.clamp(SOLIDIFICATION_RANGE_GYR.0, SOLIDIFICATION_RANGE_GYR.1)
+        .into()
 }
 
 // ------------------------------------------------------------------ climate (zero-dimensional subset)

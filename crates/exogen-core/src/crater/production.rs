@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Brimfyr
 
-//! Crater production functions, chronology, saturation and population sampling
+//! Crater production functions, flux history, saturation and population sampling
 //! (PLAN.md 4.5, docs/parameters.md F31).
 //!
 //! Counts are cumulative per km² with diameters in km, following the Neukum convention.
-//! The crater record begins [`CHRONOLOGY_CLIP_GYR`] before present: the chronology is flat
-//! earlier, because its exponential term is not calibrated there and crusts were still
-//! forming. With this start the formed basin counts of a Moon-like body match the Moon's.
+//! The flux history is written in time since the body formed: a steady rate plus an early
+//! component decaying from formation, which is the Neukum chronology rewritten so that a
+//! body of any age gets its heavy bombardment at formation and the steady flux ever after.
+//! Nothing is counted before the surface solidifies.
 //!
 //! Saturation follows the standard picture: new craters obliterate old ones, so a surface
 //! approaches an equilibrium density that is a fixed fraction of geometric saturation. Per
@@ -79,55 +80,10 @@ impl ProductionFunction {
         s
     }
 
-    /// Chronology: N(>= 1 km) per km² for a surface of age `t_gyr`. The crater record
-    /// begins [`CHRONOLOGY_CLIP_GYR`] before present: the function is flat beyond it, so
-    /// nothing formed earlier is counted. The chronology is not calibrated there and crusts
-    /// were still forming; holding the early rate constant instead triples the basin count
-    /// of a Moon-like body.
-    pub fn n1(&self, t_gyr: f64) -> f64 {
-        let (a, b, c) = self.chronology;
-        let t = t_gyr.clamp(0.0, CHRONOLOGY_CLIP_GYR);
-        a * ((b * t).exp() - 1.0) + c * t
-    }
-
-    /// Production rate of craters >= 1 km per km² per Gyr at `t_gyr` before present; zero
-    /// before the start of the record.
-    pub fn rate1(&self, t_gyr: f64) -> f64 {
-        if !(0.0..=CHRONOLOGY_CLIP_GYR).contains(&t_gyr) {
-            return 0.0;
-        }
-        let (a, b, c) = self.chronology;
-        a * b * (b * t_gyr).exp() + c
-    }
-
-    /// Scale factor turning the 1 Gyr density into the density for age `t_gyr`.
-    pub fn age_factor(&self, t_gyr: f64) -> f64 {
-        self.n1(t_gyr) / self.n1(1.0)
-    }
-
-    /// Inverse of the chronology: the age at which N(>= 1 km) equals `n`.
-    pub fn age_for_n1(&self, n: f64) -> f64 {
-        if n <= 0.0 {
-            return 0.0;
-        }
-        let (mut lo, mut hi) = (0.0f64, 20.0f64);
-        if self.n1(hi) < n {
-            return hi;
-        }
-        for _ in 0..60 {
-            let mid = 0.5 * (lo + hi);
-            if self.n1(mid) < n {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        0.5 * (lo + hi)
-    }
-
-    /// Cumulative density N(>= D) per km² for a surface of age `t_gyr`.
-    pub fn cumulative(&self, d_km: f64, t_gyr: f64) -> f64 {
-        self.cumulative_1gyr(d_km) * self.age_factor(t_gyr)
+    /// The flux history of this production function's chronology in time since formation,
+    /// for a surface that starts retaining craters `record_start` Gyr after formation.
+    pub fn flux_history(&self, record_start: f64) -> FluxHistory {
+        FluxHistory::from_chronology(self.chronology, record_start)
     }
 
     /// Sample a diameter (km) above `d_min_km` from the cumulative distribution, capped at
@@ -148,6 +104,113 @@ impl ProductionFunction {
         }
         (0.5 * (lo + hi)).exp()
     }
+}
+
+/// Impact flux history of a body in time since its formation (docs/parameters.md F31).
+///
+/// The rate of craters at or above 1 km per km² per Gyr is a steady rate plus an early
+/// component that decays exponentially from formation. With the Neukum coefficients it is
+/// the chronology's derivative written in time since formation, the present being
+/// [`NEUKUM_REFERENCE_AGE_GYR`] after formation. Nothing is counted before the surface
+/// solidifies at `record_start`.
+#[derive(Clone, Copy, Debug)]
+pub struct FluxHistory {
+    /// Steady rate of craters >= 1 km per km² per Gyr at the reference flux.
+    pub steady: f64,
+    /// Early rate at formation relative to the steady rate.
+    pub early_ratio: f64,
+    /// E-folding time of the early component, Gyr.
+    pub early_decay: f64,
+    /// Time since formation when the surface begins retaining craters, Gyr.
+    pub record_start: f64,
+}
+
+impl FluxHistory {
+    /// From chronology coefficients (a, b, c) of N1(T) = a (exp(b T) - 1) + c T, with T in
+    /// Gyr before present.
+    pub fn from_chronology(chronology: (f64, f64, f64), record_start: f64) -> Self {
+        let (_, b, c) = chronology;
+        Self {
+            steady: c,
+            early_ratio: early_flux_ratio(chronology),
+            early_decay: 1.0 / b,
+            record_start,
+        }
+    }
+
+    /// Rate of craters >= 1 km per km² per Gyr at `tau` Gyr since formation.
+    pub fn rate1(&self, tau: f64) -> f64 {
+        if tau < self.record_start {
+            return 0.0;
+        }
+        self.steady * (1.0 + self.early_ratio * (-tau / self.early_decay).exp())
+    }
+
+    /// N(>= 1 km) per km² formed between `tau0` and `tau1` Gyr since formation.
+    pub fn n1_between(&self, tau0: f64, tau1: f64) -> f64 {
+        let a = tau0.max(self.record_start);
+        let b = tau1.max(a);
+        let early = self.early_ratio
+            * self.early_decay
+            * ((-a / self.early_decay).exp() - (-b / self.early_decay).exp());
+        self.steady * ((b - a) + early)
+    }
+
+    /// Gyr of steady flux equivalent to the production between `tau0` and `tau1`.
+    pub fn equivalent_gyr(&self, tau0: f64, tau1: f64) -> f64 {
+        if self.steady <= 0.0 {
+            return 0.0;
+        }
+        self.n1_between(tau0, tau1) / self.steady
+    }
+
+    /// The time within `tau0` to `tau1` by which the fraction `u` of that interval's
+    /// production has arrived, so draws follow the rate within a step.
+    pub fn time_at_fraction(&self, tau0: f64, tau1: f64, u: f64) -> f64 {
+        let a = tau0.max(self.record_start).min(tau1);
+        let total = self.equivalent_gyr(a, tau1);
+        if total <= 0.0 {
+            return tau1;
+        }
+        let target = u.clamp(0.0, 1.0) * total;
+        let (mut lo, mut hi) = (a, tau1);
+        for _ in 0..50 {
+            let mid = 0.5 * (lo + hi);
+            if self.equivalent_gyr(a, mid) < target {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
+    }
+
+    /// The time since formation, before `present`, after which `remaining` Gyr of
+    /// equivalent flux still arrive; the record start when that is the whole record.
+    pub fn time_with_remaining(&self, present: f64, remaining: f64) -> f64 {
+        let (mut lo, mut hi) = (self.record_start.min(present), present);
+        if remaining >= self.equivalent_gyr(lo, present) {
+            return lo;
+        }
+        if remaining <= 0.0 {
+            return hi;
+        }
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            if self.equivalent_gyr(mid, present) > remaining {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
+    }
+}
+
+/// Early rate at formation relative to the steady rate, for chronology coefficients.
+pub fn early_flux_ratio(chronology: (f64, f64, f64)) -> f64 {
+    let (a, b, c) = chronology;
+    a * b * (b * NEUKUM_REFERENCE_AGE_GYR).exp() / c
 }
 
 /// Cumulative geometric saturation N(>= D) per km², D in km.
@@ -214,6 +277,7 @@ pub struct CraterSample {
 #[derive(Clone, Debug)]
 pub struct PopulationConfig {
     pub pf: ProductionFunction,
+    pub flux: FluxHistory,
     /// Impact flux relative to the lunar production function, including the density
     /// multiplier.
     pub flux_scale: f64,
@@ -262,7 +326,6 @@ pub fn sample_population(
         .iter()
         .map(|(lo, hi, _)| bin_equilibrium(lo / 1e3, hi / 1e3, cfg.saturation_fraction))
         .collect();
-    let n1_1gyr = cfg.pf.n1(1.0);
     let rng = Rng::new(cfg.seed);
     let delta = grid.delta();
     let r2_km2 = cfg.body_radius * cfg.body_radius / 1e6;
@@ -272,15 +335,16 @@ pub fn sample_population(
         .map(|k| {
             let cell = grid.cell(k);
             let area_km2 = grid.cell_area(cell) * r2_km2;
-            let age = (present - surface_age.as_slice()[k] as f64).clamp(0.0, cfg.retention_age);
-            if age <= 0.0 {
+            // The surface records craters since it formed, or since the retention age.
+            let start = (surface_age.as_slice()[k] as f64).max(present - cfg.retention_age);
+            let exposure = cfg.flux.equivalent_gyr(start, present);
+            if exposure <= 0.0 {
                 return Vec::new();
             }
-            let age_factor = cfg.pf.age_factor(age);
             let (a0, b0) = grid.angles(cell);
             let mut out = Vec::new();
             for (b, (lo, hi, _mid)) in bins.iter().enumerate() {
-                let n_prod = bin_prod_1gyr[b] * age_factor;
+                let n_prod = bin_prod_1gyr[b] * exposure;
                 let n_eq = bin_eq[b];
                 let lambda = survivors(n_prod, n_eq) * area_km2;
                 if lambda < 1e-9 {
@@ -311,13 +375,13 @@ pub fn sample_population(
                     } else {
                         u_t * n_prod
                     };
-                    let after_factor = if bin_prod_1gyr[b] > 0.0 {
+                    // Gyr of steady-flux equivalent still to come after formation.
+                    let remaining = if bin_prod_1gyr[b] > 0.0 {
                         f / bin_prod_1gyr[b]
                     } else {
                         0.0
                     };
-                    let age_before_present = cfg.pf.age_for_n1(after_factor * n1_1gyr).min(age);
-                    let time_gyr = present - age_before_present;
+                    let time_gyr = cfg.flux.time_with_remaining(present, remaining).max(start);
                     let (azimuth, ellipticity) = if u_ob < cfg.oblique_fraction {
                         (
                             u_az * 2.0 * std::f64::consts::PI,
@@ -346,20 +410,18 @@ pub fn sample_population(
 }
 
 /// Expected number of craters at or above `d_min` (metres) over the whole body formed
-/// between `t0` and `t1` Gyr since formation, for a body of age `age` and the given flux.
+/// between `t0` and `t1` Gyr since formation.
 pub fn expected_count_above(
     pf: &ProductionFunction,
+    flux: &FluxHistory,
     flux_scale: f64,
     body_radius: f64,
     d_min: f64,
-    age: f64,
     t0: f64,
     t1: f64,
 ) -> f64 {
     let area_km2 = 4.0 * std::f64::consts::PI * body_radius * body_radius / 1e6;
-    let tau0 = (age - t0).max(0.0);
-    let tau1 = (age - t1).max(0.0);
-    let per_km2 = pf.cumulative_1gyr(d_min / 1e3) * (pf.n1(tau0) - pf.n1(tau1)) / pf.n1(1.0);
+    let per_km2 = pf.cumulative_1gyr(d_min / 1e3) * flux.equivalent_gyr(t0, t1);
     (area_km2 * flux_scale * per_km2).max(0.0)
 }
 
@@ -368,23 +430,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chronology_matches_the_spike_values_and_is_monotonic() {
+    fn flux_history_matches_the_neukum_chronology() {
         let pf = ProductionFunction::lunar();
-        assert!((pf.n1(1.0) - 8.38e-4).abs() < 1e-6);
-        assert!((pf.n1(3.3) - 3.23e-3).abs() < 1e-4);
-        assert!((pf.n1(4.0) - 6.28e-2).abs() < 2e-3);
-        let mut last = 0.0;
-        for i in 0..=84 {
-            let t = i as f64 * 0.05;
-            let n = pf.n1(t);
-            assert!(n >= last);
-            last = n;
-            assert!((pf.age_for_n1(n) - t).abs() < 1e-6, "inverse at {t}");
+        let flux = pf.flux_history(0.3);
+        let present = NEUKUM_REFERENCE_AGE_GYR;
+        // The whole record is the chronology's value 4.2 Gyr before present.
+        let n_42 = NEUKUM_A * ((NEUKUM_B * 4.2).exp() - 1.0) + NEUKUM_C * 4.2;
+        let whole = flux.n1_between(0.0, present);
+        assert!((whole / n_42 - 1.0).abs() < 1e-6, "{whole} vs {n_42}");
+        // The last 1 Gyr and the last 3.3 Gyr match the spike values.
+        assert!((flux.n1_between(present - 1.0, present) - 8.38e-4).abs() < 1e-6);
+        assert!((flux.n1_between(present - 3.3, present) - 3.23e-3).abs() < 1e-4);
+        // Nothing before the record starts; a heavy flux right after it.
+        assert_eq!(flux.rate1(0.2), 0.0);
+        assert!(flux.rate1(0.3) > 1_000.0 * flux.rate1(present));
+        // The inverse of the remaining production round-trips.
+        for t in [0.3, 0.5, 1.0, 2.5, 4.0, 4.4] {
+            let remaining = flux.equivalent_gyr(t, present);
+            let back = flux.time_with_remaining(present, remaining);
+            assert!((back - t).abs() < 1e-6, "inverse at {t}: {back}");
         }
-        // Flat before the start of the record.
-        assert_eq!(pf.n1(4.5), pf.n1(CHRONOLOGY_CLIP_GYR));
-        assert_eq!(pf.rate1(4.5), 0.0);
         assert!((pf.cumulative_1gyr(1.0) - 8.17e-4).abs() < 1e-5);
+    }
+
+    /// A body of any age gets the early bombardment at formation and the steady flux after
+    /// it: the record of a 10 Gyr body is that of a 6 Gyr body plus 4 Gyr of steady flux.
+    #[test]
+    fn bodies_of_any_age_get_the_early_bombardment_at_formation() {
+        let flux = ProductionFunction::lunar().flux_history(0.3);
+        let n6 = flux.n1_between(0.0, 6.0);
+        let n10 = flux.n1_between(0.0, 10.0);
+        assert!(((n10 - n6) / (4.0 * flux.steady) - 1.0).abs() < 1e-9);
+        // The early phase holds most of a 4.5 Gyr record and a smaller share of a 10 Gyr one.
+        let early = flux.n1_between(0.0, 1.5);
+        assert!(early / flux.n1_between(0.0, 4.5) > 0.98);
+        assert!(early / n10 < early / flux.n1_between(0.0, 4.5));
+        // The early rate at formation is the chronology's exponential term.
+        let r = early_flux_ratio((NEUKUM_A, NEUKUM_B, NEUKUM_C));
+        assert!((r - 1.57e4).abs() < 2e2, "{r}");
     }
 
     #[test]
@@ -415,6 +498,7 @@ mod tests {
         let radius = 1.7374e6;
         let cfg = PopulationConfig {
             pf: ProductionFunction::lunar(),
+            flux: ProductionFunction::lunar().flux_history(0.3),
             flux_scale: 1.0,
             body_radius: radius,
             d_min: 40_000.0,
@@ -430,11 +514,12 @@ mod tests {
         {
             let ages = Field::filled(grid, surface_time as f32);
             let pop = sample_population(&grid, &ages, present, &cfg);
-            let age = present - surface_time;
+            let exposure = cfg.flux.equivalent_gyr(surface_time, present);
             for d in [40.0, 80.0, 160.0] {
                 let count = pop.iter().filter(|c| c.diameter >= d * 1e3).count() as f64;
-                let prod =
-                    cfg.pf.cumulative(d, age) * area_km2 - cfg.pf.cumulative(320.0, age) * area_km2;
+                let prod = (cfg.pf.cumulative_1gyr(d) - cfg.pf.cumulative_1gyr(320.0))
+                    * exposure
+                    * area_km2;
                 let sat = EMPIRICAL_SATURATION_FRACTION
                     * (geometric_saturation(d) - geometric_saturation(320.0))
                     * area_km2;

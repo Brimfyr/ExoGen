@@ -371,11 +371,19 @@ pub const NPF_MARS: [f64; 12] = [
 pub const MARS_CHRONOLOGY: (f64, f64, f64) = (2.68e-14, 6.93, 4.13e-4);
 /// Diameter range of the production polynomials, km; continued with the edge slope outside.
 pub const NPF_RANGE_KM: (f64, f64) = (0.01, 300.0);
-/// Start of the crater record, Gyr before present. The chronology's exponential term is
-/// not calibrated earlier and crusts were still forming; nothing formed before this is
-/// counted. A Moon-like body then forms about 43 basins above 300 km and 5 above 1000 km,
-/// which matches the Moon.
-pub const CHRONOLOGY_CLIP_GYR: f64 = 4.2;
+/// The Neukum chronology counts time before present, and the present is this long after
+/// the Moon formed. Rewriting the chronology in time since formation fixes the early flux
+/// at formation (F31), so bodies of any age get their heavy bombardment when they form.
+pub const NEUKUM_REFERENCE_AGE_GYR: f64 = 4.5;
+/// Surface solidification: time after formation when the crust is solid and rigid enough
+/// to keep large relief, so the crater record begins. 0.3 Gyr for a Moon-sized rocky body
+/// (the oldest dated lunar surfaces are 4.2 Gyr old), scaling with the square root of the
+/// radius since larger bodies cool more slowly, and shorter for ice shells. Provisional:
+/// the Phase 3 heat budget derives it.
+pub const SOLIDIFICATION_REFERENCE_GYR: f64 = 0.3;
+pub const SOLIDIFICATION_REFERENCE_RADIUS: f64 = 1.7374e6;
+pub const SOLIDIFICATION_ICE_FACTOR: f64 = 0.7;
+pub const SOLIDIFICATION_RANGE_GYR: (f64, f64) = (0.02, 1.0);
 /// Geometric saturation N(>= D) = 1.54 D^-2 per km² (Hartmann 1984) and the fraction of it
 /// at which crater populations reach equilibrium (below 5%).
 pub const GEOMETRIC_SATURATION: f64 = 1.54;
