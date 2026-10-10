@@ -14,7 +14,7 @@ pub use production::{
     CraterSample, FluxHistory, PopulationConfig, ProductionFunction, sample_population,
 };
 pub use stamp::{
-    CraterTexture, RestoreParams, StampParams, Stamper, burial_factor, crenulation,
+    CraterTexture, EdgeShape, RestoreParams, StampParams, Stamper, burial_factor, crenulation,
     ejecta_modulation, restore, stamp,
 };
 

@@ -492,16 +492,18 @@ pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
 /// Brightness mottling of fresh ejecta and floors in the ray field, and the raggedness of
 /// the continuous ejecta edge as a fraction of its radius.
 pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.25;
-pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.2;
-/// Impact melt: ponds on the floors of complex craters and basins and flows just outside
-/// the rim, placed where the crater texture exceeds these thresholds (about a fifth of the
-/// floor and a tenth of the near-rim ejecta), out to this many radii.
+pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.06;
+/// The surface-age reset fades out over this outer fraction of the continuous ejecta zone,
+/// where the ejecta is thin and renews the surface only partly.
+pub const EJECTA_EDGE_FADE: f64 = 0.2;
 /// A loop crater counts as recognisable while its rim-to-floor relief on the coarse surface
 /// is above this fraction of the fresh relief.
 pub const VISIBLE_RELIEF_FRACTION: f64 = 0.15;
+/// Impact melt: ponds on the floors of complex craters and basins, placed where a coarse
+/// planar lattice of this many cells per crater radius exceeds this threshold, about a
+/// fifth of the floor.
+pub const MELT_POND_CELLS: u32 = 4;
 pub const MELT_POND_THRESHOLD: f64 = 0.4;
-pub const MELT_FLOW_THRESHOLD: f64 = 0.6;
-pub const MELT_FLOW_RADII: f64 = 1.3;
 /// Width of the soft edge of a melt pond in texture units.
 pub const MELT_EDGE_WIDTH: f64 = 0.3;
 /// Deep-sourced ejecta is mixed with local material by ballistic sedimentation (Oberbeck

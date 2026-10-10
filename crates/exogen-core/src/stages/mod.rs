@@ -24,8 +24,8 @@ use rayon::prelude::*;
 use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
-    CraterRecord, CraterTexture, PopulationConfig, ProfileTable, RestoreParams, StampParams,
-    Stamper, dimensions, ejecta_modulation, restore, sample_population, stamp,
+    CraterRecord, CraterTexture, EdgeShape, PopulationConfig, ProfileTable, RestoreParams,
+    StampParams, Stamper, dimensions, ejecta_modulation, restore, sample_population, stamp,
 };
 use crate::fields::{Field, LayerSet};
 use crate::geom::{local_basis, offset};
@@ -238,7 +238,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 10;
+pub const FINISH_VERSION: u64 = 11;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -689,6 +689,7 @@ fn ray_field(
         let radius = 0.5 * c.diameter;
         // Fresh floors and ejecta are mottled by melt, flows and blocks, and the edge of
         // the continuous ejecta is ragged.
+        let edge_shape = EdgeShape::new(c.id);
         let texture = (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
             .then(|| CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling)));
         let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
@@ -719,13 +720,7 @@ fn ray_field(
         let ejecta_edge = CONTINUOUS_EJECTA_MULTIPLE * radius;
         for &(idx, r, phi) in &stamper.footprint {
             // Fresh ejecta: full inside the rim, fading to half at the continuous edge.
-            let edge = if r > 0.7 * ejecta_edge && r < 1.3 * ejecta_edge {
-                texture.as_ref().map_or(ejecta_edge, |t| {
-                    ejecta_edge * (1.0 + EJECTA_EDGE_RAGGEDNESS * t.noise_floor(phi, 2.0))
-                })
-            } else {
-                ejecta_edge
-            };
+            let edge = ejecta_edge * edge_shape.factor(phi);
             let mut v: f64 = if r <= radius {
                 1.0
             } else if r <= edge {

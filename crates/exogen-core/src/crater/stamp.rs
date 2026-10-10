@@ -19,8 +19,9 @@ use crate::constants::{
     TEXTURE_MIN_CELLS, TEXTURE_RADIAL_CELLS,
 };
 use crate::constants::{
-    EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_FLOW_RADII, MELT_FLOW_THRESHOLD, MELT_POND_THRESHOLD,
-    OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
+    EJECTA_EDGE_FADE, EJECTA_EDGE_RAGGEDNESS, EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_POND_CELLS,
+    MELT_POND_THRESHOLD, OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE,
+    RING_WIDTH_FRACTION,
 };
 use crate::constants::{
     FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD, PLANAR_TEXTURE_RADII,
@@ -147,6 +148,7 @@ pub fn stamp(
         .then(|| CraterTexture::new(p.seed, dim));
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
+    let edge = EdgeShape::new(p.seed);
     let bedrock = layers.bedrock.as_mut_slice();
     let deep = layers.deep.as_mut_slice();
     let melt = layers.melt.as_mut_slice();
@@ -229,8 +231,13 @@ pub fn stamp(
             0.0
         };
         bedrock[idx] = (v + w * h_ref + (1.0 - w) * old) as f32;
-        if p.set_age && re <= continuous {
-            ages[idx] = p.time_gyr;
+        let cont = continuous * edge.factor(phi);
+        if p.set_age && re <= cont {
+            // Thin ejecta near the edge renews the surface only partly.
+            let w_age = ((cont - re) / (EJECTA_EDGE_FADE * cont)).clamp(0.0, 1.0) as f32;
+            if p.time_gyr > ages[idx] {
+                ages[idx] += (p.time_gyr - ages[idx]) * w_age;
+            }
             units[idx] = if re <= dim.radius {
                 p.unit_floor
             } else {
@@ -238,9 +245,8 @@ pub fn stamp(
             };
             // Deep material by ballistic mixing: all ejecta near the rim, all local at the
             // continuous edge. Fresh ejecta covers older melt.
-            let mix = ((CONTINUOUS_EJECTA_MULTIPLE - re / dim.radius)
-                / (CONTINUOUS_EJECTA_MULTIPLE - EJECTA_PURE_RADII))
-                .clamp(0.0, 1.0);
+            let edge_x = cont / dim.radius;
+            let mix = ((edge_x - re / dim.radius) / (edge_x - EJECTA_PURE_RADII)).clamp(0.0, 1.0);
             deep[idx] += ((source_deep - deep[idx] as f64) * mix) as f32;
             melt[idx] = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
         }
@@ -382,6 +388,7 @@ pub struct CraterTexture {
     hummocks: [TextureLattice; 2],
     sculpture: Option<[TextureLattice; 2]>,
     floor: Option<[PlanarLattice; 2]>,
+    ponds: Option<PlanarLattice>,
 }
 
 impl CraterTexture {
@@ -417,11 +424,14 @@ impl CraterTexture {
                 PlanarLattice::new(&rng, 1, 2 * FLOOR_TEXTURE_CELLS, PLANAR_TEXTURE_RADII),
             ]
         });
+        let ponds = (dim.class != CraterClass::Simple)
+            .then(|| PlanarLattice::new(&Rng::new(seed ^ 0x90ED_5EED), 0, MELT_POND_CELLS, 1.1));
         Self {
             dim: *dim,
             hummocks,
             sculpture,
             floor,
+            ponds,
         }
     }
 
@@ -464,22 +474,14 @@ impl CraterTexture {
         if dim.class == CraterClass::Simple {
             return 0.0;
         }
-        let x = re / dim.radius;
-        let threshold = if re < dim.floor_radius {
-            MELT_POND_THRESHOLD
-        } else if re > dim.radius && x < MELT_FLOW_RADII {
-            MELT_FLOW_THRESHOLD
-        } else {
+        if re >= dim.floor_radius {
             return 0.0;
-        };
-        // Planar for ponds and flows alike: a polar lattice would cut the flows into
-        // sectors.
+        }
+        // Ponds on a coarse planar lattice, so they are patches rather than specks.
+        let x = re / dim.radius;
         let (s, c) = phi.sin_cos();
-        let n = self
-            .floor
-            .as_ref()
-            .map_or(0.0, |f| f[0].sample(x * c, x * s));
-        let s = ((n - threshold) / MELT_EDGE_WIDTH + 0.5).clamp(0.0, 1.0);
+        let n = self.ponds.as_ref().map_or(0.0, |p| p.sample(x * c, x * s));
+        let s = ((n - MELT_POND_THRESHOLD) / MELT_EDGE_WIDTH + 0.5).clamp(0.0, 1.0);
         s * s * (3.0 - 2.0 * s)
     }
 
@@ -566,13 +568,13 @@ impl Peak {
     }
 }
 
-/// Scalloping of a rim as a function of azimuth: a few harmonics with seeded phases and
-/// weights, scaled to unit root-mean-square.
-pub fn crenulation(seed: u64, phi: f64) -> f64 {
-    let rng = Rng::new(seed ^ 0xC2E4_0A17);
+/// A sum of azimuthal harmonics with seeded phases and weights, scaled to unit
+/// root-mean-square.
+fn harmonics(seed: u64, phi: f64, orders: &[f64]) -> f64 {
+    let rng = Rng::new(seed);
     let mut s = 0.0;
     let mut power = 0.0;
-    for (i, m) in [3.0f64, 5.0, 8.0, 13.0].into_iter().enumerate() {
+    for (i, m) in orders.iter().enumerate() {
         let phase = rng.uniform(i as u64, 0) * 2.0 * std::f64::consts::PI;
         let w = (0.5 + rng.uniform(i as u64, 1)) / m.sqrt();
         s += w * (m * phi + phase).cos();
@@ -581,9 +583,49 @@ pub fn crenulation(seed: u64, phi: f64) -> f64 {
     s / power.sqrt()
 }
 
-/// The ridge rings of one crater, each with its own scalloped shape and gaps, tabulated
-/// around the azimuth; a multi-ring basin also carries a subdued outer ring at sqrt(2)
-/// radii. Degradation widens and lowers the ridges.
+/// Scalloping of a rim as a function of azimuth: a few low harmonics.
+pub fn crenulation(seed: u64, phi: f64) -> f64 {
+    harmonics(seed ^ 0xC2E4_0A17, phi, &[3.0, 5.0, 8.0, 13.0])
+}
+
+/// Lobes of a continuous-ejecta edge as a function of azimuth: higher harmonics, so the
+/// lobes are a fraction of a radius wide at the edge.
+pub fn lobes(seed: u64, phi: f64) -> f64 {
+    harmonics(seed ^ 0xED6E_5A1F, phi, &[5.0, 8.0, 12.0, 18.0])
+}
+
+/// The lobate outline of a crater's continuous ejecta, tabulated around the azimuth as a
+/// radius factor. The stamp's age reset and the ray field share it, so the maturity disc
+/// and the bright ejecta end on the same line.
+pub struct EdgeShape {
+    table: [f64; 64],
+}
+
+impl EdgeShape {
+    pub fn new(seed: u64) -> Self {
+        let mut table = [1.0; 64];
+        if seed != 0 {
+            for (b, t) in table.iter_mut().enumerate() {
+                let phi = b as f64 / 64.0 * 2.0 * std::f64::consts::PI;
+                *t = 1.0 + EJECTA_EDGE_RAGGEDNESS * lobes(seed, phi);
+            }
+        }
+        Self { table }
+    }
+
+    #[inline]
+    pub fn factor(&self, phi: f64) -> f64 {
+        let x = phi.rem_euclid(2.0 * std::f64::consts::PI) / (2.0 * std::f64::consts::PI) * 64.0;
+        let i = (x.floor() as usize) % 64;
+        let f = x - x.floor();
+        self.table[i] * (1.0 - f) + self.table[(i + 1) % 64] * f
+    }
+}
+
+/// The ridge rings of one crater, following the rim's scalloped outline with a small
+/// wobble and a few gaps of their own, tabulated around the azimuth; a multi-ring basin
+/// also carries a subdued outer ring at sqrt(2) radii. Degradation widens and lowers the
+/// ridges.
 struct Rings {
     /// Per ring: radius by azimuth, presence by azimuth, height.
     items: Vec<([f64; 64], [f64; 64], f64)>,
@@ -759,6 +801,7 @@ pub fn restore(
         .then(|| CraterTexture::new(p.seed, dim));
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
+    let edge = EdgeShape::new(p.seed);
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let bedrock = layers.bedrock.as_mut_slice();
     let deep = layers.deep.as_mut_slice();
@@ -797,8 +840,13 @@ pub fn restore(
                 - pk.relief(x, phi, p.coarse_blur / dim.radius);
         }
         bedrock[idx] = (base[idx] as f64 + kept + d) as f32;
-        if re <= continuous {
-            ages[idx] = p.time_gyr;
+        let cont = continuous * edge.factor(phi);
+        if re <= cont {
+            // Thin ejecta near the edge renews the surface only partly.
+            let w_age = ((cont - re) / (EJECTA_EDGE_FADE * cont)).clamp(0.0, 1.0) as f32;
+            if p.time_gyr > ages[idx] {
+                ages[idx] += (p.time_gyr - ages[idx]) * w_age;
+            }
             units[idx] = if re <= dim.radius {
                 p.unit_floor
             } else {
@@ -881,10 +929,11 @@ mod tests {
         // Cells reset: area of a disc of 2 R on the sphere.
         let reset: f64 = grid
             .cells()
-            .filter(|c| layers.surface_age.get(*c) == 3.0)
+            .filter(|c| layers.surface_age.get(*c) >= 1.5)
             .map(|c| grid.cell_area(c))
             .sum();
-        let cap = 2.0 * std::f64::consts::PI * (1.0 - (2.0 * dim.radius / body_radius).cos());
+        // At least half reset out to where the edge fade passes one half: 0.9 of 2 R.
+        let cap = 2.0 * std::f64::consts::PI * (1.0 - (1.8 * dim.radius / body_radius).cos());
         assert!((reset - cap).abs() < 0.08 * cap, "reset {reset} cap {cap}");
     }
 

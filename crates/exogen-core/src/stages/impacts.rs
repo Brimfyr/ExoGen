@@ -21,7 +21,7 @@ use crate::units::{
     UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_DEEP_EJECTA, UNIT_DEEP_FLOOR, UNIT_EJECTA,
 };
 
-pub const VERSION: u64 = 9;
+pub const VERSION: u64 = 10;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
