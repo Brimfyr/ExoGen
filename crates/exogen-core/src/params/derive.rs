@@ -1585,6 +1585,27 @@ pub fn materials_regolith_mix(c: &Ctx) -> Value {
     Value::Map(m)
 }
 
+pub fn materials_lava(c: &Ctx) -> Value {
+    let regime = c.str("interior.tectonic_regime");
+    let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
+    let lava = match c.str("body.composition_class") {
+        "iron_rich" => "smooth_plains",
+        "rock" => {
+            if airless
+                && regime == "stagnant_lid"
+                && c.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX
+            {
+                "mare_basalt"
+            } else {
+                "basalt"
+            }
+        }
+        "rock_ice" => "water_ice_dirty",
+        _ => "water_ice",
+    };
+    lava.into()
+}
+
 pub fn materials_deep_bedrock(c: &Ctx) -> Value {
     let regime = c.str("interior.tectonic_regime");
     let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;

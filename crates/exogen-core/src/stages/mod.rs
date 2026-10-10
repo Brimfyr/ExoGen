@@ -15,6 +15,7 @@ pub mod impacts;
 pub mod materials;
 pub mod primordial_crust;
 pub mod tectonics;
+pub mod volcanism;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -87,6 +88,8 @@ pub struct LoopOutput {
     pub thermal: ThermalHistory,
     /// Contraction scarps emplaced inside the loop, in order of formation.
     pub scarps: Vec<tectonics::ScarpRecord>,
+    /// Lava floods emplaced inside the loop, in order of formation.
+    pub floods: Vec<volcanism::FloodRecord>,
     pub hash: u64,
 }
 
@@ -127,6 +130,8 @@ pub struct FinishOutput {
     pub replayed_count: usize,
     /// Scarps present at the epoch.
     pub scarps: Vec<tectonics::ScarpRecord>,
+    /// Floods present at the epoch.
+    pub floods: Vec<volcanism::FloodRecord>,
     pub hash: u64,
 }
 
@@ -175,6 +180,7 @@ impl Runner {
             primordial_crust::VERSION,
             impacts::VERSION,
             tectonics::VERSION,
+            volcanism::VERSION,
         ])
     }
 
@@ -248,7 +254,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 13;
+pub const FINISH_VERSION: u64 = 14;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -281,6 +287,7 @@ pub fn run_coarse_loop(
     let mut layers = crust.init();
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
+    let mut floods = volcanism::FloodProcess::new(graph, grid, &thermal);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -294,9 +301,43 @@ pub fn run_coarse_loop(
         }
         let t0 = dt * (s - 1) as f64;
         let t1 = dt * s as f64;
-        impacts.step(&mut layers, t0, t1, s as u64);
-        if let Some(c) = &mut contraction {
-            c.step(&mut layers, t0, t1, s as u64);
+        // Everything that happens in the step, in order of time: craters, scarps and
+        // eruptions interleaved as they come, so what is older is cut by what is younger.
+        let craters = impacts.sample(t0, t1, s as u64);
+        let scarps = contraction
+            .as_mut()
+            .map_or_else(Vec::new, |c| c.sample(t0, t1, s as u64));
+        let eruptions = floods
+            .as_mut()
+            .map_or_else(Vec::new, |f| f.sample(&layers, t0, t1, s as u64));
+        let mut order: Vec<(f64, u8, usize)> =
+            Vec::with_capacity(craters.len() + scarps.len() + eruptions.len());
+        order.extend(craters.iter().enumerate().map(|(i, c)| (c.time_gyr, 0, i)));
+        order.extend(scarps.iter().enumerate().map(|(i, c)| (c.time_gyr, 1, i)));
+        order.extend(
+            eruptions
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (e.time_gyr, 2, i)),
+        );
+        order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        let mut craters: Vec<Option<CraterRecord>> = craters.into_iter().map(Some).collect();
+        let mut scarps: Vec<Option<tectonics::ScarpRecord>> =
+            scarps.into_iter().map(Some).collect();
+        for (_, kind, i) in order {
+            match kind {
+                0 => impacts.apply(&mut layers, craters[i].take().unwrap()),
+                1 => {
+                    if let Some(c) = &mut contraction {
+                        c.apply(&mut layers, scarps[i].take().unwrap());
+                    }
+                }
+                _ => {
+                    if let Some(f) = &mut floods {
+                        f.apply(&mut layers, eruptions[i]);
+                    }
+                }
+            }
         }
         if s % keep_every == 0 || s == steps {
             keyframes.push(Keyframe {
@@ -320,6 +361,7 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
+    let floods = floods.map(|f| f.records).unwrap_or_default();
     Ok(LoopOutput {
         grid,
         keyframes,
@@ -329,9 +371,18 @@ pub fn run_coarse_loop(
         loop_threshold,
         thermal,
         scarps,
+        floods,
         hash,
     })
 }
+
+/// What one stamp of the finishing pass produces: the writes, a record for the sidecar
+/// when the crater is large enough, and the lava smear a flood's pass took out.
+type WaveOutput = (
+    StampOutput,
+    Option<CraterRecord>,
+    Option<(Vec<(u32, f32)>, [usize; 4])>,
+);
 
 /// The finishing pass for one keyframe at a given resolution.
 pub fn finish(
@@ -372,8 +423,28 @@ pub fn finish(
         .filter(|s| s.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
+    let floods: Vec<volcanism::FloodRecord> = loop_output
+        .floods
+        .iter()
+        .filter(|f| f.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
+    let mut smear = volcanism::LavaSmear::new(loop_output.grid, grid, &floods);
+    if !floods.is_empty() {
+        with_stamper(&grid, |stamper| {
+            for c in &loop_craters {
+                let dim = dimensions(c.diameter, &inputs.scaling);
+                let radius = 1.05 * CONTINUOUS_EJECTA_MULTIPLE * dim.radius * c.ellipticity.sqrt();
+                stamper.gather(&grid, body_radius, c.center, radius);
+                let t = c.time_gyr as f32;
+                for &(idx, _, _) in &stamper.footprint {
+                    smear.crater_time[idx] = smear.crater_time[idx].max(t);
+                }
+            }
+        });
+    }
     let coarse_cell =
         2.0 * std::f64::consts::PI * body_radius / (4.0 * loop_output.grid.face_size() as f64);
 
@@ -413,10 +484,14 @@ pub fn finish(
     enum Event {
         Loop(usize),
         Scarp(usize),
+        Flood(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> =
-        Vec::with_capacity(loop_craters.len() + scarps.len() + replay.len());
+        Vec::with_capacity(loop_craters.len() + scarps.len() + floods.len() + replay.len());
+    for (k, f) in floods.iter().enumerate() {
+        events.push((f.time_gyr, 0, f.id ^ 0x7F10_0000_0000, Event::Flood(k)));
+    }
     for (k, s) in scarps.iter().enumerate() {
         events.push((s.time_gyr, 0, s.id ^ 0x5CA2_0000_0000, Event::Scarp(k)));
     }
@@ -465,6 +540,10 @@ pub fn finish(
                     let s = &scarps[*k];
                     (s.midpoint(), s.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
+                Event::Flood(k) => {
+                    let (c, r) = floods[*k].cap(&loop_output.grid);
+                    (c, r + 2.5 * loop_output.grid.delta() + grid.delta())
+                }
             }
         })
         .collect();
@@ -475,7 +554,7 @@ pub fn finish(
     for wave in &waves {
         // Stamps in a wave have disjoint footprints: compute them in parallel against the
         // state before the wave, then apply them in order.
-        let outputs: Vec<Option<(StampOutput, Option<CraterRecord>)>> = wave
+        let outputs: Vec<Option<WaveOutput>> = wave
             .par_iter()
             .map(|&ei| {
                 with_stamper(&grid, |stamper| match &events[ei].3 {
@@ -499,8 +578,8 @@ pub fn finish(
                             impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
                         let params = RestoreParams {
                             time_gyr: c.time_gyr as f32,
-                            unit_floor: impacts::floor_unit(dim.class, deep),
-                            unit_ejecta: impacts::ejecta_unit(deep),
+                            unit_floor: impacts::floor_unit(dim.class, deep, c.on_lava),
+                            unit_ejecta: impacts::ejecta_unit(deep, c.on_lava),
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,
@@ -522,7 +601,17 @@ pub fn finish(
                             &params,
                             stamper,
                         );
-                        Some((out, None))
+                        Some((out, None, None))
+                    }
+                    Event::Flood(k) => {
+                        let (out, taken, stats) = volcanism::flood_compute(
+                            &layers,
+                            &grid,
+                            &loop_output.grid,
+                            &floods[*k],
+                            &smear,
+                        );
+                        Some((out, None, Some((taken, stats))))
                     }
                     Event::Scarp(k) => {
                         // The face the coarse grid could not carry: the profile at its
@@ -542,7 +631,7 @@ pub fn finish(
                             Some(coarse),
                             stamper,
                         );
-                        Some((out, None))
+                        Some((out, None, None))
                     }
                     Event::Replay(j) => {
                         let (c, secondary) = &replay[*j];
@@ -558,14 +647,15 @@ pub fn finish(
                         }
                         let deep = !*secondary
                             && impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
+                        let on_lava = impacts::target_is_lava(&layers, &grid, c.center);
                         let params = StampParams {
                             time_gyr: c.time_gyr as f32,
-                            unit_floor: if *secondary {
+                            unit_floor: if *secondary && !on_lava {
                                 UNIT_SECONDARY_FIELD
                             } else {
-                                impacts::floor_unit(dim.class, deep)
+                                impacts::floor_unit(dim.class, deep, on_lava)
                             },
-                            unit_ejecta: impacts::ejecta_unit(deep),
+                            unit_ejecta: impacts::ejecta_unit(deep, on_lava),
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,
@@ -601,14 +691,18 @@ pub fn finish(
                                 from_loop: false,
                                 relief: (dim.depth + dim.rim_height) as f32,
                                 visible: true,
+                                on_lava,
                                 id: c.key,
                             });
-                        Some((out, record))
+                        Some((out, record, None))
                     }
                 })
             })
             .collect();
-        for (out, record) in outputs.into_iter().flatten() {
+        for (out, record, taken) in outputs.into_iter().flatten() {
+            if let Some((t, stats)) = &taken {
+                smear.note(t, &out, *stats);
+            }
             out.apply(&mut layers);
             if let Some(r) = record {
                 records.push(r);
@@ -628,6 +722,12 @@ pub fn finish(
         }
     }
     let replayed_count = replay.len();
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "flood passes: lava {} above {} outside {} skipped {}",
+            smear.stats[0], smear.stats[1], smear.stats[2], smear.stats[3]
+        );
+    }
 
     sink.report(Progress {
         stage: "finishing",
@@ -681,6 +781,7 @@ pub fn finish(
         craters: records,
         replayed_count,
         scarps,
+        floods,
         hash,
     })
 }
@@ -1179,6 +1280,41 @@ mod tests {
         let moon_radius = preset_graph("Moon", "preview").f64("body.radius");
         let per_area = |t: f64, r: f64| t / (4.0 * std::f64::consts::PI * r * r);
         assert!(per_area(moon_taken, moon_radius) < 0.3 * per_area(taken, radius));
+    }
+
+    /// The Moon's magma floods its thin-crust lowlands: a sixth of the surface or so,
+    /// mostly on the thin-crust side, and the finishing pass keeps that extent.
+    #[test]
+    fn the_moon_floods_its_thin_crust_basins() {
+        let mut r = Runner::new();
+        let g = preset_graph("Moon", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let layers = &out.loop_output.keyframes.last().unwrap().layers;
+        let fraction = volcanism::lava_fraction(layers);
+        assert!(
+            fraction > 0.05 && fraction < 0.35,
+            "lava fraction {fraction}"
+        );
+        assert!(out.loop_output.floods.len() > 20);
+        let crust = layers.crust_thickness.as_slice();
+        let units = layers.unit_id.as_slice();
+        let mut sorted: Vec<f32> = crust.to_vec();
+        sorted.sort_by(f32::total_cmp);
+        let median = sorted[sorted.len() / 2];
+        let (mut thin, mut thick) = (0.0, 0.0);
+        for k in 0..units.len() {
+            if volcanism::is_lava_unit(units[k]) {
+                if crust[k] < median {
+                    thin += 1.0;
+                } else {
+                    thick += 1.0;
+                }
+            }
+        }
+        assert!(thin > 1.5 * thick, "thin {thin} thick {thick}");
+        assert!(median > 1e4 && median < 1e5, "crust median {median} m");
+        let fine = volcanism::lava_fraction(&out.finish.layers);
+        assert!((fine - fraction).abs() < 0.05, "{fine} vs {fraction}");
     }
 
     #[test]

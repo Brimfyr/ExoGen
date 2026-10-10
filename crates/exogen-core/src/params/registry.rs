@@ -214,6 +214,8 @@ const BEDROCK: &[&str] = &[
     "norite",
     "low_reflectance_material",
     "impact_melt",
+    "mare_basalt",
+    "smooth_plains",
 ];
 const END_MEMBER_IDS: &[&str] = BEDROCK;
 const COLOUR_SPACE: &[&str] = &["linear_srgb", "acescg"];
@@ -2166,7 +2168,7 @@ static NODES: &[NodeDef] = &[
         f(0.0, 1e7),
         &["atmosphere.surface_pressure", "orbit.star_distance"],
         d::surface_space_weathering_timescale,
-        "1 Gyr at 1 AU scaling with the distance squared; off under an atmosphere above 1 mbar.",
+        "0.3 Gyr at 1 AU, scaling with the distance squared; off under an atmosphere above 1 mbar. Lunar soils reach optical maturity within a few hundred million years: Eratosthenian craters are mature, Copernican ones are not.",
         "provisional, Phase 2",
     ),
     // ------------------------------------------------------------------ materials
@@ -2198,6 +2200,23 @@ static NODES: &[NodeDef] = &[
         d::materials_regolith_mix,
         "Baseline surface mixture of end-members before deposits. Pin to compose the surface by hand.",
         "",
+    ),
+    derived(
+        "materials.lava",
+        "materials",
+        "Lava",
+        "",
+        1.0,
+        ValueType::Enum(BEDROCK),
+        &[
+            "body.composition_class",
+            "interior.tectonic_regime",
+            "atmosphere.surface_pressure",
+            "interior.tidal_flux",
+        ],
+        d::materials_lava,
+        "What floods and flows leave at the surface: mare basalt on an airless rocky stagnant lid, the brighter smooth plains of an iron-rich body, basalt otherwise, dirty ice for cryolava. Pin to choose.",
+        "provisional, Phase 3",
     ),
     derived(
         "materials.deep_bedrock",

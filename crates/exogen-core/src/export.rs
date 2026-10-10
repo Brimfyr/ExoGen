@@ -67,6 +67,15 @@ pub struct CraterInfo {
 }
 
 #[derive(Serialize)]
+pub struct FloodInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub volume_km3: f64,
+    pub area_km2: f64,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
 pub struct ScarpInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
@@ -103,6 +112,10 @@ pub struct Sidecar {
     pub replayed_crater_count: usize,
     /// Contraction scarps present at the epoch.
     pub scarps: Vec<ScarpInfo>,
+    /// Lava floods present at the epoch.
+    pub floods: Vec<FloodInfo>,
+    /// Area fraction of the surface that is lava plains or craters formed in them.
+    pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
 }
 
@@ -134,6 +147,8 @@ pub fn export(
         "shaded.png",
         "mask_liquid.png",
         "surface_age.exr",
+        "surface_age.png",
+        "units.png",
         "sidecar.json",
     ] {
         let path = settings.dir.join(name);
@@ -314,6 +329,47 @@ pub fn export(
             max: amax as f64,
         },
     );
+    write_png16(
+        &settings.dir.join("surface_age.png"),
+        width,
+        height_px,
+        &age_eq,
+        amin,
+        amax,
+    )?;
+    maps.insert(
+        "surface_age_png".to_string(),
+        MapInfo {
+            file: "surface_age.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: "Gyr since formation of the current surface".into(),
+            min: amin as f64,
+            max: amax as f64,
+        },
+    );
+
+    // Units, nearest cell per pixel, as an index map: the id times 16.
+    let unit_ids = out.layers.unit_id.as_slice();
+    let unit_eq: Vec<u8> = (0..width * height_px)
+        .map(|k| {
+            let (x, y) = (k % width, k / width);
+            let lon = ((x as f64 + 0.5) / width as f64 - 0.5) * 2.0 * std::f64::consts::PI;
+            let lat = (0.5 - (y as f64 + 0.5) / height_px as f64) * std::f64::consts::PI;
+            let d = crate::grid::direction_from_lon_lat(lon, lat);
+            (unit_ids[grid.index(grid.locate(d).0)] as u8).saturating_mul(16)
+        })
+        .collect();
+    write_png8(&settings.dir.join("units.png"), width, height_px, &unit_eq)?;
+    maps.insert(
+        "units_png".to_string(),
+        MapInfo {
+            file: "units.png".into(),
+            encoding: "8-bit grey PNG, unit id times 16".into(),
+            units: "unit id, see unit_legend".into(),
+            min: 0.0,
+            max: 255.0,
+        },
+    );
 
     // Sidecar.
     let mut parameters = BTreeMap::new();
@@ -400,6 +456,21 @@ pub fn export(
                 }
             })
             .collect(),
+        floods: out
+            .floods
+            .iter()
+            .map(|f| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(f.vent);
+                FloodInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    volume_km3: f.volume / 1e9,
+                    area_km2: f.area / 1e6,
+                    age_gyr: out.epoch_time_gyr - f.time_gyr,
+                }
+            })
+            .collect(),
+        lava_area_fraction: crate::stages::volcanism::lava_fraction(&out.layers),
         unit_legend: crate::units::legend()
             .into_iter()
             .map(|(id, name)| UnitInfo {

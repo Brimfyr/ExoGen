@@ -261,9 +261,13 @@ impl ContractionProcess {
         ((strain(t1) - strain(t0)) * self.area).max(0.0)
     }
 
-    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, step_index: u64) {
+    /// Scarps formed between two times, in order of formation, not yet emplaced. The
+    /// budget is spent on the whole population; only those the loop grid can carry are
+    /// returned.
+    pub fn sample(&mut self, t0: f64, t1: f64, step_index: u64) -> Vec<ScarpRecord> {
         let mut budget = self.budget(t0, t1) + self.carry;
         let mut j = 0u64;
+        let mut out = Vec::new();
         while budget > 0.0 && j < 200_000 {
             let draw = 16 + j * 12;
             let length = sample_length(self.rng.uniform(step_index, draw), self.l_min, self.l_max);
@@ -298,21 +302,35 @@ impl ContractionProcess {
                     time_gyr,
                     id: (step_index << 32) | j,
                 };
-                let out = scarp_compute(
-                    layers,
-                    &self.grid,
-                    self.body_radius,
-                    &rec,
-                    0.0,
-                    None,
-                    &mut self.stamper,
-                );
-                out.apply(layers);
-                self.records.push(rec);
+                out.push(rec);
             }
             j += 1;
         }
         self.carry = budget.min(0.0);
+        out.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
+        out
+    }
+
+    /// Cut one scarp into the surface as it is now, and record it.
+    pub fn apply(&mut self, layers: &mut LayerSet, rec: ScarpRecord) {
+        let out = scarp_compute(
+            layers,
+            &self.grid,
+            self.body_radius,
+            &rec,
+            0.0,
+            None,
+            &mut self.stamper,
+        );
+        out.apply(layers);
+        self.records.push(rec);
+    }
+
+    /// Sample and emplace a step's scarps.
+    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, step_index: u64) {
+        for rec in self.sample(t0, t1, step_index) {
+            self.apply(layers, rec);
+        }
     }
 }
 

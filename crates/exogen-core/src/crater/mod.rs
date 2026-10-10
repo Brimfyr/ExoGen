@@ -40,5 +40,7 @@ pub struct CraterRecord {
     /// Whether the crater is still recognisable: residual relief above a fraction of the
     /// fresh relief.
     pub visible: bool,
+    /// Formed in lava plains, so its floor and ejecta are made of them.
+    pub on_lava: bool,
     pub id: u64,
 }

@@ -19,9 +19,10 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::{
     UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_DEEP_EJECTA, UNIT_DEEP_FLOOR, UNIT_EJECTA,
+    UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 11;
+pub const VERSION: u64 = 12;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -54,10 +55,12 @@ pub fn reaches_deep_bedrock(diameter: f64, deep_bedrock_depth: f64) -> bool {
     EXCAVATION_DEPTH_FRACTION * diameter > deep_bedrock_depth
 }
 
-/// Unit of a crater floor by class and excavation.
-pub fn floor_unit(class: crate::crater::CraterClass, deep: bool) -> u16 {
+/// Unit of a crater floor by class, excavation and target.
+pub fn floor_unit(class: crate::crater::CraterClass, deep: bool, on_lava: bool) -> u16 {
     if deep {
         UNIT_DEEP_FLOOR
+    } else if on_lava {
+        UNIT_LAVA_CRATER_FLOOR
     } else if class == crate::crater::CraterClass::MultiRing {
         UNIT_BASIN_FLOOR
     } else {
@@ -65,9 +68,21 @@ pub fn floor_unit(class: crate::crater::CraterClass, deep: bool) -> u16 {
     }
 }
 
-/// Unit of continuous ejecta by excavation.
-pub fn ejecta_unit(deep: bool) -> u16 {
-    if deep { UNIT_DEEP_EJECTA } else { UNIT_EJECTA }
+/// Unit of continuous ejecta by excavation and target.
+pub fn ejecta_unit(deep: bool, on_lava: bool) -> u16 {
+    if deep {
+        UNIT_DEEP_EJECTA
+    } else if on_lava {
+        UNIT_LAVA_EJECTA
+    } else {
+        UNIT_EJECTA
+    }
+}
+
+/// Whether the ground at a point is lava plains, so a crater there is made of them.
+pub fn target_is_lava(layers: &LayerSet, grid: &CubeSphere, center: [f64; 3]) -> bool {
+    let idx = grid.index(grid.locate(center).0);
+    crate::stages::volcanism::is_lava_unit(layers.unit_id.as_slice()[idx])
 }
 
 impl CraterInputs {
@@ -182,15 +197,16 @@ impl ImpactProcess {
     }
 
     /// Emplace the craters of one time step, oldest first.
-    pub fn step(&mut self, layers: &mut LayerSet, t_start: f64, t_end: f64, step_index: u64) {
+    /// Craters formed between two times, in order of formation, not yet emplaced.
+    pub fn sample(&self, t_start: f64, t_end: f64, step_index: u64) -> Vec<CraterRecord> {
         let inp = &self.inputs;
         if inp.flux_scale <= 0.0 || self.d_max <= self.d_loop {
-            return;
+            return Vec::new();
         }
         // Craters that the regime would have removed by the present are not emplaced.
         let cutoff = inp.age - inp.loop_retention_age;
         if t_end <= cutoff {
-            return;
+            return Vec::new();
         }
         let t_start = t_start.max(cutoff);
         let expected = expected_count_above(
@@ -231,19 +247,27 @@ impl ImpactProcess {
                     from_loop: true,
                     relief: 0.0,
                     visible: true,
+                    on_lava: false,
                     id: (step_index << 32) | j,
                 }
             })
             .collect();
         batch.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
-        for rec in &batch {
+        batch
+    }
+
+    /// Emplace one crater on the surface as it is now, and record it.
+    pub fn apply(&mut self, layers: &mut LayerSet, mut rec: CraterRecord) {
+        let inp = &self.inputs;
+        {
             let dim = dimensions(rec.diameter, &inp.scaling);
             let deep = reaches_deep_bedrock(rec.diameter, inp.deep_bedrock_depth);
+            rec.on_lava = target_is_lava(layers, &self.grid, rec.center);
             let table = ProfileTable::new(dim, 0.0);
             let params = StampParams {
                 time_gyr: rec.time_gyr as f32,
-                unit_floor: floor_unit(dim.class, deep),
-                unit_ejecta: ejecta_unit(deep),
+                unit_floor: floor_unit(dim.class, deep, rec.on_lava),
+                unit_ejecta: ejecta_unit(deep, rec.on_lava),
                 azimuth: rec.azimuth,
                 angle: rec.angle,
                 ellipticity: rec.ellipticity,
@@ -263,8 +287,27 @@ impl ImpactProcess {
                 &params,
                 &mut self.stamper,
             );
+            // Large impacts thin the crust under them, by excavation and the mantle's
+            // rise beneath the cavity. Later magma favours these thin spots, so basins
+            // flood.
+            let thinning = BASIN_CRUST_THINNING * EXCAVATION_DEPTH_FRACTION * rec.diameter;
+            let radius = dim.radius * rec.ellipticity.sqrt();
+            let crust = layers.crust_thickness.as_mut_slice();
+            for &(idx, r, _) in &self.stamper.footprint {
+                if r < radius {
+                    let w = 1.0 - (r / radius).powi(2);
+                    crust[idx] = (crust[idx] as f64 - thinning * w).max(CRUST_THICKNESS_MIN) as f32;
+                }
+            }
         }
-        self.records.extend(batch);
+        self.records.push(rec);
+    }
+
+    /// Sample and emplace a step's craters.
+    pub fn step(&mut self, layers: &mut LayerSet, t_start: f64, t_end: f64, step_index: u64) {
+        for rec in self.sample(t_start, t_end, step_index) {
+            self.apply(layers, rec);
+        }
     }
 }
 

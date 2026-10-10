@@ -986,7 +986,9 @@ pub fn restore_compute(
             melt: 0.0,
         };
         let cont = continuous * edge.factor(phi);
-        if re <= cont {
+        // The surface is the crater's only where nothing younger, lava or a later
+        // crater, has resurfaced the cell since; its relief is restored regardless.
+        if re <= cont && ages[idx] <= p.time_gyr + 1e-6 {
             // Thin ejecta near the edge renews the surface only partly.
             let w_age = ((cont - re) / (EJECTA_EDGE_FADE * cont)).clamp(0.0, 1.0) as f32;
             let mut age = ages[idx];

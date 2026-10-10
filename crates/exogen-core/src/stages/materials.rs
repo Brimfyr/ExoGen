@@ -17,9 +17,11 @@ use rayon::prelude::*;
 
 use crate::fields::{Field, LayerSet};
 use crate::params::ParamGraph;
-use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC};
+use crate::units::{
+    UNIT_CONTINENTAL, UNIT_LAVA, UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA, UNIT_OCEANIC,
+};
 
-pub const VERSION: u64 = 6;
+pub const VERSION: u64 = 7;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -105,6 +107,22 @@ pub const END_MEMBERS: &[EndMember] = &[
         fresh: [0.11, 0.11, 0.12],
         mature: [0.065, 0.065, 0.07],
         roughness: 0.85,
+    },
+    // Mare basalt: iron- and titanium-rich flood lavas, dark and faintly blue-grey when
+    // mature, brighter where fresh craters turn them over.
+    EndMember {
+        id: "mare_basalt",
+        fresh: [0.19, 0.18, 0.165],
+        mature: [0.075, 0.072, 0.070],
+        roughness: 0.55,
+    },
+    // Mercury's smooth plains: low-iron lavas a shade brighter and redder than the
+    // intercrater plains around them (Denevi et al. 2013).
+    EndMember {
+        id: "smooth_plains",
+        fresh: [0.27, 0.255, 0.235],
+        mature: [0.125, 0.112, 0.098],
+        roughness: 0.55,
     },
     // Glassy impact melt on silicate bodies: distinctly dark when fresh, buried by regolith
     // with age.
@@ -223,6 +241,11 @@ pub fn albedo(
         fresh: basalt.fresh,
         mature: basalt.mature,
     };
+    let lava_member = end_member(graph.str("materials.lava")).unwrap_or(bedrock);
+    let lava = Pair {
+        fresh: lava_member.fresh,
+        mature: lava_member.mature,
+    };
     let (deep, shallow): ([f32; 3], [f32; 3]) = match graph.str("volatiles.working_liquid") {
         "water" | "ammonia_water" => ([0.012, 0.035, 0.085], [0.06, 0.22, 0.26]),
         "methane_ethane" => ([0.02, 0.02, 0.015], [0.07, 0.07, 0.05]),
@@ -245,6 +268,7 @@ pub fn albedo(
                 let pair = match units[k] {
                     UNIT_CONTINENTAL => continental,
                     UNIT_OCEANIC => oceanic,
+                    UNIT_LAVA | UNIT_LAVA_CRATER_FLOOR | UNIT_LAVA_EJECTA => lava,
                     _ => base,
                 };
                 // Deep-sourced material by its fraction, then melt over the fresh surface.

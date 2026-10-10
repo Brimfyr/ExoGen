@@ -209,6 +209,42 @@ pub const SCARP_LOBE_DEG: f64 = 18.0;
 pub const SCARP_REFERENCE_MAX_LENGTH: f64 = 1.0e6;
 pub const SCARP_REFERENCE_STRAIN: f64 = 0.005;
 pub const SCARP_LENGTH_STRAIN_EXPONENT: f64 = 2.0;
+/// Flood volcanism (PLAN.md 4.4). The extrusive share of magma production (intrusive to
+/// extrusive 5:1 to 10:1, Crisp 1984); the lithosphere thickness over which ascent fails
+/// (the Moon's maria waned as its lithosphere passed a few hundred kilometres, Head and
+/// Wilson 1992); the contraction strain that closes the pathways (Mercury's volcanism
+/// ended as it shrank, Byrne et al. 2016); vent weighting scales for crust thickness and
+/// height; and the range of single eruption volumes, m³ (mare flow units of hundreds to
+/// thousands of km³). Provisional.
+pub const VOLCANISM_EXTRUSIVE_FRACTION: f64 = 0.10;
+/// Lithosphere thickness past which magma no longer reaches the surface, and the width of
+/// that cutoff, m: the Moon's maria waned once its lithosphere passed some 500 km.
+pub const VOLCANISM_ASCENT_LITHOSPHERE: f64 = 400e3;
+pub const VOLCANISM_ASCENT_WIDTH: f64 = 30e3;
+pub const VOLCANISM_SHUTOFF_STRAIN: f64 = 1.2e-3;
+pub const VOLCANISM_VENT_CRUST_SCALE: f64 = 10e3;
+pub const VOLCANISM_VENT_HEIGHT_SCALE: f64 = 2e3;
+pub const VOLCANISM_EVENT_VOLUME: (f64, f64) = (1e11, 1e13);
+/// Cells one flood's lake may take in, and the thickness of a flow, m: a lake spreads no
+/// thinner than this on average, and a flow drapes bumps that stand less than this above
+/// its level (flood basalt flows are tens of metres thick).
+pub const FLOOD_MAX_CELLS: usize = 40_000;
+pub const FLOOD_SHEET_THICKNESS: f64 = 50.0;
+/// Crust lost under a crater as a fraction of its excavation depth, after the mantle's
+/// rise and the melt sheet, and the floor the crust cannot thin below, m. The lunar
+/// basins thinned the crust to under 10 km (Wieczorek et al. 2013), which is where the
+/// maria are.
+pub const BASIN_CRUST_THINNING: f64 = 0.5;
+pub const CRUST_THICKNESS_MIN: f64 = 3e3;
+/// Thinner lava than this is not recorded, m.
+pub const FLOOD_MIN_THICKNESS: f64 = 1.0;
+/// Flow fronts at the finishing resolution: the smeared coarse footprint is kept where
+/// it exceeds this threshold (below a half, so a single flooded cell keeps its area and
+/// fronts sit a little outside the coarse edge), with lobes of noise this many loop cells
+/// long moving the threshold by up to this much.
+pub const FLOOD_MARGIN_THRESHOLD: f64 = 0.35;
+pub const FLOOD_MARGIN_LOBE_CELLS: f64 = 1.5;
+pub const FLOOD_MARGIN_WOBBLE: f64 = 0.2;
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
 /// Provisional, Phase 3.
@@ -594,7 +630,7 @@ pub const ICE_RESURFACING_TIDAL_FLUX: f64 = 0.01;
 pub const RETENTION_BURIAL_DEPTH_M: f64 = 10.0;
 pub const IO_REGIME_TIDAL_FLUX: f64 = 0.5;
 /// Space weathering timescale at 1 AU, Gyr, and the pressure above which it is off.
-pub const SPACE_WEATHERING_GYR_1AU: f64 = 1.0;
+pub const SPACE_WEATHERING_GYR_1AU: f64 = 0.3;
 pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;
 /// Cap on the optical maturation timescale: far from the Sun, radiolysis, sputtering and
 /// lag accumulation still darken old surfaces relative to fresh ejecta within a few Gyr.
