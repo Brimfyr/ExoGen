@@ -433,6 +433,8 @@ Each process is on or off and scaled by the derivation. Order within a step: mas
 
 Each cell holds fractions of end-members. Each end-member has a reflectance spectrum from a measured source (USGS Spectral Library v7, RELAB, published PDS spectra). Albedo RGB = spectrum mixed linearly (Hapke intimate mixing as a later refinement), integrated against the CIE 1931 colour matching functions under an equal-energy illuminant, converted to linear sRGB (ACEScg as an export option). Illuminant and star colour are deliberately left to the renderer.
 
+**Controls.** Composition class sets defaults only. The user controls the bedrock type, the baseline regolith mixture, the volatile inventory (which ices exist) and may add custom end-members with a spectrum or an RGB; the processes decide where each material ends up. A world with nitrogen ice over water-ice bedrock comes from an inventory holding both species and a temperature that freezes both, not from a palette choice, and any of these derived nodes can be pinned to compose a surface by hand.
+
 Initial end-member set (about 20): mature and fresh anorthositic regolith, mature and fresh mare basalt, fresh basaltic lava, oxidised fine dust, dark basaltic sand, hematite, water ice frost (fine) and coarse ice, CO2 frost, N2 ice, CH4 ice, tholin (Titan type and Pluto type), S8 sulfur, SO2 frost, short-chain red sulfur, white salts and carbonates, hydrated brown salts, carbonaceous dark material, quartz sand, soil, snow, sea ice, vegetation pigment. Users can add end-members with a spectrum or an RGB.
 
 Liquid bodies: colour from the absorption spectrum of the liquid and depth, R(λ) = R_bottom e^(-2 a(λ) z) + R_deep(λ)(1 - e^(-2 a(λ) z)). Water goes turquoise over shelves and deep blue over basins. Liquid methane is near black.
@@ -640,7 +642,7 @@ Gate: a project file round-trips; the same seed produces identical output twice;
 - Time-integrated emplacement in the loop and statistical emplacement in the finishing pass with pre-degradation.
 - Surface age field, diffusion, infill, space weathering, regolith roughness.
 - Primordial crust with dichotomy and isostasy.
-- Materials: regolith end-members, maturity, colour integration.
+- Materials: end-member library, colour integration, maturity, and the surface composition controls (bedrock, regolith mix, custom end-members).
 - Preview-resolution finishing pass per keyframe so the scrubber shows the crater population at any age. Output epoch parameter.
 - Presets: Moon, Mercury without scarps, Callisto without relaxation.
 

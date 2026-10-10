@@ -257,10 +257,14 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 
 ## materials
 
+Composition class sets only the defaults of this group. Surface colour comes from the per-cell mixture of end-members that the processes fill: the bedrock and regolith mix as the base, volatile ices from the inventory wherever the climate makes them stable (nitrogen and methane ice over water-ice bedrock on a cold body, for example), and dust, tholin, sulfur, salt and weathering deposits from their stages. Every derived node here can be pinned, so a surface can be composed by hand as well as derived.
+
 | id | unit | kind | default or derivation | source |
 |---|---|---|---|---|
-| materials.end_members | list | derived | Set by composition class; user may add entries with a spectrum or RGB | USGS Spectral Library v7; RELAB |
-| materials.bedrock_default | enum | derived | basalt rock, anorthosite for thick primary crust, water_ice for ice classes | |
+| materials.bedrock | enum basalt, anorthosite, felsic, water_ice, ammonia_water_ice, rock_ice_mixture, carbonaceous, sulfur_coated | derived | Default from composition class, regime and volcanism style: basalt for rock, anorthosite for a thick primary crust on an airless rock body, felsic for continental crust on a mobile lid, water_ice for ice classes, carbonaceous for dark primitive bodies. Pin to choose | Phase 2 |
+| materials.regolith_mix | map end-member to fraction | derived | Baseline surface mixture before deposits, from the bedrock and the class, for example water_ice 0.6 and rock 0.4 on a dark rock-ice terrain. Pin to set the surface composition by hand | Phase 2 |
+| materials.end_members | list | derived | The end-members active for this world: the bedrock, the regolith mix, the volatile ices present in the inventory, and the deposits the processes produce | USGS Spectral Library v7; RELAB |
+| materials.custom_end_members | list | root | User-defined materials with a name, a reflectance spectrum or an RGB, roughness and specular; usable in the regolith mix | Phase 2 |
 | materials.colour_space | enum linear_srgb, acescg | root | linear_srgb | |
 | materials.wetness_darkening | bool | expert | true | |
 | materials.vegetation_enabled | bool | derived | Phase 8: liquid water, temperature band, atmosphere | |
@@ -293,6 +297,7 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 | multiplier.erosion_intensity | multiplier | 1 |
 | multiplier.volcanic_output | multiplier | 1 |
 | multiplier.dust_cover | multiplier | 1 |
+| multiplier.frost_cover | multiplier | 1 (scales volatile frost and ice deposit extent) |
 | multiplier.relief | multiplier | 1 |
 | multiplier.cloud_fraction | multiplier | 1 |
 | multiplier.storm_activity | multiplier | 1 |

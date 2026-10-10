@@ -9,6 +9,13 @@
 //! isostatic elevation (PLAN.md 4.1), a seeded noise detail term scaled by the relief limit,
 //! a slow time-varying perturbation so keyframes differ, patchy resurfacing that stamps
 //! the surface-age layer, and diffusion. Nothing here is a model of a real process.
+//!
+//! Time variation is a blend between two noise fields, so the pattern changes in place. Two
+//! rules learned here apply to every later process: a pattern must never be moved by
+//! translating the 3D noise sample point, because a translation is not a rigid motion on the
+//! sphere and compresses the pattern on one hemisphere while stretching it on the other; and
+//! a pattern whose effect accumulates over steps must not drift at all, or it smears into
+//! streaks. A true drift of a non-accumulating field is a rotation about an axis (`rotate`).
 
 use rayon::prelude::*;
 
@@ -21,7 +28,7 @@ use crate::rng::Rng;
 use crate::spharm::Harmonics;
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// Geological unit labels written by this process.
 pub const UNIT_PRIMORDIAL: u16 = 1;
@@ -39,6 +46,7 @@ struct Continents {
 pub struct PlaceholderTerrain {
     grid: CubeSphere,
     noise: GradientNoise,
+    noise_b: GradientNoise,
     harmonics: Harmonics,
     dichotomy_axis: [f64; 3],
     dichotomy_amplitude: f64,
@@ -76,6 +84,7 @@ impl PlaceholderTerrain {
         Self {
             grid,
             noise: GradientNoise::new(seed ^ 0x9E37_79B9),
+            noise_b: GradientNoise::new(seed ^ 0x7F4A_7C15),
             harmonics: Harmonics::random(&rng, 2, 8, 2.0),
             dichotomy_axis: rng.unit_direction(1, 0),
             dichotomy_amplitude: graph.f64("tectonics.dichotomy_amplitude"),
@@ -156,17 +165,24 @@ impl PlaceholderTerrain {
     pub fn step(&self, layers: &mut LayerSet, t: f64, dt: f64) {
         let grid = self.grid;
         let frac = dt / self.age;
-        let drift = 1.5 * t / self.age;
+        let progress = t / self.age;
         let relief = self.relief;
-        let noise = &self.noise;
+        // Blend weights that morph the pattern from one noise field to the other over the age.
+        // The pattern changes in place: it is accumulated into the layers every step, so any
+        // drift would smear into streaks.
+        let phase = 0.5 * std::f64::consts::PI * progress;
+        let (wa, wb) = (phase.cos().powi(2), phase.sin().powi(2));
+        let morph = |d: [f64; 3], freq: f64, octaves: u32| {
+            wa * self.noise.fbm(d, freq, octaves, 2.0, 0.5)
+                + wb * self.noise_b.fbm(d, freq, octaves, 2.0, 0.5)
+        };
 
-        // Slow large-scale perturbation that drifts with time.
+        // Slow large-scale perturbation that morphs with time.
         let uplift: Vec<f32> = (0..grid.cell_count())
             .into_par_iter()
             .map(|k| {
                 let d = grid.center(grid.cell(k));
-                let p = [d[0] + drift, d[1] - 0.5 * drift, d[2] + 0.25 * drift];
-                (frac * 0.6 * relief * noise.fbm(p, 2.5, 4, 2.0, 0.5)) as f32
+                (frac * 0.6 * relief * morph(d, 2.5, 4)) as f32
             })
             .collect();
         layers
@@ -176,15 +192,14 @@ impl PlaceholderTerrain {
             .zip(uplift.par_iter())
             .for_each(|(h, u)| *h += u);
 
-        // Patchy resurfacing: where a drifting higher-frequency field is high, the surface is
+        // Patchy resurfacing: where a morphing higher-frequency field is high, the surface is
         // renewed: the unit changes and the surface age is stamped with the current time.
         let threshold = 0.42f64;
         let marks: Vec<bool> = (0..grid.cell_count())
             .into_par_iter()
             .map(|k| {
                 let d = grid.center(grid.cell(k));
-                let p = [d[0] - 0.7 * drift, d[1] + drift, d[2] + 0.4 * drift];
-                noise.fbm(p, 6.0, 3, 2.0, 0.5) > threshold
+                morph(d, 6.0, 3) > threshold
             })
             .collect();
         let age_slice = layers.surface_age.as_mut_slice();
@@ -203,6 +218,22 @@ impl PlaceholderTerrain {
         // Diffusion standing in for erosion.
         relax(&mut layers.bedrock, 0.05);
     }
+}
+
+/// Rotate a vector about a unit axis by an angle in radians (Rodrigues).
+pub fn rotate(d: [f64; 3], axis: [f64; 3], angle: f64) -> [f64; 3] {
+    let (s, c) = angle.sin_cos();
+    let dot = axis[0] * d[0] + axis[1] * d[1] + axis[2] * d[2];
+    let cross = [
+        axis[1] * d[2] - axis[2] * d[1],
+        axis[2] * d[0] - axis[0] * d[2],
+        axis[0] * d[1] - axis[1] * d[0],
+    ];
+    [
+        d[0] * c + cross[0] * s + axis[0] * dot * (1.0 - c),
+        d[1] * c + cross[1] * s + axis[1] * dot * (1.0 - c),
+        d[2] * c + cross[2] * s + axis[2] * dot * (1.0 - c),
+    ]
 }
 
 /// One explicit relaxation step: h += k (mean of the four edge neighbours - h).

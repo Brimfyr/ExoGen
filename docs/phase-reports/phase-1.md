@@ -63,5 +63,7 @@ Earth at preview quality gets a liquid fraction of 0.74 with the sea level 2.5 k
 ## Notes for Phase 2
 
 - The placeholder process shows coarse-cell blockiness in its resurfacing pattern after resampling. It is a placeholder; the cratering stage replaces it and small features are emplaced at the finishing resolution.
+- Patterns that move over time must be moved by rotating the sampling direction about an axis, or changed in place by blending fields, never by translating the 3D noise sample point. A translation is not a rigid motion on the sphere: the first version of the placeholder did this and its markings were compressed on one hemisphere and stretched on the other. The rule is now in the module documentation.
+- Surface colour in Phase 1 comes from the placeholder material model, which keys a base colour on the composition class. The Phase 2 material system replaces it with per-cell end-member mixtures and the controls added to the spec: bedrock, regolith mix, custom end-members, plus the volatile inventory for ices.
 - The reference-check table in `validate.rs` is the place to add crater statistics when the cratering stage lands.
 - The app's preview finishing at face size 256 takes well under a second per keyframe, so the scrubber feels immediate once a keyframe is cached.
