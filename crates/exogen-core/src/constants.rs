@@ -444,7 +444,7 @@ pub const RING_HEIGHT_DECAY: f64 = 0.8;
 /// swing (a few gaps where it drops to zero), and the subdued outer ring of a multi-ring
 /// basin at sqrt(2) radii as a fraction of the rim height.
 pub const RING_WIDTH_FRACTION: f64 = 0.04;
-pub const RING_CRENULATION: f64 = 0.05;
+pub const RING_CRENULATION: f64 = 0.02;
 pub const RING_PRESENCE: (f64, f64) = (0.85, 0.25);
 pub const OUTER_RING_HEIGHT_FRACTION: f64 = 0.3;
 /// Central peaks: basal radius as a fraction of the crater radius (peak diameters are a
@@ -455,8 +455,13 @@ pub const PEAK_RADIUS_FRACTION: f64 = 0.22;
 pub const PEAK_SIGMA_FRACTION: f64 = 0.5;
 pub const PEAK_MAX_MASSIFS: usize = 3;
 pub const PEAK_SPREAD: f64 = 0.5;
-/// Floor texture lattice cells per crater radius, on the tangent plane.
+/// Planar texture lattice: cells per crater radius on the tangent plane, and its extent in
+/// radii; it serves floors, melt and the brightness mottling of fresh ejecta.
 pub const FLOOR_TEXTURE_CELLS: u32 = 10;
+pub const PLANAR_TEXTURE_RADII: f64 = 2.2;
+/// Smallest crater, in finishing cells of diameter, whose fresh ejecta is mottled and
+/// whose continuous-ejecta edge is ragged in the ray field; smaller ones are smooth.
+pub const RAY_TEXTURE_MIN_CELLS: f64 = 24.0;
 /// Rim and ring scalloping as a fraction of the radius, and ejecta, basin-sculpture and
 /// floor texture amplitudes. Provisional, to be tuned against imagery in Phase 7.
 pub const RIM_CRENULATION_SIMPLE: f64 = 0.015;
@@ -471,7 +476,7 @@ pub const TEXTURE_AZIMUTH_CELLS: u32 = 24;
 pub const TEXTURE_RADIAL_CELLS: u32 = 6;
 pub const SCULPTURE_AZIMUTH_CELLS: u32 = 144;
 pub const SCULPTURE_RADIAL_CELLS: u32 = 3;
-pub const TEXTURE_MIN_CELLS: usize = 400;
+pub const TEXTURE_MIN_CELLS: usize = 1800;
 /// The ejecta texture fades out between these radii, in crater radii, where the ejecta is
 /// too thin for it to show.
 pub const TEXTURE_FADE_RADII: (f64, f64) = (1.3, 2.0);
@@ -486,7 +491,7 @@ pub const DEEP_BEDROCK_DEPTH_IRON_RICH: f64 = 10_000.0;
 pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
 /// Brightness mottling of fresh ejecta and floors in the ray field, and the raggedness of
 /// the continuous ejecta edge as a fraction of its radius.
-pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.4;
+pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.25;
 pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.2;
 /// Impact melt: ponds on the floors of complex craters and basins and flows just outside
 /// the rim, placed where the crater texture exceeds these thresholds (about a fifth of the

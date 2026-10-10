@@ -238,7 +238,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 9;
+pub const FINISH_VERSION: u64 = 10;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -689,7 +689,8 @@ fn ray_field(
         let radius = 0.5 * c.diameter;
         // Fresh floors and ejecta are mottled by melt, flows and blocks, and the edge of
         // the continuous ejecta is ragged.
-        let texture = CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling));
+        let texture = (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
+            .then(|| CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling)));
         let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
         // Rays keep a roughly constant linear width, so their angular width shrinks with
         // distance, and large craters' rays are shorter in radii than small craters' rays.
@@ -719,7 +720,9 @@ fn ray_field(
         for &(idx, r, phi) in &stamper.footprint {
             // Fresh ejecta: full inside the rim, fading to half at the continuous edge.
             let edge = if r > 0.7 * ejecta_edge && r < 1.3 * ejecta_edge {
-                ejecta_edge * (1.0 + EJECTA_EDGE_RAGGEDNESS * texture.noise(phi, 2.0))
+                texture.as_ref().map_or(ejecta_edge, |t| {
+                    ejecta_edge * (1.0 + EJECTA_EDGE_RAGGEDNESS * t.noise_floor(phi, 2.0))
+                })
             } else {
                 ejecta_edge
             };
@@ -728,7 +731,9 @@ fn ray_field(
             } else if r <= edge {
                 (1.0 - 0.5 * (r - radius) / (edge - radius))
                     * ejecta_modulation(phi, c.azimuth, c.angle).min(1.0)
-                    * (1.0 + EJECTA_BRIGHTNESS_TEXTURE * texture.noise(phi, r / radius))
+                    * texture.as_ref().map_or(1.0, |t| {
+                        1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / radius)
+                    })
             } else {
                 0.0
             };

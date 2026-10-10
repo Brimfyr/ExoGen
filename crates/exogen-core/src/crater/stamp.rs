@@ -22,7 +22,9 @@ use crate::constants::{
     EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_FLOW_RADII, MELT_FLOW_THRESHOLD, MELT_POND_THRESHOLD,
     OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
 };
-use crate::constants::{FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD};
+use crate::constants::{
+    FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD, PLANAR_TEXTURE_RADII,
+};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
@@ -203,7 +205,8 @@ pub fn stamp(
             v = t.height(re, phi, v);
         }
         if let Some(rg) = &rings {
-            v += rg.relief(re0, phi, profile.sigma) * p.amplitude;
+            // Rings follow the rim's scalloped shape with a small wobble of their own.
+            v += rg.relief(re, phi, profile.sigma) * p.amplitude;
         }
         if let Some(pk) = &peak {
             v += pk.relief(re0 / dim.radius, phi, profile.sigma / dim.radius) * p.amplitude;
@@ -410,8 +413,8 @@ impl CraterTexture {
         let floor = (dim.class != CraterClass::Simple).then(|| {
             let rng = Rng::new(seed ^ 0xF100_12A7);
             [
-                PlanarLattice::new(&rng, 0, FLOOR_TEXTURE_CELLS, 1.1),
-                PlanarLattice::new(&rng, 1, 2 * FLOOR_TEXTURE_CELLS, 1.1),
+                PlanarLattice::new(&rng, 0, FLOOR_TEXTURE_CELLS, PLANAR_TEXTURE_RADII),
+                PlanarLattice::new(&rng, 1, 2 * FLOOR_TEXTURE_CELLS, PLANAR_TEXTURE_RADII),
             ]
         });
         Self {
@@ -469,15 +472,13 @@ impl CraterTexture {
         } else {
             return 0.0;
         };
-        let n = if re < dim.floor_radius {
-            let (s, c) = phi.sin_cos();
-            self.floor
-                .as_ref()
-                .map_or(0.0, |f| f[0].sample(x * c, x * s))
-        } else {
-            let (t, l) = Self::coords(phi, x);
-            self.hummocks[0].sample(t, l)
-        };
+        // Planar for ponds and flows alike: a polar lattice would cut the flows into
+        // sectors.
+        let (s, c) = phi.sin_cos();
+        let n = self
+            .floor
+            .as_ref()
+            .map_or(0.0, |f| f[0].sample(x * c, x * s));
         let s = ((n - threshold) / MELT_EDGE_WIDTH + 0.5).clamp(0.0, 1.0);
         s * s * (3.0 - 2.0 * s)
     }
@@ -788,7 +789,7 @@ pub fn restore(
         }
         if let Some(rg) = &rings {
             // The ring detail the coarse grid could not carry.
-            d += rg.relief(re0, phi, p.fine_blur) - rg.relief(re0, phi, p.coarse_blur);
+            d += rg.relief(re, phi, p.fine_blur) - rg.relief(re, phi, p.coarse_blur);
         }
         if let Some(pk) = &peak {
             let x = re0 / dim.radius;
