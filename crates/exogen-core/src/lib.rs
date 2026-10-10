@@ -21,6 +21,7 @@ pub mod rng;
 pub mod shade;
 pub mod spharm;
 pub mod stages;
+pub mod thermal;
 pub mod units;
 pub mod validate;
 

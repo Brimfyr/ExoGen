@@ -34,6 +34,7 @@ use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
 use crate::rng::{Rng, hash_words};
+use crate::thermal::ThermalHistory;
 use crate::units::UNIT_SECONDARY_FIELD;
 
 /// Loop steps by quality: preview, standard, high.
@@ -81,6 +82,8 @@ pub struct LoopOutput {
     /// Craters emplaced inside the loop, in order of formation.
     pub craters: Vec<CraterRecord>,
     pub loop_threshold: f64,
+    /// The interior through the body's life, as the loop used it.
+    pub thermal: ThermalHistory,
     pub hash: u64,
 }
 
@@ -267,6 +270,7 @@ pub fn run_coarse_loop(
     let dt = age / steps as f64;
     let keep_every = steps.div_ceil(MAX_KEYFRAMES).max(1);
 
+    let thermal = ThermalHistory::from_graph(graph);
     let crust = primordial_crust::PrimordialCrust::new(graph, grid);
     let mut layers = crust.init();
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
@@ -312,6 +316,7 @@ pub fn run_coarse_loop(
         age_gyr: age,
         craters,
         loop_threshold,
+        thermal,
         hash,
     })
 }

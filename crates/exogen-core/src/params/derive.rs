@@ -270,8 +270,16 @@ pub mod physics {
     }
 
     /// F16: cumulative radial contraction, metres.
-    pub fn contraction(r: f64, age_gyr: f64) -> f64 {
-        let dt = CONTRACTION_DT_MAX * (1.0 - (-age_gyr / CONTRACTION_TIMESCALE_GYR).exp());
+    pub fn contraction(r: f64, uncompressed_density: f64, age_gyr: f64) -> f64 {
+        // Mantle cooling shrinks every body a little; a large core, cooling and
+        // solidifying, is what shrinks Mercury by kilometres. The iron content comes
+        // from the uncompressed density, which the composition model gets right where
+        // its core fraction for small bodies is still rough.
+        let iron = ((uncompressed_density - CONTRACTION_DENSITY_ROCK)
+            / (CONTRACTION_DENSITY_IRON_RICH - CONTRACTION_DENSITY_ROCK))
+            .clamp(0.0, 1.0);
+        let dt_total = CONTRACTION_DT_MANTLE + CONTRACTION_DT_CORE * iron * iron;
+        let dt = dt_total * (1.0 - (-age_gyr / CONTRACTION_TIMESCALE_GYR).exp());
         THERMAL_EXPANSIVITY / 3.0 * dt * r
     }
 
@@ -780,22 +788,81 @@ pub fn interior_surface_heat_flux(c: &Ctx) -> Value {
     .into()
 }
 
+/// The thermal evolution's inputs from the graph context, mirroring
+/// `ThermalInputs::from_graph`.
+fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
+    let regime = c.str("interior.tectonic_regime");
+    crate::thermal::ThermalInputs {
+        age_gyr: c.f64("body.age"),
+        radius: c.f64("body.radius"),
+        gravity: c.f64("body.gravity"),
+        uncompressed_density: c.f64("body.uncompressed_density"),
+        rock_mass: c.f64("body.mass") * c.f64("body.rock_mass_fraction"),
+        secular_fraction: c.f64("interior.secular_cooling_fraction"),
+        tidal_flux_now: c.f64("interior.tidal_flux"),
+        eccentricity_now: c.f64("orbit.eccentricity"),
+        eccentricity_history: c.curve("orbit.eccentricity_history").clone(),
+        icy: is_icy(c.str("body.composition_class")),
+        surface_temperature: c.f64("atmosphere.surface_temperature_mean"),
+        melting_point: ice_melting_point(c),
+        crust_strength: c.f64("interior.crust_strength"),
+        magma_efficiency_base: match regime {
+            "mobile_lid" => MAGMA_EFFICIENCY_MOBILE,
+            "episodic_lid" => MAGMA_EFFICIENCY_EPISODIC,
+            "ice_shell_ocean" | "ice_shell_rock" => MAGMA_EFFICIENCY_ICE,
+            _ => MAGMA_EFFICIENCY_STAGNANT,
+        },
+    }
+}
+
+pub fn orbit_eccentricity_history(c: &Ctx) -> Value {
+    Curve::constant(c.f64("orbit.eccentricity")).into()
+}
+
 pub fn interior_heat_flux_history(c: &Ctx) -> Value {
-    let age = c.f64("body.age");
+    crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .curve(|s| s.heat_flux)
+        .into()
+}
+
+pub fn interior_mantle_temperature_history(c: &Ctx) -> Value {
+    crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .curve(|s| s.mantle_temperature)
+        .into()
+}
+
+pub fn interior_lithosphere_history(c: &Ctx) -> Value {
+    crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .curve(|s| s.lithosphere)
+        .into()
+}
+
+pub fn interior_relief_limit_history(c: &Ctx) -> Value {
+    crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .curve(|s| s.relief_limit)
+        .into()
+}
+
+pub fn interior_contraction_history(c: &Ctx) -> Value {
+    crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .curve(|s| s.contraction)
+        .into()
+}
+
+pub fn volcanism_rate(c: &Ctx) -> Value {
+    c.f64("interior.magma_production_rate").into()
+}
+
+pub fn volcanism_resurfacing_rate(c: &Ctx) -> Value {
     let r = c.f64("body.radius");
-    let rock_mass = c.f64("body.mass") * c.f64("body.rock_mass_fraction");
     let area = 4.0 * PI * r * r;
-    let secular = c.f64("interior.secular_cooling_fraction");
-    let tidal = c.f64("interior.tidal_flux");
-    let n = 24;
-    let points = (0..=n)
-        .map(|k| {
-            let t = age * k as f64 / n as f64;
-            let q = radiogenic_per_kg(t) * rock_mass / area * (1.0 + secular) + tidal;
-            (t, q)
-        })
-        .collect();
-    Curve::new(points).into()
+    (c.f64("volcanism.rate") / area * MYR).into()
+}
+
+pub fn volcanism_history(c: &Ctx) -> Value {
+    crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .curve(|s| s.magma_rate)
+        .into()
 }
 
 fn ice_melting_point(c: &Ctx) -> f64 {
@@ -864,7 +931,12 @@ pub fn interior_max_relief(c: &Ctx) -> Value {
 }
 
 pub fn interior_contraction_total(c: &Ctx) -> Value {
-    contraction(c.f64("body.radius"), c.f64("body.age")).into()
+    contraction(
+        c.f64("body.radius"),
+        c.f64("body.uncompressed_density"),
+        c.f64("body.age"),
+    )
+    .into()
 }
 
 pub fn interior_ice_shell_thickness(c: &Ctx) -> Value {

@@ -156,6 +156,27 @@ pub fn reference_checks() -> Vec<Check> {
             "record from 4.2 Gyr",
         ),
         range("Mercury", "cratering.retention_age", 4.0, 5.0, ""),
+        range(
+            "Mercury",
+            "interior.contraction_total",
+            5_000.0,
+            7_000.0,
+            "Byrne et al. 2014",
+        ),
+        range(
+            "Moon",
+            "interior.contraction_total",
+            100.0,
+            1_500.0,
+            "Watters et al. 2010",
+        ),
+        range(
+            "Mars",
+            "interior.contraction_total",
+            1_000.0,
+            4_000.0,
+            "Nahm and Schultz 2011",
+        ),
         text("Mercury", "materials.bedrock", "mercurian_regolith", ""),
         text(
             "Mercury",

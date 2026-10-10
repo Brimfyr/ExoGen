@@ -159,10 +159,21 @@ pub const DENSITY_CRUST_ICE: f64 = 920.0;
 /// Relief coefficient c in h_max = c strength / (rho g), set so that Earth gives 9.5 km,
 /// Mars 25 km and Venus 10.5 km with the rock strength above.
 pub const RELIEF_COEFFICIENT: f64 = 1.74;
+/// The relief limit through time is scaled by the elastic thickness relative to the
+/// present one, to no less than this fraction: a thin early lithosphere carries less.
+/// Provisional until a flexural model in Phase 6.
+pub const RELIEF_SUPPORT_MIN: f64 = 0.15;
 /// Volumetric thermal expansivity for global contraction, per K, and the interior cooling
-/// model dT = 300 K (1 - exp(-age / 2 Gyr)). Mercury gives 5 to 7 km. Provisional, Phase 3.
+/// model dT = (50 K + 220 K i²) (1 - exp(-age / 2 Gyr)) with i the iron index from the
+/// uncompressed density, 0 at 3.3 g/cm³ and 1 at the 5.15 the composition model gives Mercury: every body shrinks a
+/// little from mantle cooling, and a large core, cooling and solidifying, is what shrinks
+/// Mercury by 5 to 7 km (Byrne et al. 2014) while the Moon and Mars lose under a kilometre
+/// and a few kilometres (Watters et al. 2010; Nahm and Schultz 2011). Provisional, Phase 3.
 pub const THERMAL_EXPANSIVITY: f64 = 3.0e-5;
-pub const CONTRACTION_DT_MAX: f64 = 300.0;
+pub const CONTRACTION_DT_MANTLE: f64 = 50.0;
+pub const CONTRACTION_DT_CORE: f64 = 220.0;
+pub const CONTRACTION_DENSITY_ROCK: f64 = 3_300.0;
+pub const CONTRACTION_DENSITY_IRON_RICH: f64 = 5_150.0;
 pub const CONTRACTION_TIMESCALE_GYR: f64 = 2.0;
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
