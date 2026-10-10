@@ -25,10 +25,11 @@ use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
     CraterRecord, CraterTexture, EdgeShape, PopulationConfig, ProfileTable, RestoreParams,
-    StampParams, Stamper, dimensions, ejecta_modulation, restore, sample_population, stamp,
+    StampOutput, StampParams, Stamper, dimensions, ejecta_modulation, restore_compute,
+    sample_population, stamp_compute, with_stamper,
 };
 use crate::fields::{Field, LayerSet};
-use crate::geom::{local_basis, offset};
+use crate::geom::{dot, local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
@@ -336,7 +337,6 @@ pub fn finish(
         message: format!("resampling to face size {face}"),
     });
     let mut layers = kf.layers.resample(grid);
-    let mut stamper = Stamper::new(&grid);
     if sink.cancelled() {
         return Err(RunError::Cancelled);
     }
@@ -413,121 +413,165 @@ pub fn finish(
     let mut records = loop_craters.clone();
     let total = events.len().max(1);
     let smooth_sigma = 0.5 * coarse_cell;
-    for (i, (_, _, _, event)) in events.iter().enumerate() {
-        match event {
-            Event::Loop(li) => {
-                let c = &loop_craters[*li];
-                let dim = dimensions(c.diameter, &inputs.scaling);
-                // The detail the coarse grid could not carry: the resolved profile minus
-                // its coarse-cell-smoothed version.
-                let fresh = ProfileTable::new(dim, 0.0);
-                let kappa_t = inputs.diffusivity_m2_per_myr
-                    * inputs.flux.equivalent_gyr(c.time_gyr, present)
-                    * 1e3;
-                let degraded = ProfileTable::new(dim, kappa_t);
-                let smooth = ProfileTable::new(dim, kappa_t + 0.5 * smooth_sigma * smooth_sigma);
-                let mut detail = degraded;
-                for (v, s) in detail.values.iter_mut().zip(&smooth.values) {
-                    *v -= s;
+
+    // Footprint caps: centre and angular radius with a cell of margin, for wave building.
+    let caps: Vec<([f64; 3], f64)> = events
+        .par_iter()
+        .map(|(_, _, _, event)| {
+            let (center, diameter, ellipticity) = match event {
+                Event::Loop(li) => {
+                    let c = &loop_craters[*li];
+                    (c.center, c.diameter, c.ellipticity)
                 }
-                let deep = impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
-                let params = RestoreParams {
-                    time_gyr: c.time_gyr as f32,
-                    unit_floor: impacts::floor_unit(dim.class, deep),
-                    unit_ejecta: impacts::ejecta_unit(deep),
-                    azimuth: c.azimuth,
-                    angle: c.angle,
-                    ellipticity: c.ellipticity,
-                    detail_weight: 1.0,
-                    seed: c.id,
-                    deep,
-                    fine_blur: detail.sigma,
-                    coarse_blur: smooth.sigma,
-                };
-                restore(
-                    &mut layers,
-                    &grid,
-                    body_radius,
-                    c.center,
-                    &base,
-                    &base_deep,
-                    &fresh,
-                    &detail,
-                    &params,
-                    &mut stamper,
-                );
-            }
-            Event::Replay(j) => {
-                let (c, secondary) = &replay[*j];
-                let dim = dimensions(c.diameter, &inputs.scaling);
-                // Degradation by the gardening that followed the crater: the diffusivity
-                // at the present flux times the equivalent flux since it formed.
-                let kappa_t = inputs.diffusivity_m2_per_myr
-                    * inputs.flux.equivalent_gyr(c.time_gyr, present)
-                    * 1e3;
-                let table = ProfileTable::new(dim, kappa_t);
-                if table.is_erased() {
-                    continue;
+                Event::Replay(j) => {
+                    let c = &replay[*j].0;
+                    (c.center, c.diameter, c.ellipticity)
                 }
-                let deep = !*secondary
-                    && impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
-                let params = StampParams {
-                    time_gyr: c.time_gyr as f32,
-                    unit_floor: if *secondary {
-                        UNIT_SECONDARY_FIELD
-                    } else {
-                        impacts::floor_unit(dim.class, deep)
-                    },
-                    unit_ejecta: impacts::ejecta_unit(deep),
-                    azimuth: c.azimuth,
-                    angle: c.angle,
-                    ellipticity: c.ellipticity,
-                    amplitude: if *secondary {
-                        SECONDARY_DEPTH_FACTOR
-                    } else {
-                        1.0
-                    },
-                    replace_floor: true,
-                    set_age: true,
-                    bury: true,
-                    seed: c.key,
-                    deep,
-                };
-                stamp(
-                    &mut layers,
-                    &grid,
-                    body_radius,
-                    c.center,
-                    &table,
-                    &params,
-                    &mut stamper,
-                );
-                if c.diameter >= record_min && !*secondary {
-                    records.push(CraterRecord {
-                        center: c.center,
-                        diameter: c.diameter,
-                        time_gyr: c.time_gyr,
-                        azimuth: c.azimuth,
-                        angle: c.angle,
-                        ellipticity: c.ellipticity,
-                        class: dim.class,
-                        from_loop: false,
-                        relief: (dim.depth + dim.rim_height) as f32,
-                        visible: true,
-                        id: c.key,
-                    });
-                }
+            };
+            let dim = dimensions(diameter, &inputs.scaling);
+            (
+                center,
+                dim.ejecta_radius * ellipticity.sqrt() / body_radius + grid.delta(),
+            )
+        })
+        .collect();
+    let waves = build_waves(&caps);
+
+    let mut done = 0usize;
+    let mut next_report = 0usize;
+    for wave in &waves {
+        // Stamps in a wave have disjoint footprints: compute them in parallel against the
+        // state before the wave, then apply them in order.
+        let outputs: Vec<Option<(StampOutput, Option<CraterRecord>)>> = wave
+            .par_iter()
+            .map(|&ei| {
+                with_stamper(&grid, |stamper| match &events[ei].3 {
+                    Event::Loop(li) => {
+                        let c = &loop_craters[*li];
+                        let dim = dimensions(c.diameter, &inputs.scaling);
+                        // The detail the coarse grid could not carry: the resolved profile
+                        // minus its coarse-cell-smoothed version.
+                        let fresh = ProfileTable::new(dim, 0.0);
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                            * 1e3;
+                        let degraded = ProfileTable::new(dim, kappa_t);
+                        let smooth =
+                            ProfileTable::new(dim, kappa_t + 0.5 * smooth_sigma * smooth_sigma);
+                        let mut detail = degraded;
+                        for (v, s) in detail.values.iter_mut().zip(&smooth.values) {
+                            *v -= s;
+                        }
+                        let deep =
+                            impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
+                        let params = RestoreParams {
+                            time_gyr: c.time_gyr as f32,
+                            unit_floor: impacts::floor_unit(dim.class, deep),
+                            unit_ejecta: impacts::ejecta_unit(deep),
+                            azimuth: c.azimuth,
+                            angle: c.angle,
+                            ellipticity: c.ellipticity,
+                            detail_weight: 1.0,
+                            seed: c.id,
+                            deep,
+                            fine_blur: detail.sigma,
+                            coarse_blur: smooth.sigma,
+                        };
+                        let out = restore_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            c.center,
+                            &base,
+                            &base_deep,
+                            &fresh,
+                            &detail,
+                            &params,
+                            stamper,
+                        );
+                        Some((out, None))
+                    }
+                    Event::Replay(j) => {
+                        let (c, secondary) = &replay[*j];
+                        let dim = dimensions(c.diameter, &inputs.scaling);
+                        // Degradation by the gardening that followed the crater: the
+                        // diffusivity at the present flux times the equivalent flux since.
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                            * 1e3;
+                        let table = ProfileTable::new(dim, kappa_t);
+                        if table.is_erased() {
+                            return None;
+                        }
+                        let deep = !*secondary
+                            && impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
+                        let params = StampParams {
+                            time_gyr: c.time_gyr as f32,
+                            unit_floor: if *secondary {
+                                UNIT_SECONDARY_FIELD
+                            } else {
+                                impacts::floor_unit(dim.class, deep)
+                            },
+                            unit_ejecta: impacts::ejecta_unit(deep),
+                            azimuth: c.azimuth,
+                            angle: c.angle,
+                            ellipticity: c.ellipticity,
+                            amplitude: if *secondary {
+                                SECONDARY_DEPTH_FACTOR
+                            } else {
+                                1.0
+                            },
+                            replace_floor: true,
+                            set_age: true,
+                            bury: true,
+                            seed: c.key,
+                            deep,
+                        };
+                        let out = stamp_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            c.center,
+                            &table,
+                            &params,
+                            stamper,
+                        );
+                        let record =
+                            (c.diameter >= record_min && !*secondary).then_some(CraterRecord {
+                                center: c.center,
+                                diameter: c.diameter,
+                                time_gyr: c.time_gyr,
+                                azimuth: c.azimuth,
+                                angle: c.angle,
+                                ellipticity: c.ellipticity,
+                                class: dim.class,
+                                from_loop: false,
+                                relief: (dim.depth + dim.rim_height) as f32,
+                                visible: true,
+                                id: c.key,
+                            });
+                        Some((out, record))
+                    }
+                })
+            })
+            .collect();
+        for (out, record) in outputs.into_iter().flatten() {
+            out.apply(&mut layers);
+            if let Some(r) = record {
+                records.push(r);
             }
         }
-        if i % 20_000 == 0 {
+        done += wave.len();
+        if done >= next_report {
             if sink.cancelled() {
                 return Err(RunError::Cancelled);
             }
             sink.report(Progress {
                 stage: "finishing",
-                fraction: 0.3 + 0.4 * i as f32 / total as f32,
-                message: format!("stamping craters {i} of {total}"),
+                fraction: 0.3 + 0.4 * done as f32 / total as f32,
+                message: format!("stamping craters {done} of {total}"),
             });
+            next_report = done + 10_000;
         }
     }
     let replayed_count = replay.len();
@@ -550,15 +594,7 @@ pub fn finish(
         let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
         (1.0 - (-exposure / tau_sw).exp()) as f32
     });
-    let rays = ray_field(
-        &grid,
-        body_radius,
-        &records,
-        &inputs,
-        present,
-        cell,
-        &mut stamper,
-    );
+    let rays = ray_field(&grid, body_radius, &records, &inputs, present, cell);
 
     sink.report(Progress {
         stage: "finishing",
@@ -664,8 +700,42 @@ fn sample_secondaries(
     out
 }
 
-/// Ray brightening from craters younger than the ray lifetime: a few bright radial sectors
-/// out to several radii, plus the fresh continuous ejecta, fading with age.
+/// Largest number of stamps in one wave and the largest share of the sphere their caps
+/// may cover, which bounds the memory of a wave's pending writes.
+const WAVE_MAX_STAMPS: usize = 2048;
+const WAVE_MAX_AREA: f64 = 0.25;
+/// Rayed craters computed per parallel batch.
+const RAY_BATCH: usize = 64;
+
+/// Group consecutive stamps into waves of non-overlapping footprints. Stamps in one wave
+/// touch disjoint cells, so they can be computed in parallel and applied in any order,
+/// while every overlapping pair keeps its order because a stamp never joins a wave that
+/// holds an earlier stamp it overlaps.
+fn build_waves(caps: &[([f64; 3], f64)]) -> Vec<Vec<usize>> {
+    let mut waves = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+    let mut area = 0.0;
+    for (i, &(c, rho)) in caps.iter().enumerate() {
+        let share = 0.5 * (1.0 - rho.min(std::f64::consts::PI).cos());
+        let close = current.len() >= WAVE_MAX_STAMPS
+            || area + share > WAVE_MAX_AREA
+            || current.iter().any(|&j| {
+                let (cj, rj) = caps[j];
+                dot(c, cj) > (rho + rj).min(std::f64::consts::PI).cos()
+            });
+        if close && !current.is_empty() {
+            waves.push(std::mem::take(&mut current));
+            area = 0.0;
+        }
+        current.push(i);
+        area += share;
+    }
+    if !current.is_empty() {
+        waves.push(current);
+    }
+    waves
+}
+
 fn ray_field(
     grid: &CubeSphere,
     body_radius: f64,
@@ -673,86 +743,112 @@ fn ray_field(
     inputs: &impacts::CraterInputs,
     present: f64,
     cell: f64,
-    stamper: &mut Stamper,
 ) -> Field<f32> {
     let mut rays = Field::new(*grid);
-    let lifetime = inputs.ray_lifetime.max(1e-6);
-    let rng = Rng::new(inputs.seed ^ 0x9A7F_3C11);
-    let (n_lo, n_hi) = RAYS_PER_CRATER;
-    let (l_lo, l_hi) = RAY_LENGTH_MULTIPLE;
-    for c in craters {
-        let age = present - c.time_gyr;
-        if age < 0.0 || age >= lifetime || c.diameter < RAY_MIN_CELLS * cell {
-            continue;
-        }
-        let freshness = (1.0 - age / lifetime).powi(2);
-        let radius = 0.5 * c.diameter;
-        // Fresh floors and ejecta are mottled by melt, flows and blocks, and the edge of
-        // the continuous ejecta is ragged.
-        let edge_shape = EdgeShape::new(c.id);
-        let texture = (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
-            .then(|| CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling)));
-        let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
-        // Rays keep a roughly constant linear width, so their angular width shrinks with
-        // distance, and large craters' rays are shorter in radii than small craters' rays.
-        let (w_lo, w_hi) = RAY_WIDTH_FRACTION;
-        let length_scale = (RAY_REFERENCE_DIAMETER / c.diameter).sqrt().min(1.0);
-        // Each ray's brightness follows the ejecta asymmetry of an oblique impact: strong
-        // downrange, absent in the uprange zone of avoidance.
-        let ray_params: Vec<(f64, f64, f64, f64)> = (0..n)
-            .map(|i| {
-                let d = 4 + 3 * i as u64;
-                let phi = 2.0 * std::f64::consts::PI * rng.uniform(c.id, d);
-                let width = radius * (w_lo + (w_hi - w_lo) * rng.uniform(c.id, d + 1));
-                let length =
-                    radius * (l_lo + (l_hi - l_lo) * rng.uniform(c.id, d + 2)) * length_scale;
-                let strength = ejecta_modulation(phi, c.azimuth, c.angle);
-                (phi, width, length, strength)
+    let out = rays.as_mut_slice();
+    // Each crater's ray cells are computed in parallel and merged by maximum, which is
+    // order-independent, so the result does not depend on the thread count.
+    for batch in craters.chunks(RAY_BATCH) {
+        let parts: Vec<Vec<(u32, f32)>> = batch
+            .par_iter()
+            .map(|c| {
+                with_stamper(grid, |stamper| {
+                    ray_cells(grid, body_radius, c, inputs, present, cell, stamper)
+                })
             })
             .collect();
-        let max_len = ray_params
-            .iter()
-            .map(|p| p.2)
-            .fold(0.0, f64::max)
-            .max(CONTINUOUS_EJECTA_MULTIPLE * radius);
-        stamper.gather(grid, body_radius, c.center, max_len);
-        let out = rays.as_mut_slice();
-        let ejecta_edge = CONTINUOUS_EJECTA_MULTIPLE * radius;
-        for &(idx, r, phi) in &stamper.footprint {
-            // Fresh ejecta: full inside the rim, fading to half at the continuous edge.
-            let edge = ejecta_edge * edge_shape.factor(phi);
-            let mut v: f64 = if r <= radius {
-                1.0
-            } else if r <= edge {
-                (1.0 - 0.5 * (r - radius) / (edge - radius))
-                    * ejecta_modulation(phi, c.azimuth, c.angle).min(1.0)
-                    * texture.as_ref().map_or(1.0, |t| {
-                        1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / radius)
-                    })
-            } else {
-                0.0
-            };
-            if r > edge {
-                let falloff = (edge / r).powf(1.2);
-                for &(p, w, l, s) in &ray_params {
-                    if r > l {
-                        continue;
-                    }
-                    let dphi = (phi - p + std::f64::consts::PI)
-                        .rem_euclid(2.0 * std::f64::consts::PI)
-                        - std::f64::consts::PI;
-                    let taper = ((l - r) / (0.3 * l)).clamp(0.0, 1.0);
-                    let across = dphi * r / w;
-                    v = v.max((-(across * across)).exp() * taper * falloff * s);
+        for part in parts {
+            for (idx, v) in part {
+                let o = &mut out[idx as usize];
+                if v > *o {
+                    *o = v;
                 }
-            }
-            let value = (v.min(1.0) * freshness) as f32;
-            if value > out[idx] {
-                out[idx] = value;
             }
         }
     }
     rays
+}
+
+/// The ray brightening one crater adds: full inside the rim, fading to half at the
+/// continuous-ejecta edge and mottled there, then rays of constant linear width whose
+/// strength follows the oblique ejecta asymmetry, all scaled by freshness.
+fn ray_cells(
+    grid: &CubeSphere,
+    body_radius: f64,
+    c: &CraterRecord,
+    inputs: &impacts::CraterInputs,
+    present: f64,
+    cell: f64,
+    stamper: &mut Stamper,
+) -> Vec<(u32, f32)> {
+    let lifetime = inputs.ray_lifetime.max(1e-6);
+    let age = present - c.time_gyr;
+    if age < 0.0 || age >= lifetime || c.diameter < RAY_MIN_CELLS * cell {
+        return Vec::new();
+    }
+    let tau = 2.0 * std::f64::consts::PI;
+    let rng = Rng::new(inputs.seed ^ 0x9A7F_3C11);
+    let (n_lo, n_hi) = RAYS_PER_CRATER;
+    let (l_lo, l_hi) = RAY_LENGTH_MULTIPLE;
+    let (w_lo, w_hi) = RAY_WIDTH_FRACTION;
+    let freshness = (1.0 - age / lifetime).powi(2);
+    let radius = 0.5 * c.diameter;
+    let edge_shape = EdgeShape::new(c.id);
+    let texture = (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
+        .then(|| CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling)));
+    let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
+    // Rays keep a roughly constant linear width, so their angular width shrinks with
+    // distance, and large craters' rays are shorter in radii than small craters' rays.
+    let length_scale = (RAY_REFERENCE_DIAMETER / c.diameter).sqrt().min(1.0);
+    let ray_params: Vec<(f64, f64, f64, f64)> = (0..n)
+        .map(|i| {
+            let d = 4 + 3 * i as u64;
+            let phi = tau * rng.uniform(c.id, d);
+            let width = radius * (w_lo + (w_hi - w_lo) * rng.uniform(c.id, d + 1));
+            let length = radius * (l_lo + (l_hi - l_lo) * rng.uniform(c.id, d + 2)) * length_scale;
+            let strength = ejecta_modulation(phi, c.azimuth, c.angle);
+            (phi, width, length, strength)
+        })
+        .collect();
+    let max_len = ray_params
+        .iter()
+        .map(|p| p.2)
+        .fold(0.0, f64::max)
+        .max(CONTINUOUS_EJECTA_MULTIPLE * radius);
+    stamper.gather(grid, body_radius, c.center, max_len);
+    let ejecta_edge = CONTINUOUS_EJECTA_MULTIPLE * radius;
+    let mut cells = Vec::with_capacity(stamper.footprint.len());
+    for &(idx, r, phi) in &stamper.footprint {
+        let edge = ejecta_edge * edge_shape.factor(phi);
+        let mut v: f64 = if r <= radius {
+            1.0
+        } else if r <= edge {
+            (1.0 - 0.5 * (r - radius) / (edge - radius))
+                * ejecta_modulation(phi, c.azimuth, c.angle).min(1.0)
+                * texture.as_ref().map_or(1.0, |t| {
+                    1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / radius)
+                })
+        } else {
+            0.0
+        };
+        if r > edge {
+            let falloff = (edge / r).powf(1.2);
+            for &(p, w, l, s) in &ray_params {
+                if r > l {
+                    continue;
+                }
+                let dphi = (phi - p + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
+                let taper = ((l - r) / (0.3 * l)).clamp(0.0, 1.0);
+                let across = dphi * r / w;
+                v = v.max((-(across * across)).exp() * taper * falloff * s);
+            }
+        }
+        let value = (v.min(1.0) * freshness) as f32;
+        if value > 0.0 {
+            cells.push((idx as u32, value));
+        }
+    }
+    cells
 }
 
 /// Fill the working liquid to its inventory volume (docs/parameters.md F26). Returns the

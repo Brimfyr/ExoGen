@@ -30,6 +30,7 @@ use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
 use crate::rng::Rng;
+use rayon::prelude::*;
 
 /// Reusable scratch space for footprints.
 pub struct Stamper {
@@ -89,6 +90,88 @@ impl Stamper {
     }
 }
 
+/// One cell's new values from a stamp. Stamps are computed first and applied afterwards,
+/// so stamps with disjoint footprints can be computed in parallel and applied in any order.
+#[derive(Clone, Copy)]
+pub struct CellWrite {
+    pub idx: u32,
+    pub bedrock: f32,
+    /// Whether the surface fields below are written.
+    pub surface: bool,
+    pub age: f32,
+    pub unit: u16,
+    pub deep: f32,
+    pub melt: f32,
+}
+
+/// The cells one stamp changes.
+#[derive(Default)]
+pub struct StampOutput {
+    pub cells: Vec<CellWrite>,
+}
+
+impl StampOutput {
+    /// Write the cells into the layers.
+    pub fn apply(&self, layers: &mut LayerSet) {
+        let bedrock = layers.bedrock.as_mut_slice();
+        let ages = layers.surface_age.as_mut_slice();
+        let units = layers.unit_id.as_mut_slice();
+        let deep = layers.deep.as_mut_slice();
+        let melt = layers.melt.as_mut_slice();
+        for c in &self.cells {
+            let i = c.idx as usize;
+            bedrock[i] = c.bedrock;
+            if c.surface {
+                ages[i] = c.age;
+                units[i] = c.unit;
+                deep[i] = c.deep;
+                melt[i] = c.melt;
+            }
+        }
+    }
+}
+
+thread_local! {
+    static STAMPER: std::cell::RefCell<Option<Stamper>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` with this thread's stamper for `grid`, creating or resizing it as needed, so
+/// parallel stamping does not allocate a visited array per stamp.
+pub fn with_stamper<R>(grid: &CubeSphere, f: impl FnOnce(&mut Stamper) -> R) -> R {
+    // The stamper leaves the slot while in use: `f` may run parallel work, and rayon can
+    // run another stamp on this thread while it waits, which then makes its own.
+    let taken = STAMPER.with(|cell| cell.borrow_mut().take());
+    let mut stamper = match taken {
+        Some(s) if s.visited.len() == grid.cell_count() => s,
+        _ => Stamper::new(grid),
+    };
+    let result = f(&mut stamper);
+    STAMPER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(stamper);
+        }
+    });
+    result
+}
+
+/// Footprints at least this large are computed in parallel chunks; a basin's restore at
+/// the finishing resolution covers millions of cells.
+const PARALLEL_FOOTPRINT: usize = 32_768;
+
+/// Compute the writes of a footprint, in parallel when it is large. The result is the
+/// same either way: cells are independent.
+fn map_footprint<F>(footprint: &[(usize, f64, f64)], f: F) -> Vec<CellWrite>
+where
+    F: Fn(&(usize, f64, f64)) -> CellWrite + Sync + Send,
+{
+    if footprint.len() >= PARALLEL_FOOTPRINT {
+        footprint.par_iter().map(f).collect()
+    } else {
+        footprint.iter().map(f).collect()
+    }
+}
+
 /// Effective radius for an elliptical crater: scaled so the long axis lies along `azimuth`
 /// and the area is preserved.
 #[inline]
@@ -133,6 +216,21 @@ pub fn stamp(
     p: &StampParams,
     stamper: &mut Stamper,
 ) -> usize {
+    let out = stamp_compute(layers, grid, body_radius, center, profile, p, stamper);
+    out.apply(layers);
+    out.cells.len()
+}
+
+/// Compute one crater's stamp without writing it.
+pub fn stamp_compute(
+    layers: &LayerSet,
+    grid: &CubeSphere,
+    body_radius: f64,
+    center: [f64; 3],
+    profile: &ProfileTable,
+    p: &StampParams,
+    stamper: &mut Stamper,
+) -> StampOutput {
     let dim = &profile.dim;
     stamper.gather(
         grid,
@@ -141,7 +239,7 @@ pub fn stamp(
         dim.ejecta_radius * p.ellipticity.sqrt(),
     );
     if stamper.footprint.is_empty() {
-        return 0;
+        return StampOutput::default();
     }
     let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
@@ -149,9 +247,8 @@ pub fn stamp(
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
     let edge = EdgeShape::new(p.seed);
-    let bedrock = layers.bedrock.as_mut_slice();
-    let deep = layers.deep.as_mut_slice();
-    let melt = layers.melt.as_mut_slice();
+    let bedrock = layers.bedrock.as_slice();
+    let deep = layers.deep.as_slice();
     // Reference height: area-weighted mean of the pre-impact surface inside the rim; and
     // the azimuthal mean by radius under the ejecta, against which burial damps relief.
     const BINS: usize = 16;
@@ -195,9 +292,8 @@ pub fn stamp(
         0.0
     };
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
-    let ages = layers.surface_age.as_mut_slice();
-    let units = layers.unit_id.as_mut_slice();
-    for &(idx, r, phi) in &stamper.footprint {
+    let ages = layers.surface_age.as_slice();
+    let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
         let mut v = profile.height(re)
@@ -230,28 +326,42 @@ pub fn stamp(
         } else {
             0.0
         };
-        bedrock[idx] = (v + w * h_ref + (1.0 - w) * old) as f32;
+        let mut write = CellWrite {
+            idx: idx as u32,
+            bedrock: (v + w * h_ref + (1.0 - w) * old) as f32,
+            surface: false,
+            age: 0.0,
+            unit: 0,
+            deep: 0.0,
+            melt: 0.0,
+        };
         let cont = continuous * edge.factor(phi);
         if p.set_age && re <= cont {
             // Thin ejecta near the edge renews the surface only partly.
             let w_age = ((cont - re) / (EJECTA_EDGE_FADE * cont)).clamp(0.0, 1.0) as f32;
-            if p.time_gyr > ages[idx] {
-                ages[idx] += (p.time_gyr - ages[idx]) * w_age;
+            let mut age = ages[idx];
+            if p.time_gyr > age {
+                age += (p.time_gyr - age) * w_age;
             }
-            units[idx] = if re <= dim.radius {
-                p.unit_floor
-            } else {
-                p.unit_ejecta
-            };
             // Deep material by ballistic mixing: all ejecta near the rim, all local at the
             // continuous edge. Fresh ejecta covers older melt.
             let edge_x = cont / dim.radius;
             let mix = ((edge_x - re / dim.radius) / (edge_x - EJECTA_PURE_RADII)).clamp(0.0, 1.0);
-            deep[idx] += ((source_deep - deep[idx] as f64) * mix) as f32;
-            melt[idx] = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
+            write.surface = true;
+            write.age = age;
+            write.unit = if re <= dim.radius {
+                p.unit_floor
+            } else {
+                p.unit_ejecta
+            };
+            write.deep = deep[idx] + ((source_deep - deep[idx] as f64) * mix) as f32;
+            write.melt = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
         }
+        write
+    };
+    StampOutput {
+        cells: map_footprint(&stamper.footprint, compute),
     }
-    stamper.footprint.len()
 }
 
 /// Azimuthal modulation of ejecta thickness for an oblique impact, with `phi` the azimuth
@@ -786,6 +896,36 @@ pub fn restore(
     p: &RestoreParams,
     stamper: &mut Stamper,
 ) -> usize {
+    let out = restore_compute(
+        layers,
+        grid,
+        body_radius,
+        center,
+        base,
+        base_deep,
+        fresh,
+        detail,
+        p,
+        stamper,
+    );
+    out.apply(layers);
+    out.cells.len()
+}
+
+/// Compute a loop crater's restore without writing it.
+#[allow(clippy::too_many_arguments)]
+pub fn restore_compute(
+    layers: &LayerSet,
+    grid: &CubeSphere,
+    body_radius: f64,
+    center: [f64; 3],
+    base: &[f32],
+    base_deep: &[f32],
+    fresh: &ProfileTable,
+    detail: &ProfileTable,
+    p: &RestoreParams,
+    stamper: &mut Stamper,
+) -> StampOutput {
     let dim = &fresh.dim;
     stamper.gather(
         grid,
@@ -794,7 +934,7 @@ pub fn restore(
         dim.ejecta_radius * p.ellipticity.sqrt(),
     );
     if stamper.footprint.is_empty() {
-        return 0;
+        return StampOutput::default();
     }
     let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
@@ -803,12 +943,9 @@ pub fn restore(
     let peak = Peak::new(p.seed, dim);
     let edge = EdgeShape::new(p.seed);
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
-    let bedrock = layers.bedrock.as_mut_slice();
-    let deep = layers.deep.as_mut_slice();
-    let melt = layers.melt.as_mut_slice();
-    let ages = layers.surface_age.as_mut_slice();
-    let units = layers.unit_id.as_mut_slice();
-    for &(idx, r, phi) in &stamper.footprint {
+    let bedrock = layers.bedrock.as_slice();
+    let ages = layers.surface_age.as_slice();
+    let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
         let fine = bedrock[idx] as f64 - base[idx] as f64;
@@ -839,26 +976,40 @@ pub fn restore(
             d += pk.relief(x, phi, p.fine_blur / dim.radius)
                 - pk.relief(x, phi, p.coarse_blur / dim.radius);
         }
-        bedrock[idx] = (base[idx] as f64 + kept + d) as f32;
+        let mut write = CellWrite {
+            idx: idx as u32,
+            bedrock: (base[idx] as f64 + kept + d) as f32,
+            surface: false,
+            age: 0.0,
+            unit: 0,
+            deep: 0.0,
+            melt: 0.0,
+        };
         let cont = continuous * edge.factor(phi);
         if re <= cont {
             // Thin ejecta near the edge renews the surface only partly.
             let w_age = ((cont - re) / (EJECTA_EDGE_FADE * cont)).clamp(0.0, 1.0) as f32;
-            if p.time_gyr > ages[idx] {
-                ages[idx] += (p.time_gyr - ages[idx]) * w_age;
+            let mut age = ages[idx];
+            if p.time_gyr > age {
+                age += (p.time_gyr - age) * w_age;
             }
-            units[idx] = if re <= dim.radius {
+            write.surface = true;
+            write.age = age;
+            write.unit = if re <= dim.radius {
                 p.unit_floor
             } else {
                 p.unit_ejecta
             };
             // The loop already laid down this crater's deep material; put it back over
             // whatever older craters left, and start the melt afresh.
-            deep[idx] = base_deep[idx];
-            melt[idx] = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
+            write.deep = base_deep[idx];
+            write.melt = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
         }
+        write
+    };
+    StampOutput {
+        cells: map_footprint(&stamper.footprint, compute),
     }
-    stamper.footprint.len()
 }
 
 #[cfg(test)]

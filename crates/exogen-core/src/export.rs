@@ -421,7 +421,8 @@ fn write_exr_f32(
         )]),
     );
     let image = Image::from_layer(layer);
-    retry(|| image.write().to_file(path)).map_err(|e| ExportError::Exr(e.to_string()))
+    retry(|| image.write().non_parallel().to_file(path))
+        .map_err(|e| ExportError::Exr(e.to_string()))
 }
 
 fn write_exr_rgb(
@@ -443,7 +444,8 @@ fn write_exr_rgb(
         ]),
     );
     let image = Image::from_layer(layer);
-    retry(|| image.write().to_file(path)).map_err(|e| ExportError::Exr(e.to_string()))
+    retry(|| image.write().non_parallel().to_file(path))
+        .map_err(|e| ExportError::Exr(e.to_string()))
 }
 
 fn write_png16(
