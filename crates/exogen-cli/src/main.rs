@@ -57,6 +57,9 @@ enum Command {
         /// Gyr before present to render; overrides output.epoch.
         #[arg(long)]
         epoch: Option<f64>,
+        /// Master seed; overrides seed.master.
+        #[arg(long)]
+        seed: Option<u64>,
     },
     /// Check the derived values of the reference bodies against measured values.
     Validate,
@@ -102,7 +105,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             width,
             quality,
             epoch,
-        } => render(project, preset, out, width, quality, epoch),
+            seed,
+        } => render(project, preset, out, width, quality, epoch, seed),
         Command::Validate => validate(),
         Command::Preset { action } => preset_cmd(action),
         Command::SpikeGrid {
@@ -267,8 +271,12 @@ fn render(
     width: Option<usize>,
     quality: Option<String>,
     epoch: Option<f64>,
+    seed: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut g, name) = load_graph(project, preset)?;
+    if let Some(s) = seed {
+        g.set("seed.master", s as f64)?;
+    }
     if let Some(q) = quality {
         g.set("detail.quality", q.as_str())?;
     }

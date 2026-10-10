@@ -17,3 +17,4 @@ description = "Reference body. Retrograde moon of Neptune; nitrogen ice cap and 
 "atmosphere.composition" = { N2 = 0.9999, CH4 = 0.0001 }
 "atmosphere.bond_albedo" = 0.76
 "volatiles.inventory" = { H2O = 400000.0, N2 = 50.0, CH4 = 2.0 }
+"seed.master" = 20.0

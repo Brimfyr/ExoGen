@@ -4,26 +4,36 @@
 //! The stage runner (PLAN.md 3.4, ADR 0002, ADR 0003).
 //!
 //! A run has two parts. The coarse forward loop steps the body through its age at a low
-//! resolution and keeps keyframes. The finishing pass takes the keyframe at the output
-//! epoch, resamples it to the finishing resolution and produces the fields that export
-//! reads. Both parts are cached by a hash of the parameters and seeds they depend on, so
-//! changing a late parameter does not rerun the loop.
-//!
-//! Phase 1 ships one placeholder process in the loop and a placeholder material model. The
-//! structure is what later phases fill in.
+//! resolution, emplacing the craters above the loop threshold at the steps they form, and
+//! keeps keyframes. The finishing pass takes the keyframe at the output epoch, resamples it,
+//! restores the resolved morphology of the loop craters, replays the sub-threshold crater
+//! population in age order with each crater pre-degraded for its age, fills the working
+//! liquid, computes optical maturity and rays, and assigns materials. Both parts are cached
+//! by a hash of the parameters and seeds they depend on.
 
+pub mod impacts;
 pub mod materials;
-pub mod placeholder_terrain;
+pub mod primordial_crust;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rayon::prelude::*;
+
+use crate::constants::*;
+use crate::crater::production::poisson;
+use crate::crater::{
+    CraterRecord, PopulationConfig, ProfileTable, StampParams, Stamper, dimensions,
+    sample_population, stamp,
+};
 use crate::fields::{Field, LayerSet};
+use crate::geom::{local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
-use crate::rng::hash_words;
+use crate::rng::{Rng, hash_words};
+use crate::units::{UNIT_CRATER_FLOOR, UNIT_EJECTA, UNIT_SECONDARY_FIELD};
 
 /// Loop steps by quality: preview, standard, high.
 pub const LOOP_STEPS: [usize; 3] = [30, 90, 90];
@@ -67,6 +77,9 @@ pub struct LoopOutput {
     pub keyframes: Vec<Keyframe>,
     pub steps: usize,
     pub age_gyr: f64,
+    /// Craters emplaced inside the loop, in order of formation.
+    pub craters: Vec<CraterRecord>,
+    pub loop_threshold: f64,
     pub hash: u64,
 }
 
@@ -91,11 +104,20 @@ pub struct FinishOutput {
     pub layers: LayerSet,
     pub height: Field<f32>,
     pub albedo: Field<[f32; 3]>,
+    /// Optical maturity, 0 fresh to 1 fully weathered.
+    pub maturity: Field<f32>,
+    /// Ray brightening, 0 to 1.
+    pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
     pub sea_level: f64,
     pub ocean_fraction: f64,
     pub epoch_time_gyr: f64,
     pub keyframe_index: usize,
+    /// Loop craters present at the epoch plus the replayed craters at or above eight
+    /// finishing cells, for the sidecar and the statistics.
+    pub craters: Vec<CraterRecord>,
+    /// Total replayed craters stamped, including those below the recorded size.
+    pub replayed_count: usize,
     pub hash: u64,
 }
 
@@ -132,13 +154,16 @@ impl Runner {
             graph.hash_of_group("tectonics"),
             graph.hash_of_group("atmosphere"),
             graph.hash_of_group("volatiles"),
+            graph.hash_of_group("cratering"),
+            graph.hash_of_group("seeds"),
             graph.hash_of(&[
-                "seed.terrain",
                 "detail.loop_resolution",
                 "detail.quality",
                 "multiplier.relief",
+                "multiplier.crater_density",
             ]),
-            placeholder_terrain::VERSION,
+            primordial_crust::VERSION,
+            impacts::VERSION,
         ])
     }
 
@@ -146,6 +171,10 @@ impl Runner {
     pub fn finish_key(graph: &ParamGraph, loop_hash: u64) -> u64 {
         hash_words(&[
             loop_hash,
+            graph.hash_of_group("cratering"),
+            graph.hash_of_group("materials"),
+            graph.hash_of_group("surface"),
+            graph.hash_of_group("seeds"),
             graph.hash_of(&[
                 "detail.finishing_resolution",
                 "output.epoch",
@@ -153,8 +182,10 @@ impl Runner {
                 "volatiles.working_liquid",
                 "body.radius",
                 "body.composition_class",
+                "multiplier.crater_density",
             ]),
             materials::VERSION,
+            FINISH_VERSION,
         ])
     }
 
@@ -205,6 +236,9 @@ impl Runner {
     }
 }
 
+/// Version of the finishing pass itself, bumped when its behaviour changes.
+pub const FINISH_VERSION: u64 = 2;
+
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
         cache.clear();
@@ -219,7 +253,7 @@ fn quality_index(graph: &ParamGraph) -> usize {
     }
 }
 
-/// The coarse forward loop with the Phase 1 placeholder process.
+/// The coarse forward loop.
 pub fn run_coarse_loop(
     graph: &ParamGraph,
     sink: &dyn ProgressSink,
@@ -231,8 +265,9 @@ pub fn run_coarse_loop(
     let dt = age / steps as f64;
     let keep_every = steps.div_ceil(MAX_KEYFRAMES).max(1);
 
-    let process = placeholder_terrain::PlaceholderTerrain::new(graph, grid);
-    let mut layers = process.init();
+    let crust = primordial_crust::PrimordialCrust::new(graph, grid);
+    let mut layers = crust.init();
+    let mut impacts = impacts::ImpactProcess::new(graph, grid);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -244,29 +279,36 @@ pub fn run_coarse_loop(
         if sink.cancelled() {
             return Err(RunError::Cancelled);
         }
-        let t = dt * s as f64;
-        process.step(&mut layers, t, dt);
+        let t0 = dt * (s - 1) as f64;
+        let t1 = dt * s as f64;
+        impacts.step(&mut layers, t0, t1, s as u64);
         if s % keep_every == 0 || s == steps {
             keyframes.push(Keyframe {
                 step: s,
-                time_gyr: t,
+                time_gyr: t1,
                 layers: layers.clone(),
             });
         }
         sink.report(Progress {
             stage: "coarse loop",
             fraction: s as f32 / steps as f32,
-            message: format!("step {s} of {steps}, {t:.2} Gyr"),
+            message: format!(
+                "step {s} of {steps}, {t1:.2} Gyr, {} craters",
+                impacts.records.len()
+            ),
         });
     }
 
     let hashes: Vec<u64> = keyframes.iter().map(|k| k.layers.hash()).collect();
     let hash = hash_words(&hashes);
+    let loop_threshold = impacts.loop_threshold();
     Ok(LoopOutput {
         grid,
         keyframes,
         steps,
         age_gyr: age,
+        craters: impacts.records,
+        loop_threshold,
         hash,
     })
 }
@@ -280,20 +322,151 @@ pub fn finish(
     sink: &dyn ProgressSink,
 ) -> Result<FinishOutput, RunError> {
     let kf = &loop_output.keyframes[keyframe_index];
+    let present = kf.time_gyr;
     let grid = CubeSphere::new(face);
+    let inputs = impacts::CraterInputs::from_graph(graph);
+    let body_radius = inputs.body_radius;
+    let cell = 2.0 * std::f64::consts::PI * body_radius / (4.0 * face as f64);
+
     sink.report(Progress {
         stage: "finishing",
-        fraction: 0.1,
+        fraction: 0.05,
         message: format!("resampling to face size {face}"),
     });
     let mut layers = kf.layers.resample(grid);
+    let mut stamper = Stamper::new(&grid);
     if sink.cancelled() {
         return Err(RunError::Cancelled);
     }
 
+    // Loop craters that exist at this epoch, with their resolved morphology restored.
+    let loop_craters: Vec<CraterRecord> = loop_output
+        .craters
+        .iter()
+        .filter(|c| c.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
     sink.report(Progress {
         stage: "finishing",
-        fraction: 0.5,
+        fraction: 0.15,
+        message: format!("restoring {} loop craters", loop_craters.len()),
+    });
+    let coarse_cell =
+        2.0 * std::f64::consts::PI * body_radius / (4.0 * loop_output.grid.face_size() as f64);
+    restore_loop_detail(
+        &mut layers,
+        &grid,
+        body_radius,
+        &loop_craters,
+        &inputs,
+        coarse_cell,
+        &mut stamper,
+    );
+
+    // Statistical replay of the sub-threshold population, oldest first.
+    let d_min = graph
+        .f64("cratering.min_diameter")
+        .max(FINISHING_MIN_CELLS * cell);
+    let cfg = PopulationConfig {
+        pf: inputs.pf,
+        flux_scale: inputs.flux_scale,
+        body_radius,
+        d_min,
+        d_max: loop_output.loop_threshold,
+        bins_per_octave: BINS_PER_OCTAVE,
+        saturation_fraction: inputs.saturation_fraction,
+        retention_age: inputs.retention_age,
+        oblique_fraction: inputs.oblique_fraction,
+        seed: inputs.seed,
+    };
+    sink.report(Progress {
+        stage: "finishing",
+        fraction: 0.25,
+        message: "sampling the crater population".to_string(),
+    });
+    let population = sample_population(&grid, &layers.surface_age, present, &cfg);
+    let secondaries = sample_secondaries(&loop_craters, &inputs, d_min, present);
+    let mut replay: Vec<(crate::crater::CraterSample, bool)> = population
+        .into_iter()
+        .map(|c| (c, false))
+        .chain(secondaries.into_iter().map(|c| (c, true)))
+        .collect();
+    replay.sort_by(|a, b| {
+        a.0.time_gyr
+            .total_cmp(&b.0.time_gyr)
+            .then(a.0.key.cmp(&b.0.key))
+    });
+    sink.report(Progress {
+        stage: "finishing",
+        fraction: 0.35,
+        message: format!("stamping {} craters", replay.len()),
+    });
+    if sink.cancelled() {
+        return Err(RunError::Cancelled);
+    }
+
+    let record_min = 8.0 * cell;
+    let mut records = loop_craters.clone();
+    let total = replay.len().max(1);
+    for (i, (c, secondary)) in replay.iter().enumerate() {
+        let dim = dimensions(c.diameter, &inputs.scaling);
+        let kappa_t = inputs.diffusivity_m2_per_myr * (present - c.time_gyr).max(0.0) * 1e3;
+        let table = ProfileTable::new(dim, kappa_t);
+        let params = StampParams {
+            time_gyr: c.time_gyr as f32,
+            unit_floor: if *secondary {
+                UNIT_SECONDARY_FIELD
+            } else {
+                UNIT_CRATER_FLOOR
+            },
+            unit_ejecta: UNIT_EJECTA,
+            azimuth: c.azimuth,
+            ellipticity: c.ellipticity,
+            amplitude: if *secondary {
+                SECONDARY_DEPTH_FACTOR
+            } else {
+                1.0
+            },
+            replace_floor: true,
+            set_age: true,
+        };
+        stamp(
+            &mut layers,
+            &grid,
+            body_radius,
+            c.center,
+            &table,
+            &params,
+            &mut stamper,
+        );
+        if c.diameter >= record_min && !*secondary {
+            records.push(CraterRecord {
+                center: c.center,
+                diameter: c.diameter,
+                time_gyr: c.time_gyr,
+                azimuth: c.azimuth,
+                ellipticity: c.ellipticity,
+                class: dim.class,
+                from_loop: false,
+                id: c.key,
+            });
+        }
+        if i % 20_000 == 0 {
+            if sink.cancelled() {
+                return Err(RunError::Cancelled);
+            }
+            sink.report(Progress {
+                stage: "finishing",
+                fraction: 0.35 + 0.35 * i as f32 / total as f32,
+                message: format!("stamping craters {i} of {total}"),
+            });
+        }
+    }
+    let replayed_count = replay.len();
+
+    sink.report(Progress {
+        stage: "finishing",
+        fraction: 0.72,
         message: "hydrosphere".to_string(),
     });
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
@@ -302,10 +475,36 @@ pub fn finish(
     sink.report(Progress {
         stage: "finishing",
         fraction: 0.8,
+        message: "weathering and rays".to_string(),
+    });
+    let tau_sw = graph.f64("surface.space_weathering_timescale");
+    let maturity = Field::from_fn(grid, |c, _| {
+        let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
+        (1.0 - (-exposure / tau_sw).exp()) as f32
+    });
+    let rays = ray_field(
+        &grid,
+        body_radius,
+        &records,
+        &inputs,
+        present,
+        cell,
+        &mut stamper,
+    );
+
+    sink.report(Progress {
+        stage: "finishing",
+        fraction: 0.92,
         message: "materials".to_string(),
     });
-    let albedo = materials::albedo(graph, &layers, &height);
-    let hash = hash_words(&[layers.hash(), height.hash(), sea_level.to_bits()]);
+    let albedo = materials::albedo(graph, &layers, &maturity, &rays);
+    let hash = hash_words(&[
+        layers.hash(),
+        height.hash(),
+        maturity.hash(),
+        rays.hash(),
+        sea_level.to_bits(),
+    ]);
     sink.report(Progress {
         stage: "finishing",
         fraction: 1.0,
@@ -316,12 +515,206 @@ pub fn finish(
         layers,
         height,
         albedo,
+        maturity,
+        rays,
         sea_level,
         ocean_fraction,
-        epoch_time_gyr: kf.time_gyr,
+        epoch_time_gyr: present,
         keyframe_index,
+        craters: records,
+        replayed_count,
         hash,
     })
+}
+
+/// Add back the morphology of loop craters that the coarse grid could not carry: the
+/// difference between the resolved profile and its coarse-cell-smoothed version, weighted
+/// by how much of the crater's surface still dates from its formation.
+fn restore_loop_detail(
+    layers: &mut LayerSet,
+    grid: &CubeSphere,
+    body_radius: f64,
+    craters: &[CraterRecord],
+    inputs: &impacts::CraterInputs,
+    coarse_cell: f64,
+    stamper: &mut Stamper,
+) {
+    let sigma = 0.5 * coarse_cell;
+    for c in craters {
+        let dim = dimensions(c.diameter, &inputs.scaling);
+        let fresh = ProfileTable::new(dim, 0.0);
+        let smooth = ProfileTable::new(dim, 0.5 * sigma * sigma);
+        let mut diff = fresh.clone();
+        for (v, s) in diff.values.iter_mut().zip(&smooth.values) {
+            *v -= s;
+        }
+        // Survival: fraction of cells inside 1.1 R whose surface still dates from this crater.
+        stamper.gather(grid, body_radius, c.center, 1.1 * dim.radius);
+        let mut same = 0usize;
+        let mut total = 0usize;
+        for &(idx, _, _) in &stamper.footprint {
+            total += 1;
+            if (layers.surface_age.as_slice()[idx] as f64 - c.time_gyr).abs() < 1e-3 {
+                same += 1;
+            }
+        }
+        if total == 0 {
+            continue;
+        }
+        let weight = same as f64 / total as f64;
+        if weight < 0.3 {
+            continue;
+        }
+        let params = StampParams {
+            time_gyr: c.time_gyr as f32,
+            unit_floor: 0,
+            unit_ejecta: 0,
+            azimuth: c.azimuth,
+            ellipticity: c.ellipticity,
+            amplitude: weight,
+            replace_floor: false,
+            set_age: false,
+        };
+        stamp(layers, grid, body_radius, c.center, &diff, &params, stamper);
+    }
+}
+
+/// Secondary craters of the loop craters: clusters at a few primary radii, formed at the
+/// primary's time, sized as a small fraction of the primary.
+fn sample_secondaries(
+    primaries: &[CraterRecord],
+    inputs: &impacts::CraterInputs,
+    d_min: f64,
+    present: f64,
+) -> Vec<crate::crater::CraterSample> {
+    let rng = Rng::new(inputs.seed ^ 0x5EC0_7DA2);
+    let mut out = Vec::new();
+    let (f_lo, f_hi) = SECONDARY_SIZE_FRACTION;
+    let (r_lo, r_hi) = SECONDARY_DISTANCE_MULTIPLE;
+    let slope = 3.0f64;
+    for p in primaries {
+        if p.time_gyr > present {
+            continue;
+        }
+        let expected =
+            SECONDARIES_PER_100KM * (inputs.secondary_fraction / 0.2) * (p.diameter / 1.0e5);
+        let (count, _) = poisson(&rng, p.id, 0, expected);
+        if count == 0 {
+            continue;
+        }
+        let (east, north) = local_basis(p.center);
+        let radius = 0.5 * p.diameter;
+        let clusters = (count / 6).max(1);
+        for j in 0..count as u64 {
+            let cluster = j % clusters as u64;
+            let base = 8 + cluster * 4;
+            let dist = radius * (r_lo + (r_hi - r_lo) * rng.uniform(p.id, base));
+            let phi = 2.0 * std::f64::consts::PI * rng.uniform(p.id, base + 1);
+            let draw = 1_000 + j * 4;
+            let jitter_r = 0.15 * radius * (rng.uniform(p.id, draw) - 0.5);
+            let jitter_phi = 0.3 * (rng.uniform(p.id, draw + 1) - 0.5) * radius / dist.max(1.0);
+            let center = offset(
+                p.center,
+                east,
+                north,
+                (dist + jitter_r) / inputs.body_radius,
+                phi + jitter_phi,
+            );
+            let u = rng.uniform(p.id, draw + 2);
+            let q = (f_hi / f_lo).powf(-slope);
+            let diameter = p.diameter * f_lo * (1.0 - u * (1.0 - q)).powf(-1.0 / slope);
+            if diameter < d_min {
+                continue;
+            }
+            out.push(crate::crater::CraterSample {
+                center,
+                diameter,
+                time_gyr: p.time_gyr,
+                azimuth: phi,
+                ellipticity: 1.2,
+                key: (p.id << 16) | j,
+            });
+        }
+    }
+    out
+}
+
+/// Ray brightening from craters younger than the ray lifetime: a few bright radial sectors
+/// out to several radii, plus the fresh continuous ejecta, fading with age.
+fn ray_field(
+    grid: &CubeSphere,
+    body_radius: f64,
+    craters: &[CraterRecord],
+    inputs: &impacts::CraterInputs,
+    present: f64,
+    cell: f64,
+    stamper: &mut Stamper,
+) -> Field<f32> {
+    let mut rays = Field::new(*grid);
+    let lifetime = inputs.ray_lifetime.max(1e-6);
+    let rng = Rng::new(inputs.seed ^ 0x9A7F_3C11);
+    let (n_lo, n_hi) = RAYS_PER_CRATER;
+    let (l_lo, l_hi) = RAY_LENGTH_MULTIPLE;
+    for c in craters {
+        let age = present - c.time_gyr;
+        if age < 0.0 || age >= lifetime || c.diameter < RAY_MIN_CELLS * cell {
+            continue;
+        }
+        let freshness = (1.0 - age / lifetime).powi(2);
+        let radius = 0.5 * c.diameter;
+        let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
+        // Rays keep a roughly constant linear width, so their angular width shrinks with
+        // distance, and large craters' rays are shorter in radii than small craters' rays.
+        let (w_lo, w_hi) = RAY_WIDTH_FRACTION;
+        let length_scale = (RAY_REFERENCE_DIAMETER / c.diameter).sqrt().min(1.0);
+        let ray_params: Vec<(f64, f64, f64)> = (0..n)
+            .map(|i| {
+                let d = 4 + 3 * i as u64;
+                let phi = 2.0 * std::f64::consts::PI * rng.uniform(c.id, d);
+                let width = radius * (w_lo + (w_hi - w_lo) * rng.uniform(c.id, d + 1));
+                let length =
+                    radius * (l_lo + (l_hi - l_lo) * rng.uniform(c.id, d + 2)) * length_scale;
+                (phi, width, length)
+            })
+            .collect();
+        let max_len = ray_params
+            .iter()
+            .map(|p| p.2)
+            .fold(0.0, f64::max)
+            .max(CONTINUOUS_EJECTA_MULTIPLE * radius);
+        stamper.gather(grid, body_radius, c.center, max_len);
+        let out = rays.as_mut_slice();
+        let ejecta_edge = CONTINUOUS_EJECTA_MULTIPLE * radius;
+        for &(idx, r, phi) in &stamper.footprint {
+            // Fresh ejecta: full inside the rim, fading to half at the continuous edge.
+            let mut v: f64 = if r <= radius {
+                1.0
+            } else if r <= ejecta_edge {
+                1.0 - 0.5 * (r - radius) / (ejecta_edge - radius)
+            } else {
+                0.0
+            };
+            if r > ejecta_edge {
+                let falloff = (ejecta_edge / r).powf(1.2);
+                for &(p, w, l) in &ray_params {
+                    if r > l {
+                        continue;
+                    }
+                    let dphi = (phi - p + std::f64::consts::PI)
+                        .rem_euclid(2.0 * std::f64::consts::PI)
+                        - std::f64::consts::PI;
+                    let taper = ((l - r) / (0.3 * l)).clamp(0.0, 1.0);
+                    let across = dphi * r / w;
+                    v = v.max((-(across * across)).exp() * taper * falloff);
+                }
+            }
+            let value = (v * freshness) as f32;
+            if value > out[idx] {
+                out[idx] = value;
+            }
+        }
+    }
+    rays
 }
 
 /// Fill the working liquid to its inventory volume (docs/parameters.md F26). Returns the
@@ -360,18 +753,22 @@ pub fn hydrosphere_fill(graph: &ParamGraph, layers: &mut LayerSet) -> (f64, f64)
     let volume = gel * 4.0 * std::f64::consts::PI * radius * radius;
     let level = solid.fill_level(radius, volume);
     let grid = layers.grid;
+    let depths: Vec<f32> = solid
+        .as_slice()
+        .par_iter()
+        .map(|h| (level - *h as f64).max(0.0) as f32)
+        .collect();
     let mut covered = 0.0;
     let mut total = 0.0;
-    let mut liquid = Field::new(grid);
-    for c in grid.cells() {
-        let depth = (level - solid.get(c) as f64).max(0.0);
-        liquid.set(c, depth as f32);
+    for (k, c) in grid.cells().enumerate() {
         let a = grid.cell_area(c);
         total += a;
-        if depth > 0.0 {
+        if depths[k] > 0.0 {
             covered += a;
         }
     }
+    let mut liquid = Field::new(grid);
+    liquid.as_mut_slice().copy_from_slice(&depths);
     layers.liquid = liquid;
     (level, covered / total)
 }
@@ -381,15 +778,15 @@ mod tests {
     use super::*;
     use crate::presets::preset;
 
-    fn earth_preview() -> ParamGraph {
-        let (mut g, _) = preset("Earth").unwrap().to_graph();
-        g.set("detail.quality", "preview").unwrap();
+    fn preset_graph(name: &str, quality: &str) -> ParamGraph {
+        let (mut g, _) = preset(name).unwrap().to_graph();
+        g.set("detail.quality", quality).unwrap();
         g
     }
 
     #[test]
     fn the_same_seed_gives_identical_output_on_different_thread_counts() {
-        let g = earth_preview();
+        let g = preset_graph("Moon", "preview");
         let run_with = |threads: usize| {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
@@ -406,7 +803,7 @@ mod tests {
 
     #[test]
     fn keyframes_change_over_time_and_the_cache_is_used() {
-        let g = earth_preview();
+        let g = preset_graph("Moon", "preview");
         let mut r = Runner::new();
         let out = r.run(&g, &NoProgress).unwrap();
         assert!(!out.loop_cached && !out.finish_cached);
@@ -430,7 +827,7 @@ mod tests {
 
     #[test]
     fn earth_gets_an_ocean_covering_most_of_the_surface() {
-        let g = earth_preview();
+        let g = preset_graph("Earth", "preview");
         let mut r = Runner::new();
         let out = r.run(&g, &NoProgress).unwrap();
         assert!(out.finish.sea_level.is_finite());
@@ -439,5 +836,99 @@ mod tests {
             "liquid fraction {}",
             out.finish.ocean_fraction
         );
+    }
+
+    #[test]
+    fn the_moon_is_heavily_cratered_and_earth_is_not() {
+        let mut r = Runner::new();
+        let moon = r
+            .run(&preset_graph("Moon", "preview"), &NoProgress)
+            .unwrap();
+        let earth = r
+            .run(&preset_graph("Earth", "preview"), &NoProgress)
+            .unwrap();
+        assert!(
+            moon.loop_output.craters.len() > 100,
+            "loop craters {}",
+            moon.loop_output.craters.len()
+        );
+        assert!(
+            moon.finish.replayed_count > 5_000,
+            "replayed {}",
+            moon.finish.replayed_count
+        );
+        // Earth retains craters for only about 100 Myr, so it has far fewer per area.
+        let moon_area = 4.0 * std::f64::consts::PI * 1.7374e6f64.powi(2);
+        let earth_area = 4.0 * std::f64::consts::PI * 6.371e6f64.powi(2);
+        let moon_density = moon.finish.replayed_count as f64 / moon_area;
+        let earth_density = earth.finish.replayed_count as f64 / earth_area;
+        assert!(
+            earth_density < 0.05 * moon_density,
+            "earth {earth_density:e} moon {moon_density:e}"
+        );
+        // Rays exist only on young craters, so only a small fraction of the Moon is rayed.
+        let rayed = moon
+            .finish
+            .rays
+            .as_slice()
+            .iter()
+            .filter(|v| **v > 0.05)
+            .count() as f64
+            / moon.finish.rays.len() as f64;
+        assert!(rayed > 0.001 && rayed < 0.25, "rayed fraction {rayed}");
+        // Mature highlands are dark; fresh ejecta is brighter.
+        let (lo, hi) = {
+            let a = moon.finish.albedo.as_slice();
+            a.iter()
+                .fold((1.0f32, 0.0f32), |(lo, hi), c| (lo.min(c[1]), hi.max(c[1])))
+        };
+        assert!(lo < 0.2 && hi > 0.25, "albedo range {lo} to {hi}");
+    }
+
+    #[test]
+    fn moon_height_spectrum_has_a_terrain_like_slope() {
+        let mut r = Runner::new();
+        let moon = r
+            .run(&preset_graph("Moon", "preview"), &NoProgress)
+            .unwrap();
+        let width = 1024usize;
+        let row = crate::grid::projection::to_equirectangular(
+            &moon.finish.grid,
+            moon.finish.height.as_slice(),
+            width,
+            width / 2,
+        );
+        let equator: Vec<f64> = row[(width / 4) * width..(width / 4 + 1) * width]
+            .iter()
+            .map(|v| *v as f64)
+            .collect();
+        let slope = spectral_slope(&equator, 4, 128);
+        assert!(slope < -1.3 && slope > -3.8, "spectral slope {slope}");
+    }
+
+    /// Log-log slope of the periodogram of a periodic row between two wavenumbers.
+    fn spectral_slope(row: &[f64], k_lo: usize, k_hi: usize) -> f64 {
+        let n = row.len();
+        let mean = row.iter().sum::<f64>() / n as f64;
+        let mut xs = Vec::new();
+        let mut ys = Vec::new();
+        let mut k = k_lo;
+        while k <= k_hi {
+            let (mut re, mut im) = (0.0, 0.0);
+            for (i, v) in row.iter().enumerate() {
+                let ang = 2.0 * std::f64::consts::PI * k as f64 * i as f64 / n as f64;
+                re += (v - mean) * ang.cos();
+                im -= (v - mean) * ang.sin();
+            }
+            let power = (re * re + im * im).max(1e-30);
+            xs.push((k as f64).ln());
+            ys.push(power.ln());
+            k = (k as f64 * 1.25).ceil() as usize;
+        }
+        let mx = xs.iter().sum::<f64>() / xs.len() as f64;
+        let my = ys.iter().sum::<f64>() / ys.len() as f64;
+        let num: f64 = xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+        let den: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum();
+        num / den
     }
 }

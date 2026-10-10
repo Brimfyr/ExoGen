@@ -1,6 +1,6 @@
 version = "0.0.1"
 name = "Ganymede"
-description = "Reference body. Largest moon; dark cratered and bright grooved terrains."
+description = "Reference body. Largest moon; dark cratered terrain over clean ice that fresh impacts expose. Bright grooved terrain is Phase 4."
 
 [values]
 "orbit.primary" = "planet"
@@ -15,3 +15,5 @@ description = "Reference body. Largest moon; dark cratered and bright grooved te
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
 "atmosphere.bond_albedo" = 0.43
+"materials.regolith_mix" = { water_ice_dirty = 0.7, water_ice = 0.3 }
+"seed.master" = 22.0

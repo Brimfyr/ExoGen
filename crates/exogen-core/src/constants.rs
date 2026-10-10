@@ -353,6 +353,97 @@ pub const GRAVITY_MOON: f64 = 1.62;
 pub const TRANSITION_ICE_FACTOR: f64 = 0.15;
 pub const PEAK_RING_MULTIPLE: f64 = 8.5;
 pub const MULTIRING_MULTIPLE: f64 = 20.0;
+
+// ---------------------------------------------------------------- cratering (population)
+
+/// Neukum lunar production function (Neukum, Ivanov and Hartmann 2001): log10 N(>= D) per
+/// km² for a 1 Gyr surface as a polynomial in log10 D (km), valid 0.01 to 300 km.
+pub const NPF_LUNAR: [f64; 12] = [
+    -3.0876, -3.557528, 0.781027, 1.021521, -0.156012, -0.444058, 0.019977, 0.086850, -0.005874,
+    -0.006809, 8.25e-4, 5.54e-5,
+];
+/// Ivanov 2001 Mars production function and the Hartmann and Neukum 2001 Mars chronology.
+/// Provisional until the Mars stage in Phase 5 checks them against the source.
+pub const NPF_MARS: [f64; 12] = [
+    -3.384, -3.197, 1.257, 0.7915, -0.4861, -0.3630, 0.1016, 6.756e-2, -1.181e-2, -4.753e-3,
+    6.233e-4, 5.805e-5,
+];
+pub const MARS_CHRONOLOGY: (f64, f64, f64) = (2.68e-14, 6.93, 4.13e-4);
+/// Diameter range of the production polynomials, km; continued with the edge slope outside.
+pub const NPF_RANGE_KM: (f64, f64) = (0.01, 300.0);
+/// Start of the crater record, Gyr before present. The chronology's exponential term is
+/// not calibrated earlier and crusts were still forming; nothing formed before this is
+/// counted. A Moon-like body then forms about 43 basins above 300 km and 5 above 1000 km,
+/// which matches the Moon.
+pub const CHRONOLOGY_CLIP_GYR: f64 = 4.2;
+/// Geometric saturation N(>= D) = 1.54 D^-2 per km² (Hartmann 1984) and the fraction of it
+/// at which crater populations reach equilibrium (below 5%).
+pub const GEOMETRIC_SATURATION: f64 = 1.54;
+pub const EMPIRICAL_SATURATION_FRACTION: f64 = 0.05;
+/// Pike 1977 lunar morphometry, (coefficient, exponent) in km: d = a D^b.
+pub const PIKE_SIMPLE_DEPTH: (f64, f64) = (0.196, 1.010);
+pub const PIKE_SIMPLE_RIM: (f64, f64) = (0.036, 1.014);
+pub const PIKE_COMPLEX_DEPTH: (f64, f64) = (1.044, 0.301);
+pub const PIKE_COMPLEX_RIM: (f64, f64) = (0.236, 0.399);
+/// Central peak height; Pike's 0.032 D^0.9 over-predicts Copernicus, so the coefficient is
+/// fitted to it. Provisional.
+pub const CENTRAL_PEAK_HEIGHT: (f64, f64) = (0.02, 0.9);
+/// Flat floor diameter of complex craters, km (Pike 1977 form).
+pub const FLOOR_DIAMETER: (f64, f64) = (0.19, 1.25);
+/// Caps for the largest basins, metres at lunar gravity; scaled as (g_moon / g)^0.25.
+pub const MAX_BASIN_DEPTH_LUNAR: f64 = 9_000.0;
+pub const MAX_RIM_HEIGHT_LUNAR: f64 = 3_500.0;
+/// Ejecta extent in crater radii and the radial thickness exponent (McGetchin et al. 1973
+/// give -3 for the thickness decay beyond the rim).
+pub const EJECTA_RADIUS_MULTIPLE: f64 = 3.0;
+pub const EJECTA_EXPONENT: f64 = -3.0;
+pub const BASIN_EJECTA_RADIUS_MULTIPLE: f64 = 4.0;
+pub const BASIN_EJECTA_EXPONENT: f64 = -2.5;
+/// Extent of the continuous ejecta that resets the surface age, in radii.
+pub const CONTINUOUS_EJECTA_MULTIPLE: f64 = 2.0;
+/// Rays: length range in radii, count range, and the smallest crater (in finishing cells)
+/// that gets rays.
+pub const RAY_LENGTH_MULTIPLE: (f64, f64) = (6.0, 15.0);
+pub const RAYS_PER_CRATER: (u32, u32) = (8, 24);
+pub const RAY_MIN_CELLS: f64 = 6.0;
+/// Rays of craters larger than this reference (Tycho, 85 km) are shortened in radii by the
+/// square root of the diameter ratio, since ejecta speed grows slowly with crater size.
+pub const RAY_REFERENCE_DIAMETER: f64 = 85_000.0;
+/// Linear ray width range as a fraction of the crater radius.
+pub const RAY_WIDTH_FRACTION: (f64, f64) = (0.10, 0.30);
+/// Secondaries: count per 100 km of primary diameter at a secondary fraction of 0.2, size
+/// range as a fraction of the primary, distance range in primary radii, and the depth
+/// factor relative to a primary of the same size.
+pub const SECONDARIES_PER_100KM: f64 = 400.0;
+pub const SECONDARY_SIZE_FRACTION: (f64, f64) = (0.005, 0.04);
+pub const SECONDARY_DISTANCE_MULTIPLE: (f64, f64) = (2.5, 8.0);
+pub const SECONDARY_DEPTH_FACTOR: f64 = 0.5;
+/// Split between simulated and replayed craters, in loop cells; the smallest replayed
+/// crater in finishing cells; and the size bins per octave of the replay.
+pub const LOOP_THRESHOLD_CELLS: f64 = 8.0;
+pub const FINISHING_MIN_CELLS: f64 = 2.0;
+pub const BINS_PER_OCTAVE: u32 = 4;
+/// Largest basin radius as a fraction of the body radius (South Pole–Aitken is 0.72).
+pub const MAX_CRATER_RADIUS_FRACTION: f64 = 0.75;
+/// Crater retention ages by regime, Gyr, until the erosion stages exist. Provisional.
+pub const RETENTION_MOBILE_LID_GYR: f64 = 0.1;
+pub const RETENTION_EPISODIC_GYR: f64 = 0.5;
+pub const RETENTION_THIN_ATMOSPHERE_GYR: f64 = 3.5;
+pub const RETENTION_ICE_OCEAN_GYR: f64 = 0.1;
+/// Tidal flux above which an ice shell over an ocean is treated as actively resurfacing
+/// (Europa 0.075 W/m², Enceladus 0.02) rather than ancient (Callisto, Ganymede).
+pub const ICE_RESURFACING_TIDAL_FLUX: f64 = 0.01;
+/// Burial depth that erases the replayed craters, metres, against the volcanic
+/// resurfacing rate, applied only above the Io-regime tidal flux where volcanism
+/// resurfaces the whole body.
+pub const RETENTION_BURIAL_DEPTH_M: f64 = 10.0;
+pub const IO_REGIME_TIDAL_FLUX: f64 = 0.5;
+/// Space weathering timescale at 1 AU, Gyr, and the pressure above which it is off.
+pub const SPACE_WEATHERING_GYR_1AU: f64 = 1.0;
+pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;
+/// Cap on the optical maturation timescale: far from the Sun, radiolysis, sputtering and
+/// lag accumulation still darken old surfaces relative to fresh ejecta within a few Gyr.
+pub const SPACE_WEATHERING_MAX_GYR: f64 = 4.0;
 /// Lunar topographic diffusivity, m²/Myr (Fassett and Thomson 2014), and the atmosphere
 /// multiplier above 1 kPa. Provisional, Phase 2.
 pub const DIFFUSIVITY_LUNAR: f64 = 5.5;
@@ -361,6 +452,9 @@ pub const DIFFUSIVITY_ATMOSPHERE_PRESSURE: f64 = 1.0e3;
 /// Ray fading timescale at 1 AU, Gyr, airless; and under an atmosphere. Provisional, Phase 2.
 pub const RAY_FADING_GYR_1AU: f64 = 1.0;
 pub const RAY_FADING_GYR_ATMOSPHERE: f64 = 0.05;
+/// Cap on the ray lifetime: far from the Sun, sputtering and regolith gardening still erase
+/// rays within about this time (rayed craters are rare on the Galilean satellites).
+pub const RAY_FADING_MAX_GYR: f64 = 1.5;
 /// Impactor densities by region, kg/m³.
 pub const IMPACTOR_DENSITY_INNER: f64 = 2_700.0;
 pub const IMPACTOR_DENSITY_OUTER: f64 = 600.0;

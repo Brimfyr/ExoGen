@@ -1,6 +1,6 @@
 version = "0.0.1"
 name = "Ceres"
-description = "Reference body. Largest asteroid; ice-rich interior with bright salt deposits."
+description = "Reference body. Largest asteroid; ice-rich interior under a dark carbonaceous surface. Bright salt deposits are Phase 4."
 
 [values]
 "orbit.semi_major_axis" = 4.1402e11
@@ -12,3 +12,6 @@ description = "Reference body. Largest asteroid; ice-rich interior with bright s
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
 "atmosphere.bond_albedo" = 0.09
+"materials.bedrock" = "water_ice_dirty"
+"materials.regolith_mix" = { carbonaceous = 0.8, water_ice_dirty = 0.2 }
+"seed.master" = 24.0

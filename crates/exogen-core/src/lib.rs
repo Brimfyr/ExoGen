@@ -8,8 +8,10 @@
 //! repository for the design.
 
 pub mod constants;
+pub mod crater;
 pub mod export;
 pub mod fields;
+pub mod geom;
 pub mod grid;
 pub mod noise;
 pub mod params;
@@ -18,6 +20,7 @@ pub mod project;
 pub mod rng;
 pub mod spharm;
 pub mod stages;
+pub mod units;
 pub mod validate;
 
 /// Version of the engine, written into project files and sidecars.

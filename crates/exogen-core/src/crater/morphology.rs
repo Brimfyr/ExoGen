@@ -1,0 +1,340 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Brimfyr
+
+//! Crater classes, dimensions and radial profiles (PLAN.md 4.5).
+//!
+//! Dimensions follow Pike's lunar fits in kilometres, converted to metres, with the
+//! transition diameters supplied by the parameter graph so that gravity and target scaling
+//! enter in one place. Profiles are radial height functions relative to the pre-impact
+//! reference surface, continuous through the rim into the ejecta.
+
+use crate::constants::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CraterClass {
+    Simple,
+    Complex,
+    PeakRing,
+    MultiRing,
+}
+
+impl CraterClass {
+    pub fn name(self) -> &'static str {
+        match self {
+            CraterClass::Simple => "simple",
+            CraterClass::Complex => "complex",
+            CraterClass::PeakRing => "peak_ring",
+            CraterClass::MultiRing => "multi_ring",
+        }
+    }
+}
+
+/// Body-dependent scaling inputs, all in SI.
+#[derive(Clone, Copy, Debug)]
+pub struct Scaling {
+    pub simple_complex: f64,
+    pub peak_ring: f64,
+    pub multi_ring: f64,
+    pub gravity: f64,
+}
+
+impl Scaling {
+    pub fn classify(&self, diameter: f64) -> CraterClass {
+        if diameter < self.simple_complex {
+            CraterClass::Simple
+        } else if diameter < self.peak_ring {
+            CraterClass::Complex
+        } else if diameter < self.multi_ring {
+            CraterClass::PeakRing
+        } else {
+            CraterClass::MultiRing
+        }
+    }
+}
+
+/// Crater dimensions in metres.
+#[derive(Clone, Copy, Debug)]
+pub struct Dimensions {
+    pub class: CraterClass,
+    pub radius: f64,
+    pub depth: f64,
+    pub rim_height: f64,
+    pub floor_radius: f64,
+    pub peak_height: f64,
+    pub peak_radius: f64,
+    pub ring_radius: f64,
+    pub ring_height: f64,
+    pub ejecta_radius: f64,
+    pub ejecta_exponent: f64,
+}
+
+fn pow_law(law: (f64, f64), d_km: f64) -> f64 {
+    law.0 * d_km.powf(law.1)
+}
+
+pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
+    let class = s.classify(diameter);
+    let d_km = diameter / 1e3;
+    let radius = 0.5 * diameter;
+    let g_scale = (GRAVITY_MOON / s.gravity.max(0.05)).powf(0.25);
+    match class {
+        CraterClass::Simple => Dimensions {
+            class,
+            radius,
+            depth: pow_law(PIKE_SIMPLE_DEPTH, d_km) * 1e3,
+            rim_height: pow_law(PIKE_SIMPLE_RIM, d_km) * 1e3,
+            floor_radius: 0.0,
+            peak_height: 0.0,
+            peak_radius: 0.0,
+            ring_radius: 0.0,
+            ring_height: 0.0,
+            ejecta_radius: EJECTA_RADIUS_MULTIPLE * radius,
+            ejecta_exponent: EJECTA_EXPONENT,
+        },
+        _ => {
+            let depth =
+                (pow_law(PIKE_COMPLEX_DEPTH, d_km) * 1e3).min(MAX_BASIN_DEPTH_LUNAR * g_scale);
+            let rim_height =
+                (pow_law(PIKE_COMPLEX_RIM, d_km) * 1e3).min(MAX_RIM_HEIGHT_LUNAR * g_scale);
+            let floor_radius = (0.5 * pow_law(FLOOR_DIAMETER, d_km) * 1e3)
+                .min(0.75 * radius)
+                .max(0.3 * radius);
+            let (peak_height, peak_radius) = if class == CraterClass::Complex {
+                (pow_law(CENTRAL_PEAK_HEIGHT, d_km) * 1e3, 0.15 * radius)
+            } else {
+                (0.0, 0.0)
+            };
+            let (ring_radius, ring_height) = match class {
+                CraterClass::PeakRing => (0.5 * radius, 0.3 * depth),
+                CraterClass::MultiRing => (0.5 * radius, 0.25 * depth),
+                _ => (0.0, 0.0),
+            };
+            let (ejecta_radius, ejecta_exponent) = if class == CraterClass::MultiRing {
+                (BASIN_EJECTA_RADIUS_MULTIPLE * radius, BASIN_EJECTA_EXPONENT)
+            } else {
+                (EJECTA_RADIUS_MULTIPLE * radius, EJECTA_EXPONENT)
+            };
+            Dimensions {
+                class,
+                radius,
+                depth,
+                rim_height,
+                floor_radius,
+                peak_height,
+                peak_radius,
+                ring_radius,
+                ring_height,
+                ejecta_radius,
+                ejecta_exponent,
+            }
+        }
+    }
+}
+
+fn smoothstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Fresh radial profile height at distance `r` from the centre, relative to the reference
+/// surface. Inside the rim the value is the surface itself; outside it is ejecta thickness.
+pub fn fresh_height(dim: &Dimensions, r: f64) -> f64 {
+    let rr = dim.radius;
+    if r >= rr {
+        if r >= dim.ejecta_radius {
+            return 0.0;
+        }
+        let mut h = dim.rim_height * (r / rr).powf(dim.ejecta_exponent);
+        if dim.class == CraterClass::MultiRing {
+            // Outer ring at sqrt(2) R, subdued.
+            let ring_r = std::f64::consts::SQRT_2 * rr;
+            let sigma = 0.06 * rr;
+            h += 0.3 * dim.rim_height * (-((r - ring_r) / sigma).powi(2)).exp();
+        }
+        return h;
+    }
+    match dim.class {
+        CraterClass::Simple => {
+            let x = r / rr;
+            -dim.depth + (dim.depth + dim.rim_height) * x * x
+        }
+        _ => {
+            let mut h = if r <= dim.floor_radius {
+                -dim.depth
+            } else {
+                let s = smoothstep((r - dim.floor_radius) / (rr - dim.floor_radius).max(1.0));
+                -dim.depth + (dim.depth + dim.rim_height) * s
+            };
+            if dim.peak_height > 0.0 {
+                let sigma = 0.5 * dim.peak_radius;
+                h += dim.peak_height * (-(r / sigma).powi(2)).exp();
+            }
+            if dim.ring_height > 0.0 {
+                let sigma = 0.07 * rr;
+                h += dim.ring_height * (-((r - dim.ring_radius) / sigma).powi(2)).exp();
+            }
+            h
+        }
+    }
+}
+
+/// A radial profile sampled into a table and optionally diffused.
+#[derive(Clone, Debug)]
+pub struct ProfileTable {
+    pub dim: Dimensions,
+    /// Height at `k * step` for k in 0..n, covering 0 to the ejecta radius.
+    pub values: Vec<f64>,
+    pub step: f64,
+}
+
+impl ProfileTable {
+    pub const SAMPLES: usize = 128;
+
+    /// Build the fresh profile and apply topographic diffusion for an elapsed `kappa_t`
+    /// (m²) by a radial Gaussian blur in the table, which is a close approximation for the
+    /// small blur widths that matter at map scale.
+    pub fn new(dim: Dimensions, kappa_t: f64) -> Self {
+        let n = Self::SAMPLES;
+        let step = dim.ejecta_radius / (n - 1) as f64;
+        let fresh: Vec<f64> = (0..n)
+            .map(|k| fresh_height(&dim, k as f64 * step))
+            .collect();
+        // Two-dimensional diffusion for kappa t has sigma² = 2 kappa t per axis; a blur along
+        // the radial table alone needs twice that variance to lower a bowl's centre by the
+        // same amount, which is the quantity that matters for the degradation state.
+        let sigma = (4.0 * kappa_t.max(0.0)).sqrt();
+        let values = if sigma < 0.25 * step {
+            fresh
+        } else {
+            let w = ((3.0 * sigma / step).ceil() as i64).min(n as i64);
+            (0..n as i64)
+                .map(|k| {
+                    let mut num = 0.0;
+                    let mut den = 0.0;
+                    for j in -w..=w {
+                        let idx = (k + j).abs().min(2 * (n as i64 - 1) - (k + j).abs());
+                        let idx = idx.clamp(0, n as i64 - 1) as usize;
+                        let weight = (-(j as f64 * step / sigma).powi(2) * 0.5).exp();
+                        num += weight * fresh[idx];
+                        den += weight;
+                    }
+                    num / den
+                })
+                .collect()
+        };
+        Self { dim, values, step }
+    }
+
+    /// Height at radius `r` (metres) by linear interpolation; zero beyond the ejecta.
+    #[inline]
+    pub fn height(&self, r: f64) -> f64 {
+        if r >= self.dim.ejecta_radius || r < 0.0 {
+            return 0.0;
+        }
+        let x = r / self.step;
+        let k = x.floor() as usize;
+        if k + 1 >= self.values.len() {
+            return self.values[self.values.len() - 1];
+        }
+        let f = x - k as f64;
+        self.values[k] * (1.0 - f) + self.values[k + 1] * f
+    }
+
+    /// Rim-to-floor depth of the (possibly degraded) profile.
+    pub fn measured_depth(&self) -> f64 {
+        let lo = self.values.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hi = self
+            .values
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
+        hi - lo
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lunar() -> Scaling {
+        Scaling {
+            simple_complex: 16_500.0,
+            peak_ring: 140_000.0,
+            multi_ring: 330_000.0,
+            gravity: 1.62,
+        }
+    }
+
+    #[test]
+    fn classes_and_depths_follow_pike() {
+        let s = lunar();
+        let simple = dimensions(5_000.0, &s);
+        assert_eq!(simple.class, CraterClass::Simple);
+        assert!((simple.depth / 5_000.0 - 0.2).abs() < 0.02);
+        let copernicus = dimensions(93_000.0, &s);
+        assert_eq!(copernicus.class, CraterClass::Complex);
+        assert!(
+            (copernicus.depth - 4_090.0).abs() < 150.0,
+            "{}",
+            copernicus.depth
+        );
+        assert!((copernicus.rim_height - 1_440.0).abs() < 100.0);
+        assert!(copernicus.peak_height > 900.0 && copernicus.peak_height < 1_500.0);
+        let schrodinger = dimensions(320_000.0, &s);
+        assert_eq!(schrodinger.class, CraterClass::PeakRing);
+        let orientale = dimensions(930_000.0, &s);
+        assert_eq!(orientale.class, CraterClass::MultiRing);
+        assert!(orientale.depth <= MAX_BASIN_DEPTH_LUNAR + 1.0);
+    }
+
+    #[test]
+    fn profile_is_continuous_at_the_rim_and_measures_its_own_depth() {
+        let s = lunar();
+        for d in [3_000.0, 30_000.0, 200_000.0, 600_000.0] {
+            let dim = dimensions(d, &s);
+            let inside = fresh_height(&dim, dim.radius * 0.999);
+            let outside = fresh_height(&dim, dim.radius * 1.001);
+            assert!(
+                (inside - outside).abs() < 0.02 * dim.rim_height + 1.0,
+                "D={d}: {inside} vs {outside}"
+            );
+            let table = ProfileTable::new(dim, 0.0);
+            let measured = table.measured_depth();
+            let expected = dim.depth + dim.rim_height;
+            assert!(
+                (measured - expected).abs() < 0.03 * expected + 1.0,
+                "D={d}: {measured} vs {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn diffusion_shallows_a_small_crater() {
+        let s = lunar();
+        let dim = dimensions(1_000.0, &s);
+        let fresh = ProfileTable::new(dim, 0.0).measured_depth();
+        let old = ProfileTable::new(dim, 20_000.0).measured_depth();
+        assert!(old < 0.7 * fresh, "fresh {fresh} old {old}");
+    }
+
+    #[test]
+    fn gravity_moves_the_transition() {
+        let big = Scaling {
+            simple_complex: 2_900.0,
+            peak_ring: 24_650.0,
+            multi_ring: 58_000.0,
+            gravity: 9.2,
+        };
+        let small = Scaling {
+            simple_complex: 19_400.0,
+            peak_ring: 164_900.0,
+            multi_ring: 388_000.0,
+            gravity: 1.38,
+        };
+        let d = 12_000.0;
+        assert_eq!(dimensions(d, &small).class, CraterClass::Simple);
+        assert_eq!(dimensions(d, &big).class, CraterClass::Complex);
+        assert!(dimensions(d, &big).peak_height > 0.0);
+        assert_eq!(dimensions(d, &small).peak_height, 0.0);
+    }
+}

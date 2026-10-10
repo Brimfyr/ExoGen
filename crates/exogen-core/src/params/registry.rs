@@ -200,6 +200,21 @@ const NORMAL_CONVENTION: &[&str] = &["opengl", "directx"];
 
 const KM3_PER_YEAR: f64 = 1.0e9 / YEAR;
 
+const BEDROCK: &[&str] = &[
+    "basalt",
+    "anorthosite",
+    "felsic",
+    "water_ice",
+    "water_ice_dirty",
+    "ammonia_water_ice",
+    "rock_ice_mixture",
+    "carbonaceous",
+    "sulfur_coated",
+    "mercurian_regolith",
+];
+const END_MEMBER_IDS: &[&str] = BEDROCK;
+const COLOUR_SPACE: &[&str] = &["linear_srgb", "acescg"];
+
 static NODES: &[NodeDef] = &[
     // ------------------------------------------------------------------ star
     root(
@@ -1897,6 +1912,134 @@ static NODES: &[NodeDef] = &[
         "multiplier.haze_optical_depth",
         "Haze optical depth",
         "Scales the aerosol optical depth written to the sidecar.",
+    ),
+    // ------------------------------------------------------------------ cratering (population)
+    derived(
+        "cratering.loop_threshold",
+        "cratering",
+        "Loop threshold diameter",
+        "km",
+        1e3,
+        f(0.0, 1e7),
+        &["body.radius", "detail.loop_resolution"],
+        d::cratering_loop_threshold,
+        "Craters above eight loop cells are emplaced inside the coarse loop; smaller ones are replayed at the finishing resolution.",
+        "ADR 0002",
+    ),
+    derived(
+        "cratering.min_diameter",
+        "cratering",
+        "Smallest replayed crater",
+        "km",
+        1e3,
+        f(0.0, 1e7),
+        &[
+            "body.radius",
+            "detail.finishing_resolution",
+            "atmosphere.crater_cutoff_diameter",
+        ],
+        d::cratering_min_diameter,
+        "Larger of the atmospheric cut-off and two finishing cells.",
+        "",
+    ),
+    derived(
+        "cratering.retention_age",
+        "cratering",
+        "Crater retention age",
+        "Gyr",
+        1.0,
+        f(0.0, 13.0),
+        &[
+            "body.age",
+            "interior.tectonic_regime",
+            "atmosphere.surface_pressure",
+            "interior.magma_production_rate",
+            "body.radius",
+            "interior.tidal_flux",
+        ],
+        d::cratering_retention_age,
+        "Longest surface age used for crater counting until the erosion stages exist: the body age when airless, 3.5 Gyr under a thin atmosphere, 0.5 Gyr on an episodic lid, 0.1 Gyr on a mobile lid or a young ice shell, and the burial time at the volcanic resurfacing rate.",
+        "provisional, Phase 5",
+    ),
+    expert_root(
+        "cratering.empirical_saturation",
+        "cratering",
+        "Saturation fraction",
+        "",
+        f(0.005, 0.2),
+        Default::F64(0.05),
+        "Equilibrium crater density as a fraction of geometric saturation (Hartmann 1984: below 5%).",
+    ),
+    expert_root(
+        "cratering.secondary_fraction",
+        "cratering",
+        "Secondary fraction",
+        "",
+        f(0.0, 1.0),
+        Default::F64(0.2),
+        "Scales the number of secondary craters per primary.",
+    ),
+    expert_root(
+        "cratering.oblique_fraction",
+        "cratering",
+        "Oblique impact fraction",
+        "",
+        f(0.0, 0.5),
+        Default::F64(0.05),
+        "Fraction of craters elongated by a low impact angle.",
+    ),
+    // ------------------------------------------------------------------ surface processes
+    derived(
+        "surface.space_weathering_timescale",
+        "surface",
+        "Space weathering timescale",
+        "Gyr",
+        1.0,
+        f(0.0, 1e7),
+        &["atmosphere.surface_pressure", "orbit.star_distance"],
+        d::surface_space_weathering_timescale,
+        "1 Gyr at 1 AU scaling with the distance squared; off under an atmosphere above 1 mbar.",
+        "provisional, Phase 2",
+    ),
+    // ------------------------------------------------------------------ materials
+    derived(
+        "materials.bedrock",
+        "materials",
+        "Bedrock",
+        "",
+        1.0,
+        ValueType::Enum(BEDROCK),
+        &[
+            "body.composition_class",
+            "interior.tectonic_regime",
+            "atmosphere.surface_pressure",
+            "interior.tidal_flux",
+        ],
+        d::materials_bedrock,
+        "Default from composition class, regime, atmosphere and tidal state. Pin to choose.",
+        "",
+    ),
+    derived(
+        "materials.regolith_mix",
+        "materials",
+        "Regolith mix",
+        "fraction",
+        1.0,
+        ValueType::Map(END_MEMBER_IDS),
+        &["materials.bedrock"],
+        d::materials_regolith_mix,
+        "Baseline surface mixture of end-members before deposits. Pin to compose the surface by hand.",
+        "",
+    ),
+    root(
+        "materials.colour_space",
+        "materials",
+        "Colour space",
+        "",
+        1.0,
+        ValueType::Enum(COLOUR_SPACE),
+        Default::Str("linear_srgb"),
+        "Primaries of the exported albedo.",
     ),
 ];
 

@@ -126,6 +126,82 @@ pub fn reference_checks() -> Vec<Check> {
             24_000.0,
             "mean about 19 to 20 km/s",
         ),
+        range(
+            "Earth",
+            "cratering.retention_age",
+            0.05,
+            0.2,
+            "mobile lid keeps craters for about 100 Myr; Phase 2 rule",
+        ),
+        text(
+            "Earth",
+            "materials.bedrock",
+            "felsic",
+            "continental default; oceanic crust uses basalt by unit",
+        ),
+        range(
+            "Moon",
+            "cratering.retention_age",
+            4.0,
+            5.0,
+            "airless stagnant lid keeps craters for its whole age",
+        ),
+        text("Moon", "materials.bedrock", "anorthosite", ""),
+        range("Mercury", "cratering.retention_age", 4.0, 5.0, ""),
+        text("Mercury", "materials.bedrock", "mercurian_regolith", ""),
+        range(
+            "Venus",
+            "cratering.retention_age",
+            0.3,
+            0.7,
+            "global resurfacing 300 to 700 Myr ago",
+        ),
+        text("Venus", "materials.bedrock", "basalt", ""),
+        range(
+            "Mars",
+            "cratering.retention_age",
+            3.0,
+            4.0,
+            "thin atmosphere; highlands retain craters to about 3.5 Gyr",
+        ),
+        text("Mars", "materials.bedrock", "basalt", ""),
+        range(
+            "Io",
+            "cratering.retention_age",
+            0.0,
+            0.01,
+            "resurfaced faster than craters form",
+        ),
+        text("Io", "materials.bedrock", "sulfur_coated", ""),
+        range(
+            "Europa",
+            "cratering.retention_age",
+            0.05,
+            0.2,
+            "surface age 40 to 90 Myr",
+        ),
+        text("Europa", "materials.bedrock", "water_ice", ""),
+        range(
+            "Ganymede",
+            "cratering.retention_age",
+            4.0,
+            5.0,
+            "dark terrain is ancient; grooved terrain is Phase 4",
+        ),
+        range(
+            "Callisto",
+            "cratering.retention_age",
+            4.0,
+            5.0,
+            "the most heavily cratered surface known",
+        ),
+        range(
+            "Enceladus",
+            "cratering.retention_age",
+            0.05,
+            0.2,
+            "young terrain where tidal heating is focused",
+        ),
         // Mars
         range("Mars", "body.gravity", 3.64, 3.78, "3.71 m/s²"),
         range(
@@ -380,7 +456,14 @@ pub fn reference_checks() -> Vec<Check> {
 pub fn run_reference_checks() -> Vec<CheckResult> {
     let mut graphs: std::collections::BTreeMap<&'static str, ParamGraph> = Default::default();
     let mut out = Vec::new();
-    for check in reference_checks() {
+    let mut checks = reference_checks();
+    checks.sort_by_key(|c| {
+        presets::PRESET_NAMES
+            .iter()
+            .position(|n| *n == c.preset)
+            .unwrap_or(usize::MAX)
+    });
+    for check in checks {
         let g = graphs.entry(check.preset).or_insert_with(|| {
             let p = presets::preset(check.preset)
                 .unwrap_or_else(|| panic!("no preset {}", check.preset));

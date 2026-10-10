@@ -13,3 +13,4 @@ description = "Reference body. Nitrogen ice plains and dark tholin regions under
 "atmosphere.composition" = { N2 = 0.995, CH4 = 0.005 }
 "atmosphere.bond_albedo" = 0.5
 "volatiles.inventory" = { H2O = 413000.0, N2 = 30.0, CH4 = 5.0 }
+"seed.master" = 21.0

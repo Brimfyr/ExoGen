@@ -52,6 +52,22 @@ pub struct ParameterInfo {
 }
 
 #[derive(Serialize)]
+pub struct CraterInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub diameter_km: f64,
+    pub age_gyr: f64,
+    pub class: String,
+    pub from_loop: bool,
+}
+
+#[derive(Serialize)]
+pub struct UnitInfo {
+    pub id: u16,
+    pub name: String,
+}
+
+#[derive(Serialize)]
 pub struct Sidecar {
     pub exogen_version: String,
     pub project: String,
@@ -66,6 +82,10 @@ pub struct Sidecar {
     pub stage_outputs: BTreeMap<String, f64>,
     pub parameters: BTreeMap<String, ParameterInfo>,
     pub warnings: Vec<String>,
+    /// Craters emplaced in the loop and the larger replayed ones.
+    pub craters: Vec<CraterInfo>,
+    pub replayed_crater_count: usize,
+    pub unit_legend: Vec<UnitInfo>,
 }
 
 pub struct ExportSettings {
@@ -271,6 +291,29 @@ pub fn export(
             .warnings()
             .into_iter()
             .map(|w| format!("{:?}: {}", w.severity, w.text))
+            .collect(),
+        craters: out
+            .craters
+            .iter()
+            .map(|c| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(c.center);
+                CraterInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: c.diameter / 1e3,
+                    age_gyr: out.epoch_time_gyr - c.time_gyr,
+                    class: c.class.name().to_string(),
+                    from_loop: c.from_loop,
+                }
+            })
+            .collect(),
+        replayed_crater_count: out.replayed_count,
+        unit_legend: crate::units::legend()
+            .into_iter()
+            .map(|(id, name)| UnitInfo {
+                id,
+                name: name.to_string(),
+            })
             .collect(),
     };
     let path = settings.dir.join("sidecar.json");

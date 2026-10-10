@@ -13,3 +13,4 @@ description = "Reference body. 6 mbar CO2, 25 m global water layer as polar ice,
 "atmosphere.composition" = { CO2 = 0.9532, N2 = 0.027, Ar = 0.016 }
 "atmosphere.bond_albedo" = 0.25
 "volatiles.inventory" = { H2O = 25.0, CO2 = 8.0 }
+"seed.master" = 12.0

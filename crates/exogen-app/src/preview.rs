@@ -19,16 +19,20 @@ pub enum Channel {
     Liquid,
     Crust,
     Unit,
+    Maturity,
+    Rays,
 }
 
 impl Channel {
-    pub const ALL: [Channel; 6] = [
+    pub const ALL: [Channel; 8] = [
         Channel::Albedo,
         Channel::Height,
         Channel::SurfaceAge,
         Channel::Liquid,
         Channel::Crust,
         Channel::Unit,
+        Channel::Maturity,
+        Channel::Rays,
     ];
 
     pub fn label(self) -> &'static str {
@@ -39,6 +43,8 @@ impl Channel {
             Channel::Liquid => "liquid depth",
             Channel::Crust => "crust thickness",
             Channel::Unit => "unit id",
+            Channel::Maturity => "maturity",
+            Channel::Rays => "rays",
         }
     }
 }
@@ -164,6 +170,18 @@ pub fn build_equirect(out: &FinishOutput, channel: Channel, width: usize) -> Equ
             range = (lo, hi);
             for (k, &c) in eq.iter().enumerate() {
                 rgb[k] = ramp((c - lo) / (hi - lo).max(1.0), &GREY);
+            }
+        }
+        Channel::Maturity => {
+            let eq = to_equirectangular(&grid, out.maturity.as_slice(), width, height);
+            for (k, &m) in eq.iter().enumerate() {
+                rgb[k] = ramp(m, &GREY);
+            }
+        }
+        Channel::Rays => {
+            let eq = to_equirectangular(&grid, out.rays.as_slice(), width, height);
+            for (k, &v) in eq.iter().enumerate() {
+                rgb[k] = ramp(v, &AGE_RAMP);
             }
         }
         Channel::Unit => {

@@ -16,3 +16,4 @@ description = "Reference body. Innermost Galilean moon; eccentricity pumped by t
 "atmosphere.composition" = { SO2 = 1.0 }
 "atmosphere.bond_albedo" = 0.52
 "volatiles.inventory" = { SO2 = 1.0 }
+"seed.master" = 16.0

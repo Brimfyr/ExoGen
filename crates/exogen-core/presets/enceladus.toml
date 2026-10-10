@@ -15,3 +15,4 @@ description = "Reference body. Small ice moon with a south polar plume; about 16
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
 "atmosphere.bond_albedo" = 0.81
+"seed.master" = 19.0

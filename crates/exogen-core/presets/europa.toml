@@ -15,3 +15,4 @@ description = "Reference body. Ice shell over a water ocean; about 100 km of H2O
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
 "atmosphere.bond_albedo" = 0.67
+"seed.master" = 17.0

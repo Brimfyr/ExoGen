@@ -1317,7 +1317,7 @@ pub fn cratering_ray_fading_timescale(c: &Ctx) -> Value {
         RAY_FADING_GYR_ATMOSPHERE
     } else {
         let d = c.f64("orbit.star_distance") / AU;
-        RAY_FADING_GYR_1AU * d * d
+        (RAY_FADING_GYR_1AU * d * d).min(RAY_FADING_MAX_GYR)
     }
     .into()
 }
@@ -1373,6 +1373,108 @@ pub fn climate_lapse_rate(c: &Ctx) -> Value {
         1.0
     };
     (c.f64("body.gravity") / cp * moist).into()
+}
+
+// ------------------------------------------------------------------ cratering (population)
+
+/// Mean cell width of a cubesphere face size on this body, metres.
+fn cell_width(radius: f64, face: f64) -> f64 {
+    2.0 * PI * radius / (4.0 * face.max(1.0))
+}
+
+pub fn cratering_loop_threshold(c: &Ctx) -> Value {
+    (LOOP_THRESHOLD_CELLS * cell_width(c.f64("body.radius"), c.f64("detail.loop_resolution")))
+        .into()
+}
+
+pub fn cratering_min_diameter(c: &Ctx) -> Value {
+    let by_resolution = FINISHING_MIN_CELLS
+        * cell_width(c.f64("body.radius"), c.f64("detail.finishing_resolution"));
+    by_resolution
+        .max(c.f64("atmosphere.crater_cutoff_diameter"))
+        .into()
+}
+
+pub fn cratering_retention_age(c: &Ctx) -> Value {
+    let age = c.f64("body.age");
+    let regime = c.str("interior.tectonic_regime");
+    let p = c.f64("atmosphere.surface_pressure");
+    let mut retention = match regime {
+        "mobile_lid" => RETENTION_MOBILE_LID_GYR,
+        "episodic_lid" => RETENTION_EPISODIC_GYR,
+        "ice_shell_ocean" => {
+            if c.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX {
+                RETENTION_ICE_OCEAN_GYR
+            } else {
+                age
+            }
+        }
+        _ => {
+            if p > SPACE_WEATHERING_MAX_PRESSURE {
+                RETENTION_THIN_ATMOSPHERE_GYR
+            } else {
+                age
+            }
+        }
+    };
+    // Volcanic burial applies only where volcanism resurfaces the whole body, which the
+    // tidal flux threshold of the Io regime marks; elsewhere flows are local and the
+    // volcanism stage places them.
+    if c.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX {
+        let r = c.f64("body.radius");
+        let rate_m_per_gyr = c.f64("interior.magma_production_rate") / (4.0 * PI * r * r) * GYR;
+        if rate_m_per_gyr > 0.0 {
+            retention = retention.min(RETENTION_BURIAL_DEPTH_M / rate_m_per_gyr);
+        }
+    }
+    retention.clamp(1e-4, age).into()
+}
+
+pub fn surface_space_weathering_timescale(c: &Ctx) -> Value {
+    if c.f64("atmosphere.surface_pressure") > SPACE_WEATHERING_MAX_PRESSURE {
+        1.0e6
+    } else {
+        let d = c.f64("orbit.star_distance") / AU;
+        (SPACE_WEATHERING_GYR_1AU * d * d).min(SPACE_WEATHERING_MAX_GYR)
+    }
+    .into()
+}
+
+// ------------------------------------------------------------------ materials
+
+pub fn materials_bedrock(c: &Ctx) -> Value {
+    let class = c.str("body.composition_class");
+    let regime = c.str("interior.tectonic_regime");
+    let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
+    let bedrock = match class {
+        "iron_rich" => "mercurian_regolith",
+        "rock" => {
+            if c.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX {
+                "sulfur_coated"
+            } else if regime == "mobile_lid" {
+                "felsic"
+            } else if airless && regime == "stagnant_lid" {
+                "anorthosite"
+            } else {
+                "basalt"
+            }
+        }
+        "rock_ice" => {
+            if regime == "ice_shell_ocean" && airless {
+                "water_ice"
+            } else {
+                "water_ice_dirty"
+            }
+        }
+        _ => "water_ice",
+    };
+    bedrock.into()
+}
+
+pub fn materials_regolith_mix(c: &Ctx) -> Value {
+    let mut m = BTreeMap::new();
+    m.insert(c.str("materials.bedrock").to_string(), 1.0);
+    Value::Map(m)
 }
 
 // ------------------------------------------------------------------ detail, output, seeds
