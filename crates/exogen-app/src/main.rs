@@ -491,8 +491,11 @@ impl App {
                 ui.label("Sun az");
                 if ui
                     .add(
-                        egui::Slider::new(&mut self.globe.sun_azimuth, -3.14..=3.14)
-                            .show_value(false),
+                        egui::Slider::new(
+                            &mut self.globe.sun_azimuth,
+                            -std::f32::consts::PI..=std::f32::consts::PI,
+                        )
+                        .show_value(false),
                     )
                     .changed()
                 {
@@ -509,18 +512,19 @@ impl App {
                     self.globe_dirty = true;
                 }
             }
-            if let Some(img) = &self.image {
-                if self.channel != Channel::Albedo && self.channel != Channel::Unit {
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "range {} to {}",
-                            params_panel::format_num(img.range.0 as f64),
-                            params_panel::format_num(img.range.1 as f64)
-                        ))
-                        .weak(),
-                    );
-                }
+            if let Some(img) = &self.image
+                && self.channel != Channel::Albedo
+                && self.channel != Channel::Unit
+            {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "range {} to {}",
+                        params_panel::format_num(img.range.0 as f64),
+                        params_panel::format_num(img.range.1 as f64)
+                    ))
+                    .weak(),
+                );
             }
         });
 
