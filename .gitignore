@@ -1,0 +1,20 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Generated maps, caches and logs
+/out/
+/exports/
+/cache/
+*.log
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local tool settings
+.claude/settings.local.json
