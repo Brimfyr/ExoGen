@@ -1,0 +1,16 @@
+[package]
+name = "exogen-app"
+description = "ExoGen desktop application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "exogen-app"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36.2", features = ["wgpu"] }
+exogen-core.workspace = true

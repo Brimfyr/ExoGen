@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/exogen-core", "crates/exogen-cli", "crates/exogen-app"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Brimfyr/ExoGen"
+authors = ["Brimfyr"]
+
+[workspace.dependencies]
+exogen-core = { path = "crates/exogen-core" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = 1
