@@ -10,7 +10,7 @@ use crate::constants::*;
 use crate::crater::production::{expected_count_above, poisson};
 use crate::crater::{
     CraterRecord, FluxHistory, ProductionFunction, ProfileTable, Scaling, StampParams, Stamper,
-    dimensions, stamp,
+    dimensions, ellipticity_for, impact_angle, stamp,
 };
 use crate::fields::LayerSet;
 use crate::grid::CubeSphere;
@@ -18,7 +18,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::{UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_EJECTA};
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -157,20 +157,15 @@ impl ImpactProcess {
                     t_end,
                     self.rng.uniform(step_index, draw + 3),
                 );
-                let (azimuth, ellipticity) =
-                    if self.rng.uniform(step_index, draw + 4) < inp.oblique_fraction {
-                        (
-                            self.rng.uniform(step_index, draw + 5) * 2.0 * std::f64::consts::PI,
-                            1.15 + 0.35 * self.rng.uniform(step_index, draw + 6),
-                        )
-                    } else {
-                        (0.0, 1.0)
-                    };
+                let angle = impact_angle(self.rng.uniform(step_index, draw + 4));
+                let azimuth = self.rng.uniform(step_index, draw + 5) * 2.0 * std::f64::consts::PI;
+                let ellipticity = ellipticity_for(angle, inp.oblique_fraction);
                 CraterRecord {
                     center,
                     diameter,
                     time_gyr,
                     azimuth,
+                    angle,
                     ellipticity,
                     class: inp.scaling.classify(diameter),
                     from_loop: true,
@@ -191,6 +186,7 @@ impl ImpactProcess {
                 },
                 unit_ejecta: UNIT_EJECTA,
                 azimuth: rec.azimuth,
+                angle: rec.angle,
                 ellipticity: rec.ellipticity,
                 amplitude: 1.0,
                 replace_floor: true,

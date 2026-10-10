@@ -7,11 +7,15 @@ pub mod morphology;
 pub mod production;
 pub mod stamp;
 
-pub use morphology::{CraterClass, Dimensions, ProfileTable, Scaling, dimensions};
+pub use morphology::{
+    CraterClass, Dimensions, ProfileTable, Scaling, dimensions, ellipticity_for, impact_angle,
+};
 pub use production::{
     CraterSample, FluxHistory, PopulationConfig, ProductionFunction, sample_population,
 };
-pub use stamp::{RestoreParams, StampParams, Stamper, burial_factor, restore, stamp};
+pub use stamp::{
+    RestoreParams, StampParams, Stamper, burial_factor, ejecta_modulation, restore, stamp,
+};
 
 /// A crater that was emplaced, kept for the sidecar, for rays and secondaries, and for
 /// re-stamping resolved detail at the finishing resolution.
@@ -20,7 +24,10 @@ pub struct CraterRecord {
     pub center: [f64; 3],
     pub diameter: f64,
     pub time_gyr: f64,
+    /// Downrange direction, radians in the local east-north frame.
     pub azimuth: f64,
+    /// Impact angle from horizontal, radians.
+    pub angle: f64,
     pub ellipticity: f64,
     pub class: CraterClass,
     /// True for craters emplaced inside the coarse loop.

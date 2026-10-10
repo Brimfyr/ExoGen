@@ -25,7 +25,7 @@ use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
     CraterRecord, PopulationConfig, ProfileTable, RestoreParams, StampParams, Stamper, dimensions,
-    restore, sample_population, stamp,
+    ejecta_modulation, restore, sample_population, stamp,
 };
 use crate::fields::{Field, LayerSet};
 use crate::geom::{local_basis, offset};
@@ -237,7 +237,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 4;
+pub const FINISH_VERSION: u64 = 5;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -436,6 +436,7 @@ pub fn finish(
                     },
                     unit_ejecta: UNIT_EJECTA,
                     azimuth: c.azimuth,
+                    angle: c.angle,
                     ellipticity: c.ellipticity,
                     detail_weight: 1.0,
                 };
@@ -472,6 +473,7 @@ pub fn finish(
                     },
                     unit_ejecta: UNIT_EJECTA,
                     azimuth: c.azimuth,
+                    angle: c.angle,
                     ellipticity: c.ellipticity,
                     amplitude: if *secondary {
                         SECONDARY_DEPTH_FACTOR
@@ -497,6 +499,7 @@ pub fn finish(
                         diameter: c.diameter,
                         time_gyr: c.time_gyr,
                         azimuth: c.azimuth,
+                        angle: c.angle,
                         ellipticity: c.ellipticity,
                         class: dim.class,
                         from_loop: false,
@@ -633,6 +636,7 @@ fn sample_secondaries(
                 diameter,
                 time_gyr: p.time_gyr,
                 azimuth: phi,
+                angle: SECONDARY_IMPACT_ANGLE,
                 ellipticity: 1.2,
                 key: (p.id << 16) | j,
             });
@@ -669,14 +673,17 @@ fn ray_field(
         // distance, and large craters' rays are shorter in radii than small craters' rays.
         let (w_lo, w_hi) = RAY_WIDTH_FRACTION;
         let length_scale = (RAY_REFERENCE_DIAMETER / c.diameter).sqrt().min(1.0);
-        let ray_params: Vec<(f64, f64, f64)> = (0..n)
+        // Each ray's brightness follows the ejecta asymmetry of an oblique impact: strong
+        // downrange, absent in the uprange zone of avoidance.
+        let ray_params: Vec<(f64, f64, f64, f64)> = (0..n)
             .map(|i| {
                 let d = 4 + 3 * i as u64;
                 let phi = 2.0 * std::f64::consts::PI * rng.uniform(c.id, d);
                 let width = radius * (w_lo + (w_hi - w_lo) * rng.uniform(c.id, d + 1));
                 let length =
                     radius * (l_lo + (l_hi - l_lo) * rng.uniform(c.id, d + 2)) * length_scale;
-                (phi, width, length)
+                let strength = ejecta_modulation(phi, c.azimuth, c.angle);
+                (phi, width, length, strength)
             })
             .collect();
         let max_len = ray_params
@@ -692,13 +699,14 @@ fn ray_field(
             let mut v: f64 = if r <= radius {
                 1.0
             } else if r <= ejecta_edge {
-                1.0 - 0.5 * (r - radius) / (ejecta_edge - radius)
+                (1.0 - 0.5 * (r - radius) / (ejecta_edge - radius))
+                    * ejecta_modulation(phi, c.azimuth, c.angle).min(1.0)
             } else {
                 0.0
             };
             if r > ejecta_edge {
                 let falloff = (ejecta_edge / r).powf(1.2);
-                for &(p, w, l) in &ray_params {
+                for &(p, w, l, s) in &ray_params {
                     if r > l {
                         continue;
                     }
@@ -707,10 +715,10 @@ fn ray_field(
                         - std::f64::consts::PI;
                     let taper = ((l - r) / (0.3 * l)).clamp(0.0, 1.0);
                     let across = dphi * r / w;
-                    v = v.max((-(across * across)).exp() * taper * falloff);
+                    v = v.max((-(across * across)).exp() * taper * falloff * s);
                 }
             }
-            let value = (v * freshness) as f32;
+            let value = (v.min(1.0) * freshness) as f32;
             if value > out[idx] {
                 out[idx] = value;
             }

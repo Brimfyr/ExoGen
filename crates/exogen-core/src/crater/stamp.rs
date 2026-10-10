@@ -10,7 +10,11 @@
 //! the continuous ejecta have their surface age reset to the impact time.
 
 use super::morphology::ProfileTable;
-use crate::constants::{BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE};
+use crate::constants::{
+    BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE, OBLIQUE_ASYMMETRY_DEG,
+    OBLIQUE_BUTTERFLY_DEG, OBLIQUE_BUTTERFLY_MAX, OBLIQUE_DOWNRANGE_MAX, OBLIQUE_FORBIDDEN_DEG,
+    OBLIQUE_FORBIDDEN_DEPTH, OBLIQUE_FORBIDDEN_HALF_WIDTH_DEG,
+};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
@@ -88,7 +92,10 @@ pub struct StampParams {
     pub time_gyr: f32,
     pub unit_floor: u16,
     pub unit_ejecta: u16,
+    /// Downrange direction, radians in the local east-north frame.
     pub azimuth: f64,
+    /// Impact angle from horizontal, radians; π/2 is vertical.
+    pub angle: f64,
     pub ellipticity: f64,
     /// Multiply the profile height before applying (1 for a full stamp).
     pub amplitude: f64,
@@ -158,7 +165,9 @@ pub fn stamp(
     let units = layers.unit_id.as_mut_slice();
     for &(idx, r, phi) in &stamper.footprint {
         let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
-        let v = profile.height(re) * p.amplitude;
+        let v = profile.height(re)
+            * p.amplitude
+            * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
         let mut old = bedrock[idx] as f64;
         if p.bury && re > dim.radius && v > 0.0 {
             let b = bin_of(re);
@@ -189,12 +198,48 @@ pub fn stamp(
     stamper.footprint.len()
 }
 
+/// Azimuthal modulation of ejecta thickness for an oblique impact, with `phi` the azimuth
+/// from the centre and `azimuth` the downrange direction: ejecta thickens downrange and
+/// thins uprange below 45°, an uprange zone of avoidance opens below 30°, and side lobes
+/// grow below 15° (Gault and Wedekind 1978; Herrick and Forsberg-Taylor 2003).
+#[inline]
+pub fn ejecta_modulation(phi: f64, azimuth: f64, angle: f64) -> f64 {
+    let dphi = phi - azimuth;
+    let (s, c) = dphi.sin_cos();
+    let deg = angle.to_degrees();
+    let down = (1.0 - deg / OBLIQUE_ASYMMETRY_DEG).clamp(0.0, 1.0);
+    let mut m = 1.0 + OBLIQUE_DOWNRANGE_MAX * down * c;
+    if deg < OBLIQUE_FORBIDDEN_DEG {
+        let strength = 1.0 - deg / OBLIQUE_FORBIDDEN_DEG;
+        let half_width = OBLIQUE_FORBIDDEN_HALF_WIDTH_DEG.to_radians() * strength;
+        // Angle from the uprange direction.
+        let from_up = dphi.rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+        m *= 1.0 - OBLIQUE_FORBIDDEN_DEPTH * strength * (-(from_up / half_width).powi(2)).exp();
+    }
+    if deg < OBLIQUE_BUTTERFLY_DEG {
+        let strength = 1.0 - deg / OBLIQUE_BUTTERFLY_DEG;
+        m *= 1.0 + OBLIQUE_BUTTERFLY_MAX * strength * s * s;
+    }
+    m.max(0.0)
+}
+
+/// The modulation faded in across the rim so the cavity side stays symmetric.
+#[inline]
+fn ejecta_factor(re: f64, radius: f64, phi: f64, azimuth: f64, angle: f64) -> f64 {
+    let ramp = ((re / radius - 1.0) / 0.3).clamp(0.0, 1.0);
+    if ramp <= 0.0 {
+        return 1.0;
+    }
+    1.0 + (ejecta_modulation(phi, azimuth, angle) - 1.0) * ramp
+}
+
 /// Parameters of a loop-crater restore at the finishing resolution.
 pub struct RestoreParams {
     pub time_gyr: f32,
     pub unit_floor: u16,
     pub unit_ejecta: u16,
     pub azimuth: f64,
+    pub angle: f64,
     pub ellipticity: f64,
     /// Weight of the resolved detail: the fraction of the crater that survived the loop.
     pub detail_weight: f64,
@@ -256,12 +301,14 @@ pub fn restore(
         // 1 inside 0.95 R, 0 outside 1.05 R: the cavity removes the fine relief.
         let cut = ((1.05 - re / dim.radius) / 0.10).clamp(0.0, 1.0);
         let thickness = if re > dim.radius {
-            fresh.height(re).max(0.0)
+            (fresh.height(re) * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle)).max(0.0)
         } else {
             0.0
         };
         let kept = fine * (1.0 - cut) * burial_factor(fine, thickness);
-        let d = detail.height(re) * p.detail_weight;
+        let d = detail.height(re)
+            * p.detail_weight
+            * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
         bedrock[idx] = (base[idx] as f64 + kept + d) as f32;
         if re <= continuous {
             ages[idx] = p.time_gyr;
@@ -303,6 +350,7 @@ mod tests {
             unit_floor: 3,
             unit_ejecta: 4,
             azimuth: 0.0,
+            angle: std::f64::consts::FRAC_PI_2,
             ellipticity: 1.0,
             amplitude: 1.0,
             replace_floor: true,
@@ -385,6 +433,7 @@ mod tests {
                 unit_floor: 4,
                 unit_ejecta: 5,
                 azimuth: 0.0,
+                angle: std::f64::consts::FRAC_PI_2,
                 ellipticity: 1.0,
                 amplitude: 1.0,
                 replace_floor: true,
@@ -426,6 +475,72 @@ mod tests {
         assert!(
             lost > 0.2 * draped_before && lost < 0.8 * draped_before,
             "buried {buried_before} -> {buried_after}, draped -> {draped_after}"
+        );
+    }
+
+    /// Oblique ejecta is thicker downrange, nearly absent uprange and raised to the sides;
+    /// a vertical impact is symmetric. Measured against the analytic thickness at each
+    /// sampled cell's own distance, so the grid does not enter.
+    #[test]
+    fn oblique_ejecta_is_thicker_downrange_and_absent_uprange() {
+        let grid = CubeSphere::new(512);
+        let body_radius = 1.7374e6;
+        let s = Scaling {
+            simple_complex: 16_500.0,
+            peak_ring: 140_000.0,
+            multi_ring: 330_000.0,
+            gravity: 1.62,
+        };
+        let dim = dimensions(200_000.0, &s);
+        let table = ProfileTable::new(dim, 0.0);
+        let center = [0.0, 0.0, 1.0];
+        let (east, north) = crate::geom::local_basis(center);
+        let azimuth = 1.0;
+        let factor = |layers: &LayerSet, phi: f64| -> f64 {
+            let d = crate::geom::offset(center, east, north, 1.5 * dim.radius / body_radius, phi);
+            let cell = grid.locate(d).0;
+            let r = crate::geom::angle_between(center, grid.center(cell)) * body_radius;
+            layers.bedrock.get(cell) as f64 / table.height(r)
+        };
+        let mut out = Vec::new();
+        for angle in [std::f64::consts::FRAC_PI_2, 10f64.to_radians()] {
+            let mut layers = LayerSet::new(grid);
+            let mut stamper = Stamper::new(&grid);
+            let params = StampParams {
+                time_gyr: 1.0,
+                unit_floor: 4,
+                unit_ejecta: 5,
+                azimuth,
+                angle,
+                ellipticity: 1.0,
+                amplitude: 1.0,
+                replace_floor: true,
+                set_age: true,
+                bury: true,
+            };
+            stamp(
+                &mut layers,
+                &grid,
+                body_radius,
+                center,
+                &table,
+                &params,
+                &mut stamper,
+            );
+            out.push((
+                factor(&layers, azimuth),
+                factor(&layers, azimuth + std::f64::consts::PI),
+                factor(&layers, azimuth + std::f64::consts::FRAC_PI_2),
+            ));
+        }
+        let (vd, vu, vs) = out[0];
+        for v in [vd, vu, vs] {
+            assert!((v - 1.0).abs() < 0.05, "vertical impact: {vd} {vu} {vs}");
+        }
+        let (od, ou, os) = out[1];
+        assert!(
+            od > 1.3 && ou < 0.4 && os > 1.1,
+            "oblique: down {od} up {ou} side {os}"
         );
     }
 

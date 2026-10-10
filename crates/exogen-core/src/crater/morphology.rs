@@ -131,6 +131,24 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
     }
 }
 
+/// Impact angle from horizontal for a uniform draw `u`: isotropic impactors strike a
+/// sphere with probability density sin 2θ (Gilbert 1893; Shoemaker 1962), whose
+/// cumulative distribution is sin²θ. The most probable angle is 45°.
+pub fn impact_angle(u: f64) -> f64 {
+    u.clamp(0.0, 1.0).sqrt().asin()
+}
+
+/// Elongation of the cavity for an impact angle. Cavities stay circular down to the angle
+/// below which `elliptical_fraction` of all craters form (about 12° for 5%), then elongate
+/// toward grazing incidence.
+pub fn ellipticity_for(angle: f64, elliptical_fraction: f64) -> f64 {
+    let threshold = elliptical_fraction.clamp(0.0, 1.0).sqrt().asin();
+    if threshold <= 0.0 || angle >= threshold {
+        return 1.0;
+    }
+    1.0 + ELLIPTICITY_MAX_EXCESS * ((threshold - angle) / threshold).powf(1.5)
+}
+
 fn smoothstep(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -330,6 +348,35 @@ mod tests {
         let fresh = ProfileTable::new(dim, 0.0).measured_depth();
         let old = ProfileTable::new(dim, 20_000.0).measured_depth();
         assert!(old < 0.7 * fresh, "fresh {fresh} old {old}");
+    }
+
+    /// Impact angles follow sin 2θ: a mean of 45°, with the share below 12° being sin² 12°,
+    /// and only the elliptical fraction of cavities elongated.
+    #[test]
+    fn impact_angles_follow_sin_two_theta_and_few_cavities_are_elliptical() {
+        let n = 20_000;
+        let (mut sum, mut below_12, mut elliptical) = (0.0, 0, 0);
+        for i in 0..n {
+            let a = impact_angle((i as f64 + 0.5) / n as f64);
+            sum += a;
+            if a < 12f64.to_radians() {
+                below_12 += 1;
+            }
+            if ellipticity_for(a, 0.05) > 1.0 {
+                elliptical += 1;
+            }
+        }
+        let mean_deg = (sum / n as f64).to_degrees();
+        assert!((mean_deg - 45.0).abs() < 0.5, "{mean_deg}");
+        let f12 = below_12 as f64 / n as f64;
+        assert!(
+            (f12 - 12f64.to_radians().sin().powi(2)).abs() < 0.005,
+            "{f12}"
+        );
+        let fe = elliptical as f64 / n as f64;
+        assert!((fe - 0.05).abs() < 0.005, "{fe}");
+        assert_eq!(ellipticity_for(0.8, 0.05), 1.0);
+        assert!(ellipticity_for(0.02, 0.05) > 1.5);
     }
 
     #[test]

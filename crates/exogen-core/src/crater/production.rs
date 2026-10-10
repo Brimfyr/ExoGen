@@ -19,6 +19,7 @@
 
 use rayon::prelude::*;
 
+use super::morphology::{ellipticity_for, impact_angle};
 use crate::constants::*;
 use crate::fields::Field;
 use crate::grid::CubeSphere;
@@ -268,7 +269,10 @@ pub struct CraterSample {
     pub diameter: f64,
     /// Formation time, Gyr since the body formed.
     pub time_gyr: f64,
+    /// Downrange direction, radians in the local east-north frame.
     pub azimuth: f64,
+    /// Impact angle from horizontal, radians.
+    pub angle: f64,
     pub ellipticity: f64,
     pub key: u64,
 }
@@ -382,19 +386,15 @@ pub fn sample_population(
                         0.0
                     };
                     let time_gyr = cfg.flux.time_with_remaining(present, remaining).max(start);
-                    let (azimuth, ellipticity) = if u_ob < cfg.oblique_fraction {
-                        (
-                            u_az * 2.0 * std::f64::consts::PI,
-                            1.15 + 0.35 * rng.uniform(k as u64, draw + 6),
-                        )
-                    } else {
-                        (0.0, 1.0)
-                    };
+                    let angle = impact_angle(u_ob);
+                    let azimuth = u_az * 2.0 * std::f64::consts::PI;
+                    let ellipticity = ellipticity_for(angle, cfg.oblique_fraction);
                     out.push(CraterSample {
                         center,
                         diameter,
                         time_gyr,
                         azimuth,
+                        angle,
                         ellipticity,
                         key: (k as u64) << 24 | ((b as u64) << 12) | (out.len() as u64),
                     });

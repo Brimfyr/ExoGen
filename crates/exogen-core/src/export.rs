@@ -58,6 +58,7 @@ pub struct CraterInfo {
     pub diameter_km: f64,
     pub age_gyr: f64,
     pub class: String,
+    pub impact_angle_deg: f64,
     pub from_loop: bool,
 }
 
@@ -303,6 +304,7 @@ pub fn export(
                     diameter_km: c.diameter / 1e3,
                     age_gyr: out.epoch_time_gyr - c.time_gyr,
                     class: c.class.name().to_string(),
+                    impact_angle_deg: c.angle.to_degrees(),
                     from_loop: c.from_loop,
                 }
             })

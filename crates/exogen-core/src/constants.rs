@@ -413,6 +413,21 @@ pub const CONTINUOUS_EJECTA_MULTIPLE: f64 = 2.0;
 /// Depressions fill (ejecta ponds in lows) faster than highs are shaken down. Provisional.
 pub const BURIAL_FACTOR_LOW: f64 = 1.0;
 pub const BURIAL_FACTOR_HIGH: f64 = 0.5;
+/// Oblique impacts (Gault and Wedekind 1978; Bottke et al. 2000; Herrick and Forsberg-Taylor
+/// 2003). Impact angles follow sin 2θ. Cavities stay circular down to the angle below which
+/// the elliptical fraction of craters forms, with the elongation rising toward grazing
+/// incidence by at most this excess. Ejecta thickens downrange and thins uprange below
+/// 45°, an uprange zone of avoidance opens below 30°, and side lobes grow below 15°.
+pub const ELLIPTICITY_MAX_EXCESS: f64 = 0.8;
+pub const OBLIQUE_ASYMMETRY_DEG: f64 = 45.0;
+pub const OBLIQUE_DOWNRANGE_MAX: f64 = 0.7;
+pub const OBLIQUE_FORBIDDEN_DEG: f64 = 30.0;
+pub const OBLIQUE_FORBIDDEN_HALF_WIDTH_DEG: f64 = 60.0;
+pub const OBLIQUE_FORBIDDEN_DEPTH: f64 = 0.85;
+pub const OBLIQUE_BUTTERFLY_DEG: f64 = 15.0;
+pub const OBLIQUE_BUTTERFLY_MAX: f64 = 1.0;
+/// Secondaries strike at low angles along the radial from their primary.
+pub const SECONDARY_IMPACT_ANGLE: f64 = 0.5;
 /// Rays: length range in radii, count range, and the smallest crater (in finishing cells)
 /// that gets rays.
 pub const RAY_LENGTH_MULTIPLE: (f64, f64) = (6.0, 15.0);
