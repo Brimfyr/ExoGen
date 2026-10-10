@@ -18,3 +18,9 @@ desktop.ini
 
 # Local tool settings
 .claude/settings.local.json
+
+# Python research environment
+/research/.venv/
+__pycache__/
+*.pyc
+/research/output/

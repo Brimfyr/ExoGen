@@ -97,7 +97,7 @@ Single-file export to 16384 x 8192. Tiled export to 32768 x 16384. Cube-map expo
 ```
 exogen-core      Simulation engine library. No UI dependency. CPU path mandatory, GPU path optional.
   params/        Parameter graph: definitions, derivations, lock state, plausibility rules
-  grid/          Cubesphere and coarse spherical point sets; neighbour tables; resampling; projection
+  grid/          Cubesphere at any resolution; Fibonacci point set and spherical Voronoi for plates; neighbour tables; resampling; projection
   fields/        Layered field storage, tiling, caching, hashing
   stages/        One module per process (section 4)
   materials/     Spectral end-members, mixing, colour integration
@@ -115,7 +115,7 @@ The engine is a library first. The GUI and CLI are thin clients. Studios will wa
 **Grids.** Two grids, each used where it fits.
 
 - *Cubesphere* for everything that touches the surface at resolution: cratering, erosion, deposition, materials, detail synthesis. Six faces with the equiangular mapping (cell area ratio about 1.3 centre to corner). Face size F gives an equirectangular-equivalent width of about 4F. Neighbour lookup across edges and corners via precomputed tables. GPU friendly: six 2D textures.
-- *Coarse spherical point set* (Fibonacci sphere or icosphere, 10k to 100k points) for plate tectonics, the climate model and the thermal model, where fields are smooth and large scale. Rasterised to the cubesphere by spherical interpolation when needed.
+- *Coarse spherical point set* (Fibonacci sphere, 10k to 100k points) with its spherical Voronoi tessellation, for plate tectonics only: plates are regions and crust is advected as points, which a point set handles without remeshing. Rasterised to the cubesphere by spherical interpolation at each loop step. The climate, weather and thermal models run on coarse cubespheres (F=64 to 256) with the same grid code as the surface (ADR 0001).
 
 Equirectangular is an export projection only. Poles are oversampled on export, which is harmless. Gradients for normals and slopes are computed on the cubesphere.
 
@@ -319,13 +319,13 @@ The result is a continuous degradation sequence by age: fresh rayed craters on t
 
 ### 4.6 Climate
 
-Runs on the coarse point set whenever surface pressure is non-negligible. Also runs in a degenerate mode for airless bodies to give surface temperature for volatile stability.
+Runs on a coarse cubesphere (F=64 to 128) whenever surface pressure is non-negligible. Also runs in a degenerate mode for airless bodies to give surface temperature for volatile stability.
 
 **Insolation.** Computed for arbitrary rotation state: period, obliquity, eccentricity, and locked. Annual and diurnal averaging by rotation regime. Obliquity above 54° puts the annual insolation maximum at the poles, which moves ice to the equator. Locked bodies get a substellar-centred field.
 
 **Energy balance.** Two-dimensional diffusive energy balance (North 1975 form): heat capacity by surface type, insolation times co-albedo, outgoing longwave A + BT generalised through the greenhouse optical depth, horizontal transport D∇²T with D scaled by pressure and rotation rate following Williams and Kasting 1997. Ice-albedo feedback included. Ocean heat transport added where seas exist.
 
-**Downscaling.** Climate fields are produced on the coarse point set but are never applied to the surface there. Temperature is downscaled to the surface grid with the lapse rate on the fine elevation plus aspect and slope terms. Precipitation is downscaled with orographic lift from the fine slope and the wind. All thresholds are evaluated on the downscaled fields (section 4.12).
+**Downscaling.** Climate fields are produced on a coarse cubesphere but are never applied to the surface at that resolution. Temperature is downscaled to the surface grid with the lapse rate on the fine elevation plus aspect and slope terms. Precipitation is downscaled with orographic lift from the fine slope and the wind. All thresholds are evaluated on the downscaled fields (section 4.12).
 
 **Circulation.** Hadley cell edge latitude from Held and Hou 1980, scaling as (g H Δ / (Ω² a²))^(1/2). Fast rotators get multiple cells and jets; slow rotators and locked worlds get a single cell from substellar to antistellar or from equator to pole. Surface wind field: zonal bands with the right sign per cell, meridional components, deflection by rotation, and a thermal-gradient component for locked worlds. This wind field drives moisture transport, dust and clouds.
 
@@ -731,10 +731,10 @@ Gate: Earth-like preset biome map matches Earth's zonal distribution of forest, 
 
 ## 11. Decisions
 
-All resolved on 2026-10-10.
+All resolved on 2026-10-10. Architecture decision records are in `docs/adr/`.
 
 1. **Stack.** Rust with wgpu and egui. Dependencies must be GPL-3.0-compatible; the planned crates are MIT or Apache-2.0 licensed, which is compatible.
-2. **Simulation grid.** Cubesphere plus coarse point set.
+2. **Simulation grid.** Cubesphere at every resolution; a Fibonacci point set only for plates (ADR 0001).
 3. **Colour management.** Linear sRGB EXR plus sRGB PNG by default, ACEScg optional.
 4. **Minimum body radius for the spheroid assumption.** 400 km nominal, warning below.
 5. **Platform order.** Windows first, then macOS and Linux.
