@@ -20,7 +20,7 @@ use crate::spharm::Harmonics;
 use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC, UNIT_PRIMORDIAL};
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// Two-level crust for mobile-lid bodies: thin oceanic crust and thick continental crust
 /// covering a fraction of the area, which gives the bimodal hypsometry that lets an ocean

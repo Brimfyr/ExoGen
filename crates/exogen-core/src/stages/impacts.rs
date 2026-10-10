@@ -21,7 +21,7 @@ use crate::units::{
     UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_DEEP_EJECTA, UNIT_DEEP_FLOOR, UNIT_EJECTA,
 };
 
-pub const VERSION: u64 = 6;
+pub const VERSION: u64 = 7;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -252,6 +252,7 @@ impl ImpactProcess {
                 set_age: true,
                 bury: true,
                 seed: rec.id,
+                deep,
             };
             stamp(
                 layers,

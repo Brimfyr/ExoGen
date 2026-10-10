@@ -17,11 +17,9 @@ use rayon::prelude::*;
 
 use crate::fields::{Field, LayerSet};
 use crate::params::ParamGraph;
-use crate::units::{
-    UNIT_CONTINENTAL, UNIT_DEEP_EJECTA, UNIT_DEEP_FLOOR, UNIT_IMPACT_MELT, UNIT_OCEANIC,
-};
+use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC};
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -232,6 +230,8 @@ pub fn albedo(
     let grid = layers.grid;
     let liquid = layers.liquid.as_slice();
     let units = layers.unit_id.as_slice();
+    let deep_f = layers.deep.as_slice();
+    let melt_f = layers.melt.as_slice();
     let m = maturity.as_slice();
     let r = rays.as_slice();
     let data: Vec<[f32; 3]> = (0..grid.cell_count())
@@ -244,12 +244,14 @@ pub fn albedo(
                 let pair = match units[k] {
                     UNIT_CONTINENTAL => continental,
                     UNIT_OCEANIC => oceanic,
-                    UNIT_DEEP_FLOOR | UNIT_DEEP_EJECTA => deep_pair,
-                    UNIT_IMPACT_MELT => melt_pair,
                     _ => base,
                 };
+                // Deep-sourced material by its fraction, then melt over the fresh surface.
+                let fresh = lerp3(pair.fresh, deep_pair.fresh, deep_f[k]);
+                let mature = lerp3(pair.mature, deep_pair.mature, deep_f[k]);
+                let fresh = lerp3(fresh, melt_pair.fresh, melt_f[k]);
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
-                lerp3(pair.fresh, pair.mature, effective)
+                lerp3(fresh, mature, effective)
             }
         })
         .collect();

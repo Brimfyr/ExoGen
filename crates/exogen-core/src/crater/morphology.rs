@@ -181,14 +181,9 @@ pub fn fresh_height(dim: &Dimensions, r: f64) -> f64 {
         if r >= dim.ejecta_radius {
             return 0.0;
         }
-        let mut h = dim.rim_height * (r / rr).powf(dim.ejecta_exponent);
-        if dim.class == CraterClass::MultiRing {
-            // Outer ring at sqrt(2) R, subdued.
-            let ring_r = std::f64::consts::SQRT_2 * rr;
-            let sigma = 0.06 * rr;
-            h += 0.3 * dim.rim_height * (-((r - ring_r) / sigma).powi(2)).exp();
-        }
-        return h;
+        // Rings, including a multi-ring basin's outer ring, are added by the stamp with
+        // their own shapes.
+        return dim.rim_height * (r / rr).powf(dim.ejecta_exponent);
     }
     match dim.class {
         CraterClass::Simple => {
@@ -205,10 +200,6 @@ pub fn fresh_height(dim: &Dimensions, r: f64) -> f64 {
             if dim.peak_height > 0.0 {
                 let sigma = 0.5 * dim.peak_radius;
                 h += dim.peak_height * (-(r / sigma).powi(2)).exp();
-            }
-            let sigma = 0.06 * rr;
-            for &(ring_r, ring_h) in dim.rings.iter().take(dim.ring_count) {
-                h += ring_h * (-((r - ring_r) / sigma).powi(2)).exp();
             }
             h
         }

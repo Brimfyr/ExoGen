@@ -111,6 +111,30 @@ pub fn export(
         path: settings.dir.display().to_string(),
         source,
     })?;
+    // All or nothing: make sure every output can be written before writing any, so that
+    // a file held open by a viewer leaves the previous set intact instead of a mixed one.
+    for name in [
+        "height.exr",
+        "height.png",
+        "albedo.exr",
+        "albedo.png",
+        "mask_liquid.png",
+        "surface_age.exr",
+        "sidecar.json",
+    ] {
+        let path = settings.dir.join(name);
+        retry(|| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+        })
+        .map_err(|source| ExportError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+    }
     let mut maps = BTreeMap::new();
 
     // Datum.

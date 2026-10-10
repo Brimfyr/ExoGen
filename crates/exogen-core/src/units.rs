@@ -15,8 +15,6 @@ pub const UNIT_SECONDARY_FIELD: u16 = 7;
 /// bedrock.
 pub const UNIT_DEEP_FLOOR: u16 = 8;
 pub const UNIT_DEEP_EJECTA: u16 = 9;
-/// Impact melt ponds and flows of complex craters and basins.
-pub const UNIT_IMPACT_MELT: u16 = 10;
 
 pub fn unit_name(id: u16) -> &'static str {
     match id {
@@ -29,14 +27,13 @@ pub fn unit_name(id: u16) -> &'static str {
         UNIT_SECONDARY_FIELD => "secondary crater field",
         UNIT_DEEP_FLOOR => "deep-excavating crater floor",
         UNIT_DEEP_EJECTA => "deep-sourced ejecta",
-        UNIT_IMPACT_MELT => "impact melt",
         _ => "none",
     }
 }
 
 /// All known units with their names, for the sidecar legend.
 pub fn legend() -> Vec<(u16, &'static str)> {
-    (0..=UNIT_IMPACT_MELT)
+    (0..=UNIT_DEEP_EJECTA)
         .map(|id| (id, unit_name(id)))
         .collect()
 }

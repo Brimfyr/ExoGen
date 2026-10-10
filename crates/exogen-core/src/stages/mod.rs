@@ -238,7 +238,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 7;
+pub const FINISH_VERSION: u64 = 8;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -350,6 +350,7 @@ pub fn finish(
         .cloned()
         .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
+    let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let coarse_cell =
         2.0 * std::f64::consts::PI * body_radius / (4.0 * loop_output.grid.face_size() as f64);
 
@@ -439,6 +440,9 @@ pub fn finish(
                     ellipticity: c.ellipticity,
                     detail_weight: 1.0,
                     seed: c.id,
+                    deep,
+                    fine_blur: detail.sigma,
+                    coarse_blur: smooth.sigma,
                 };
                 restore(
                     &mut layers,
@@ -446,6 +450,7 @@ pub fn finish(
                     body_radius,
                     c.center,
                     &base,
+                    &base_deep,
                     &fresh,
                     &detail,
                     &params,
@@ -486,6 +491,7 @@ pub fn finish(
                     set_age: true,
                     bury: true,
                     seed: c.key,
+                    deep,
                 };
                 stamp(
                     &mut layers,

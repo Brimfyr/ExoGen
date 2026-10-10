@@ -227,6 +227,10 @@ pub struct LayerSet {
     pub crust_age: Field<f32>,
     pub surface_age: Field<f32>,
     pub unit_id: Field<u16>,
+    /// Fraction of the surface material that came from the deep bedrock, 0 to 1.
+    pub deep: Field<f32>,
+    /// Impact melt cover, 0 to 1.
+    pub melt: Field<f32>,
 }
 
 impl LayerSet {
@@ -242,6 +246,8 @@ impl LayerSet {
             crust_age: Field::new(grid),
             surface_age: Field::new(grid),
             unit_id: Field::new(grid),
+            deep: Field::new(grid),
+            melt: Field::new(grid),
         }
     }
 
@@ -272,6 +278,8 @@ impl LayerSet {
             crust_age: self.crust_age.resample(target),
             surface_age: self.surface_age.resample(target),
             unit_id: self.unit_id.resample_nearest(target),
+            deep: self.deep.resample(target),
+            melt: self.melt.resample(target),
         }
     }
 
@@ -286,6 +294,8 @@ impl LayerSet {
             self.crust_age.hash(),
             self.surface_age.hash(),
             self.unit_id.hash(),
+            self.deep.hash(),
+            self.melt.hash(),
         ];
         crate::rng::hash_words(&parts)
     }

@@ -437,22 +437,30 @@ pub const SECONDARY_CHAIN_SPACING: f64 = 0.12;
 /// 1962), one more for each sqrt(2) of diameter above the onset, at most this many; the
 /// inner rings are lower by this factor each. Orientale has three inside its rim.
 pub const MAX_RINGS: usize = 4;
-pub const RING_HEIGHT_FRACTION: f64 = 0.3;
-pub const RING_HEIGHT_DECAY: f64 = 0.8;
+pub const RING_HEIGHT_FRACTION: f64 = 0.2;
+pub const RING_HEIGHT_DECAY: f64 = 0.7;
+/// Ring ridges: width as a fraction of the rim radius, their own scalloping (larger than
+/// the rim's so each ring has its own shape), presence around the azimuth as mean and
+/// swing (gaps where it drops to zero), and the subdued outer ring of a multi-ring basin at
+/// sqrt(2) radii as a fraction of the rim height.
+pub const RING_WIDTH_FRACTION: f64 = 0.06;
+pub const RING_CRENULATION: f64 = 0.06;
+pub const RING_PRESENCE: (f64, f64) = (0.6, 0.5);
+pub const OUTER_RING_HEIGHT_FRACTION: f64 = 0.3;
 /// Rim and ring scalloping as a fraction of the radius, and ejecta, basin-sculpture and
 /// floor texture amplitudes. Provisional, to be tuned against imagery in Phase 7.
 pub const RIM_CRENULATION_SIMPLE: f64 = 0.015;
 pub const RIM_CRENULATION_COMPLEX: f64 = 0.035;
 pub const EJECTA_TEXTURE: f64 = 0.5;
-pub const BASIN_SCULPTURE: f64 = 0.5;
+pub const BASIN_SCULPTURE: f64 = 0.25;
 pub const FLOOR_TEXTURE: f64 = 0.04;
 /// Texture lattice: cells around the azimuth and per e-fold of radius, per octave; the
 /// basin sculpture lattice is stretched radially. Craters with fewer footprint cells than
 /// this are stamped without texture.
 pub const TEXTURE_AZIMUTH_CELLS: u32 = 24;
 pub const TEXTURE_RADIAL_CELLS: u32 = 6;
-pub const SCULPTURE_AZIMUTH_CELLS: u32 = 72;
-pub const SCULPTURE_RADIAL_CELLS: u32 = 2;
+pub const SCULPTURE_AZIMUTH_CELLS: u32 = 144;
+pub const SCULPTURE_RADIAL_CELLS: u32 = 3;
 pub const TEXTURE_MIN_CELLS: usize = 400;
 /// The ejecta texture fades out between these radii, in crater radii, where the ejecta is
 /// too thin for it to show.
@@ -479,6 +487,12 @@ pub const VISIBLE_RELIEF_FRACTION: f64 = 0.15;
 pub const MELT_POND_THRESHOLD: f64 = 0.4;
 pub const MELT_FLOW_THRESHOLD: f64 = 0.6;
 pub const MELT_FLOW_RADII: f64 = 1.3;
+/// Width of the soft edge of a melt pond in texture units.
+pub const MELT_EDGE_WIDTH: f64 = 0.3;
+/// Deep-sourced ejecta is mixed with local material by ballistic sedimentation (Oberbeck
+/// 1975): the deposit is all primary ejecta out to this many radii and all local material
+/// at the continuous ejecta edge.
+pub const EJECTA_PURE_RADII: f64 = 1.1;
 /// Rays: length range in radii, count range, and the smallest crater (in finishing cells)
 /// that gets rays.
 pub const RAY_LENGTH_MULTIPLE: (f64, f64) = (6.0, 15.0);
