@@ -129,7 +129,7 @@ pub fn wholesale_resurfacing(graph: &ParamGraph) -> bool {
     match graph.str("interior.tectonic_regime") {
         "mobile_lid" | "episodic_lid" => true,
         "ice_shell_ocean" => graph.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX,
-        _ => false,
+        _ => crate::stages::io::is_io_regime(graph),
     }
 }
 

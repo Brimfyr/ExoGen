@@ -21,6 +21,12 @@ pub const UNIT_LAVA_CRATER_FLOOR: u16 = 11;
 pub const UNIT_LAVA_EJECTA: u16 = 12;
 /// Deformed old crust that survived an episodic lid's resurfacing.
 pub const UNIT_TESSERA: u16 = 13;
+/// The Io regime: patera floors, fresh silicate flows, plume deposits, mountains.
+pub const UNIT_PATERA_FLOOR: u16 = 14;
+pub const UNIT_IO_FLOW: u16 = 15;
+pub const UNIT_PLUME_RED: u16 = 16;
+pub const UNIT_PLUME_WHITE: u16 = 17;
+pub const UNIT_MOUNTAIN: u16 = 18;
 
 pub fn unit_name(id: u16) -> &'static str {
     match id {
@@ -37,11 +43,16 @@ pub fn unit_name(id: u16) -> &'static str {
         UNIT_LAVA_CRATER_FLOOR => "crater floor in lava",
         UNIT_LAVA_EJECTA => "lava ejecta",
         UNIT_TESSERA => "tessera",
+        UNIT_PATERA_FLOOR => "patera floor",
+        UNIT_IO_FLOW => "fresh silicate flow",
+        UNIT_PLUME_RED => "plume deposit, sulfur",
+        UNIT_PLUME_WHITE => "plume deposit, frost",
+        UNIT_MOUNTAIN => "mountain block",
         _ => "none",
     }
 }
 
 /// All known units with their names, for the sidecar legend.
 pub fn legend() -> Vec<(u16, &'static str)> {
-    (0..=UNIT_TESSERA).map(|id| (id, unit_name(id))).collect()
+    (0..=UNIT_MOUNTAIN).map(|id| (id, unit_name(id))).collect()
 }

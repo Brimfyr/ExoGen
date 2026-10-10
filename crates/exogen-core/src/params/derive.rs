@@ -1475,6 +1475,28 @@ pub fn climate_lapse_rate(c: &Ctx) -> Value {
 
 // ------------------------------------------------------------------ tectonics (contraction)
 
+fn io_regime(c: &Ctx) -> bool {
+    c.str("body.composition_class") == "rock" && c.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX
+}
+
+pub fn volcanism_patera_count(c: &Ctx) -> Value {
+    if !io_regime(c) {
+        return 0.0.into();
+    }
+    (IO_PATERAE_PER_TW * c.f64("interior.tidal_power") / 1e12)
+        .round()
+        .into()
+}
+
+pub fn tectonics_mountain_count(c: &Ctx) -> Value {
+    if !io_regime(c) {
+        return 0.0.into();
+    }
+    (IO_MOUNTAINS_PER_TW * c.f64("interior.tidal_power") / 1e12)
+        .round()
+        .into()
+}
+
 pub fn tectonics_resurfacing_time(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "episodic_lid" {
         return 0.0.into();

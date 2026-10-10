@@ -13,6 +13,7 @@
 
 pub mod episodic;
 pub mod impacts;
+pub mod io;
 pub mod materials;
 pub mod plume;
 pub mod primordial_crust;
@@ -104,6 +105,11 @@ pub struct LoopOutput {
     pub resurfacing: Option<episodic::Resurfacing>,
     pub coronae: Vec<episodic::Corona>,
     pub domes: Vec<episodic::Dome>,
+    /// The Io regime's paterae, mountains, flow fields and plume rings.
+    pub paterae: Vec<io::Patera>,
+    pub mountains: Vec<io::Mountain>,
+    pub io_flows: Vec<io::FlowField>,
+    pub plume_rings: Vec<io::PlumeRing>,
     pub hash: u64,
 }
 
@@ -158,6 +164,11 @@ pub struct FinishOutput {
     pub resurfacing: Option<episodic::Resurfacing>,
     pub coronae: Vec<episodic::Corona>,
     pub domes: Vec<episodic::Dome>,
+    /// The Io regime's features, all of the present surface.
+    pub paterae: Vec<io::Patera>,
+    pub mountains: Vec<io::Mountain>,
+    pub io_flows: Vec<io::FlowField>,
+    pub plume_rings: Vec<io::PlumeRing>,
     pub hash: u64,
 }
 
@@ -210,6 +221,7 @@ impl Runner {
             ridges::VERSION,
             plume::VERSION,
             episodic::VERSION,
+            io::VERSION,
         ])
     }
 
@@ -283,7 +295,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 18;
+pub const FINISH_VERSION: u64 = 19;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -319,6 +331,7 @@ pub fn run_coarse_loop(
     let mut floods = volcanism::FloodProcess::new(graph, grid, &thermal);
     let mut plume = plume::PlumeProcess::new(graph, grid);
     let mut episodic = episodic::EpisodicProcess::new(graph, grid);
+    let mut io = io::IoProcess::new(graph, grid);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -342,6 +355,9 @@ pub fn run_coarse_loop(
             && let Some(f) = &mut floods
         {
             f.note_resurfacing(&fill, e.event_time());
+        }
+        if let Some(i) = &mut io {
+            i.step(&mut layers, t0, t1);
         }
         let boost = plume.as_ref().map(|p| p.vent_boost());
         // Everything that happens in the step, in order of time: craters, scarps and
@@ -404,6 +420,10 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
+    let (paterae, mountains, io_flows, plume_rings) = match io {
+        Some(i) => (i.paterae, i.mountains, i.flows, i.rings),
+        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+    };
     let (resurfacing, coronae, domes) = match episodic {
         Some(e) => (e.resurfacing, e.coronae, e.domes),
         None => (None, Vec::new(), Vec::new()),
@@ -452,6 +472,10 @@ pub fn run_coarse_loop(
         resurfacing,
         coronae,
         domes,
+        paterae,
+        mountains,
+        io_flows,
+        plume_rings,
         hash,
     })
 }
@@ -549,6 +573,28 @@ pub fn finish(
         .filter(|d| d.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
+    // The Io regime's features belong to the present surface only.
+    let io_now = (present - loop_output.age_gyr).abs() < 1e-9;
+    let paterae: Vec<io::Patera> = if io_now {
+        loop_output.paterae.clone()
+    } else {
+        Vec::new()
+    };
+    let mountains: Vec<io::Mountain> = if io_now {
+        loop_output.mountains.clone()
+    } else {
+        Vec::new()
+    };
+    let io_flows: Vec<io::FlowField> = if io_now {
+        loop_output.io_flows.clone()
+    } else {
+        Vec::new()
+    };
+    let plume_rings: Vec<io::PlumeRing> = if io_now {
+        loop_output.plume_rings.clone()
+    } else {
+        Vec::new()
+    };
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let mut smear = volcanism::LavaSmear::new(
@@ -617,6 +663,10 @@ pub fn finish(
         Resurfacing,
         Corona(usize),
         Dome(usize),
+        Patera(usize),
+        Mountain(usize),
+        IoFlow(usize),
+        PlumeRing(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
@@ -651,6 +701,18 @@ pub fn finish(
     }
     for (k, d) in domes.iter().enumerate() {
         events.push((d.time_gyr, 0, d.id ^ 0xD03E_0000_0000, Event::Dome(k)));
+    }
+    for (k, p) in paterae.iter().enumerate() {
+        events.push((present, 0, p.id, Event::Patera(k)));
+    }
+    for (k, m) in mountains.iter().enumerate() {
+        events.push((present, 0, m.id, Event::Mountain(k)));
+    }
+    for (k, f) in io_flows.iter().enumerate() {
+        events.push((present, 0, f.id, Event::IoFlow(k)));
+    }
+    for (k, r) in plume_rings.iter().enumerate() {
+        events.push((present, 0, r.id, Event::PlumeRing(k)));
     }
     for (k, r) in ridges.iter().enumerate() {
         events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
@@ -734,6 +796,25 @@ pub fn finish(
                 Event::Dome(k) => {
                     let d = &domes[*k];
                     (d.center, d.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Patera(k) => {
+                    let p = &paterae[*k];
+                    (
+                        p.center,
+                        p.cap_radius(body_radius) + 3.0 * loop_output.grid.delta(),
+                    )
+                }
+                Event::Mountain(k) => {
+                    let m = &mountains[*k];
+                    (m.center, m.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::IoFlow(k) => {
+                    let f = &io_flows[*k];
+                    (f.center, f.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::PlumeRing(k) => {
+                    let r = &plume_rings[*k];
+                    (r.center, r.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
             }
         })
@@ -869,6 +950,42 @@ pub fn finish(
                             &grid,
                             body_radius,
                             &domes[*k],
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Patera(k) => {
+                        let out = io::patera_compute(
+                            &layers,
+                            &grid,
+                            coarse_cell,
+                            body_radius,
+                            &paterae[*k],
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Mountain(k) => {
+                        let out = io::mountain_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &mountains[*k],
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::IoFlow(k) => {
+                        let out =
+                            io::flow_compute(&layers, &grid, body_radius, &io_flows[*k], stamper);
+                        Some((out, None, None))
+                    }
+                    Event::PlumeRing(k) => {
+                        let out = io::ring_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &plume_rings[*k],
                             stamper,
                         );
                         Some((out, None, None))
@@ -1083,6 +1200,10 @@ pub fn finish(
         resurfacing,
         coronae,
         domes,
+        paterae,
+        mountains,
+        io_flows,
+        plume_rings,
         hash,
     })
 }
@@ -1764,6 +1885,41 @@ mod tests {
                 .craters
                 .iter()
                 .all(|c| c.time_gyr >= event - 1e-6)
+        );
+    }
+
+    /// Io keeps no craters, carries hundreds of paterae and dozens of mountains, and its
+    /// plains are sulfur yellow.
+    #[test]
+    fn io_is_craterless_with_paterae_and_mountains() {
+        let mut r = Runner::new();
+        let g = preset_graph("Io", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let lo = &out.loop_output;
+        assert!(lo.paterae.len() > 100, "{} paterae", lo.paterae.len());
+        assert!(lo.mountains.len() > 20, "{} mountains", lo.mountains.len());
+        assert!(!lo.io_flows.is_empty() && !lo.plume_rings.is_empty());
+        assert!(
+            out.finish.craters.is_empty(),
+            "{} craters",
+            out.finish.craters.len()
+        );
+        let units = out.finish.layers.unit_id.as_slice();
+        let flows = units
+            .iter()
+            .filter(|&&u| u == crate::units::UNIT_IO_FLOW)
+            .count() as f64
+            / units.len() as f64;
+        assert!(flows > 0.005 && flows < 0.3, "flow share {flows}");
+        let albedo = out.finish.albedo.as_slice();
+        let mean: [f64; 3] = albedo.iter().fold([0.0; 3], |a, c| {
+            [a[0] + c[0] as f64, a[1] + c[1] as f64, a[2] + c[2] as f64]
+        });
+        let n = albedo.len() as f64;
+        let (rr, gg, bb) = (mean[0] / n, mean[1] / n, mean[2] / n);
+        assert!(
+            rr > gg && gg > bb && rr > 0.3,
+            "mean colour {rr:.2} {gg:.2} {bb:.2}"
         );
     }
 

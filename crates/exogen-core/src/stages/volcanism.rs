@@ -173,6 +173,9 @@ const NEIGHBOURS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 impl FloodProcess {
     /// None for regimes whose volcanism is handled elsewhere.
     pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
+        if crate::stages::io::is_io_regime(graph) {
+            return None;
+        }
         let event_time = match graph.str("interior.tectonic_regime") {
             "stagnant_lid" => None,
             "episodic_lid" => Some(graph.f64("tectonics.resurfacing_time")),

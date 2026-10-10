@@ -15,13 +15,15 @@ use std::collections::BTreeMap;
 
 use rayon::prelude::*;
 
+use crate::constants::*;
 use crate::fields::{Field, LayerSet};
 use crate::params::ParamGraph;
 use crate::units::{
-    UNIT_CONTINENTAL, UNIT_LAVA, UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA, UNIT_OCEANIC,
+    UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_LAVA, UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
+    UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR, UNIT_PLUME_RED, UNIT_PLUME_WHITE,
 };
 
-pub const VERSION: u64 = 7;
+pub const VERSION: u64 = 8;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -258,9 +260,35 @@ pub fn albedo(
     let melt_f = layers.melt.as_slice();
     let m = maturity.as_slice();
     let r = rays.as_slice();
+    // The Io regime colours itself: sulfur plains reddened towards the poles, patches of
+    // frost, black fresh flows, dark patera floors, plume deposits and bare mountain rock.
+    let io = graph.str("materials.bedrock") == "sulfur_coated";
+    let frost_noise =
+        crate::noise::GradientNoise::new(graph.f64("seed.terrain") as u64 ^ 0xF205_7000);
+    let frost_frequency = graph.f64("body.radius") / IO_FROST_LENGTH;
     let data: Vec<[f32; 3]> = (0..grid.cell_count())
         .into_par_iter()
         .map(|k| {
+            if io {
+                let d = grid.center(grid.cell(k));
+                let lat = d[2].asin().to_degrees().abs();
+                let (lo, hi) = IO_POLAR_LATITUDES_DEG;
+                let polar = ((lat - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
+                let plains = lerp3(IO_SULFUR, IO_POLAR, polar * polar * (3.0 - 2.0 * polar));
+                let n = frost_noise.fbm(d, frost_frequency, 3, 2.0, 0.5);
+                let frost = ((n + 0.15) / 0.3).clamp(0.0, 1.0) as f32 * IO_FROST_COVER as f32;
+                let plains = lerp3(plains, IO_FROST, frost * (1.0 - polar));
+                // Deposits and flows lie over the plains by their coverage.
+                let cover = melt_f[k].clamp(0.0, 1.0);
+                return match units[k] {
+                    UNIT_IO_FLOW => lerp3(plains, IO_FLOW_DARK, cover),
+                    UNIT_PATERA_FLOOR => IO_PATERA_FLOOR,
+                    UNIT_PLUME_RED => lerp3(plains, IO_PLUME_RED, cover),
+                    UNIT_PLUME_WHITE => lerp3(plains, IO_FROST, cover),
+                    UNIT_MOUNTAIN => lerp3(plains, IO_MOUNTAIN_ROCK, cover.max(0.6)),
+                    _ => plains,
+                };
+            }
             if liquid[k] > 0.0 {
                 let t = (-liquid[k] / 60.0).exp();
                 lerp3(deep, shallow, t)

@@ -2011,6 +2011,22 @@ static NODES: &[NodeDef] = &[
     ),
     // ------------------------------------------------------------------ tectonics (contraction)
     derived(
+        "tectonics.mountain_count",
+        "tectonics",
+        "Mountain blocks",
+        "",
+        1.0,
+        f(0.0, 2000.0),
+        &[
+            "body.composition_class",
+            "interior.tidal_flux",
+            "interior.tidal_power",
+        ],
+        d::tectonics_mountain_count,
+        "Tilted crustal blocks raised by the subsidence of a resurfacing crust in the Io regime: two per terawatt of tidal power, some 150 on Io. Pin to choose.",
+        "PLAN.md 4.4",
+    ),
+    derived(
         "tectonics.resurfacing_time",
         "tectonics",
         "Resurfacing time",
@@ -2205,6 +2221,22 @@ static NODES: &[NodeDef] = &[
         d::volcanism_rate,
         "The interior's magma production rate.",
         "F17",
+    ),
+    derived(
+        "volcanism.patera_count",
+        "volcanism",
+        "Paterae",
+        "",
+        1.0,
+        f(0.0, 5000.0),
+        &[
+            "body.composition_class",
+            "interior.tidal_flux",
+            "interior.tidal_power",
+        ],
+        d::volcanism_patera_count,
+        "Volcanic depressions in the Io regime: five or so per terawatt of tidal power, some 400 on Io, concentrated at low latitudes. Pin to choose.",
+        "PLAN.md 4.4",
     ),
     derived(
         "volcanism.corona_count",

@@ -123,6 +123,23 @@ pub struct DomeInfo {
 }
 
 #[derive(Serialize)]
+pub struct PateraInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub diameter_km: f64,
+    pub depth_m: f64,
+    pub active: bool,
+}
+
+#[derive(Serialize)]
+pub struct MountainInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub diameter_km: f64,
+    pub height_m: f64,
+}
+
+#[derive(Serialize)]
 pub struct RidgeInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
@@ -210,6 +227,11 @@ pub struct Sidecar {
     pub tessera_fraction: f64,
     pub coronae: Vec<CoronaInfo>,
     pub domes: Vec<DomeInfo>,
+    /// The Io regime: paterae, mountains, and how many flow fields and plume rings.
+    pub paterae: Vec<PateraInfo>,
+    pub mountains: Vec<MountainInfo>,
+    pub flow_field_count: usize,
+    pub plume_ring_count: usize,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
@@ -652,6 +674,35 @@ pub fn export(
                 }
             })
             .collect(),
+        paterae: out
+            .paterae
+            .iter()
+            .map(|p| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(p.center);
+                PateraInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: 2.0 * p.radius / 1e3,
+                    depth_m: p.depth,
+                    active: p.active,
+                }
+            })
+            .collect(),
+        mountains: out
+            .mountains
+            .iter()
+            .map(|m| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(m.center);
+                MountainInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: 2.0 * m.radius / 1e3,
+                    height_m: m.height,
+                }
+            })
+            .collect(),
+        flow_field_count: out.io_flows.len(),
+        plume_ring_count: out.plume_rings.len(),
         lava_area_fraction: crate::stages::volcanism::lava_fraction(&out.layers),
         unit_legend: crate::units::legend()
             .into_iter()

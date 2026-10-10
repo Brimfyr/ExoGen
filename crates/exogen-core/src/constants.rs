@@ -377,6 +377,60 @@ pub const DOMES_PER_AREA: f64 = 3.3e-13;
 pub const DOME_DIAMETER: (f64, f64) = (20e3, 60e3);
 pub const DOME_HEIGHT: f64 = 800.0;
 pub const DOME_TOP_ROUGHNESS: f64 = 0.08;
+/// The Io regime (PLAN.md 4.4). Paterae per terawatt of tidal power (Io: some 400 at
+/// 75 TW), the weight of the poles against the equator in placing them, their diameter
+/// range, m, with the draw skewed to small ones by this power, their depth, m, the share
+/// that are active, and their wall width as a fraction of the radius. Mountains per
+/// terawatt (Io: some 150), their diameters and heights, m, the tilt of a block as a
+/// fraction of its height, and the ridged texture's relative amplitude and length.
+/// Flow fields: the share of quiet paterae that still have one, their reach, m, the
+/// lobing of their margins and their thickness, m. Plume rings: the share of active
+/// paterae with one, the ring radius, m, the inner edge of the red deposits and the
+/// outer edge of the white frost as fractions of it, and the wobble of those edges. The
+/// surface's age, Gyr, and the colours: sulfur plains, the reddened poles between these
+/// latitudes, frost patches of this length, m, covering this share, fresh flows, patera
+/// floors, red deposits, white frost and mountain rock, as linear reflectance.
+pub const IO_PATERAE_PER_TW: f64 = 5.4;
+pub const IO_PATERA_POLAR_WEIGHT: f64 = 0.3;
+pub const IO_PATERA_DIAMETER: (f64, f64) = (10e3, 200e3);
+pub const IO_PATERA_SIZE_SKEW: f64 = 2.0;
+pub const IO_PATERA_DEPTH: f64 = 1_200.0;
+pub const IO_PATERA_ACTIVE_FRACTION: f64 = 0.2;
+pub const IO_PATERA_WALL_FRACTION: f64 = 0.08;
+pub const IO_MOUNTAINS_PER_TW: f64 = 2.0;
+pub const IO_MOUNTAIN_DIAMETER: (f64, f64) = (80e3, 300e3);
+pub const IO_MOUNTAIN_HEIGHT: (f64, f64) = (3e3, 15e3);
+pub const IO_MOUNTAIN_TILT: f64 = 0.5;
+/// Mountain outlines: elongation up to this aspect ratio, and the noise on the outline
+/// as a fraction of the radius.
+pub const IO_MOUNTAIN_ASPECT: f64 = 2.5;
+pub const IO_MOUNTAIN_OUTLINE: f64 = 0.3;
+pub const IO_MOUNTAIN_TEXTURE: f64 = 0.08;
+pub const IO_MOUNTAIN_TEXTURE_LENGTH: f64 = 12e3;
+pub const IO_QUIET_FLOW_FRACTION: f64 = 0.15;
+pub const IO_FLOW_REACH: (f64, f64) = (40e3, 300e3);
+pub const IO_FLOW_LOBING: f64 = 0.45;
+pub const IO_FLOW_THICKNESS: f64 = 20.0;
+pub const IO_PLUME_FRACTION: f64 = 0.3;
+pub const IO_PLUME_RING_RADIUS: (f64, f64) = (80e3, 600e3);
+pub const IO_RING_RED_INNER: f64 = 0.55;
+pub const IO_RING_WHITE_OUTER: f64 = 1.3;
+pub const IO_RING_EDGE_WOBBLE: f64 = 0.08;
+/// Deposits and flows are blended over the plains by a coverage: how soft their edges
+/// are as a fraction of the ring radius or flow reach, and how mottled the deposits.
+pub const IO_DEPOSIT_EDGE: f64 = 0.12;
+pub const IO_DEPOSIT_MOTTLING: f64 = 0.35;
+pub const IO_SURFACE_AGE_GYR: f64 = 1e-4;
+pub const IO_SULFUR: [f32; 3] = [0.65, 0.55, 0.25];
+pub const IO_POLAR: [f32; 3] = [0.38, 0.24, 0.13];
+pub const IO_POLAR_LATITUDES_DEG: (f64, f64) = (40.0, 70.0);
+pub const IO_FROST: [f32; 3] = [0.86, 0.86, 0.88];
+pub const IO_FROST_LENGTH: f64 = 400e3;
+pub const IO_FROST_COVER: f64 = 0.45;
+pub const IO_FLOW_DARK: [f32; 3] = [0.05, 0.05, 0.05];
+pub const IO_PATERA_FLOOR: [f32; 3] = [0.14, 0.09, 0.05];
+pub const IO_PLUME_RED: [f32; 3] = [0.55, 0.20, 0.08];
+pub const IO_MOUNTAIN_ROCK: [f32; 3] = [0.32, 0.28, 0.22];
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
 /// Provisional, Phase 3.
