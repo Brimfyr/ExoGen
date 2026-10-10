@@ -19,6 +19,8 @@ pub const UNIT_DEEP_EJECTA: u16 = 9;
 pub const UNIT_LAVA: u16 = 10;
 pub const UNIT_LAVA_CRATER_FLOOR: u16 = 11;
 pub const UNIT_LAVA_EJECTA: u16 = 12;
+/// Deformed old crust that survived an episodic lid's resurfacing.
+pub const UNIT_TESSERA: u16 = 13;
 
 pub fn unit_name(id: u16) -> &'static str {
     match id {
@@ -34,13 +36,12 @@ pub fn unit_name(id: u16) -> &'static str {
         UNIT_LAVA => "lava plains",
         UNIT_LAVA_CRATER_FLOOR => "crater floor in lava",
         UNIT_LAVA_EJECTA => "lava ejecta",
+        UNIT_TESSERA => "tessera",
         _ => "none",
     }
 }
 
 /// All known units with their names, for the sidecar legend.
 pub fn legend() -> Vec<(u16, &'static str)> {
-    (0..=UNIT_LAVA_EJECTA)
-        .map(|id| (id, unit_name(id)))
-        .collect()
+    (0..=UNIT_TESSERA).map(|id| (id, unit_name(id))).collect()
 }

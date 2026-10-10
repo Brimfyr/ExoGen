@@ -11,6 +11,7 @@
 //! liquid, computes optical maturity and rays, and assigns materials. Both parts are cached
 //! by a hash of the parameters and seeds they depend on.
 
+pub mod episodic;
 pub mod impacts;
 pub mod materials;
 pub mod plume;
@@ -99,6 +100,10 @@ pub struct LoopOutput {
     pub shields: Vec<plume::Shield>,
     pub canyons: Vec<plume::Trough>,
     pub graben: Vec<plume::Trough>,
+    /// An episodic lid's resurfacing event, coronae and domes.
+    pub resurfacing: Option<episodic::Resurfacing>,
+    pub coronae: Vec<episodic::Corona>,
+    pub domes: Vec<episodic::Dome>,
     pub hash: u64,
 }
 
@@ -148,6 +153,11 @@ pub struct FinishOutput {
     pub shields: Vec<plume::Shield>,
     pub canyons: Vec<plume::Trough>,
     pub graben: Vec<plume::Trough>,
+    /// The resurfacing event if it lies before the epoch, and the coronae and domes
+    /// present at it.
+    pub resurfacing: Option<episodic::Resurfacing>,
+    pub coronae: Vec<episodic::Corona>,
+    pub domes: Vec<episodic::Dome>,
     pub hash: u64,
 }
 
@@ -199,6 +209,7 @@ impl Runner {
             volcanism::VERSION,
             ridges::VERSION,
             plume::VERSION,
+            episodic::VERSION,
         ])
     }
 
@@ -272,7 +283,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 17;
+pub const FINISH_VERSION: u64 = 18;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -306,7 +317,8 @@ pub fn run_coarse_loop(
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(graph, grid, &thermal);
-    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal);
+    let mut plume = plume::PlumeProcess::new(graph, grid);
+    let mut episodic = episodic::EpisodicProcess::new(graph, grid);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -320,9 +332,16 @@ pub fn run_coarse_loop(
         }
         let t0 = dt * (s - 1) as f64;
         let t1 = dt * s as f64;
-        // The slow processes first: the dome lifts, the shields grow, the canyon deepens.
+        // The slow processes first: the dome lifts, the shields grow, the canyon deepens;
+        // an episodic lid's event renews the plains.
         if let Some(p) = &mut plume {
             p.step(&mut layers, t0, t1);
+        }
+        if let Some(e) = &mut episodic
+            && let Some(fill) = e.step(&mut layers, t0, t1)
+            && let Some(f) = &mut floods
+        {
+            f.note_resurfacing(&fill, e.event_time());
         }
         let boost = plume.as_ref().map(|p| p.vent_boost());
         // Everything that happens in the step, in order of time: craters, scarps and
@@ -385,6 +404,10 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
+    let (resurfacing, coronae, domes) = match episodic {
+        Some(e) => (e.resurfacing, e.coronae, e.domes),
+        None => (None, Vec::new(), Vec::new()),
+    };
     let (rises, shields, canyons, graben, load) = match plume {
         Some(p) => (p.rises, p.shields, p.canyons, p.graben, Some(p.load)),
         None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
@@ -426,6 +449,9 @@ pub fn run_coarse_loop(
         shields,
         canyons,
         graben,
+        resurfacing,
+        coronae,
+        domes,
         hash,
     })
 }
@@ -507,10 +533,31 @@ pub fn finish(
         .filter(|g| g.start_gyr <= present + 1e-9)
         .cloned()
         .collect();
+    let resurfacing = loop_output
+        .resurfacing
+        .clone()
+        .filter(|r| r.time_gyr <= present + 1e-9);
+    let coronae: Vec<episodic::Corona> = loop_output
+        .coronae
+        .iter()
+        .filter(|c| c.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
+    let domes: Vec<episodic::Dome> = loop_output
+        .domes
+        .iter()
+        .filter(|d| d.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
-    let mut smear = volcanism::LavaSmear::new(loop_output.grid, grid, &floods);
-    if !floods.is_empty() {
+    let mut smear = volcanism::LavaSmear::new(
+        loop_output.grid,
+        grid,
+        &floods,
+        resurfacing.as_ref().map(|r| r.fill.as_slice()),
+    );
+    if !floods.is_empty() || resurfacing.is_some() {
         with_stamper(&grid, |stamper| {
             for c in &loop_craters {
                 let dim = dimensions(c.diameter, &inputs.scaling);
@@ -567,6 +614,9 @@ pub fn finish(
         Shield(usize),
         Canyon(usize),
         Graben(usize),
+        Resurfacing,
+        Corona(usize),
+        Dome(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
@@ -592,6 +642,15 @@ pub fn finish(
     }
     for (k, g) in graben.iter().enumerate() {
         events.push((g.start_gyr, 0, g.id ^ 0x6A8B_0000_0000, Event::Graben(k)));
+    }
+    if let Some(r) = &resurfacing {
+        events.push((r.time_gyr, 0, 0xE915_0000_0000, Event::Resurfacing));
+    }
+    for (k, c) in coronae.iter().enumerate() {
+        events.push((c.time_gyr, 0, c.id ^ 0xC020_0000_0000, Event::Corona(k)));
+    }
+    for (k, d) in domes.iter().enumerate() {
+        events.push((d.time_gyr, 0, d.id ^ 0xD03E_0000_0000, Event::Dome(k)));
     }
     for (k, r) in ridges.iter().enumerate() {
         events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
@@ -666,6 +725,15 @@ pub fn finish(
                 Event::Graben(k) => {
                     let g = &graben[*k];
                     (g.midpoint(), g.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Resurfacing => ([0.0, 0.0, 1.0], std::f64::consts::PI),
+                Event::Corona(k) => {
+                    let c = &coronae[*k];
+                    (c.center, c.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Dome(k) => {
+                    let d = &domes[*k];
+                    (d.center, d.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
             }
         })
@@ -763,6 +831,44 @@ pub fn finish(
                                 coarse_cell,
                                 (4.0 * kappa_t + 2.0 * smooth_sigma * smooth_sigma).sqrt(),
                             )),
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Resurfacing => {
+                        let r = resurfacing.as_ref().expect("event present");
+                        let (out, taken) = episodic::resurfacing_compute(
+                            &layers,
+                            &grid,
+                            &loop_output.grid,
+                            body_radius,
+                            r,
+                            &smear,
+                            inputs.seed,
+                        );
+                        Some((out, None, Some((taken, [0; 4]))))
+                    }
+                    Event::Corona(k) => {
+                        let c = &coronae[*k];
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                            * 1e3;
+                        let out = episodic::corona_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            c,
+                            (4.0 * kappa_t).sqrt(),
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Dome(k) => {
+                        let out = episodic::dome_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &domes[*k],
                             stamper,
                         );
                         Some((out, None, None))
@@ -974,6 +1080,9 @@ pub fn finish(
         shields,
         canyons,
         graben,
+        resurfacing,
+        coronae,
+        domes,
         hash,
     })
 }
@@ -1607,6 +1716,55 @@ mod tests {
             .run(&preset_graph("Moon", "preview"), &NoProgress)
             .unwrap();
         assert!(moon.loop_output.rises.is_empty() && moon.loop_output.shields.is_empty());
+    }
+
+    /// Venus renews its surface: most of it is plains the age of the event, a few per
+    /// cent is older tessera, coronae and domes dot the plains, and the craters are few.
+    #[test]
+    fn venus_renews_its_surface_and_keeps_tessera() {
+        let mut r = Runner::new();
+        let g = preset_graph("Venus", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let lo = &out.loop_output;
+        assert!(!lo.rises.is_empty() && !lo.shields.is_empty());
+        let event = lo.resurfacing.as_ref().expect("an event").time_gyr;
+        assert!((event - g.f64("tectonics.resurfacing_time")).abs() < 1e-9);
+        assert!(lo.coronae.len() > 50 && !lo.domes.is_empty());
+        let tessera = episodic::tessera_fraction(&out.finish.layers);
+        assert!(tessera > 0.04 && tessera < 0.14, "tessera {tessera}");
+        // Plains carry the event's age; tessera is older.
+        let layers = &out.finish.layers;
+        let units = layers.unit_id.as_slice();
+        let ages = layers.surface_age.as_slice();
+        let (mut plains, mut plains_at_event) = (0usize, 0usize);
+        let mut tessera_older = 0usize;
+        for k in 0..units.len() {
+            if units[k] == crate::units::UNIT_LAVA {
+                plains += 1;
+                if (ages[k] as f64 - event).abs() < 0.3 {
+                    plains_at_event += 1;
+                }
+            } else if units[k] == crate::units::UNIT_TESSERA && (ages[k] as f64) < event - 0.1 {
+                tessera_older += 1;
+            }
+        }
+        assert!(
+            plains_at_event * 10 > plains * 7,
+            "{plains_at_event} of {plains}"
+        );
+        assert!(tessera_older > 0);
+        // Few craters, none older than the event.
+        assert!(
+            out.finish.craters.len() < 2_000,
+            "{} craters",
+            out.finish.craters.len()
+        );
+        assert!(
+            out.finish
+                .craters
+                .iter()
+                .all(|c| c.time_gyr >= event - 1e-6)
+        );
     }
 
     #[test]

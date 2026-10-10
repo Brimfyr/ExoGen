@@ -163,6 +163,8 @@ pub struct FloodProcess {
     heap: BinaryHeap<Reverse<Key>>,
     /// Extrusive volume carried between steps, m³.
     carry: f64,
+    /// On an episodic lid: when the surface was renewed, before which no flows are kept.
+    event_time: Option<f64>,
     pub records: Vec<FloodRecord>,
 }
 
@@ -171,9 +173,11 @@ const NEIGHBOURS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 impl FloodProcess {
     /// None for regimes whose volcanism is handled elsewhere.
     pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
-        if graph.str("interior.tectonic_regime") != "stagnant_lid" {
-            return None;
-        }
+        let event_time = match graph.str("interior.tectonic_regime") {
+            "stagnant_lid" => None,
+            "episodic_lid" => Some(graph.f64("tectonics.resurfacing_time")),
+            _ => return None,
+        };
         let body_radius = graph.f64("body.radius");
         let areas = (0..grid.cell_count())
             .map(|k| grid.cell_area(grid.cell(k)) * body_radius * body_radius)
@@ -190,8 +194,19 @@ impl FloodProcess {
             generation: 0,
             heap: BinaryHeap::new(),
             carry: 0.0,
+            event_time,
             records: Vec::new(),
         })
+    }
+
+    /// Take the resurfacing event's fill into the thickness and last-flow records.
+    pub fn note_resurfacing(&mut self, fill: &[f32], time_gyr: f64) {
+        for (k, &f) in fill.iter().enumerate() {
+            if f > 0.0 {
+                self.thickness[k] += f;
+                self.last_time[k] = time_gyr as f32;
+            }
+        }
     }
 
     /// Fraction of the magma that reaches the surface at a time: the extrusive share,
@@ -205,8 +220,14 @@ impl FloodProcess {
         VOLCANISM_EXTRUSIVE_FRACTION * ascent * (-(strain / VOLCANISM_SHUTOFF_STRAIN).powi(2)).exp()
     }
 
-    /// Extrusive volume between two times, m³, by midpoint rule over sub-intervals.
+    /// Extrusive volume between two times, m³, by midpoint rule over sub-intervals. On an
+    /// episodic lid nothing before the event is kept, and a small share erupts after it.
     pub fn budget(&self, t0: f64, t1: f64) -> f64 {
+        let (t0, share) = match self.event_time {
+            Some(event) if t1 <= event => return 0.0,
+            Some(event) => (t0.max(event), EPISODIC_POST_EVENT_FRACTION),
+            None => (t0, 1.0),
+        };
         let n = 8;
         let dt = (t1 - t0) / n as f64;
         let mut v = 0.0;
@@ -214,7 +235,7 @@ impl FloodProcess {
             let t = t0 + (i as f64 + 0.5) * dt;
             v += self.thermal.at(t).magma_rate * self.eruptive_fraction(t) * dt * GYR;
         }
-        v
+        v * share
     }
 
     /// Vent weights: thin crust and low ground, and any rise's boost.
@@ -479,13 +500,23 @@ pub struct LavaSmear {
 }
 
 impl LavaSmear {
-    pub fn new(coarse: CubeSphere, grid: CubeSphere, floods: &[FloodRecord]) -> Self {
+    pub fn new(
+        coarse: CubeSphere,
+        grid: CubeSphere,
+        floods: &[FloodRecord],
+        extra: Option<&[f32]>,
+    ) -> Self {
         let mut thickness = Field::<f32>::new(coarse);
         {
             let t = thickness.as_mut_slice();
             for f in floods {
                 for (&idx, c) in &f.cells() {
                     t[idx as usize] += c.thickness;
+                }
+            }
+            if let Some(e) = extra {
+                for (v, x) in t.iter_mut().zip(e) {
+                    *v += x;
                 }
             }
         }

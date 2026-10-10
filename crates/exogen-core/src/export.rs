@@ -104,6 +104,25 @@ pub struct TroughInfo {
 }
 
 #[derive(Serialize)]
+pub struct CoronaInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub diameter_km: f64,
+    pub centre_relief_m: f64,
+    pub rim_height_m: f64,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
+pub struct DomeInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub diameter_km: f64,
+    pub height_m: f64,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
 pub struct RidgeInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
@@ -185,6 +204,12 @@ pub struct Sidecar {
     pub shields: Vec<ShieldInfo>,
     pub canyons: Vec<TroughInfo>,
     pub graben: Vec<TroughInfo>,
+    /// An episodic lid: how long before the epoch the surface was renewed, the tessera
+    /// share, and the coronae and domes present.
+    pub resurfacing_age_gyr: Option<f64>,
+    pub tessera_fraction: f64,
+    pub coronae: Vec<CoronaInfo>,
+    pub domes: Vec<DomeInfo>,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
@@ -592,6 +617,40 @@ pub fn export(
             .graben
             .iter()
             .map(|t| trough_info(t, out.epoch_time_gyr))
+            .collect(),
+        resurfacing_age_gyr: out
+            .resurfacing
+            .as_ref()
+            .map(|r| out.epoch_time_gyr - r.time_gyr),
+        tessera_fraction: crate::stages::episodic::tessera_fraction(&out.layers),
+        coronae: out
+            .coronae
+            .iter()
+            .map(|c| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(c.center);
+                CoronaInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: 2.0 * c.radius / 1e3,
+                    centre_relief_m: c.centre_relief,
+                    rim_height_m: c.rim_height,
+                    age_gyr: out.epoch_time_gyr - c.time_gyr,
+                }
+            })
+            .collect(),
+        domes: out
+            .domes
+            .iter()
+            .map(|d| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(d.center);
+                DomeInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: 2.0 * d.radius / 1e3,
+                    height_m: d.height,
+                    age_gyr: out.epoch_time_gyr - d.time_gyr,
+                }
+            })
             .collect(),
         lava_area_fraction: crate::stages::volcanism::lava_fraction(&out.layers),
         unit_legend: crate::units::legend()

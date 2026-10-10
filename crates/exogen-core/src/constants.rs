@@ -282,6 +282,8 @@ pub const RIDGE_LOAD_WEIGHT: f64 = 0.5;
 pub const PLUME_MIN_RADIUS: f64 = 3.0e6;
 pub const PLUME_FLUX_PER_PLUME: f64 = 0.02;
 pub const PLUME_RISE_DIAMETER_FRACTION: f64 = 1.5;
+/// A thin, hot episodic lid supports narrower rises (Beta Regio: 2,500 km on Venus).
+pub const PLUME_RISE_DIAMETER_FRACTION_EPISODIC: f64 = 0.4;
 pub const RISE_HEIGHT_FRACTION: f64 = 0.28;
 pub const RISE_START_GYR: f64 = 0.3;
 pub const RISE_END_GYR: f64 = 1.5;
@@ -315,11 +317,14 @@ pub const SHIELD_FLOW_TEXTURE_LENGTH: f64 = 15e3;
 /// this much over this length; their walls take this fraction of the width; walls are
 /// scalloped by this fraction over this length; the width pulses by this fraction over
 /// this length (chasmata); and the floor tapers to the ends with this power.
-pub const CANYON_MIN_RISE_DIAMETER: f64 = 3.0e6;
+pub const CANYON_MIN_RISE_DIAMETER: f64 = 2.0e6;
 pub const CANYON_LENGTH_FRACTION: f64 = 0.8;
 pub const CANYON_START_FRACTION: f64 = 0.6;
-pub const CANYON_WIDTH: f64 = 200e3;
-pub const CANYON_DEPTH: f64 = 7e3;
+/// Width as a fraction of the rise diameter and depth as a fraction of the rise height
+/// (Valles Marineris: 200 km wide and 7 km deep on a 5,000 km, 7 km rise; Devana
+/// Chasma on Venus: 100 km wide and 2 to 3 km deep on a smaller, lower rise).
+pub const CANYON_WIDTH_FRACTION: f64 = 0.04;
+pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_START_GYR: f64 = 1.0;
 pub const CANYON_END_GYR: f64 = 2.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
@@ -336,6 +341,42 @@ pub const TROUGH_SCALLOP_LENGTH: f64 = 60e3;
 pub const TROUGH_WIDTH_PULSE: f64 = 0.4;
 pub const TROUGH_PULSE_LENGTH: f64 = 700e3;
 pub const TROUGH_TAPER_POWER: f64 = 0.3;
+/// The episodic lid (PLAN.md 4.3, Venus). The event fills every depression this far
+/// towards its spill point and lays this veneer everywhere else on the plains, m; the
+/// tessera are the highest-standing fraction of the surface by a height smoothed this
+/// many passes, keep a surface this much older than the event, Gyr, and carry a fabric
+/// of this relief, m, at this wavelength, m. After the event, eruptions carry this share
+/// of the extrusive budget, the rest having gone into the event.
+pub const TESSERA_FRACTION: f64 = 0.08;
+pub const TESSERA_SMOOTHING_PASSES: usize = 20;
+pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
+pub const TESSERA_RELIEF: f64 = 1_000.0;
+pub const TESSERA_FABRIC_LENGTH: f64 = 30e3;
+pub const EPISODIC_FILL_FRACTION: f64 = 0.7;
+pub const EPISODIC_VENEER: f64 = 20.0;
+pub const EPISODIC_POST_EVENT_FRACTION: f64 = 0.02;
+/// Coronae on an episodic lid: how many per m² (Venus: some 500), their diameters, m,
+/// with the draw skewed to small ones by this power, the share whose centre sags, the
+/// central relief and rim height, m, the rim's position and width as fractions of the
+/// radius, the moat as a fraction of the rim height, the rim's height wobble, and the
+/// concentric fractures' relief and spacing. Pancake domes: how many per m² (Venus:
+/// some 150), diameters, height and top roughness.
+pub const CORONAE_PER_AREA: f64 = 1.1e-12;
+pub const CORONA_DIAMETER: (f64, f64) = (100e3, 1_000e3);
+pub const CORONA_SIZE_SKEW: f64 = 2.0;
+pub const CORONA_SAG_FRACTION: f64 = 0.4;
+pub const CORONA_CENTRE_RELIEF: f64 = 400.0;
+pub const CORONA_RIM_HEIGHT: f64 = 800.0;
+pub const CORONA_RIM_POSITION: f64 = 0.85;
+pub const CORONA_RIM_WIDTH: f64 = 0.05;
+pub const CORONA_MOAT_FRACTION: f64 = 0.3;
+pub const CORONA_RIM_WOBBLE: f64 = 0.3;
+pub const CORONA_FRACTURE_RELIEF: f64 = 0.15;
+pub const CORONA_FRACTURE_SPACING: f64 = 0.08;
+pub const DOMES_PER_AREA: f64 = 3.3e-13;
+pub const DOME_DIAMETER: (f64, f64) = (20e3, 60e3);
+pub const DOME_HEIGHT: f64 = 800.0;
+pub const DOME_TOP_ROUGHNESS: f64 = 0.08;
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
 /// Provisional, Phase 3.

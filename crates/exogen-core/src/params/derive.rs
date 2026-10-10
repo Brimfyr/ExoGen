@@ -1475,9 +1475,42 @@ pub fn climate_lapse_rate(c: &Ctx) -> Value {
 
 // ------------------------------------------------------------------ tectonics (contraction)
 
+pub fn tectonics_resurfacing_time(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "episodic_lid" {
+        return 0.0.into();
+    }
+    (c.f64("body.age") - c.f64("cratering.retention_age"))
+        .max(0.0)
+        .into()
+}
+
+pub fn tectonics_tessera_fraction(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") == "episodic_lid" {
+        TESSERA_FRACTION.into()
+    } else {
+        0.0.into()
+    }
+}
+
+pub fn volcanism_corona_count(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "episodic_lid" {
+        return 0.0.into();
+    }
+    let r = c.f64("body.radius");
+    (CORONAE_PER_AREA * 4.0 * PI * r * r).round().into()
+}
+
+pub fn volcanism_dome_count(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "episodic_lid" {
+        return 0.0.into();
+    }
+    let r = c.f64("body.radius");
+    (DOMES_PER_AREA * 4.0 * PI * r * r).round().into()
+}
+
 pub fn tectonics_plume_count(c: &Ctx) -> Value {
-    if c.str("interior.tectonic_regime") != "stagnant_lid"
-        || c.f64("body.radius") < PLUME_MIN_RADIUS
+    let regime = c.str("interior.tectonic_regime");
+    if !matches!(regime, "stagnant_lid" | "episodic_lid") || c.f64("body.radius") < PLUME_MIN_RADIUS
     {
         return 0.0.into();
     }
@@ -1491,17 +1524,19 @@ pub fn tectonics_rise_diameter(c: &Ctx) -> Value {
     if c.f64("tectonics.plume_count") < 1.0 {
         return 0.0.into();
     }
-    (PLUME_RISE_DIAMETER_FRACTION * c.f64("body.radius")).into()
+    let fraction = if c.str("interior.tectonic_regime") == "episodic_lid" {
+        PLUME_RISE_DIAMETER_FRACTION_EPISODIC
+    } else {
+        PLUME_RISE_DIAMETER_FRACTION
+    };
+    (fraction * c.f64("body.radius")).into()
 }
 
 pub fn tectonics_rise_height(c: &Ctx) -> Value {
     if c.f64("tectonics.plume_count") < 1.0 {
         return 0.0.into();
     }
-    let relief = crate::thermal::ThermalHistory::new(&thermal_inputs(c))
-        .at(c.f64("body.age"))
-        .relief_limit;
-    (RISE_HEIGHT_FRACTION * relief).into()
+    (RISE_HEIGHT_FRACTION * c.f64("interior.max_relief")).into()
 }
 
 pub fn tectonics_canyon_count(c: &Ctx) -> Value {

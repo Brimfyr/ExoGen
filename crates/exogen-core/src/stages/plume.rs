@@ -25,7 +25,6 @@ use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
-use crate::thermal::ThermalHistory;
 use crate::units::UNIT_LAVA;
 
 pub const VERSION: u64 = 1;
@@ -189,13 +188,17 @@ pub struct PlumeProcess {
 
 impl PlumeProcess {
     /// None when the body raises no plume.
-    pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
+    pub fn new(graph: &ParamGraph, grid: CubeSphere) -> Option<Self> {
         let count = graph.f64("tectonics.plume_count").round() as usize;
-        if count == 0 || graph.str("interior.tectonic_regime") != "stagnant_lid" {
+        if count == 0
+            || !matches!(
+                graph.str("interior.tectonic_regime"),
+                "stagnant_lid" | "episodic_lid"
+            )
+        {
             return None;
         }
         let body_radius = graph.f64("body.radius");
-        let age = graph.f64("body.age");
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
         let rise_radius = 0.5 * graph.f64("tectonics.rise_diameter");
         let rise_height = graph.f64("tectonics.rise_height");
@@ -221,7 +224,7 @@ impl PlumeProcess {
         }
         // Shields: a few large ones on the first rise, smaller ones on each.
         let shield_count = graph.f64("volcanism.shield_count").round() as usize;
-        let relief_limit = thermal.at(age).relief_limit;
+        let relief_limit = graph.f64("interior.max_relief");
         let mut shields = Vec::new();
         let mut sid = 0u64;
         for (ri, rise) in rises.iter().enumerate() {
@@ -316,8 +319,8 @@ impl PlumeProcess {
                     points,
                     spacing: 0.5 * cell,
                     length,
-                    width: CANYON_WIDTH,
-                    depth: CANYON_DEPTH.min(0.9 * rise_height + CANYON_DEPTH * 0.5),
+                    width: CANYON_WIDTH_FRACTION * 2.0 * rise.radius,
+                    depth: CANYON_DEPTH_FRACTION * rise.height,
                     start_gyr: CANYON_START_GYR,
                     end_gyr: CANYON_END_GYR,
                     id: k,
