@@ -8,8 +8,25 @@
 /// Sun azimuth clockwise from north and elevation, degrees, and the ambient share of the
 /// light, the cartographic convention of light from the upper left.
 pub const SHADE_SUN_AZIMUTH_DEG: f64 = 315.0;
-pub const SHADE_SUN_ELEVATION_DEG: f64 = 35.0;
+pub const SHADE_SUN_ELEVATION_DEG: f64 = 30.0;
 pub const SHADE_AMBIENT: f32 = 0.3;
+/// Mean albedo the preview is exposed to, so dark worlds read as well as bright ones.
+pub const SHADE_PREVIEW_MEAN: f32 = 0.5;
+
+/// Exposure gain that brings the mean albedo up to the preview mean; never darkens.
+pub fn preview_gain(albedo: impl Iterator<Item = f32>) -> f32 {
+    let (mut sum, mut n) = (0.0f64, 0usize);
+    for a in albedo {
+        if a.is_finite() {
+            sum += a as f64;
+            n += 1;
+        }
+    }
+    if n == 0 || sum <= 0.0 {
+        return 1.0;
+    }
+    (SHADE_PREVIEW_MEAN as f64 / (sum / n as f64)).max(1.0) as f32
+}
 
 /// Lambert shading, 0 to 1, of an equirectangular height map in metres on a body of
 /// radius `body_radius`, with `width` columns and `rows` rows.
@@ -37,8 +54,12 @@ pub fn hillshade(height: &[f32], width: usize, rows: usize, body_radius: f64) ->
     out
 }
 
-/// Albedo lit by the shade: ambient plus the direct share.
-pub fn lit(albedo: [f32; 3], shade: f32) -> [f32; 3] {
-    let k = SHADE_AMBIENT + (1.0 - SHADE_AMBIENT) * shade;
-    [albedo[0] * k, albedo[1] * k, albedo[2] * k]
+/// Albedo, exposed by `gain`, lit by the shade: ambient plus the direct share.
+pub fn lit(albedo: [f32; 3], shade: f32, gain: f32) -> [f32; 3] {
+    let k = gain * (SHADE_AMBIENT + (1.0 - SHADE_AMBIENT) * shade);
+    [
+        (albedo[0] * k).min(1.0),
+        (albedo[1] * k).min(1.0),
+        (albedo[2] * k).min(1.0),
+    ]
 }

@@ -67,6 +67,17 @@ pub struct CraterInfo {
 }
 
 #[derive(Serialize)]
+pub struct ScarpInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    /// Strike at the midpoint, degrees clockwise from north.
+    pub strike_deg: f64,
+    pub length_km: f64,
+    pub height_m: f64,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
 pub struct UnitInfo {
     pub id: u16,
     pub name: String,
@@ -90,6 +101,8 @@ pub struct Sidecar {
     /// Craters emplaced in the loop and the larger replayed ones.
     pub craters: Vec<CraterInfo>,
     pub replayed_crater_count: usize,
+    /// Contraction scarps present at the epoch.
+    pub scarps: Vec<ScarpInfo>,
     pub unit_legend: Vec<UnitInfo>,
 }
 
@@ -227,14 +240,21 @@ pub fn export(
         },
     );
 
-    // Shaded relief preview: the albedo lit from one fixed sun over the height map.
+    // Shaded relief preview: the albedo, exposed to a common mean, lit from one fixed sun
+    // over the height map.
     let shade = crate::shade::hillshade(&height_eq, width, height_px, graph.f64("body.radius"));
+    let gain = crate::shade::preview_gain(
+        (0..width * height_px).map(|k| (channels[0][k] + channels[1][k] + channels[2][k]) / 3.0),
+    );
     let lit: Vec<Vec<f32>> = (0..3)
         .map(|ch| {
             (0..width * height_px)
                 .map(|k| {
-                    crate::shade::lit([channels[0][k], channels[1][k], channels[2][k]], shade[k])
-                        [ch]
+                    crate::shade::lit(
+                        [channels[0][k], channels[1][k], channels[2][k]],
+                        shade[k],
+                        gain,
+                    )[ch]
                 })
                 .collect()
         })
@@ -245,7 +265,7 @@ pub fn export(
         MapInfo {
             file: "shaded.png".into(),
             encoding: "8-bit sRGB PNG".into(),
-            units: "preview: albedo lit from the upper left".into(),
+            units: "preview: albedo exposed to a common mean, lit from the upper left".into(),
             min: 0.0,
             max: 1.0,
         },
@@ -365,6 +385,21 @@ pub fn export(
             })
             .collect(),
         replayed_crater_count: out.replayed_count,
+        scarps: out
+            .scarps
+            .iter()
+            .map(|s| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(s.midpoint());
+                ScarpInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    strike_deg: (90.0 - s.midpoint_heading().to_degrees()).rem_euclid(360.0),
+                    length_km: s.length / 1e3,
+                    height_m: s.height,
+                    age_gyr: out.epoch_time_gyr - s.time_gyr,
+                }
+            })
+            .collect(),
         unit_legend: crate::units::legend()
             .into_iter()
             .map(|(id, name)| UnitInfo {

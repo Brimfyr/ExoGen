@@ -14,6 +14,7 @@
 pub mod impacts;
 pub mod materials;
 pub mod primordial_crust;
+pub mod tectonics;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -84,6 +85,8 @@ pub struct LoopOutput {
     pub loop_threshold: f64,
     /// The interior through the body's life, as the loop used it.
     pub thermal: ThermalHistory,
+    /// Contraction scarps emplaced inside the loop, in order of formation.
+    pub scarps: Vec<tectonics::ScarpRecord>,
     pub hash: u64,
 }
 
@@ -122,6 +125,8 @@ pub struct FinishOutput {
     pub craters: Vec<CraterRecord>,
     /// Total replayed craters stamped, including those below the recorded size.
     pub replayed_count: usize,
+    /// Scarps present at the epoch.
+    pub scarps: Vec<tectonics::ScarpRecord>,
     pub hash: u64,
 }
 
@@ -169,6 +174,7 @@ impl Runner {
             ]),
             primordial_crust::VERSION,
             impacts::VERSION,
+            tectonics::VERSION,
         ])
     }
 
@@ -242,7 +248,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 12;
+pub const FINISH_VERSION: u64 = 13;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -274,6 +280,7 @@ pub fn run_coarse_loop(
     let crust = primordial_crust::PrimordialCrust::new(graph, grid);
     let mut layers = crust.init();
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
+    let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -288,6 +295,9 @@ pub fn run_coarse_loop(
         let t0 = dt * (s - 1) as f64;
         let t1 = dt * s as f64;
         impacts.step(&mut layers, t0, t1, s as u64);
+        if let Some(c) = &mut contraction {
+            c.step(&mut layers, t0, t1, s as u64);
+        }
         if s % keep_every == 0 || s == steps {
             keyframes.push(Keyframe {
                 step: s,
@@ -309,6 +319,7 @@ pub fn run_coarse_loop(
     let hash = hash_words(&hashes);
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
+    let scarps = contraction.map(|c| c.records).unwrap_or_default();
     Ok(LoopOutput {
         grid,
         keyframes,
@@ -317,6 +328,7 @@ pub fn run_coarse_loop(
         craters,
         loop_threshold,
         thermal,
+        scarps,
         hash,
     })
 }
@@ -352,6 +364,12 @@ pub fn finish(
         .craters
         .iter()
         .filter(|c| c.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
+    let scarps: Vec<tectonics::ScarpRecord> = loop_output
+        .scarps
+        .iter()
+        .filter(|s| s.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
@@ -394,10 +412,14 @@ pub fn finish(
     // destroyed are stamped before it and removed by its restore.
     enum Event {
         Loop(usize),
+        Scarp(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> =
-        Vec::with_capacity(loop_craters.len() + replay.len());
+        Vec::with_capacity(loop_craters.len() + scarps.len() + replay.len());
+    for (k, s) in scarps.iter().enumerate() {
+        events.push((s.time_gyr, 0, s.id ^ 0x5CA2_0000_0000, Event::Scarp(k)));
+    }
     for (i, c) in loop_craters.iter().enumerate() {
         events.push((c.time_gyr, 0, c.id, Event::Loop(i)));
     }
@@ -423,21 +445,27 @@ pub fn finish(
     let caps: Vec<([f64; 3], f64)> = events
         .par_iter()
         .map(|(_, _, _, event)| {
-            let (center, diameter, ellipticity) = match event {
+            let crater_cap = |center: [f64; 3], diameter: f64, ellipticity: f64| {
+                let dim = dimensions(diameter, &inputs.scaling);
+                (
+                    center,
+                    dim.ejecta_radius * ellipticity.sqrt() / body_radius + grid.delta(),
+                )
+            };
+            match event {
                 Event::Loop(li) => {
                     let c = &loop_craters[*li];
-                    (c.center, c.diameter, c.ellipticity)
+                    crater_cap(c.center, c.diameter, c.ellipticity)
                 }
                 Event::Replay(j) => {
                     let c = &replay[*j].0;
-                    (c.center, c.diameter, c.ellipticity)
+                    crater_cap(c.center, c.diameter, c.ellipticity)
                 }
-            };
-            let dim = dimensions(diameter, &inputs.scaling);
-            (
-                center,
-                dim.ejecta_radius * ellipticity.sqrt() / body_radius + grid.delta(),
-            )
+                Event::Scarp(k) => {
+                    let s = &scarps[*k];
+                    (s.midpoint(), s.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+            }
         })
         .collect();
     let waves = build_waves(&caps);
@@ -492,6 +520,26 @@ pub fn finish(
                             &fresh,
                             &detail,
                             &params,
+                            stamper,
+                        );
+                        Some((out, None))
+                    }
+                    Event::Scarp(k) => {
+                        // The face the coarse grid could not carry: the profile at its
+                        // degraded width minus the coarse-smoothed one.
+                        let s = &scarps[*k];
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(s.time_gyr, present)
+                            * 1e3;
+                        let fine = (4.0 * kappa_t).sqrt();
+                        let coarse = (4.0 * kappa_t + 2.0 * smooth_sigma * smooth_sigma).sqrt();
+                        let out = tectonics::scarp_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            s,
+                            fine,
+                            Some(coarse),
                             stamper,
                         );
                         Some((out, None))
@@ -632,6 +680,7 @@ pub fn finish(
         keyframe_index,
         craters: records,
         replayed_count,
+        scarps,
         hash,
     })
 }
@@ -1086,6 +1135,50 @@ mod tests {
                 .filter(|c| c.visible)
                 .all(|c| c.relief > 1_000.0)
         );
+    }
+
+    /// Mercury takes up its contraction in scarps: many, up to hundreds of kilometres long
+    /// and kilometres high, carrying most of the shortening budget; the Moon far less.
+    #[test]
+    fn mercury_takes_up_its_contraction_in_scarps() {
+        let mut r = Runner::new();
+        let mercury = r
+            .run(&preset_graph("Mercury", "preview"), &NoProgress)
+            .unwrap();
+        let g = preset_graph("Mercury", "preview");
+        let radius = g.f64("body.radius");
+        let area = 4.0 * std::f64::consts::PI * radius * radius;
+        let budget = 2.0 * g.f64("interior.contraction_total") / radius * area;
+        let scarps = &mercury.loop_output.scarps;
+        let taken: f64 = scarps
+            .iter()
+            .map(|s| s.length * tectonics::scarp_shortening(s.height))
+            .sum();
+        assert!(scarps.len() > 100, "{} scarps", scarps.len());
+        let longest = scarps.iter().map(|s| s.length).fold(0.0, f64::max);
+        let highest = scarps.iter().map(|s| s.height).fold(0.0, f64::max);
+        assert!(
+            longest > 300_000.0 && highest > 1_500.0,
+            "{longest} m, {highest} m"
+        );
+        // Stamped scarps carry most of the budget; the rest is in scarps too short for
+        // the loop grid.
+        assert!(
+            taken > 0.3 * budget && taken <= 1.05 * budget,
+            "taken {taken} of {budget}"
+        );
+        let moon = r
+            .run(&preset_graph("Moon", "preview"), &NoProgress)
+            .unwrap();
+        let moon_taken: f64 = moon
+            .loop_output
+            .scarps
+            .iter()
+            .map(|s| s.length * tectonics::scarp_shortening(s.height))
+            .sum();
+        let moon_radius = preset_graph("Moon", "preview").f64("body.radius");
+        let per_area = |t: f64, r: f64| t / (4.0 * std::f64::consts::PI * r * r);
+        assert!(per_area(moon_taken, moon_radius) < 0.3 * per_area(taken, radius));
     }
 
     #[test]

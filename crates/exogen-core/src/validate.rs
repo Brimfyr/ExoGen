@@ -167,7 +167,7 @@ pub fn reference_checks() -> Vec<Check> {
             "Moon",
             "interior.contraction_total",
             100.0,
-            1_500.0,
+            600.0,
             "Watters et al. 2010",
         ),
         range(

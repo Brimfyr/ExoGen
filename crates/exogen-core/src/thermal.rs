@@ -273,8 +273,8 @@ mod tests {
             assert!(s.contraction >= last);
             last = s.contraction;
         }
-        // Mercury-class total contraction is kilometres; the Moon's less.
-        assert!(now.contraction > 500.0 && now.contraction < 5_000.0);
+        // The Moon's total contraction is a few hundred metres; Mercury's kilometres.
+        assert!(now.contraction > 100.0 && now.contraction < 1_000.0);
     }
 
     /// A scripted eccentricity history drives the tidal flux with its square.

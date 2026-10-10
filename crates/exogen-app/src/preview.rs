@@ -130,8 +130,11 @@ pub fn build_equirect(
             if channel == Channel::Shaded {
                 let eq = to_equirectangular(&grid, out.height.as_slice(), width, height);
                 let shade = exogen_core::shade::hillshade(&eq, width, height, body_radius);
+                let gain = exogen_core::shade::preview_gain(
+                    rgb.iter().map(|c| (c[0] + c[1] + c[2]) / 3.0),
+                );
                 for (k, s) in shade.iter().enumerate() {
-                    rgb[k] = exogen_core::shade::lit(rgb[k], *s);
+                    rgb[k] = exogen_core::shade::lit(rgb[k], *s, gain);
                 }
             }
         }

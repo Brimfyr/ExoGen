@@ -278,8 +278,10 @@ pub mod physics {
         let iron = ((uncompressed_density - CONTRACTION_DENSITY_ROCK)
             / (CONTRACTION_DENSITY_IRON_RICH - CONTRACTION_DENSITY_ROCK))
             .clamp(0.0, 1.0);
-        let dt_total = CONTRACTION_DT_MANTLE + CONTRACTION_DT_CORE * iron * iron;
-        let dt = dt_total * (1.0 - (-age_gyr / CONTRACTION_TIMESCALE_GYR).exp());
+        let hot_start = (r / CONTRACTION_HOT_START_RADIUS).powi(2).min(1.0);
+        let dt_total = CONTRACTION_DT_MANTLE * hot_start + CONTRACTION_DT_CORE * iron * iron;
+        let since_onset = (age_gyr - CONTRACTION_ONSET_GYR).max(0.0);
+        let dt = dt_total * (1.0 - (-since_onset / CONTRACTION_TIMESCALE_GYR).exp());
         THERMAL_EXPANSIVITY / 3.0 * dt * r
     }
 
@@ -1469,6 +1471,16 @@ pub fn climate_lapse_rate(c: &Ctx) -> Value {
         1.0
     };
     (c.f64("body.gravity") / cp * moist).into()
+}
+
+// ------------------------------------------------------------------ tectonics (contraction)
+
+pub fn tectonics_contraction_strain(c: &Ctx) -> Value {
+    (2.0 * c.f64("interior.contraction_total") / c.f64("body.radius")).into()
+}
+
+pub fn tectonics_scarp_total_shortening(c: &Ctx) -> Value {
+    (c.f64("tectonics.contraction_strain") * 2.0 * PI * c.f64("body.radius")).into()
 }
 
 // ------------------------------------------------------------------ cratering (population)

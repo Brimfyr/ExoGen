@@ -171,10 +171,44 @@ pub const RELIEF_SUPPORT_MIN: f64 = 0.15;
 /// and a few kilometres (Watters et al. 2010; Nahm and Schultz 2011). Provisional, Phase 3.
 pub const THERMAL_EXPANSIVITY: f64 = 3.0e-5;
 pub const CONTRACTION_DT_MANTLE: f64 = 50.0;
-pub const CONTRACTION_DT_CORE: f64 = 220.0;
+pub const CONTRACTION_DT_CORE: f64 = 250.0;
+/// Radius above which a body accreted hot throughout. Smaller bodies started cool inside
+/// and heated for a long time, offsetting the cooling of their outer shells, so their net
+/// mantle contraction scales down with (R / this)²: the Moon's few hundred metres against
+/// the kilometre thermal models give for a hot start (Watters et al. 2010).
+pub const CONTRACTION_HOT_START_RADIUS: f64 = 3.39e6;
 pub const CONTRACTION_DENSITY_ROCK: f64 = 3_300.0;
 pub const CONTRACTION_DENSITY_IRON_RICH: f64 = 5_150.0;
 pub const CONTRACTION_TIMESCALE_GYR: f64 = 2.0;
+/// Time after formation before net contraction begins: early radiogenic heating and the
+/// magma-ocean aftermath offset secular cooling at first (Tosi et al. 2013 for Mercury;
+/// the Hesperian onset of wrinkle ridges on Mars), so the scarps that survive post-date
+/// the heavy bombardment.
+pub const CONTRACTION_ONSET_GYR: f64 = 0.7;
+/// Lobate scarps (Byrne et al. 2014; Watters et al. 2009): lengths from a power law with
+/// this cumulative exponent between 10 km and this fraction of the radius; height from
+/// length as h_km = 0.03 L_km^0.667 (Enterprise Rupes: 1,000 km, 3 km); thrust dip for
+/// the shortening; face slope; back slope length in heights; total heading change along
+/// a trace; and the shortest scarp stamped in the loop, in loop cells. Provisional.
+pub const SCARP_LENGTH_EXPONENT: f64 = 1.5;
+pub const SCARP_MIN_LENGTH: f64 = 10_000.0;
+pub const SCARP_MAX_LENGTH_FRACTION: f64 = 0.4;
+pub const SCARP_HEIGHT_COEFF_KM: f64 = 0.03;
+pub const SCARP_HEIGHT_EXPONENT: f64 = 0.667;
+pub const SCARP_DIP_DEG: f64 = 25.0;
+pub const SCARP_FACE_SLOPE_DEG: f64 = 12.0;
+pub const SCARP_BACK_SLOPE_FACTOR: f64 = 20.0;
+pub const SCARP_TURN_DEG: f64 = 40.0;
+pub const SCARP_LOOP_MIN_CELLS: f64 = 2.0;
+/// Lobes along a trace: harmonics of heading wobble and the amplitude of the first.
+pub const SCARP_LOBE_HARMONICS: usize = 3;
+pub const SCARP_LOBE_DEG: f64 = 18.0;
+/// Longest scarp as a function of strain: the reference length at the reference strain
+/// (Mercury's thousand-kilometre scarps at half a per cent), scaling with the strain to
+/// this power as faulting deepens and segments link.
+pub const SCARP_REFERENCE_MAX_LENGTH: f64 = 1.0e6;
+pub const SCARP_REFERENCE_STRAIN: f64 = 0.005;
+pub const SCARP_LENGTH_STRAIN_EXPONENT: f64 = 2.0;
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
 /// Provisional, Phase 3.

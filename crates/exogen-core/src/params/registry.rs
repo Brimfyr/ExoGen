@@ -1072,7 +1072,7 @@ static NODES: &[NodeDef] = &[
         f(0.0, 1e5),
         &["body.radius", "body.uncompressed_density", "body.age"],
         d::interior_contraction_total,
-        "Radius lost to cooling: 50 K of mantle cooling for every body plus 220 K times the squared iron index from the uncompressed density (0 at 3.3 g/cm³, 1 at Mercury's 5.15), over a 2 Gyr timescale. Mercury about 6.6 km, Mars about 2 km, the Moon under 1 km. Expressed as scarps on stagnant lids.",
+        "Radius lost to cooling: 50 K of mantle cooling, scaled down by (R / Mars radius)² for small bodies that accreted cool inside, plus 250 K times the squared iron index from the uncompressed density (0 at 3.3 g/cm³, 1 at Mercury's 5.15), over a 2 Gyr timescale from an onset 0.7 Gyr after formation, before which early heating offsets the cooling. Mercury about 6 km, Mars about 2 km, the Moon about 200 m. Expressed as scarps on stagnant lids.",
         "F16; Byrne et al. 2014",
     ),
     derived(
@@ -2006,6 +2006,31 @@ static NODES: &[NodeDef] = &[
         "multiplier.haze_optical_depth",
         "Haze optical depth",
         "Scales the aerosol optical depth written to the sidecar.",
+    ),
+    // ------------------------------------------------------------------ tectonics (contraction)
+    derived(
+        "tectonics.contraction_strain",
+        "tectonics",
+        "Contraction strain",
+        "",
+        1.0,
+        f(0.0, 0.1),
+        &["interior.contraction_total", "body.radius"],
+        d::tectonics_contraction_strain,
+        "Areal strain from global contraction, 2 dR / R; Mercury about 0.5%. The scarps take up this fraction of the surface area as shortening.",
+        "F16",
+    ),
+    derived(
+        "tectonics.scarp_total_shortening",
+        "tectonics",
+        "Scarp shortening",
+        "km",
+        1e3,
+        f(0.0, 1e7),
+        &["tectonics.contraction_strain", "body.radius"],
+        d::tectonics_scarp_total_shortening,
+        "Shortening summed along one great circle: strain times the circumference.",
+        "",
     ),
     // ------------------------------------------------------------------ cratering (population)
     derived(
