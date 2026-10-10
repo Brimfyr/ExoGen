@@ -76,6 +76,11 @@ impl PaddedField {
 /// Bilinear interpolation using only the cells of the face that contains `d`, clamping the
 /// stencil to the face. Exact whenever the four stencil cells lie inside that face.
 fn interior_bilinear(grid: &CubeSphere, values: &[f32], d: [f64; 3]) -> f32 {
+    interior_bilinear_with(grid, &|c: Cell| values[grid.index(c)], d)
+}
+
+/// The same, reading cells through `value`.
+fn interior_bilinear_with(grid: &CubeSphere, value: &dyn Fn(Cell) -> f32, d: [f64; 3]) -> f32 {
     let (c, x, y) = grid.locate(d);
     let f = grid.face_size() as i64;
     let i0 = ((x - 0.5).floor() as i64).clamp(0, f - 2);
@@ -83,11 +88,11 @@ fn interior_bilinear(grid: &CubeSphere, values: &[f32], d: [f64; 3]) -> f32 {
     let fx = (x - 0.5 - i0 as f64).clamp(0.0, 1.0);
     let fy = (y - 0.5 - j0 as f64).clamp(0.0, 1.0);
     let v = |i: i64, j: i64| {
-        values[grid.index(Cell {
+        value(Cell {
             face: c.face,
             i: i as u32,
             j: j as u32,
-        })] as f64
+        }) as f64
     };
     (v(i0, j0) * (1.0 - fx) * (1.0 - fy)
         + v(i0 + 1, j0) * fx * (1.0 - fy)
@@ -97,16 +102,64 @@ fn interior_bilinear(grid: &CubeSphere, values: &[f32], d: [f64; 3]) -> f32 {
 
 /// Seamless bilinear sample of a padded field at a unit direction.
 pub fn sample_bilinear(grid: &CubeSphere, field: &PaddedField, d: [f64; 3]) -> f32 {
+    sample_bilinear_with(grid, &|face, i, j| field.get(face, i, j), d)
+}
+
+/// The same, reading padded values through `get` (in-face indices in `-1..=f`).
+fn sample_bilinear_with(grid: &CubeSphere, get: &dyn Fn(u8, i64, i64) -> f32, d: [f64; 3]) -> f32 {
     let (c, x, y) = grid.locate(d);
     let i0 = (x - 0.5).floor() as i64;
     let j0 = (y - 0.5).floor() as i64;
     let fx = x - 0.5 - i0 as f64;
     let fy = y - 0.5 - j0 as f64;
-    let v = |i: i64, j: i64| field.get(c.face, i, j) as f64;
+    let v = |i: i64, j: i64| get(c.face, i, j) as f64;
     (v(i0, j0) * (1.0 - fx) * (1.0 - fy)
         + v(i0 + 1, j0) * fx * (1.0 - fy)
         + v(i0, j0 + 1) * (1.0 - fx) * fy
         + v(i0 + 1, j0 + 1) * fx * fy) as f32
+}
+
+/// A field that is zero except on a few cells, sampled exactly as a `PaddedField` of the
+/// same values would be: ghost cells across face edges are built on demand by the same
+/// in-face interpolation the padding uses.
+pub struct SparseField {
+    grid: CubeSphere,
+    values: std::collections::HashMap<usize, f32>,
+}
+
+impl SparseField {
+    pub fn new(grid: CubeSphere, entries: impl IntoIterator<Item = (usize, f32)>) -> Self {
+        Self {
+            grid,
+            values: entries.into_iter().collect(),
+        }
+    }
+
+    fn value(&self, c: Cell) -> f32 {
+        self.values.get(&self.grid.index(c)).copied().unwrap_or(0.0)
+    }
+
+    /// Value at in-face indices in `-1..=f`, ghosts included.
+    pub fn get(&self, face: u8, i: i64, j: i64) -> f32 {
+        let f = self.grid.face_size() as i64;
+        if (0..f).contains(&i) && (0..f).contains(&j) {
+            return self.value(Cell {
+                face,
+                i: i as u32,
+                j: j as u32,
+            });
+        }
+        let delta = self.grid.delta();
+        let alpha = -FRAC_PI_4 + (i as f64 + 0.5) * delta;
+        let beta = -FRAC_PI_4 + (j as f64 + 0.5) * delta;
+        let d = CubeSphere::direction(face, alpha, beta);
+        interior_bilinear_with(&self.grid, &|c: Cell| self.value(c), d)
+    }
+}
+
+/// Seamless bilinear sample of a sparse field at a unit direction.
+pub fn sample_bilinear_sparse(grid: &CubeSphere, field: &SparseField, d: [f64; 3]) -> f32 {
+    sample_bilinear_with(grid, &|face, i, j| field.get(face, i, j), d)
 }
 
 /// Resample a field to an equirectangular image of `width x height` samples.

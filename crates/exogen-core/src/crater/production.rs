@@ -90,14 +90,42 @@ impl ProductionFunction {
     /// Sample a diameter (km) above `d_min_km` from the cumulative distribution, capped at
     /// `d_max_km`, by bisection on the cumulative density.
     pub fn sample_diameter_above(&self, u: f64, d_min_km: f64, d_max_km: f64) -> f64 {
-        let n_min = self.cumulative_1gyr(d_min_km);
-        let n_max = self.cumulative_1gyr(d_max_km);
+        self.sample_with(|d| self.cumulative_1gyr(d), u, d_min_km, d_max_km)
+    }
+
+    /// The steady flux's production: the lunar function, falling steeper above the knee
+    /// where the asteroid belt runs out of large bodies.
+    pub fn cumulative_steady_1gyr(&self, d_km: f64) -> f64 {
+        let n = self.cumulative_1gyr(d_km);
+        if d_km > STEADY_FLUX_KNEE_KM {
+            n * (d_km / STEADY_FLUX_KNEE_KM).powf(-STEADY_FLUX_EXTRA_SLOPE)
+        } else {
+            n
+        }
+    }
+
+    /// A diameter from the steady flux's production, km, capped at the largest crater a
+    /// stray body makes.
+    pub fn sample_steady_diameter_above(&self, u: f64, d_min_km: f64, d_max_km: f64) -> f64 {
+        let d_max_km = d_max_km.min(STEADY_FLUX_MAX_KM).max(d_min_km);
+        self.sample_with(|d| self.cumulative_steady_1gyr(d), u, d_min_km, d_max_km)
+    }
+
+    fn sample_with(
+        &self,
+        cumulative: impl Fn(f64) -> f64,
+        u: f64,
+        d_min_km: f64,
+        d_max_km: f64,
+    ) -> f64 {
+        let n_min = cumulative(d_min_km);
+        let n_max = cumulative(d_max_km);
         // Target cumulative value between n_max and n_min; larger u gives a smaller crater.
         let target = n_max + (n_min - n_max) * u.clamp(0.0, 1.0);
         let (mut lo, mut hi) = (d_min_km.ln(), d_max_km.ln());
         for _ in 0..50 {
             let mid = 0.5 * (lo + hi);
-            if self.cumulative_1gyr(mid.exp()) > target {
+            if cumulative(mid.exp()) > target {
                 lo = mid;
             } else {
                 hi = mid;
@@ -145,6 +173,12 @@ impl FluxHistory {
             return 0.0;
         }
         self.steady * (1.0 + self.early_ratio * (-tau / self.early_decay).exp())
+    }
+
+    /// Share of the flux at a time that is the early, basin-forming component.
+    pub fn early_share(&self, tau: f64) -> f64 {
+        let e = self.early_ratio * (-tau / self.early_decay).exp();
+        e / (1.0 + e)
     }
 
     /// N(>= 1 km) per km² formed between `tau0` and `tau1` Gyr since formation.

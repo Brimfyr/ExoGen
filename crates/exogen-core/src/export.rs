@@ -76,6 +76,34 @@ pub struct FloodInfo {
 }
 
 #[derive(Serialize)]
+pub struct RiseInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub diameter_km: f64,
+    pub height_m: f64,
+}
+
+#[derive(Serialize)]
+pub struct ShieldInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub diameter_km: f64,
+    pub height_m: f64,
+    pub calderas: usize,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
+pub struct TroughInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub length_km: f64,
+    pub width_km: f64,
+    pub depth_m: f64,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
 pub struct RidgeInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
@@ -93,6 +121,32 @@ pub struct ScarpInfo {
     pub length_km: f64,
     pub height_m: f64,
     pub age_gyr: f64,
+}
+
+/// How many floods the sidecar lists; the rest are counted.
+const SIDECAR_FLOOD_LIMIT: usize = 4_000;
+
+fn largest_floods(
+    floods: &[crate::stages::volcanism::FloodRecord],
+    limit: usize,
+) -> Vec<&crate::stages::volcanism::FloodRecord> {
+    let mut refs: Vec<&crate::stages::volcanism::FloodRecord> = floods.iter().collect();
+    refs.sort_by(|a, b| b.area.total_cmp(&a.area).then(a.id.cmp(&b.id)));
+    refs.truncate(limit);
+    refs.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
+    refs
+}
+
+fn trough_info(t: &crate::stages::plume::Trough, epoch: f64) -> TroughInfo {
+    let (lon, lat) = crate::grid::lon_lat_from_direction(t.midpoint());
+    TroughInfo {
+        lat_deg: lat.to_degrees(),
+        lon_deg: lon.to_degrees(),
+        length_km: t.length / 1e3,
+        width_km: t.width / 1e3,
+        depth_m: t.depth,
+        age_gyr: epoch - t.end_gyr.min(epoch),
+    }
 }
 
 #[derive(Serialize)]
@@ -121,10 +175,16 @@ pub struct Sidecar {
     pub replayed_crater_count: usize,
     /// Contraction scarps present at the epoch.
     pub scarps: Vec<ScarpInfo>,
-    /// Lava floods present at the epoch.
+    /// Lava floods present at the epoch: how many, and the largest by area.
+    pub flood_count: usize,
     pub floods: Vec<FloodInfo>,
     /// Wrinkle ridges present at the epoch.
     pub ridges: Vec<RidgeInfo>,
+    /// Plume rises, and the shields, canyons and graben present at the epoch.
+    pub rises: Vec<RiseInfo>,
+    pub shields: Vec<ShieldInfo>,
+    pub canyons: Vec<TroughInfo>,
+    pub graben: Vec<TroughInfo>,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
@@ -467,9 +527,9 @@ pub fn export(
                 }
             })
             .collect(),
-        floods: out
-            .floods
-            .iter()
+        flood_count: out.floods.len(),
+        floods: largest_floods(&out.floods, SIDECAR_FLOOD_LIMIT)
+            .into_iter()
             .map(|f| {
                 let (lon, lat) = crate::grid::lon_lat_from_direction(f.vent);
                 FloodInfo {
@@ -494,6 +554,44 @@ pub fn export(
                     age_gyr: out.epoch_time_gyr - r.time_gyr,
                 }
             })
+            .collect(),
+        rises: out
+            .rises
+            .iter()
+            .map(|r| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(r.center);
+                RiseInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: 2.0 * r.radius / 1e3,
+                    height_m: r.height,
+                }
+            })
+            .collect(),
+        shields: out
+            .shields
+            .iter()
+            .map(|sh| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(sh.center);
+                ShieldInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: 2.0 * sh.radius / 1e3,
+                    height_m: sh.height,
+                    calderas: sh.calderas.len(),
+                    age_gyr: out.epoch_time_gyr - sh.start_gyr,
+                }
+            })
+            .collect(),
+        canyons: out
+            .canyons
+            .iter()
+            .map(|t| trough_info(t, out.epoch_time_gyr))
+            .collect(),
+        graben: out
+            .graben
+            .iter()
+            .map(|t| trough_info(t, out.epoch_time_gyr))
             .collect(),
         lava_area_fraction: crate::stages::volcanism::lava_fraction(&out.layers),
         unit_legend: crate::units::legend()

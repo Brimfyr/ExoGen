@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 12;
+pub const VERSION: u64 = 13;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -223,16 +223,22 @@ impl ImpactProcess {
             .map(|j| {
                 let draw = 16 + j * 8;
                 let u_d = self.rng.uniform(step_index, draw);
-                let diameter =
-                    inp.pf
-                        .sample_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
-                        * 1e3;
                 let center = self.rng.unit_direction(step_index, draw + 1);
                 let time_gyr = inp.flux.time_at_fraction(
                     t_start,
                     t_end,
                     self.rng.uniform(step_index, draw + 3),
                 );
+                // From the early, basin-forming population or the steady asteroid flux,
+                // by their shares at the time.
+                let early = self.rng.uniform(step_index, draw + 6) < inp.flux.early_share(time_gyr);
+                let diameter = if early {
+                    inp.pf
+                        .sample_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
+                } else {
+                    inp.pf
+                        .sample_steady_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
+                } * 1e3;
                 let angle = impact_angle(self.rng.uniform(step_index, draw + 4));
                 let azimuth = self.rng.uniform(step_index, draw + 5) * 2.0 * std::f64::consts::PI;
                 let ellipticity = ellipticity_for(angle, inp.oblique_fraction);

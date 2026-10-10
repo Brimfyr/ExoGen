@@ -22,7 +22,7 @@ use crate::crater::{CellWrite, StampOutput};
 use crate::fields::{Field, LayerSet};
 use crate::geom::normalize;
 use crate::grid::CubeSphere;
-use crate::grid::projection::{PaddedField, sample_bilinear};
+use crate::grid::projection::{SparseField, sample_bilinear_sparse};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
@@ -217,8 +217,8 @@ impl FloodProcess {
         v
     }
 
-    /// Vent weights: thin crust and low ground.
-    fn vent_weights(&self, layers: &LayerSet) -> Vec<f64> {
+    /// Vent weights: thin crust and low ground, and any rise's boost.
+    fn vent_weights(&self, layers: &LayerSet, boost: Option<&[f64]>) -> Vec<f64> {
         let crust = layers.crust_thickness.as_slice();
         let bedrock = layers.bedrock.as_slice();
         let n = bedrock.len();
@@ -233,7 +233,8 @@ impl FloodProcess {
                     * (-((bedrock[k] as f64 - median) / VOLCANISM_VENT_HEIGHT_SCALE)
                         .clamp(-4.0, 4.0))
                     .exp()
-                    * self.areas[k];
+                    * self.areas[k]
+                    * boost.map_or(1.0, |b| b[k]);
                 acc += w;
                 acc
             })
@@ -245,6 +246,7 @@ impl FloodProcess {
     pub fn sample(
         &mut self,
         layers: &LayerSet,
+        boost: Option<&[f64]>,
         t0: f64,
         t1: f64,
         step_index: u64,
@@ -254,7 +256,7 @@ impl FloodProcess {
             self.carry = budget;
             return Vec::new();
         }
-        let cumulative = self.vent_weights(layers);
+        let cumulative = self.vent_weights(layers, boost);
         let total = *cumulative.last().unwrap_or(&0.0);
         if total <= 0.0 {
             return Vec::new();
@@ -295,7 +297,7 @@ impl FloodProcess {
 
     /// Sample and emplace a step's eruptions.
     pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, step_index: u64) {
-        for ev in self.sample(layers, t0, t1, step_index) {
+        for ev in self.sample(layers, None, t0, t1, step_index) {
             self.apply(layers, ev);
         }
     }
@@ -368,7 +370,14 @@ impl FloodProcess {
                 let n = grid.index(grid.neighbor(cell, di, dj));
                 if self.visited[n] != generation {
                     self.visited[n] = generation;
-                    let dist = crate::geom::angle_between(seed_dir, grid.center(grid.cell(n)));
+                    let centre = grid.center(grid.cell(n));
+                    // Flows run only so far from their vent.
+                    if crate::geom::angle_between(vent_dir, centre) * self.body_radius
+                        > FLOOD_MAX_REACH
+                    {
+                        continue;
+                    }
+                    let dist = crate::geom::angle_between(seed_dir, centre);
                     self.heap.push(Reverse(Key(bedrock[n], dist as f32, n)));
                 }
             }
@@ -525,16 +534,13 @@ pub fn flood_compute(
     }
     let mut stats = [0usize; 4];
     let covered = rec.cells();
-    // Dense coarse thickness, for the same bilinear sampling the base went through, and
-    // the footprint indicator whose smeared outline bounds the fine fill.
-    let mut thickness = vec![0.0f32; coarse.cell_count()];
-    let mut indicator = vec![0.0f32; coarse.cell_count()];
-    for (&idx, c) in &covered {
-        thickness[idx as usize] = c.thickness;
-        indicator[idx as usize] = 1.0;
-    }
-    let padded = PaddedField::new(coarse, &thickness);
-    let padded_ind = PaddedField::new(coarse, &indicator);
+    // The coarse thickness, sampled exactly as the base's resampling did, and the
+    // footprint indicator whose smeared outline bounds the fine fill.
+    let padded = SparseField::new(
+        *coarse,
+        covered.iter().map(|(&idx, c)| (idx as usize, c.thickness)),
+    );
+    let padded_ind = SparseField::new(*coarse, covered.keys().map(|&idx| (idx as usize, 1.0)));
     let lobes = GradientNoise::new(rec.id ^ 0x0F10_0D00);
     let lobe_frequency = 1.0 / (FLOOD_MARGIN_LOBE_CELLS * coarse.delta());
     // Coarse cells to visit: the footprint and its ring, with the level the lava could
@@ -574,7 +580,7 @@ pub fn flood_compute(
                 };
                 let idx = grid.index(fine);
                 let d = grid.center(fine);
-                let own = sample_bilinear(coarse, &padded, d);
+                let own = sample_bilinear_sparse(coarse, &padded, d);
                 taken.push((idx as u32, own));
                 // A younger crater sits here: it was stamped on top of this lava in
                 // the loop, so the base is right as it is.
@@ -587,7 +593,7 @@ pub fn flood_compute(
                 let remaining = smear.total[idx] - smear.done[idx];
                 let ground = bedrock[idx] - remaining;
                 let carry = remaining - own;
-                let mut outline = sample_bilinear(coarse, &padded_ind, d) as f64;
+                let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
                 if (outline - FLOOD_MARGIN_THRESHOLD).abs() < FLOOD_MARGIN_WOBBLE {
                     outline += FLOOD_MARGIN_WOBBLE * lobes.fbm(d, lobe_frequency, 2, 2.0, 0.5);
                 }

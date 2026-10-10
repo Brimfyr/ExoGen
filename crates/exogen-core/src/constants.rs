@@ -238,6 +238,9 @@ pub const BASIN_CRUST_THINNING: f64 = 0.5;
 pub const CRUST_THICKNESS_MIN: f64 = 3e3;
 /// Thinner lava than this is not recorded, m.
 pub const FLOOD_MIN_THICKNESS: f64 = 1.0;
+/// How far from its vent a flow can travel, m: the longest flood-basalt flows run a
+/// thousand kilometres or so (Tharsis, the Deccan), not around the body.
+pub const FLOOD_MAX_REACH: f64 = 1.5e6;
 /// Flow fronts at the finishing resolution: the smeared coarse footprint is kept where
 /// it exceeds this threshold (below a half, so a single flooded cell keeps its area and
 /// fronts sit a little outside the coarse edge), with lobes of noise this many loop cells
@@ -268,6 +271,71 @@ pub const RIDGE_CONTOUR_FOLLOWING: f64 = 0.35;
 pub const RIDGE_WOBBLE_DEG: f64 = 25.0;
 pub const RIDGE_WOBBLE_LENGTH: f64 = 60e3;
 pub const RIDGE_DELAY_GYR: f64 = 0.2;
+/// Extra weight of a vent on a volcanic rise, per unit of dome height over the rise's
+/// full height, and the dome's share in the load field the ridges follow.
+pub const PLUME_VENT_BOOST: f64 = 20.0;
+pub const RIDGE_LOAD_WEIGHT: f64 = 0.5;
+/// Plume loading (PLAN.md 4.3). A stagnant lid at least this big raises one plume per
+/// this much surface heat flux, up to three (Mars: one, Tharsis); the rise spans this
+/// fraction of the radius and stands this fraction of the strength-limited relief
+/// (Tharsis: 5,000 km across, 7 km high); it grows between these times.
+pub const PLUME_MIN_RADIUS: f64 = 3.0e6;
+pub const PLUME_FLUX_PER_PLUME: f64 = 0.02;
+pub const PLUME_RISE_DIAMETER_FRACTION: f64 = 1.5;
+pub const RISE_HEIGHT_FRACTION: f64 = 0.28;
+pub const RISE_START_GYR: f64 = 0.3;
+pub const RISE_END_GYR: f64 = 1.5;
+/// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
+/// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise
+/// they sit (fraction of its radius), when they start, their growth timescale, and the
+/// thickness of flows that renews a flank's surface. Calderas as fractions of the
+/// shield's radius and height, with a cap on depth and the wall width as a fraction of
+/// the caldera radius. Flank texture: radial flow ridges of this relative amplitude and
+/// length.
+pub const SHIELDS_PER_RISE: f64 = 5.0;
+pub const SHIELD_MAX_DIAMETER_FRACTION: f64 = 0.12;
+pub const SHIELD_SLOPE_DEG: f64 = 5.0;
+pub const SHIELD_FLANK_EXPONENT: f64 = 1.6;
+pub const SHIELD_FLANK_POWER: f64 = 0.9;
+pub const SHIELD_PLACEMENT: (f64, f64) = (0.1, 0.6);
+pub const SHIELD_START_GYR: (f64, f64) = (1.0, 2.5);
+pub const SHIELD_GROWTH_GYR: f64 = 1.0;
+pub const SHIELD_RENEWAL_THICKNESS: f64 = 5.0;
+pub const CALDERA_RADIUS_FRACTION: f64 = 0.1;
+pub const CALDERA_DEPTH_FRACTION: f64 = 0.12;
+pub const CALDERA_MAX_DEPTH: f64 = 3e3;
+pub const CALDERA_WALL_WIDTH: f64 = 0.15;
+pub const SHIELD_FLOW_TEXTURE: f64 = 0.3;
+pub const SHIELD_FLOW_TEXTURE_LENGTH: f64 = 15e3;
+/// The canyon (Valles Marineris: 4,000 km long, 200 km wide, 7 km deep) on a rise at
+/// least this wide: its length as a fraction of the rise diameter, where it starts
+/// (fraction of the rise radius from the centre), width, depth, growth interval, and the
+/// carving that renews the floor's surface in a step. Graben on the flanks: how many
+/// per rise, where they start, their lengths, widths and depth. Trough traces wobble by
+/// this much over this length; their walls take this fraction of the width; walls are
+/// scalloped by this fraction over this length; the width pulses by this fraction over
+/// this length (chasmata); and the floor tapers to the ends with this power.
+pub const CANYON_MIN_RISE_DIAMETER: f64 = 3.0e6;
+pub const CANYON_LENGTH_FRACTION: f64 = 0.8;
+pub const CANYON_START_FRACTION: f64 = 0.6;
+pub const CANYON_WIDTH: f64 = 200e3;
+pub const CANYON_DEPTH: f64 = 7e3;
+pub const CANYON_START_GYR: f64 = 1.0;
+pub const CANYON_END_GYR: f64 = 2.0;
+pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
+pub const GRABEN_PER_RISE: f64 = 60.0;
+pub const GRABEN_START_FRACTION: (f64, f64) = (0.35, 1.0);
+pub const GRABEN_LENGTH: (f64, f64) = (200e3, 1_500e3);
+pub const GRABEN_WIDTH: (f64, f64) = (8e3, 30e3);
+pub const GRABEN_DEPTH: f64 = 400.0;
+pub const TROUGH_WOBBLE_DEG: f64 = 12.0;
+pub const TROUGH_WOBBLE_LENGTH: f64 = 400e3;
+pub const TROUGH_WALL_FRACTION: f64 = 0.05;
+pub const TROUGH_SCALLOP: f64 = 0.12;
+pub const TROUGH_SCALLOP_LENGTH: f64 = 60e3;
+pub const TROUGH_WIDTH_PULSE: f64 = 0.4;
+pub const TROUGH_PULSE_LENGTH: f64 = 700e3;
+pub const TROUGH_TAPER_POWER: f64 = 0.3;
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
 /// Provisional, Phase 3.
@@ -479,6 +547,15 @@ pub const NPF_RANGE_KM: (f64, f64) = (0.01, 300.0);
 /// the Moon formed. Rewriting the chronology in time since formation fixes the early flux
 /// at formation (F31), so bodies of any age get their heavy bombardment when they form.
 pub const NEUKUM_REFERENCE_AGE_GYR: f64 = 4.5;
+/// The steady flux after the heavy bombardment comes from the collisionally evolved
+/// asteroid belt, whose large bodies are depleted next to the leftover planetesimals
+/// that dug the basins: above this crater diameter, km, its production falls steeper
+/// than the lunar function by this extra cumulative slope, and no stray body makes a
+/// crater larger than this. The Moon and Mars have no crater over a few hundred
+/// kilometres younger than the basin era.
+pub const STEADY_FLUX_KNEE_KM: f64 = 150.0;
+pub const STEADY_FLUX_EXTRA_SLOPE: f64 = 2.0;
+pub const STEADY_FLUX_MAX_KM: f64 = 600.0;
 /// Surface solidification: time after formation when the crust is solid and rigid enough
 /// to keep large relief, so the crater record begins. 0.3 Gyr for a Moon-sized rocky body
 /// (the oldest dated lunar surfaces are 4.2 Gyr old), scaling with the square root of the

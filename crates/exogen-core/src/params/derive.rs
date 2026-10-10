@@ -1475,6 +1475,53 @@ pub fn climate_lapse_rate(c: &Ctx) -> Value {
 
 // ------------------------------------------------------------------ tectonics (contraction)
 
+pub fn tectonics_plume_count(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "stagnant_lid"
+        || c.f64("body.radius") < PLUME_MIN_RADIUS
+    {
+        return 0.0.into();
+    }
+    (c.f64("interior.surface_heat_flux") / PLUME_FLUX_PER_PLUME)
+        .floor()
+        .clamp(0.0, 3.0)
+        .into()
+}
+
+pub fn tectonics_rise_diameter(c: &Ctx) -> Value {
+    if c.f64("tectonics.plume_count") < 1.0 {
+        return 0.0.into();
+    }
+    (PLUME_RISE_DIAMETER_FRACTION * c.f64("body.radius")).into()
+}
+
+pub fn tectonics_rise_height(c: &Ctx) -> Value {
+    if c.f64("tectonics.plume_count") < 1.0 {
+        return 0.0.into();
+    }
+    let relief = crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .at(c.f64("body.age"))
+        .relief_limit;
+    (RISE_HEIGHT_FRACTION * relief).into()
+}
+
+pub fn tectonics_canyon_count(c: &Ctx) -> Value {
+    if c.f64("tectonics.plume_count") >= 1.0
+        && c.f64("tectonics.rise_diameter") >= CANYON_MIN_RISE_DIAMETER
+    {
+        1.0.into()
+    } else {
+        0.0.into()
+    }
+}
+
+pub fn volcanism_shield_count(c: &Ctx) -> Value {
+    if c.f64("tectonics.plume_count") >= 1.0 {
+        SHIELDS_PER_RISE.into()
+    } else {
+        0.0.into()
+    }
+}
+
 pub fn tectonics_contraction_strain(c: &Ctx) -> Value {
     (2.0 * c.f64("interior.contraction_total") / c.f64("body.radius")).into()
 }

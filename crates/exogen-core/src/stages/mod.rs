@@ -13,6 +13,7 @@
 
 pub mod impacts;
 pub mod materials;
+pub mod plume;
 pub mod primordial_crust;
 pub mod ridges;
 pub mod tectonics;
@@ -93,6 +94,11 @@ pub struct LoopOutput {
     pub floods: Vec<volcanism::FloodRecord>,
     /// Wrinkle ridges laid out on the plains at the end of the loop.
     pub ridges: Vec<ridges::RidgeRecord>,
+    /// Plume rises, their shields, canyons and graben.
+    pub rises: Vec<plume::Rise>,
+    pub shields: Vec<plume::Shield>,
+    pub canyons: Vec<plume::Trough>,
+    pub graben: Vec<plume::Trough>,
     pub hash: u64,
 }
 
@@ -137,6 +143,11 @@ pub struct FinishOutput {
     pub floods: Vec<volcanism::FloodRecord>,
     /// Wrinkle ridges present at the epoch.
     pub ridges: Vec<ridges::RidgeRecord>,
+    /// Plume rises, and the shields, canyons and graben present at the epoch.
+    pub rises: Vec<plume::Rise>,
+    pub shields: Vec<plume::Shield>,
+    pub canyons: Vec<plume::Trough>,
+    pub graben: Vec<plume::Trough>,
     pub hash: u64,
 }
 
@@ -187,6 +198,7 @@ impl Runner {
             tectonics::VERSION,
             volcanism::VERSION,
             ridges::VERSION,
+            plume::VERSION,
         ])
     }
 
@@ -260,7 +272,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 15;
+pub const FINISH_VERSION: u64 = 17;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -294,6 +306,7 @@ pub fn run_coarse_loop(
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(graph, grid, &thermal);
+    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -307,15 +320,20 @@ pub fn run_coarse_loop(
         }
         let t0 = dt * (s - 1) as f64;
         let t1 = dt * s as f64;
+        // The slow processes first: the dome lifts, the shields grow, the canyon deepens.
+        if let Some(p) = &mut plume {
+            p.step(&mut layers, t0, t1);
+        }
+        let boost = plume.as_ref().map(|p| p.vent_boost());
         // Everything that happens in the step, in order of time: craters, scarps and
         // eruptions interleaved as they come, so what is older is cut by what is younger.
         let craters = impacts.sample(t0, t1, s as u64);
         let scarps = contraction
             .as_mut()
             .map_or_else(Vec::new, |c| c.sample(t0, t1, s as u64));
-        let eruptions = floods
-            .as_mut()
-            .map_or_else(Vec::new, |f| f.sample(&layers, t0, t1, s as u64));
+        let eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
+            f.sample(&layers, boost.as_deref(), t0, t1, s as u64)
+        });
         let mut order: Vec<(f64, u8, usize)> =
             Vec::with_capacity(craters.len() + scarps.len() + eruptions.len());
         order.extend(craters.iter().enumerate().map(|(i, c)| (c.time_gyr, 0, i)));
@@ -367,13 +385,24 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
+    let (rises, shields, canyons, graben, load) = match plume {
+        Some(p) => (p.rises, p.shields, p.canyons, p.graben, Some(p.load)),
+        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
+    };
     let (floods, ridges) = match floods {
         Some(f) => {
+            // The ridges follow the lava thickness and, around a rise, its load.
+            let mut field = f.thickness.clone();
+            if let Some(load) = &load {
+                for (v, l) in field.iter_mut().zip(load) {
+                    *v += RIDGE_LOAD_WEIGHT as f32 * l;
+                }
+            }
             let ridges = ridges::plan_ridges(
                 &grid,
                 graph.f64("body.radius"),
                 layers.unit_id.as_slice(),
-                &f.thickness,
+                &field,
                 &f.last_time,
                 age,
                 graph.f64("seed.volcanism") as u64,
@@ -393,6 +422,10 @@ pub fn run_coarse_loop(
         scarps,
         floods,
         ridges,
+        rises,
+        shields,
+        canyons,
+        graben,
         hash,
     })
 }
@@ -456,6 +489,24 @@ pub fn finish(
         .filter(|r| r.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
+    let shields: Vec<plume::Shield> = loop_output
+        .shields
+        .iter()
+        .filter(|s| s.start_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
+    let canyons: Vec<plume::Trough> = loop_output
+        .canyons
+        .iter()
+        .filter(|c| c.start_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
+    let graben: Vec<plume::Trough> = loop_output
+        .graben
+        .iter()
+        .filter(|g| g.start_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let mut smear = volcanism::LavaSmear::new(loop_output.grid, grid, &floods);
@@ -513,11 +564,35 @@ pub fn finish(
         Scarp(usize),
         Flood(usize),
         Ridge(usize),
+        Shield(usize),
+        Canyon(usize),
+        Graben(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
-        loop_craters.len() + scarps.len() + floods.len() + ridges.len() + replay.len(),
+        loop_craters.len()
+            + scarps.len()
+            + floods.len()
+            + ridges.len()
+            + shields.len()
+            + canyons.len()
+            + graben.len()
+            + replay.len(),
     );
+    for (k, sh) in shields.iter().enumerate() {
+        events.push((sh.start_gyr, 0, sh.id ^ 0x5B1E_0000_0000, Event::Shield(k)));
+    }
+    for (k, c) in canyons.iter().enumerate() {
+        events.push((
+            c.end_gyr.min(present),
+            0,
+            c.id ^ 0xCA17_0000_0000,
+            Event::Canyon(k),
+        ));
+    }
+    for (k, g) in graben.iter().enumerate() {
+        events.push((g.start_gyr, 0, g.id ^ 0x6A8B_0000_0000, Event::Graben(k)));
+    }
     for (k, r) in ridges.iter().enumerate() {
         events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
     }
@@ -579,6 +654,18 @@ pub fn finish(
                 Event::Ridge(k) => {
                     let r = &ridges[*k];
                     (r.midpoint(), r.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Shield(k) => {
+                    let sh = &shields[*k];
+                    (sh.center, sh.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Canyon(k) => {
+                    let c = &canyons[*k];
+                    (c.midpoint(), c.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Graben(k) => {
+                    let g = &graben[*k];
+                    (g.midpoint(), g.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
             }
         })
@@ -648,6 +735,55 @@ pub fn finish(
                             &smear,
                         );
                         Some((out, None, Some((taken, stats))))
+                    }
+                    Event::Shield(k) => {
+                        let out = plume::shield_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &shields[*k],
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Canyon(k) => {
+                        let c = &canyons[*k];
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(c.end_gyr.min(present), present)
+                            * 1e3;
+                        let out = plume::trough_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &base,
+                            c,
+                            c.end_gyr.min(present) as f32,
+                            (4.0 * kappa_t).sqrt(),
+                            Some((
+                                coarse_cell,
+                                (4.0 * kappa_t + 2.0 * smooth_sigma * smooth_sigma).sqrt(),
+                            )),
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Graben(k) => {
+                        let g = &graben[*k];
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(g.start_gyr, present)
+                            * 1e3;
+                        let out = plume::trough_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &base,
+                            g,
+                            g.start_gyr as f32,
+                            (4.0 * kappa_t).sqrt(),
+                            None,
+                            stamper,
+                        );
+                        Some((out, None, None))
                     }
                     Event::Ridge(k) => {
                         let r = &ridges[*k];
@@ -834,6 +970,10 @@ pub fn finish(
         scarps,
         floods,
         ridges,
+        rises: loop_output.rises.clone(),
+        shields,
+        canyons,
+        graben,
         hash,
     })
 }
@@ -1375,6 +1515,98 @@ mod tests {
             let idx = g.index(g.locate(r.midpoint()).0);
             assert!(volcanism::is_lava_unit(units[idx]));
         }
+    }
+
+    /// Mars raises one plume: a rise kilometres high with shields on it, a canyon
+    /// kilometres deep on its flank, graben, and lava concentrated around it.
+    #[test]
+    fn mars_raises_a_rise_with_shields_and_a_canyon() {
+        let mut r = Runner::new();
+        let g = preset_graph("Mars", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let lo = &out.loop_output;
+        assert_eq!(lo.rises.len(), 1);
+        assert!(lo.shields.len() >= 4, "{} shields", lo.shields.len());
+        assert_eq!(lo.canyons.len(), 1);
+        assert!(lo.graben.len() > 20, "{} graben", lo.graben.len());
+        let grid = out.finish.grid;
+        let radius = g.f64("body.radius");
+        let height = out.finish.height.as_slice();
+        let at = |d: [f64; 3]| height[grid.index(grid.locate(d).0)] as f64;
+        let rise = &lo.rises[0];
+        let (east, north) = crate::geom::local_basis(rise.center);
+        // The rise stands above the ground beyond it.
+        let far: f64 = (0..8)
+            .map(|k| {
+                let phi = k as f64 * std::f64::consts::FRAC_PI_4;
+                at(crate::geom::offset(
+                    rise.center,
+                    east,
+                    north,
+                    1.2 * rise.radius / radius,
+                    phi,
+                ))
+            })
+            .sum::<f64>()
+            / 8.0;
+        let top = at(rise.center);
+        assert!(top - far > 0.3 * rise.height, "rise {top} vs far {far}");
+        // The tallest shield reaches most of its height above the dome around it.
+        let big = lo
+            .shields
+            .iter()
+            .max_by(|a, b| a.height.total_cmp(&b.height))
+            .unwrap();
+        let (e2, n2) = crate::geom::local_basis(big.center);
+        let foot: f64 = (0..8)
+            .map(|k| {
+                let phi = k as f64 * std::f64::consts::FRAC_PI_4;
+                at(crate::geom::offset(
+                    big.center,
+                    e2,
+                    n2,
+                    1.1 * big.radius / radius,
+                    phi,
+                ))
+            })
+            .sum::<f64>()
+            / 8.0;
+        let summit = at(crate::geom::offset(
+            big.center,
+            e2,
+            n2,
+            0.15 * big.radius / radius,
+            0.0,
+        ));
+        assert!(
+            summit - foot > 0.5 * big.height,
+            "shield {summit} vs foot {foot}"
+        );
+        // The canyon floor lies kilometres below its rims.
+        let canyon = &lo.canyons[0];
+        let mid = canyon.midpoint();
+        let next = canyon.points[canyon.points.len() / 2 + 1];
+        let t = crate::geom::normalize([next[0] - mid[0], next[1] - mid[1], next[2] - mid[2]]);
+        let n = crate::geom::normalize(crate::geom::cross(mid, t));
+        let side = |s: f64| {
+            let d = canyon.width * s / radius;
+            at(crate::geom::normalize([
+                mid[0] + d * n[0],
+                mid[1] + d * n[1],
+                mid[2] + d * n[2],
+            ]))
+        };
+        let rims = 0.5 * (side(1.0) + side(-1.0));
+        assert!(
+            rims - at(mid) > 3_000.0,
+            "canyon floor {} rims {rims}",
+            at(mid)
+        );
+        // The Moon raises none.
+        let moon = r
+            .run(&preset_graph("Moon", "preview"), &NoProgress)
+            .unwrap();
+        assert!(moon.loop_output.rises.is_empty() && moon.loop_output.shields.is_empty());
     }
 
     #[test]
