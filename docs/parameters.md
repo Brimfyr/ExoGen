@@ -1,6 +1,10 @@
 # Parameter graph specification
 
-Revision 0.1, 2026-10-10. This document is the contract for the `params` module of `exogen-core`. Every node the user can see or set is listed here with its unit, kind, default or derivation, and the source of the relation. The formula appendix at the end gives the relations by number. Values marked *fit* are calibrated against the reference bodies during the phase that implements the stage; the derivation form is fixed here, the constants are not.
+Revision 0.2, 2026-10-10. This document is the contract for the `params` module of `exogen-core`. Every node the user can see or set is listed here with its unit, kind, default or derivation, and the source of the relation. The formula appendix at the end gives the relations by number. Values marked *fit* are calibrated against the reference bodies during the phase that implements the stage; the derivation form is fixed here, the constants are not.
+
+## Implementation status
+
+Phase 1 implements the graph mechanism and the groups star, orbit, body, rotation, interior, atmosphere, volatiles, climate (zero-dimensional subset), cratering (scaling subset), detail, output, seeds and multipliers, plus `tectonics.dichotomy_mode`, `tectonics.dichotomy_amplitude` and `tectonics.initial_crust_thickness`. The executable table is `crates/exogen-core/src/params/registry.rs`; every constant lives in `crates/exogen-core/src/constants.rs` with its source, and constants marked provisional there are calibrated in the phase named. The remaining tectonics, volcanism, weather, surface-process and material nodes are added by the phases that implement those stages. A test asserts that every derivation reads only the nodes it declares, and `exogen validate` checks the derived values of the fourteen reference presets against measured values.
 
 ## Conventions
 
@@ -108,7 +112,8 @@ Revision 0.1, 2026-10-10. This document is the contract for the `params` module 
 | atmosphere.surface_temperature_mean | K | derived | Global mean from the climate stage; pinning it rescales the greenhouse term to match | |
 | atmosphere.bond_albedo | 1 | derived | From the climate stage's surface and cloud state; initial guess by composition class | |
 | atmosphere.jeans_parameter | map species to value | derived | F23 at the mean surface temperature | |
-| atmosphere.retention_warning | text | derived | Species with Jeans parameter below 6 | |
+| atmosphere.exobase_temperature | K | expert derived | Surface temperature plus 700 K x xuv^0.3 x (1 − 0.8 f_CO2). Earth about 1000 K, Mars about 250 K | provisional, Phase 5 |
+| atmosphere.retention_warning | text | derived | Species with Jeans parameter below 36 at the exobase temperature | |
 | atmosphere.oxidant_availability | 1 | derived | O2 fraction plus 0.1 x water vapour fraction, times pressure in bar; clipped to 1 | fit |
 | atmosphere.haze_production | kg/m²/Gyr | derived | Tholin: CH4 fraction x xuv_relative x constant; sulfuric: SO2 fraction x constant | fit |
 | atmosphere.crater_cutoff_diameter | m | derived | F24 | fit |
@@ -301,7 +306,7 @@ Each rule is a predicate with a severity (note, warning) and an explanation that
 | Rule | Severity | Explanation template |
 |---|---|---|
 | Liquid requested but not stable | warning | "{species} liquid requested. Surface temperature {T} K is outside its liquid range at {P} bar ({T_melt} to {T_boil} K)." |
-| Atmosphere retention | warning | "{species} Jeans parameter {λ} is below 6. This atmosphere is unlikely to survive {age} Gyr." |
+| Atmosphere retention | warning | "Jeans parameter below 36 at the exobase temperature {T} K for {species}. These species are unlikely to survive {age} Gyr." |
 | Pressure below triple point | note | "Surface pressure {P} is below the {species} triple point; no liquid can exist." |
 | Locking inconsistency | warning | "Locking timescale {t} Gyr is shorter than body age {age} Gyr but rotation is pinned free." |
 | Relief above strength limit | warning | "Requested relief {h} km exceeds the crustal strength limit {h_max} km." |
@@ -337,7 +342,7 @@ Symbols: G gravitational constant, σ Stefan–Boltzmann, k_B Boltzmann, m_u ato
 - **F20 Scale height.** H = k_B T / (μ m_u g).
 - **F21 Greenhouse optical depth.** τ = Σ_species a_s u_s^b_s with u_s the species column mass, a_s and b_s fit to Earth (+33 K), Mars (+5 K), Venus (+500 K) and Titan (+3 K net); water column derived from relative humidity and temperature by Clausius–Clapeyron; N2–N2 and CH4–N2 collision-induced terms scale as column squared. Surface temperature follows T_s⁴ = T_eq⁴ (1 + 3τ/4) in the zero-dimensional estimate.
 - **F22 Equilibrium temperature.** T_eq = (L (1 − A_B) / (16 π σ d²))^(1/4); substellar temperature without redistribution is √2 T_eq.
-- **F23 Jeans parameter.** λ = G m μ_s m_u / (k_B T R) per species, evaluated at the surface temperature as a conservative proxy for the exobase.
+- **F23 Jeans parameter.** λ = G m μ_s m_u / (k_B T R) per species, evaluated at the exobase temperature T_exo = T_s + 700 K x xuv^0.3 x (1 − 0.8 f_CO2) (provisional). A species is flagged below λ = 36, which is the rule of thumb that a gas survives when the escape speed exceeds six times its most probable thermal speed.
 - **F24 Crater cut-off.** D_min = c (P/g)^0.6, c such that Earth gives 150 m; this yields about 2.4 km for Venus and 13 m for Mars, to be re-fit against Venus and Titan counts.
 - **F25 Vapour pressure.** ln(p/p_t) = (L / R_s)(1/T_t − 1/T) per species about its triple point (T_t, p_t) with latent heat L of vaporisation above T_t and sublimation below.
 - **F26 Sea level.** Find z such that ∫ max(0, z − h) dA over the surface equals the liquid inventory volume, by bisection on the hypsometric curve.
@@ -346,6 +351,6 @@ Symbols: G gravitational constant, σ Stefan–Boltzmann, k_B Boltzmann, m_u ato
 - **F29 Impact velocity.** v² = v_∞² + v_esc², with v_∞ by location: 0.4 to 1.0 x the local orbital speed for heliocentric impactors, plus parent-planet focusing for moons.
 - **F30 Simple-to-complex transition.** D_sc = 16.5 km x (1.62 / g) x f_material, f = 1 rock, 0.15 ice.
 - **F31 Chronology.** N(≥1 km) = 5.44e−14 (e^(6.93 T) − 1) + 8.38e−4 T per km² with T in Gyr; the flux history is its derivative; the production function is the Neukum 2001 polynomial.
-- **F32 Hadley edge.** φ_H = sqrt(5 g H Δ_h / (3 Ω² R²)) in radians, capped at π/2, with H the tropopause height (taken as 3 scale heights) and Δ_h the fractional equator-to-pole radiative-equilibrium temperature contrast (Held and Hou 1980).
+- **F32 Hadley edge.** φ_H = sqrt(5 g H Δ_h / (3 Ω² R²)) in radians, capped at π/2, with H the tropopause height (taken as 2 scale heights, which gives Earth 32°) and Δ_h the fractional equator-to-pole radiative-equilibrium temperature contrast (Held and Hou 1980).
 - **F33 Heat transport coefficient.** D = 0.58 W/m²/K x (P / 1 bar)(c_p / c_p,air)(μ_air / μ)(Ω_Earth / Ω)², capped at 100 x the Earth value (Williams and Kasting 1997 scaling as used in exoplanet energy-balance models).
 - **F34 Threshold friction speed.** u*_t = 0.1 sqrt(ρ_particle g d / ρ_air) for sand-size grains (Iversen and White 1982, large-particle limit); d = 200 µm default.
