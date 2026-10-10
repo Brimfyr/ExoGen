@@ -1425,7 +1425,6 @@ seed_fn!(seed_detail, "detail");
 
 #[cfg(test)]
 mod tests {
-    use super::physics::*;
     use super::*;
 
     #[test]
