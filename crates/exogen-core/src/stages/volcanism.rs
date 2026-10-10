@@ -178,7 +178,9 @@ impl FloodProcess {
         }
         let event_time = match graph.str("interior.tectonic_regime") {
             "stagnant_lid" => None,
-            "episodic_lid" => Some(graph.f64("tectonics.resurfacing_time")),
+            "episodic_lid" => Some(
+                (graph.f64("body.age") - graph.f64("tectonics.resurfacing_event_age")).max(0.0),
+            ),
             _ => return None,
         };
         let body_radius = graph.f64("body.radius");

@@ -214,7 +214,7 @@ impl EpisodicProcess {
         }
         let body_radius = graph.f64("body.radius");
         let age = graph.f64("body.age");
-        let event_time = graph.f64("tectonics.resurfacing_time");
+        let event_time = (age - graph.f64("tectonics.resurfacing_event_age")).max(0.0);
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xE915_0D1C);
         let n_coronae = graph.f64("volcanism.corona_count").round() as u64;
         let mut coronae = Vec::new();

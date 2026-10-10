@@ -1497,13 +1497,11 @@ pub fn tectonics_mountain_count(c: &Ctx) -> Value {
         .into()
 }
 
-pub fn tectonics_resurfacing_time(c: &Ctx) -> Value {
+pub fn tectonics_resurfacing_event_age(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "episodic_lid" {
         return 0.0.into();
     }
-    (c.f64("body.age") - c.f64("cratering.retention_age"))
-        .max(0.0)
-        .into()
+    c.f64("cratering.retention_age").into()
 }
 
 pub fn tectonics_tessera_fraction(c: &Ctx) -> Value {
@@ -1543,7 +1541,7 @@ pub fn tectonics_plume_count(c: &Ctx) -> Value {
 }
 
 pub fn tectonics_rise_diameter(c: &Ctx) -> Value {
-    if c.f64("tectonics.plume_count") < 1.0 {
+    if c.f64("tectonics.plume_rise_count") < 1.0 {
         return 0.0.into();
     }
     let fraction = if c.str("interior.tectonic_regime") == "episodic_lid" {
@@ -1555,15 +1553,15 @@ pub fn tectonics_rise_diameter(c: &Ctx) -> Value {
 }
 
 pub fn tectonics_rise_height(c: &Ctx) -> Value {
-    if c.f64("tectonics.plume_count") < 1.0 {
+    if c.f64("tectonics.plume_rise_count") < 1.0 {
         return 0.0.into();
     }
     (RISE_HEIGHT_FRACTION * c.f64("interior.max_relief")).into()
 }
 
 pub fn tectonics_canyon_count(c: &Ctx) -> Value {
-    if c.f64("tectonics.plume_count") >= 1.0
-        && c.f64("tectonics.rise_diameter") >= CANYON_MIN_RISE_DIAMETER
+    if c.f64("tectonics.plume_rise_count") >= 1.0
+        && c.f64("tectonics.plume_rise_diameter") >= CANYON_MIN_RISE_DIAMETER
     {
         1.0.into()
     } else {
@@ -1572,7 +1570,7 @@ pub fn tectonics_canyon_count(c: &Ctx) -> Value {
 }
 
 pub fn volcanism_shield_count(c: &Ctx) -> Value {
-    if c.f64("tectonics.plume_count") >= 1.0 {
+    if c.f64("tectonics.plume_rise_count") >= 1.0 {
         SHIELDS_PER_RISE.into()
     } else {
         0.0.into()

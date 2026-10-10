@@ -189,7 +189,7 @@ pub struct PlumeProcess {
 impl PlumeProcess {
     /// None when the body raises no plume.
     pub fn new(graph: &ParamGraph, grid: CubeSphere) -> Option<Self> {
-        let count = graph.f64("tectonics.plume_count").round() as usize;
+        let count = graph.f64("tectonics.plume_rise_count").round() as usize;
         if count == 0
             || !matches!(
                 graph.str("interior.tectonic_regime"),
@@ -200,8 +200,8 @@ impl PlumeProcess {
         }
         let body_radius = graph.f64("body.radius");
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
-        let rise_radius = 0.5 * graph.f64("tectonics.rise_diameter");
-        let rise_height = graph.f64("tectonics.rise_height");
+        let rise_radius = 0.5 * graph.f64("tectonics.plume_rise_diameter");
+        let rise_height = graph.f64("tectonics.plume_rise_height");
         let mut rises = Vec::new();
         for i in 0..count as u64 {
             let mut center = rng.unit_direction(i, 1);
@@ -290,7 +290,7 @@ impl PlumeProcess {
         }
         // Canyons and graben on the first rise's flank.
         let cell = grid.delta() * body_radius;
-        let canyon_count = graph.f64("tectonics.canyon_count").round() as usize;
+        let canyon_count = graph.f64("tectonics.canyon_system_count").round() as usize;
         let mut canyons = Vec::new();
         let mut graben = Vec::new();
         if let Some(rise) = rises.first() {

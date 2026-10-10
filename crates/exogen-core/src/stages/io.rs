@@ -156,7 +156,7 @@ impl IoProcess {
         let body_radius = graph.f64("body.radius");
         let age = graph.f64("body.age");
         let rng = Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x10_5EED_0001);
-        let n_paterae = graph.f64("volcanism.patera_count").round() as u64;
+        let n_paterae = graph.f64("volcanism.paterae_count").round() as u64;
         let mut paterae = Vec::new();
         for k in 0..n_paterae {
             // Low latitudes favoured: draw until the latitude weight accepts.

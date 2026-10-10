@@ -1849,7 +1849,8 @@ mod tests {
         let lo = &out.loop_output;
         assert!(!lo.rises.is_empty() && !lo.shields.is_empty());
         let event = lo.resurfacing.as_ref().expect("an event").time_gyr;
-        assert!((event - g.f64("tectonics.resurfacing_time")).abs() < 1e-9);
+        let expected = g.f64("body.age") - g.f64("tectonics.resurfacing_event_age");
+        assert!((event - expected).abs() < 1e-9);
         assert!(lo.coronae.len() > 50 && !lo.domes.is_empty());
         let tessera = episodic::tessera_fraction(&out.finish.layers);
         assert!(tessera > 0.04 && tessera < 0.14, "tessera {tessera}");

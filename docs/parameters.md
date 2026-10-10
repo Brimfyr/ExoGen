@@ -1,10 +1,10 @@
 # Parameter graph specification
 
-Revision 0.2, 2026-10-10. This document is the contract for the `params` module of `exogen-core`. Every node the user can see or set is listed here with its unit, kind, default or derivation, and the source of the relation. The formula appendix at the end gives the relations by number. Values marked *fit* are calibrated against the reference bodies during the phase that implements the stage; the derivation form is fixed here, the constants are not.
+Revision 0.3, 2026-10-11. This document is the contract for the `params` module of `exogen-core`. Every node the user can see or set is listed here with its unit, kind, default or derivation, and the source of the relation. The formula appendix at the end gives the relations by number. Values marked *fit* are calibrated against the reference bodies during the phase that implements the stage; the derivation form is fixed here, the constants are not.
 
 ## Implementation status
 
-Phase 1 implements the graph mechanism and the groups star, orbit, body, rotation, interior, atmosphere, volatiles, climate (zero-dimensional subset), cratering (scaling subset), detail, output, seeds and multipliers, plus `tectonics.dichotomy_mode`, `tectonics.dichotomy_amplitude` and `tectonics.initial_crust_thickness`. Phase 2 adds the cratering population nodes (`cratering.loop_threshold`, `cratering.min_diameter`, `cratering.retention_age`, `cratering.empirical_saturation`, `cratering.secondary_fraction`, `cratering.oblique_fraction`), `surface.space_weathering_timescale`, `surface.solidification_time`, the flux history nodes `cratering.early_flux_ratio` and `cratering.early_flux_decay`, and the material controls `materials.bedrock`, `materials.regolith_mix`, `materials.deep_bedrock`, `materials.deep_bedrock_depth` and `materials.colour_space`. The impact flux is written in time since formation, so the crater record begins at the solidification time whatever the body's age; craters carry an impact angle; and each preset carries its own master seed. The executable table is `crates/exogen-core/src/params/registry.rs`; every constant lives in `crates/exogen-core/src/constants.rs` with its source, and constants marked provisional there are calibrated in the phase named. The remaining tectonics, volcanism, weather, surface-process and material nodes are added by the phases that implement those stages. A test asserts that every derivation reads only the nodes it declares, and `exogen validate` checks the derived values of the fourteen reference presets against measured values.
+Phase 1 implements the graph mechanism and the groups star, orbit, body, rotation, interior, atmosphere, volatiles, climate (zero-dimensional subset), cratering (scaling subset), detail, output, seeds and multipliers, plus `tectonics.dichotomy_mode`, `tectonics.dichotomy_amplitude` and `tectonics.initial_crust_thickness`. Phase 2 adds the cratering population nodes (`cratering.loop_threshold`, `cratering.min_diameter`, `cratering.retention_age`, `cratering.empirical_saturation`, `cratering.secondary_fraction`, `cratering.oblique_fraction`), `surface.space_weathering_timescale`, `surface.solidification_time`, the flux history nodes `cratering.early_flux_ratio` and `cratering.early_flux_decay`, and the material controls `materials.bedrock`, `materials.regolith_mix`, `materials.deep_bedrock`, `materials.deep_bedrock_depth` and `materials.colour_space`. The impact flux is written in time since formation, so the crater record begins at the solidification time whatever the body's age; craters carry an impact angle; and each preset carries its own master seed. The executable table is `crates/exogen-core/src/params/registry.rs`; every constant lives in `crates/exogen-core/src/constants.rs` with its source, and constants marked provisional there are calibrated in the phase named. Phase 3 adds the thermal history curves (`interior.heat_flux_history`, `interior.mantle_temperature_history`, `interior.lithosphere_history`, `interior.relief_limit_history`, `interior.contraction_history`, `orbit.eccentricity_history`), `volcanism.rate`, `volcanism.resurfacing_rate` and `volcanism.history`, the contraction nodes `tectonics.contraction_strain` and `tectonics.scarp_total_shortening`, the plume nodes `tectonics.plume_rise_count`, `tectonics.plume_rise_diameter`, `tectonics.plume_rise_height` and `tectonics.canyon_system_count`, the episodic-lid nodes `tectonics.resurfacing_event_age` and `tectonics.tessera_fraction`, the Io-regime node `tectonics.mountain_count`, the volcanism counts `volcanism.shield_count`, `volcanism.corona_count`, `volcanism.dome_count` and `volcanism.paterae_count`, and `materials.lava`. The remaining tectonics, volcanism, weather, surface-process and material nodes are added by the phases that implement those stages. A test asserts that every derivation reads only the nodes it declares, and `exogen validate` checks the derived values of the fourteen reference presets against measured values.
 
 ## Conventions
 
@@ -86,13 +86,17 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 | interior.tidal_flux | W/m² | derived | tidal_power / (4π R²) | |
 | interior.secular_cooling_fraction | 1 | expert derived | 1.0 for R above 3000 km falling to 0.2 at 500 km, times radiogenic flux | fit |
 | interior.surface_heat_flux | W/m² | derived | radiogenic plus tidal plus secular | |
-| interior.heat_flux_history | W/m² | curve | F12 and F13 evaluated over body age with the eccentricity curve | |
+| interior.heat_flux_history | W/m² | curve | F12 and F13 evaluated over body age with the eccentricity curve, plus secular cooling | Phase 3 |
+| interior.mantle_temperature_history | K | curve | Thermal evolution over the body's life, ending at interior.mantle_temperature | Phase 3 |
+| interior.lithosphere_history | m | curve | F14 along the heat-flux history | Phase 3 |
+| interior.relief_limit_history | m | curve | F15 scaled by the elastic thickness relative to today's, floored at 0.15 | Phase 3 |
+| interior.contraction_history | m | curve | F16 accumulated over the body's life | Phase 3 |
 | interior.mantle_temperature | K | expert derived | Thermal evolution, calibrated so Earth is 1600 K now | fit |
 | interior.lithosphere_thickness | m | derived | F14 conductive thickness | |
 | interior.elastic_thickness | m | derived | Depth to the 650 K isotherm for rock, 170 K for ice, from the conductive profile | |
 | interior.crust_strength | Pa | derived | 150 MPa rock, weakened linearly to 50 MPa as surface temperature approaches 750 K; 5 MPa ice | fit |
 | interior.max_relief | m | derived | F15 | |
-| interior.contraction_total | m | derived | F16 | |
+| interior.contraction_total | m | derived | F16 at the present | Byrne et al. 2014 |
 | interior.magma_production_rate | m³/s | derived | F17 | fit |
 | interior.ice_shell_thickness | m | derived | F18 for rock_ice and ice_dominated bodies | |
 | interior.has_subsurface_ocean | bool | derived | Ice layer thicker than the conductive shell thickness | |
@@ -148,14 +152,15 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 | tectonics.continental_fraction_initial | 1 | derived | 0.1 mobile lid; grows in the loop | |
 | tectonics.hotspot_count | 1 | derived | 10 x (area / Earth area) | heuristic |
 | tectonics.reorganisation_interval | Myr | expert | 150 | |
-| tectonics.contraction_strain | 1 | derived | 2 x contraction_total / radius | |
-| tectonics.scarp_total_shortening | m | derived | contraction_strain x 2π R | |
-| tectonics.plume_rise_count | 1 | derived | 0 mobile lid; stagnant lid: 2 when surface_heat_flux above 0.02, else 0 | heuristic |
-| tectonics.plume_rise_diameter | m | derived | 0.75 x radius | fit |
-| tectonics.plume_rise_height | m | derived | 0.3 x max_relief | fit |
-| tectonics.canyon_system_count | 1 | derived | 1 per plume rise with diameter above 0.5 R | |
-| tectonics.resurfacing_event_age | Gyr | derived | 0.5 for episodic lid | |
-| tectonics.tessera_fraction | 1 | derived | 0.08 episodic lid | |
+| tectonics.contraction_strain | 1 | derived | 2 x contraction_total / radius; the scarps take this fraction of the area up as shortening, the longest of them scaling with its square (F35) | Phase 3 |
+| tectonics.scarp_total_shortening | m | derived | contraction_strain x 2π R | Phase 3 |
+| tectonics.plume_rise_count | 1 | derived | Stagnant or episodic lid at least 3,000 km in radius: floor(surface_heat_flux / 0.02 W/m²), at most 3; else 0. Mars 1, Venus 3 | Phase 3, heuristic |
+| tectonics.plume_rise_diameter | m | derived | 1.5 R on a stagnant lid (Tharsis), 0.4 R on an episodic lid (Beta Regio) | Phase 3, fit |
+| tectonics.plume_rise_height | m | derived | 0.28 x max_relief (Tharsis 7 km, Beta Regio about 3 km) | Phase 3, fit |
+| tectonics.canyon_system_count | 1 | derived | 1 when a plume rise is wider than 2,000 km (Valles Marineris, Devana Chasma) | Phase 3 |
+| tectonics.resurfacing_event_age | Gyr | derived | The crater retention age for an episodic lid, 0.5 on Venus; else 0 | Phase 3 |
+| tectonics.tessera_fraction | 1 | derived | 0.08 episodic lid: the highest-standing share of the surface that survives the event | Phase 3 |
+| tectonics.mountain_count | 1 | derived | Io regime: 2 per TW of tidal power, some 150 on Io | Phase 3, heuristic |
 | tectonics.ice_resurfaced_fraction | 1 | derived | ice_shell_ocean: clipped (tidal_flux / 0.05); ice_shell_rock: 0 | fit |
 | tectonics.ice_crack_density | per m | derived | Tidal stress amplitude / ice strength, scaled by shell thickness | fit |
 | tectonics.chaos_fraction | 1 | derived | Fraction of the shell thinner than 0.5 x mean, from the heat flux pattern | |
@@ -166,16 +171,18 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 
 | id | unit | kind | default or derivation | source |
 |---|---|---|---|---|
-| volcanism.rate | m³/s | derived | interior.magma_production_rate | |
-| volcanism.resurfacing_rate | m/Myr | derived | rate / area | |
+| volcanism.rate | m³/s | derived | interior.magma_production_rate | Phase 3 |
+| volcanism.resurfacing_rate | m/Myr | derived | rate / area | Phase 3 |
 | volcanism.style | enum none, silicate, sulfur_silicate, cryo_water_ammonia, cryo_brine | derived | By composition class and heat flux; sulfur_silicate above 1 W/m² on rock | |
-| volcanism.shield_count | 1 | derived | plume_rise_count x 4 for stagnant lid; hotspot_count for mobile lid | heuristic |
+| volcanism.shield_count | 1 | derived | 5 on the main plume rise, half as many on each further rise; hotspot_count for a mobile lid in Phase 6 | Phase 3, heuristic |
+| volcanism.corona_count | 1 | derived | Episodic lid: 1.1e-12 per m², some 500 on Venus | Phase 3, heuristic |
+| volcanism.dome_count | 1 | derived | Episodic lid: 3.3e-13 per m², some 150 on Venus | Phase 3, heuristic |
 | volcanism.arc_volcano_density | per m of arc | derived | 1 per 70 km of convergent boundary | |
 | volcanism.flood_episode_count | 1 | derived | From the heat flux history: one per 10 Myr of rate above threshold, capped | fit |
-| volcanism.paterae_count | 1 | derived | 400 x (tidal_flux / 2) for sulfur_silicate | heuristic |
+| volcanism.paterae_count | 1 | derived | Io regime: 5.4 per TW of tidal power, some 400 on Io | Phase 3, heuristic |
 | volcanism.fresh_lava_albedo | 1 | derived | 0.07 basalt, 0.4 cryolava, 0.1 sulfur-coated | |
 | volcanism.active_vent_count | 1 | derived | Vents younger than 1 Myr at the output epoch | |
-| volcanism.history | m³/s | curve | Follows interior.heat_flux_history | |
+| volcanism.history | m³/s | curve | F17 along the thermal history; the extrusive share erupts as floods (F36) | Phase 3 |
 
 ## cratering
 
@@ -266,6 +273,7 @@ Composition class sets only the defaults of this group. Surface colour comes fro
 | materials.bedrock | enum basalt, anorthosite, felsic, water_ice, ammonia_water_ice, rock_ice_mixture, carbonaceous, sulfur_coated | derived | Default from composition class, regime and volcanism style: basalt for rock, anorthosite for a thick primary crust on an airless rock body, felsic for continental crust on a mobile lid, water_ice for ice classes, carbonaceous for dark primitive bodies. Pin to choose | Phase 2 |
 | materials.regolith_mix | map end-member to fraction | derived | Baseline surface mixture before deposits, from the bedrock and the class, for example water_ice 0.6 and rock 0.4 on a dark rock-ice terrain. Pin to set the surface composition by hand | Phase 2 |
 | materials.deep_bedrock | enum as bedrock, plus norite, low_reflectance_material, impact_melt | derived | What large craters excavate from below the surface layer: norite on an airless rocky stagnant lid, low-reflectance material on an iron-rich body, clean water ice under the lag of an ice shell, otherwise the bedrock. Pin to choose | Phase 2, provisional |
+| materials.lava | enum as bedrock, plus mare_basalt, smooth_plains | derived | What floods and flows leave: mare basalt on an airless rocky stagnant lid, the brighter smooth plains of an iron-rich body, basalt otherwise, dirty ice for cryolava. Pin to choose | Phase 3, provisional |
 | materials.deep_bedrock_depth | m | derived | 25 km rocky, 10 km iron-rich, 0.5 km ice shells. A crater excavating a tenth of its diameter (Melosh 1989) deeper than this exposes the deep bedrock in its floor and ejecta | Phase 2, provisional |
 | materials.end_members | list | derived | The end-members active for this world: the bedrock, the regolith mix, the volatile ices present in the inventory, and the deposits the processes produce | USGS Spectral Library v7; RELAB |
 | materials.custom_end_members | list | root | User-defined materials with a name, a reflectance spectrum or an RGB, roughness and specular; usable in the regolith mix | Phase 2 |
@@ -344,7 +352,7 @@ Symbols: G gravitational constant, σ Stefan–Boltzmann, k_B Boltzmann, m_u ato
 - **F13 Tidal heating.** Ė = (21/2) (k₂/Q) G M_p² R⁵ n e² / a⁶ (Peale, Cassen and Reynolds 1979).
 - **F14 Lithosphere thickness.** z = k (T_mantle − T_surface) / q, with k = 3 W/m/K for rock and k = 651 / T W/m/K for ice.
 - **F15 Maximum relief.** h_max = c Δσ / (ρ_crust g), c calibrated so Earth gives 9 km, Mars 22 km and Venus 11 km with the strength law of interior.crust_strength. For ice, h_max is the smaller of the strength value and the relaxation-limited value for the body's age.
-- **F16 Global contraction.** ΔR = (α_v / 3) ΔT R with α_v = 3e−5 per K and ΔT the mean interior cooling from the thermal evolution (Mercury gives 5 to 7 km).
+- **F16 Global contraction.** ΔR = (α_v / 3) ΔT R with α_v = 3e−5 per K and ΔT = 50 K x min(1, (R / R_Mars)²) of mantle cooling plus 250 K times the squared iron index from the uncompressed density (0 at 3.3 g/cm³, 1 at 5.15), accumulating as 1 − exp(−(t − 0.7 Gyr) / 2 Gyr) after a 0.7 Gyr onset during which early heating offsets the cooling. Mercury 5.7 km, Mars 1.7 km, the Moon 0.2 km (Byrne et al. 2014; Watters et al. 2010; Tosi et al. 2013).
 - **F17 Magma production.** Rate = max(0, q − q_conductive) x 4π R² / (ρ L_fusion + ρ c_p ΔT) x efficiency, calibrated so Earth gives about 20 km³/yr and Io about 1 cm/yr of resurfacing.
 - **F18 Ice shell thickness.** d = k_ice (T_melt − T_surface) / q with k_ice = 651 / T evaluated at the mean shell temperature; T_melt lowered by ammonia if present.
 - **F19 Tectonic regime.** ice_shell_ocean if has_subsurface_ocean; ice_shell_rock if composition is ice_dominated or rock_ice without an ocean; mobile_lid if surface liquid water exists and surface_heat_flux is above 0.05 W/m² and radius above 4000 km; episodic_lid if rock with surface_heat_flux above 0.04 and no surface water and radius above 5000 km; stagnant_lid otherwise. Overridable.
@@ -362,4 +370,7 @@ Symbols: G gravitational constant, σ Stefan–Boltzmann, k_B Boltzmann, m_u ato
 - **F31 Flux history.** The Neukum chronology N(≥1 km) = 5.44e−14 (e^(6.93 T) − 1) + 8.38e−4 T per km², T in Gyr before present, rewritten in time since formation τ with the present 4.5 Gyr after the Moon formed: rate = c [1 + ρ e^(−τ/τ_d)] with ρ = a b e^(4.5 b) / c ≈ 1.57e4 and τ_d = 1 / b = 0.144 Gyr, zero before the surface solidifies. A body of any age gets its heavy bombardment at formation and the steady flux ever after; the production function is the Neukum 2001 polynomial.
 - **F32 Hadley edge.** φ_H = sqrt(5 g H Δ_h / (3 Ω² R²)) in radians, capped at π/2, with H the tropopause height (taken as 2 scale heights, which gives Earth 32°) and Δ_h the fractional equator-to-pole radiative-equilibrium temperature contrast (Held and Hou 1980).
 - **F33 Heat transport coefficient.** D = 0.58 W/m²/K x (P / 1 bar)(c_p / c_p,air)(μ_air / μ)(Ω_Earth / Ω)², capped at 100 x the Earth value (Williams and Kasting 1997 scaling as used in exoplanet energy-balance models).
+- **F35 Scarp population.** Lengths from N(>L) ∝ L^−1.5 between 10 km and L_max = min(0.4 R, 1,000 km x (ε / 0.005)²) for areal strain ε; height h = 0.03 L_km^0.667 km (Enterprise Rupes), shortening h / tan 25° per unit length, the population drawn until the shortening area ε x 4π R² is spent; a face of 12° central slope and a back slope 20 h long.
+- **F36 Flood volcanism.** Eruptive fraction of F17 = 0.1 / (1 + exp((z_lith − 400 km) / 30 km)) x exp(−(ε / 0.0012)²); eruptions of 100 to 10,000 km³ (log-uniform) from vents weighted by exp(−(crust − min) / 10 km) exp(−(h − median) / 2 km) x (1 + 20 x rise height fraction); each fills one lake from the nearest low, taking cells in height order across passes, spreading no thinner than 50 m and no further than 1,500 km, subsiding by 5% of its thickness.
+- **F37 Steady-flux production.** After the heavy bombardment the lunar production function falls two cumulative slopes steeper above 150 km and makes nothing over 600 km; each crater draws from the early or steady population by the early share r e^(−t/τ) / (1 + r e^(−t/τ)) of the flux at its time (F31).
 - **F34 Threshold friction speed.** u*_t = 0.1 sqrt(ρ_particle g d / ρ_air) for sand-size grains (Iversen and White 1982, large-particle limit); d = 200 µm default.
