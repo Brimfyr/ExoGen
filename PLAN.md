@@ -713,7 +713,7 @@ Gate: Earth-like preset biome map matches Earth's zonal distribution of forest, 
 
 ### Phase 9: polish and release (M)
 
-- Preset library, documentation with references per parameter, UI pass, test coverage, builds for Windows, macOS and Linux, licence, user guide.
+- Preset library, documentation with references per parameter, UI pass, test coverage, builds for Windows, macOS and Linux, user guide.
 
 ### Risks and mitigations
 
@@ -729,15 +729,17 @@ Gate: Earth-like preset biome map matches Earth's zonal distribution of forest, 
 
 ---
 
-## 11. Open decisions
+## 11. Decisions
 
-1. **Stack.** Rust with wgpu and egui as recommended, or C++ with Vulkan and ImGui. Default: Rust.
-2. **Simulation grid.** Cubesphere plus coarse point set as recommended. Default: as recommended.
-3. **Colour management.** Linear sRGB EXR plus sRGB PNG by default, ACEScg optional. Default: as stated.
-4. **Minimum body radius for the spheroid assumption.** Default: 400 km nominal, warning below.
-5. **Platform order.** Default: Windows first, then macOS and Linux.
-6. **Licence.** Needed before any public release. Not a blocker for development.
-7. **Name.** ExoGen is the working title.
+All resolved on 2026-10-10.
+
+1. **Stack.** Rust with wgpu and egui. Dependencies must be GPL-3.0-compatible; the planned crates are MIT or Apache-2.0 licensed, which is compatible.
+2. **Simulation grid.** Cubesphere plus coarse point set.
+3. **Colour management.** Linear sRGB EXR plus sRGB PNG by default, ACEScg optional.
+4. **Minimum body radius for the spheroid assumption.** 400 km nominal, warning below.
+5. **Platform order.** Windows first, then macOS and Linux.
+6. **Licence.** GPL-3.0-or-later.
+7. **Name.** ExoGen. Repository: github.com/Brimfyr/ExoGen.
 
 ---
 
