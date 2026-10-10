@@ -24,8 +24,8 @@ use rayon::prelude::*;
 use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
-    CraterRecord, PopulationConfig, ProfileTable, StampParams, Stamper, dimensions,
-    sample_population, stamp,
+    CraterRecord, PopulationConfig, ProfileTable, RestoreParams, StampParams, Stamper,
+    dimensions, restore, sample_population, stamp,
 };
 use crate::fields::{Field, LayerSet};
 use crate::geom::{local_basis, offset};
@@ -33,7 +33,7 @@ use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
 use crate::rng::{Rng, hash_words};
-use crate::units::{UNIT_CRATER_FLOOR, UNIT_EJECTA, UNIT_SECONDARY_FIELD};
+use crate::units::{UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_EJECTA, UNIT_SECONDARY_FIELD};
 
 /// Loop steps by quality: preview, standard, high.
 pub const LOOP_STEPS: [usize; 3] = [30, 90, 90];
@@ -237,7 +237,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 2;
+pub const FINISH_VERSION: u64 = 3;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -339,31 +339,19 @@ pub fn finish(
         return Err(RunError::Cancelled);
     }
 
-    // Loop craters that exist at this epoch, with their resolved morphology restored.
+    // Loop craters that exist at this epoch. Their coarse form is in the resampled base;
+    // their resolved detail is restored below, in age order among the replayed craters.
     let loop_craters: Vec<CraterRecord> = loop_output
         .craters
         .iter()
         .filter(|c| c.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
-    sink.report(Progress {
-        stage: "finishing",
-        fraction: 0.15,
-        message: format!("restoring {} loop craters", loop_craters.len()),
-    });
+    let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let coarse_cell =
         2.0 * std::f64::consts::PI * body_radius / (4.0 * loop_output.grid.face_size() as f64);
-    restore_loop_detail(
-        &mut layers,
-        &grid,
-        body_radius,
-        &loop_craters,
-        &inputs,
-        coarse_cell,
-        &mut stamper,
-    );
 
-    // Statistical replay of the sub-threshold population, oldest first.
+    // Statistical sample of the sub-threshold population, from the surface ages the loop left.
     let d_min = graph
         .f64("cratering.min_diameter")
         .max(FINISHING_MIN_CELLS * cell);
@@ -381,25 +369,41 @@ pub fn finish(
     };
     sink.report(Progress {
         stage: "finishing",
-        fraction: 0.25,
+        fraction: 0.15,
         message: "sampling the crater population".to_string(),
     });
     let population = sample_population(&grid, &layers.surface_age, present, &cfg);
     let secondaries = sample_secondaries(&loop_craters, &inputs, d_min, present);
-    let mut replay: Vec<(crate::crater::CraterSample, bool)> = population
+    let replay: Vec<(crate::crater::CraterSample, bool)> = population
         .into_iter()
         .map(|c| (c, false))
         .chain(secondaries.into_iter().map(|c| (c, true)))
         .collect();
-    replay.sort_by(|a, b| {
-        a.0.time_gyr
-            .total_cmp(&b.0.time_gyr)
-            .then(a.0.key.cmp(&b.0.key))
+
+    // One age-ordered sequence of loop craters and replayed craters. A loop crater goes
+    // before anything else of the same time, so its own secondaries land on it; craters it
+    // destroyed are stamped before it and removed by its restore.
+    enum Event {
+        Loop(usize),
+        Replay(usize),
+    }
+    let mut events: Vec<(f64, u8, u64, Event)> =
+        Vec::with_capacity(loop_craters.len() + replay.len());
+    for (i, c) in loop_craters.iter().enumerate() {
+        events.push((c.time_gyr, 0, c.id, Event::Loop(i)));
+    }
+    for (j, (c, _)) in replay.iter().enumerate() {
+        events.push((c.time_gyr, 1, c.key, Event::Replay(j)));
+    }
+    events.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then(a.1.cmp(&b.1))
+            .then(a.2.cmp(&b.2))
     });
     sink.report(Progress {
         stage: "finishing",
-        fraction: 0.35,
-        message: format!("stamping {} craters", replay.len()),
+        fraction: 0.3,
+        message: format!("stamping {} craters", events.len()),
     });
     if sink.cancelled() {
         return Err(RunError::Cancelled);
@@ -407,49 +411,91 @@ pub fn finish(
 
     let record_min = 8.0 * cell;
     let mut records = loop_craters.clone();
-    let total = replay.len().max(1);
-    for (i, (c, secondary)) in replay.iter().enumerate() {
-        let dim = dimensions(c.diameter, &inputs.scaling);
-        let kappa_t = inputs.diffusivity_m2_per_myr * (present - c.time_gyr).max(0.0) * 1e3;
-        let table = ProfileTable::new(dim, kappa_t);
-        let params = StampParams {
-            time_gyr: c.time_gyr as f32,
-            unit_floor: if *secondary {
-                UNIT_SECONDARY_FIELD
-            } else {
-                UNIT_CRATER_FLOOR
-            },
-            unit_ejecta: UNIT_EJECTA,
-            azimuth: c.azimuth,
-            ellipticity: c.ellipticity,
-            amplitude: if *secondary {
-                SECONDARY_DEPTH_FACTOR
-            } else {
-                1.0
-            },
-            replace_floor: true,
-            set_age: true,
-        };
-        stamp(
-            &mut layers,
-            &grid,
-            body_radius,
-            c.center,
-            &table,
-            &params,
-            &mut stamper,
-        );
-        if c.diameter >= record_min && !*secondary {
-            records.push(CraterRecord {
-                center: c.center,
-                diameter: c.diameter,
-                time_gyr: c.time_gyr,
-                azimuth: c.azimuth,
-                ellipticity: c.ellipticity,
-                class: dim.class,
-                from_loop: false,
-                id: c.key,
-            });
+    let total = events.len().max(1);
+    let smooth_sigma = 0.5 * coarse_cell;
+    for (i, (_, _, _, event)) in events.iter().enumerate() {
+        match event {
+            Event::Loop(li) => {
+                let c = &loop_craters[*li];
+                let dim = dimensions(c.diameter, &inputs.scaling);
+                // The detail the coarse grid could not carry: the resolved profile minus
+                // its coarse-cell-smoothed version.
+                let fresh = ProfileTable::new(dim, 0.0);
+                let smooth = ProfileTable::new(dim, 0.5 * smooth_sigma * smooth_sigma);
+                let mut detail = fresh.clone();
+                for (v, s) in detail.values.iter_mut().zip(&smooth.values) {
+                    *v -= s;
+                }
+                let params = RestoreParams {
+                    time_gyr: c.time_gyr as f32,
+                    unit_floor: if dim.class == crate::crater::CraterClass::MultiRing {
+                        UNIT_BASIN_FLOOR
+                    } else {
+                        UNIT_CRATER_FLOOR
+                    },
+                    unit_ejecta: UNIT_EJECTA,
+                    azimuth: c.azimuth,
+                    ellipticity: c.ellipticity,
+                    detail_weight: 1.0,
+                };
+                restore(
+                    &mut layers,
+                    &grid,
+                    body_radius,
+                    c.center,
+                    &base,
+                    &fresh,
+                    &detail,
+                    &params,
+                    &mut stamper,
+                );
+            }
+            Event::Replay(j) => {
+                let (c, secondary) = &replay[*j];
+                let dim = dimensions(c.diameter, &inputs.scaling);
+                let kappa_t =
+                    inputs.diffusivity_m2_per_myr * (present - c.time_gyr).max(0.0) * 1e3;
+                let table = ProfileTable::new(dim, kappa_t);
+                let params = StampParams {
+                    time_gyr: c.time_gyr as f32,
+                    unit_floor: if *secondary {
+                        UNIT_SECONDARY_FIELD
+                    } else {
+                        UNIT_CRATER_FLOOR
+                    },
+                    unit_ejecta: UNIT_EJECTA,
+                    azimuth: c.azimuth,
+                    ellipticity: c.ellipticity,
+                    amplitude: if *secondary {
+                        SECONDARY_DEPTH_FACTOR
+                    } else {
+                        1.0
+                    },
+                    replace_floor: true,
+                    set_age: true,
+                };
+                stamp(
+                    &mut layers,
+                    &grid,
+                    body_radius,
+                    c.center,
+                    &table,
+                    &params,
+                    &mut stamper,
+                );
+                if c.diameter >= record_min && !*secondary {
+                    records.push(CraterRecord {
+                        center: c.center,
+                        diameter: c.diameter,
+                        time_gyr: c.time_gyr,
+                        azimuth: c.azimuth,
+                        ellipticity: c.ellipticity,
+                        class: dim.class,
+                        from_loop: false,
+                        id: c.key,
+                    });
+                }
+            }
         }
         if i % 20_000 == 0 {
             if sink.cancelled() {
@@ -457,7 +503,7 @@ pub fn finish(
             }
             sink.report(Progress {
                 stage: "finishing",
-                fraction: 0.35 + 0.35 * i as f32 / total as f32,
+                fraction: 0.3 + 0.4 * i as f32 / total as f32,
                 message: format!("stamping craters {i} of {total}"),
             });
         }
@@ -525,58 +571,6 @@ pub fn finish(
         replayed_count,
         hash,
     })
-}
-
-/// Add back the morphology of loop craters that the coarse grid could not carry: the
-/// difference between the resolved profile and its coarse-cell-smoothed version, weighted
-/// by how much of the crater's surface still dates from its formation.
-fn restore_loop_detail(
-    layers: &mut LayerSet,
-    grid: &CubeSphere,
-    body_radius: f64,
-    craters: &[CraterRecord],
-    inputs: &impacts::CraterInputs,
-    coarse_cell: f64,
-    stamper: &mut Stamper,
-) {
-    let sigma = 0.5 * coarse_cell;
-    for c in craters {
-        let dim = dimensions(c.diameter, &inputs.scaling);
-        let fresh = ProfileTable::new(dim, 0.0);
-        let smooth = ProfileTable::new(dim, 0.5 * sigma * sigma);
-        let mut diff = fresh.clone();
-        for (v, s) in diff.values.iter_mut().zip(&smooth.values) {
-            *v -= s;
-        }
-        // Survival: fraction of cells inside 1.1 R whose surface still dates from this crater.
-        stamper.gather(grid, body_radius, c.center, 1.1 * dim.radius);
-        let mut same = 0usize;
-        let mut total = 0usize;
-        for &(idx, _, _) in &stamper.footprint {
-            total += 1;
-            if (layers.surface_age.as_slice()[idx] as f64 - c.time_gyr).abs() < 1e-3 {
-                same += 1;
-            }
-        }
-        if total == 0 {
-            continue;
-        }
-        let weight = same as f64 / total as f64;
-        if weight < 0.3 {
-            continue;
-        }
-        let params = StampParams {
-            time_gyr: c.time_gyr as f32,
-            unit_floor: 0,
-            unit_ejecta: 0,
-            azimuth: c.azimuth,
-            ellipticity: c.ellipticity,
-            amplitude: weight,
-            replace_floor: false,
-            set_age: false,
-        };
-        stamp(layers, grid, body_radius, c.center, &diff, &params, stamper);
-    }
 }
 
 /// Secondary craters of the loop craters: clusters at a few primary radii, formed at the
@@ -883,6 +877,33 @@ mod tests {
                 .fold((1.0f32, 0.0f32), |(lo, hi), c| (lo.min(c[1]), hi.max(c[1])))
         };
         assert!(lo < 0.2 && hi > 0.25, "albedo range {lo} to {hi}");
+    }
+
+    /// Nothing older than a loop crater survives inside it: the finishing pass stamps in
+    /// age order and the restore removes what the impact destroyed, so every cell inside
+    /// the rim dates from the crater or from something younger.
+    #[test]
+    fn nothing_older_than_a_loop_crater_survives_inside_it() {
+        let mut r = Runner::new();
+        let moon = r
+            .run(&preset_graph("Moon", "preview"), &NoProgress)
+            .unwrap();
+        let grid = moon.finish.grid;
+        let ages = moon.finish.layers.surface_age.as_slice();
+        let mut stamper = Stamper::new(&grid);
+        let (mut checked, mut older) = (0usize, 0usize);
+        for c in moon.finish.craters.iter().filter(|c| c.from_loop) {
+            let inner = 0.45 * c.diameter / c.ellipticity.sqrt();
+            stamper.gather(&grid, 1.7374e6, c.center, inner);
+            for &(idx, _, _) in &stamper.footprint {
+                checked += 1;
+                if (ages[idx] as f64) < c.time_gyr - 1e-3 {
+                    older += 1;
+                }
+            }
+        }
+        assert!(checked > 1_000, "checked {checked} cells");
+        assert_eq!(older, 0, "{older} of {checked} cells older than their crater");
     }
 
     #[test]

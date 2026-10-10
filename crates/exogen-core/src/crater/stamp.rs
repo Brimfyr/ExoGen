@@ -10,7 +10,7 @@
 //! the continuous ejecta have their surface age reset to the impact time.
 
 use super::morphology::ProfileTable;
-use crate::constants::CONTINUOUS_EJECTA_MULTIPLE;
+use crate::constants::{BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
@@ -151,6 +151,92 @@ pub fn stamp(
         };
         bedrock[idx] = (v + w * h_ref + (1.0 - w) * old) as f32;
         if p.set_age && re <= continuous {
+            ages[idx] = p.time_gyr;
+            units[idx] = if re <= dim.radius {
+                p.unit_floor
+            } else {
+                p.unit_ejecta
+            };
+        }
+    }
+    stamper.footprint.len()
+}
+
+/// Parameters of a loop-crater restore at the finishing resolution.
+pub struct RestoreParams {
+    pub time_gyr: f32,
+    pub unit_floor: u16,
+    pub unit_ejecta: u16,
+    pub azimuth: f64,
+    pub ellipticity: f64,
+    /// Weight of the resolved detail: the fraction of the crater that survived the loop.
+    pub detail_weight: f64,
+}
+
+/// Relief under ejecta of thickness `thickness` is damped by this factor: depressions fill
+/// and highs are shaken down, with the thickness measured against the relief itself so
+/// thin ejecta on deep relief changes little and thick ejecta on shallow relief erases it.
+#[inline]
+pub fn burial_factor(relief: f64, thickness: f64) -> f64 {
+    if thickness <= 0.0 {
+        return 1.0;
+    }
+    let k = if relief < 0.0 {
+        BURIAL_FACTOR_LOW
+    } else {
+        BURIAL_FACTOR_HIGH
+    };
+    (-k * thickness / relief.abs().max(1.0)).exp()
+}
+
+/// Re-stamp a loop crater at the finishing resolution, in its place in the age order.
+///
+/// `base` is the resampled coarse height before any finishing-pass stamp; it already holds
+/// the crater's coarse form. Inside the rim the height returns to the base plus the
+/// resolved detail, which removes whatever the pass stamped there earlier: those craters
+/// are older and the impact destroyed them. Under the ejecta the relief added earlier in
+/// the pass is buried according to the ejecta thickness. Ages and units within the
+/// continuous ejecta are reset to the impact time.
+#[allow(clippy::too_many_arguments)]
+pub fn restore(
+    layers: &mut LayerSet,
+    grid: &CubeSphere,
+    body_radius: f64,
+    center: [f64; 3],
+    base: &[f32],
+    fresh: &ProfileTable,
+    detail: &ProfileTable,
+    p: &RestoreParams,
+    stamper: &mut Stamper,
+) -> usize {
+    let dim = &fresh.dim;
+    stamper.gather(
+        grid,
+        body_radius,
+        center,
+        dim.ejecta_radius * p.ellipticity.sqrt(),
+    );
+    if stamper.footprint.is_empty() {
+        return 0;
+    }
+    let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
+    let bedrock = layers.bedrock.as_mut_slice();
+    let ages = layers.surface_age.as_mut_slice();
+    let units = layers.unit_id.as_mut_slice();
+    for &(idx, r, phi) in &stamper.footprint {
+        let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let fine = bedrock[idx] as f64 - base[idx] as f64;
+        // 1 inside 0.95 R, 0 outside 1.05 R: the cavity removes the fine relief.
+        let cut = ((1.05 - re / dim.radius) / 0.10).clamp(0.0, 1.0);
+        let thickness = if re > dim.radius {
+            fresh.height(re).max(0.0)
+        } else {
+            0.0
+        };
+        let kept = fine * (1.0 - cut) * burial_factor(fine, thickness);
+        let d = detail.height(re) * p.detail_weight;
+        bedrock[idx] = (base[idx] as f64 + kept + d) as f32;
+        if re <= continuous {
             ages[idx] = p.time_gyr;
             units[idx] = if re <= dim.radius {
                 p.unit_floor

@@ -401,6 +401,10 @@ pub const BASIN_EJECTA_RADIUS_MULTIPLE: f64 = 4.0;
 pub const BASIN_EJECTA_EXPONENT: f64 = -2.5;
 /// Extent of the continuous ejecta that resets the surface age, in radii.
 pub const CONTINUOUS_EJECTA_MULTIPLE: f64 = 2.0;
+/// Ejecta burial: relief under ejecta is damped by exp(-k t / |relief|) for thickness t.
+/// Depressions fill (ejecta ponds in lows) faster than highs are shaken down. Provisional.
+pub const BURIAL_FACTOR_LOW: f64 = 1.0;
+pub const BURIAL_FACTOR_HIGH: f64 = 0.5;
 /// Rays: length range in radii, count range, and the smallest crater (in finishing cells)
 /// that gets rays.
 pub const RAY_LENGTH_MULTIPLE: (f64, f64) = (6.0, 15.0);
