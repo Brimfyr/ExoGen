@@ -303,12 +303,13 @@ pub fn run_coarse_loop(
     let hashes: Vec<u64> = keyframes.iter().map(|k| k.layers.hash()).collect();
     let hash = hash_words(&hashes);
     let loop_threshold = impacts.loop_threshold();
+    let craters = impacts.into_records(&layers);
     Ok(LoopOutput {
         grid,
         keyframes,
         steps,
         age_gyr: age,
-        craters: impacts.records,
+        craters,
         loop_threshold,
         hash,
     })
@@ -505,6 +506,8 @@ pub fn finish(
                         ellipticity: c.ellipticity,
                         class: dim.class,
                         from_loop: false,
+                        relief: (dim.depth + dim.rim_height) as f32,
+                        visible: true,
                         id: c.key,
                     });
                 }
@@ -941,6 +944,40 @@ mod tests {
         assert_eq!(
             older, 0,
             "{older} of {checked} cells older than their crater"
+        );
+    }
+
+    /// Craters erase each other: a share of the loop craters lose their relief to later
+    /// cavities and ejecta, while most basins, which nothing relaxes yet, stay visible.
+    #[test]
+    fn later_impacts_erase_some_loop_craters_and_most_basins_stay_visible() {
+        let mut r = Runner::new();
+        let moon = r
+            .run(&preset_graph("Moon", "preview"), &NoProgress)
+            .unwrap();
+        let all = &moon.loop_output.craters;
+        let erased = all.iter().filter(|c| !c.visible).count();
+        assert!(all.len() > 50, "loop craters {}", all.len());
+        let fraction = erased as f64 / all.len() as f64;
+        assert!(
+            (0.02..0.5).contains(&fraction),
+            "erased {erased} of {} loop craters",
+            all.len()
+        );
+        let basins: Vec<_> = all.iter().filter(|c| c.diameter >= 300_000.0).collect();
+        let visible = basins.iter().filter(|c| c.visible).count();
+        assert!(basins.len() >= 20, "basins {}", basins.len());
+        assert!(
+            visible * 2 >= basins.len(),
+            "visible basins {visible} of {}",
+            basins.len()
+        );
+        // A visible basin keeps kilometres of relief.
+        assert!(
+            basins
+                .iter()
+                .filter(|c| c.visible)
+                .all(|c| c.relief > 1_000.0)
         );
     }
 

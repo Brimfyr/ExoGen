@@ -59,6 +59,10 @@ pub struct CraterInfo {
     pub age_gyr: f64,
     pub class: String,
     pub impact_angle_deg: f64,
+    /// Rim-to-floor relief left at the end of the coarse loop for loop craters, metres.
+    pub relief_m: f64,
+    /// Whether the crater is still recognisable on the surface.
+    pub visible: bool,
     pub from_loop: bool,
 }
 
@@ -305,6 +309,8 @@ pub fn export(
                     age_gyr: out.epoch_time_gyr - c.time_gyr,
                     class: c.class.name().to_string(),
                     impact_angle_deg: c.angle.to_degrees(),
+                    relief_m: c.relief as f64,
+                    visible: c.visible,
                     from_loop: c.from_loop,
                 }
             })

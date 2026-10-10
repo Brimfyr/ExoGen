@@ -4,7 +4,7 @@ Revision 0.2, 2026-10-10. This document is the contract for the `params` module 
 
 ## Implementation status
 
-Phase 1 implements the graph mechanism and the groups star, orbit, body, rotation, interior, atmosphere, volatiles, climate (zero-dimensional subset), cratering (scaling subset), detail, output, seeds and multipliers, plus `tectonics.dichotomy_mode`, `tectonics.dichotomy_amplitude` and `tectonics.initial_crust_thickness`. Phase 2 adds the cratering population nodes (`cratering.loop_threshold`, `cratering.min_diameter`, `cratering.retention_age`, `cratering.empirical_saturation`, `cratering.secondary_fraction`, `cratering.oblique_fraction`), `surface.space_weathering_timescale`, and the material controls `materials.bedrock`, `materials.regolith_mix` and `materials.colour_space`. The crater record begins 4.2 Gyr before present (the chronology's calibration limit); craters formed earlier are not counted, and each preset carries its own master seed. The executable table is `crates/exogen-core/src/params/registry.rs`; every constant lives in `crates/exogen-core/src/constants.rs` with its source, and constants marked provisional there are calibrated in the phase named. The remaining tectonics, volcanism, weather, surface-process and material nodes are added by the phases that implement those stages. A test asserts that every derivation reads only the nodes it declares, and `exogen validate` checks the derived values of the fourteen reference presets against measured values.
+Phase 1 implements the graph mechanism and the groups star, orbit, body, rotation, interior, atmosphere, volatiles, climate (zero-dimensional subset), cratering (scaling subset), detail, output, seeds and multipliers, plus `tectonics.dichotomy_mode`, `tectonics.dichotomy_amplitude` and `tectonics.initial_crust_thickness`. Phase 2 adds the cratering population nodes (`cratering.loop_threshold`, `cratering.min_diameter`, `cratering.retention_age`, `cratering.empirical_saturation`, `cratering.secondary_fraction`, `cratering.oblique_fraction`), `surface.space_weathering_timescale`, `surface.solidification_time`, the flux history nodes `cratering.early_flux_ratio` and `cratering.early_flux_decay`, and the material controls `materials.bedrock`, `materials.regolith_mix`, `materials.deep_bedrock`, `materials.deep_bedrock_depth` and `materials.colour_space`. The impact flux is written in time since formation, so the crater record begins at the solidification time whatever the body's age; craters carry an impact angle; and each preset carries its own master seed. The executable table is `crates/exogen-core/src/params/registry.rs`; every constant lives in `crates/exogen-core/src/constants.rs` with its source, and constants marked provisional there are calibrated in the phase named. The remaining tectonics, volcanism, weather, surface-process and material nodes are added by the phases that implement those stages. A test asserts that every derivation reads only the nodes it declares, and `exogen validate` checks the derived values of the fourteen reference presets against measured values.
 
 ## Conventions
 
@@ -191,14 +191,15 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 | cratering.multiring_onset | m | derived | 20 x simple_complex_transition | |
 | cratering.morphometry_coefficients | table | expert | Pike lunar set by default; per-class overrides | Pike 1977, 1980 |
 | cratering.min_diameter | m | derived | Larger of atmosphere.crater_cutoff_diameter and two export pixels | |
-| cratering.flux_history | 1 | curve | Chronology derivative F31 | Neukum et al. 2001 |
-| cratering.late_spike | bool | root | false | |
+| cratering.early_flux_ratio | x steady | expert | Rate at formation over the steady rate: a b e^(4.5 b) / c of the chronology, about 1.57e4 (F31) | Neukum et al. 2001 |
+| cratering.early_flux_decay | Gyr | expert | 1 / b of the chronology, 0.144 Gyr (F31) | Neukum et al. 2001 |
+| cratering.flux_history | 1 | curve | Rate over the body's life relative to the present: zero before surface.solidification_time, then the early bombardment decaying into the steady flux (F31) | Neukum et al. 2001 |
 | cratering.giant_basins | list of diameter, lat, lon, age | root | empty: sampled from the production function | |
-| cratering.diffusivity | m²/Myr | derived | 5.5 x (gravity / 1.62)^0.5, x 10 with an atmosphere above 1 kPa | Fassett and Thomson 2014; fit |
+| cratering.diffusivity | m²/Myr | derived | Gardening diffusivity at the present flux: 5.5 x (gravity / 1.62)^0.5, x 10 with an atmosphere above 1 kPa; the flux history scales it back in time, so a crater's degradation follows the impacts that came after it | Fassett and Thomson 2014; fit |
 | cratering.ray_fading_timescale | Gyr | derived | 1.0 x (a / 1 AU)² airless; 0.05 with an atmosphere | fit |
 | cratering.rampart_ejecta | bool | derived | Regolith volatile content above threshold | |
 | cratering.secondary_fraction | 1 | expert | 0.2 | |
-| cratering.oblique_fraction | 1 | expert | 0.05 below 15° | |
+| cratering.oblique_fraction | 1 | expert | 0.05: the share of elliptical cavities, formed below about 12°. Impact angles follow sin 2θ; ejecta and rays thicken downrange below 45°, open an uprange zone of avoidance below 30° and grow side lobes below 15° | Bottke et al. 2000; Gault and Wedekind 1978 |
 
 ## climate
 
@@ -247,7 +248,8 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 | surface.threshold_friction_speed | m/s | derived | F34 | Iversen and White 1982 |
 | surface.mass_wasting_diffusivity | m²/Myr | derived | Same as cratering.diffusivity | |
 | surface.angle_of_repose | deg | derived | 32 rock, 30 ice | |
-| surface.space_weathering_timescale | Gyr | derived | 1.0 x (a / 1 AU)² airless; disabled above 100 Pa | fit |
+| surface.solidification_time | Gyr after formation | derived | 0.3 x (R / 1737 km)^0.5, x 0.7 for ice shells: when the crust is solid and rigid enough to keep large relief, so the crater record begins. Pin to set | provisional, Phase 3 heat budget |
+| surface.space_weathering_timescale | Gyr | derived | 1.0 x (a / 1 AU)² airless, capped at 4 Gyr; disabled above 100 Pa | fit |
 | surface.oxidation_rate | 1/Gyr | derived | oxidant_availability x temperature factor | fit |
 | surface.tholin_deposition_rate | m/Gyr | derived | haze_production / deposit density | fit |
 | surface.sulfur_deposition | bool | derived | volcanism.style is sulfur_silicate | |
@@ -263,6 +265,8 @@ Composition class sets only the defaults of this group. Surface colour comes fro
 |---|---|---|---|---|
 | materials.bedrock | enum basalt, anorthosite, felsic, water_ice, ammonia_water_ice, rock_ice_mixture, carbonaceous, sulfur_coated | derived | Default from composition class, regime and volcanism style: basalt for rock, anorthosite for a thick primary crust on an airless rock body, felsic for continental crust on a mobile lid, water_ice for ice classes, carbonaceous for dark primitive bodies. Pin to choose | Phase 2 |
 | materials.regolith_mix | map end-member to fraction | derived | Baseline surface mixture before deposits, from the bedrock and the class, for example water_ice 0.6 and rock 0.4 on a dark rock-ice terrain. Pin to set the surface composition by hand | Phase 2 |
+| materials.deep_bedrock | enum as bedrock, plus norite, low_reflectance_material, impact_melt | derived | What large craters excavate from below the surface layer: norite on an airless rocky stagnant lid, low-reflectance material on an iron-rich body, clean water ice under the lag of an ice shell, otherwise the bedrock. Pin to choose | Phase 2, provisional |
+| materials.deep_bedrock_depth | m | derived | 25 km rocky, 10 km iron-rich, 0.5 km ice shells. A crater excavating a tenth of its diameter (Melosh 1989) deeper than this exposes the deep bedrock in its floor and ejecta | Phase 2, provisional |
 | materials.end_members | list | derived | The end-members active for this world: the bedrock, the regolith mix, the volatile ices present in the inventory, and the deposits the processes produce | USGS Spectral Library v7; RELAB |
 | materials.custom_end_members | list | root | User-defined materials with a name, a reflectance spectrum or an RGB, roughness and specular; usable in the regolith mix | Phase 2 |
 | materials.colour_space | enum linear_srgb, acescg | root | linear_srgb | |
@@ -355,7 +359,7 @@ Symbols: G gravitational constant, σ Stefan–Boltzmann, k_B Boltzmann, m_u ato
 - **F28 Impact flux.** Relative to the Moon: inner system by heliocentric distance and gravitational focusing per Ivanov 2001 (Mars about 2); outer system per Zahnle et al. 2003 by planet and satellite distance.
 - **F29 Impact velocity.** v² = v_∞² + v_esc², with v_∞ by location: 0.4 to 1.0 x the local orbital speed for heliocentric impactors, plus parent-planet focusing for moons.
 - **F30 Simple-to-complex transition.** D_sc = 16.5 km x (1.62 / g) x f_material, f = 1 rock, 0.15 ice.
-- **F31 Chronology.** N(≥1 km) = 5.44e−14 (e^(6.93 T) − 1) + 8.38e−4 T per km² with T in Gyr; the flux history is its derivative; the production function is the Neukum 2001 polynomial.
+- **F31 Flux history.** The Neukum chronology N(≥1 km) = 5.44e−14 (e^(6.93 T) − 1) + 8.38e−4 T per km², T in Gyr before present, rewritten in time since formation τ with the present 4.5 Gyr after the Moon formed: rate = c [1 + ρ e^(−τ/τ_d)] with ρ = a b e^(4.5 b) / c ≈ 1.57e4 and τ_d = 1 / b = 0.144 Gyr, zero before the surface solidifies. A body of any age gets its heavy bombardment at formation and the steady flux ever after; the production function is the Neukum 2001 polynomial.
 - **F32 Hadley edge.** φ_H = sqrt(5 g H Δ_h / (3 Ω² R²)) in radians, capped at π/2, with H the tropopause height (taken as 2 scale heights, which gives Earth 32°) and Δ_h the fractional equator-to-pole radiative-equilibrium temperature contrast (Held and Hou 1980).
 - **F33 Heat transport coefficient.** D = 0.58 W/m²/K x (P / 1 bar)(c_p / c_p,air)(μ_air / μ)(Ω_Earth / Ω)², capped at 100 x the Earth value (Williams and Kasting 1997 scaling as used in exoplanet energy-balance models).
 - **F34 Threshold friction speed.** u*_t = 0.1 sqrt(ρ_particle g d / ρ_air) for sand-size grains (Iversen and White 1982, large-particle limit); d = 200 µm default.

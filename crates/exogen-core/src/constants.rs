@@ -473,6 +473,9 @@ pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.2;
 /// Impact melt: ponds on the floors of complex craters and basins and flows just outside
 /// the rim, placed where the crater texture exceeds these thresholds (about a fifth of the
 /// floor and a tenth of the near-rim ejecta), out to this many radii.
+/// A loop crater counts as recognisable while its rim-to-floor relief on the coarse surface
+/// is above this fraction of the fresh relief.
+pub const VISIBLE_RELIEF_FRACTION: f64 = 0.15;
 pub const MELT_POND_THRESHOLD: f64 = 0.4;
 pub const MELT_FLOW_THRESHOLD: f64 = 0.6;
 pub const MELT_FLOW_RADII: f64 = 1.3;

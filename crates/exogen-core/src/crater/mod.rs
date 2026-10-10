@@ -33,5 +33,11 @@ pub struct CraterRecord {
     pub class: CraterClass,
     /// True for craters emplaced inside the coarse loop.
     pub from_loop: bool,
+    /// Rim-to-floor relief left on the coarse surface at the end of the loop, metres;
+    /// the fresh relief for replayed craters.
+    pub relief: f32,
+    /// Whether the crater is still recognisable: residual relief above a fraction of the
+    /// fresh relief.
+    pub visible: bool,
     pub id: u64,
 }

@@ -8,6 +8,7 @@
 
 use crate::constants::*;
 use crate::crater::production::{expected_count_above, poisson};
+use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
     CraterRecord, FluxHistory, ProductionFunction, ProfileTable, Scaling, StampParams, Stamper,
     dimensions, ellipticity_for, impact_angle, stamp,
@@ -147,6 +148,39 @@ impl ImpactProcess {
         self.d_loop
     }
 
+    /// Measure the relief every emplaced crater still has on the final coarse surface,
+    /// mark the recognisable ones, and return the records.
+    pub fn into_records(mut self, layers: &LayerSet) -> Vec<CraterRecord> {
+        let height = layers.bedrock.as_slice();
+        for rec in self.records.iter_mut() {
+            let dim = dimensions(rec.diameter, &self.inputs.scaling);
+            self.stamper.gather(
+                &self.grid,
+                self.inputs.body_radius,
+                rec.center,
+                1.15 * dim.radius,
+            );
+            let (mut floor, mut n_floor, mut rim, mut n_rim) = (0.0, 0usize, 0.0, 0usize);
+            for &(idx, r, phi) in &self.stamper.footprint {
+                let x = elliptical_radius(r, phi, rec.azimuth, rec.ellipticity) / dim.radius;
+                if x < 0.5 {
+                    floor += height[idx] as f64;
+                    n_floor += 1;
+                } else if (0.9..=1.15).contains(&x) {
+                    rim += height[idx] as f64;
+                    n_rim += 1;
+                }
+            }
+            if n_floor == 0 || n_rim == 0 {
+                continue;
+            }
+            let relief = rim / n_rim as f64 - floor / n_floor as f64;
+            rec.relief = relief as f32;
+            rec.visible = relief > VISIBLE_RELIEF_FRACTION * (dim.depth + dim.rim_height);
+        }
+        self.records
+    }
+
     /// Emplace the craters of one time step, oldest first.
     pub fn step(&mut self, layers: &mut LayerSet, t_start: f64, t_end: f64, step_index: u64) {
         let inp = &self.inputs;
@@ -195,6 +229,8 @@ impl ImpactProcess {
                     ellipticity,
                     class: inp.scaling.classify(diameter),
                     from_loop: true,
+                    relief: 0.0,
+                    visible: true,
                     id: (step_index << 32) | j,
                 }
             })
