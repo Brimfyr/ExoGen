@@ -18,7 +18,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::{UNIT_BASIN_FLOOR, UNIT_CRATER_FLOOR, UNIT_EJECTA};
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -195,6 +195,7 @@ impl ImpactProcess {
                 amplitude: 1.0,
                 replace_floor: true,
                 set_age: true,
+                bury: true,
             };
             stamp(
                 layers,

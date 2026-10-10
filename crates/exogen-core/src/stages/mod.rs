@@ -237,7 +237,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 3;
+pub const FINISH_VERSION: u64 = 4;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -418,8 +418,12 @@ pub fn finish(
                 // The detail the coarse grid could not carry: the resolved profile minus
                 // its coarse-cell-smoothed version.
                 let fresh = ProfileTable::new(dim, 0.0);
-                let smooth = ProfileTable::new(dim, 0.5 * smooth_sigma * smooth_sigma);
-                let mut detail = fresh.clone();
+                let kappa_t = inputs.diffusivity_m2_per_myr
+                    * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                    * 1e3;
+                let degraded = ProfileTable::new(dim, kappa_t);
+                let smooth = ProfileTable::new(dim, kappa_t + 0.5 * smooth_sigma * smooth_sigma);
+                let mut detail = degraded;
                 for (v, s) in detail.values.iter_mut().zip(&smooth.values) {
                     *v -= s;
                 }
@@ -450,8 +454,15 @@ pub fn finish(
             Event::Replay(j) => {
                 let (c, secondary) = &replay[*j];
                 let dim = dimensions(c.diameter, &inputs.scaling);
-                let kappa_t = inputs.diffusivity_m2_per_myr * (present - c.time_gyr).max(0.0) * 1e3;
+                // Degradation by the gardening that followed the crater: the diffusivity
+                // at the present flux times the equivalent flux since it formed.
+                let kappa_t = inputs.diffusivity_m2_per_myr
+                    * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                    * 1e3;
                 let table = ProfileTable::new(dim, kappa_t);
+                if table.is_erased() {
+                    continue;
+                }
                 let params = StampParams {
                     time_gyr: c.time_gyr as f32,
                     unit_floor: if *secondary {
@@ -469,6 +480,7 @@ pub fn finish(
                     },
                     replace_floor: true,
                     set_age: true,
+                    bury: true,
                 };
                 stamp(
                     &mut layers,

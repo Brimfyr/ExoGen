@@ -456,8 +456,10 @@ pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;
 /// Cap on the optical maturation timescale: far from the Sun, radiolysis, sputtering and
 /// lag accumulation still darken old surfaces relative to fresh ejecta within a few Gyr.
 pub const SPACE_WEATHERING_MAX_GYR: f64 = 4.0;
-/// Lunar topographic diffusivity, m²/Myr (Fassett and Thomson 2014), and the atmosphere
-/// multiplier above 1 kPa. Provisional, Phase 2.
+/// Lunar topographic diffusivity at the present impact flux, m²/Myr (Fassett and Thomson
+/// 2014, whose fit spans the last 3 Gyr, over which the flux varied little). The flux
+/// history scales it back in time, so a crater's degradation follows the impacts that
+/// came after it. The atmosphere multiplier applies above 1 kPa. Provisional, Phase 5.
 pub const DIFFUSIVITY_LUNAR: f64 = 5.5;
 pub const DIFFUSIVITY_ATMOSPHERE_MULTIPLE: f64 = 10.0;
 pub const DIFFUSIVITY_ATMOSPHERE_PRESSURE: f64 = 1.0e3;

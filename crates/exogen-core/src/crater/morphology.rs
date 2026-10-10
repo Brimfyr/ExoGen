@@ -185,6 +185,8 @@ pub struct ProfileTable {
     /// Height at `k * step` for k in 0..n, covering 0 to the ejecta radius.
     pub values: Vec<f64>,
     pub step: f64,
+    /// Radial blur width applied for degradation, metres.
+    pub sigma: f64,
 }
 
 impl ProfileTable {
@@ -207,6 +209,9 @@ impl ProfileTable {
             fresh
         } else {
             let w = ((3.0 * sigma / step).ceil() as i64).min(n as i64);
+            let weights: Vec<f64> = (0..=w)
+                .map(|j| (-(j as f64 * step / sigma).powi(2) * 0.5).exp())
+                .collect();
             (0..n as i64)
                 .map(|k| {
                     let mut num = 0.0;
@@ -214,7 +219,7 @@ impl ProfileTable {
                     for j in -w..=w {
                         let idx = (k + j).abs().min(2 * (n as i64 - 1) - (k + j).abs());
                         let idx = idx.clamp(0, n as i64 - 1) as usize;
-                        let weight = (-(j as f64 * step / sigma).powi(2) * 0.5).exp();
+                        let weight = weights[j.unsigned_abs() as usize];
                         num += weight * fresh[idx];
                         den += weight;
                     }
@@ -222,7 +227,17 @@ impl ProfileTable {
                 })
                 .collect()
         };
-        Self { dim, values, step }
+        Self {
+            dim,
+            values,
+            step,
+            sigma,
+        }
+    }
+
+    /// True when the blur is so wide that no relief of the crater remains.
+    pub fn is_erased(&self) -> bool {
+        self.sigma > 2.0 * self.dim.radius
     }
 
     /// Height at radius `r` (metres) by linear interpolation; zero beyond the ejecta.

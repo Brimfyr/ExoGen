@@ -1544,7 +1544,7 @@ static NODES: &[NodeDef] = &[
         f(0.0, 1e6),
         &["body.gravity", "atmosphere.surface_pressure"],
         d::cratering_diffusivity,
-        "5.5 x (g / 1.62)^0.5, times 10 under an atmosphere.",
+        "Gardening diffusivity at the present impact flux: 5.5 m²/Myr x (g / 1.62)^0.5, times 10 under an atmosphere. The flux history scales it back in time.",
         "Fassett and Thomson 2014; provisional",
     ),
     derived(

@@ -96,6 +96,8 @@ pub struct StampParams {
     /// additive (used to add resolved detail on top of a coarse stamp).
     pub replace_floor: bool,
     pub set_age: bool,
+    /// Bury the relief already there under the ejecta according to its thickness.
+    pub bury: bool,
 }
 
 /// Stamp one crater. Returns the number of cells touched.
@@ -119,15 +121,31 @@ pub fn stamp(
         return 0;
     }
     let bedrock = layers.bedrock.as_mut_slice();
-    // Reference height: area-weighted mean of the pre-impact surface inside the rim.
+    // Reference height: area-weighted mean of the pre-impact surface inside the rim; and
+    // the azimuthal mean by radius under the ejecta, against which burial damps relief.
+    const BINS: usize = 16;
+    let span = (dim.ejecta_radius / dim.radius - 1.0).max(1e-6);
+    let bin_of = |re: f64| -> usize {
+        (((re / dim.radius - 1.0) / span) * BINS as f64)
+            .floor()
+            .clamp(0.0, (BINS - 1) as f64) as usize
+    };
     let mut sum = 0.0;
     let mut wsum = 0.0;
+    // Ring means are plain cell averages: cell areas differ by at most 40% on the grid,
+    // and the mean only serves as a local reference.
+    let mut ring_sum = [0.0f64; BINS];
+    let mut ring_area = [0.0f64; BINS];
     for &(idx, r, phi) in &stamper.footprint {
         let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         if re <= dim.radius {
             let a = grid.cell_area(grid.cell(idx));
             sum += bedrock[idx] as f64 * a;
             wsum += a;
+        } else if p.bury && re < dim.ejecta_radius {
+            let b = bin_of(re);
+            ring_sum[b] += bedrock[idx] as f64;
+            ring_area[b] += 1.0;
         }
     }
     let h_ref = if wsum > 0.0 {
@@ -141,7 +159,16 @@ pub fn stamp(
     for &(idx, r, phi) in &stamper.footprint {
         let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let v = profile.height(re) * p.amplitude;
-        let old = bedrock[idx] as f64;
+        let mut old = bedrock[idx] as f64;
+        if p.bury && re > dim.radius && v > 0.0 {
+            let b = bin_of(re);
+            let mean = if ring_area[b] > 0.0 {
+                ring_sum[b] / ring_area[b]
+            } else {
+                h_ref
+            };
+            old = mean + (old - mean) * burial_factor(old - mean, v);
+        }
         let w = if p.replace_floor {
             // 1 inside 0.95 R, 0 outside 1.05 R.
             let t = (1.05 - re / dim.radius) / 0.10;
@@ -280,6 +307,7 @@ mod tests {
             amplitude: 1.0,
             replace_floor: true,
             set_age: true,
+            bury: true,
         };
         let touched = stamp(
             &mut layers,
@@ -317,6 +345,88 @@ mod tests {
             .sum();
         let cap = 2.0 * std::f64::consts::PI * (1.0 - (2.0 * dim.radius / body_radius).cos());
         assert!((reset - cap).abs() < 0.08 * cap, "reset {reset} cap {cap}");
+    }
+
+    /// Ejecta buries older relief: a small crater under a larger crater's ejecta loses a
+    /// good part of its depth; without burial the ejecta only drapes it.
+    #[test]
+    fn ejecta_buries_older_relief() {
+        let grid = CubeSphere::new(256);
+        let body_radius = 1.7374e6;
+        let s = Scaling {
+            simple_complex: 16_500.0,
+            peak_ring: 140_000.0,
+            multi_ring: 330_000.0,
+            gravity: 1.62,
+        };
+        let small = dimensions(20_000.0, &s);
+        let big = dimensions(200_000.0, &s);
+        let big_center = [0.0, 0.0, 1.0];
+        let (east, north) = crate::geom::local_basis(big_center);
+        // The small crater sits at 1.3 big radii, under the continuous ejecta.
+        let small_center =
+            crate::geom::offset(big_center, east, north, 1.3 * big.radius / body_radius, 0.3);
+        let relief = |layers: &LayerSet, stamper: &mut Stamper| -> f64 {
+            stamper.gather(&grid, body_radius, small_center, 1.1 * small.radius);
+            let h = layers.bedrock.as_slice();
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for &(idx, _, _) in &stamper.footprint {
+                lo = lo.min(h[idx] as f64);
+                hi = hi.max(h[idx] as f64);
+            }
+            hi - lo
+        };
+        let mut results = Vec::new();
+        for bury in [true, false] {
+            let mut layers = LayerSet::new(grid);
+            let mut stamper = Stamper::new(&grid);
+            let params = |t: f32| StampParams {
+                time_gyr: t,
+                unit_floor: 4,
+                unit_ejecta: 5,
+                azimuth: 0.0,
+                ellipticity: 1.0,
+                amplitude: 1.0,
+                replace_floor: true,
+                set_age: true,
+                bury,
+            };
+            stamp(
+                &mut layers,
+                &grid,
+                body_radius,
+                small_center,
+                &ProfileTable::new(small, 0.0),
+                &params(1.0),
+                &mut stamper,
+            );
+            let before = relief(&layers, &mut stamper);
+            stamp(
+                &mut layers,
+                &grid,
+                body_radius,
+                big_center,
+                &ProfileTable::new(big, 0.0),
+                &params(2.0),
+                &mut stamper,
+            );
+            let after = relief(&layers, &mut stamper);
+            results.push((before, after));
+        }
+        let (buried_before, buried_after) = results[0];
+        let (draped_before, draped_after) = results[1];
+        assert!((buried_before - draped_before).abs() < 1.0);
+        // Draping adds the ejecta slope across the span and nothing else is lost.
+        assert!(
+            draped_after > 0.9 * draped_before,
+            "draped {draped_before} -> {draped_after}"
+        );
+        // Burial removes a good part of the relief on top of the same slope.
+        let lost = draped_after - buried_after;
+        assert!(
+            lost > 0.2 * draped_before && lost < 0.8 * draped_before,
+            "buried {buried_before} -> {buried_after}, draped -> {draped_after}"
+        );
     }
 
     #[test]
