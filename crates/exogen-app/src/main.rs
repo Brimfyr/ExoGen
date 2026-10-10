@@ -284,7 +284,7 @@ impl App {
     }
 
     fn export(&mut self) {
-        let Some(r) = &self.result else {
+        let Some(finish) = self.result.as_ref().map(|r| r.finish.clone()) else {
             self.log("nothing to export: run first");
             return;
         };
@@ -299,7 +299,7 @@ impl App {
         ));
         self.worker.submit(Job::Export {
             graph: self.graph.clone(),
-            finish: r.finish.clone(),
+            finish,
             dir: PathBuf::from(&self.export_dir),
             width: self.export_width,
             name: self.project_name.clone(),
