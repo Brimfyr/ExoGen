@@ -932,8 +932,9 @@ mod tests {
             .filter(|c| layers.surface_age.get(*c) >= 1.5)
             .map(|c| grid.cell_area(c))
             .sum();
-        // At least half reset out to where the edge fade passes one half: 0.9 of 2 R.
-        let cap = 2.0 * std::f64::consts::PI * (1.0 - (1.8 * dim.radius / body_radius).cos());
+        // At least half reset out to where the edge fade passes one half.
+        let half = (2.0 - EJECTA_EDGE_FADE) * dim.radius / body_radius;
+        let cap = 2.0 * std::f64::consts::PI * (1.0 - half.cos());
         assert!((reset - cap).abs() < 0.08 * cap, "reset {reset} cap {cap}");
     }
 

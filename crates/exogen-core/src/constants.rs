@@ -489,13 +489,14 @@ pub const EXCAVATION_DEPTH_FRACTION: f64 = 0.1;
 pub const DEEP_BEDROCK_DEPTH_ROCK: f64 = 25_000.0;
 pub const DEEP_BEDROCK_DEPTH_IRON_RICH: f64 = 10_000.0;
 pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
-/// Brightness mottling of fresh ejecta and floors in the ray field, and the raggedness of
-/// the continuous ejecta edge as a fraction of its radius.
+/// Brightness mottling of fresh ejecta in the ray field, and the lobing of the continuous
+/// ejecta edge as a fraction of its radius. The lobing is off: at map resolution a few
+/// harmonics read as petals, and the real lumpy outline belongs to the detail pass.
 pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.25;
-pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.06;
+pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.0;
 /// The surface-age reset fades out over this outer fraction of the continuous ejecta zone,
 /// where the ejecta is thin and renews the surface only partly.
-pub const EJECTA_EDGE_FADE: f64 = 0.2;
+pub const EJECTA_EDGE_FADE: f64 = 0.08;
 /// A loop crater counts as recognisable while its rim-to-floor relief on the coarse surface
 /// is above this fraction of the fresh relief.
 pub const VISIBLE_RELIEF_FRACTION: f64 = 0.15;

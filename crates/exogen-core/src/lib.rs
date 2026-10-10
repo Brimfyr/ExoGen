@@ -18,6 +18,7 @@ pub mod params;
 pub mod presets;
 pub mod project;
 pub mod rng;
+pub mod shade;
 pub mod spharm;
 pub mod stages;
 pub mod units;

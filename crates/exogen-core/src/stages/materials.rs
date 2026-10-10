@@ -19,7 +19,7 @@ use crate::fields::{Field, LayerSet};
 use crate::params::ParamGraph;
 use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC};
 
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -106,11 +106,12 @@ pub const END_MEMBERS: &[EndMember] = &[
         mature: [0.065, 0.065, 0.07],
         roughness: 0.85,
     },
-    // Glassy impact melt on silicate bodies: dark when fresh, buried by regolith with age.
+    // Glassy impact melt on silicate bodies: distinctly dark when fresh, buried by regolith
+    // with age.
     EndMember {
         id: "impact_melt",
-        fresh: [0.13, 0.12, 0.11],
-        mature: [0.09, 0.085, 0.08],
+        fresh: [0.10, 0.095, 0.09],
+        mature: [0.07, 0.065, 0.06],
         roughness: 0.60,
     },
 ];

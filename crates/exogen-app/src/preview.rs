@@ -14,6 +14,7 @@ use exogen_core::stages::FinishOutput;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Channel {
     Albedo,
+    Shaded,
     Height,
     SurfaceAge,
     Liquid,
@@ -24,8 +25,9 @@ pub enum Channel {
 }
 
 impl Channel {
-    pub const ALL: [Channel; 8] = [
+    pub const ALL: [Channel; 9] = [
         Channel::Albedo,
+        Channel::Shaded,
         Channel::Height,
         Channel::SurfaceAge,
         Channel::Liquid,
@@ -38,6 +40,7 @@ impl Channel {
     pub fn label(self) -> &'static str {
         match self {
             Channel::Albedo => "albedo",
+            Channel::Shaded => "shaded relief",
             Channel::Height => "height",
             Channel::SurfaceAge => "surface age",
             Channel::Liquid => "liquid depth",
@@ -104,19 +107,31 @@ fn unit_colour(id: u16) -> [f32; 3] {
 }
 
 /// Render a channel of a finished state to an equirectangular image.
-pub fn build_equirect(out: &FinishOutput, channel: Channel, width: usize) -> EquirectRgb {
+pub fn build_equirect(
+    out: &FinishOutput,
+    channel: Channel,
+    width: usize,
+    body_radius: f64,
+) -> EquirectRgb {
     let height = width / 2;
     let grid = out.grid;
     let n = width * height;
     let mut rgb = vec![[0.0f32; 3]; n];
     let mut range = (0.0f32, 1.0f32);
     match channel {
-        Channel::Albedo => {
+        Channel::Albedo | Channel::Shaded => {
             for ch in 0..3 {
                 let plane: Vec<f32> = out.albedo.as_slice().iter().map(|c| c[ch]).collect();
                 let eq = to_equirectangular(&grid, &plane, width, height);
                 for (k, v) in eq.iter().enumerate() {
                     rgb[k][ch] = *v;
+                }
+            }
+            if channel == Channel::Shaded {
+                let eq = to_equirectangular(&grid, out.height.as_slice(), width, height);
+                let shade = exogen_core::shade::hillshade(&eq, width, height, body_radius);
+                for (k, s) in shade.iter().enumerate() {
+                    rgb[k] = exogen_core::shade::lit(rgb[k], *s);
                 }
             }
         }

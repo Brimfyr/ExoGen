@@ -118,6 +118,7 @@ pub fn export(
         "height.png",
         "albedo.exr",
         "albedo.png",
+        "shaded.png",
         "mask_liquid.png",
         "surface_age.exr",
         "sidecar.json",
@@ -221,6 +222,30 @@ pub fn export(
             file: "albedo.png".into(),
             encoding: "8-bit sRGB PNG".into(),
             units: "reflectance".into(),
+            min: 0.0,
+            max: 1.0,
+        },
+    );
+
+    // Shaded relief preview: the albedo lit from one fixed sun over the height map.
+    let shade = crate::shade::hillshade(&height_eq, width, height_px, graph.f64("body.radius"));
+    let lit: Vec<Vec<f32>> = (0..3)
+        .map(|ch| {
+            (0..width * height_px)
+                .map(|k| {
+                    crate::shade::lit([channels[0][k], channels[1][k], channels[2][k]], shade[k])
+                        [ch]
+                })
+                .collect()
+        })
+        .collect();
+    write_png_srgb(&settings.dir.join("shaded.png"), width, height_px, &lit)?;
+    maps.insert(
+        "shaded_png".to_string(),
+        MapInfo {
+            file: "shaded.png".into(),
+            encoding: "8-bit sRGB PNG".into(),
+            units: "preview: albedo lit from the upper left".into(),
             min: 0.0,
             max: 1.0,
         },

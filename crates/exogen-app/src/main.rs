@@ -231,7 +231,12 @@ impl App {
         if self.image.is_some() && self.image_key == key {
             return;
         }
-        let img = Arc::new(preview::build_equirect(&out, self.channel, PREVIEW_WIDTH));
+        let img = Arc::new(preview::build_equirect(
+            &out,
+            self.channel,
+            PREVIEW_WIDTH,
+            self.graph.f64("body.radius"),
+        ));
         let color = preview::to_color_image(&img, self.globe.exposure);
         self.map_texture =
             Some(ctx.load_texture("preview-map", color, egui::TextureOptions::LINEAR));
@@ -514,6 +519,7 @@ impl App {
             }
             if let Some(img) = &self.image
                 && self.channel != Channel::Albedo
+                && self.channel != Channel::Shaded
                 && self.channel != Channel::Unit
             {
                 ui.separator();
