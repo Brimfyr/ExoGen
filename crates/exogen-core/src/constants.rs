@@ -436,17 +436,27 @@ pub const SECONDARY_CHAIN_SPACING: f64 = 0.12;
 /// Multi-ring basins: rings at successive 1/sqrt(2) of the rim radius (Hartmann and Kuiper
 /// 1962), one more for each sqrt(2) of diameter above the onset, at most this many; the
 /// inner rings are lower by this factor each. Orientale has three inside its rim.
-pub const MAX_RINGS: usize = 4;
-pub const RING_HEIGHT_FRACTION: f64 = 0.2;
-pub const RING_HEIGHT_DECAY: f64 = 0.7;
+pub const MAX_RINGS: usize = 3;
+pub const RING_HEIGHT_FRACTION: f64 = 0.3;
+pub const RING_HEIGHT_DECAY: f64 = 0.8;
 /// Ring ridges: width as a fraction of the rim radius, their own scalloping (larger than
 /// the rim's so each ring has its own shape), presence around the azimuth as mean and
-/// swing (gaps where it drops to zero), and the subdued outer ring of a multi-ring basin at
-/// sqrt(2) radii as a fraction of the rim height.
-pub const RING_WIDTH_FRACTION: f64 = 0.06;
-pub const RING_CRENULATION: f64 = 0.06;
-pub const RING_PRESENCE: (f64, f64) = (0.6, 0.5);
+/// swing (a few gaps where it drops to zero), and the subdued outer ring of a multi-ring
+/// basin at sqrt(2) radii as a fraction of the rim height.
+pub const RING_WIDTH_FRACTION: f64 = 0.04;
+pub const RING_CRENULATION: f64 = 0.05;
+pub const RING_PRESENCE: (f64, f64) = (0.85, 0.25);
 pub const OUTER_RING_HEIGHT_FRACTION: f64 = 0.3;
+/// Central peaks: basal radius as a fraction of the crater radius (peak diameters are a
+/// fifth to a quarter of the crater's; Hale and Head 1979), the Gaussian width of a massif
+/// as a fraction of that, the most massifs in a peak complex, and their spread as a
+/// fraction of the peak radius.
+pub const PEAK_RADIUS_FRACTION: f64 = 0.22;
+pub const PEAK_SIGMA_FRACTION: f64 = 0.5;
+pub const PEAK_MAX_MASSIFS: usize = 3;
+pub const PEAK_SPREAD: f64 = 0.5;
+/// Floor texture lattice cells per crater radius, on the tangent plane.
+pub const FLOOR_TEXTURE_CELLS: u32 = 10;
 /// Rim and ring scalloping as a fraction of the radius, and ejecta, basin-sculpture and
 /// floor texture amplitudes. Provisional, to be tuned against imagery in Phase 7.
 pub const RIM_CRENULATION_SIMPLE: f64 = 0.015;

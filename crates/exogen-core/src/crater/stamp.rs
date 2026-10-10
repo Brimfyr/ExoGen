@@ -22,6 +22,7 @@ use crate::constants::{
     EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_FLOW_RADII, MELT_FLOW_THRESHOLD, MELT_POND_THRESHOLD,
     OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
 };
+use crate::constants::{FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
@@ -143,6 +144,7 @@ pub fn stamp(
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
         .then(|| CraterTexture::new(p.seed, dim));
     let rings = Rings::new(p.seed, dim);
+    let peak = Peak::new(p.seed, dim);
     let bedrock = layers.bedrock.as_mut_slice();
     let deep = layers.deep.as_mut_slice();
     let melt = layers.melt.as_mut_slice();
@@ -202,6 +204,9 @@ pub fn stamp(
         }
         if let Some(rg) = &rings {
             v += rg.relief(re0, phi, profile.sigma) * p.amplitude;
+        }
+        if let Some(pk) = &peak {
+            v += pk.relief(re0 / dim.radius, phi, profile.sigma / dim.radius) * p.amplitude;
         }
         let mut old = bedrock[idx] as f64;
         if p.bury && re > dim.radius && v > 0.0 {
@@ -329,12 +334,51 @@ impl TextureLattice {
     }
 }
 
+/// Value-noise lattice on the crater's tangent plane in units of its radius, for the
+/// floor, where a polar lattice would shrink its cells without limit toward the centre.
+struct PlanarLattice {
+    size: usize,
+    half: f64,
+    values: Vec<f32>,
+}
+
+impl PlanarLattice {
+    fn new(rng: &Rng, octave: u64, cells_per_radius: u32, half: f64) -> Self {
+        let n = (cells_per_radius as f64 * half).ceil() as usize;
+        let size = 2 * n + 1;
+        let mut values = Vec::with_capacity(size * size);
+        for j in 0..size as u64 {
+            for i in 0..size as u64 {
+                let key = (1 << 60) | (octave << 40) | (i << 20) | j;
+                values.push((2.0 * rng.uniform(key, 0) - 1.0) as f32);
+            }
+        }
+        Self { size, half, values }
+    }
+
+    #[inline]
+    fn sample(&self, u: f64, v: f64) -> f64 {
+        let last = (self.size - 1) as f64;
+        let fu = ((u / self.half + 1.0) * 0.5 * last).clamp(0.0, last - 1e-6);
+        let fv = ((v / self.half + 1.0) * 0.5 * last).clamp(0.0, last - 1e-6);
+        let (iu, iv) = (fu.floor(), fv.floor());
+        let smooth = |t: f64| t * t * (3.0 - 2.0 * t);
+        let (su, sv) = (smooth(fu - iu), smooth(fv - iv));
+        let (i, j) = (iu as usize, iv as usize);
+        let at = |i: usize, j: usize| self.values[j * self.size + i] as f64;
+        let a = at(i, j) + (at(i + 1, j) - at(i, j)) * su;
+        let b = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * su;
+        a + (b - a) * sv
+    }
+}
+
 /// The texture of one crater: two octaves of hummocks on the ejecta and the floor, and
 /// radial sculpture for basins and peak-ring craters.
 pub struct CraterTexture {
     dim: Dimensions,
     hummocks: [TextureLattice; 2],
     sculpture: Option<[TextureLattice; 2]>,
+    floor: Option<[PlanarLattice; 2]>,
 }
 
 impl CraterTexture {
@@ -363,10 +407,30 @@ impl CraterTexture {
                 lattice(&rng, 1, SCULPTURE_AZIMUTH_CELLS, SCULPTURE_RADIAL_CELLS),
             ]
         });
+        let floor = (dim.class != CraterClass::Simple).then(|| {
+            let rng = Rng::new(seed ^ 0xF100_12A7);
+            [
+                PlanarLattice::new(&rng, 0, FLOOR_TEXTURE_CELLS, 1.1),
+                PlanarLattice::new(&rng, 1, 2 * FLOOR_TEXTURE_CELLS, 1.1),
+            ]
+        });
         Self {
             dim: *dim,
             hummocks,
             sculpture,
+            floor,
+        }
+    }
+
+    /// Floor noise in -1 to 1 on the tangent plane at a radius in crater radii.
+    #[inline]
+    pub fn noise_floor(&self, phi: f64, x: f64) -> f64 {
+        match &self.floor {
+            Some(f) => {
+                let (s, c) = phi.sin_cos();
+                (f[0].sample(x * c, x * s) + 0.5 * f[1].sample(x * c, x * s)) / 1.5
+            }
+            None => 0.0,
         }
     }
 
@@ -405,8 +469,15 @@ impl CraterTexture {
         } else {
             return 0.0;
         };
-        let (t, l) = Self::coords(phi, x);
-        let n = self.hummocks[0].sample(t, l);
+        let n = if re < dim.floor_radius {
+            let (s, c) = phi.sin_cos();
+            self.floor
+                .as_ref()
+                .map_or(0.0, |f| f[0].sample(x * c, x * s))
+        } else {
+            let (t, l) = Self::coords(phi, x);
+            self.hummocks[0].sample(t, l)
+        };
         let s = ((n - threshold) / MELT_EDGE_WIDTH + 0.5).clamp(0.0, 1.0);
         s * s * (3.0 - 2.0 * s)
     }
@@ -432,11 +503,65 @@ impl CraterTexture {
             }
             v * f.max(0.0)
         } else if re < dim.floor_radius && dim.class != CraterClass::Simple {
-            let (t, l) = Self::coords(phi, x);
-            v + FLOOR_TEXTURE * dim.depth * self.noise_at(t, l)
+            v + FLOOR_TEXTURE * dim.depth * self.noise_floor(phi, x)
         } else {
             v
         }
+    }
+}
+
+/// The central peak of a complex crater as a cluster of massifs on the tangent plane, in
+/// units of the crater radius. Degradation widens and lowers each massif.
+struct Peak {
+    /// Per massif: offset u, offset v, sigma, height in metres.
+    massifs: Vec<(f64, f64, f64, f64)>,
+}
+
+impl Peak {
+    fn new(seed: u64, dim: &Dimensions) -> Option<Self> {
+        if dim.peak_height <= 0.0 || dim.radius <= 0.0 {
+            return None;
+        }
+        let radius = dim.peak_radius / dim.radius;
+        let rng = Rng::new(seed ^ 0x9EA4_0C11);
+        let count = if seed == 0 {
+            1
+        } else {
+            1 + (rng.uniform(0, 0) * PEAK_MAX_MASSIFS as f64) as usize
+        };
+        let massifs = (0..count as u64)
+            .map(|i| {
+                let (offset, angle) = if count == 1 {
+                    (0.0, 0.0)
+                } else {
+                    (
+                        PEAK_SPREAD * radius * rng.uniform(i, 1).sqrt(),
+                        2.0 * std::f64::consts::PI * rng.uniform(i, 2),
+                    )
+                };
+                let sigma = PEAK_SIGMA_FRACTION * radius * (0.7 + 0.6 * rng.uniform(i, 3))
+                    / (count as f64).sqrt();
+                let height = dim.peak_height * (0.7 + 0.5 * rng.uniform(i, 4));
+                (offset * angle.cos(), offset * angle.sin(), sigma, height)
+            })
+            .collect();
+        Some(Self { massifs })
+    }
+
+    /// Peak relief at a radius in crater radii and an azimuth, after a blur in radii.
+    #[inline]
+    fn relief(&self, x: f64, phi: f64, blur: f64) -> f64 {
+        let (s, c) = phi.sin_cos();
+        let (u, v) = (x * c, x * s);
+        let mut h = 0.0;
+        for &(mu, mv, sigma, height) in &self.massifs {
+            let s2 = sigma * sigma + blur * blur;
+            let d2 = (u - mu) * (u - mu) + (v - mv) * (v - mv);
+            if d2 < 16.0 * s2 {
+                h += height * (sigma * sigma / s2) * (-d2 / s2).exp();
+            }
+        }
+        h
     }
 }
 
@@ -632,6 +757,7 @@ pub fn restore(
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
         .then(|| CraterTexture::new(p.seed, dim));
     let rings = Rings::new(p.seed, dim);
+    let peak = Peak::new(p.seed, dim);
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let bedrock = layers.bedrock.as_mut_slice();
     let deep = layers.deep.as_mut_slice();
@@ -663,6 +789,11 @@ pub fn restore(
         if let Some(rg) = &rings {
             // The ring detail the coarse grid could not carry.
             d += rg.relief(re0, phi, p.fine_blur) - rg.relief(re0, phi, p.coarse_blur);
+        }
+        if let Some(pk) = &peak {
+            let x = re0 / dim.radius;
+            d += pk.relief(x, phi, p.fine_blur / dim.radius)
+                - pk.relief(x, phi, p.coarse_blur / dim.radius);
         }
         bedrock[idx] = (base[idx] as f64 + kept + d) as f32;
         if re <= continuous {
@@ -950,6 +1081,67 @@ mod tests {
             assert_eq!(tex.melt_fraction(2.0 * dim.radius, phi), 0.0);
         }
         assert!(partial > 0, "no soft pond edges");
+        // The floor texture is continuous through the centre: all azimuths agree there.
+        let centre: Vec<f64> = (0..n)
+            .map(|b| tex.noise_floor(b as f64 / n as f64 * 2.0 * std::f64::consts::PI, 0.01))
+            .collect();
+        let spread = centre.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+            - centre.iter().cloned().fold(f64::INFINITY, f64::min);
+        assert!(spread < 0.1, "floor texture spread at the centre {spread}");
+    }
+
+    /// A complex crater's central peak rises from its floor by most of the Pike height.
+    #[test]
+    fn central_peak_rises_from_the_floor() {
+        let grid = CubeSphere::new(1024);
+        let body_radius = 1.7374e6;
+        let s = Scaling {
+            simple_complex: 16_500.0,
+            peak_ring: 140_000.0,
+            multi_ring: 330_000.0,
+            gravity: 1.62,
+        };
+        let dim = dimensions(60_000.0, &s);
+        assert!(dim.peak_height > 500.0);
+        let mut layers = LayerSet::new(grid);
+        let mut stamper = Stamper::new(&grid);
+        let center = [0.0, 0.0, 1.0];
+        let params = StampParams {
+            time_gyr: 1.0,
+            unit_floor: 4,
+            unit_ejecta: 5,
+            azimuth: 0.0,
+            angle: std::f64::consts::FRAC_PI_2,
+            ellipticity: 1.0,
+            amplitude: 1.0,
+            replace_floor: true,
+            set_age: true,
+            bury: true,
+            seed: 0,
+            deep: false,
+        };
+        stamp(
+            &mut layers,
+            &grid,
+            body_radius,
+            center,
+            &ProfileTable::new(dim, 0.0),
+            &params,
+            &mut stamper,
+        );
+        stamper.gather(&grid, body_radius, center, 0.4 * dim.radius);
+        let h = layers.bedrock.as_slice();
+        let top = stamper
+            .footprint
+            .iter()
+            .map(|&(idx, _, _)| h[idx] as f64)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let rise = top + dim.depth;
+        assert!(
+            rise > 0.4 * dim.peak_height,
+            "peak rises {rise} m of {} m",
+            dim.peak_height
+        );
     }
 
     #[test]

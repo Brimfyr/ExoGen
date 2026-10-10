@@ -101,7 +101,10 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
                 .min(0.75 * radius)
                 .max(0.3 * radius);
             let (peak_height, peak_radius) = if class == CraterClass::Complex {
-                (pow_law(CENTRAL_PEAK_HEIGHT, d_km) * 1e3, 0.15 * radius)
+                (
+                    pow_law(CENTRAL_PEAK_HEIGHT, d_km) * 1e3,
+                    PEAK_RADIUS_FRACTION * radius,
+                )
             } else {
                 (0.0, 0.0)
             };
@@ -191,16 +194,13 @@ pub fn fresh_height(dim: &Dimensions, r: f64) -> f64 {
             -dim.depth + (dim.depth + dim.rim_height) * x * x
         }
         _ => {
-            let mut h = if r <= dim.floor_radius {
+            let h = if r <= dim.floor_radius {
                 -dim.depth
             } else {
                 let s = smoothstep((r - dim.floor_radius) / (rr - dim.floor_radius).max(1.0));
                 -dim.depth + (dim.depth + dim.rim_height) * s
             };
-            if dim.peak_height > 0.0 {
-                let sigma = 0.5 * dim.peak_radius;
-                h += dim.peak_height * (-(r / sigma).powi(2)).exp();
-            }
+            // The central peak is added by the stamp as a cluster of massifs.
             h
         }
     }
