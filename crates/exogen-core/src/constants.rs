@@ -245,6 +245,29 @@ pub const FLOOD_MIN_THICKNESS: f64 = 1.0;
 pub const FLOOD_MARGIN_THRESHOLD: f64 = 0.35;
 pub const FLOOD_MARGIN_LOBE_CELLS: f64 = 1.5;
 pub const FLOOD_MARGIN_WOBBLE: f64 = 0.2;
+/// Subsidence of a lava fill as a fraction of its thickness, from compaction of the pile
+/// and the sag of the floor under it, so a surface over a buried crater dips over the
+/// deep fill and shows the rim as a ring (ghost craters).
+pub const LAVA_SUBSIDENCE: f64 = 0.05;
+/// Wrinkle ridges on plains (PLAN.md 4.4): ridge length per plains area, 1/m (lunar
+/// maria carry about a kilometre of ridge per forty square kilometres); the range of
+/// one ridge's length, m; arch height and width, crest height and width, m; how far the
+/// crest wanders within the arch and over what length; the floor of the seed weight
+/// relative to the mean thickness gradient; how strongly a trace follows the contours;
+/// the heading wobble; and the delay after the last flow before the ridges stand.
+pub const RIDGE_LENGTH_PER_AREA: f64 = 1.0 / 40e3;
+pub const RIDGE_LENGTH: (f64, f64) = (20e3, 300e3);
+pub const RIDGE_HEIGHT: f64 = 200.0;
+pub const RIDGE_ARCH_WIDTH: f64 = 6e3;
+pub const RIDGE_CREST_HEIGHT: f64 = 80.0;
+pub const RIDGE_CREST_WIDTH: f64 = 1.2e3;
+pub const RIDGE_CREST_WANDER: f64 = 0.6;
+pub const RIDGE_CREST_WANDER_LENGTH: f64 = 25e3;
+pub const RIDGE_SEED_FLOOR: f64 = 0.3;
+pub const RIDGE_CONTOUR_FOLLOWING: f64 = 0.35;
+pub const RIDGE_WOBBLE_DEG: f64 = 25.0;
+pub const RIDGE_WOBBLE_LENGTH: f64 = 60e3;
+pub const RIDGE_DELAY_GYR: f64 = 0.2;
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
 /// Provisional, Phase 3.

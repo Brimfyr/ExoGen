@@ -14,6 +14,7 @@
 pub mod impacts;
 pub mod materials;
 pub mod primordial_crust;
+pub mod ridges;
 pub mod tectonics;
 pub mod volcanism;
 
@@ -90,6 +91,8 @@ pub struct LoopOutput {
     pub scarps: Vec<tectonics::ScarpRecord>,
     /// Lava floods emplaced inside the loop, in order of formation.
     pub floods: Vec<volcanism::FloodRecord>,
+    /// Wrinkle ridges laid out on the plains at the end of the loop.
+    pub ridges: Vec<ridges::RidgeRecord>,
     pub hash: u64,
 }
 
@@ -132,6 +135,8 @@ pub struct FinishOutput {
     pub scarps: Vec<tectonics::ScarpRecord>,
     /// Floods present at the epoch.
     pub floods: Vec<volcanism::FloodRecord>,
+    /// Wrinkle ridges present at the epoch.
+    pub ridges: Vec<ridges::RidgeRecord>,
     pub hash: u64,
 }
 
@@ -181,6 +186,7 @@ impl Runner {
             impacts::VERSION,
             tectonics::VERSION,
             volcanism::VERSION,
+            ridges::VERSION,
         ])
     }
 
@@ -254,7 +260,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 14;
+pub const FINISH_VERSION: u64 = 15;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -361,7 +367,21 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
-    let floods = floods.map(|f| f.records).unwrap_or_default();
+    let (floods, ridges) = match floods {
+        Some(f) => {
+            let ridges = ridges::plan_ridges(
+                &grid,
+                graph.f64("body.radius"),
+                layers.unit_id.as_slice(),
+                &f.thickness,
+                &f.last_time,
+                age,
+                graph.f64("seed.volcanism") as u64,
+            );
+            (f.records, ridges)
+        }
+        None => (Vec::new(), Vec::new()),
+    };
     Ok(LoopOutput {
         grid,
         keyframes,
@@ -372,6 +392,7 @@ pub fn run_coarse_loop(
         thermal,
         scarps,
         floods,
+        ridges,
         hash,
     })
 }
@@ -427,6 +448,12 @@ pub fn finish(
         .floods
         .iter()
         .filter(|f| f.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
+    let ridges: Vec<ridges::RidgeRecord> = loop_output
+        .ridges
+        .iter()
+        .filter(|r| r.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
@@ -485,10 +512,15 @@ pub fn finish(
         Loop(usize),
         Scarp(usize),
         Flood(usize),
+        Ridge(usize),
         Replay(usize),
     }
-    let mut events: Vec<(f64, u8, u64, Event)> =
-        Vec::with_capacity(loop_craters.len() + scarps.len() + floods.len() + replay.len());
+    let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
+        loop_craters.len() + scarps.len() + floods.len() + ridges.len() + replay.len(),
+    );
+    for (k, r) in ridges.iter().enumerate() {
+        events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
+    }
     for (k, f) in floods.iter().enumerate() {
         events.push((f.time_gyr, 0, f.id ^ 0x7F10_0000_0000, Event::Flood(k)));
     }
@@ -543,6 +575,10 @@ pub fn finish(
                 Event::Flood(k) => {
                     let (c, r) = floods[*k].cap(&loop_output.grid);
                     (c, r + 2.5 * loop_output.grid.delta() + grid.delta())
+                }
+                Event::Ridge(k) => {
+                    let r = &ridges[*k];
+                    (r.midpoint(), r.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
             }
         })
@@ -612,6 +648,21 @@ pub fn finish(
                             &smear,
                         );
                         Some((out, None, Some((taken, stats))))
+                    }
+                    Event::Ridge(k) => {
+                        let r = &ridges[*k];
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(r.time_gyr, present)
+                            * 1e3;
+                        let out = ridges::ridge_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            r,
+                            (4.0 * kappa_t).sqrt(),
+                            stamper,
+                        );
+                        Some((out, None, None))
                     }
                     Event::Scarp(k) => {
                         // The face the coarse grid could not carry: the profile at its
@@ -782,6 +833,7 @@ pub fn finish(
         replayed_count,
         scarps,
         floods,
+        ridges,
         hash,
     })
 }
@@ -1315,6 +1367,14 @@ mod tests {
         assert!(median > 1e4 && median < 1e5, "crust median {median} m");
         let fine = volcanism::lava_fraction(&out.finish.layers);
         assert!((fine - fraction).abs() < 0.05, "{fine} vs {fraction}");
+        // The maria carry wrinkle ridges, all of them on lava.
+        let ridges = &out.loop_output.ridges;
+        assert!(ridges.len() > 20, "{} ridges", ridges.len());
+        let g = out.loop_output.grid;
+        for r in ridges {
+            let idx = g.index(g.locate(r.midpoint()).0);
+            assert!(volcanism::is_lava_unit(units[idx]));
+        }
     }
 
     #[test]

@@ -76,6 +76,15 @@ pub struct FloodInfo {
 }
 
 #[derive(Serialize)]
+pub struct RidgeInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub length_km: f64,
+    pub height_m: f64,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
 pub struct ScarpInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
@@ -114,6 +123,8 @@ pub struct Sidecar {
     pub scarps: Vec<ScarpInfo>,
     /// Lava floods present at the epoch.
     pub floods: Vec<FloodInfo>,
+    /// Wrinkle ridges present at the epoch.
+    pub ridges: Vec<RidgeInfo>,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
@@ -467,6 +478,20 @@ pub fn export(
                     volume_km3: f.volume / 1e9,
                     area_km2: f.area / 1e6,
                     age_gyr: out.epoch_time_gyr - f.time_gyr,
+                }
+            })
+            .collect(),
+        ridges: out
+            .ridges
+            .iter()
+            .map(|r| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(r.midpoint());
+                RidgeInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    length_km: r.length / 1e3,
+                    height_m: r.height + r.crest,
+                    age_gyr: out.epoch_time_gyr - r.time_gyr,
                 }
             })
             .collect(),

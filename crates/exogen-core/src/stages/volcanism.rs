@@ -29,7 +29,7 @@ use crate::rng::Rng;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
 #[derive(Clone, Copy, Debug)]
@@ -153,6 +153,10 @@ pub struct FloodProcess {
     rng: Rng,
     /// Cell areas, m².
     areas: Vec<f64>,
+    /// Cumulative lava thickness and the time of the last flood, per coarse cell, for
+    /// laying out the ridges at the end.
+    pub thickness: Vec<f32>,
+    pub last_time: Vec<f32>,
     /// Visit marks for the pond search, by generation.
     visited: Vec<u32>,
     generation: u32,
@@ -180,6 +184,8 @@ impl FloodProcess {
             thermal: thermal.clone(),
             rng: Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x7F10_0D5A),
             areas,
+            thickness: vec![0.0; grid.cell_count()],
+            last_time: vec![f32::NEG_INFINITY; grid.cell_count()],
             visited: vec![0; grid.cell_count()],
             generation: 0,
             heap: BinaryHeap::new(),
@@ -399,14 +405,19 @@ impl FloodProcess {
                 if t <= FLOOD_MIN_THICKNESS {
                     continue;
                 }
+                // The pile subsides by a share of its thickness: what is recorded and
+                // added is the height left after that.
+                let added = (1.0 - LAVA_SUBSIDENCE) * t;
                 placed += t * self.areas[idx];
                 recorded.push(FloodCell {
                     idx: idx as u32,
-                    thickness: t as f32,
+                    thickness: added as f32,
                     prev_unit: units[idx],
                     prev_age: ages[idx],
                 });
-                bedrock[idx] = level as f32;
+                self.thickness[idx] += t as f32;
+                self.last_time[idx] = time_gyr as f32;
+                bedrock[idx] = (h as f64 + added) as f32;
                 ages[idx] = time_gyr as f32;
                 units[idx] = UNIT_LAVA;
                 deep[idx] = 0.0;
@@ -584,9 +595,11 @@ pub fn flood_compute(
                 let drape = FLOOD_SHEET_THICKNESS as f32;
                 if ground < level + drape && outline >= FLOOD_MARGIN_THRESHOLD {
                     stats[0] += 1;
+                    let fill = (level - ground).max(0.0);
+                    let surface = ground + (1.0 - LAVA_SUBSIDENCE as f32) * fill;
                     cells.push(CellWrite {
                         idx: idx as u32,
-                        bedrock: ground.max(level) + carry,
+                        bedrock: surface + carry,
                         surface: true,
                         age: time,
                         unit: UNIT_LAVA,
@@ -721,13 +734,21 @@ mod tests {
             .iter()
             .map(|(&idx, c)| c.thickness as f64 * p.areas[idx as usize])
             .sum();
+        // What stands is the fill less its subsidence; the record keeps the volume.
+        let standing = (1.0 - LAVA_SUBSIDENCE) * volume;
         assert!(
-            (filled - volume).abs() < 0.02 * volume,
-            "{filled} vs {volume}"
+            (filled - standing).abs() < 0.02 * volume,
+            "{filled} vs {standing}"
         );
-        // The pit took it all: half full, flat, lava unit, new age.
+        assert!(
+            (rec.volume - volume).abs() < 0.02 * volume,
+            "{} vs {volume}",
+            rec.volume
+        );
+        // The pit took it all: half full less subsidence, flat, lava unit, new age.
         let b = layers.bedrock.as_slice()[pit];
-        assert!((b + 500.0).abs() < 5.0, "{b}");
+        let expected = -1_000.0 + (1.0 - LAVA_SUBSIDENCE) * 500.0;
+        assert!((b as f64 - expected).abs() < 5.0, "{b} vs {expected}");
         assert_eq!(layers.unit_id.as_slice()[pit], UNIT_LAVA);
         assert_eq!(layers.surface_age.as_slice()[pit], 1.0);
         assert_eq!(covered.len(), 1);
