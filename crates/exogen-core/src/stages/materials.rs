@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_PLUME_WHITE,
 };
 
-pub const VERSION: u64 = 10;
+pub const VERSION: u64 = 11;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -347,23 +347,21 @@ pub fn albedo(
                 let pair = match units[k] {
                     UNIT_CONTINENTAL => continental,
                     UNIT_OCEANIC => oceanic,
-                    // Lava by its coverage, mixed sideways into its surroundings: a thin
-                    // flow shows the substrate through, an old contact is blurred.
-                    _ => {
-                        let c = mixed[k].clamp(0.0, 1.0);
-                        if c <= 0.0 {
-                            base
-                        } else {
-                            Pair {
-                                fresh: lerp3(base.fresh, lava.fresh, c),
-                                mature: lerp3(base.mature, lava.mature, c),
-                            }
-                        }
-                    }
+                    _ => base,
                 };
-                // Deep-sourced material by its fraction, then melt over the fresh surface.
+                // The substrate: deep-sourced material by its fraction. Lava lies over it
+                // by its coverage, mixed sideways into its surroundings, so a thin flow
+                // shows the substrate through and an old contact is blurred; then melt
+                // over the fresh surface.
                 let fresh = lerp3(pair.fresh, deep_pair.fresh, deep_f[k]);
                 let mature = lerp3(pair.mature, deep_pair.mature, deep_f[k]);
+                let c = mixed[k].clamp(0.0, 1.0);
+                let (fresh, mature) =
+                    if c > 0.0 && units[k] != UNIT_CONTINENTAL && units[k] != UNIT_OCEANIC {
+                        (lerp3(fresh, lava.fresh, c), lerp3(mature, lava.mature, c))
+                    } else {
+                        (fresh, mature)
+                    };
                 let fresh = lerp3(fresh, melt_pair.fresh, melt_f[k]);
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
                 lerp3(fresh, mature, effective)

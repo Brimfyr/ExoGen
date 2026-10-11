@@ -30,7 +30,7 @@ use crate::stages::deform::Deformation;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
 #[derive(Clone, Copy, Debug)]
@@ -481,7 +481,6 @@ impl FloodProcess {
             let bedrock = layers.bedrock.as_mut_slice();
             let ages = layers.surface_age.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
-            let deep = layers.deep.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
             for &(idx, h) in &popped {
@@ -504,7 +503,6 @@ impl FloodProcess {
                 bedrock[idx] = (h as f64 + added) as f32;
                 ages[idx] = time_gyr as f32;
                 units[idx] = UNIT_LAVA;
-                deep[idx] = 0.0;
                 melt[idx] = 0.0;
                 cover[idx] = (t / LAVA_COVER_DEPTH).min(1.0) as f32;
             }
@@ -700,7 +698,7 @@ pub fn flood_compute(
                         surface: true,
                         age: time,
                         unit: UNIT_LAVA,
-                        deep: 0.0,
+                        deep: deep[idx],
                         melt: 0.0,
                         cover: (fill / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0),
                     });

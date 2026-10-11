@@ -247,8 +247,10 @@ pub const CRUST_THICKNESS_MIN: f64 = 3e3;
 /// Thinner lava than this is not recorded, m.
 pub const FLOOD_MIN_THICKNESS: f64 = 1.0;
 /// Lava thinner than this is mixed with its substrate by gardening and shows it through:
-/// a flow's coverage of the surface is its thickness over this, m.
-pub const LAVA_COVER_DEPTH: f64 = 30.0;
+/// a flow's coverage of the surface is its thickness over this, m. Gardening mixes to
+/// about the regolith's depth, 4 to 5 m on the maria (Oberbeck and Quaide 1968;
+/// Shkuratov and Bondarenko 2001), so only lava a few metres thin shows what is under it.
+pub const LAVA_COVER_DEPTH: f64 = 6.0;
 /// How far from its vent a flow can travel, m: the longest flood-basalt flows run a
 /// thousand kilometres or so (Tharsis, the Deccan), not around the body.
 pub const FLOOD_MAX_REACH: f64 = 1.5e6;
