@@ -18,7 +18,8 @@ The principle set in the Phase 3 reviews holds throughout: counts come from budg
 ## Gate results
 
 - **Relaxation removes large craters first** (`stages::tests::ganymede_relaxes_its_large_craters_first`). On the Ganymede preset the median depth-to-diameter of craters 30 to 70 km across stays above 0.02 while that of craters over 150 km falls below a quarter of it. At standard quality: 20 to 40 km 0.072, 40 to 80 km 0.044, 80 to 160 km 0.001, over 160 km 0.000; Callisto, whose dirty ice is stiffer, keeps 0.060 at 40 to 80 km. Ganymede's relief fell from 30 km of basin to 11 km.
-- The Ganymede two-terrain gate and the Europa crack-orientation gate wait for milestones 3 and 4.
+- **Europa's crack orientations follow the tidal stress field** (`stages::tests::europa_cracks_follow_the_tidal_stress`). The Europa preset grows more than 200 cracks, among them cycloids, and more than 80% of its ridges run within twenty degrees of the direction perpendicular to the most tensile stress at their midpoint in the field of their own time. At standard quality: a diurnal tension of 81 kPa, a crack density of one per 32 km, 2,831 cracks on the present surface, of which 1,815 double ridges, 321 bands and 695 cycloids, the longest 1,500 km.
+- The Ganymede two-terrain gate waits for milestone 4.
 
 ## Measurements
 
@@ -26,12 +27,14 @@ Standard quality, after milestone 2.
 
 | Body | Loop | Finish | What shows |
 |---|---|---|---|
-| Europa | 3.9 s | 3.9 s | a bright sheet of 0.83 reflectance, relief within 3 km, five craters |
+| Europa | 3.8 s | 13 s | 2,831 cracks, salts in the young ones, relief within 3 km, five craters |
 | Ganymede | 6.6 s | 21 s | relief 11 km, large craters flat, frost caps past 40°, mean reflectance 0.65 against 0.83 at the poles (sRGB) |
 | Callisto | 4.5 s | 11 s | dark lag at the equator (0.40) grading to frost caps (0.77), bright young craters |
 | Ceres | 10 s | 59 s | dark mixture with cryolava on 2% of the surface, large basins relaxed |
 
 ## Findings during the phase
+
+- **The tidal field came out at the right size without tuning.** The membrane stresses of a thin shell under the degree-2 tide, with h₂ = 1.14 from 1 + k₂ cut down by the shell's rigidity, give Europa 81 kPa of diurnal tension against the 40 to 100 kPa of the literature, and Enceladus 119 kPa; Ganymede's 3 kPa falls below the cracking stress, so it grows no lineae, as it should.
 
 - **The lag without a brake went opaque in a few million years at Callisto's equator**, and its caps began at a cliff of latitude, because the free sublimation rate at 120 K times the age is thousands of tonnes of ice per square metre. The lag chokes its own growth once it is thick and grows as the square root of time, which is what Moore et al. 1999 describe, and the transition spreads over twenty degrees.
 - **Every ancient cell was excavated clean ice.** The deep bedrock that Phase 2 gave icy bodies made Ganymede white once thousands of overlapping craters had spread their ejecta over everything. Gardening now mixes clean ice back into the regolith over half a gigayear, and a shell over rock has no clean ice below it at all.

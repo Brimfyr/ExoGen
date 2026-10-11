@@ -20,10 +20,11 @@ use crate::fields::{Field, LayerSet};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::units::{
-    UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
+    UNIT_BAND, UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
+    UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 13;
+pub const VERSION: u64 = 14;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -128,6 +129,14 @@ pub const END_MEMBERS: &[EndMember] = &[
     },
     // Glassy impact melt on silicate bodies: distinctly dark when fresh, buried by regolith
     // with age.
+    // Hydrated salts and sulfuric acid hydrates from an ocean, brown-red when fresh,
+    // paling as frost settles on them.
+    EndMember {
+        id: "hydrated_salt",
+        fresh: [0.40, 0.26, 0.17],
+        mature: [0.52, 0.42, 0.34],
+        roughness: 0.6,
+    },
     EndMember {
         id: "impact_melt",
         fresh: [0.10, 0.095, 0.09],
@@ -318,6 +327,8 @@ pub fn albedo(
         None
     };
     let frost_colour = end_member("water_ice").unwrap().fresh;
+    let salt_colour = end_member("hydrated_salt").unwrap().fresh;
+    let ages_f = layers.surface_age.as_slice();
     let mixed = if gardened {
         mixed_cover(
             grid,
@@ -410,7 +421,18 @@ pub fn albedo(
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
                 let colour = lerp3(fresh, mature, effective);
                 match &frost {
-                    Some(f) => lerp3(colour, frost_colour, f.at(grid.center(grid.cell(k))) as f32),
+                    Some(f) => {
+                        let colour =
+                            lerp3(colour, frost_colour, f.at(grid.center(grid.cell(k))) as f32);
+                        // The ocean's salts in a crack, fading under frost with its age.
+                        if units[k] == UNIT_LINEA || units[k] == UNIT_BAND {
+                            let age = (present - ages_f[k] as f64).max(0.0);
+                            let salt = cover_f[k] * (-age / SALT_FADE_GYR).exp() as f32;
+                            lerp3(colour, salt_colour, salt.clamp(0.0, 1.0))
+                        } else {
+                            colour
+                        }
+                    }
                     None => colour,
                 }
             }

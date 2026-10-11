@@ -27,6 +27,9 @@ pub const UNIT_IO_FLOW: u16 = 15;
 pub const UNIT_PLUME_RED: u16 = 16;
 pub const UNIT_PLUME_WHITE: u16 = 17;
 pub const UNIT_MOUNTAIN: u16 = 18;
+/// An ice shell's cracks: double ridges and cycloids, and dilational bands.
+pub const UNIT_LINEA: u16 = 19;
+pub const UNIT_BAND: u16 = 20;
 
 pub fn unit_name(id: u16) -> &'static str {
     match id {
@@ -48,11 +51,13 @@ pub fn unit_name(id: u16) -> &'static str {
         UNIT_PLUME_RED => "plume deposit, sulfur",
         UNIT_PLUME_WHITE => "plume deposit, frost",
         UNIT_MOUNTAIN => "mountain block",
+        UNIT_LINEA => "linea",
+        UNIT_BAND => "band",
         _ => "none",
     }
 }
 
 /// All known units with their names, for the sidecar legend.
 pub fn legend() -> Vec<(u16, &'static str)> {
-    (0..=UNIT_MOUNTAIN).map(|id| (id, unit_name(id))).collect()
+    (0..=UNIT_BAND).map(|id| (id, unit_name(id))).collect()
 }

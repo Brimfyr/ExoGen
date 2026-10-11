@@ -956,6 +956,47 @@ pub const ELASTIC_SUPPORT_FACTOR: f64 = 4.0;
 /// stiffer than clean ice (Ceres's needs 1e25 Pa s near the surface against clean ice's
 /// 3e21 at the same temperature: Fu et al. 2017).
 pub const ICE_ROCK_VISCOSITY_DECADES: f64 = 12.0;
+/// The tidal stress field (F41): the elastic moduli of ice (Young's 9 GPa, Poisson 0.33;
+/// Gammon et al. 1983); the shell's reduction of the Love number h₂ per unit of its
+/// thickness over the radius (a 10 km shell on Europa takes h₂ from 1.25 to 1.1, a 40 km
+/// shell on Enceladus to a quarter); l₂ over h₂ for a shell over an ocean (Wahr et al.
+/// 2006: Europa 0.3 and 1.2); phases sampled through an orbit; the tension at which the
+/// shell cracks (Hoppa et al. 1999 fit cycloids with 40 kPa) and the tensile strength of
+/// ice; the crack density per unit of tension over strength per metre of shell; the lag
+/// of a non-synchronously rotating shell behind the tidal axis before it relaxes, degrees,
+/// and its period as a multiple of the surface's retention age (the lineae's
+/// orientations turn by a quarter turn over the oldest ones Europa shows).
+pub const ICE_YOUNG_MODULUS: f64 = 9.0e9;
+pub const ICE_POISSON: f64 = 0.33;
+pub const SHELL_RIGIDITY_FACTOR: f64 = 20.0;
+pub const L2_OVER_H2: f64 = 0.25;
+pub const TIDAL_PHASE_SAMPLES: usize = 32;
+pub const ICE_CRACK_STRESS: f64 = 4.0e4;
+pub const ICE_TENSILE_STRENGTH: f64 = 1.0e6;
+pub const CRACK_DENSITY_FACTOR: f64 = 3.0;
+pub const NSR_SHIFT_DEG: f64 = 1.0;
+pub const NSR_PERIOD_RETENTION_FACTOR: f64 = 4.0;
+/// Lineae (F42): lengths, m, log-uniform; the width of a double ridge and its ridge
+/// height, m, with the central trough as a fraction of it (Europa's ridges stand 100 to
+/// 300 m over 1 to 2 km); the wander of a crack along the slow field; the share of the
+/// tension that must be diurnal for a crack to be a cycloid; a cycloid's propagation
+/// speed, m/s (Hoppa et al. 1999: about 3 km/h), the orbits it may run and the steps per
+/// orbit; the share of cracks that pull apart into bands, their widths and floor depth,
+/// m; and the time the ocean's salts take to fade under frost, Gyr.
+pub const LINEA_LENGTH: (f64, f64) = (100e3, 1_500e3);
+pub const LINEA_WIDTH: f64 = 2e3;
+pub const LINEA_RIDGE_HEIGHT: f64 = 150.0;
+pub const LINEA_TROUGH_FRACTION: f64 = 0.6;
+pub const LINEA_WOBBLE_RAD: f64 = 0.08;
+pub const LINEA_WOBBLE_LENGTH: f64 = 200e3;
+pub const LINEA_DIURNAL_SHARE: f64 = 0.6;
+pub const CYCLOID_SPEED: f64 = 0.8;
+pub const CYCLOID_MAX_ORBITS: usize = 12;
+pub const CYCLOID_PHASE_STEPS: usize = 64;
+pub const BAND_FRACTION: f64 = 0.15;
+pub const BAND_WIDTH: (f64, f64) = (10e3, 30e3);
+pub const BAND_DEPTH: f64 = 100.0;
+pub const SALT_FADE_GYR: f64 = 0.03;
 pub const GAS_CONSTANT: f64 = 8.314_462;
 /// Thermal segregation: the ice the warm latitudes sublime condenses again where it is
 /// cold, so a body that loses ice at its equator wears frost at its poles (Ganymede's

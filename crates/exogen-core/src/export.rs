@@ -139,6 +139,16 @@ pub struct PateraInfo {
 }
 
 #[derive(Serialize)]
+pub struct LineaInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub length_km: f64,
+    pub width_km: f64,
+    pub kind: String,
+    pub age_gyr: f64,
+}
+
+#[derive(Serialize)]
 pub struct MountainInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
@@ -243,6 +253,9 @@ pub struct Sidecar {
     pub mountains: Vec<MountainInfo>,
     pub flow_field_count: usize,
     pub plume_ring_count: usize,
+    /// An ice shell's cracks present at the epoch: how many, and the longest.
+    pub linea_count: usize,
+    pub lineae: Vec<LineaInfo>,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
@@ -485,7 +498,7 @@ pub fn export(
         },
     );
 
-    // Units, nearest cell per pixel, as an index map: the id times 16.
+    // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
     let unit_eq: Vec<u8> = (0..width * height_px)
         .map(|k| {
@@ -493,7 +506,7 @@ pub fn export(
             let lon = ((x as f64 + 0.5) / width as f64 - 0.5) * 2.0 * std::f64::consts::PI;
             let lat = (0.5 - (y as f64 + 0.5) / height_px as f64) * std::f64::consts::PI;
             let d = crate::grid::direction_from_lon_lat(lon, lat);
-            (unit_ids[grid.index(grid.locate(d).0)] as u8).saturating_mul(16)
+            (unit_ids[grid.index(grid.locate(d).0)] as u8).saturating_mul(8)
         })
         .collect();
     write_png8(&settings.dir.join("units.png"), width, height_px, &unit_eq)?;
@@ -501,7 +514,7 @@ pub fn export(
         "units_png".to_string(),
         MapInfo {
             file: "units.png".into(),
-            encoding: "8-bit grey PNG, unit id times 16".into(),
+            encoding: "8-bit grey PNG, unit id times 8".into(),
             units: "unit id, see unit_legend".into(),
             min: 0.0,
             max: 255.0,
@@ -735,6 +748,31 @@ pub fn export(
             .collect(),
         flow_field_count: out.io_flows.len(),
         plume_ring_count: out.plume_rings.len(),
+        linea_count: out.lineae.len(),
+        lineae: {
+            let mut sorted: Vec<&crate::stages::lineae::Linea> = out.lineae.iter().collect();
+            sorted.sort_by(|a, b| b.length.total_cmp(&a.length));
+            sorted
+                .into_iter()
+                .take(SIDECAR_FLOOD_LIMIT)
+                .map(|l| {
+                    let (lon, lat) = crate::grid::lon_lat_from_direction(l.midpoint());
+                    LineaInfo {
+                        lat_deg: lat.to_degrees(),
+                        lon_deg: lon.to_degrees(),
+                        length_km: l.length / 1e3,
+                        width_km: l.width / 1e3,
+                        kind: match l.kind {
+                            crate::stages::lineae::LineaKind::Ridge => "ridge",
+                            crate::stages::lineae::LineaKind::Cycloid => "cycloid",
+                            crate::stages::lineae::LineaKind::Band => "band",
+                        }
+                        .to_string(),
+                        age_gyr: out.epoch_time_gyr - l.time_gyr,
+                    }
+                })
+                .collect()
+        },
         lava_area_fraction: crate::stages::volcanism::lava_fraction(&out.layers),
         unit_legend: crate::units::legend()
             .into_iter()

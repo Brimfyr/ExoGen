@@ -731,6 +731,41 @@ pub fn interior_love_number_k2(c: &Ctx) -> Value {
     .into()
 }
 
+pub fn interior_love_number_h2(c: &Ctx) -> Value {
+    crate::stages::tidal::love_number_h2(
+        c.f64("interior.love_number_k2"),
+        c.f64("interior.ice_shell_thickness"),
+        c.f64("body.radius"),
+        is_icy(c.str("body.composition_class")),
+    )
+    .into()
+}
+
+pub fn tectonics_tidal_stress(c: &Ctx) -> Value {
+    match crate::stages::tidal::TidalShell::from_ctx(c) {
+        Some(shell) => shell.amplitude().into(),
+        None => 0.0.into(),
+    }
+}
+
+pub fn tectonics_ice_crack_density(c: &Ctx) -> Value {
+    let stress = c.f64("tectonics.tidal_stress");
+    if c.str("interior.tectonic_regime") != "ice_shell_ocean" || stress <= ICE_CRACK_STRESS {
+        return 0.0.into();
+    }
+    (CRACK_DENSITY_FACTOR * (stress / ICE_TENSILE_STRENGTH)
+        / c.f64("interior.ice_shell_thickness").max(1.0))
+    .into()
+}
+
+pub fn tectonics_nsr_period(c: &Ctx) -> Value {
+    if c.f64("tectonics.ice_crack_density") > 0.0 {
+        (NSR_PERIOD_RETENTION_FACTOR * c.f64("cratering.retention_age")).into()
+    } else {
+        0.0.into()
+    }
+}
+
 pub fn interior_dissipation_q(c: &Ctx) -> Value {
     match c.str("body.composition_class") {
         "rock_ice" => Q_ROCK_ICE,

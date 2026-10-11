@@ -16,12 +16,14 @@ pub mod episodic;
 pub mod ice;
 pub mod impacts;
 pub mod io;
+pub mod lineae;
 pub mod materials;
 pub mod plume;
 pub mod primordial_crust;
 pub mod relaxation;
 pub mod ridges;
 pub mod tectonics;
+pub mod tidal;
 pub mod volcanism;
 
 use std::collections::HashMap;
@@ -192,6 +194,8 @@ pub struct FinishOutput {
     pub mountains: Vec<io::Mountain>,
     pub io_flows: Vec<io::FlowField>,
     pub plume_rings: Vec<io::PlumeRing>,
+    /// An ice shell's cracks present at the epoch.
+    pub lineae: Vec<lineae::Linea>,
     pub hash: u64,
 }
 
@@ -318,7 +322,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 23;
+pub const FINISH_VERSION: u64 = 24;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -645,6 +649,10 @@ pub fn finish(
         .filter(|r| r.alive(present))
         .cloned()
         .collect();
+    // An ice shell's cracks within the surface's retention age, drawn per time bin.
+    let lineae: Vec<lineae::Linea> = lineae::Cracks::new(graph)
+        .map(|c| c.generate(present, &grid, inputs.seed))
+        .unwrap_or_default();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let mut smear = volcanism::LavaSmear::new(
@@ -740,6 +748,7 @@ pub fn finish(
         Mountain(usize),
         IoFlow(usize),
         PlumeRing(usize),
+        Linea(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
@@ -750,6 +759,7 @@ pub fn finish(
             + shields.len()
             + canyons.len()
             + graben.len()
+            + lineae.len()
             + replay.len(),
     );
     for (k, sh) in shields.iter().enumerate() {
@@ -786,6 +796,9 @@ pub fn finish(
     }
     for (k, r) in plume_rings.iter().enumerate() {
         events.push((present, 0, r.id, Event::PlumeRing(k)));
+    }
+    for (k, l) in lineae.iter().enumerate() {
+        events.push((l.time_gyr, 0, l.id ^ 0x11CE_0000_0000, Event::Linea(k)));
     }
     for (k, r) in ridges.iter().enumerate() {
         events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
@@ -888,6 +901,10 @@ pub fn finish(
                 Event::PlumeRing(k) => {
                     let r = &plume_rings[*k];
                     (r.center, r.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Linea(k) => {
+                    let l = &lineae[*k];
+                    (l.midpoint(), l.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
             }
         })
@@ -1061,6 +1078,21 @@ pub fn finish(
                             &grid,
                             body_radius,
                             &plume_rings[*k],
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Linea(k) => {
+                        let l = &lineae[*k];
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(l.time_gyr, present)
+                            * 1e3;
+                        let out = lineae::linea_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            l,
+                            (4.0 * kappa_t).sqrt(),
                             stamper,
                         );
                         Some((out, None, None))
@@ -1287,6 +1319,7 @@ pub fn finish(
         mountains,
         io_flows,
         plume_rings,
+        lineae,
         hash,
     })
 }
@@ -2043,6 +2076,54 @@ mod tests {
                 .iter()
                 .all(|c| c.time_gyr >= event - 1e-6)
         );
+    }
+
+    /// Europa's cracks open perpendicular to the most tensile tidal stress of their moment.
+    #[test]
+    fn europa_cracks_follow_the_tidal_stress() {
+        let mut r = Runner::new();
+        let g = preset_graph("Europa", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let cracks = lineae::Cracks::new(&g).expect("Europa cracks");
+        let lineae = &out.finish.lineae;
+        assert!(lineae.len() > 200, "{} lineae", lineae.len());
+        let cycloids = lineae
+            .iter()
+            .filter(|l| l.kind == lineae::LineaKind::Cycloid)
+            .count();
+        assert!(cycloids > 0, "no cycloids");
+        // Every ridge runs within twenty degrees of the direction perpendicular to the
+        // most tensile stress at its midpoint, in the field of its own time.
+        let present = out.finish.epoch_time_gyr;
+        let mut within = 0;
+        let mut total = 0;
+        for l in lineae
+            .iter()
+            .filter(|l| l.kind != lineae::LineaKind::Cycloid)
+        {
+            let n = l.points.len();
+            if n < 5 {
+                continue;
+            }
+            let (a, b) = (l.points[n / 2 - 1], l.points[n / 2 + 1]);
+            let mid = l.points[n / 2];
+            let chord = crate::geom::normalize([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+            let axis = lineae::mean_axis_at(l.time_gyr, present, cracks.nsr_period_gyr);
+            let stress = cracks.shell.total(axis, mid, l.phase);
+            let d = lineae::crack_direction(mid, &stress, Some(chord));
+            let cos = crate::geom::dot(chord, d).abs().min(1.0);
+            if cos.acos().to_degrees() < 20.0 {
+                within += 1;
+            }
+            total += 1;
+        }
+        assert!(total > 50, "{total} ridges measured");
+        assert!(
+            within as f64 > 0.8 * total as f64,
+            "{within} of {total} ridges follow the field"
+        );
+        let share = lineae::crack_fraction(&out.finish.layers);
+        assert!(share > 0.005, "crack share {share}");
     }
 
     /// Ganymede's ice relaxes its large craters into palimpsests and keeps its small ones.
