@@ -783,6 +783,66 @@ pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
         .into()
 }
 
+pub fn tectonics_chaos_fraction(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
+        return 0.0.into();
+    }
+    let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
+    if ratio >= WHOLESALE_SHELL_RATIO {
+        return 0.0.into();
+    }
+    (CHAOS_FRACTION_MAX * (c.f64("interior.tidal_flux") / CHAOS_FLUX).min(1.0)).into()
+}
+
+pub fn volcanism_cryodome_count(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "ice_shell_rock" {
+        return 0.0.into();
+    }
+    let r_km3 = (c.f64("body.radius") / 1e3).powi(3);
+    let (lo, hi) = (
+        CRYODOME_VOLUME_SHARE.0 * r_km3,
+        CRYODOME_VOLUME_SHARE.1 * r_km3,
+    );
+    let mean = (hi - lo) / (hi / lo).ln();
+    // The magma rate is kept in m³/s; the volumes are km³.
+    (CRYODOME_SHARE * c.f64("volcanism.rate") * GYR / 1e9 * c.f64("body.age") / mean)
+        .round()
+        .into()
+}
+
+pub fn volcanism_plume_fallout_rate(c: &Ctx) -> Value {
+    if c.f64("tectonics.polar_thinning") <= POLAR_ACTIVE_THINNING
+        || c.f64("tectonics.ice_crack_density") <= 0.0
+    {
+        return 0.0.into();
+    }
+    (PLUME_FALLOUT_RATE * (c.f64("interior.tidal_flux") / POLAR_FOCUS_FLUX).min(1.0)).into()
+}
+
+pub fn materials_salt(c: &Ctx) -> Value {
+    if c.str("orbit.primary") == "planet"
+        && c.f64("orbit.primary_mass") > MAGNETOSPHERE_JUPITER_MASS
+    {
+        "hydrated_salt".into()
+    } else {
+        "carbonate_salt".into()
+    }
+}
+
+pub fn surface_trailing_irradiation(c: &Ctx) -> Value {
+    if c.str("rotation.mode") != "locked" || c.str("orbit.primary") != "planet" {
+        return 0.0.into();
+    }
+    let m = c.f64("orbit.primary_mass");
+    if m > MAGNETOSPHERE_JUPITER_MASS {
+        1.0.into()
+    } else if m > MAGNETOSPHERE_SATURN_MASS {
+        MAGNETOSPHERE_SATURN_SHARE.into()
+    } else {
+        0.0.into()
+    }
+}
+
 pub fn tectonics_ice_resurfacing_age(c: &Ctx) -> Value {
     if c.f64("tectonics.ice_resurfaced_fraction") > 0.0 {
         (ICE_RESURFACING_AGE_FRACTION * c.f64("body.age")).into()

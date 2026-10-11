@@ -11,6 +11,7 @@
 //! liquid, computes optical maturity and rays, and assigns materials. Both parts are cached
 //! by a hash of the parameters and seeds they depend on.
 
+pub mod cryo;
 pub mod deform;
 pub mod episodic;
 pub mod ice;
@@ -204,8 +205,12 @@ pub struct FinishOutput {
     pub mountains: Vec<io::Mountain>,
     pub io_flows: Vec<io::FlowField>,
     pub plume_rings: Vec<io::PlumeRing>,
-    /// An ice shell's cracks present at the epoch.
+    /// An ice shell's cracks present at the epoch, its chaos, and the domes a shell over
+    /// rock has built, with the share of the surface that is chaos matrix.
     pub lineae: Vec<lineae::Linea>,
+    pub chaos: Vec<cryo::Chaos>,
+    pub cryodomes: Vec<cryo::Cryodome>,
+    pub chaos_fraction: f64,
     /// The lanes of grooved terrain present at the epoch, and the shares of the surface
     /// that are grooved terrain and renewed polar terrain.
     pub lanes: Vec<ice_shell::Lane>,
@@ -268,6 +273,7 @@ impl Runner {
             episodic::VERSION,
             io::VERSION,
             ice_shell::VERSION,
+            cryo::VERSION,
         ])
     }
 
@@ -341,7 +347,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 26;
+pub const FINISH_VERSION: u64 = 27;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -747,9 +753,30 @@ pub fn finish(
         .cloned()
         .collect();
     // An ice shell's cracks within the surface's retention age, drawn per time bin.
+    let shell_history = ice_shell_history(graph, &loop_output.thermal);
     let lineae: Vec<lineae::Linea> = lineae::Cracks::new(graph)
         .map(|c| c.generate(present, &grid, inputs.seed))
         .unwrap_or_default();
+    // Chaos where a thin shell melts through, and the domes a shell over rock extrudes,
+    // each at the height its relaxation has left it.
+    let chaos = cryo::chaos_population(graph, present, inputs.seed);
+    let cryodomes = cryo::cryodome_population(graph, present, inputs.seed);
+    let dome_heights: Vec<f64> = cryodomes
+        .iter()
+        .map(|d| {
+            d.height
+                * match &shell_history {
+                    Some(shell_at) => relaxation::survival_since(
+                        2.0 * d.radius,
+                        d.time_gyr,
+                        present,
+                        &**shell_at,
+                        1.0,
+                    ),
+                    None => 1.0,
+                }
+        })
+        .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let lane_floor: &[f32] = lane_floor.as_ref().map_or(&base, |f| f.as_slice());
     let polar_floor: &[f32] = polar_floor.as_ref().map_or(&base, |f| f.as_slice());
@@ -819,7 +846,7 @@ pub fn finish(
         .collect();
     // On an ice shell a replayed crater has relaxed over its own life by the shell's
     // viscosity at its wavelength; what survives scales its whole relief.
-    let relaxed: Vec<f32> = match ice_shell_history(graph, &loop_output.thermal) {
+    let relaxed: Vec<f32> = match &shell_history {
         Some(shell_at) => replay
             .par_iter()
             .map(|(c, _)| {
@@ -827,7 +854,7 @@ pub fn finish(
                     c.diameter,
                     c.time_gyr,
                     present,
-                    &*shell_at,
+                    &**shell_at,
                     shell_map.factor(c.center),
                 ) as f32
             })
@@ -856,6 +883,8 @@ pub fn finish(
         Linea(usize),
         Groove(usize),
         PolarTerrain,
+        Chaos(usize),
+        Cryodome(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
@@ -869,6 +898,8 @@ pub fn finish(
             + lineae.len()
             + lanes.len()
             + 1
+            + chaos.len()
+            + cryodomes.len()
             + replay.len(),
     );
     for (k, sh) in shields.iter().enumerate() {
@@ -916,6 +947,12 @@ pub fn finish(
     }
     if polar {
         events.push((polar_time, 0, 0x5027_0000_0000, Event::PolarTerrain));
+    }
+    for (k, c) in chaos.iter().enumerate() {
+        events.push((c.time_gyr, 0, c.id ^ 0xC4A0_0000_0000, Event::Chaos(k)));
+    }
+    for (k, d) in cryodomes.iter().enumerate() {
+        events.push((d.time_gyr, 0, d.id ^ 0xD0CE_0000_0000, Event::Cryodome(k)));
     }
     for (k, r) in ridges.iter().enumerate() {
         events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
@@ -1031,6 +1068,14 @@ pub fn finish(
                     shell_map.pole.unwrap_or([0.0, 0.0, 1.0]),
                     shell_map.radius_rad + 2.0 * grid.delta(),
                 ),
+                Event::Chaos(k) => {
+                    let c = &chaos[*k];
+                    (c.center, c.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Cryodome(k) => {
+                    let d = &cryodomes[*k];
+                    (d.center, d.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
             }
         })
         .collect();
@@ -1234,6 +1279,22 @@ pub fn finish(
                         );
                         Some((out, None, None))
                     }
+                    Event::Chaos(k) => {
+                        let out =
+                            cryo::chaos_compute(&layers, &grid, body_radius, &chaos[*k], stamper);
+                        Some((out, None, None))
+                    }
+                    Event::Cryodome(k) => {
+                        let out = cryo::cryodome_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &cryodomes[*k],
+                            dome_heights[*k],
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
                     Event::Linea(k) => {
                         let l = &lineae[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
@@ -1404,6 +1465,18 @@ pub fn finish(
         fraction: 0.72,
         message: "hydrosphere".to_string(),
     });
+    // On an ice shell over rock the domes' substrate is partly clean ice, and the deep
+    // young craters' floors carry salts.
+    if ice::is_ice_surface(graph) {
+        cryo::post_pass(
+            &mut layers,
+            body_radius,
+            &cryodomes,
+            &records,
+            &inputs.scaling,
+            present,
+        );
+    }
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
     let height = layers.height();
 
@@ -1444,6 +1517,7 @@ pub fn finish(
         message: "done".to_string(),
     });
     let (grooved_fraction, polar_fraction) = ice_shell::terrain_shares(&layers);
+    let chaos_fraction = cryo::chaos_share(&layers);
     Ok(FinishOutput {
         grid,
         layers,
@@ -1473,6 +1547,9 @@ pub fn finish(
         io_flows,
         plume_rings,
         lineae,
+        chaos,
+        cryodomes,
+        chaos_fraction,
         lanes,
         lane_coverage: if groove_time.is_some() {
             loop_output.lane_coverage
@@ -2285,6 +2362,76 @@ mod tests {
         );
         let share = lineae::crack_fraction(&out.finish.layers);
         assert!(share > 0.005, "crack share {share}");
+    }
+
+    /// Europa's thin shell breaks into chaos where its heat melts it through.
+    #[test]
+    fn europa_breaks_into_chaos() {
+        let mut r = Runner::new();
+        let g = preset_graph("Europa", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        assert!(
+            out.finish.chaos.len() > 20,
+            "{} chaos patches",
+            out.finish.chaos.len()
+        );
+        let share = out.finish.chaos_fraction;
+        assert!(
+            (0.08..=0.4).contains(&share),
+            "chaos matrix share {share:.3}"
+        );
+    }
+
+    /// Ceres builds domes of brine-rich ice and brightens the floors of its deep young
+    /// craters with salts.
+    #[test]
+    fn ceres_builds_domes_and_bright_floors() {
+        let mut r = Runner::new();
+        let g = preset_graph("Ceres", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        assert!(
+            out.finish.cryodomes.len() >= 5,
+            "{} domes",
+            out.finish.cryodomes.len()
+        );
+        let layers = &out.finish.layers;
+        let units = layers.unit_id.as_slice();
+        let cover = layers.cover.as_slice();
+        let salted = units
+            .iter()
+            .zip(cover)
+            .filter(|(u, c)| {
+                (**u == crate::units::UNIT_CRATER_FLOOR || **u == crate::units::UNIT_DEEP_FLOOR)
+                    && **c > 0.0
+            })
+            .count();
+        assert!(salted > 0, "no salted crater floors");
+    }
+
+    /// Enceladus's plume keeps its surface in fresh frost and buries the salts in its
+    /// cracks before they can show.
+    #[test]
+    fn enceladus_fallout_keeps_it_bright() {
+        let mut r = Runner::new();
+        let g = preset_graph("Enceladus", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let m = out.finish.maturity.as_slice();
+        let mean = m.iter().map(|&v| v as f64).sum::<f64>() / m.len() as f64;
+        assert!(mean < 0.1, "mean maturity {mean:.3}");
+        let units = out.finish.layers.unit_id.as_slice();
+        let albedo = out.finish.albedo.as_slice();
+        let (mut sum, mut n) = ([0.0f64; 3], 0usize);
+        for (k, &u) in units.iter().enumerate() {
+            if u == crate::units::UNIT_LINEA || u == crate::units::UNIT_BAND {
+                for (ch, acc) in sum.iter_mut().enumerate() {
+                    *acc += albedo[k][ch] as f64;
+                }
+                n += 1;
+            }
+        }
+        assert!(n > 0, "no cracks");
+        let (r, b) = (sum[0] / n as f64, sum[2] / n as f64);
+        assert!(r - b < 0.03, "cracks are brown: r {r:.3} b {b:.3}");
     }
 
     /// Ganymede has two terrains: the old dark cratered one and the lanes of bright

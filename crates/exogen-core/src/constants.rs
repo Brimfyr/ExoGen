@@ -1062,6 +1062,63 @@ pub const GROOVE_SET_TURN: f64 = 0.4;
 pub const ICE_RESURFACING_FLUX_FLOOR: f64 = 0.005;
 pub const ICE_RESURFACING_FLUX: f64 = 0.05;
 pub const ICE_RESURFACING_AGE_FRACTION: f64 = 0.4;
+/// Chaos (F45): on a shell over an ocean thin against the body, the share of the surface
+/// disrupted into chaos, up to this much, in proportion to the tidal flux over this flux,
+/// W/m²; the patches' diameters, m, log-uniform, placed in a heat field of this many
+/// cycles round the body whose troughs take this share fewer than its crests; the drop of the matrix, m, its hummocks, m, at this spacing, m;
+/// the share of a patch left standing as rafts of the old surface and their scale, m;
+/// and the wobble of a patch's outline.
+pub const CHAOS_FRACTION_MAX: f64 = 0.3;
+pub const CHAOS_FLUX: f64 = 0.05;
+pub const CHAOS_DIAMETER: (f64, f64) = (5e3, 120e3);
+pub const CHAOS_HEAT_FREQUENCY: f64 = 2.0;
+pub const CHAOS_HEAT_CONTRAST: f64 = 0.5;
+pub const CHAOS_DROP: f64 = 150.0;
+pub const CHAOS_HUMMOCK: f64 = 60.0;
+pub const CHAOS_HUMMOCK_SPACING: f64 = 1.5e3;
+pub const CHAOS_RAFT_SHARE: f64 = 0.35;
+pub const CHAOS_RAFT_SCALE: f64 = 15e3;
+pub const CHAOS_EDGE_WOBBLE: f64 = 0.3;
+/// Cryovolcanic domes (F46): on a shell over rock this share of the ice magma budget
+/// extrudes as domes of volumes drawn log-uniform between these shares of the body's
+/// radius cubed (Ceres 100 to 3,000 km³, Ahuna Mons about 1,500), with this height over
+/// diameter (Ahuna Mons 4 km over 17); the streaks on their flanks as a share of the
+/// height; the share of a dome's substrate that is clean ice; and the salts on it.
+pub const CRYODOME_SHARE: f64 = 0.7;
+pub const CRYODOME_VOLUME_SHARE: (f64, f64) = (1e-6, 3e-5);
+pub const CRYODOME_ASPECT: f64 = 0.24;
+pub const CRYODOME_FLANK_ROUGHNESS: f64 = 0.06;
+pub const CRYODOME_CLEAN: f64 = 0.5;
+pub const CRYODOME_SALT: f64 = 0.4;
+/// Faculae (F46): on a shell over rock a crater deeper than this, m, brings brines up
+/// into its floor, which leave salts over this share of the floor's radius in patches at
+/// this scale, m, that darken over this time, Gyr (Occator's are a few million years old
+/// in a crater of twenty million).
+pub const FACULA_BRINE_DEPTH: f64 = 3e3;
+pub const FACULA_FLOOR_SHARE: f64 = 0.35;
+pub const FACULA_PATCH_SCALE: f64 = 4e3;
+pub const FACULA_FADE_GYR: f64 = 0.15;
+/// Plume fallout (F47): the fresh ice a polar plume lays down at its pole, m/Gyr, when
+/// the tidal flux focuses fully (Enceladus about 0.1 mm/yr near the stripes), falling
+/// off over this angle, deg, to this share of it far away; the depth that buries a lag or
+/// a salt, m; and the rate that keeps a full frost cover, m/Gyr.
+pub const PLUME_FALLOUT_RATE: f64 = 1e5;
+pub const PLUME_FALLOUT_ANGLE_DEG: f64 = 25.0;
+pub const PLUME_FALLOUT_FAR: f64 = 0.01;
+pub const PLUME_BURIAL_DEPTH: f64 = 1e-3;
+pub const PLUME_FROST_RATE: f64 = 1e3;
+/// The warm fissures a plume vents from sinter the ice to coarse grains, darker and bluer
+/// than the frost round them (Enceladus's tiger stripes): the tint at the pole.
+pub const VENT_ICE_TINT: [f32; 3] = [0.78, 0.85, 0.94];
+/// Hemispheric asymmetry (F48): a locked moon's trailing hemisphere takes its parent's
+/// magnetospheric plasma, which darkens and reddens the ice there by this tint at the
+/// apex in a Jupiter-class magnetosphere (a parent over this mass, kg; Europa's and
+/// Ganymede's trailing sides are the darker and redder) and by this share of it in a
+/// Saturn-class one (over this mass).
+pub const TRAILING_TINT: [f32; 3] = [0.76, 0.69, 0.62];
+pub const MAGNETOSPHERE_JUPITER_MASS: f64 = 1e27;
+pub const MAGNETOSPHERE_SATURN_MASS: f64 = 1e26;
+pub const MAGNETOSPHERE_SATURN_SHARE: f64 = 0.3;
 pub const GAS_CONSTANT: f64 = 8.314_462;
 /// Thermal segregation: the ice the warm latitudes sublime condenses again where it is
 /// cold, so a body that loses ice at its equator wears frost at its poles (Ganymede's

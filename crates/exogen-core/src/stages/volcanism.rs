@@ -177,6 +177,8 @@ pub struct FloodProcess {
     carry: f64,
     /// On an episodic lid: when the surface was renewed, before which no flows are kept.
     event_time: Option<f64>,
+    /// The share of the ice magma budget that floods rather than builds domes.
+    flood_share: f64,
     age: f64,
     pub records: Vec<FloodRecord>,
 }
@@ -253,6 +255,11 @@ impl FloodProcess {
             heap: BinaryHeap::new(),
             carry: 0.0,
             event_time,
+            flood_share: if graph.str("interior.tectonic_regime") == "ice_shell_rock" {
+                1.0 - CRYODOME_SHARE
+            } else {
+                1.0
+            },
             age: graph.f64("body.age"),
             records: Vec::new(),
         })
@@ -294,7 +301,7 @@ impl FloodProcess {
             let t = t0 + (i as f64 + 0.5) * dt;
             v += self.thermal.at(t).magma_rate * self.eruptive_fraction(t) * dt * GYR;
         }
-        v * share
+        v * share * self.flood_share
     }
 
     /// Vent weights: thin crust and low ground, and any rise's boost.

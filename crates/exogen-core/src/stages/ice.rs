@@ -118,10 +118,16 @@ pub fn lag_maturity(graph: &ParamGraph, layers: &LayerSet, present: f64) -> Fiel
     let impurity = regolith_impurity(graph);
     let clean = crate::stages::materials::non_ice_fraction("water_ice");
     let clean_f = layers.clean.as_slice();
+    // A plume's fallout buries the lag as fast as it falls.
+    let fallout = crate::stages::cryo::Fallout::new(graph);
     Field::from_fn(grid, |c, d| {
         let cos_lat = (1.0 - d[2] * d[2]).max(0.0).sqrt();
         let t = mean_surface_temperature(insolation, albedo, cos_lat);
         let exposure = present - layers.surface_age.get(c) as f64;
+        let exposure = match &fallout {
+            Some(f) => exposure.min(f.burial_gyr(d)),
+            None => exposure,
+        };
         let share = clean_f[grid.index(c)].clamp(0.0, 1.0) as f64;
         let impurity = impurity + (clean - impurity) * share;
         lag_maturity_at(t, impurity, exposure) as f32

@@ -33,6 +33,9 @@ pub const UNIT_BAND: u16 = 20;
 /// Lanes of grooved terrain, and the renewed terrain under a pole where the shell is thin.
 pub const UNIT_GROOVED: u16 = 21;
 pub const UNIT_POLAR_TERRAIN: u16 = 22;
+/// The matrix of a chaos patch, and a cryovolcanic dome.
+pub const UNIT_CHAOS: u16 = 23;
+pub const UNIT_CRYODOME: u16 = 24;
 
 pub fn unit_name(id: u16) -> &'static str {
     match id {
@@ -58,13 +61,13 @@ pub fn unit_name(id: u16) -> &'static str {
         UNIT_BAND => "band",
         UNIT_GROOVED => "grooved terrain",
         UNIT_POLAR_TERRAIN => "polar terrain",
+        UNIT_CHAOS => "chaos",
+        UNIT_CRYODOME => "cryovolcanic dome",
         _ => "none",
     }
 }
 
 /// All known units with their names, for the sidecar legend.
 pub fn legend() -> Vec<(u16, &'static str)> {
-    (0..=UNIT_POLAR_TERRAIN)
-        .map(|id| (id, unit_name(id)))
-        .collect()
+    (0..=UNIT_CRYODOME).map(|id| (id, unit_name(id))).collect()
 }

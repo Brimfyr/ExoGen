@@ -261,6 +261,11 @@ pub struct Sidecar {
     pub lane_count: usize,
     pub lane_coverage: f64,
     pub grooved_fraction: f64,
+    /// Chaos patches and the share of the surface that is chaos matrix; cryovolcanic
+    /// domes built over the body's life.
+    pub chaos_count: usize,
+    pub chaos_fraction: f64,
+    pub cryodome_count: usize,
     pub polar_terrain_fraction: f64,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
@@ -756,6 +761,9 @@ pub fn export(
         plume_ring_count: out.plume_rings.len(),
         linea_count: out.lineae.len(),
         lane_count: out.lanes.len(),
+        chaos_count: out.chaos.len(),
+        chaos_fraction: out.chaos_fraction,
+        cryodome_count: out.cryodomes.len(),
         lane_coverage: out.lane_coverage,
         grooved_fraction: out.grooved_fraction,
         polar_terrain_fraction: out.polar_fraction,

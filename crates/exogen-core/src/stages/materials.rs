@@ -17,14 +17,15 @@ use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
+use crate::geom::dot;
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::units::{
-    UNIT_BAND, UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
-    UNIT_PATERA_FLOOR,
+    UNIT_BAND, UNIT_CHAOS, UNIT_CONTINENTAL, UNIT_CRATER_FLOOR, UNIT_CRYODOME, UNIT_DEEP_FLOOR,
+    UNIT_IO_FLOW, UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 16;
+pub const VERSION: u64 = 17;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -135,6 +136,14 @@ pub const END_MEMBERS: &[EndMember] = &[
         id: "hydrated_salt",
         fresh: [0.40, 0.26, 0.17],
         mature: [0.52, 0.42, 0.34],
+        roughness: 0.6,
+    },
+    // Sodium carbonates and chlorides from an ocean where no magnetosphere irradiates
+    // them: white, greying as they take dust (Ceres's faculae, Enceladus's stripes).
+    EndMember {
+        id: "carbonate_salt",
+        fresh: [0.86, 0.85, 0.80],
+        mature: [0.72, 0.70, 0.66],
         roughness: 0.6,
     },
     EndMember {
@@ -328,7 +337,14 @@ pub fn albedo(
         None
     };
     let frost_colour = end_member("water_ice").unwrap().fresh;
-    let salt_colour = end_member("hydrated_salt").unwrap().fresh;
+    let salt_colour = end_member(graph.str("materials.salt"))
+        .unwrap_or_else(|| end_member("hydrated_salt").unwrap())
+        .fresh;
+    // A plume's fallout, and the plasma on a locked moon's trailing hemisphere.
+    let fallout = frost
+        .as_ref()
+        .and_then(|_| crate::stages::cryo::Fallout::new(graph));
+    let trailing = graph.f64("surface.trailing_irradiation");
     // Ice renewed from below, the grooved lanes and the polar terrain, is clean whatever
     // lies around it.
     let clean_ice = {
@@ -430,24 +446,76 @@ pub fn albedo(
                 let fresh = lerp3(pair.fresh, deep_pair.fresh, deep_f[k]);
                 let mature = lerp3(pair.mature, deep_pair.mature, deep_f[k]);
                 let c = mixed[k].clamp(0.0, 1.0);
-                let (fresh, mature) =
-                    if c > 0.0 && units[k] != UNIT_CONTINENTAL && units[k] != UNIT_OCEANIC {
-                        (lerp3(fresh, lava.fresh, c), lerp3(mature, lava.mature, c))
-                    } else {
-                        (fresh, mature)
-                    };
+                let salted = matches!(
+                    units[k],
+                    UNIT_LINEA | UNIT_BAND | UNIT_CHAOS | UNIT_CRYODOME
+                );
+                let (fresh, mature) = if c > 0.0
+                    && !salted
+                    && units[k] != UNIT_CONTINENTAL
+                    && units[k] != UNIT_OCEANIC
+                {
+                    (lerp3(fresh, lava.fresh, c), lerp3(mature, lava.mature, c))
+                } else {
+                    (fresh, mature)
+                };
                 let fresh = lerp3(fresh, melt_pair.fresh, melt_f[k]);
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
                 let colour = lerp3(fresh, mature, effective);
                 match &frost {
                     Some(f) => {
-                        let colour =
-                            lerp3(colour, frost_colour, f.at(grid.center(grid.cell(k))) as f32);
-                        // The ocean's salts in a crack, fading under frost with its age.
-                        if units[k] == UNIT_LINEA || units[k] == UNIT_BAND {
-                            let age = (present - ages_f[k] as f64).max(0.0);
-                            let salt = cover_f[k] * (-age / SALT_FADE_GYR).exp() as f32;
-                            lerp3(colour, salt_colour, salt.clamp(0.0, 1.0))
+                        let d = grid.center(grid.cell(k));
+                        // Frost: what the cold latitudes keep, and what a plume lays down.
+                        let mut frost_share = f.at(d);
+                        let mut burial = f64::INFINITY;
+                        if let Some(fall) = &fallout {
+                            frost_share = frost_share.max(fall.frost_at(d));
+                            burial = fall.burial_gyr(d);
+                        }
+                        let colour = lerp3(colour, frost_colour, frost_share as f32);
+                        // The ocean's salts: in a crack or a chaos matrix fading under
+                        // frost, on a dome or a deep crater's floor darkening with age,
+                        // and under a plume buried as fast as they fall.
+                        let fade = match units[k] {
+                            UNIT_LINEA | UNIT_BAND | UNIT_CHAOS => Some(SALT_FADE_GYR),
+                            UNIT_CRYODOME | UNIT_CRATER_FLOOR | UNIT_DEEP_FLOOR => {
+                                Some(FACULA_FADE_GYR)
+                            }
+                            _ => None,
+                        };
+                        let colour = match fade {
+                            Some(fade) if cover_f[k] > 0.0 => {
+                                let age = (present - ages_f[k] as f64).max(0.0);
+                                let salt = cover_f[k] * (-age / fade.min(burial)).exp() as f32;
+                                lerp3(colour, salt_colour, salt.clamp(0.0, 1.0))
+                            }
+                            _ => colour,
+                        };
+                        // A plume's warm vents sinter the ice in the fissures to coarse
+                        // grains, darker and bluer than the frost round them.
+                        let colour = match &fallout {
+                            Some(fall) if units[k] == UNIT_LINEA || units[k] == UNIT_BAND => {
+                                let w = (cover_f[k] as f64 * fall.vent_weight(d)) as f32;
+                                let coarse = [
+                                    colour[0] * VENT_ICE_TINT[0],
+                                    colour[1] * VENT_ICE_TINT[1],
+                                    colour[2] * VENT_ICE_TINT[2],
+                                ];
+                                lerp3(colour, coarse, w.clamp(0.0, 1.0))
+                            }
+                            _ => colour,
+                        };
+                        // The trailing hemisphere's plasma darkens and reddens the ice.
+                        if trailing > 0.0 {
+                            let w = (trailing
+                                * dot(d, crate::stages::cryo::TRAILING_APEX).max(0.0).powi(2))
+                                as f32;
+                            let tinted = [
+                                colour[0] * TRAILING_TINT[0],
+                                colour[1] * TRAILING_TINT[1],
+                                colour[2] * TRAILING_TINT[2],
+                            ];
+                            lerp3(colour, tinted, w)
                         } else {
                             colour
                         }

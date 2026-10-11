@@ -174,6 +174,7 @@ const fn stage_output(
 const PRIMARY: &[&str] = &["star", "planet"];
 const COMPOSITION_CLASS: &[&str] = &["iron_rich", "rock", "rock_ice", "ice_dominated"];
 const ROTATION_MODE: &[&str] = &["free", "locked"];
+const SALT: &[&str] = &["hydrated_salt", "carbonate_salt"];
 const ROTATION_REGIME: &[&str] = &["rapid", "rhines", "slow"];
 const TECTONIC_REGIME: &[&str] = &[
     "mobile_lid",
@@ -2196,6 +2197,23 @@ static NODES: &[NodeDef] = &[
         "PLAN.md 4.3",
     ),
     derived(
+        "tectonics.chaos_fraction",
+        "tectonics",
+        "Chaos fraction",
+        "",
+        1.0,
+        f(0.0, 1.0),
+        &[
+            "interior.tectonic_regime",
+            "interior.ice_shell_thickness",
+            "body.radius",
+            "interior.tidal_flux",
+        ],
+        d::tectonics_chaos_fraction,
+        "Share of a thin shell over an ocean (under 0.02 R) disrupted into chaos (F45): 0.3 x the tidal flux over 50 mW/m², clipped; Europa 0.3. Pin to choose.",
+        "PLAN.md 4.3",
+    ),
+    derived(
         "tectonics.ice_resurfacing_age",
         "tectonics",
         "Ice resurfacing age",
@@ -2271,6 +2289,30 @@ static NODES: &[NodeDef] = &[
         d::cratering_min_diameter,
         "Larger of the atmospheric cut-off and two finishing cells.",
         "",
+    ),
+    derived(
+        "materials.salt",
+        "materials",
+        "Ocean salt end-member",
+        "",
+        1.0,
+        ValueType::Enum(SALT),
+        &["orbit.primary", "orbit.primary_mass"],
+        d::materials_salt,
+        "What an ocean's brines leave on the surface: sulfate and chloride hydrates irradiated brown-red in a Jupiter-class magnetosphere (a parent over 1e27 kg), sodium carbonates white elsewhere (Ceres's faculae, Enceladus's stripes).",
+        "PLAN.md 4.3",
+    ),
+    derived(
+        "surface.trailing_irradiation",
+        "surface",
+        "Trailing hemisphere irradiation",
+        "",
+        1.0,
+        f(0.0, 1.0),
+        &["rotation.mode", "orbit.primary", "orbit.primary_mass"],
+        d::surface_trailing_irradiation,
+        "How much magnetospheric plasma a locked moon's trailing hemisphere takes (F48): 1 in a Jupiter-class magnetosphere, 0.3 in a Saturn-class one, else 0. Pin to choose.",
+        "PLAN.md 4.3",
     ),
     derived(
         "cratering.retention_age",
@@ -2371,6 +2413,39 @@ static NODES: &[NodeDef] = &[
         d::volcanism_dome_count,
         "Steep-sided flat-topped domes on an episodic lid's plains, 20 to 60 km across: about 150 on Venus. Pin to choose.",
         "PLAN.md 4.4",
+    ),
+    derived(
+        "volcanism.cryodome_count",
+        "volcanism",
+        "Cryovolcanic domes",
+        "",
+        1.0,
+        f(0.0, 1e5),
+        &[
+            "interior.tectonic_regime",
+            "body.radius",
+            "volcanism.rate",
+            "body.age",
+        ],
+        d::volcanism_cryodome_count,
+        "Domes of brine-rich ice a shell over rock has built over its life (F46): 0.7 of the ice magma budget in domes of 1e-6 to 3e-5 of the radius cubed; Ceres about 20, most of them relaxed away. Informative; the loop draws them from the budget.",
+        "PLAN.md 4.3",
+    ),
+    derived(
+        "volcanism.plume_fallout_rate",
+        "volcanism",
+        "Plume fallout rate",
+        "m/Gyr",
+        1.0,
+        f(0.0, 1e7),
+        &[
+            "tectonics.polar_thinning",
+            "tectonics.ice_crack_density",
+            "interior.tidal_flux",
+        ],
+        d::volcanism_plume_fallout_rate,
+        "Fresh ice a polar plume lays down at its pole (F47): 1e5 m/Gyr (0.1 mm/yr) at a focused tidal flux of 20 mW/m², where the polar terrain is active and the shell cracks; Enceladus 9e4. Pin to choose.",
+        "PLAN.md 4.3",
     ),
     derived(
         "volcanism.province_count",

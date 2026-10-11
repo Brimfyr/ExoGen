@@ -1,6 +1,6 @@
 version = "0.0.1"
 name = "Ceres"
-description = "Reference body. Largest asteroid; ice-rich interior under a dark carbonaceous surface. Bright salt deposits are Phase 4."
+description = "Reference body. Dark dwarf planet with an ice-rich crust over rock; domes of brine-rich ice and white salts in the floors of its deep young craters."
 
 [values]
 "orbit.semi_major_axis" = 4.1402e11
