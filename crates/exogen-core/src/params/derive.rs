@@ -1569,6 +1569,13 @@ pub fn tectonics_canyon_count(c: &Ctx) -> Value {
     }
 }
 
+pub fn volcanism_province_count(c: &Ctx) -> Value {
+    (c.f64("body.radius") / MAGMA_PROVINCE_RADIUS_PER)
+        .round()
+        .clamp(1.0, 3.0)
+        .into()
+}
+
 pub fn volcanism_shield_count(c: &Ctx) -> Value {
     if c.f64("tectonics.plume_rise_count") >= 1.0 {
         SHIELDS_PER_RISE.into()

@@ -93,8 +93,10 @@ pub struct LoopOutput {
     pub thermal: ThermalHistory,
     /// Contraction scarps emplaced inside the loop, in order of formation.
     pub scarps: Vec<tectonics::ScarpRecord>,
-    /// Lava floods emplaced inside the loop, in order of formation.
+    /// Lava floods emplaced inside the loop, in order of formation, and the magmatic
+    /// provinces their vents favoured.
     pub floods: Vec<volcanism::FloodRecord>,
+    pub provinces: Vec<volcanism::Province>,
     /// Wrinkle ridges laid out on the plains at the end of the loop.
     pub ridges: Vec<ridges::RidgeRecord>,
     /// Plume rises, their shields, canyons and graben.
@@ -151,8 +153,9 @@ pub struct FinishOutput {
     pub replayed_count: usize,
     /// Scarps present at the epoch.
     pub scarps: Vec<tectonics::ScarpRecord>,
-    /// Floods present at the epoch.
+    /// Floods present at the epoch, and the magmatic provinces.
     pub floods: Vec<volcanism::FloodRecord>,
+    pub provinces: Vec<volcanism::Province>,
     /// Wrinkle ridges present at the epoch.
     pub ridges: Vec<ridges::RidgeRecord>,
     /// Plume rises, and the shields, canyons and graben present at the epoch.
@@ -329,8 +332,13 @@ pub fn run_coarse_loop(
     let mut layers = crust.init();
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
-    let mut floods = volcanism::FloodProcess::new(graph, grid, &thermal);
     let mut plume = plume::PlumeProcess::new(graph, grid);
+    let mut floods = volcanism::FloodProcess::new(
+        graph,
+        grid,
+        &thermal,
+        plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
+    );
     let mut episodic = episodic::EpisodicProcess::new(graph, grid);
     let mut io = io::IoProcess::new(graph, grid);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
@@ -433,7 +441,7 @@ pub fn run_coarse_loop(
         Some(p) => (p.rises, p.shields, p.canyons, p.graben, Some(p.load)),
         None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
     };
-    let (floods, ridges) = match floods {
+    let (floods, ridges, provinces) = match floods {
         Some(f) => {
             // The ridges follow the lava thickness and, around a rise, its load.
             let mut field = f.thickness.clone();
@@ -451,9 +459,9 @@ pub fn run_coarse_loop(
                 age,
                 graph.f64("seed.volcanism") as u64,
             );
-            (f.records, ridges)
+            (f.records, ridges, f.provinces)
         }
-        None => (Vec::new(), Vec::new()),
+        None => (Vec::new(), Vec::new(), Vec::new()),
     };
     Ok(LoopOutput {
         grid,
@@ -465,6 +473,7 @@ pub fn run_coarse_loop(
         thermal,
         scarps,
         floods,
+        provinces,
         ridges,
         rises,
         shields,
@@ -1207,6 +1216,7 @@ pub fn finish(
         replayed_count,
         scarps,
         floods,
+        provinces: loop_output.provinces.clone(),
         ridges,
         rises: loop_output.rises.clone(),
         shields,
@@ -1780,22 +1790,31 @@ mod tests {
         let at = |d: [f64; 3]| height[grid.index(grid.locate(d).0)] as f64;
         let rise = &lo.rises[0];
         let (east, north) = crate::geom::local_basis(rise.center);
-        // The rise stands above the ground beyond it.
-        let far: f64 = (0..8)
-            .map(|k| {
-                let phi = k as f64 * std::f64::consts::FRAC_PI_4;
-                at(crate::geom::offset(
-                    rise.center,
-                    east,
-                    north,
-                    1.2 * rise.radius / radius,
-                    phi,
-                ))
-            })
-            .sum::<f64>()
-            / 8.0;
-        let top = at(rise.center);
-        assert!(top - far > 0.3 * rise.height, "rise {top} vs far {far}");
+        // The rise stands above the ground beyond it: the mean over its crown against the
+        // mean round a ring beyond its foot, many samples each so that craters, shields
+        // and the canyon do not decide it.
+        let ring_mean = |frac: f64, n: usize| -> f64 {
+            (0..n)
+                .map(|k| {
+                    let phi = k as f64 * 2.0 * std::f64::consts::PI / n as f64;
+                    at(crate::geom::offset(
+                        rise.center,
+                        east,
+                        north,
+                        frac * rise.radius / radius,
+                        phi,
+                    ))
+                })
+                .sum::<f64>()
+                / n as f64
+        };
+        let crown = 0.5 * (ring_mean(0.1, 16) + ring_mean(0.2, 32));
+        let far = ring_mean(1.2, 64);
+        assert!(
+            crown - far > 0.3 * rise.height,
+            "crown {crown} vs far {far}, rise {}",
+            rise.height
+        );
         // The tallest shield reaches most of its height above the dome around it.
         let big = lo
             .shields

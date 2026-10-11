@@ -2262,6 +2262,18 @@ static NODES: &[NodeDef] = &[
         "PLAN.md 4.4",
     ),
     derived(
+        "volcanism.province_count",
+        "volcanism",
+        "Magmatic provinces",
+        "",
+        1.0,
+        f(0.0, 6.0),
+        &["body.radius"],
+        d::volcanism_province_count,
+        "Regions of a more fertile mantle that the eruptions favour, one per 2,000 km of radius; the plume rises count first, then random regions: the Moon's Procellarum terrane, Mercury's northern plains, Tharsis. Pin to choose.",
+        "PLAN.md 4.4",
+    ),
+    derived(
         "volcanism.shield_count",
         "volcanism",
         "Shield volcanoes",

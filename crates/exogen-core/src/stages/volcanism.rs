@@ -20,7 +20,7 @@ use std::collections::{BinaryHeap, HashMap};
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput};
 use crate::fields::{Field, LayerSet};
-use crate::geom::normalize;
+use crate::geom::{angle_between, normalize};
 use crate::grid::CubeSphere;
 use crate::grid::projection::{SparseField, sample_bilinear_sparse};
 use crate::noise::GradientNoise;
@@ -30,7 +30,7 @@ use crate::stages::deform::Deformation;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
 #[derive(Clone, Copy, Debug)]
@@ -147,6 +147,14 @@ impl Ord for Key {
 }
 
 /// Flood volcanism through the coarse loop.
+/// A magmatic province: a region of the mantle more fertile than the rest.
+#[derive(Clone, Debug)]
+pub struct Province {
+    pub center: [f64; 3],
+    /// Gaussian angular radius, rad.
+    pub sigma: f64,
+}
+
 pub struct FloodProcess {
     grid: CubeSphere,
     body_radius: f64,
@@ -154,6 +162,9 @@ pub struct FloodProcess {
     rng: Rng,
     /// Cell areas, m².
     areas: Vec<f64>,
+    /// Magmatic provinces and their weight per coarse cell, which the vents favour.
+    pub provinces: Vec<Province>,
+    province_weight: Vec<f64>,
     /// Cumulative lava thickness and the time of the last flood, per coarse cell, for
     /// laying out the ridges at the end.
     pub thickness: Vec<f32>,
@@ -173,7 +184,14 @@ const NEIGHBOURS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
 impl FloodProcess {
     /// None for regimes whose volcanism is handled elsewhere.
-    pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
+    /// The plume rises are provinces in their own right: a plume head is the most
+    /// fertile mantle there is, and its rise draws the eruptions before any other region.
+    pub fn new(
+        graph: &ParamGraph,
+        grid: CubeSphere,
+        thermal: &ThermalHistory,
+        rises: &[crate::stages::plume::Rise],
+    ) -> Option<Self> {
         if crate::stages::io::is_io_regime(graph) {
             return None;
         }
@@ -188,12 +206,40 @@ impl FloodProcess {
         let areas = (0..grid.cell_count())
             .map(|k| grid.cell_area(grid.cell(k)) * body_radius * body_radius)
             .collect();
+        let rng = Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x7F10_0D5A);
+        let n_provinces = graph.f64("volcanism.province_count").round().max(0.0) as usize;
+        let mut provinces: Vec<Province> = rises
+            .iter()
+            .map(|r| Province {
+                center: r.center,
+                sigma: r.radius / body_radius,
+            })
+            .collect();
+        for k in provinces.len()..n_provinces {
+            provinces.push(Province {
+                center: rng.unit_direction(0xB10 + k as u64, 1),
+                sigma: MAGMA_PROVINCE_SIGMA_RAD,
+            });
+        }
+        let province_weight = (0..grid.cell_count())
+            .map(|k| {
+                if provinces.is_empty() {
+                    return 1.0;
+                }
+                let d = grid.center(grid.cell(k));
+                provinces.iter().fold(MAGMA_PROVINCE_FLOOR, |w, p| {
+                    w + (-(angle_between(p.center, d) / p.sigma).powi(2)).exp()
+                })
+            })
+            .collect();
         Some(Self {
             grid,
             body_radius,
             thermal: thermal.clone(),
-            rng: Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x7F10_0D5A),
+            rng,
             areas,
+            provinces,
+            province_weight,
             thickness: vec![0.0; grid.cell_count()],
             last_time: vec![f32::NEG_INFINITY; grid.cell_count()],
             visited: vec![0; grid.cell_count()],
@@ -261,6 +307,7 @@ impl FloodProcess {
                         .clamp(-4.0, 4.0))
                     .exp()
                     * self.areas[k]
+                    * self.province_weight[k]
                     * boost.map_or(1.0, |b| b[k]);
                 acc += w;
                 acc
@@ -716,7 +763,7 @@ mod tests {
     fn process(grid: CubeSphere) -> FloodProcess {
         let (g, _) = preset("Moon").unwrap().to_graph();
         let thermal = ThermalHistory::from_graph(&g);
-        let mut p = FloodProcess::new(&g, grid, &thermal).unwrap();
+        let mut p = FloodProcess::new(&g, grid, &thermal, &[]).unwrap();
         p.body_radius = 1_000e3;
         p.areas = (0..grid.cell_count())
             .map(|k| grid.cell_area(grid.cell(k)) * 1e12)
@@ -732,7 +779,7 @@ mod tests {
             let (g, _) = preset(name).unwrap().to_graph();
             let thermal = ThermalHistory::from_graph(&g);
             let grid = CubeSphere::new(8);
-            let p = FloodProcess::new(&g, grid, &thermal).unwrap();
+            let p = FloodProcess::new(&g, grid, &thermal, &[]).unwrap();
             println!(
                 "{name}: t  lithosphere_km  magma_m3_s  strain  eruptive  budget_km3_per_0.1Gyr"
             );

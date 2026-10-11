@@ -76,6 +76,13 @@ pub struct FloodInfo {
 }
 
 #[derive(Serialize)]
+pub struct ProvinceInfo {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+    pub radius_deg: f64,
+}
+
+#[derive(Serialize)]
 pub struct RiseInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
@@ -211,9 +218,11 @@ pub struct Sidecar {
     pub replayed_crater_count: usize,
     /// Contraction scarps present at the epoch.
     pub scarps: Vec<ScarpInfo>,
-    /// Lava floods present at the epoch: how many, and the largest by area.
+    /// Lava floods present at the epoch: how many, and the largest by area; and the
+    /// magmatic provinces the vents favoured.
     pub flood_count: usize,
     pub floods: Vec<FloodInfo>,
+    pub magma_provinces: Vec<ProvinceInfo>,
     /// Wrinkle ridges present at the epoch.
     pub ridges: Vec<RidgeInfo>,
     /// Plume rises, and the shields, canyons and graben present at the epoch.
@@ -575,6 +584,18 @@ pub fn export(
             })
             .collect(),
         flood_count: out.floods.len(),
+        magma_provinces: out
+            .provinces
+            .iter()
+            .map(|p| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(p.center);
+                ProvinceInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    radius_deg: p.sigma.to_degrees(),
+                }
+            })
+            .collect(),
         floods: largest_floods(&out.floods, SIDECAR_FLOOD_LIMIT)
             .into_iter()
             .map(|f| {

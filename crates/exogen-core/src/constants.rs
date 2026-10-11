@@ -223,6 +223,14 @@ pub const VOLCANISM_ASCENT_LITHOSPHERE: f64 = 400e3;
 pub const VOLCANISM_ASCENT_WIDTH: f64 = 30e3;
 pub const VOLCANISM_SHUTOFF_STRAIN: f64 = 1.2e-3;
 pub const VOLCANISM_VENT_CRUST_SCALE: f64 = 10e3;
+/// Magmatic provinces: the mantle is not uniformly fertile. The cumulate pile a magma
+/// ocean leaves concentrates the heat-producing elements in a few regions, and the
+/// eruptions favour them: the Moon's Procellarum KREEP Terrane holds most of the maria,
+/// Mercury's northern plains most of its smooth plains. One province per this much
+/// radius, their Gaussian angular radius, and the weight of the rest of the body.
+pub const MAGMA_PROVINCE_RADIUS_PER: f64 = 2.0e6;
+pub const MAGMA_PROVINCE_SIGMA_RAD: f64 = 0.7;
+pub const MAGMA_PROVINCE_FLOOR: f64 = 0.03;
 pub const VOLCANISM_VENT_HEIGHT_SCALE: f64 = 2e3;
 pub const VOLCANISM_EVENT_VOLUME: (f64, f64) = (1e11, 1e13);
 /// Cells one flood's lake may take in, and the thickness of a flow, m: a lake spreads no
