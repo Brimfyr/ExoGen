@@ -1782,7 +1782,8 @@ mod tests {
         let lo = &out.loop_output;
         assert_eq!(lo.rises.len(), 1);
         assert!(lo.shields.len() >= 4, "{} shields", lo.shields.len());
-        assert_eq!(lo.canyons.len(), 1);
+        // One canyon system: the main trough and its en-echelon neighbours.
+        assert_eq!(lo.canyons.len(), 1 + CANYON_SIDE_TROUGHS as usize);
         assert!(lo.graben.len() > 20, "{} graben", lo.graben.len());
         let grid = out.finish.grid;
         let radius = g.f64("body.radius");
@@ -1846,8 +1847,14 @@ mod tests {
             summit - foot > 0.5 * big.height,
             "shield {summit} vs foot {foot}"
         );
-        // The canyon floor lies kilometres below its rims.
-        let canyon = &lo.canyons[0];
+        // The canyon floor lies kilometres below the plateau either side: the main
+        // trough is the longest, and the rims are the highest ground within a few
+        // widths, past the en-echelon troughs beside it.
+        let canyon = lo
+            .canyons
+            .iter()
+            .max_by(|a, b| a.length.total_cmp(&b.length))
+            .unwrap();
         let mid = canyon.midpoint();
         let next = canyon.points[canyon.points.len() / 2 + 1];
         let t = crate::geom::normalize([next[0] - mid[0], next[1] - mid[1], next[2] - mid[2]]);
@@ -1860,7 +1867,13 @@ mod tests {
                 mid[2] + d * n[2],
             ]))
         };
-        let rims = 0.5 * (side(1.0) + side(-1.0));
+        let rim = |sign: f64| {
+            [1.0, 1.5, 2.0, 2.5]
+                .iter()
+                .map(|&s| side(sign * s))
+                .fold(f64::NEG_INFINITY, f64::max)
+        };
+        let rims = 0.5 * (rim(1.0) + rim(-1.0));
         assert!(
             rims - at(mid) > 3_000.0,
             "canyon floor {} rims {rims}",

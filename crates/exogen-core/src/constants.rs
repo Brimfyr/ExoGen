@@ -339,6 +339,15 @@ pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_START_GYR: f64 = 1.0;
 pub const CANYON_END_GYR: f64 = 2.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
+/// En-echelon troughs beside the main canyon: how many, and their lateral offset,
+/// length, width and depth as fractions of the main trough's. Valles Marineris is Ius,
+/// Tithonium, Candor, Ophir and Melas Chasmata beside and overlapping Coprates, with
+/// plateau remnants between them.
+pub const CANYON_SIDE_TROUGHS: u64 = 3;
+pub const CANYON_SIDE_OFFSET: (f64, f64) = (0.7, 1.3);
+pub const CANYON_SIDE_LENGTH: (f64, f64) = (0.25, 0.5);
+pub const CANYON_SIDE_WIDTH: (f64, f64) = (0.5, 0.8);
+pub const CANYON_SIDE_DEPTH: (f64, f64) = (0.6, 0.9);
 pub const GRABEN_PER_RISE: f64 = 60.0;
 pub const GRABEN_START_FRACTION: (f64, f64) = (0.35, 1.0);
 pub const GRABEN_LENGTH: (f64, f64) = (200e3, 1_500e3);

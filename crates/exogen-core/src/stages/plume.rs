@@ -27,7 +27,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::UNIT_LAVA;
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -325,16 +325,45 @@ impl PlumeProcess {
                     &rng,
                     draw,
                 );
+                let width = CANYON_WIDTH_FRACTION * 2.0 * rise.radius;
+                let depth = CANYON_DEPTH_FRACTION * rise.height;
                 canyons.push(Trough {
-                    points,
+                    points: points.clone(),
                     spacing: 0.5 * cell,
                     length,
-                    width: CANYON_WIDTH_FRACTION * 2.0 * rise.radius,
-                    depth: CANYON_DEPTH_FRACTION * rise.height,
+                    width,
+                    depth,
                     start_gyr: CANYON_START_GYR,
                     end_gyr: CANYON_END_GYR,
                     id: k,
                 });
+                // En-echelon troughs beside the main one: parallel, offset to either
+                // side, each along part of its length, with plateau remnants between.
+                let n_points = points.len();
+                for j in 0..CANYON_SIDE_TROUGHS {
+                    let sd = draw + 1 + j;
+                    let side = if rng.uniform(sd, 1) < 0.5 { -1.0 } else { 1.0 };
+                    let (o_lo, o_hi) = CANYON_SIDE_OFFSET;
+                    let lateral = side * width * (o_lo + (o_hi - o_lo) * rng.uniform(sd, 2));
+                    let (f_lo, f_hi) = CANYON_SIDE_LENGTH;
+                    let span =
+                        ((f_lo + (f_hi - f_lo) * rng.uniform(sd, 3)) * n_points as f64) as usize;
+                    let span = span.clamp(2, n_points);
+                    let i0 = ((n_points - span) as f64 * rng.uniform(sd, 4)) as usize;
+                    let (w_lo, w_hi) = CANYON_SIDE_WIDTH;
+                    let (d_lo, d_hi) = CANYON_SIDE_DEPTH;
+                    canyons.push(Trough {
+                        points: offset_trace(&points[i0..i0 + span], lateral, body_radius),
+                        spacing: 0.5 * cell,
+                        length: span as f64 * 0.5 * cell,
+                        width: width * (w_lo + (w_hi - w_lo) * rng.uniform(sd, 5)),
+                        depth: depth * (d_lo + (d_hi - d_lo) * rng.uniform(sd, 6)),
+                        start_gyr: CANYON_START_GYR
+                            + 0.3 * (CANYON_END_GYR - CANYON_START_GYR) * rng.uniform(sd, 7),
+                        end_gyr: CANYON_END_GYR,
+                        id: 100 + k * 8 + j,
+                    });
+                }
             }
             let n_graben = (GRABEN_PER_RISE * (rise.radius / 2.5e6).clamp(0.5, 2.0)) as u64;
             for k in 0..n_graben {
@@ -481,8 +510,34 @@ impl PlumeProcess {
     }
 }
 
+/// A trace shifted sideways by a distance: each point moved along the local normal.
+fn offset_trace(points: &[[f64; 3]], lateral: f64, body_radius: f64) -> Vec<[f64; 3]> {
+    let n = points.len();
+    (0..n)
+        .map(|k| {
+            let p = points[k];
+            let prev = points[k.saturating_sub(1)];
+            let next = points[(k + 1).min(n - 1)];
+            let chord = [next[0] - prev[0], next[1] - prev[1], next[2] - prev[2]];
+            let radial = dot(chord, p);
+            let t = normalize([
+                chord[0] - radial * p[0],
+                chord[1] - radial * p[1],
+                chord[2] - radial * p[2],
+            ]);
+            let normal = normalize(cross(p, t));
+            let s = lateral / body_radius;
+            normalize([
+                p[0] + s * normal[0],
+                p[1] + s * normal[1],
+                p[2] + s * normal[2],
+            ])
+        })
+        .collect()
+}
+
 /// A trace running outward from `start`, away from `center`, with a slow wobble.
-fn radial_trace(
+pub(crate) fn radial_trace(
     start: [f64; 3],
     center: [f64; 3],
     length: f64,
@@ -494,7 +549,7 @@ fn radial_trace(
     let n = (length / spacing).ceil().max(2.0) as usize;
     let mut points = Vec::with_capacity(n + 1);
     let mut p = start;
-    let phase = 2.0 * std::f64::consts::PI * rng.uniform(draw, 7);
+    let noise = GradientNoise::new(draw ^ 0x7A11_CE00);
     let turn_scale = TROUGH_WOBBLE_DEG.to_radians() * (0.5 + rng.uniform(draw, 8));
     for i in 0..=n {
         points.push(p);
@@ -510,8 +565,9 @@ fn radial_trace(
             out = east;
         }
         let s = i as f64 * spacing;
-        let turn =
-            turn_scale * (2.0 * std::f64::consts::PI * s / TROUGH_WOBBLE_LENGTH + phase).sin();
+        let turn = turn_scale
+            * (noise.fbm([s / TROUGH_WOBBLE_LENGTH, 0.5, 0.25], 1.0, 2, 2.0, 0.5) / 0.6)
+                .clamp(-1.0, 1.0);
         let side = normalize(cross(p, out));
         let heading = normalize([
             out[0] * turn.cos() + side[0] * turn.sin(),
@@ -541,7 +597,9 @@ struct Frame {
     p: [f64; 3],
     t: [f64; 3],
     normal: [f64; 3],
+    /// Depth and width factors towards the ends of the trace.
     taper: f64,
+    narrow: f64,
     pulse: f64,
 }
 
@@ -557,6 +615,7 @@ struct TroughSize {
 impl TroughFrames {
     pub fn new(trough: &Trough) -> Self {
         let n = trough.points.len();
+        let noise = GradientNoise::new(trough.id ^ 0xCA17_0000);
         let mut frames = Vec::with_capacity(n);
         for k in 0..n {
             let p = trough.points[k];
@@ -580,23 +639,33 @@ impl TroughFrames {
             if taper <= 0.0 {
                 continue;
             }
+            let narrow = taper.sqrt();
             let taper = taper.powf(TROUGH_TAPER_POWER);
-            // Chasmata: the width pulses along the trace, and each wall is scalloped.
-            let pulse = 1.0
+            // Chasmata: the width swells and narrows along the trace, and each wall is
+            // scalloped.
+            let pulse = (1.0
                 + TROUGH_WIDTH_PULSE
-                    * (2.0 * std::f64::consts::PI * along_trace / TROUGH_PULSE_LENGTH).sin();
+                    * (noise.fbm(
+                        [along_trace / TROUGH_PULSE_LENGTH, 0.37, 0.61],
+                        1.0,
+                        2,
+                        2.0,
+                        0.5,
+                    ) / 0.6))
+                .clamp(0.5, 1.6);
             frames.push(Frame {
                 p,
                 t,
                 normal,
                 taper,
+                narrow,
                 pulse,
             });
         }
         Self {
             frames,
             width: trough.width,
-            noise: GradientNoise::new(trough.id ^ 0xCA17_0000),
+            noise,
         }
     }
 
@@ -649,7 +718,7 @@ impl TroughFrames {
                     2.0,
                     0.5,
                 );
-        let width = size.width * f.pulse * scallop;
+        let width = size.width * f.pulse * scallop * f.narrow;
         let u = f.taper * trough_profile(across, width, size.depth, size.wall, blur);
         Some((along.abs(), u))
     }
