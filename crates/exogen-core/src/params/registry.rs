@@ -2106,7 +2106,7 @@ static NODES: &[NodeDef] = &[
             "tectonics.plume_rise_diameter",
         ],
         d::tectonics_canyon_count,
-        "Graben on a rise wider than 2,000 km that grow into a canyon system by wall collapse (Valles Marineris, Devana Chasma). Pin to choose.",
+        "One per plume rise wider than 2,000 km: Valles Marineris on Tharsis; on an episodic lid a rift zone of three arms radiating from each rise, Devana Chasma through Beta Regio.",
         "PLAN.md 4.3",
     ),
     derived(

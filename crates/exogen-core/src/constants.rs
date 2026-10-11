@@ -330,6 +330,11 @@ pub const SHIELD_FLOW_TEXTURE_LENGTH: f64 = 15e3;
 /// this length (chasmata); and the floor tapers to the ends with this power.
 pub const CANYON_MIN_RISE_DIAMETER: f64 = 2.0e6;
 pub const CANYON_LENGTH_FRACTION: f64 = 0.8;
+/// On an episodic lid the canyon system is a rift zone: arms radiating from the rise
+/// (Devana Chasma through Beta Regio; Ganis, Dali and Parga Chasmata from Atla), each as
+/// long as the rise is wide, carved after the resurfacing event.
+pub const RIFT_ARMS_EPISODIC: u64 = 3;
+pub const CANYON_LENGTH_FRACTION_EPISODIC: f64 = 1.0;
 pub const CANYON_START_FRACTION: f64 = 0.6;
 /// Width as a fraction of the rise diameter and depth as a fraction of the rise height
 /// (Valles Marineris: 200 km wide and 7 km deep on a 5,000 km, 7 km rise; Devana
@@ -372,6 +377,14 @@ pub const TESSERA_SMOOTHING_PASSES: usize = 20;
 pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
 pub const TESSERA_RELIEF: f64 = 1_000.0;
 pub const TESSERA_FABRIC_LENGTH: f64 = 30e3;
+/// Broader folds under the fine fabric, as the tessera's ridge belts are.
+pub const TESSERA_FOLD_RELIEF: f64 = 800.0;
+pub const TESSERA_FOLD_LENGTH: f64 = 120e3;
+/// Tessera stand as crustal plateaus: thickened crust held up isostatically, 1 to 4 km
+/// above the plains (Ovda, Thetis, Alpha Regio). The uplift ramps in over a width of the
+/// smoothed-height score about the tessera threshold, so the plateau edge is a slope.
+pub const TESSERA_PLATEAU_UPLIFT: f64 = 2_000.0;
+pub const TESSERA_EDGE_WIDTH: f64 = 300.0;
 pub const EPISODIC_FILL_FRACTION: f64 = 0.7;
 pub const EPISODIC_VENEER: f64 = 20.0;
 pub const EPISODIC_POST_EVENT_FRACTION: f64 = 0.02;
@@ -394,6 +407,14 @@ pub const CORONA_RIM_WOBBLE: f64 = 0.3;
 pub const CORONA_FRACTURE_RELIEF: f64 = 0.15;
 pub const CORONA_FRACTURE_SPACING: f64 = 0.08;
 pub const DOMES_PER_AREA: f64 = 3.3e-13;
+/// Novae: radial fracture systems round a share of the coronae, which with the rises'
+/// graben give Venus its spidery fracture belts. Fractures per nova, their length as a
+/// fraction of the corona radius, width and depth.
+pub const NOVA_FRACTION: f64 = 0.3;
+pub const NOVA_FRACTURES: (u64, u64) = (6, 14);
+pub const NOVA_LENGTH: (f64, f64) = (1.0, 3.0);
+pub const NOVA_WIDTH: (f64, f64) = (6e3, 15e3);
+pub const NOVA_DEPTH: f64 = 250.0;
 pub const DOME_DIAMETER: (f64, f64) = (20e3, 60e3);
 pub const DOME_HEIGHT: f64 = 800.0;
 pub const DOME_TOP_ROUGHNESS: f64 = 0.08;

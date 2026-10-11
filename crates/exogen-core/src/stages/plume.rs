@@ -209,6 +209,15 @@ impl PlumeProcess {
             return None;
         }
         let body_radius = graph.f64("body.radius");
+        let episodic = graph.str("interior.tectonic_regime") == "episodic_lid";
+        // On an episodic lid the rifts and graben come after the event, which would
+        // otherwise fill them; on a stagnant lid they follow the dome.
+        let age = graph.f64("body.age");
+        let event_time = if episodic {
+            (age - graph.f64("tectonics.resurfacing_event_age")).max(0.0)
+        } else {
+            0.0
+        };
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
         let rise_radius = 0.5 * graph.f64("tectonics.plume_rise_diameter");
         let rise_height = graph.f64("tectonics.plume_rise_height");
@@ -303,12 +312,31 @@ impl PlumeProcess {
         let canyon_count = graph.f64("tectonics.canyon_system_count").round() as usize;
         let mut canyons = Vec::new();
         let mut graben = Vec::new();
-        if let Some(rise) = rises.first() {
+        for (ri, rise) in rises.iter().enumerate() {
             let (east, north) = local_basis(rise.center);
-            for k in 0..canyon_count as u64 {
+            // One canyon system per rise that has one, of one arm on a stagnant lid and
+            // several radiating arms on an episodic one; every rise has graben.
+            let arms = if ri < canyon_count {
+                if episodic { RIFT_ARMS_EPISODIC } else { 1 }
+            } else {
+                0
+            };
+            let (canyon_start, canyon_end) = if episodic {
+                (event_time, age)
+            } else {
+                (CANYON_START_GYR, CANYON_END_GYR)
+            };
+            for a in 0..arms {
+                let k = ri as u64 * 8 + a;
                 let draw = 5_000 + k * 8;
-                let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 1);
-                let length = CANYON_LENGTH_FRACTION * 2.0 * rise.radius;
+                let phi =
+                    2.0 * std::f64::consts::PI * (a as f64 + rng.uniform(draw, 1)) / arms as f64;
+                let length_fraction = if episodic {
+                    CANYON_LENGTH_FRACTION_EPISODIC
+                } else {
+                    CANYON_LENGTH_FRACTION
+                };
+                let length = length_fraction * 2.0 * rise.radius;
                 let start = offset(
                     rise.center,
                     east,
@@ -333,8 +361,8 @@ impl PlumeProcess {
                     length,
                     width,
                     depth,
-                    start_gyr: CANYON_START_GYR,
-                    end_gyr: CANYON_END_GYR,
+                    start_gyr: canyon_start,
+                    end_gyr: canyon_end,
                     id: k,
                 });
                 // En-echelon troughs beside the main one: parallel, offset to either
@@ -358,16 +386,16 @@ impl PlumeProcess {
                         length: span as f64 * 0.5 * cell,
                         width: width * (w_lo + (w_hi - w_lo) * rng.uniform(sd, 5)),
                         depth: depth * (d_lo + (d_hi - d_lo) * rng.uniform(sd, 6)),
-                        start_gyr: CANYON_START_GYR
-                            + 0.3 * (CANYON_END_GYR - CANYON_START_GYR) * rng.uniform(sd, 7),
-                        end_gyr: CANYON_END_GYR,
+                        start_gyr: canyon_start
+                            + 0.3 * (canyon_end - canyon_start) * rng.uniform(sd, 7),
+                        end_gyr: canyon_end,
                         id: 100 + k * 8 + j,
                     });
                 }
             }
             let n_graben = (GRABEN_PER_RISE * (rise.radius / 2.5e6).clamp(0.5, 2.0)) as u64;
             for k in 0..n_graben {
-                let draw = 9_000 + k * 8;
+                let draw = 9_000 + ri as u64 * 4_096 + k * 8;
                 let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 1);
                 let r0 = rise.radius
                     * (GRABEN_START_FRACTION.0
@@ -381,7 +409,11 @@ impl PlumeProcess {
                     radial_trace(start, rise.center, length, spacing, body_radius, &rng, draw);
                 let (w_lo, w_hi) = GRABEN_WIDTH;
                 let width = w_lo * (w_hi / w_lo).powf(rng.uniform(draw, 4));
-                let time = rise.start_gyr + (rise.end_gyr - rise.start_gyr) * rng.uniform(draw, 5);
+                let time = if episodic {
+                    event_time + (age - event_time) * rng.uniform(draw, 5)
+                } else {
+                    rise.start_gyr + (rise.end_gyr - rise.start_gyr) * rng.uniform(draw, 5)
+                };
                 graben.push(Trough {
                     points,
                     spacing,
@@ -390,7 +422,7 @@ impl PlumeProcess {
                     depth: GRABEN_DEPTH * (0.5 + rng.uniform(draw, 6)),
                     start_gyr: time,
                     end_gyr: time,
-                    id: 1_000 + k,
+                    id: 1_000 + ri as u64 * 1_000 + k,
                 });
             }
         }
@@ -805,7 +837,6 @@ pub fn trough_compute(
     let ages = layers.surface_age.as_slice();
     let cell = grid.delta() * body_radius;
     let fine = trough_depths(grid, body_radius, trough, 1.0, cell, blur_fine, stamper);
-    let blur_coarse = coarse.map(|c| c.1);
     let coarse: HashMap<usize, f64> = match coarse {
         Some((coarse_cell, blur)) => {
             trough_depths(grid, body_radius, trough, 1.0, coarse_cell, blur, stamper)
@@ -820,20 +851,14 @@ pub fn trough_compute(
             let smeared = coarse.get(&idx).copied().unwrap_or(0.0);
             // How deep inside the trough this cell is, 0 on the rim to 1 on the floor.
             let inside = (depth / trough.depth.max(1.0)).clamp(0.0, 1.0);
-            let kept = if blur_coarse.is_some() {
-                // The loop carried the trough: keep older fine relief outside the floor.
-                (bedrock[idx] - base[idx]) as f64 * (1.0 - inside)
-            } else {
-                (bedrock[idx] - base[idx]) as f64
-            };
-            let reference = if blur_coarse.is_some() {
-                base[idx] as f64
-            } else {
-                bedrock[idx] as f64
-            };
+            // What the finish has added since the base is kept outside the floor and
+            // removed inside it, as a crater's cavity removes what it cuts. (Taking the
+            // current ground as the reference as well as keeping the difference counted
+            // that difference twice, and overlapping graben doubled each other.)
+            let kept = (bedrock[idx] - base[idx]) as f64 * (1.0 - inside);
             let mut write = CellWrite {
                 idx: idx as u32,
-                bedrock: (reference + kept - (depth - smeared)) as f32,
+                bedrock: (base[idx] as f64 + kept - (depth - smeared)) as f32,
                 surface: false,
                 age: 0.0,
                 unit: 0,

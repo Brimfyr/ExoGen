@@ -1560,10 +1560,8 @@ pub fn tectonics_rise_height(c: &Ctx) -> Value {
 }
 
 pub fn tectonics_canyon_count(c: &Ctx) -> Value {
-    if c.f64("tectonics.plume_rise_count") >= 1.0
-        && c.f64("tectonics.plume_rise_diameter") >= CANYON_MIN_RISE_DIAMETER
-    {
-        1.0.into()
+    if c.f64("tectonics.plume_rise_diameter") >= CANYON_MIN_RISE_DIAMETER {
+        c.f64("tectonics.plume_rise_count").round().into()
     } else {
         0.0.into()
     }

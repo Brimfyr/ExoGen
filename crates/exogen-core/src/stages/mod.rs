@@ -360,7 +360,12 @@ pub fn run_coarse_loop(
             p.step(&mut layers, t0, t1);
         }
         if let Some(e) = &mut episodic
-            && let Some(fill) = e.step(&mut layers, t0, t1)
+            && let Some(fill) = e.step(
+                &mut layers,
+                t0,
+                t1,
+                plume.as_ref().map(|p| p.load.as_slice()),
+            )
             && let Some(f) = &mut floods
         {
             f.note_resurfacing(&fill, e.event_time());
@@ -433,14 +438,16 @@ pub fn run_coarse_loop(
         Some(i) => (i.paterae, i.mountains, i.flows, i.rings),
         None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
     };
-    let (resurfacing, coronae, domes) = match episodic {
-        Some(e) => (e.resurfacing, e.coronae, e.domes),
-        None => (None, Vec::new(), Vec::new()),
+    let (resurfacing, coronae, domes, novae) = match episodic {
+        Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
+        None => (None, Vec::new(), Vec::new(), Vec::new()),
     };
-    let (rises, shields, canyons, graben, load) = match plume {
+    let (rises, shields, canyons, mut graben, load) = match plume {
         Some(p) => (p.rises, p.shields, p.canyons, p.graben, Some(p.load)),
         None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
     };
+    // The novae's fractures are stamped as the graben are.
+    graben.extend(novae);
     let (floods, ridges, provinces) = match floods {
         Some(f) => {
             // The ridges follow the lava thickness and, around a rise, its load.

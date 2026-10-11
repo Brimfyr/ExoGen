@@ -17,16 +17,18 @@ use std::collections::BinaryHeap;
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
+use crate::geom::{local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::deform::Deformation;
+use crate::stages::plume::{Trough, radial_trace};
 use crate::stages::volcanism::LavaSmear;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -166,7 +168,22 @@ pub fn tessera_texture(d: [f64; 3], noise: &GradientNoise, body_radius: f64) -> 
         2.0,
         0.5,
     );
-    TESSERA_RELIEF * (a.max(b) - 0.5)
+    let g = body_radius / TESSERA_FOLD_LENGTH;
+    let fold = noise.ridged(
+        [d[2] * g + 11.0, d[0] * g * 0.5, d[1] * g * 1.2],
+        1.0,
+        2,
+        2.0,
+        0.5,
+    );
+    TESSERA_RELIEF * (a.max(b) - 0.5) + TESSERA_FOLD_RELIEF * (fold - 0.5)
+}
+
+/// The plateau uplift of the tessera at a smoothed-height score, m: full above the
+/// threshold, ramping in over the edge width below it.
+pub fn plateau_lift(score: f32, threshold: f32) -> f32 {
+    let x = ((score - threshold) / (2.0 * TESSERA_EDGE_WIDTH as f32) + 0.5).clamp(0.0, 1.0);
+    TESSERA_PLATEAU_UPLIFT as f32 * x * x * (3.0 - 2.0 * x)
 }
 
 /// The central dome or sag of a corona at a fraction of its radius, m.
@@ -210,6 +227,8 @@ pub struct EpisodicProcess {
     pub resurfacing: Option<Resurfacing>,
     pub coronae: Vec<Corona>,
     pub domes: Vec<Dome>,
+    /// Radial fracture systems round some of the coronae, stamped as graben.
+    pub novae: Vec<Trough>,
     stamper: Stamper,
 }
 
@@ -252,6 +271,39 @@ impl EpisodicProcess {
                 id: 1_000 + k,
             });
         }
+        // Novae: a share of the coronae send fractures radiating out beyond their rims.
+        let cell = grid.delta() * body_radius;
+        let mut novae = Vec::new();
+        for c in &coronae {
+            if rng.uniform(c.id, 7) >= NOVA_FRACTION {
+                continue;
+            }
+            let (east, north) = local_basis(c.center);
+            let (n_lo, n_hi) = NOVA_FRACTURES;
+            let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 8)) as u64;
+            for j in 0..n {
+                let draw = 50_000 + c.id * 16 + j;
+                let phi = 2.0 * std::f64::consts::PI * (j as f64 + rng.uniform(draw, 1)) / n as f64;
+                let r0 = c.radius * (0.3 + 0.6 * rng.uniform(draw, 2));
+                let (l_lo, l_hi) = NOVA_LENGTH;
+                let length = c.radius * (l_lo + (l_hi - l_lo) * rng.uniform(draw, 3));
+                let start = offset(c.center, east, north, r0 / body_radius, phi);
+                let spacing = 0.5 * cell;
+                let points =
+                    radial_trace(start, c.center, length, spacing, body_radius, &rng, draw);
+                let (w_lo, w_hi) = NOVA_WIDTH;
+                novae.push(Trough {
+                    points,
+                    spacing,
+                    length,
+                    width: w_lo * (w_hi / w_lo).powf(rng.uniform(draw, 4)),
+                    depth: NOVA_DEPTH * (0.6 + 0.8 * rng.uniform(draw, 5)),
+                    start_gyr: c.time_gyr,
+                    end_gyr: c.time_gyr,
+                    id: 2_000_000 + draw,
+                });
+            }
+        }
         Some(Self {
             grid,
             body_radius,
@@ -261,6 +313,7 @@ impl EpisodicProcess {
             resurfacing: None,
             coronae,
             domes,
+            novae,
             stamper: Stamper::new(&grid),
         })
     }
@@ -270,15 +323,27 @@ impl EpisodicProcess {
     }
 
     /// Apply what falls in the step: the event, and the coarse part of coronae and domes.
-    /// Returns the event's fill when it happens, for the lava ledger.
-    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64) -> Option<Vec<f32>> {
+    /// Returns the event's fill when it happens, for the lava ledger. The tessera are
+    /// chosen on the height without the plume rises' domes, which are young dynamic
+    /// topography, not the old thick crust.
+    pub fn step(
+        &mut self,
+        layers: &mut LayerSet,
+        t0: f64,
+        t1: f64,
+        dome: Option<&[f32]>,
+    ) -> Option<Vec<f32>> {
         let grid = self.grid;
         let body_radius = self.body_radius;
         let mut event_fill = None;
         if !self.done && self.event_time > t0 && self.event_time <= t1 {
             self.done = true;
             let heights = layers.bedrock.as_slice().to_vec();
-            let score = smooth(&grid, &heights, TESSERA_SMOOTHING_PASSES);
+            let old_crust: Vec<f32> = match dome {
+                Some(l) => heights.iter().zip(l).map(|(h, l)| h - l).collect(),
+                None => heights.clone(),
+            };
+            let score = smooth(&grid, &old_crust, TESSERA_SMOOTHING_PASSES);
             let threshold = upper_quantile(&grid, &score, self.tessera_fraction);
             let filled = fill_depressions(&grid, &heights);
             let n = grid.cell_count();
@@ -292,14 +357,18 @@ impl EpisodicProcess {
                 let melt = layers.melt.as_mut_slice();
                 let cover = layers.cover.as_mut_slice();
                 for k in 0..n {
+                    let lift = plateau_lift(score[k], threshold);
                     if score[k] > threshold {
+                        fill[k] = lift;
+                        bedrock[k] += lift;
                         units[k] = UNIT_TESSERA;
                         ages[k] = ages[k].min(tessera_age);
                         cover[k] = 0.0;
                         continue;
                     }
                     let t = (EPISODIC_FILL_FRACTION as f32 * (filled[k] - heights[k])).max(0.0)
-                        + EPISODIC_VENEER as f32;
+                        + EPISODIC_VENEER as f32
+                        + lift;
                     fill[k] = t;
                     bedrock[k] += t;
                     ages[k] = self.event_time as f32;
@@ -388,11 +457,12 @@ pub fn resurfacing_compute(
         let ground = bedrock[idx] - remaining - later;
         let carry = remaining - own + later;
         let score = sample_bilinear(coarse, &padded_score, d);
+        let lift = plateau_lift(score, rec.threshold);
         if score > rec.threshold {
             let fabric = tessera_texture(d, &noise, body_radius) as f32;
             cells.push(CellWrite {
                 idx: idx as u32,
-                bedrock: ground + fabric + carry,
+                bedrock: ground + lift + fabric + carry,
                 surface: true,
                 age: ages[idx].min(rec.tessera_age),
                 unit: UNIT_TESSERA,
@@ -403,7 +473,8 @@ pub fn resurfacing_compute(
         } else {
             let target = sample_bilinear(coarse, &padded_filled, d);
             let t = (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0)
-                + EPISODIC_VENEER as f32;
+                + EPISODIC_VENEER as f32
+                + lift;
             cells.push(CellWrite {
                 idx: idx as u32,
                 bedrock: ground + t + carry,
