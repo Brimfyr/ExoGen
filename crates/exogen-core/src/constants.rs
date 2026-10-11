@@ -418,67 +418,108 @@ pub const NOVA_DEPTH: f64 = 250.0;
 pub const DOME_DIAMETER: (f64, f64) = (20e3, 60e3);
 pub const DOME_HEIGHT: f64 = 800.0;
 pub const DOME_TOP_ROUGHNESS: f64 = 0.08;
-/// The Io regime (PLAN.md 4.4). Paterae per terawatt of tidal power (Io: some 400 at
-/// 75 TW), the weight of the poles against the equator in placing them, their diameter
-/// range, m, with the draw skewed to small ones by this power, their depth, m, the share
-/// that are active, and their wall width as a fraction of the radius. Mountains per
-/// terawatt (Io: some 150), their diameters and heights, m, the tilt of a block as a
-/// fraction of its height, and the ridged texture's relative amplitude and length.
-/// Flow fields: the share of quiet paterae that still have one, their reach, m, the
-/// lobing of their margins and their thickness, m. Plume rings: the share of active
-/// paterae with one, the ring radius, m, the inner edge of the red deposits and the
-/// outer edge of the white frost as fractions of it, and the wobble of those edges. The
-/// surface's age, Gyr, and the colours: sulfur plains, the reddened poles between these
-/// latitudes, frost patches of this length, m, covering this share, fresh flows, patera
-/// floors, red deposits, white frost and mountain rock, as linear reflectance.
+/// The Io regime: paterae per terawatt of tidal power (Io: some 400), the latitude weight
+/// of the paterae (1 at the equator, this at the poles, as the tidal heat comes out at low
+/// latitudes), their diameters, m, log-uniform and skewed small, their depth, m, the
+/// wall width as a fraction of the radius, the polygon share of a fault-bounded outline
+/// and its noise, the sides of that polygon, and the share of paterae active at a time.
 pub const IO_PATERAE_PER_TW: f64 = 5.4;
 pub const IO_PATERA_POLAR_WEIGHT: f64 = 0.3;
 pub const IO_PATERA_DIAMETER: (f64, f64) = (10e3, 200e3);
 pub const IO_PATERA_SIZE_SKEW: f64 = 2.0;
 pub const IO_PATERA_DEPTH: f64 = 1_200.0;
-pub const IO_PATERA_ACTIVE_FRACTION: f64 = 0.2;
 pub const IO_PATERA_WALL_FRACTION: f64 = 0.08;
+pub const IO_PATERA_POLYGON: f64 = 0.6;
+pub const IO_PATERA_OUTLINE: f64 = 0.12;
+pub const IO_PATERA_SIDES: (u32, u32) = (5, 8);
+pub const IO_PATERA_ACTIVE_FRACTION: f64 = 0.2;
+/// Years since a quiet patera's floor last held a lake, log-uniform, and the time over
+/// which a floor goes from black silicate to a sulfur coat.
+pub const IO_FLOOR_AGE_YR: (f64, f64) = (1.0, 1e6);
+pub const IO_FLOOR_COAT_YR: f64 = 2_000.0;
+/// Mountains: tilted crustal blocks raised by the subsidence of the crust under the
+/// burial, two per terawatt (Io: some 150), their diameters and heights, m, the tilt of a
+/// block as a fraction of its height, elongation up to this aspect ratio, the noise on
+/// the outline as a fraction of the radius, the ridged texture's relative amplitude and
+/// length, and their lifetimes, Gyr: raised and buried in a few hundred million years.
 pub const IO_MOUNTAINS_PER_TW: f64 = 2.0;
 pub const IO_MOUNTAIN_DIAMETER: (f64, f64) = (80e3, 300e3);
 pub const IO_MOUNTAIN_HEIGHT: (f64, f64) = (3e3, 15e3);
 pub const IO_MOUNTAIN_TILT: f64 = 0.5;
-/// Mountain outlines: elongation up to this aspect ratio, and the noise on the outline
-/// as a fraction of the radius.
 pub const IO_MOUNTAIN_ASPECT: f64 = 2.5;
 pub const IO_MOUNTAIN_OUTLINE: f64 = 0.3;
 pub const IO_MOUNTAIN_TEXTURE: f64 = 0.08;
 pub const IO_MOUNTAIN_TEXTURE_LENGTH: f64 = 12e3;
+pub const IO_MOUNTAIN_LIFETIME_GYR: (f64, f64) = (0.1, 0.5);
+/// Flow fields: from every active patera and this share of the quiet ones; their reach,
+/// m, log-uniform; the vent's pool as a fraction of the reach; lobes per field, the
+/// angular spread of a lobe, rad, the lobing of the margins, the softness of the edge as
+/// a fraction of the reach, the thickness, m; lobe ages, years, log-uniform, and the
+/// time over which a flow goes from black to brown under the sulfur rain. A field is a
+/// connected body of this fraction of the reach with the lobes reaching out from it.
 pub const IO_QUIET_FLOW_FRACTION: f64 = 0.15;
 pub const IO_FLOW_REACH: (f64, f64) = (40e3, 300e3);
-pub const IO_FLOW_LOBING: f64 = 0.45;
+pub const IO_FLOW_VENT: f64 = 0.15;
+pub const IO_FLOW_BODY: f64 = 0.25;
+pub const IO_FLOW_LOBES: (u32, u32) = (4, 10);
+pub const IO_FLOW_SPREAD: (f64, f64) = (0.4, 1.0);
+pub const IO_FLOW_LOBING: f64 = 0.3;
+pub const IO_FLOW_EDGE: f64 = 0.08;
 pub const IO_FLOW_THICKNESS: f64 = 20.0;
-/// Plumes: the share of the active paterae with a plume ring; the rings' radii; and the
-/// one giant, Pele-class plume, whose ring is red sulfur 1,200 to 1,400 km across. The
-/// smaller, Prometheus-class rings are mostly white frost; the giant's is mostly red,
-/// each with a little of the other.
-pub const IO_PLUME_FRACTION: f64 = 0.12;
-pub const IO_PLUME_RING_RADIUS: (f64, f64) = (80e3, 250e3);
-pub const IO_GIANT_RING_RADIUS: (f64, f64) = (550e3, 700e3);
-pub const IO_GIANT_RING_WHITE: f64 = 0.35;
-pub const IO_SMALL_RING_RED: f64 = 0.35;
-pub const IO_RING_RED_INNER: f64 = 0.55;
-pub const IO_RING_WHITE_OUTER: f64 = 1.3;
+pub const IO_FLOW_AGE_YR: (f64, f64) = (1.0, 3e5);
+pub const IO_FLOW_DARK_YR: f64 = 150.0;
+/// Plumes: the share of centres that are gas-rich, Pele-class, and the share of active
+/// paterae of each class with a plume at a time; the eruption speeds of each class, m/s,
+/// whose ballistic range v²/g is the ring radius (Pele's ring 1,200 to 1,400 km across
+/// from about a kilometre a second in Io's gravity; Prometheus-class rings a few hundred
+/// kilometres from half that), with log-normal scatter; the ring's width and the inner
+/// fall as fractions of the radius, a Pele-class plume leaving mostly the ring and a
+/// Prometheus-class one filling its disc; the frost share of a Pele-class deposit and
+/// the red share of a Prometheus-class one; the wobble of the ring and the mottling of
+/// the fallout; years since a quiet centre's last plume, log-uniform; the burial time of
+/// frost fallout, longer by this factor where the cold keeps the frost; and the fading
+/// time of red sulfur, which Surt's and Tvashtar's rings lost within a couple of years.
+pub const IO_PELE_CLASS_FRACTION: f64 = 0.05;
+pub const IO_PLUME_FRACTION_PELE: f64 = 0.5;
+pub const IO_PLUME_FRACTION_PROMETHEUS: f64 = 0.1;
+pub const IO_PLUME_SPEED_PELE: f64 = 1_000.0;
+pub const IO_PLUME_SPEED_PROMETHEUS: f64 = 500.0;
+pub const IO_PLUME_SPEED_SCATTER: f64 = 0.25;
+pub const IO_RING_WIDTH: f64 = 0.25;
+pub const IO_RING_INNER_PELE: f64 = 0.3;
+pub const IO_RING_INNER_PROMETHEUS: f64 = 0.8;
+pub const IO_PELE_FROST: f64 = 0.25;
+pub const IO_PROMETHEUS_RED: f64 = 0.15;
 pub const IO_RING_EDGE_WOBBLE: f64 = 0.08;
-/// Deposits and flows are blended over the plains by a coverage: how soft their edges
-/// are as a fraction of the ring radius or flow reach, and how mottled the deposits.
-pub const IO_DEPOSIT_EDGE: f64 = 0.12;
 pub const IO_DEPOSIT_MOTTLING: f64 = 0.35;
+pub const IO_PLUME_AGE_YR: (f64, f64) = (10.0, 1e6);
+pub const IO_FALLOUT_FADE_YR: f64 = 100.0;
+pub const IO_FROST_COLD_FACTOR: f64 = 3.0;
+pub const IO_RED_FADE_YR: f64 = 2.0;
 pub const IO_SURFACE_AGE_GYR: f64 = 1e-4;
+/// Slack on a feature's birth and death against the step times' rounding, Gyr.
+pub const IO_ALIVE_TOLERANCE_GYR: f64 = 1e-6;
+/// Colours, linear reflectance: sulfur plains, sulfur reddened by radiation in the
+/// cold, SO2 frost, fresh silicate, an old flow under its sulfur coat, a quiet patera
+/// floor, a plume's red sulfur and bare mountain rock. The global frost fall covers this
+/// share where it survives the day; the day's peak temperature at which half of it
+/// survives and the width of that transition, K (SO2 sublimes fast above about 120 K);
+/// the temperature below which radiation keeps sulfur red and its width, K; and the
+/// slopes between which a mountain sheds its coat, degrees.
 pub const IO_SULFUR: [f32; 3] = [0.65, 0.55, 0.25];
 pub const IO_POLAR: [f32; 3] = [0.38, 0.24, 0.13];
-pub const IO_POLAR_LATITUDES_DEG: (f64, f64) = (40.0, 70.0);
 pub const IO_FROST: [f32; 3] = [0.86, 0.86, 0.88];
-pub const IO_FROST_LENGTH: f64 = 400e3;
-pub const IO_FROST_COVER: f64 = 0.45;
 pub const IO_FLOW_DARK: [f32; 3] = [0.05, 0.05, 0.05];
+pub const IO_FLOW_OLD: [f32; 3] = [0.20, 0.15, 0.09];
 pub const IO_PATERA_FLOOR: [f32; 3] = [0.14, 0.09, 0.05];
 pub const IO_PLUME_RED: [f32; 3] = [0.55, 0.20, 0.08];
 pub const IO_MOUNTAIN_ROCK: [f32; 3] = [0.32, 0.28, 0.22];
+pub const IO_FROST_BACKGROUND: f64 = 0.2;
+pub const IO_FROST_HALF_K: f64 = 120.0;
+pub const IO_FROST_WIDTH_K: f64 = 5.0;
+pub const IO_RED_HALF_K: f64 = 118.0;
+pub const IO_RED_WIDTH_K: f64 = 6.0;
+pub const IO_MOUNTAIN_BARE_SLOPE_DEG: (f64, f64) = (5.0, 15.0);
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
 /// Provisional, Phase 3.

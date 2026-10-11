@@ -108,7 +108,9 @@ pub struct LoopOutput {
     pub resurfacing: Option<episodic::Resurfacing>,
     pub coronae: Vec<episodic::Corona>,
     pub domes: Vec<episodic::Dome>,
-    /// The Io regime's paterae, mountains, flow fields and plume rings.
+    /// The Io regime's paterae, mountains, flow fields and plume rings through the
+    /// body's life, each with its birth and death; the finish takes those alive at the
+    /// epoch.
     pub paterae: Vec<io::Patera>,
     pub mountains: Vec<io::Mountain>,
     pub io_flows: Vec<io::FlowField>,
@@ -299,7 +301,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 20;
+pub const FINISH_VERSION: u64 = 21;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -371,7 +373,7 @@ pub fn run_coarse_loop(
             f.note_resurfacing(&fill, e.event_time());
         }
         if let Some(i) = &mut io {
-            i.step(&mut layers, t0, t1);
+            i.step(&mut layers, t0, t1, s % keep_every == 0 || s == steps);
         }
         let boost = plume.as_ref().map(|p| p.vent_boost());
         // Everything that happens in the step, in order of time: craters, scarps and
@@ -590,28 +592,31 @@ pub fn finish(
         .filter(|d| d.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
-    // The Io regime's features belong to the present surface only.
-    let io_now = (present - loop_output.age_gyr).abs() < 1e-9;
-    let paterae: Vec<io::Patera> = if io_now {
-        loop_output.paterae.clone()
-    } else {
-        Vec::new()
-    };
-    let mountains: Vec<io::Mountain> = if io_now {
-        loop_output.mountains.clone()
-    } else {
-        Vec::new()
-    };
-    let io_flows: Vec<io::FlowField> = if io_now {
-        loop_output.io_flows.clone()
-    } else {
-        Vec::new()
-    };
-    let plume_rings: Vec<io::PlumeRing> = if io_now {
-        loop_output.plume_rings.clone()
-    } else {
-        Vec::new()
-    };
+    // The Io regime's features alive at the epoch.
+    let paterae: Vec<io::Patera> = loop_output
+        .paterae
+        .iter()
+        .filter(|p| p.alive(present))
+        .cloned()
+        .collect();
+    let mountains: Vec<io::Mountain> = loop_output
+        .mountains
+        .iter()
+        .filter(|m| m.alive(present))
+        .cloned()
+        .collect();
+    let io_flows: Vec<io::FlowField> = loop_output
+        .io_flows
+        .iter()
+        .filter(|f| f.alive(present))
+        .cloned()
+        .collect();
+    let plume_rings: Vec<io::PlumeRing> = loop_output
+        .plume_rings
+        .iter()
+        .filter(|r| r.alive(present))
+        .cloned()
+        .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let mut smear = volcanism::LavaSmear::new(

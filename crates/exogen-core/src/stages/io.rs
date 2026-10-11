@@ -1,17 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Brimfyr
 
-//! The Io regime (PLAN.md 4.4): a rocky body heated past about a watt per square metre.
+//! The Io regime (PLAN.md 4.4): a rocky body heated past about half a watt per square
+//! metre.
 //!
 //! Resurfacing outruns impacts by orders of magnitude, so the surface is always young
-//! and carries no craters. What it carries instead: hundreds of paterae, flat-floored
-//! volcanic depressions tens to two hundred kilometres across, concentrated at low
-//! latitudes where the tidal heat comes out; dark silicate flow fields spreading from
-//! the active ones; the ring deposits of plumes, red sulfur near the vent and white
-//! sulfur dioxide frost further out; and isolated mountains, tilted crustal blocks up
-//! to seventeen kilometres high raised by the subsidence of the crust under the burial.
-//! Everything here is laid down in the last step of the loop, since the oldest surface
-//! is a fraction of a million years old, and refined at the finish.
+//! and carries no craters. What it carries is in a steady state, and the loop lays it
+//! down afresh at every step on the body's own base terrain, so every epoch has an Io of
+//! its own. The volcanic centres are paterae, volcano-tectonic depressions with irregular
+//! fault-bounded outlines, a share of them active with floors of fresh silicate; the
+//! active ones and a few quiet ones feed compound flow fields, lobes of different ages
+//! from black fresh lava to older flows going brown under the sulfur rain; the gas-rich
+//! Pele-class centres and some of the Prometheus-class ones throw plumes whose fallout
+//! settles in rings at the ballistic range of the eruption speed, red sulfur from the
+//! hot gas-rich plumes and white sulfur dioxide frost from the rest, and the fallout of
+//! a quiet centre's last plumes fades as it is buried. Mountains are tilted crustal
+//! blocks raised by the subsidence of the crust under the burial, standing a few hundred
+//! million years.
+//!
+//! The colour is not painted. Each cell carries what the eruptions left on it, the fresh
+//! silicate exposure in `deep`, the red sulfur fallout in `melt` and the frost fallout in
+//! `cover` (on a flow or a floor, `cover` is the lava's own coverage), and the materials
+//! stage lights those by the temperature the latitude's insolation gives, which decides
+//! where frost survives the day and where radiation keeps sulfur red.
 
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
@@ -23,16 +34,28 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::*;
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
-/// A patera: a volcanic depression with a flat floor, active when its floor is a lake of
-/// fresh silicate lava.
+/// A patera: a volcano-tectonic depression with a flat floor and a fault-bounded,
+/// irregular outline.
 #[derive(Clone, Debug)]
 pub struct Patera {
     pub center: [f64; 3],
+    /// Mean radius and the depth of the floor below the rim, m.
     pub radius: f64,
     pub depth: f64,
+    /// A lava lake on the floor at present.
     pub active: bool,
+    /// Years since the floor last held a lake: it goes from black silicate to a sulfur
+    /// coat.
+    pub floor_age_yr: f64,
+    /// Gas-rich, Pele-class, whose plumes are hot and red; the rest are Prometheus-class.
+    pub pele: bool,
+    /// The outline: a polygon with this many sides at this rotation, under noise.
+    pub sides: u32,
+    pub rotation: f64,
+    pub birth_gyr: f64,
+    pub death_gyr: f64,
     pub id: u64,
 }
 
@@ -48,46 +71,90 @@ pub struct Mountain {
     pub tilt: f64,
     /// Elongation along the tilt azimuth, and the seed of the outline noise.
     pub aspect: f64,
+    pub birth_gyr: f64,
+    pub death_gyr: f64,
     pub id: u64,
 }
 
-/// A flow field spreading from a patera.
+/// One lobe of a flow field: a sector of the field's reach, laid down some years ago.
+#[derive(Clone, Debug)]
+pub struct Lobe {
+    pub azimuth: f64,
+    pub spread: f64,
+    pub reach_fraction: f64,
+    pub age_yr: f64,
+}
+
+/// A compound flow field spreading from a patera.
 #[derive(Clone, Debug)]
 pub struct FlowField {
     pub center: [f64; 3],
     pub reach: f64,
+    pub lobes: Vec<Lobe>,
+    pub birth_gyr: f64,
+    pub death_gyr: f64,
     pub id: u64,
 }
 
-/// A plume's ring deposits round a patera.
+/// A plume's fallout round a patera: a ring at the ballistic range, red sulfur from a
+/// Pele-class plume and frost from a Prometheus-class one, at a density that fades as
+/// the fallout is buried after the plume dies.
 #[derive(Clone, Debug)]
 pub struct PlumeRing {
     pub center: [f64; 3],
     pub radius: f64,
-    /// The one Pele-class plume, whose ring is red; the rest are mostly frost.
-    pub giant: bool,
+    pub pele: bool,
+    /// Densities of the red sulfur and the frost in the fallout, 0 to 1, each faded by
+    /// its own time since the plume died.
+    pub red: f64,
+    pub white: f64,
+    pub birth_gyr: f64,
+    pub death_gyr: f64,
     pub id: u64,
 }
 
 impl Patera {
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.3 * self.radius / body_radius
+        1.5 * self.radius / body_radius
+    }
+    pub fn alive(&self, t: f64) -> bool {
+        self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
     }
 }
 impl Mountain {
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.2 * self.radius / body_radius
+        1.2 * self.radius * self.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE) / body_radius
+    }
+    pub fn alive(&self, t: f64) -> bool {
+        self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
     }
 }
 impl FlowField {
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
         1.1 * self.reach / body_radius
     }
+    pub fn alive(&self, t: f64) -> bool {
+        self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
+    }
 }
 impl PlumeRing {
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.5 * self.radius / body_radius
+        (1.0 + 3.0 * IO_RING_WIDTH) * self.radius / body_radius
     }
+    pub fn alive(&self, t: f64) -> bool {
+        self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
+    }
+}
+
+/// Radius of a patera's outline at an azimuth: a polygon's edge, as the faults that
+/// bound a collapse leave it, under noise.
+pub fn patera_radius(phi: f64, p: &Patera, noise: &GradientNoise) -> f64 {
+    let sector = 2.0 * std::f64::consts::PI / p.sides as f64;
+    let a = (phi - p.rotation).rem_euclid(sector) - 0.5 * sector;
+    let polygon = (0.5 * sector).cos() / a.cos();
+    let wobble = 1.0
+        + IO_PATERA_OUTLINE * noise.fbm([phi.cos() * 1.3, phi.sin() * 1.3, 0.37], 2.0, 2, 2.0, 0.5);
+    p.radius * (IO_PATERA_POLYGON * polygon + (1.0 - IO_PATERA_POLYGON)) * wobble
 }
 
 /// Depth of a flat-floored pit at a distance from its centre, with walls of a width.
@@ -100,48 +167,90 @@ pub fn pit_profile(r: f64, radius: f64, depth: f64, wall: f64) -> f64 {
 pub fn block_radius(phi: f64, m: &Mountain, noise: &GradientNoise) -> f64 {
     let t = phi - m.tilt_azimuth;
     let ellipse = 1.0 / (t.cos().powi(2) + (m.aspect * t.sin()).powi(2)).sqrt() * m.aspect.sqrt();
-    let outline =
-        1.0 + IO_MOUNTAIN_OUTLINE * noise.fbm([phi.cos(), phi.sin(), 0.5], 2.5, 2, 2.0, 0.5);
-    m.radius * ellipse * outline
+    let wobble = 1.0
+        + IO_MOUNTAIN_OUTLINE
+            * noise.fbm([phi.cos() * 1.5, phi.sin() * 1.5, 0.3], 2.0, 2, 2.0, 0.5);
+    m.radius * ellipse * wobble
 }
 
-/// Height of a tilted block at a distance and azimuth from its centre.
+/// Height of a tilted block at a point: a plateau sloping down towards the tilt azimuth,
+/// dropping to nothing at its noisy edge.
 pub fn block_profile(r: f64, phi: f64, m: &Mountain, noise: &GradientNoise) -> f64 {
-    let x = r / block_radius(phi, m, noise);
-    if x >= 1.0 {
+    let edge = block_radius(phi, m, noise);
+    if r >= edge {
         return 0.0;
     }
-    let plateau = (1.0 - x.powi(4)).powf(0.5);
+    let x = r / edge;
     let tilt = 1.0 - m.tilt * 0.5 * (1.0 + x * (phi - m.tilt_azimuth).cos());
-    m.height * plateau * tilt
+    let rim = (1.0 - x.powi(8)).max(0.0);
+    m.height * tilt * rim
 }
 
-/// Coverage of a lobate flow field at a point, 1 inside, fading to 0 across a soft
-/// margin at a noisy radius round the source.
-fn flow_cover(d: [f64; 3], f: &FlowField, body_radius: f64, noise: &GradientNoise) -> f64 {
+/// A flow field's coverage and freshness at a point: the strongest lobe reaching it,
+/// and the freshest lava among the lobes that reach it.
+fn flow_at(d: [f64; 3], f: &FlowField, body_radius: f64, noise: &GradientNoise) -> (f64, f64) {
     let r = angle_between(f.center, d) * body_radius;
     if r > f.reach {
-        return 0.0;
+        return (0.0, 0.0);
     }
     let (east, north) = local_basis(f.center);
     let phi = azimuth_from(f.center, east, north, d);
-    let lobes = noise.fbm(
-        [phi.cos() * 1.7, phi.sin() * 1.7, r / f.reach * 2.0],
-        1.0,
-        2,
-        2.0,
-        0.5,
-    );
-    let edge = 0.55 + IO_FLOW_LOBING * lobes;
-    ((edge - r / f.reach) / IO_DEPOSIT_EDGE).clamp(0.0, 1.0)
+    // The vent's own pool at the centre; the lobes reach out of a connected body.
+    let mut cover: f64 = ((IO_FLOW_VENT * f.reach - r) / (IO_FLOW_EDGE * f.reach)).clamp(0.0, 1.0);
+    let mut fresh: f64 = 0.0;
+    for (j, lobe) in f.lobes.iter().enumerate() {
+        let mut da = (phi - lobe.azimuth).rem_euclid(2.0 * std::f64::consts::PI);
+        if da > std::f64::consts::PI {
+            da -= 2.0 * std::f64::consts::PI;
+        }
+        let sector = (-(da / lobe.spread).powi(2)).exp();
+        let lobing = 1.0
+            + IO_FLOW_LOBING
+                * noise.fbm(
+                    [
+                        phi.cos() * 2.0 + j as f64 * 3.1,
+                        phi.sin() * 2.0,
+                        r / f.reach * 2.0,
+                    ],
+                    1.0,
+                    2,
+                    2.0,
+                    0.5,
+                );
+        let extent =
+            f.reach * (IO_FLOW_BODY + (1.0 - IO_FLOW_BODY) * lobe.reach_fraction * sector) * lobing;
+        let c = ((extent - r) / (IO_FLOW_EDGE * f.reach)).clamp(0.0, 1.0);
+        if c > 0.0 {
+            cover = cover.max(c);
+            fresh = fresh.max(c * (-lobe.age_yr / IO_FLOW_DARK_YR).exp());
+        }
+    }
+    (cover, fresh)
 }
 
-/// The Io regime's features, laid down in the last loop step.
+/// Fallout density of a plume at a fraction of its ring radius: the ring where the
+/// ballistic shells land, over a thinner fall inside it.
+pub fn ring_profile(x: f64, inner: f64) -> f64 {
+    let ring = (-((x - 1.0) / IO_RING_WIDTH).powi(2)).exp();
+    let fill = inner * ((1.0 - x) / 0.5).clamp(0.0, 1.0);
+    (ring + fill).min(1.0)
+}
+
+/// The Io regime's features through the loop: a steady state, laid down afresh at every
+/// step on the base terrain, with the full timeline kept so any epoch can be finished.
 pub struct IoProcess {
     grid: CubeSphere,
     body_radius: f64,
-    age: f64,
-    done: bool,
+    gravity: f64,
+    /// The day's peak temperature at the subsolar point, K, from the insolation.
+    subsolar_k: f64,
+    dt: f64,
+    step_index: u64,
+    rng: Rng,
+    n_paterae: usize,
+    n_mountains: usize,
+    /// The terrain before the regime's features, which every step starts from.
+    base: Option<LayerSet>,
     pub paterae: Vec<Patera>,
     pub mountains: Vec<Mountain>,
     pub flows: Vec<FlowField>,
@@ -155,112 +264,214 @@ impl IoProcess {
         if !is_io_regime(graph) {
             return None;
         }
-        let body_radius = graph.f64("body.radius");
-        let age = graph.f64("body.age");
-        let rng = Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x10_5EED_0001);
-        let n_paterae = graph.f64("volcanism.paterae_count").round() as u64;
-        let mut paterae = Vec::new();
-        for k in 0..n_paterae {
-            // Low latitudes favoured: draw until the latitude weight accepts.
-            let mut center = rng.unit_direction(k, 1);
-            for attempt in 0..12u64 {
-                let lat = center[2].asin();
-                let w = IO_PATERA_POLAR_WEIGHT + (1.0 - IO_PATERA_POLAR_WEIGHT) * lat.cos().powi(2);
-                if rng.uniform(k, 2 + attempt) < w {
-                    break;
-                }
-                center = rng.unit_direction(k, 20 + attempt);
-            }
-            let (lo, hi) = IO_PATERA_DIAMETER;
-            let diameter = lo * (hi / lo).powf(rng.uniform(k, 40).powf(IO_PATERA_SIZE_SKEW));
-            paterae.push(Patera {
-                center,
-                radius: 0.5 * diameter,
-                depth: IO_PATERA_DEPTH * (0.5 + rng.uniform(k, 41)),
-                active: rng.uniform(k, 42) < IO_PATERA_ACTIVE_FRACTION,
-                id: k,
-            });
-        }
-        let n_mountains = graph.f64("tectonics.mountain_count").round() as u64;
-        let mut mountains = Vec::new();
-        for k in 0..n_mountains {
-            let (lo, hi) = IO_MOUNTAIN_DIAMETER;
-            let diameter = lo * (hi / lo).powf(rng.uniform(5_000 + k, 1));
-            let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
-            mountains.push(Mountain {
-                center: rng.unit_direction(5_000 + k, 2),
-                radius: 0.5 * diameter,
-                height: h_lo * (h_hi / h_lo).powf(rng.uniform(5_000 + k, 3)),
-                tilt_azimuth: 2.0 * std::f64::consts::PI * rng.uniform(5_000 + k, 4),
-                tilt: IO_MOUNTAIN_TILT * rng.uniform(5_000 + k, 5),
-                aspect: 1.0 + (IO_MOUNTAIN_ASPECT - 1.0) * rng.uniform(5_000 + k, 6),
-                id: 5_000 + k,
-            });
-        }
-        // Flow fields from the active paterae and a few quiet ones; plume rings round a
-        // share of the active ones.
-        let mut flows = Vec::new();
-        let mut rings: Vec<PlumeRing> = Vec::new();
-        for p in &paterae {
-            let draw = 9_000 + p.id;
-            let flowing = p.active || rng.uniform(draw, 1) < IO_QUIET_FLOW_FRACTION;
-            if flowing {
-                let (lo, hi) = IO_FLOW_REACH;
-                flows.push(FlowField {
-                    center: p.center,
-                    reach: (lo * (hi / lo).powf(rng.uniform(draw, 2))).max(2.0 * p.radius),
-                    id: draw,
-                });
-            }
-            if p.active && rng.uniform(draw, 3) < IO_PLUME_FRACTION {
-                // The first plume drawn is the giant one.
-                let giant = rings.is_empty();
-                let (lo, hi) = if giant {
-                    IO_GIANT_RING_RADIUS
-                } else {
-                    IO_PLUME_RING_RADIUS
-                };
-                rings.push(PlumeRing {
-                    center: p.center,
-                    radius: lo * (hi / lo).powf(rng.uniform(draw, 4)),
-                    giant,
-                    id: draw + 20_000,
-                });
-            }
-        }
         Some(Self {
             grid,
-            body_radius,
-            age,
-            done: false,
-            paterae,
-            mountains,
-            flows,
-            rings,
+            body_radius: graph.f64("body.radius"),
+            gravity: graph.f64("body.gravity"),
+            subsolar_k: {
+                let absorbed =
+                    graph.f64("orbit.insolation") * (1.0 - graph.f64("atmosphere.bond_albedo"));
+                (absorbed.max(0.0) / SIGMA_SB).powf(0.25)
+            },
+            dt: 0.0,
+            step_index: 0,
+            rng: Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x10_5EED_0001),
+            n_paterae: graph.f64("volcanism.paterae_count").round().max(0.0) as usize,
+            n_mountains: graph.f64("tectonics.mountain_count").round().max(0.0) as usize,
+            base: None,
+            paterae: Vec::new(),
+            mountains: Vec::new(),
+            flows: Vec::new(),
+            rings: Vec::new(),
             stamper: Stamper::new(&grid),
         })
     }
 
-    /// In the last step: the paterae and mountains on the coarse grid, and a surface
-    /// everywhere as young as the resurfacing makes it.
-    pub fn step(&mut self, layers: &mut LayerSet, _t0: f64, t1: f64) {
-        if self.done || t1 < self.age - 1e-9 {
+    fn log_uniform(&self, index: u64, draw: u64, range: (f64, f64)) -> f64 {
+        range.0 * (range.1 / range.0).powf(self.rng.uniform(index, draw))
+    }
+
+    /// The features alive through a step: mountains retire and are replaced over their
+    /// lifetimes; paterae, flows and fallout are renewed every step, since the surface
+    /// is younger than the step.
+    fn populate(&mut self, t1: f64, lay: bool) {
+        let step = self.step_index;
+        let death = t1 + self.dt.max(1e-6);
+        // Mountains.
+        let alive = self.mountains.iter().filter(|m| m.alive(t1)).count();
+        for _ in alive..self.n_mountains {
+            let k = 5_000 + self.mountains.len() as u64;
+            let (lo, hi) = IO_MOUNTAIN_DIAMETER;
+            let diameter = lo * (hi / lo).powf(self.rng.uniform(k, 1));
+            let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
+            let life = self.log_uniform(k, 7, IO_MOUNTAIN_LIFETIME_GYR);
+            // The first population is of all ages; later ones are born now.
+            let birth = if step == 0 {
+                t1 - life * self.rng.uniform(k, 8)
+            } else {
+                t1
+            };
+            self.mountains.push(Mountain {
+                center: self.rng.unit_direction(k, 2),
+                radius: 0.5 * diameter,
+                height: h_lo * (h_hi / h_lo).powf(self.rng.uniform(k, 3)),
+                tilt_azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(k, 4),
+                tilt: IO_MOUNTAIN_TILT * self.rng.uniform(k, 5),
+                aspect: 1.0 + (IO_MOUNTAIN_ASPECT - 1.0) * self.rng.uniform(k, 6),
+                birth_gyr: birth,
+                death_gyr: birth + life,
+                id: k,
+            });
+        }
+        // Paterae, with their flows and fallout, for the steps whose surface is kept.
+        if !lay {
             return;
         }
-        self.done = true;
+        for k in 0..self.n_paterae as u64 {
+            let idx = 1_000_000 + step * 100_003 + k;
+            // Low latitudes favoured: draw until the latitude weight accepts.
+            let mut center = self.rng.unit_direction(idx, 1);
+            for attempt in 0..12u64 {
+                let lat = center[2].asin();
+                let w = IO_PATERA_POLAR_WEIGHT + (1.0 - IO_PATERA_POLAR_WEIGHT) * lat.cos().powi(2);
+                if self.rng.uniform(idx, 2 + attempt) < w {
+                    break;
+                }
+                center = self.rng.unit_direction(idx, 20 + attempt);
+            }
+            let (lo, hi) = IO_PATERA_DIAMETER;
+            let diameter = lo * (hi / lo).powf(self.rng.uniform(idx, 40).powf(IO_PATERA_SIZE_SKEW));
+            let radius = 0.5 * diameter;
+            let pele = self.rng.uniform(idx, 43) < IO_PELE_CLASS_FRACTION;
+            let active = self.rng.uniform(idx, 42) < IO_PATERA_ACTIVE_FRACTION;
+            let floor_age_yr = if active {
+                0.0
+            } else {
+                self.log_uniform(idx, 44, IO_FLOOR_AGE_YR)
+            };
+            let (s_lo, s_hi) = IO_PATERA_SIDES;
+            self.paterae.push(Patera {
+                center,
+                radius,
+                depth: IO_PATERA_DEPTH * (0.5 + self.rng.uniform(idx, 41)),
+                active,
+                floor_age_yr,
+                pele,
+                sides: s_lo + (self.rng.bits(idx, 45) % (s_hi - s_lo + 1) as u64) as u32,
+                rotation: 2.0 * std::f64::consts::PI * self.rng.uniform(idx, 46),
+                birth_gyr: t1,
+                death_gyr: death,
+                id: idx,
+            });
+            // Flow fields from the active paterae and a few quiet ones: lobes of
+            // different ages.
+            if active || self.rng.uniform(idx, 47) < IO_QUIET_FLOW_FRACTION {
+                let (n_lo, n_hi) = IO_FLOW_LOBES;
+                let n = n_lo + (self.rng.bits(idx, 48) % (n_hi - n_lo + 1) as u64) as u32;
+                let lobes = (0..n)
+                    .map(|j| {
+                        let d = 60 + 4 * j as u64;
+                        let (sp_lo, sp_hi) = IO_FLOW_SPREAD;
+                        Lobe {
+                            azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(idx, d),
+                            spread: sp_lo + (sp_hi - sp_lo) * self.rng.uniform(idx, d + 1),
+                            reach_fraction: 0.3 + 0.7 * self.rng.uniform(idx, d + 2),
+                            age_yr: self.log_uniform(idx, d + 3, IO_FLOW_AGE_YR),
+                        }
+                    })
+                    .collect();
+                self.flows.push(FlowField {
+                    center,
+                    reach: self.log_uniform(idx, 49, IO_FLOW_REACH).max(2.0 * radius),
+                    lobes,
+                    birth_gyr: t1,
+                    death_gyr: death,
+                    id: idx + 10_000_000,
+                });
+            }
+            // Fallout: a plume now, or the fading fallout of the last one.
+            let plume_fraction = if pele {
+                IO_PLUME_FRACTION_PELE
+            } else {
+                IO_PLUME_FRACTION_PROMETHEUS
+            };
+            let plume_age_yr = if active && self.rng.uniform(idx, 50) < plume_fraction {
+                0.0
+            } else {
+                self.log_uniform(idx, 51, IO_PLUME_AGE_YR)
+            };
+            // Red sulfur fades in a couple of years; frost lasts until it is buried,
+            // longer where the cold keeps it.
+            let cos_lat = (1.0 - center[2] * center[2]).max(0.0).sqrt();
+            let t_peak = self.subsolar_k * cos_lat.max(0.02).powf(0.25);
+            let persist = 1.0 / (1.0 + ((t_peak - IO_FROST_HALF_K) / IO_FROST_WIDTH_K).exp());
+            let frost_fade = IO_FALLOUT_FADE_YR * (1.0 + IO_FROST_COLD_FACTOR * persist);
+            let (red_share, white_share) = if pele {
+                (1.0, IO_PELE_FROST)
+            } else {
+                (IO_PROMETHEUS_RED, 1.0)
+            };
+            let red = red_share * (-plume_age_yr / IO_RED_FADE_YR).exp();
+            let white = white_share * (-plume_age_yr / frost_fade).exp();
+            if red.max(white) > 0.05 {
+                let speed = if pele {
+                    IO_PLUME_SPEED_PELE
+                } else {
+                    IO_PLUME_SPEED_PROMETHEUS
+                } * (IO_PLUME_SPEED_SCATTER * self.rng.normal(idx, 52)).exp();
+                self.rings.push(PlumeRing {
+                    center,
+                    radius: speed * speed / self.gravity.max(0.01),
+                    pele,
+                    red,
+                    white,
+                    birth_gyr: t1,
+                    death_gyr: death,
+                    id: idx + 20_000_000,
+                });
+            }
+        }
+    }
+
+    /// The surface at the end of a step: the base terrain, the mountains standing, the
+    /// paterae, the fallout and the flows, all on the coarse grid. Only the steps whose
+    /// surface the loop keeps as a keyframe are laid; the rest keep the timeline going.
+    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, lay: bool) {
+        match &self.base {
+            None => {
+                self.dt = t1 - t0;
+                self.base = Some(layers.clone());
+            }
+            Some(base) => {
+                if lay {
+                    *layers = base.clone();
+                }
+            }
+        }
+        self.populate(t1, lay);
+        self.step_index += 1;
+        if !lay {
+            return;
+        }
         let grid = self.grid;
         let body_radius = self.body_radius;
         let cell = grid.delta() * body_radius;
-        let now = (self.age - IO_SURFACE_AGE_GYR) as f32;
+        let now = (t1 - IO_SURFACE_AGE_GYR) as f32;
         {
             let ages = layers.surface_age.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
-            for (a, u) in ages.iter_mut().zip(units.iter_mut()) {
-                *a = now;
-                *u = UNIT_PRIMORDIAL;
+            let deep = layers.deep.as_mut_slice();
+            let melt = layers.melt.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
+            for k in 0..ages.len() {
+                ages[k] = now;
+                units[k] = UNIT_PRIMORDIAL;
+                deep[k] = 0.0;
+                melt[k] = 0.0;
+                cover[k] = 0.0;
             }
         }
-        for m in &self.mountains {
+        for m in self.mountains.iter().filter(|m| m.alive(t1)) {
             let noise = GradientNoise::new(m.id ^ 0x0B10_C000);
             self.stamper.gather(
                 &grid,
@@ -276,30 +487,57 @@ impl IoProcess {
                 if h > 0.0 {
                     bedrock[idx] += h as f32;
                     units[idx] = UNIT_MOUNTAIN;
-                    cover[idx] = 1.0;
+                    cover[idx] = 0.0;
                 }
             }
         }
-        for p in &self.paterae {
+        for p in self.paterae.iter().filter(|p| p.alive(t1)) {
+            let noise = GradientNoise::new(p.id ^ 0x9A7E_2A00);
             let wall = (IO_PATERA_WALL_FRACTION * p.radius).max(cell);
-            self.stamper
-                .gather(&grid, body_radius, p.center, p.radius + 3.0 * wall);
+            self.stamper.gather(
+                &grid,
+                body_radius,
+                p.center,
+                p.radius * (1.0 + IO_PATERA_OUTLINE) + 3.0 * wall,
+            );
             let bedrock = layers.bedrock.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
+            let deep = layers.deep.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
-            for &(idx, r, _) in &self.stamper.footprint {
-                let depth = pit_profile(r, p.radius, p.depth, wall);
-                bedrock[idx] -= depth as f32;
-                if r < p.radius {
+            let fresh = floor_freshness(p) as f32;
+            for &(idx, r, phi) in &self.stamper.footprint {
+                let edge = patera_radius(phi, p, &noise);
+                bedrock[idx] -= pit_profile(r, edge, p.depth, wall) as f32;
+                if r < edge {
                     units[idx] = if p.active {
                         UNIT_IO_FLOW
                     } else {
                         UNIT_PATERA_FLOOR
                     };
+                    deep[idx] = fresh;
                     cover[idx] = 1.0;
                 }
             }
         }
+        let rings: Vec<PlumeRing> = self.rings.iter().filter(|r| r.alive(t1)).cloned().collect();
+        for r in &rings {
+            let out = ring_compute(layers, &grid, body_radius, r, &mut self.stamper);
+            out.apply(layers);
+        }
+        let flows: Vec<FlowField> = self.flows.iter().filter(|f| f.alive(t1)).cloned().collect();
+        for f in &flows {
+            let out = flow_compute(layers, &grid, body_radius, f, &mut self.stamper);
+            out.apply(layers);
+        }
+    }
+}
+
+/// How much of a patera's floor is still fresh silicate.
+pub fn floor_freshness(p: &Patera) -> f64 {
+    if p.active {
+        1.0
+    } else {
+        (-p.floor_age_yr / IO_FLOOR_COAT_YR).exp()
     }
 }
 
@@ -309,8 +547,8 @@ pub fn is_io_regime(graph: &ParamGraph) -> bool {
         && graph.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX
 }
 
-/// Finishing pass of a patera: the walls sharpened from the loop's cell-wide ones, the
-/// floor's unit.
+/// Finishing pass of a patera: the pit's fine profile minus the version the loop
+/// carried, and the floor's unit and freshness.
 pub fn patera_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -321,17 +559,26 @@ pub fn patera_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let cell = grid.delta() * body_radius;
+    let noise = GradientNoise::new(p.id ^ 0x9A7E_2A00);
     let wall_fine = (IO_PATERA_WALL_FRACTION * p.radius).max(cell);
     let wall_coarse = (IO_PATERA_WALL_FRACTION * p.radius).max(coarse_cell);
     let smear = (0.5 * coarse_cell).hypot(wall_coarse);
-    stamper.gather(grid, body_radius, p.center, p.radius + 3.0 * smear);
+    stamper.gather(
+        grid,
+        body_radius,
+        p.center,
+        p.radius * (1.0 + IO_PATERA_OUTLINE) + 3.0 * smear,
+    );
     let time = layers.surface_age.as_slice();
+    let melt = layers.melt.as_slice();
+    let fresh = floor_freshness(p) as f32;
     let cells = stamper
         .footprint
         .iter()
-        .map(|&(idx, r, _)| {
-            let fine = pit_profile(r, p.radius, p.depth, wall_fine);
-            let coarse = pit_profile(r, p.radius, p.depth, smear);
+        .map(|&(idx, r, phi)| {
+            let edge = patera_radius(phi, p, &noise);
+            let fine = pit_profile(r, edge, p.depth, wall_fine);
+            let coarse = pit_profile(r, edge, p.depth, smear);
             let mut write = CellWrite {
                 idx: idx as u32,
                 bedrock: (bedrock[idx] as f64 - (fine - coarse)) as f32,
@@ -342,19 +589,17 @@ pub fn patera_compute(
                 melt: 0.0,
                 cover: 0.0,
             };
-            if r < p.radius + 0.5 * wall_fine {
+            if r < edge {
                 write.surface = true;
                 write.age = time[idx];
-                write.unit = if r < p.radius {
-                    if p.active {
-                        UNIT_IO_FLOW
-                    } else {
-                        UNIT_PATERA_FLOOR
-                    }
+                write.unit = if p.active {
+                    UNIT_IO_FLOW
                 } else {
-                    UNIT_PRIMORDIAL
+                    UNIT_PATERA_FLOOR
                 };
-                write.cover = if r < p.radius { 1.0 } else { 0.0 };
+                write.deep = fresh;
+                write.melt = melt[idx] * (1.0 - fresh);
+                write.cover = 1.0;
             }
             write
         })
@@ -372,6 +617,8 @@ pub fn mountain_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
+    let melt = layers.melt.as_slice();
+    let cover = layers.cover.as_slice();
     stamper.gather(
         grid,
         body_radius,
@@ -404,7 +651,8 @@ pub fn mountain_compute(
                 write.surface = true;
                 write.age = ages[idx];
                 write.unit = UNIT_MOUNTAIN;
-                write.cover = 1.0;
+                write.melt = melt[idx];
+                write.cover = cover[idx];
             }
             write
         })
@@ -412,7 +660,9 @@ pub fn mountain_compute(
     StampOutput { cells }
 }
 
-/// Finishing pass of a flow field: dark fresh silicate over the plains, a little relief.
+/// A flow field over the ground: its lobes' coverage and freshness, a little relief;
+/// over an earlier flow the stronger coverage and the fresher lava win, and the lava
+/// buries the fallout under it.
 pub fn flow_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -423,26 +673,30 @@ pub fn flow_compute(
     let bedrock = layers.bedrock.as_slice();
     let units = layers.unit_id.as_slice();
     let ages = layers.surface_age.as_slice();
+    let deep = layers.deep.as_slice();
+    let melt = layers.melt.as_slice();
+    let covered = layers.cover.as_slice();
     stamper.gather(grid, body_radius, f.center, f.reach);
     let noise = GradientNoise::new(f.id ^ 0xF10_0000);
-    let covered = layers.cover.as_slice();
     let cells = stamper
         .footprint
         .iter()
         .filter_map(|&(idx, _, _)| {
-            let d = grid.center(grid.cell(idx));
             if units[idx] == UNIT_MOUNTAIN {
                 return None;
             }
-            let cover = flow_cover(d, f, body_radius, &noise) as f32;
+            let d = grid.center(grid.cell(idx));
+            let (cover, fresh) = flow_at(d, f, body_radius, &noise);
             if cover <= 0.0 {
                 return None;
             }
-            // A flow over an earlier flow keeps the stronger coverage.
-            let cover = if units[idx] == UNIT_IO_FLOW {
-                cover.max(covered[idx])
+            let (cover, fresh) = if matches!(units[idx], UNIT_IO_FLOW | UNIT_PATERA_FLOOR) {
+                (
+                    (cover as f32).max(covered[idx]),
+                    (fresh as f32).max(deep[idx]),
+                )
             } else {
-                cover
+                (cover as f32, fresh as f32)
             };
             Some(CellWrite {
                 idx: idx as u32,
@@ -450,8 +704,8 @@ pub fn flow_compute(
                 surface: true,
                 age: ages[idx],
                 unit: UNIT_IO_FLOW,
-                deep: 0.0,
-                melt: 0.0,
+                deep: fresh,
+                melt: melt[idx] * (1.0 - cover),
                 cover,
             })
         })
@@ -459,8 +713,9 @@ pub fn flow_compute(
     StampOutput { cells }
 }
 
-/// Finishing pass of a plume's rings: red deposits inside the ring radius, white frost
-/// beyond it, over whatever plains they fall on.
+/// A plume's fallout over the ground: red sulfur or frost by the plume's class, at the
+/// ring's density and the fallout's, mottled, laid over the plains and the mountains
+/// and over cooled lava, where it joins what earlier plumes left.
 pub fn ring_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -471,47 +726,52 @@ pub fn ring_compute(
     let bedrock = layers.bedrock.as_slice();
     let units = layers.unit_id.as_slice();
     let ages = layers.surface_age.as_slice();
-    let existing = layers.cover.as_slice();
+    let deep = layers.deep.as_slice();
+    let melt = layers.melt.as_slice();
+    let cover = layers.cover.as_slice();
     stamper.gather(
         grid,
         body_radius,
         ring.center,
-        (IO_RING_WHITE_OUTER + 2.0 * IO_DEPOSIT_EDGE) * ring.radius,
+        (1.0 + 3.0 * IO_RING_WIDTH) * ring.radius,
     );
     let noise = GradientNoise::new(ring.id ^ 0x21_0600);
     let mottle_frequency = body_radius / (0.15 * ring.radius);
+    let inner = if ring.pele {
+        IO_RING_INNER_PELE
+    } else {
+        IO_RING_INNER_PROMETHEUS
+    };
     let cells = stamper
         .footprint
         .iter()
         .filter_map(|&(idx, r, phi)| {
-            // Over the plains, or over another ring's deposit where this one is denser.
-            let over_deposit = matches!(units[idx], UNIT_PLUME_RED | UNIT_PLUME_WHITE);
-            if units[idx] != UNIT_PRIMORDIAL && !over_deposit {
+            // Hot lava takes no fallout.
+            if deep[idx] > 0.5 {
                 return None;
             }
             let d = grid.center(grid.cell(idx));
-            let x = r / ring.radius;
             let edge =
                 IO_RING_EDGE_WOBBLE * noise.fbm([phi.cos(), phi.sin(), 0.7], 3.0, 2, 2.0, 0.5);
-            let soft = |a: f64| (a / IO_DEPOSIT_EDGE).clamp(0.0, 1.0);
-            // Red from the inner edge to the ring, white frost fading out beyond it, both
-            // mottled.
-            let red = soft(x - IO_RING_RED_INNER - edge) * soft(1.0 + edge - x);
-            let white = soft(x - 1.0 - edge + IO_DEPOSIT_EDGE)
-                * ((IO_RING_WHITE_OUTER + edge - x) / (IO_RING_WHITE_OUTER - 1.0)).clamp(0.0, 1.0);
+            let x = r / ring.radius / (1.0 + edge);
             let mottle = 1.0
                 - IO_DEPOSIT_MOTTLING * (0.5 + 0.5 * noise.fbm(d, mottle_frequency, 2, 2.0, 0.5));
-            let (red, white) = if ring.giant {
-                (red, white * IO_GIANT_RING_WHITE)
+            let fall = ring_profile(x, inner) * mottle;
+            if fall < 0.02 {
+                return None;
+            }
+            let red = (ring.red * fall) as f32;
+            let white = (ring.white * fall) as f32;
+            // On a flow or a floor the coverage is the lava's own; frost goes on plains
+            // and mountains.
+            let lava = matches!(units[idx], UNIT_IO_FLOW | UNIT_PATERA_FLOOR);
+            let new_cover = if lava {
+                cover[idx]
             } else {
-                (red * IO_SMALL_RING_RED, white)
+                cover[idx].max(white)
             };
-            let (unit, cover) = if red >= white {
-                (UNIT_PLUME_RED, red * mottle)
-            } else {
-                (UNIT_PLUME_WHITE, white * mottle)
-            };
-            if cover < 0.02 || (over_deposit && cover <= existing[idx] as f64) {
+            let new_melt = melt[idx].max(red);
+            if new_cover <= cover[idx] && new_melt <= melt[idx] {
                 return None;
             }
             Some(CellWrite {
@@ -519,10 +779,10 @@ pub fn ring_compute(
                 bedrock: bedrock[idx],
                 surface: true,
                 age: ages[idx],
-                unit,
-                deep: 0.0,
-                melt: 0.0,
-                cover: cover as f32,
+                unit: units[idx],
+                deep: deep[idx],
+                melt: new_melt,
+                cover: new_cover,
             })
         })
         .collect();
@@ -545,6 +805,8 @@ mod tests {
             tilt_azimuth: 0.0,
             tilt: 0.4,
             aspect: 1.0,
+            birth_gyr: 0.0,
+            death_gyr: 1.0,
             id: 1,
         };
         let noise = GradientNoise::new(1);
@@ -555,5 +817,36 @@ mod tests {
         let far = block_profile(0.5 * m.radius, std::f64::consts::PI, &m, &noise);
         assert!(near < far, "{near} vs {far}");
         assert!(block_profile(2.0 * m.radius, 0.3, &m, &noise) == 0.0);
+        // The ring peaks at the ring radius and the inner fall is thinner.
+        assert!(ring_profile(1.0, 0.3) > ring_profile(0.5, 0.3));
+        assert!(ring_profile(0.5, 0.3) > ring_profile(1.6, 0.3));
+    }
+
+    #[test]
+    fn a_patera_outline_is_a_noisy_polygon() {
+        let p = Patera {
+            center: [1.0, 0.0, 0.0],
+            radius: 30e3,
+            depth: 1e3,
+            active: false,
+            floor_age_yr: 100.0,
+            pele: false,
+            sides: 6,
+            rotation: 0.0,
+            birth_gyr: 0.0,
+            death_gyr: 1.0,
+            id: 3,
+        };
+        let noise = GradientNoise::new(3);
+        let mut lo = f64::INFINITY;
+        let mut hi = 0.0f64;
+        for k in 0..360 {
+            let r = patera_radius((k as f64).to_radians(), &p, &noise);
+            lo = lo.min(r);
+            hi = hi.max(r);
+        }
+        assert!(lo > 0.6 * p.radius && hi < 1.4 * p.radius, "{lo} {hi}");
+        assert!(hi - lo > 0.05 * p.radius);
+        assert!((floor_freshness(&p) - (-100.0f64 / IO_FLOOR_COAT_YR).exp()).abs() < 1e-9);
     }
 }

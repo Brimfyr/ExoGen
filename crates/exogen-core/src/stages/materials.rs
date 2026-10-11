@@ -20,11 +20,10 @@ use crate::fields::{Field, LayerSet};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::units::{
-    UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR, UNIT_PLUME_RED,
-    UNIT_PLUME_WHITE,
+    UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 11;
+pub const VERSION: u64 = 12;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -312,33 +311,59 @@ pub fn albedo(
         cover_f.to_vec()
     };
     let r = rays.as_slice();
-    // The Io regime colours itself: sulfur plains reddened towards the poles, patches of
-    // frost, black fresh flows, dark patera floors, plume deposits and bare mountain rock.
-    let frost_noise =
-        crate::noise::GradientNoise::new(graph.f64("seed.terrain") as u64 ^ 0xF205_7000);
-    let frost_frequency = graph.f64("body.radius") / IO_FROST_LENGTH;
+    // The Io regime colours itself from what the eruptions left and the temperature the
+    // latitude's insolation gives: the day's peak temperature decides where the global
+    // frost fall survives and where radiation keeps sulfur red.
+    let io_subsolar_k = {
+        let absorbed = graph.f64("orbit.insolation") * (1.0 - graph.f64("atmosphere.bond_albedo"));
+        (absorbed.max(0.0) / SIGMA_SB).powf(0.25)
+    };
+    let bedrock_f = layers.bedrock.as_slice();
+    let io_cell = grid.delta() * graph.f64("body.radius");
     let data: Vec<[f32; 3]> = (0..grid.cell_count())
         .into_par_iter()
         .map(|k| {
             if io {
                 let d = grid.center(grid.cell(k));
-                let lat = d[2].asin().to_degrees().abs();
-                let (lo, hi) = IO_POLAR_LATITUDES_DEG;
-                let polar = ((lat - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
-                let plains = lerp3(IO_SULFUR, IO_POLAR, polar * polar * (3.0 - 2.0 * polar));
-                let n = frost_noise.fbm(d, frost_frequency, 3, 2.0, 0.5);
-                let frost = ((n + 0.15) / 0.3).clamp(0.0, 1.0) as f32 * IO_FROST_COVER as f32;
-                let plains = lerp3(plains, IO_FROST, frost * (1.0 - polar));
-                // Deposits and flows lie over the plains by their coverage.
-                let cover = cover_f[k].clamp(0.0, 1.0);
-                return match units[k] {
-                    UNIT_IO_FLOW => lerp3(plains, IO_FLOW_DARK, cover),
-                    UNIT_PATERA_FLOOR => IO_PATERA_FLOOR,
-                    UNIT_PLUME_RED => lerp3(plains, IO_PLUME_RED, cover),
-                    UNIT_PLUME_WHITE => lerp3(plains, IO_FROST, cover),
-                    UNIT_MOUNTAIN => lerp3(plains, IO_MOUNTAIN_ROCK, cover.max(0.6)),
-                    _ => plains,
+                let cos_lat = (1.0 - d[2] * d[2]).max(0.0).sqrt();
+                let t_peak = io_subsolar_k * cos_lat.max(0.02).powf(0.25);
+                let logistic = |x: f64| 1.0 / (1.0 + (-x).exp());
+                let persist = logistic((IO_FROST_HALF_K - t_peak) / IO_FROST_WIDTH_K) as f32;
+                let red = logistic((IO_RED_HALF_K - t_peak) / IO_RED_WIDTH_K) as f32;
+                let plains = lerp3(IO_SULFUR, IO_FROST, IO_FROST_BACKGROUND as f32 * persist);
+                let plains = lerp3(plains, IO_POLAR, red);
+                // What lies on the cell: frost, or on lava the lava's own coverage; the
+                // fresh silicate exposure; the red fallout over all but hot lava.
+                let coat = cover_f[k].clamp(0.0, 1.0);
+                let fresh = deep_f[k].clamp(0.0, 1.0);
+                let c = match units[k] {
+                    UNIT_IO_FLOW => lerp3(lerp3(plains, IO_FLOW_OLD, coat), IO_FLOW_DARK, fresh),
+                    UNIT_PATERA_FLOOR => lerp3(
+                        lerp3(plains, IO_PATERA_FLOOR, 0.8 * coat),
+                        IO_FLOW_DARK,
+                        fresh,
+                    ),
+                    UNIT_MOUNTAIN => {
+                        // Steep flanks shed their coat and show the rock.
+                        let cell = grid.cell(k);
+                        let h = |di: i32, dj: i32| {
+                            bedrock_f[grid.index(grid.neighbor(cell, di, dj))] as f64
+                        };
+                        let slope = ((h(1, 0) - h(-1, 0)).powi(2) + (h(0, 1) - h(0, -1)).powi(2))
+                            .sqrt()
+                            / (2.0 * io_cell);
+                        let (lo, hi) = IO_MOUNTAIN_BARE_SLOPE_DEG;
+                        let bare =
+                            ((slope.atan().to_degrees() - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
+                        lerp3(
+                            lerp3(plains, IO_FROST, coat),
+                            IO_MOUNTAIN_ROCK,
+                            0.25 + 0.75 * bare,
+                        )
+                    }
+                    _ => lerp3(plains, IO_FROST, coat),
                 };
+                return lerp3(c, IO_PLUME_RED, melt_f[k].clamp(0.0, 1.0) * (1.0 - fresh));
             }
             if liquid[k] > 0.0 {
                 let t = (-liquid[k] / 60.0).exp();
