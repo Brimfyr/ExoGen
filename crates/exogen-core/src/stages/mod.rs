@@ -11,6 +11,7 @@
 //! liquid, computes optical maturity and rays, and assigns materials. Both parts are cached
 //! by a hash of the parameters and seeds they depend on.
 
+pub mod deform;
 pub mod episodic;
 pub mod impacts;
 pub mod io;
@@ -295,7 +296,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 19;
+pub const FINISH_VERSION: u64 = 20;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -603,6 +604,18 @@ pub fn finish(
         &floods,
         resurfacing.as_ref().map(|r| r.fill.as_slice()),
     );
+    // What the slow processes added after each flood, so a refill sees the ground the
+    // flood found and not the dome or shield that grew under it since.
+    let deform = deform::Deformation::new(
+        loop_output.grid,
+        body_radius,
+        loop_output.age_gyr / loop_output.steps.max(1) as f64,
+        present,
+        &loop_output.rises,
+        &shields,
+        &canyons,
+        &coronae,
+    );
     if !floods.is_empty() || resurfacing.is_some() {
         with_stamper(&grid, |stamper| {
             for c in &loop_craters {
@@ -882,6 +895,7 @@ pub fn finish(
                             &loop_output.grid,
                             &floods[*k],
                             &smear,
+                            &deform,
                         );
                         Some((out, None, Some((taken, stats))))
                     }
@@ -926,6 +940,7 @@ pub fn finish(
                             r,
                             &smear,
                             inputs.seed,
+                            &deform,
                         );
                         Some((out, None, Some((taken, [0; 4]))))
                     }
@@ -1164,7 +1179,7 @@ pub fn finish(
         fraction: 0.92,
         message: "materials".to_string(),
     });
-    let albedo = materials::albedo(graph, &layers, &maturity, &rays);
+    let albedo = materials::albedo(graph, &layers, &maturity, &rays, present);
     let hash = hash_words(&[
         layers.hash(),
         height.hash(),

@@ -17,13 +17,14 @@ use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
+use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::units::{
-    UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_LAVA, UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
-    UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR, UNIT_PLUME_RED, UNIT_PLUME_WHITE,
+    UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR, UNIT_PLUME_RED,
+    UNIT_PLUME_WHITE,
 };
 
-pub const VERSION: u64 = 8;
+pub const VERSION: u64 = 10;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -193,12 +194,47 @@ struct Pair {
     mature: [f32; 3],
 }
 
+/// Lava coverage mixed sideways by impact gardening: the coverage blurred over the
+/// mixing zone of the oldest surfaces, blended in by how far each cell's own age has
+/// let the zone grow, so fresh flow margins stay sharp and old mare margins soften.
+fn mixed_cover(
+    grid: CubeSphere,
+    body_radius: f64,
+    cover: &[f32],
+    ages: &[f32],
+    present: f64,
+) -> Vec<f32> {
+    let cell = grid.delta() * body_radius;
+    let sigma_full =
+        REGOLITH_MIXING_LENGTH * (present / REGOLITH_MIXING_REFERENCE_GYR).sqrt().max(1e-3);
+    // Each pass of the 1/8, 1/2, 1/8 kernel adds a quarter of a cell of variance.
+    let passes = (4.0 * (sigma_full / cell).powi(2)).round() as usize;
+    if passes == 0 {
+        return cover.to_vec();
+    }
+    let passes = passes.min(REGOLITH_MIXING_MAX_PASSES);
+    let sigma_blur = 0.5 * (passes as f64).sqrt() * cell;
+    let blurred = crate::stages::episodic::smooth(&grid, cover, passes);
+    cover
+        .iter()
+        .zip(blurred.iter())
+        .zip(ages.iter())
+        .map(|((&c, &b), &a)| {
+            let exposure = (present - a as f64).max(0.0);
+            let sigma = REGOLITH_MIXING_LENGTH * (exposure / REGOLITH_MIXING_REFERENCE_GYR).sqrt();
+            let f = (sigma / sigma_blur).clamp(0.0, 1.0) as f32;
+            c + f * (b - c)
+        })
+        .collect()
+}
+
 /// Linear-reflectance albedo of the surface.
 pub fn albedo(
     graph: &ParamGraph,
     layers: &LayerSet,
     maturity: &Field<f32>,
     rays: &Field<f32>,
+    present: f64,
 ) -> Field<[f32; 3]> {
     let bedrock =
         end_member(graph.str("materials.bedrock")).unwrap_or_else(|| end_member("basalt").unwrap());
@@ -258,11 +294,26 @@ pub fn albedo(
     let units = layers.unit_id.as_slice();
     let deep_f = layers.deep.as_slice();
     let melt_f = layers.melt.as_slice();
+    let cover_f = layers.cover.as_slice();
     let m = maturity.as_slice();
+    // On an airless surface small impacts mix the regolith sideways, and a contact
+    // between lava and its substrate blurs in colour as it ages.
+    let io = graph.str("materials.bedrock") == "sulfur_coated";
+    let gardened = !io && graph.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
+    let mixed = if gardened {
+        mixed_cover(
+            grid,
+            graph.f64("body.radius"),
+            cover_f,
+            layers.surface_age.as_slice(),
+            present,
+        )
+    } else {
+        cover_f.to_vec()
+    };
     let r = rays.as_slice();
     // The Io regime colours itself: sulfur plains reddened towards the poles, patches of
     // frost, black fresh flows, dark patera floors, plume deposits and bare mountain rock.
-    let io = graph.str("materials.bedrock") == "sulfur_coated";
     let frost_noise =
         crate::noise::GradientNoise::new(graph.f64("seed.terrain") as u64 ^ 0xF205_7000);
     let frost_frequency = graph.f64("body.radius") / IO_FROST_LENGTH;
@@ -279,7 +330,7 @@ pub fn albedo(
                 let frost = ((n + 0.15) / 0.3).clamp(0.0, 1.0) as f32 * IO_FROST_COVER as f32;
                 let plains = lerp3(plains, IO_FROST, frost * (1.0 - polar));
                 // Deposits and flows lie over the plains by their coverage.
-                let cover = melt_f[k].clamp(0.0, 1.0);
+                let cover = cover_f[k].clamp(0.0, 1.0);
                 return match units[k] {
                     UNIT_IO_FLOW => lerp3(plains, IO_FLOW_DARK, cover),
                     UNIT_PATERA_FLOOR => IO_PATERA_FLOOR,
@@ -296,8 +347,19 @@ pub fn albedo(
                 let pair = match units[k] {
                     UNIT_CONTINENTAL => continental,
                     UNIT_OCEANIC => oceanic,
-                    UNIT_LAVA | UNIT_LAVA_CRATER_FLOOR | UNIT_LAVA_EJECTA => lava,
-                    _ => base,
+                    // Lava by its coverage, mixed sideways into its surroundings: a thin
+                    // flow shows the substrate through, an old contact is blurred.
+                    _ => {
+                        let c = mixed[k].clamp(0.0, 1.0);
+                        if c <= 0.0 {
+                            base
+                        } else {
+                            Pair {
+                                fresh: lerp3(base.fresh, lava.fresh, c),
+                                mature: lerp3(base.mature, lava.mature, c),
+                            }
+                        }
+                    }
                 };
                 // Deep-sourced material by its fraction, then melt over the fresh surface.
                 let fresh = lerp3(pair.fresh, deep_pair.fresh, deep_f[k]);

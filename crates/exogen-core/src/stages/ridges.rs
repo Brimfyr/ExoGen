@@ -330,6 +330,7 @@ pub fn ridge_compute(
             unit: 0,
             deep: 0.0,
             melt: 0.0,
+            cover: 0.0,
         })
         .collect();
     cells.sort_by_key(|c| c.idx);

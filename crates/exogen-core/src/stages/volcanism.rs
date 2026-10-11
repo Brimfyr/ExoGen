@@ -26,10 +26,11 @@ use crate::grid::projection::{SparseField, sample_bilinear_sparse};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
+use crate::stages::deform::Deformation;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
 #[derive(Clone, Copy, Debug)]
@@ -435,6 +436,7 @@ impl FloodProcess {
             let units = layers.unit_id.as_mut_slice();
             let deep = layers.deep.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
             for &(idx, h) in &popped {
                 let t = level - h as f64;
                 if t <= FLOOD_MIN_THICKNESS {
@@ -457,6 +459,7 @@ impl FloodProcess {
                 units[idx] = UNIT_LAVA;
                 deep[idx] = 0.0;
                 melt[idx] = 0.0;
+                cover[idx] = (t / LAVA_COVER_DEPTH).min(1.0) as f32;
             }
         }
         let ponds = if recorded.is_empty() {
@@ -563,6 +566,7 @@ pub fn flood_compute(
     coarse: &CubeSphere,
     rec: &FloodRecord,
     smear: &LavaSmear,
+    deform: &Deformation,
 ) -> (StampOutput, Vec<(u32, f32)>, [usize; 4]) {
     let ratio = grid.face_size() / coarse.face_size();
     if ratio == 0 || !grid.face_size().is_multiple_of(coarse.face_size()) {
@@ -600,6 +604,7 @@ pub fn flood_compute(
     let units = layers.unit_id.as_slice();
     let deep = layers.deep.as_slice();
     let melt = layers.melt.as_slice();
+    let cover = layers.cover.as_slice();
     let time = rec.time_gyr as f32;
     let mut cells = Vec::with_capacity(levels.len() * (ratio * ratio) as usize);
     let mut taken = Vec::with_capacity(levels.len() * (ratio * ratio) as usize);
@@ -624,11 +629,14 @@ pub fn flood_compute(
                     stats[3] += 1;
                     continue;
                 }
-                // The ground as the flood found it, and the smears of floods still to
-                // come, which ride on top of whatever is written.
+                // The ground as the flood found it: the base less the smears not yet
+                // taken out and less what the slow processes, the domes, shields,
+                // canyon and coronae, have added since; both ride on top of whatever
+                // is written.
                 let remaining = smear.total[idx] - smear.done[idx];
-                let ground = bedrock[idx] - remaining;
-                let carry = remaining - own;
+                let later = deform.since_flood(d, rec.time_gyr) as f32;
+                let ground = bedrock[idx] - remaining - later;
+                let carry = remaining - own + later;
                 let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
                 if (outline - FLOOD_MARGIN_THRESHOLD).abs() < FLOOD_MARGIN_WOBBLE {
                     outline += FLOOD_MARGIN_WOBBLE * lobes.fbm(d, lobe_frequency, 2, 2.0, 0.5);
@@ -647,6 +655,7 @@ pub fn flood_compute(
                         unit: UNIT_LAVA,
                         deep: 0.0,
                         melt: 0.0,
+                        cover: (fill / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0),
                     });
                 } else {
                     if ground >= level + drape {
@@ -669,6 +678,7 @@ pub fn flood_compute(
                         unit,
                         deep: deep[idx],
                         melt: melt[idx],
+                        cover: cover[idx],
                     });
                 }
             }

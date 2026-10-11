@@ -261,13 +261,13 @@ impl IoProcess {
             );
             let bedrock = layers.bedrock.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
-            let melt = layers.melt.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
             for &(idx, r, phi) in &self.stamper.footprint {
                 let h = block_profile(r, phi, m, &noise);
                 if h > 0.0 {
                     bedrock[idx] += h as f32;
                     units[idx] = UNIT_MOUNTAIN;
-                    melt[idx] = 1.0;
+                    cover[idx] = 1.0;
                 }
             }
         }
@@ -277,7 +277,7 @@ impl IoProcess {
                 .gather(&grid, body_radius, p.center, p.radius + 3.0 * wall);
             let bedrock = layers.bedrock.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
-            let melt = layers.melt.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
             for &(idx, r, _) in &self.stamper.footprint {
                 let depth = pit_profile(r, p.radius, p.depth, wall);
                 bedrock[idx] -= depth as f32;
@@ -287,7 +287,7 @@ impl IoProcess {
                     } else {
                         UNIT_PATERA_FLOOR
                     };
-                    melt[idx] = 1.0;
+                    cover[idx] = 1.0;
                 }
             }
         }
@@ -331,6 +331,7 @@ pub fn patera_compute(
                 unit: 0,
                 deep: 0.0,
                 melt: 0.0,
+                cover: 0.0,
             };
             if r < p.radius + 0.5 * wall_fine {
                 write.surface = true;
@@ -344,7 +345,7 @@ pub fn patera_compute(
                 } else {
                     UNIT_PRIMORDIAL
                 };
-                write.melt = if r < p.radius { 1.0 } else { 0.0 };
+                write.cover = if r < p.radius { 1.0 } else { 0.0 };
             }
             write
         })
@@ -388,12 +389,13 @@ pub fn mountain_compute(
                 unit: 0,
                 deep: 0.0,
                 melt: 0.0,
+                cover: 0.0,
             };
             if block > 0.0 {
                 write.surface = true;
                 write.age = ages[idx];
                 write.unit = UNIT_MOUNTAIN;
-                write.melt = 1.0;
+                write.cover = 1.0;
             }
             write
         })
@@ -414,7 +416,7 @@ pub fn flow_compute(
     let ages = layers.surface_age.as_slice();
     stamper.gather(grid, body_radius, f.center, f.reach);
     let noise = GradientNoise::new(f.id ^ 0xF10_0000);
-    let melt = layers.melt.as_slice();
+    let covered = layers.cover.as_slice();
     let cells = stamper
         .footprint
         .iter()
@@ -429,7 +431,7 @@ pub fn flow_compute(
             }
             // A flow over an earlier flow keeps the stronger coverage.
             let cover = if units[idx] == UNIT_IO_FLOW {
-                cover.max(melt[idx])
+                cover.max(covered[idx])
             } else {
                 cover
             };
@@ -440,7 +442,8 @@ pub fn flow_compute(
                 age: ages[idx],
                 unit: UNIT_IO_FLOW,
                 deep: 0.0,
-                melt: cover,
+                melt: 0.0,
+                cover,
             })
         })
         .collect();
@@ -501,7 +504,8 @@ pub fn ring_compute(
                 age: ages[idx],
                 unit,
                 deep: 0.0,
-                melt: cover as f32,
+                melt: 0.0,
+                cover: cover as f32,
             })
         })
         .collect();

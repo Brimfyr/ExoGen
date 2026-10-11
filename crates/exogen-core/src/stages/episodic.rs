@@ -22,6 +22,7 @@ use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
+use crate::stages::deform::Deformation;
 use crate::stages::volcanism::LavaSmear;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
@@ -168,13 +169,18 @@ pub fn tessera_texture(d: [f64; 3], noise: &GradientNoise, body_radius: f64) -> 
     TESSERA_RELIEF * (a.max(b) - 0.5)
 }
 
+/// The central dome or sag of a corona at a fraction of its radius, m.
+pub fn corona_core(x: f64, centre_relief: f64) -> f64 {
+    centre_relief * (1.0 - (x / CORONA_RIM_POSITION).powi(2)).max(0.0)
+}
+
 /// Corona profile at a fraction of the radius: the central relief, the rim, the moat.
 pub fn corona_profile(x: f64, centre_relief: f64, rim_height: f64) -> f64 {
     if x >= 1.4 {
         return 0.0;
     }
     // Centre: a smooth dome or sag out to the rim.
-    let core = centre_relief * (1.0 - (x / CORONA_RIM_POSITION).powi(2)).max(0.0);
+    let core = corona_core(x, centre_relief);
     // Rim: a ridge ring at the rim position; moat just outside it.
     let rim = rim_height * (-((x - CORONA_RIM_POSITION) / CORONA_RIM_WIDTH).powi(2)).exp();
     let moat = -CORONA_MOAT_FRACTION
@@ -284,10 +290,12 @@ impl EpisodicProcess {
                 let units = layers.unit_id.as_mut_slice();
                 let deep = layers.deep.as_mut_slice();
                 let melt = layers.melt.as_mut_slice();
+                let cover = layers.cover.as_mut_slice();
                 for k in 0..n {
                     if score[k] > threshold {
                         units[k] = UNIT_TESSERA;
                         ages[k] = ages[k].min(tessera_age);
+                        cover[k] = 0.0;
                         continue;
                     }
                     let t = (EPISODIC_FILL_FRACTION as f32 * (filled[k] - heights[k])).max(0.0)
@@ -298,6 +306,7 @@ impl EpisodicProcess {
                     units[k] = UNIT_LAVA;
                     deep[k] = 0.0;
                     melt[k] = 0.0;
+                    cover[k] = 1.0;
                 }
             }
             event_fill = Some(fill.clone());
@@ -321,13 +330,15 @@ impl EpisodicProcess {
             let bedrock = layers.bedrock.as_mut_slice();
             let ages = layers.surface_age.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
             for &(idx, r, _) in &self.stamper.footprint {
                 let x = r / c.radius;
-                let core = c.centre_relief * (1.0 - (x / CORONA_RIM_POSITION).powi(2)).max(0.0);
+                let core = corona_core(x, c.centre_relief);
                 bedrock[idx] += core as f32;
                 if x < CORONA_RIM_POSITION && units[idx] != UNIT_TESSERA {
                     ages[idx] = c.time_gyr as f32;
                     units[idx] = UNIT_LAVA;
+                    cover[idx] = 1.0;
                 }
             }
         }
@@ -338,6 +349,7 @@ impl EpisodicProcess {
 /// Finishing pass of the event: the tessera boundary at the resolved resolution, the
 /// plains refilled against the resolved ground, the tessera fabric. Returns the writes
 /// and the smear taken out per cell.
+#[allow(clippy::too_many_arguments)]
 pub fn resurfacing_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -346,6 +358,7 @@ pub fn resurfacing_compute(
     rec: &Resurfacing,
     smear: &LavaSmear,
     seed: u64,
+    deform: &Deformation,
 ) -> (StampOutput, Vec<(u32, f32)>) {
     let padded_fill = PaddedField::new(coarse, &rec.fill);
     let padded_filled = PaddedField::new(coarse, &rec.filled);
@@ -367,9 +380,13 @@ pub fn resurfacing_compute(
         if smear.crater_time[idx] > time + 1e-6 {
             continue;
         }
+        // The ground as the event found it: the base less the smears not yet taken out
+        // and less what the rises, shields and coronae have added since; both ride on
+        // top of whatever is written.
         let remaining = smear.total[idx] - smear.done[idx];
-        let ground = bedrock[idx] - remaining;
-        let carry = remaining - own;
+        let later = deform.since_event(d, rec.time_gyr) as f32;
+        let ground = bedrock[idx] - remaining - later;
+        let carry = remaining - own + later;
         let score = sample_bilinear(coarse, &padded_score, d);
         if score > rec.threshold {
             let fabric = tessera_texture(d, &noise, body_radius) as f32;
@@ -381,6 +398,7 @@ pub fn resurfacing_compute(
                 unit: UNIT_TESSERA,
                 deep: deep[idx],
                 melt: melt[idx],
+                cover: 0.0,
             });
         } else {
             let target = sample_bilinear(coarse, &padded_filled, d);
@@ -394,6 +412,7 @@ pub fn resurfacing_compute(
                 unit: UNIT_LAVA,
                 deep: 0.0,
                 melt: 0.0,
+                cover: 1.0,
             });
         }
     }
@@ -437,6 +456,7 @@ pub fn corona_compute(
                 unit: 0,
                 deep: 0.0,
                 melt: 0.0,
+                cover: 0.0,
             }
         })
         .collect();
@@ -476,11 +496,13 @@ pub fn dome_compute(
                 unit: 0,
                 deep: 0.0,
                 melt: 0.0,
+                cover: 0.0,
             };
             if top > 0.05 && ages[idx] <= time + 1e-6 {
                 write.surface = true;
                 write.age = time;
                 write.unit = UNIT_LAVA;
+                write.cover = 1.0;
             }
             write
         })

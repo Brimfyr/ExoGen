@@ -102,6 +102,7 @@ pub struct CellWrite {
     pub unit: u16,
     pub deep: f32,
     pub melt: f32,
+    pub cover: f32,
 }
 
 /// The cells one stamp changes.
@@ -118,6 +119,7 @@ impl StampOutput {
         let units = layers.unit_id.as_mut_slice();
         let deep = layers.deep.as_mut_slice();
         let melt = layers.melt.as_mut_slice();
+        let cover = layers.cover.as_mut_slice();
         for c in &self.cells {
             let i = c.idx as usize;
             bedrock[i] = c.bedrock;
@@ -126,6 +128,7 @@ impl StampOutput {
                 units[i] = c.unit;
                 deep[i] = c.deep;
                 melt[i] = c.melt;
+                cover[i] = c.cover;
             }
         }
     }
@@ -334,6 +337,7 @@ pub fn stamp_compute(
             unit: 0,
             deep: 0.0,
             melt: 0.0,
+            cover: 0.0,
         };
         let cont = continuous * edge.factor(phi);
         if p.set_age && re <= cont {
@@ -356,6 +360,12 @@ pub fn stamp_compute(
             };
             write.deep = deep[idx] + ((source_deep - deep[idx] as f64) * mix) as f32;
             write.melt = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
+            // A crater in lava is made of lava through and through.
+            write.cover = if crate::stages::volcanism::is_lava_unit(write.unit) {
+                1.0
+            } else {
+                0.0
+            };
         }
         write
     };
@@ -984,6 +994,7 @@ pub fn restore_compute(
             unit: 0,
             deep: 0.0,
             melt: 0.0,
+            cover: 0.0,
         };
         let cont = continuous * edge.factor(phi);
         // The surface is the crater's only where nothing younger, lava or a later
@@ -1006,6 +1017,11 @@ pub fn restore_compute(
             // whatever older craters left, and start the melt afresh.
             write.deep = base_deep[idx];
             write.melt = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
+            write.cover = if crate::stages::volcanism::is_lava_unit(write.unit) {
+                1.0
+            } else {
+                0.0
+            };
         }
         write
     };

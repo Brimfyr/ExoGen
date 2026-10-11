@@ -111,8 +111,18 @@ fn smooth(t: f64, a: f64, b: f64) -> f64 {
     x * x * (3.0 - 2.0 * x)
 }
 
+/// Growth of a rise's dome by a time, 0 to 1.
+pub fn rise_progress(rise: &Rise, t: f64) -> f64 {
+    smooth(t, rise.start_gyr, rise.end_gyr)
+}
+
+/// Growth of a trough by a time, 0 to 1.
+pub fn trough_progress(trough: &Trough, t: f64) -> f64 {
+    smooth(t, trough.start_gyr, trough.end_gyr)
+}
+
 /// Shield growth: most of it early, a tail to the present.
-fn shield_progress(t: f64, start: f64) -> f64 {
+pub fn shield_progress(t: f64, start: f64) -> f64 {
     if t <= start {
         0.0
     } else {
@@ -412,6 +422,7 @@ impl PlumeProcess {
             let units = layers.unit_id.as_mut_slice();
             let deep = layers.deep.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
             for &(idx, _, _) in &self.stamper.footprint {
                 let d = grid.center(grid.cell(idx));
                 let full = shield_height(shield, d, body_radius, false, 0.0);
@@ -426,6 +437,7 @@ impl PlumeProcess {
                     units[idx] = UNIT_LAVA;
                     deep[idx] = 0.0;
                     melt[idx] = 0.0;
+                    cover[idx] = 1.0;
                 }
             }
         }
@@ -516,6 +528,133 @@ fn radial_trace(
     points
 }
 
+/// A trough's trace resolved into frames: each point with its tangent and normal, the
+/// taper and the width pulse there. Shared by the stamp over a grid and the depth at a
+/// point.
+pub struct TroughFrames {
+    frames: Vec<Frame>,
+    width: f64,
+    noise: GradientNoise,
+}
+
+struct Frame {
+    p: [f64; 3],
+    t: [f64; 3],
+    normal: [f64; 3],
+    taper: f64,
+    pulse: f64,
+}
+
+/// A trough's dimensions at a growth fraction, m.
+struct TroughSize {
+    width: f64,
+    depth: f64,
+    wall: f64,
+    search: f64,
+    half_band: f64,
+}
+
+impl TroughFrames {
+    pub fn new(trough: &Trough) -> Self {
+        let n = trough.points.len();
+        let mut frames = Vec::with_capacity(n);
+        for k in 0..n {
+            let p = trough.points[k];
+            let prev = trough.points[k.saturating_sub(1)];
+            let next = trough.points[(k + 1).min(n - 1)];
+            let chord = [next[0] - prev[0], next[1] - prev[1], next[2] - prev[2]];
+            let radial = dot(chord, p);
+            let t = normalize([
+                chord[0] - radial * p[0],
+                chord[1] - radial * p[1],
+                chord[2] - radial * p[2],
+            ]);
+            if dot(t, t) < 0.5 {
+                continue;
+            }
+            let normal = normalize(cross(p, t));
+            let along_trace = k as f64 * trough.spacing;
+            let taper = (std::f64::consts::PI * along_trace / trough.length)
+                .sin()
+                .max(0.0);
+            if taper <= 0.0 {
+                continue;
+            }
+            let taper = taper.powf(TROUGH_TAPER_POWER);
+            // Chasmata: the width pulses along the trace, and each wall is scalloped.
+            let pulse = 1.0
+                + TROUGH_WIDTH_PULSE
+                    * (2.0 * std::f64::consts::PI * along_trace / TROUGH_PULSE_LENGTH).sin();
+            frames.push(Frame {
+                p,
+                t,
+                normal,
+                taper,
+                pulse,
+            });
+        }
+        Self {
+            frames,
+            width: trough.width,
+            noise: GradientNoise::new(trough.id ^ 0xCA17_0000),
+        }
+    }
+
+    /// The trace points that carry a frame.
+    pub fn points(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
+        self.frames.iter().map(|f| f.p)
+    }
+
+    fn size(trough: &Trough, progress: f64, wall_floor: f64, cell: f64) -> TroughSize {
+        let width = trough.width * (0.3 + 0.7 * progress);
+        let depth = trough.depth * progress;
+        // Walls no narrower than the grid that carries them.
+        let wall = (TROUGH_WALL_FRACTION * width).max(wall_floor);
+        TroughSize {
+            width,
+            depth,
+            wall,
+            search: 0.5 * width + 3.0 * wall + 2.0 * cell,
+            half_band: 0.5 * trough.spacing + cell,
+        }
+    }
+
+    /// How far from a trace point the trough reaches at a growth fraction, m.
+    pub fn search(&self, trough: &Trough, progress: f64, wall_floor: f64, cell: f64) -> f64 {
+        Self::size(trough, progress, wall_floor, cell).search
+    }
+
+    /// The depth a frame gives a point, with the point's distance along strike, or
+    /// nothing when the point is outside the frame's band.
+    fn depth_from(
+        &self,
+        d: [f64; 3],
+        body_radius: f64,
+        size: &TroughSize,
+        blur: f64,
+        f: &Frame,
+    ) -> Option<(f64, f64)> {
+        let along = dot(d, f.t) * body_radius;
+        if along.abs() > size.half_band {
+            return None;
+        }
+        let across = dot(d, f.normal) * body_radius;
+        let scallop_frequency = body_radius / TROUGH_SCALLOP_LENGTH.max(self.width);
+        let scallop = 1.0
+            + TROUGH_SCALLOP
+                * self.noise.fbm(
+                    [d[0] + across.signum() * 3.0, d[1], d[2]],
+                    scallop_frequency,
+                    2,
+                    2.0,
+                    0.5,
+                );
+        let width = size.width * f.pulse * scallop;
+        let u = f.taper * trough_profile(across, width, size.depth, size.wall, blur);
+        Some((along.abs(), u))
+    }
+}
+
 /// Depth of a trough at each cell it touches, at a growth fraction, with scalloped
 /// walls and a tapered floor: nearest trace point along strike.
 pub fn trough_depths(
@@ -528,71 +667,53 @@ pub fn trough_depths(
     stamper: &mut Stamper,
 ) -> Vec<(usize, f64)> {
     let cell = grid.delta() * body_radius;
-    let noise = GradientNoise::new(trough.id ^ 0xCA17_0000);
-    let scallop_frequency = body_radius / TROUGH_SCALLOP_LENGTH.max(trough.width);
-    let width_now = trough.width * (0.3 + 0.7 * progress);
-    let depth_now = trough.depth * progress;
-    // Walls no narrower than the grid that carries them.
-    let wall = (TROUGH_WALL_FRACTION * width_now).max(wall_floor);
-    let search = 0.5 * width_now + 3.0 * wall + 2.0 * cell;
-    let half_band = 0.5 * trough.spacing + cell;
+    let frames = TroughFrames::new(trough);
+    let size = TroughFrames::size(trough, progress, wall_floor, cell);
     let mut best: HashMap<usize, (f64, f64)> = HashMap::new();
-    let n = trough.points.len();
-    for k in 0..n {
-        let p = trough.points[k];
-        let prev = trough.points[k.saturating_sub(1)];
-        let next = trough.points[(k + 1).min(n - 1)];
-        let chord = [next[0] - prev[0], next[1] - prev[1], next[2] - prev[2]];
-        let radial = dot(chord, p);
-        let t = normalize([
-            chord[0] - radial * p[0],
-            chord[1] - radial * p[1],
-            chord[2] - radial * p[2],
-        ]);
-        if dot(t, t) < 0.5 {
-            continue;
-        }
-        let normal = normalize(cross(p, t));
-        let along_trace = k as f64 * trough.spacing;
-        let taper = (std::f64::consts::PI * along_trace / trough.length)
-            .sin()
-            .max(0.0);
-        if taper <= 0.0 {
-            continue;
-        }
-        let taper = taper.powf(TROUGH_TAPER_POWER);
-        // Chasmata: the width pulses along the trace, and each wall is scalloped.
-        let pulse = 1.0
-            + TROUGH_WIDTH_PULSE
-                * (2.0 * std::f64::consts::PI * along_trace / TROUGH_PULSE_LENGTH).sin();
-        stamper.gather(grid, body_radius, p, search);
+    for f in &frames.frames {
+        stamper.gather(grid, body_radius, f.p, size.search);
         for &(idx, _, _) in &stamper.footprint {
             let d = grid.center(grid.cell(idx));
-            let along = dot(d, t) * body_radius;
-            if along.abs() > half_band {
-                continue;
-            }
-            let across = dot(d, normal) * body_radius;
-            let scallop = 1.0
-                + TROUGH_SCALLOP
-                    * noise.fbm(
-                        [d[0] + across.signum() * 3.0, d[1], d[2]],
-                        scallop_frequency,
-                        2,
-                        2.0,
-                        0.5,
-                    );
-            let width = width_now * pulse * scallop;
-            let u = taper * trough_profile(across, width, depth_now, wall, blur);
-            let entry = best.entry(idx).or_insert((f64::INFINITY, 0.0));
-            if along.abs() < entry.0 {
-                *entry = (along.abs(), u);
+            if let Some((along, u)) = frames.depth_from(d, body_radius, &size, blur, f) {
+                let entry = best.entry(idx).or_insert((f64::INFINITY, 0.0));
+                if along < entry.0 {
+                    *entry = (along, u);
+                }
             }
         }
     }
     let mut out: Vec<(usize, f64)> = best.into_iter().map(|(i, (_, u))| (i, u)).collect();
     out.sort_by_key(|e| e.0);
     out
+}
+
+/// Depth of a trough at a point, m, as a grid of cell `cell` with walls no narrower
+/// than `wall_floor` carries it: the same profile the stamp lays down, at any point.
+#[allow(clippy::too_many_arguments)]
+pub fn trough_depth_at(
+    d: [f64; 3],
+    body_radius: f64,
+    trough: &Trough,
+    frames: &TroughFrames,
+    progress: f64,
+    wall_floor: f64,
+    cell: f64,
+    blur: f64,
+) -> f64 {
+    let size = TroughFrames::size(trough, progress, wall_floor, cell);
+    let reach = (size.search + 0.5 * cell) / body_radius;
+    let mut best = (f64::INFINITY, 0.0);
+    for f in &frames.frames {
+        if angle_between(f.p, d) > reach {
+            continue;
+        }
+        if let Some((along, u)) = frames.depth_from(d, body_radius, &size, blur, f)
+            && along < best.0
+        {
+            best = (along, u);
+        }
+    }
+    best.1
 }
 
 /// Finishing pass of a trough: the fine profile minus the version the loop carried,
@@ -649,6 +770,7 @@ pub fn trough_compute(
                 unit: 0,
                 deep: 0.0,
                 melt: 0.0,
+                cover: 0.0,
             };
             if inside > 0.5 && ages[idx] <= time_gyr + 1e-6 {
                 write.surface = true;
@@ -656,6 +778,7 @@ pub fn trough_compute(
                 write.unit = layers.unit_id.as_slice()[idx];
                 write.deep = layers.deep.as_slice()[idx];
                 write.melt = layers.melt.as_slice()[idx];
+                write.cover = layers.cover.as_slice()[idx];
             }
             write
         })
@@ -706,6 +829,7 @@ pub fn shield_compute(
                 unit: 0,
                 deep: 0.0,
                 melt: 0.0,
+                cover: 0.0,
             }
         })
         .collect();

@@ -231,6 +231,9 @@ pub struct LayerSet {
     pub deep: Field<f32>,
     /// Impact melt cover, 0 to 1.
     pub melt: Field<f32>,
+    /// Coverage of a deposit laid over the substrate, 0 to 1: lava by its thickness,
+    /// plume deposits by their density. What is not covered shows the substrate.
+    pub cover: Field<f32>,
 }
 
 impl LayerSet {
@@ -248,6 +251,7 @@ impl LayerSet {
             unit_id: Field::new(grid),
             deep: Field::new(grid),
             melt: Field::new(grid),
+            cover: Field::new(grid),
         }
     }
 
@@ -280,6 +284,7 @@ impl LayerSet {
             unit_id: self.unit_id.resample_nearest(target),
             deep: self.deep.resample(target),
             melt: self.melt.resample(target),
+            cover: self.cover.resample(target),
         }
     }
 
@@ -296,6 +301,7 @@ impl LayerSet {
             self.unit_id.hash(),
             self.deep.hash(),
             self.melt.hash(),
+            self.cover.hash(),
         ];
         crate::rng::hash_words(&parts)
     }

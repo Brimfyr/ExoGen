@@ -238,6 +238,9 @@ pub const BASIN_CRUST_THINNING: f64 = 0.5;
 pub const CRUST_THICKNESS_MIN: f64 = 3e3;
 /// Thinner lava than this is not recorded, m.
 pub const FLOOD_MIN_THICKNESS: f64 = 1.0;
+/// Lava thinner than this is mixed with its substrate by gardening and shows it through:
+/// a flow's coverage of the surface is its thickness over this, m.
+pub const LAVA_COVER_DEPTH: f64 = 30.0;
 /// How far from its vent a flow can travel, m: the longest flood-basalt flows run a
 /// thousand kilometres or so (Tharsis, the Deccan), not around the body.
 pub const FLOOD_MAX_REACH: f64 = 1.5e6;
@@ -824,6 +827,13 @@ pub const ICE_RESURFACING_TIDAL_FLUX: f64 = 0.01;
 /// resurfaces the whole body.
 pub const RETENTION_BURIAL_DEPTH_M: f64 = 10.0;
 pub const IO_REGIME_TIDAL_FLUX: f64 = 0.5;
+/// Lateral mixing of the regolith by small impacts: a contact between two materials
+/// blurs in colour over a zone this wide, m, after the reference age, Gyr. Li and
+/// Mustard 2000 measure 4 to 5 km across lunar mare-highland contacts of 3.5 Gyr; the
+/// zone widens as the square root of the age, as a diffusive process does.
+pub const REGOLITH_MIXING_LENGTH: f64 = 4.5e3;
+pub const REGOLITH_MIXING_REFERENCE_GYR: f64 = 3.5;
+pub const REGOLITH_MIXING_MAX_PASSES: usize = 24;
 /// Space weathering timescale at 1 AU, Gyr, and the pressure above which it is off.
 pub const SPACE_WEATHERING_GYR_1AU: f64 = 0.3;
 pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;
