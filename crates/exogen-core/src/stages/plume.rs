@@ -27,7 +27,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::UNIT_LAVA;
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -307,123 +307,119 @@ impl PlumeProcess {
                 sid += 1;
             }
         }
-        // Canyons and graben on the first rise's flank.
+        // Rifting: the uplift stretches the lithosphere, and the extension is taken up
+        // by a population of normal-fault troughs, from chasmata kilometres deep to
+        // graben at the grid's limit, drawn from a power law until the budget is spent.
+        // Faults cluster beside faults, so the big ones gather en-echelon neighbours and
+        // the small ones form swarms.
         let cell = grid.delta() * body_radius;
-        let canyon_count = graph.f64("tectonics.canyon_system_count").round() as usize;
+        let extension = graph.f64("tectonics.rift_extension");
         let mut canyons = Vec::new();
         let mut graben = Vec::new();
         for (ri, rise) in rises.iter().enumerate() {
             let (east, north) = local_basis(rise.center);
-            // One canyon system per rise that has one, of one arm on a stagnant lid and
-            // several radiating arms on an episodic one; every rise has graben.
-            let arms = if ri < canyon_count {
-                if episodic { RIFT_ARMS_EPISODIC } else { 1 }
-            } else {
-                0
-            };
-            let (canyon_start, canyon_end) = if episodic {
+            let budget = extension
+                * (rise.height / rise_height.max(1.0))
+                * 2.0
+                * std::f64::consts::PI
+                * RIFT_TRANSECT_FRACTION
+                * rise.radius;
+            let l_min = RIFT_MIN_LENGTH;
+            let l_max = (RIFT_MAX_LENGTH_FRACTION * 2.0 * rise.radius).max(2.0 * l_min);
+            let (t_lo, t_hi) = if episodic {
                 (event_time, age)
             } else {
-                (CANYON_START_GYR, CANYON_END_GYR)
+                (rise.start_gyr, RIFT_END_GYR.min(age))
             };
-            for a in 0..arms {
-                let k = ri as u64 * 8 + a;
-                let draw = 5_000 + k * 8;
-                let phi =
-                    2.0 * std::f64::consts::PI * (a as f64 + rng.uniform(draw, 1)) / arms as f64;
-                let length_fraction = if episodic {
-                    CANYON_LENGTH_FRACTION_EPISODIC
+            let depth_cap = (CANYON_DEPTH_FRACTION * rise.height).max(RIFT_MIN_DEPTH);
+            let spacing = 0.5 * cell;
+            let mut faults: Vec<Trough> = Vec::new();
+            let mut spent = 0.0;
+            let mut k = 0u64;
+            while spent < budget && k < RIFT_MAX_FAULTS {
+                let draw = 5_000 + ri as u64 * 1_000_000 + k * 16;
+                k += 1;
+                // Length from the truncated power law by inverse transform.
+                let u = rng.uniform(draw, 1).clamp(1e-9, 1.0 - 1e-9);
+                let ratio = (l_min / l_max).powf(RIFT_LENGTH_SLOPE);
+                let mut length = l_min * (1.0 - u * (1.0 - ratio)).powf(-1.0 / RIFT_LENGTH_SLOPE);
+                let scatter = (RIFT_DEPTH_SCATTER * rng.normal(draw, 2)).exp();
+                let depth =
+                    (RIFT_DEPTH_PER_LENGTH * length * scatter).clamp(RIFT_MIN_DEPTH, depth_cap);
+                let width = (RIFT_WIDTH_PER_DEPTH * depth).max(RIFT_MIN_WIDTH);
+                // Beside an existing fault, chosen by length, or on its own.
+                let host = if !faults.is_empty() && rng.uniform(draw, 3) < RIFT_CLUSTER_PROBABILITY
+                {
+                    let total: f64 = faults.iter().map(|f| f.length).sum();
+                    let mut pick = rng.uniform(draw, 4) * total;
+                    let mut chosen = faults.len() - 1;
+                    for (i, f) in faults.iter().enumerate() {
+                        if pick < f.length {
+                            chosen = i;
+                            break;
+                        }
+                        pick -= f.length;
+                    }
+                    Some(chosen)
                 } else {
-                    CANYON_LENGTH_FRACTION
+                    None
                 };
-                let length = length_fraction * 2.0 * rise.radius;
-                let start = offset(
-                    rise.center,
-                    east,
-                    north,
-                    CANYON_START_FRACTION * rise.radius / body_radius,
-                    phi,
-                );
-                let points = radial_trace(
-                    start,
-                    rise.center,
-                    length,
-                    0.5 * cell,
-                    body_radius,
-                    &rng,
-                    draw,
-                );
-                let width = CANYON_WIDTH_FRACTION * 2.0 * rise.radius;
-                let depth = CANYON_DEPTH_FRACTION * rise.height;
-                canyons.push(Trough {
-                    points: points.clone(),
-                    spacing: 0.5 * cell,
-                    length,
-                    width,
-                    depth,
-                    start_gyr: canyon_start,
-                    end_gyr: canyon_end,
-                    id: k,
-                });
-                // En-echelon troughs beside the main one: parallel, offset to either
-                // side, each along part of its length, with plateau remnants between.
-                let n_points = points.len();
-                for j in 0..CANYON_SIDE_TROUGHS {
-                    let sd = draw + 1 + j;
-                    let side = if rng.uniform(sd, 1) < 0.5 { -1.0 } else { 1.0 };
-                    let (o_lo, o_hi) = CANYON_SIDE_OFFSET;
-                    let lateral = side * width * (o_lo + (o_hi - o_lo) * rng.uniform(sd, 2));
-                    let (f_lo, f_hi) = CANYON_SIDE_LENGTH;
-                    let span =
-                        ((f_lo + (f_hi - f_lo) * rng.uniform(sd, 3)) * n_points as f64) as usize;
-                    let span = span.clamp(2, n_points);
-                    let i0 = ((n_points - span) as f64 * rng.uniform(sd, 4)) as usize;
-                    let (w_lo, w_hi) = CANYON_SIDE_WIDTH;
-                    let (d_lo, d_hi) = CANYON_SIDE_DEPTH;
-                    canyons.push(Trough {
-                        points: offset_trace(&points[i0..i0 + span], lateral, body_radius),
-                        spacing: 0.5 * cell,
-                        length: span as f64 * 0.5 * cell,
-                        width: width * (w_lo + (w_hi - w_lo) * rng.uniform(sd, 5)),
-                        depth: depth * (d_lo + (d_hi - d_lo) * rng.uniform(sd, 6)),
-                        start_gyr: canyon_start
-                            + 0.3 * (canyon_end - canyon_start) * rng.uniform(sd, 7),
-                        end_gyr: canyon_end,
-                        id: 100 + k * 8 + j,
-                    });
-                }
-            }
-            let n_graben = (GRABEN_PER_RISE * (rise.radius / 2.5e6).clamp(0.5, 2.0)) as u64;
-            for k in 0..n_graben {
-                let draw = 9_000 + ri as u64 * 4_096 + k * 8;
-                let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 1);
-                let r0 = rise.radius
-                    * (GRABEN_START_FRACTION.0
-                        + (GRABEN_START_FRACTION.1 - GRABEN_START_FRACTION.0)
-                            * rng.uniform(draw, 2));
-                let (l_lo, l_hi) = GRABEN_LENGTH;
-                let length = l_lo * (l_hi / l_lo).powf(rng.uniform(draw, 3));
-                let start = offset(rise.center, east, north, r0 / body_radius, phi);
-                let spacing = 0.5 * cell;
-                let points =
-                    radial_trace(start, rise.center, length, spacing, body_radius, &rng, draw);
-                let (w_lo, w_hi) = GRABEN_WIDTH;
-                let width = w_lo * (w_hi / w_lo).powf(rng.uniform(draw, 4));
-                let time = if episodic {
-                    event_time + (age - event_time) * rng.uniform(draw, 5)
+                let points = match host {
+                    Some(h) => {
+                        let hf = &faults[h];
+                        let n_points = hf.points.len();
+                        let span = ((length / hf.spacing).round() as usize).clamp(2, n_points);
+                        let i0 = ((n_points - span) as f64 * rng.uniform(draw, 5)) as usize;
+                        let side = if rng.uniform(draw, 6) < 0.5 {
+                            -1.0
+                        } else {
+                            1.0
+                        };
+                        let (g_lo, g_hi) = RIFT_CLUSTER_OFFSET;
+                        let gap = g_lo + (g_hi - g_lo) * rng.uniform(draw, 7).powi(2);
+                        length = span as f64 * hf.spacing;
+                        offset_trace(
+                            &hf.points[i0..i0 + span],
+                            side * gap * hf.width.max(width),
+                            body_radius,
+                        )
+                    }
+                    None => {
+                        let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 5);
+                        let (r_lo, r_hi) = RIFT_START_FRACTION;
+                        let r0 = rise.radius * (r_lo + (r_hi - r_lo) * rng.uniform(draw, 6));
+                        let start = offset(rise.center, east, north, r0 / body_radius, phi);
+                        radial_trace(start, rise.center, length, spacing, body_radius, &rng, draw)
+                    }
+                };
+                let time = t_lo + (t_hi - t_lo) * rng.uniform(draw, 8);
+                let carried = width >= RIFT_LOOP_WIDTH_CELLS * cell;
+                let (start_gyr, end_gyr) = if carried {
+                    (
+                        (time - 0.5 * RIFT_CARVING_GYR).max(t_lo),
+                        (time + 0.5 * RIFT_CARVING_GYR).min(age),
+                    )
                 } else {
-                    rise.start_gyr + (rise.end_gyr - rise.start_gyr) * rng.uniform(draw, 5)
+                    (time, time)
                 };
-                graben.push(Trough {
+                spent += RIFT_HEAVE_PER_DEPTH * depth * length;
+                faults.push(Trough {
                     points,
                     spacing,
                     length,
                     width,
-                    depth: GRABEN_DEPTH * (0.5 + rng.uniform(draw, 6)),
-                    start_gyr: time,
-                    end_gyr: time,
-                    id: 1_000 + ri as u64 * 1_000 + k,
+                    depth,
+                    start_gyr,
+                    end_gyr,
+                    id: 1_000 + ri as u64 * 1_000_000 + k,
                 });
+            }
+            for f in faults {
+                if f.width >= RIFT_LOOP_WIDTH_CELLS * cell {
+                    canyons.push(f);
+                } else {
+                    graben.push(f);
+                }
             }
         }
         Some(Self {
@@ -701,9 +697,17 @@ impl TroughFrames {
         }
     }
 
-    /// The trace points that carry a frame.
+    /// The trace points that carry a frame, in frame order.
     pub fn points(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
         self.frames.iter().map(|f| f.p)
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
     }
 
     fn size(trough: &Trough, progress: f64, wall_floor: f64, cell: f64) -> TroughSize {
@@ -796,16 +800,18 @@ pub fn trough_depth_at(
     body_radius: f64,
     trough: &Trough,
     frames: &TroughFrames,
+    frame_range: (usize, usize),
     progress: f64,
     wall_floor: f64,
     cell: f64,
     blur: f64,
 ) -> f64 {
     let size = TroughFrames::size(trough, progress, wall_floor, cell);
-    let reach = (size.search + 0.5 * cell) / body_radius;
+    let cos_reach = ((size.search + 0.5 * cell) / body_radius).cos();
     let mut best = (f64::INFINITY, 0.0);
-    for f in &frames.frames {
-        if angle_between(f.p, d) > reach {
+    let (lo, hi) = frame_range;
+    for f in &frames.frames[lo.min(frames.frames.len())..hi.min(frames.frames.len())] {
+        if dot(f.p, d) < cos_reach {
             continue;
         }
         if let Some((along, u)) = frames.depth_from(d, body_radius, &size, blur, f)

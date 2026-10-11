@@ -1789,8 +1789,8 @@ mod tests {
         let lo = &out.loop_output;
         assert_eq!(lo.rises.len(), 1);
         assert!(lo.shields.len() >= 4, "{} shields", lo.shields.len());
-        // One canyon system: the main trough and its en-echelon neighbours.
-        assert_eq!(lo.canyons.len(), 1 + CANYON_SIDE_TROUGHS as usize);
+        // A rift population: at least one trough the loop carried, and many graben.
+        assert!(!lo.canyons.is_empty(), "no loop-carried canyon");
         assert!(lo.graben.len() > 20, "{} graben", lo.graben.len());
         let grid = out.finish.grid;
         let radius = g.f64("body.radius");

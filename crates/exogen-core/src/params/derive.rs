@@ -1559,9 +1559,9 @@ pub fn tectonics_rise_height(c: &Ctx) -> Value {
     (RISE_HEIGHT_FRACTION * c.f64("interior.max_relief")).into()
 }
 
-pub fn tectonics_canyon_count(c: &Ctx) -> Value {
-    if c.f64("tectonics.plume_rise_diameter") >= CANYON_MIN_RISE_DIAMETER {
-        c.f64("tectonics.plume_rise_count").round().into()
+pub fn tectonics_rift_extension(c: &Ctx) -> Value {
+    if c.f64("tectonics.plume_rise_count") >= 1.0 {
+        (RIFT_EXTENSION_PER_UPLIFT * c.f64("tectonics.plume_rise_height")).into()
     } else {
         0.0.into()
     }

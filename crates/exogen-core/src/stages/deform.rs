@@ -22,7 +22,8 @@ use crate::stages::plume::{
 enum Deformer {
     Rise(usize),
     Shield(usize),
-    Canyon(usize),
+    /// A canyon and the range of its frames that reach the cell.
+    Canyon(usize, u32, u32),
     Corona(usize),
 }
 
@@ -78,19 +79,29 @@ impl<'a> Deformation<'a> {
             );
         }
         let mut frames = Vec::with_capacity(canyons.len());
-        let mut marked = vec![u32::MAX; n];
+        // Per coarse cell, the first and last frame of the canyon in hand that reach it.
+        let mut range: Vec<(u32, u32)> = vec![(u32::MAX, 0); n];
+        let mut touched: Vec<usize> = Vec::new();
         for (k, c) in canyons.iter().enumerate() {
             let f = TroughFrames::new(c);
             let reach = f.search(c, 1.0, cell, cell) + cell;
-            for p in f.points() {
+            for (fi, p) in f.points().enumerate() {
                 stamper.gather(&coarse, body_radius, p, reach);
                 for &(idx, _, _) in &stamper.footprint {
-                    if marked[idx] != k as u32 {
-                        marked[idx] = k as u32;
-                        pairs.push((idx as u32, Deformer::Canyon(k)));
+                    let r = &mut range[idx];
+                    if r.0 == u32::MAX {
+                        touched.push(idx);
                     }
+                    r.0 = r.0.min(fi as u32);
+                    r.1 = r.1.max(fi as u32 + 1);
                 }
             }
+            for &idx in &touched {
+                let (lo, hi) = range[idx];
+                pairs.push((idx as u32, Deformer::Canyon(k, lo, hi)));
+                range[idx] = (u32::MAX, 0);
+            }
+            touched.clear();
             frames.push(f);
         }
         for (k, c) in coronae.iter().enumerate() {
@@ -172,7 +183,7 @@ impl<'a> Deformation<'a> {
                         h += shield_height(s, d, r_body, false, 0.0) * p;
                     }
                 }
-                Deformer::Canyon(k) => {
+                Deformer::Canyon(k, lo, hi) => {
                     let c = &self.canyons[k];
                     let p = trough_progress(c, t_slow);
                     if p > 0.0 {
@@ -181,6 +192,7 @@ impl<'a> Deformation<'a> {
                             r_body,
                             c,
                             &self.frames[k],
+                            (lo as usize, hi as usize),
                             p,
                             coarse_cell,
                             coarse_cell,

@@ -322,44 +322,42 @@ pub const CALDERA_MAX_DEPTH: f64 = 3e3;
 pub const CALDERA_WALL_WIDTH: f64 = 0.15;
 pub const SHIELD_FLOW_TEXTURE: f64 = 0.3;
 pub const SHIELD_FLOW_TEXTURE_LENGTH: f64 = 15e3;
-/// The canyon (Valles Marineris: 4,000 km long, 200 km wide, 7 km deep) on a rise at
-/// least this wide: its length as a fraction of the rise diameter, where it starts
-/// (fraction of the rise radius from the centre), width, depth, growth interval, and the
-/// carving that renews the floor's surface in a step. Graben on the flanks: how many
-/// per rise, where they start, their lengths, widths and depth. Trough traces wobble by
-/// this much over this length; their walls take this fraction of the width; walls are
-/// scalloped by this fraction over this length; the width pulses by this fraction over
-/// this length (chasmata); and the floor tapers to the ends with this power.
-pub const CANYON_MIN_RISE_DIAMETER: f64 = 2.0e6;
-pub const CANYON_LENGTH_FRACTION: f64 = 0.8;
-/// On an episodic lid the canyon system is a rift zone: arms radiating from the rise
-/// (Devana Chasma through Beta Regio; Ganis, Dali and Parga Chasmata from Atla), each as
-/// long as the rise is wide, carved after the resurfacing event.
-pub const RIFT_ARMS_EPISODIC: u64 = 3;
-pub const CANYON_LENGTH_FRACTION_EPISODIC: f64 = 1.0;
-pub const CANYON_START_FRACTION: f64 = 0.6;
-/// Width as a fraction of the rise diameter and depth as a fraction of the rise height
-/// (Valles Marineris: 200 km wide and 7 km deep on a 5,000 km, 7 km rise; Devana
-/// Chasma on Venus: 100 km wide and 2 to 3 km deep on a smaller, lower rise).
-pub const CANYON_WIDTH_FRACTION: f64 = 0.04;
+/// Rifting on a rise: the uplift stretches the lithosphere, and the extension across
+/// the rift zone comes to a few times the uplift (Valles Marineris some 30 km on
+/// Tharsis's 8 km, Andrews-Hanna 2012; Devana Chasma 10 to 20 km on Beta Regio's 4 km).
+/// It is spent along a transect round the rise as a population of normal-fault troughs:
+/// lengths from N(>L) ∝ L^−2 between a lower bound and 1.5 rise diameters, depth a
+/// thousandth and a half of the length with log-normal scatter, capped at the uplift;
+/// width thirty depths; heave 1.2 depths, two faults dipping 60°. Half the faults join an
+/// existing one as an en-echelon neighbour, a width or a few to its side, so the big
+/// ones gather parallel chasmata and the small ones form swarms. Troughs wider than two
+/// coarse cells are carved through the loop over a gigayear; the rest are cut at the
+/// finish. On a stagnant lid the rifting follows the dome; on an episodic lid it
+/// follows the resurfacing event.
+pub const RIFT_EXTENSION_PER_UPLIFT: f64 = 4.0;
+pub const RIFT_TRANSECT_FRACTION: f64 = 0.7;
+pub const RIFT_LENGTH_SLOPE: f64 = 2.0;
+pub const RIFT_MIN_LENGTH: f64 = 50e3;
+pub const RIFT_MAX_LENGTH_FRACTION: f64 = 1.5;
+pub const RIFT_DEPTH_PER_LENGTH: f64 = 1.5e-3;
+pub const RIFT_DEPTH_SCATTER: f64 = 0.4;
+pub const RIFT_MIN_DEPTH: f64 = 50.0;
+pub const RIFT_WIDTH_PER_DEPTH: f64 = 30.0;
+pub const RIFT_MIN_WIDTH: f64 = 2e3;
+pub const RIFT_HEAVE_PER_DEPTH: f64 = 1.2;
+pub const RIFT_START_FRACTION: (f64, f64) = (0.3, 1.1);
+pub const RIFT_CLUSTER_PROBABILITY: f64 = 0.5;
+pub const RIFT_CLUSTER_OFFSET: (f64, f64) = (0.8, 3.5);
+pub const RIFT_LOOP_WIDTH_CELLS: f64 = 2.0;
+pub const RIFT_CARVING_GYR: f64 = 1.0;
+pub const RIFT_END_GYR: f64 = 2.0;
+pub const RIFT_MAX_FAULTS: u64 = 20_000;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
-pub const CANYON_START_GYR: f64 = 1.0;
-pub const CANYON_END_GYR: f64 = 2.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
-/// En-echelon troughs beside the main canyon: how many, and their lateral offset,
-/// length, width and depth as fractions of the main trough's. Valles Marineris is Ius,
-/// Tithonium, Candor, Ophir and Melas Chasmata beside and overlapping Coprates, with
-/// plateau remnants between them.
-pub const CANYON_SIDE_TROUGHS: u64 = 3;
-pub const CANYON_SIDE_OFFSET: (f64, f64) = (0.7, 1.3);
-pub const CANYON_SIDE_LENGTH: (f64, f64) = (0.25, 0.5);
-pub const CANYON_SIDE_WIDTH: (f64, f64) = (0.5, 0.8);
-pub const CANYON_SIDE_DEPTH: (f64, f64) = (0.6, 0.9);
-pub const GRABEN_PER_RISE: f64 = 60.0;
-pub const GRABEN_START_FRACTION: (f64, f64) = (0.35, 1.0);
-pub const GRABEN_LENGTH: (f64, f64) = (200e3, 1_500e3);
-pub const GRABEN_WIDTH: (f64, f64) = (8e3, 30e3);
-pub const GRABEN_DEPTH: f64 = 400.0;
+/// Trough traces wander by this much over this length; their walls take this fraction
+/// of the width; the walls are scalloped by this fraction over this length; the width
+/// swells and narrows by this fraction over this length (chasmata); and the floor tapers
+/// to the ends with this power.
 pub const TROUGH_WOBBLE_DEG: f64 = 12.0;
 pub const TROUGH_WOBBLE_LENGTH: f64 = 400e3;
 pub const TROUGH_WALL_FRACTION: f64 = 0.05;
