@@ -1,6 +1,6 @@
 # Parameter graph specification
 
-Revision 0.3, 2026-10-11. This document is the contract for the `params` module of `exogen-core`. Every node the user can see or set is listed here with its unit, kind, default or derivation, and the source of the relation. The formula appendix at the end gives the relations by number. Values marked *fit* are calibrated against the reference bodies during the phase that implements the stage; the derivation form is fixed here, the constants are not.
+Revision 0.4, 2026-10-11. This document is the contract for the `params` module of `exogen-core`. Every node the user can see or set is listed here with its unit, kind, default or derivation, and the source of the relation. The formula appendix at the end gives the relations by number. Values marked *fit* are calibrated against the reference bodies during the phase that implements the stage; the derivation form is fixed here, the constants are not.
 
 ## Implementation status
 
@@ -157,9 +157,9 @@ Phase 1 implements the graph mechanism and the groups star, orbit, body, rotatio
 | tectonics.plume_rise_count | 1 | derived | Stagnant or episodic lid at least 3,000 km in radius: floor(surface_heat_flux / 0.02 W/m²), at most 3; else 0. Mars 1, Venus 3 | Phase 3, heuristic |
 | tectonics.plume_rise_diameter | m | derived | 1.5 R on a stagnant lid (Tharsis), 0.4 R on an episodic lid (Beta Regio) | Phase 3, fit |
 | tectonics.plume_rise_height | m | derived | 0.28 x max_relief (Tharsis 7 km, Beta Regio about 3 km) | Phase 3, fit |
-| tectonics.canyon_system_count | 1 | derived | 1 when a plume rise is wider than 2,000 km (Valles Marineris, Devana Chasma) | Phase 3 |
+| tectonics.canyon_system_count | 1 | derived | One per plume rise wider than 2,000 km: on a stagnant lid one trough with three en-echelon neighbours (Valles Marineris); on an episodic lid a rift zone of three arms radiating from the rise, carved after the event (Devana Chasma through Beta Regio) | Phase 3 |
 | tectonics.resurfacing_event_age | Gyr | derived | The crater retention age for an episodic lid, 0.5 on Venus; else 0 | Phase 3 |
-| tectonics.tessera_fraction | 1 | derived | 0.08 episodic lid: the highest-standing share of the surface that survives the event | Phase 3 |
+| tectonics.tessera_fraction | 1 | derived | 0.08 episodic lid: the highest-standing share of the surface, measured without the plume rises' domes, that survives the event; it stands as crustal plateaus 2 km above the plains | Phase 3 |
 | tectonics.mountain_count | 1 | derived | Io regime: 2 per TW of tidal power, some 150 on Io | Phase 3, heuristic |
 | tectonics.ice_resurfaced_fraction | 1 | derived | ice_shell_ocean: clipped (tidal_flux / 0.05); ice_shell_rock: 0 | fit |
 | tectonics.ice_crack_density | per m | derived | Tidal stress amplitude / ice strength, scaled by shell thickness | fit |
