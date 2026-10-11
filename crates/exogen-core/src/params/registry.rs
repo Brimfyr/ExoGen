@@ -207,6 +207,7 @@ const BEDROCK: &[&str] = &[
     "felsic",
     "water_ice",
     "water_ice_dirty",
+    "carbonaceous_ice",
     "ammonia_water_ice",
     "rock_ice_mixture",
     "carbonaceous",

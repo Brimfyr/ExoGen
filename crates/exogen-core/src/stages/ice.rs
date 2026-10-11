@@ -85,6 +85,8 @@ pub struct FrostCover {
     insolation: f64,
     albedo: f64,
     supply: f64,
+    /// How much of the frost shows: a dirty regolith gardens it in.
+    cleanliness: f64,
 }
 
 impl FrostCover {
@@ -93,25 +95,79 @@ impl FrostCover {
         let albedo = graph.f64("atmosphere.bond_albedo");
         let t_eq = mean_surface_temperature(insolation, albedo, 1.0);
         let sublimed = ice_sublimation_flux(t_eq) * graph.f64("body.age") * SECONDS_PER_GYR;
+        let cleanliness = (1.0 - regolith_impurity(graph)).clamp(0.0, 1.0).powi(2);
         Self {
             insolation,
             albedo,
             supply: (sublimed / FROST_SUPPLY_KG_M2).min(1.0),
+            cleanliness,
         }
     }
 
-    /// Frost share at a direction on the sphere.
+    /// Frost share at a direction on the sphere, on level ground.
     pub fn at(&self, d: [f64; 3]) -> f64 {
-        let cos_lat = (1.0 - d[2] * d[2]).max(0.0).sqrt();
+        self.at_slope(d, 0.0)
+    }
+
+    /// Frost share at a direction on a slope: the slope faces the pole or the equator and
+    /// sits at that slope's own mean temperature, so frost lies on pole-facing walls and
+    /// leaves equator-facing ones.
+    pub fn at_slope(&self, d: [f64; 3], poleward_slope: f64) -> f64 {
+        let cos_lat = effective_cos_lat(d, poleward_slope);
         let t = mean_surface_temperature(self.insolation, self.albedo, cos_lat);
         let persist = 1.0 / (1.0 + ((t - FROST_HALF_K) / FROST_WIDTH_K).exp());
-        FROST_COVER_MAX * persist * self.supply
+        FROST_COVER_MAX * persist * self.supply * self.cleanliness
     }
 }
 
-/// The maturity field of an icy surface from the surface ages. Ice renewed from below,
-/// the grooved lanes and the polar terrain, is clean whatever the regolith around it.
-pub fn lag_maturity(graph: &ParamGraph, layers: &LayerSet, present: f64) -> Field<f32> {
+/// The cosine of the latitude a slope behaves as: a surface rising towards the pole faces
+/// the equator and is warmer, one rising towards the equator faces the pole.
+pub fn effective_cos_lat(d: [f64; 3], poleward_slope: f64) -> f64 {
+    let lat = d[2].clamp(-1.0, 1.0).asin().abs();
+    (lat - poleward_slope)
+        .clamp(0.0, std::f64::consts::FRAC_PI_2)
+        .cos()
+}
+
+/// The slope of a height field towards the nearer pole at every cell, rad: positive where
+/// the ground rises polewards, from the four neighbours' heights.
+pub fn poleward_slope(height: &Field<f32>, body_radius: f64) -> Field<f32> {
+    let grid = height.grid();
+    Field::from_fn(grid, |c, d| {
+        let (east, north) = crate::geom::local_basis(d);
+        let h0 = height.get(c) as f64;
+        let (mut sxx, mut sxh, mut syy, mut syh) = (0.0, 0.0, 0.0, 0.0);
+        for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let nb = grid.neighbor(c, di, dj);
+            let p = grid.center(nb);
+            let dp = [
+                (p[0] - d[0]) * body_radius,
+                (p[1] - d[1]) * body_radius,
+                (p[2] - d[2]) * body_radius,
+            ];
+            let (x, y) = (crate::geom::dot(dp, east), crate::geom::dot(dp, north));
+            let dh = height.get(nb) as f64 - h0;
+            sxx += x * x;
+            sxh += x * dh;
+            syy += y * y;
+            syh += y * dh;
+        }
+        let _gx = if sxx > 0.0 { sxh / sxx } else { 0.0 };
+        let gy = if syy > 0.0 { syh / syy } else { 0.0 };
+        let poleward = if d[2] >= 0.0 { gy } else { -gy };
+        poleward.atan() as f32
+    })
+}
+
+/// The maturity field of an icy surface from the surface ages, each cell at its slope's
+/// own mean temperature. Ice renewed from below, the grooved lanes and the polar terrain,
+/// is clean whatever the regolith around it.
+pub fn lag_maturity(
+    graph: &ParamGraph,
+    layers: &LayerSet,
+    present: f64,
+    slope: Option<&Field<f32>>,
+) -> Field<f32> {
     let grid = layers.grid;
     let insolation = graph.f64("orbit.insolation");
     let albedo = graph.f64("atmosphere.bond_albedo");
@@ -121,8 +177,8 @@ pub fn lag_maturity(graph: &ParamGraph, layers: &LayerSet, present: f64) -> Fiel
     // A plume's fallout buries the lag as fast as it falls.
     let fallout = crate::stages::cryo::Fallout::new(graph);
     Field::from_fn(grid, |c, d| {
-        let cos_lat = (1.0 - d[2] * d[2]).max(0.0).sqrt();
-        let t = mean_surface_temperature(insolation, albedo, cos_lat);
+        let tilt = slope.map_or(0.0, |s| s.get(c) as f64);
+        let t = mean_surface_temperature(insolation, albedo, effective_cos_lat(d, tilt));
         let exposure = present - layers.surface_age.get(c) as f64;
         let exposure = match &fallout {
             Some(f) => exposure.min(f.burial_gyr(d)),
@@ -172,15 +228,12 @@ impl ShellMap {
 
     /// The taper's radius in a direction, rad: the mean, wobbled round the pole.
     pub fn radius_at(&self, d: [f64; 3]) -> f64 {
-        self.radius_rad * (1.0 + POLAR_MARGIN_WOBBLE * self.noise.fbm(d, 2.0, 2, 2.0, 0.5))
-    }
-
-    /// Angular radius of the active terrain in a direction, rad.
-    pub fn active_radius_at(&self, d: [f64; 3]) -> f64 {
-        if self.radius_rad <= 0.0 {
-            return 0.0;
-        }
-        self.active_radius_rad() * self.radius_at(d) / self.radius_rad
+        self.radius_rad
+            * (1.0
+                + POLAR_MARGIN_WOBBLE
+                    * self
+                        .noise
+                        .fbm(d, 2.0 / (2.0 * std::f64::consts::PI), 2, 2.0, 0.5))
     }
 
     /// The focusing profile at a direction: 1 at the pole, 0 beyond the taper.
@@ -206,29 +259,10 @@ impl ShellMap {
         self.pole.is_some() && self.thinning > POLAR_ACTIVE_THINNING
     }
 
-    /// Angular radius of the active terrain, rad: where the profile crosses the active
-    /// share.
-    pub fn active_radius_rad(&self) -> f64 {
-        (2.0 * POLAR_ACTIVE_PROFILE - 1.0).clamp(-1.0, 1.0).acos() / std::f64::consts::PI
-            * self.radius_rad
-    }
-
-    /// Whether the terrain at a direction is the renewed polar terrain.
-    pub fn active(&self, d: [f64; 3]) -> bool {
+    /// Whether the shell at a direction is in the thinned zone whose fissures renew the
+    /// terrain: the taper above the active share.
+    pub fn thin(&self, d: [f64; 3]) -> bool {
         self.has_active_terrain() && self.profile(d) > POLAR_ACTIVE_PROFILE
-    }
-
-    /// How much of a cell at a direction the active terrain covers, 0 to 1: a one-cell
-    /// ramp across its edge, for an edge drawn without stair steps.
-    pub fn active_coverage(&self, d: [f64; 3], body_radius: f64, cell: f64) -> f64 {
-        let Some(pole) = self.pole else {
-            return 0.0;
-        };
-        if !self.has_active_terrain() {
-            return 0.0;
-        }
-        let angle = crate::geom::angle_between(pole, d);
-        ((self.active_radius_at(d) - angle) * body_radius / cell.max(1.0) + 0.5).clamp(0.0, 1.0)
     }
 
     /// How far below the mean surface the thinner shell floats, m: the isostatic
@@ -274,6 +308,7 @@ mod tests {
             insolation: 50.25,
             albedo: 0.43,
             supply: 1.0,
+            cleanliness: 1.0,
         };
         let lat = |deg: f64| [deg.to_radians().cos(), 0.0, deg.to_radians().sin()];
         assert!(frost.at(lat(0.0)) < 0.05 && frost.at(lat(70.0)) > 0.3);

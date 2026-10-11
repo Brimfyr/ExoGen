@@ -12,6 +12,6 @@ description = "Reference body. Dark dwarf planet with an ice-rich crust over roc
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
 "atmosphere.bond_albedo" = 0.09
-"materials.bedrock" = "water_ice_dirty"
-"materials.regolith_mix" = { carbonaceous = 0.8, water_ice_dirty = 0.2 }
+"materials.bedrock" = "carbonaceous_ice"
+"materials.regolith_mix" = { carbonaceous = 0.8, carbonaceous_ice = 0.2 }
 "seed.master" = 24.0

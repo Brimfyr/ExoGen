@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_IO_FLOW, UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 17;
+pub const VERSION: u64 = 18;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -73,6 +73,14 @@ pub const END_MEMBERS: &[EndMember] = &[
         fresh: [0.36, 0.35, 0.34],
         mature: [0.26, 0.25, 0.24],
         roughness: 0.70,
+    },
+    // Ceres's crust: hydrated silicates, carbonates and clathrates with a third of ice,
+    // dark even when fresh (Haulani's ejecta are 1.6 times the surroundings).
+    EndMember {
+        id: "carbonaceous_ice",
+        fresh: [0.160, 0.155, 0.150],
+        mature: [0.095, 0.090, 0.085],
+        roughness: 0.80,
     },
     EndMember {
         id: "carbonaceous",
@@ -156,7 +164,10 @@ pub const END_MEMBERS: &[EndMember] = &[
 
 /// Ice end-members, whose excavated bright material darkens back to the lag it came from.
 pub fn is_ice(id: &str) -> bool {
-    id.starts_with("water_ice") || id == "ammonia_water_ice" || id == "rock_ice_mixture"
+    id.starts_with("water_ice")
+        || id == "ammonia_water_ice"
+        || id == "rock_ice_mixture"
+        || id == "carbonaceous_ice"
 }
 
 /// The share of an end-member that is not ice and stays behind as lag when the ice
@@ -165,6 +176,7 @@ pub fn non_ice_fraction(id: &str) -> f64 {
     match id {
         "water_ice" | "ammonia_water_ice" => 0.02,
         "water_ice_dirty" => 0.3,
+        "carbonaceous_ice" => 0.4,
         "rock_ice_mixture" => 0.5,
         _ => 1.0,
     }
@@ -263,6 +275,7 @@ pub fn albedo(
     maturity: &Field<f32>,
     rays: &Field<f32>,
     present: f64,
+    slope: Option<&Field<f32>>,
 ) -> Field<[f32; 3]> {
     let bedrock =
         end_member(graph.str("materials.bedrock")).unwrap_or_else(|| end_member("basalt").unwrap());
@@ -466,7 +479,8 @@ pub fn albedo(
                     Some(f) => {
                         let d = grid.center(grid.cell(k));
                         // Frost: what the cold latitudes keep, and what a plume lays down.
-                        let mut frost_share = f.at(d);
+                        let tilt = slope.map_or(0.0, |s| s.as_slice()[k] as f64);
+                        let mut frost_share = f.at_slope(d, tilt);
                         let mut burial = f64::INFINITY;
                         if let Some(fall) = &fallout {
                             frost_share = frost_share.max(fall.frost_at(d));

@@ -118,7 +118,15 @@ pub fn chaos_population(graph: &ParamGraph, present: f64, seed: u64) -> Vec<Chao
             let mut center = None;
             for attempt in 0..16u64 {
                 let p = rng.unit_direction(bin, draw + 1 + 2 * attempt);
-                let field = 0.5 + 0.5 * heat.fbm(p, CHAOS_HEAT_FREQUENCY, 2, 2.0, 0.5);
+                let field = 0.5
+                    + 0.5
+                        * heat.fbm(
+                            p,
+                            CHAOS_HEAT_FREQUENCY / (2.0 * std::f64::consts::PI),
+                            2,
+                            2.0,
+                            0.5,
+                        );
                 let w = 1.0 - CHAOS_HEAT_CONTRAST * (1.0 - field.clamp(0.0, 1.0));
                 if rng.uniform(bin, draw + 2 + 2 * attempt) < w {
                     center = Some(p);
@@ -163,10 +171,10 @@ pub fn chaos_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let noise = GradientNoise::new(chaos.id ^ 0xC4A0_0000);
-    let tau = 2.0 * std::f64::consts::PI;
-    let outline_frequency = tau * body_radius / (2.0 * chaos.radius);
-    let raft_frequency = tau * body_radius / CHAOS_RAFT_SCALE;
-    let hummock_frequency = tau * body_radius / CHAOS_HUMMOCK_SPACING;
+    // Noise frequencies are lattice cells per radian: the radius over the feature length.
+    let outline_frequency = body_radius / (2.0 * chaos.radius);
+    let raft_frequency = body_radius / CHAOS_RAFT_SCALE;
+    let hummock_frequency = body_radius / CHAOS_HUMMOCK_SPACING;
     // The share of a patch standing as rafts sets the threshold on the raft field.
     let raft_threshold = 0.55 * (1.0 - 2.0 * CHAOS_RAFT_SHARE);
     let time = chaos.time_gyr as f32;
@@ -289,7 +297,7 @@ pub fn cryodome_compute(
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let noise = GradientNoise::new(dome.id ^ 0xD0CE_0000);
-    let streak_frequency = 2.0 * std::f64::consts::PI * body_radius / (0.2 * dome.radius);
+    let streak_frequency = body_radius / (0.2 * dome.radius);
     let time = dome.time_gyr as f32;
     stamper.gather(grid, body_radius, dome.center, dome.radius);
     let mut cells: Vec<CellWrite> = stamper
@@ -357,7 +365,7 @@ pub fn post_pass(
     let ages = layers.surface_age.as_slice().to_vec();
     let cover = layers.cover.as_mut_slice();
     let noise = GradientNoise::new(0xFAC0_1A00);
-    let patch_frequency = 2.0 * std::f64::consts::PI * body_radius / FACULA_PATCH_SCALE;
+    let patch_frequency = body_radius / FACULA_PATCH_SCALE;
     crate::crater::with_stamper(&grid, |stamper| {
         for c in faculae {
             let dim = dimensions(c.diameter, scaling);

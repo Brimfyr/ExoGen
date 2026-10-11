@@ -863,7 +863,7 @@ pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.25;
 pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.0;
 /// The surface-age reset fades out over this outer fraction of the continuous ejecta zone,
 /// where the ejecta is thin and renews the surface only partly.
-pub const EJECTA_EDGE_FADE: f64 = 0.08;
+pub const EJECTA_EDGE_FADE: f64 = 0.35;
 /// A loop crater counts as recognisable while its rim-to-floor relief on the coarse surface
 /// is above this fraction of the fresh relief.
 pub const VISIBLE_RELIEF_FRACTION: f64 = 0.15;
@@ -998,6 +998,12 @@ pub const CYCLOID_PHASE_STEPS: usize = 64;
 pub const BAND_FRACTION: f64 = 0.15;
 pub const BAND_WIDTH_RAD: (f64, f64) = (0.0064, 0.019);
 pub const BAND_DEPTH: f64 = 100.0;
+/// A band is a lens: its width scaled by (4 s (1 - s)) to this power along its length, s
+/// the share of the length; and it is lineated inside, parallel to its axis, at this
+/// spacing, m (or three cells), by this much, m.
+pub const BAND_TAPER_POWER: f64 = 0.35;
+pub const BAND_LINEATION_SPACING: f64 = 1.5e3;
+pub const BAND_LINEATION: f64 = 40.0;
 pub const SALT_FADE_GYR: f64 = 0.03;
 /// Focused heating (F43): a shell over an ocean thins under one pole where the tidal
 /// dissipation concentrates, by up to this share of its thickness, in proportion to the
@@ -1015,10 +1021,17 @@ pub const POLAR_FOCUS_FLUX: f64 = 0.02;
 pub const POLAR_FOCUS_SHELL_RATIO: f64 = 0.03;
 pub const POLAR_TERRAIN_RADIUS_DEG: f64 = 70.0;
 pub const POLAR_ACTIVE_PROFILE: f64 = 0.5;
+/// The renewed terrain is the thinned shell's core, the taper above this, and the ground
+/// within this distance, m, of the fissures that opened in the thinned zone, wherever
+/// the taper stands above this; its folds fade over this distance, m, from its edge.
+pub const POLAR_CORE_PROFILE: f64 = 0.75;
+pub const POLAR_SPREAD_WIDTH: f64 = 30e3;
+pub const POLAR_OUTER_PROFILE: f64 = 0.3;
+pub const POLAR_FOLD_TAPER: f64 = 20e3;
 pub const POLAR_ACTIVE_THINNING: f64 = 0.3;
 pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
-pub const POLAR_FOLD_AMPLITUDE: f64 = 100.0;
+pub const POLAR_FOLD_AMPLITUDE: f64 = 150.0;
 pub const POLAR_FOLD_SPACING: f64 = 1.5e3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
 pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
@@ -1030,7 +1043,9 @@ pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
 /// Grooved terrain (F44): lanes of new ice drawn as great-circle swaths, their lengths
 /// log-uniform between these angles, rad, their widths between these, m, wobbling along
 /// them by this share, gathered in belts of extension drawn by a field of this many
-/// cycles round the body, this share of them laid beside an earlier lane turned by up to
+/// cycles round the body raised to this power (the extension localises, so the dark
+/// terrain between the belts stays whole), this share of them laid beside an earlier
+/// lane turned by up to
 /// this angle and set this many widths to its side (so the lanes come in parallel sets,
 /// as sulci do), until they cover the resurfaced share, at most this many; this share of
 /// the lanes is smooth
@@ -1043,11 +1058,12 @@ pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
 /// (Callisto's 0.08 mW/m² never stretched its shell); and the age of the
 /// resurfacing as a share of the body's age (Ganymede's bright terrain is about two
 /// gigayears old).
-pub const GROOVE_LANE_LENGTH_RAD: (f64, f64) = (0.2, 2.0);
-pub const GROOVE_LANE_WIDTH: (f64, f64) = (20e3, 200e3);
+pub const GROOVE_LANE_LENGTH_RAD: (f64, f64) = (0.2, 1.5);
+pub const GROOVE_LANE_WIDTH: (f64, f64) = (30e3, 250e3);
 pub const GROOVE_WIDTH_WOBBLE: f64 = 0.25;
-pub const GROOVE_BELT_FREQUENCY: f64 = 1.5;
-pub const GROOVE_NEIGHBOUR_SHARE: f64 = 0.6;
+pub const GROOVE_BELT_FREQUENCY: f64 = 1.2;
+pub const GROOVE_BELT_POWER: f64 = 4.0;
+pub const GROOVE_NEIGHBOUR_SHARE: f64 = 0.75;
 pub const GROOVE_NEIGHBOUR_TURN_DEG: f64 = 12.0;
 pub const GROOVE_NEIGHBOUR_OFFSET: (f64, f64) = (1.0, 3.0);
 pub const GROOVE_MAX_LANES: u64 = 1500;
@@ -1070,7 +1086,7 @@ pub const ICE_RESURFACING_AGE_FRACTION: f64 = 0.4;
 /// and the wobble of a patch's outline.
 pub const CHAOS_FRACTION_MAX: f64 = 0.3;
 pub const CHAOS_FLUX: f64 = 0.05;
-pub const CHAOS_DIAMETER: (f64, f64) = (5e3, 120e3);
+pub const CHAOS_DIAMETER: (f64, f64) = (5e3, 300e3);
 pub const CHAOS_HEAT_FREQUENCY: f64 = 2.0;
 pub const CHAOS_HEAT_CONTRAST: f64 = 0.5;
 pub const CHAOS_DROP: f64 = 150.0;
@@ -1109,7 +1125,13 @@ pub const PLUME_BURIAL_DEPTH: f64 = 1e-3;
 pub const PLUME_FROST_RATE: f64 = 1e3;
 /// The warm fissures a plume vents from sinter the ice to coarse grains, darker and bluer
 /// than the frost round them (Enceladus's tiger stripes): the tint at the pole.
-pub const VENT_ICE_TINT: [f32; 3] = [0.78, 0.85, 0.94];
+pub const VENT_ICE_TINT: [f32; 3] = [0.66, 0.78, 0.92];
+/// The fissures under a plume are widened and deepened by the venting: troughs this deep,
+/// m, this wide, m, with flanking ridges this share of the depth (Enceladus's tiger
+/// stripes: 500 m troughs 2 km wide with 100 m flanks).
+pub const VENT_TROUGH_DEPTH: f64 = 450.0;
+pub const VENT_WIDTH: f64 = 3e3;
+pub const VENT_RIDGE_SHARE: f64 = 0.3;
 /// Hemispheric asymmetry (F48): a locked moon's trailing hemisphere takes its parent's
 /// magnetospheric plasma, which darkens and reddens the ice there by this tint at the
 /// apex in a Jupiter-class magnetosphere (a parent over this mass, kg; Europa's and

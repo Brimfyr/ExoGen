@@ -37,6 +37,9 @@ pub enum LineaKind {
     Cycloid,
     /// A dilational band of new ice between the halves of a crack.
     Band,
+    /// A fissure under a plume: a trough widened and deepened by the venting, with low
+    /// flanks.
+    Vent,
 }
 
 /// A crack in the shell and what grew along it.
@@ -127,6 +130,8 @@ pub struct Cracks {
     pub retention: f64,
     pub body_radius: f64,
     pub orbit_period_s: f64,
+    /// Whether a plume vents from the fissures of the polar terrain.
+    pub vent: bool,
 }
 
 impl Cracks {
@@ -154,6 +159,7 @@ impl Cracks {
             retention: graph.f64("cratering.retention_age"),
             body_radius: graph.f64("body.radius"),
             orbit_period_s: graph.f64("orbit.period"),
+            vent: graph.f64("volcanism.plume_fallout_rate") > 0.0,
         })
     }
 
@@ -225,7 +231,7 @@ impl Cracks {
                 // surface, and opened in the field of its own time.
                 let mut time = time;
                 let mut axis = axis;
-                if self.shell_map.active(p0) {
+                if self.shell_map.thin(p0) {
                     time = (present - POLAR_RENEWAL_GYR * rng.uniform(bin, draw + 54)).max(0.0);
                     axis = mean_axis_at(time, present, self.nsr_period_gyr);
                     phase = self.shell.peak_tension(axis, p0).1;
@@ -245,6 +251,12 @@ impl Cracks {
                     LineaKind::Band
                 } else {
                     LineaKind::Ridge
+                };
+                // Under a plume the fissures of the thinned shell are its vents.
+                let kind = if self.vent && self.shell_map.thin(p0) {
+                    LineaKind::Vent
+                } else {
+                    kind
                 };
                 let length = l_lo * (l_hi / l_lo).powf(rng.uniform(bin, draw + 51));
                 let id = (bin << 32) | j;
@@ -266,6 +278,10 @@ impl Cracks {
                             BAND_DEPTH * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
                         )
                     }
+                    LineaKind::Vent => (
+                        VENT_WIDTH,
+                        VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, draw + 53)),
+                    ),
                     _ => (
                         LINEA_WIDTH,
                         LINEA_RIDGE_HEIGHT * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
@@ -406,6 +422,14 @@ pub fn linea_profile(kind: LineaKind, d: f64, width: f64, relief: f64, blur: f64
             let wall = (0.1 * width).hypot(blur).max(1.0);
             -relief * 0.5 * (1.0 - ((x - 0.5 * width) / wall).tanh())
         }
+        LineaKind::Vent => {
+            let w = width.hypot(2.0 * blur).max(1.0);
+            let sigma = (w / 4.0).max(1.0);
+            let trough = -relief * (-(x / sigma).powi(2)).exp();
+            let crest = 0.6 * w;
+            let flanks = VENT_RIDGE_SHARE * relief * (-((x - crest) / (0.5 * sigma)).powi(2)).exp();
+            trough + flanks
+        }
         _ => {
             let w = width.hypot(2.0 * blur).max(1.0);
             let crest = 0.25 * w;
@@ -437,7 +461,9 @@ pub fn linea_compute(
     };
     let half_band = 0.5 * rec.spacing + cell;
     let n = rec.points.len();
-    let mut best: HashMap<usize, (f64, f64)> = HashMap::new();
+    // Per cell: the nearest point along the crack, the signed distance across it, and
+    // how far along the crack's length that point lies.
+    let mut best: HashMap<usize, (f64, f64, f64)> = HashMap::new();
     for k in 0..n {
         let p = rec.points[k];
         let prev = rec.points[k.saturating_sub(1)];
@@ -461,18 +487,37 @@ pub fn linea_compute(
                 continue;
             }
             let across = dot(d, normal) * body_radius;
-            let entry = best.entry(idx).or_insert((f64::INFINITY, 0.0));
+            let entry = best.entry(idx).or_insert((f64::INFINITY, 0.0, 0.0));
             if along.abs() < entry.0 {
-                *entry = (along.abs(), across);
+                *entry = (along.abs(), across, k as f64 / (n - 1).max(1) as f64);
             }
         }
     }
     let time = rec.time_gyr as f32;
+    let lineation_spacing = BAND_LINEATION_SPACING.max(3.0 * cell);
     let mut cells: Vec<CellWrite> = best
         .into_iter()
-        .map(|(idx, (_, across))| {
-            let h = linea_profile(rec.kind, across, width, rec.relief, blur);
-            let inside = across.abs() < 0.5 * width;
+        .map(|(idx, (_, across, s))| {
+            // A band is a lens, widest in the middle and closing at its ends, and is
+            // lineated inside along its axis.
+            let width_here = match rec.kind {
+                LineaKind::Band => {
+                    width
+                        * (4.0 * s * (1.0 - s))
+                            .max(0.0)
+                            .powf(BAND_TAPER_POWER)
+                            .max(0.05)
+                }
+                _ => width,
+            };
+            let mut h = linea_profile(rec.kind, across, width_here, rec.relief, blur);
+            let inside = across.abs() < 0.5 * width_here;
+            if rec.kind == LineaKind::Band && inside {
+                let edge = 1.0 - (across / (0.5 * width_here)).powi(2);
+                h += BAND_LINEATION
+                    * edge
+                    * (2.0 * std::f64::consts::PI * across / lineation_spacing).sin();
+            }
             let mut write = CellWrite {
                 idx: idx as u32,
                 bedrock: (bedrock[idx] as f64 + h) as f32,

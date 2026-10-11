@@ -347,7 +347,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 27;
+pub const FINISH_VERSION: u64 = 28;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -627,6 +627,30 @@ pub fn finish(
         return Err(RunError::Cancelled);
     }
     let shell_map = ice::ShellMap::new(graph);
+    let shell_history = ice_shell_history(graph, &loop_output.thermal);
+    let lineae: Vec<lineae::Linea> = lineae::Cracks::new(graph)
+        .map(|c| c.generate(present, &grid, inputs.seed))
+        .unwrap_or_default();
+    // Chaos where a thin shell melts through, and the domes a shell over rock extrudes,
+    // each at the height its relaxation has left it.
+    let chaos = cryo::chaos_population(graph, present, inputs.seed);
+    let cryodomes = cryo::cryodome_population(graph, present, inputs.seed);
+    let dome_heights: Vec<f64> = cryodomes
+        .iter()
+        .map(|d| {
+            d.height
+                * match &shell_history {
+                    Some(shell_at) => relaxation::survival_since(
+                        2.0 * d.radius,
+                        d.time_gyr,
+                        present,
+                        &**shell_at,
+                        1.0,
+                    ),
+                    None => 1.0,
+                }
+        })
+        .collect();
     // The lanes of grooved terrain if they lie before the epoch, and the polar terrain's
     // renewal, which stands at the end of the sequence with its folds along the cracks.
     let groove_time = loop_output.groove_time.filter(|&te| te <= present + 1e-9);
@@ -646,16 +670,6 @@ pub fn finish(
         .unwrap_or([1.0, 0.0, 0.0]);
     // The coarse loop drew the lanes and the polar terrain cell by cell: their edges are
     // redrawn at this resolution before anything reads the ages they leave.
-    ice_shell::rasterize(
-        &mut layers,
-        body_radius,
-        cell,
-        &lanes,
-        groove_time,
-        &shell_map,
-        polar,
-        polar_time,
-    );
     let lane_floor: Option<Field<f32>> = loop_output
         .lane_floor
         .as_ref()
@@ -666,6 +680,21 @@ pub fn finish(
         .as_ref()
         .filter(|_| polar)
         .map(|f| f.resample(grid));
+    let polar_edge = ice_shell::rasterize(
+        &mut layers,
+        body_radius,
+        cell,
+        &lanes,
+        groove_time,
+        lane_floor.as_ref().map(|f| f.as_slice()),
+        &shell_map,
+        &lineae,
+        polar,
+        polar_time,
+        polar_floor.as_ref().map(|f| f.as_slice()),
+    );
+    let polar = polar && polar_edge.is_some();
+    let polar_edge: Vec<f32> = polar_edge.unwrap_or_default();
 
     // Loop craters that exist at this epoch. Their coarse form is in the resampled base;
     // their resolved detail is restored below, in age order among the replayed craters.
@@ -753,30 +782,6 @@ pub fn finish(
         .cloned()
         .collect();
     // An ice shell's cracks within the surface's retention age, drawn per time bin.
-    let shell_history = ice_shell_history(graph, &loop_output.thermal);
-    let lineae: Vec<lineae::Linea> = lineae::Cracks::new(graph)
-        .map(|c| c.generate(present, &grid, inputs.seed))
-        .unwrap_or_default();
-    // Chaos where a thin shell melts through, and the domes a shell over rock extrudes,
-    // each at the height its relaxation has left it.
-    let chaos = cryo::chaos_population(graph, present, inputs.seed);
-    let cryodomes = cryo::cryodome_population(graph, present, inputs.seed);
-    let dome_heights: Vec<f64> = cryodomes
-        .iter()
-        .map(|d| {
-            d.height
-                * match &shell_history {
-                    Some(shell_at) => relaxation::survival_since(
-                        2.0 * d.radius,
-                        d.time_gyr,
-                        present,
-                        &**shell_at,
-                        1.0,
-                    ),
-                    None => 1.0,
-                }
-        })
-        .collect();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let lane_floor: &[f32] = lane_floor.as_ref().map_or(&base, |f| f.as_slice());
     let polar_floor: &[f32] = polar_floor.as_ref().map_or(&base, |f| f.as_slice());
@@ -1272,6 +1277,7 @@ pub fn finish(
                             body_radius,
                             polar_floor,
                             &shell_map,
+                            &polar_edge,
                             fold_direction,
                             polar_time,
                             cell,
@@ -1479,6 +1485,8 @@ pub fn finish(
     }
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
     let height = layers.height();
+    // On ice, each slope sits at its own mean temperature: frost and lag follow it.
+    let slope = ice::is_ice_surface(graph).then(|| ice::poleward_slope(&height, body_radius));
 
     sink.report(Progress {
         stage: "finishing",
@@ -1489,7 +1497,7 @@ pub fn finish(
     // temperature and the surface's age have left.
     let tau_sw = graph.f64("surface.space_weathering_timescale");
     let maturity = if ice::is_ice_surface(graph) {
-        ice::lag_maturity(graph, &layers, present)
+        ice::lag_maturity(graph, &layers, present, slope.as_ref())
     } else {
         Field::from_fn(grid, |c, _| {
             let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
@@ -1503,7 +1511,7 @@ pub fn finish(
         fraction: 0.92,
         message: "materials".to_string(),
     });
-    let albedo = materials::albedo(graph, &layers, &maturity, &rays, present);
+    let albedo = materials::albedo(graph, &layers, &maturity, &rays, present, slope.as_ref());
     let hash = hash_words(&[
         layers.hash(),
         height.hash(),

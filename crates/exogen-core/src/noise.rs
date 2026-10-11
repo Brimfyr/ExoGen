@@ -105,8 +105,9 @@ impl GradientNoise {
     }
 
     /// Fractional Brownian motion on the unit sphere: `octaves` layers starting at
-    /// `frequency` (cycles around the sphere), each `lacunarity` times finer and `gain`
-    /// times weaker. Normalised so the output amplitude is about 1.
+    /// `frequency` in lattice cells per radian along the sphere (a feature of length L on
+    /// a body of radius R wants R / L; one cycle round the body wants 1 / 2π), each
+    /// `lacunarity` times finer and `gain` times weaker. Normalised so the output amplitude is about 1.
     pub fn fbm(
         &self,
         d: [f64; 3],

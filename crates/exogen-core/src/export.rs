@@ -784,6 +784,7 @@ pub fn export(
                             crate::stages::lineae::LineaKind::Ridge => "ridge",
                             crate::stages::lineae::LineaKind::Cycloid => "cycloid",
                             crate::stages::lineae::LineaKind::Band => "band",
+                            crate::stages::lineae::LineaKind::Vent => "vent",
                         }
                         .to_string(),
                         age_gyr: out.epoch_time_gyr - l.time_gyr,

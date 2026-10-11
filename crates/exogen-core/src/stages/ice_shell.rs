@@ -19,12 +19,13 @@ use rayon::prelude::*;
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper, with_stamper};
 use crate::fields::{Field, LayerSet};
-use crate::geom::{angle_between, cross, dot, normalize};
+use crate::geom::{cross, dot, normalize};
 use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::ice::ShellMap;
+use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
 pub const VERSION: u64 = 2;
@@ -111,6 +112,86 @@ pub fn field_from(grid: CubeSphere, values: &[f32]) -> Field<f32> {
     let mut f = Field::new(grid);
     f.as_mut_slice().copy_from_slice(values);
     f
+}
+
+/// The renewed polar terrain on a grid: the thinned shell's core and the ground within
+/// the spread width of the fissures that opened in the thinned zone, wherever the shell
+/// is thinned at all; so the outline follows the stripes and lobes where they end.
+pub fn polar_mask(
+    grid: &CubeSphere,
+    body_radius: f64,
+    shell: &ShellMap,
+    cracks: &[Linea],
+) -> Vec<bool> {
+    let n = grid.cell_count();
+    if !shell.has_active_terrain() {
+        return vec![false; n];
+    }
+    let mut mask: Vec<bool> = (0..n)
+        .map(|k| shell.profile(grid.center(grid.cell(k))) > POLAR_CORE_PROFILE)
+        .collect();
+    with_stamper(grid, |stamper| {
+        for l in cracks.iter().filter(|l| shell.thin(l.midpoint())) {
+            let every = ((0.5 * POLAR_SPREAD_WIDTH / l.spacing.max(1.0)) as usize).max(1);
+            for p in l.points.iter().step_by(every) {
+                stamper.gather(grid, body_radius, *p, POLAR_SPREAD_WIDTH);
+                for &(k, _, _) in &stamper.footprint {
+                    if shell.profile(grid.center(grid.cell(k))) > POLAR_OUTER_PROFILE {
+                        mask[k] = true;
+                    }
+                }
+            }
+        }
+    });
+    mask
+}
+
+/// Signed distance to a mask's edge in cells, positive inside, by breadth-first search
+/// from the edge out to a limit; beyond it the limit itself.
+pub fn edge_distance(grid: &CubeSphere, mask: &[bool], limit: usize) -> Vec<f32> {
+    let n = mask.len();
+    let neighbours = |k: usize| {
+        let c = grid.cell(k);
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|(di, dj)| grid.index(grid.neighbor(c, di, dj)))
+    };
+    let mut dist = vec![f32::NAN; n];
+    let mut queue = std::collections::VecDeque::new();
+    for k in 0..n {
+        if neighbours(k).iter().any(|&nb| mask[nb] != mask[k]) {
+            dist[k] = if mask[k] { 0.5 } else { -0.5 };
+            queue.push_back(k);
+        }
+    }
+    while let Some(k) = queue.pop_front() {
+        let next = dist[k].abs() + 1.0;
+        if next > limit as f32 {
+            continue;
+        }
+        for nb in neighbours(k) {
+            if dist[nb].is_nan() {
+                dist[nb] = if mask[nb] { next } else { -next };
+                queue.push_back(nb);
+            }
+        }
+    }
+    for (k, d) in dist.iter_mut().enumerate() {
+        if d.is_nan() {
+            *d = if mask[k] {
+                limit as f32
+            } else {
+                -(limit as f32)
+            };
+        }
+    }
+    // The search counts steps along the grid, so its contours are diamonds; two passes of
+    // smoothing round them.
+    crate::stages::episodic::smooth(grid, &dist, 2)
+}
+
+/// How far from the polar terrain's edge, in cells, the finish keeps a distance: the
+/// margin ridge's reach.
+pub fn polar_edge_limit(cell: f64) -> usize {
+    (4.0 * POLAR_MARGIN_WIDTH / cell.max(1.0)).ceil() as usize + 2
 }
 
 /// A mask eroded by one cell: a cell stays only with all four neighbours. The coarse loop
@@ -247,9 +328,9 @@ impl IceShellProcess {
                                 u[1] * ca + v[1] * sa,
                                 u[2] * ca + v[2] * sa,
                             ]);
-                            let w =
-                                0.5 + 0.5 * belts.fbm(center, GROOVE_BELT_FREQUENCY, 2, 2.0, 0.5);
-                            if rng.uniform(k, 4 + 2 * attempt) < w * w {
+                            let w = 0.5
+                                + 0.5 * belts.fbm(center, GROOVE_BELT_FREQUENCY / tau, 2, 2.0, 0.5);
+                            if rng.uniform(k, 4 + 2 * attempt) < w.powf(GROOVE_BELT_POWER) {
                                 break;
                             }
                         }
@@ -291,7 +372,18 @@ impl IceShellProcess {
                 .map(|&c| -shell.depression(c, mean_shell) as f32)
                 .collect()
         });
-        let active: Vec<bool> = centers.iter().map(|&c| shell.active(c)).collect();
+        // The renewed terrain follows the fissures of the thinned shell, traced here at the
+        // finishing grid's step so that the loop and the finish draw the same outline.
+        let active = if shell.has_active_terrain() {
+            let seed = graph.f64("seed.cratering") as u64;
+            let fine = CubeSphere::new(graph.f64("detail.finishing_resolution") as u32);
+            let cracks = Cracks::new(graph)
+                .map(|c| c.generate(graph.f64("body.age"), &fine, seed))
+                .unwrap_or_default();
+            polar_mask(&grid, body_radius, &shell, &cracks)
+        } else {
+            vec![false; n]
+        };
         let active = eroded(&grid, &active);
         Some(Self {
             grid,
@@ -432,10 +524,13 @@ pub fn rasterize(
     cell: f64,
     lanes: &[Lane],
     groove_time: Option<f64>,
+    lane_floor: Option<&[f32]>,
     shell: &ShellMap,
+    cracks: &[Linea],
     polar: bool,
     polar_time: f64,
-) {
+    polar_floor: Option<&[f32]>,
+) -> Option<Vec<f32>> {
     let grid = layers.grid;
     let n = grid.cell_count();
     if let Some(te) = groove_time
@@ -475,18 +570,20 @@ pub fn rasterize(
             }
         }
         redraw(layers, &coverage, &touched, UNIT_GROOVED, te, false);
+        if let Some(floor) = lane_floor {
+            lay_floor(layers, &coverage, floor);
+        }
     }
-    if polar && let Some(pole) = shell.pole {
-        let mut coverage = vec![0.0f32; n];
-        let mut touched = vec![false; n];
-        with_stamper(&grid, |stamper| {
-            stamper.gather(&grid, body_radius, pole, shell.radius_rad * body_radius);
-            for &(k, _, _) in &stamper.footprint {
-                touched[k] = true;
-                coverage[k] =
-                    shell.active_coverage(grid.center(grid.cell(k)), body_radius, cell) as f32;
-            }
-        });
+    if polar && shell.pole.is_some() {
+        let mask = polar_mask(&grid, body_radius, shell, cracks);
+        let limit = polar_edge_limit(cell);
+        let dist = edge_distance(&grid, &mask, limit);
+        // A two-cell ramp across the edge.
+        let coverage: Vec<f32> = dist
+            .iter()
+            .map(|&d| (0.5 + 0.5 * d).clamp(0.0, 1.0))
+            .collect();
+        let touched: Vec<bool> = dist.iter().map(|&d| d > -(limit as f32)).collect();
         redraw(
             layers,
             &coverage,
@@ -495,6 +592,9 @@ pub fn rasterize(
             polar_time,
             true,
         );
+        if let Some(floor) = polar_floor {
+            lay_floor(layers, &coverage, floor);
+        }
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             let inside = coverage.iter().filter(|&&c| c >= 0.5).count();
             let partial = coverage.iter().filter(|&&c| c > 0.0 && c < 0.5).count();
@@ -502,6 +602,25 @@ pub fn rasterize(
                 "polar terrain on the fine grid: {inside} cells inside, {partial} on the edge, {} touched",
                 touched.iter().filter(|&&t| t).count()
             );
+        }
+        return Some(dist);
+    }
+    None
+}
+
+/// The renewed terrain's floor laid under it before anything is stamped, by the
+/// coverage, so that a crater formed since sits on the renewed surface rather than on
+/// the old relief the coarse loop left outside its cells.
+fn lay_floor(layers: &mut LayerSet, coverage: &[f32], floor: &[f32]) {
+    for ((h, &c), &f) in layers
+        .bedrock
+        .as_mut_slice()
+        .iter_mut()
+        .zip(coverage)
+        .zip(floor)
+    {
+        if c > 0.0 {
+            *h += (f - *h) * c;
         }
     }
 }
@@ -577,7 +696,7 @@ pub fn groove_compute(
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
     let noise = GradientNoise::new(lane.id ^ 0x6700_0000);
-    let set_frequency = 2.0 * std::f64::consts::PI * body_radius / GROOVE_SET_LENGTH;
+    let set_frequency = body_radius / GROOVE_SET_LENGTH;
     let spacing = GROOVE_SPACING.max(GROOVE_MIN_CELLS * cell);
     let along_axis = normalize(cross(lane.axis, lane.center));
     stamper.gather(
@@ -633,6 +752,7 @@ pub fn polar_compute(
     body_radius: f64,
     floor: &[f32],
     shell: &ShellMap,
+    edge: &[f32],
     fold_direction: [f64; 3],
     time_gyr: f64,
     cell: f64,
@@ -644,29 +764,26 @@ pub fn polar_compute(
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
-    let reach = shell.radius_rad.min(
-        shell.active_radius_rad() * (1.0 + POLAR_MARGIN_WOBBLE)
-            + 4.0 * POLAR_MARGIN_WIDTH / body_radius,
-    );
+    let limit = polar_edge_limit(cell) as f32;
+    let reach = shell.radius_rad;
     let normal = normalize(cross(pole, fold_direction));
     let spacing = POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
     let noise = GradientNoise::new(0x5027_F01D);
-    let set_frequency =
-        2.0 * std::f64::consts::PI * body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
+    let set_frequency = body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
     stamper.gather(grid, body_radius, pole, reach * body_radius);
     let mut cells: Vec<CellWrite> = stamper
         .footprint
         .par_iter()
         .filter_map(|&(k, _, _)| {
             let d = grid.center(grid.cell(k));
-            let angle = angle_between(pole, d);
-            if angle >= reach {
+            let dk = edge[k];
+            if dk <= -limit {
                 return None;
             }
-            let edge = shell.active_radius_at(d);
-            let x = (angle - edge) * body_radius / POLAR_MARGIN_WIDTH;
+            // The margin ridge straddles the edge; inside, the folds fade in from it.
+            let x = dk as f64 * cell / POLAR_MARGIN_WIDTH;
             let ridge = POLAR_MARGIN_HEIGHT * (-x * x).exp();
-            let c = shell.active_coverage(d, body_radius, cell);
+            let c = (0.5 + 0.5 * dk as f64).clamp(0.0, 1.0);
             let held = units[k] != UNIT_POLAR_TERRAIN || ages[k] as f64 > time_gyr + 1e-3;
             if c <= 0.0 || (c >= 0.5 && held) {
                 if ridge < 1.0 {
@@ -674,7 +791,7 @@ pub fn polar_compute(
                 }
                 return Some(write(k, bedrock[k] as f64 + ridge));
             }
-            let taper = ((edge - angle) / (0.15 * edge)).clamp(0.0, 1.0);
+            let taper = (dk as f64 * cell / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
             let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
             let across = dot(d, normal) * body_radius;
             let along = dot(d, fold_direction) * body_radius;
