@@ -11,9 +11,10 @@
 //! mean insolation hardly warms, keep their frost.
 
 use crate::constants::*;
-use crate::fields::Field;
-use crate::grid::CubeSphere;
+use crate::fields::{Field, LayerSet};
+use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
+use crate::rng::Rng;
 
 /// Whether the body's surface is ice, whatever its bulk is made of.
 pub fn is_ice_surface(graph: &ParamGraph) -> bool {
@@ -108,22 +109,128 @@ impl FrostCover {
     }
 }
 
-/// The maturity field of an icy surface from the surface ages.
-pub fn lag_maturity(
-    graph: &ParamGraph,
-    grid: CubeSphere,
-    surface_age: &Field<f32>,
-    present: f64,
-) -> Field<f32> {
+/// The maturity field of an icy surface from the surface ages. Ice renewed from below,
+/// the grooved lanes and the polar terrain, is clean whatever the regolith around it.
+pub fn lag_maturity(graph: &ParamGraph, layers: &LayerSet, present: f64) -> Field<f32> {
+    let grid = layers.grid;
     let insolation = graph.f64("orbit.insolation");
     let albedo = graph.f64("atmosphere.bond_albedo");
     let impurity = regolith_impurity(graph);
+    let clean = crate::stages::materials::non_ice_fraction("water_ice");
+    let clean_f = layers.clean.as_slice();
     Field::from_fn(grid, |c, d| {
         let cos_lat = (1.0 - d[2] * d[2]).max(0.0).sqrt();
         let t = mean_surface_temperature(insolation, albedo, cos_lat);
-        let exposure = present - surface_age.get(c) as f64;
+        let exposure = present - layers.surface_age.get(c) as f64;
+        let share = clean_f[grid.index(c)].clamp(0.0, 1.0) as f64;
+        let impurity = impurity + (clean - impurity) * share;
         lag_maturity_at(t, impurity, exposure) as f32
     })
+}
+
+/// The shell's thickness across the body (F43): thinned under one pole where the tidal
+/// heating focuses, as a share of the mean, tapering to the mean away from it; the
+/// terrain over the thinnest part is renewed.
+#[derive(Clone, Debug)]
+pub struct ShellMap {
+    pub pole: Option<[f64; 3]>,
+    pub thinning: f64,
+    pub radius_rad: f64,
+    /// The field that wobbles the thinning's edge round the pole.
+    noise: GradientNoise,
+}
+
+impl ShellMap {
+    pub fn new(graph: &ParamGraph) -> Self {
+        let thinning = graph.f64("tectonics.polar_thinning").clamp(0.0, 0.95);
+        let seed = graph.f64("seed.tectonics") as u64;
+        let noise = GradientNoise::new(seed ^ 0x5027_B0B1);
+        if thinning <= 0.0 {
+            return Self {
+                pole: None,
+                thinning: 0.0,
+                radius_rad: 0.0,
+                noise,
+            };
+        }
+        // Which pole is a coin the body tossed long ago.
+        let rng = Rng::new(seed ^ 0x5027_0000);
+        let south = rng.bits(0, 0) & 1 == 0;
+        Self {
+            pole: Some([0.0, 0.0, if south { -1.0 } else { 1.0 }]),
+            thinning,
+            radius_rad: POLAR_TERRAIN_RADIUS_DEG.to_radians(),
+            noise,
+        }
+    }
+
+    /// The taper's radius in a direction, rad: the mean, wobbled round the pole.
+    pub fn radius_at(&self, d: [f64; 3]) -> f64 {
+        self.radius_rad * (1.0 + POLAR_MARGIN_WOBBLE * self.noise.fbm(d, 2.0, 2, 2.0, 0.5))
+    }
+
+    /// Angular radius of the active terrain in a direction, rad.
+    pub fn active_radius_at(&self, d: [f64; 3]) -> f64 {
+        if self.radius_rad <= 0.0 {
+            return 0.0;
+        }
+        self.active_radius_rad() * self.radius_at(d) / self.radius_rad
+    }
+
+    /// The focusing profile at a direction: 1 at the pole, 0 beyond the taper.
+    pub fn profile(&self, d: [f64; 3]) -> f64 {
+        let Some(pole) = self.pole else {
+            return 0.0;
+        };
+        let x = crate::geom::angle_between(pole, d) / self.radius_at(d).max(1e-9);
+        if x >= 1.0 {
+            0.0
+        } else {
+            0.5 * (1.0 + (std::f64::consts::PI * x).cos())
+        }
+    }
+
+    /// The local shell thickness over the mean.
+    pub fn factor(&self, d: [f64; 3]) -> f64 {
+        1.0 - self.thinning * self.profile(d)
+    }
+
+    /// Whether the thinning is deep enough for the terrain over it to renew itself.
+    pub fn has_active_terrain(&self) -> bool {
+        self.pole.is_some() && self.thinning > POLAR_ACTIVE_THINNING
+    }
+
+    /// Angular radius of the active terrain, rad: where the profile crosses the active
+    /// share.
+    pub fn active_radius_rad(&self) -> f64 {
+        (2.0 * POLAR_ACTIVE_PROFILE - 1.0).clamp(-1.0, 1.0).acos() / std::f64::consts::PI
+            * self.radius_rad
+    }
+
+    /// Whether the terrain at a direction is the renewed polar terrain.
+    pub fn active(&self, d: [f64; 3]) -> bool {
+        self.has_active_terrain() && self.profile(d) > POLAR_ACTIVE_PROFILE
+    }
+
+    /// How much of a cell at a direction the active terrain covers, 0 to 1: a one-cell
+    /// ramp across its edge, for an edge drawn without stair steps.
+    pub fn active_coverage(&self, d: [f64; 3], body_radius: f64, cell: f64) -> f64 {
+        let Some(pole) = self.pole else {
+            return 0.0;
+        };
+        if !self.has_active_terrain() {
+            return 0.0;
+        }
+        let angle = crate::geom::angle_between(pole, d);
+        ((self.active_radius_at(d) - angle) * body_radius / cell.max(1.0) + 0.5).clamp(0.0, 1.0)
+    }
+
+    /// How far below the mean surface the thinner shell floats, m: the isostatic
+    /// depression of the thinning, less what the lid holds up.
+    pub fn depression(&self, d: [f64; 3], mean_thickness: f64) -> f64 {
+        let thinned = mean_thickness * self.thinning * self.profile(d);
+        POLAR_DEPRESSION_FRACTION * (DENSITY_ICE - DENSITY_CRUST_ICE) / DENSITY_ICE * thinned
+    }
 }
 
 #[cfg(test)]

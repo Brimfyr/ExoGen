@@ -1,6 +1,6 @@
 version = "0.0.1"
 name = "Ganymede"
-description = "Reference body. Largest moon; dark cratered terrain over clean ice that fresh impacts expose. Bright grooved terrain is Phase 4."
+description = "Reference body. Largest moon; dark cratered terrain over clean ice, cut by lanes of bright grooved terrain two gigayears old."
 
 [values]
 "orbit.primary" = "planet"
@@ -16,4 +16,8 @@ description = "Reference body. Largest moon; dark cratered terrain over clean ic
 "atmosphere.composition" = {}
 "atmosphere.bond_albedo" = 0.43
 "materials.regolith_mix" = { water_ice_dirty = 0.7, water_ice = 0.3 }
+# Two thirds of Ganymede is bright grooved terrain from a heating episode, the passage
+# into the Laplace resonance, that the eccentricity history does not carry; the formula
+# gives it nothing from today's tidal flux.
+"tectonics.ice_resurfaced_fraction" = 0.65
 "seed.master" = 22.0

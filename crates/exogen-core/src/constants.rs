@@ -965,7 +965,8 @@ pub const ICE_ROCK_VISCOSITY_DECADES: f64 = 12.0;
 /// ice; the crack density per unit of tension over strength per metre of shell; the lag
 /// of a non-synchronously rotating shell behind the tidal axis before it relaxes, degrees,
 /// and its period as a multiple of the surface's retention age (the lineae's
-/// orientations turn by a quarter turn over the oldest ones Europa shows).
+/// orientations turn by half a turn over the oldest ones Europa shows, so the zones of tension sweep
+/// every longitude).
 pub const ICE_YOUNG_MODULUS: f64 = 9.0e9;
 pub const ICE_POISSON: f64 = 0.33;
 pub const SHELL_RIGIDITY_FACTOR: f64 = 20.0;
@@ -975,15 +976,16 @@ pub const ICE_CRACK_STRESS: f64 = 4.0e4;
 pub const ICE_TENSILE_STRENGTH: f64 = 1.0e6;
 pub const CRACK_DENSITY_FACTOR: f64 = 3.0;
 pub const NSR_SHIFT_DEG: f64 = 1.0;
-pub const NSR_PERIOD_RETENTION_FACTOR: f64 = 4.0;
-/// Lineae (F42): lengths, m, log-uniform; the width of a double ridge and its ridge
+pub const NSR_PERIOD_RETENTION_FACTOR: f64 = 2.0;
+/// Lineae (F42): lengths as a share of the radius, log-uniform (Europa 100 to 1,500 km; a
+/// crack scales with the body it crosses); the width of a double ridge and its ridge
 /// height, m, with the central trough as a fraction of it (Europa's ridges stand 100 to
 /// 300 m over 1 to 2 km); the wander of a crack along the slow field; the share of the
 /// tension that must be diurnal for a crack to be a cycloid; a cycloid's propagation
 /// speed, m/s (Hoppa et al. 1999: about 3 km/h), the orbits it may run and the steps per
-/// orbit; the share of cracks that pull apart into bands, their widths and floor depth,
-/// m; and the time the ocean's salts take to fade under frost, Gyr.
-pub const LINEA_LENGTH: (f64, f64) = (100e3, 1_500e3);
+/// orbit; the share of cracks that pull apart into bands, their widths as a share of the
+/// radius (Europa 10 to 30 km) and floor depth, m; and the time the ocean's salts take to fade under frost, Gyr.
+pub const LINEA_LENGTH_RAD: (f64, f64) = (0.064, 0.96);
 pub const LINEA_WIDTH: f64 = 2e3;
 pub const LINEA_RIDGE_HEIGHT: f64 = 150.0;
 pub const LINEA_TROUGH_FRACTION: f64 = 0.6;
@@ -994,9 +996,72 @@ pub const CYCLOID_SPEED: f64 = 0.8;
 pub const CYCLOID_MAX_ORBITS: usize = 12;
 pub const CYCLOID_PHASE_STEPS: usize = 64;
 pub const BAND_FRACTION: f64 = 0.15;
-pub const BAND_WIDTH: (f64, f64) = (10e3, 30e3);
+pub const BAND_WIDTH_RAD: (f64, f64) = (0.0064, 0.019);
 pub const BAND_DEPTH: f64 = 100.0;
 pub const SALT_FADE_GYR: f64 = 0.03;
+/// Focused heating (F43): a shell over an ocean thins under one pole where the tidal
+/// dissipation concentrates, by up to this share of its thickness, in proportion to the
+/// tidal flux over this flux, W/m², rising with the shell's thickness over the radius
+/// over this ratio (a thin shell like Europa's cracks everywhere instead); the thinning
+/// tapers to nothing this far from the pole; the terrain within the inner half of the
+/// taper is active once the thinning passes this share: renewed on this timescale, Gyr,
+/// and lying this share of its isostatic depression low (Enceladus's south polar terrain
+/// lies about a kilometre low over a shell a few kilometres thick under a mean of
+/// twenty); its folds between the cracks, m and m; the margin ridge where the spreading
+/// terrain meets the old, m and m; and the wobble of the thinning's edge round the pole
+/// as a share of its radius, by a two-cycle field.
+pub const POLAR_THINNING_MAX: f64 = 0.8;
+pub const POLAR_FOCUS_FLUX: f64 = 0.02;
+pub const POLAR_FOCUS_SHELL_RATIO: f64 = 0.03;
+pub const POLAR_TERRAIN_RADIUS_DEG: f64 = 70.0;
+pub const POLAR_ACTIVE_PROFILE: f64 = 0.5;
+pub const POLAR_ACTIVE_THINNING: f64 = 0.3;
+pub const POLAR_RENEWAL_GYR: f64 = 0.002;
+pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
+pub const POLAR_FOLD_AMPLITUDE: f64 = 100.0;
+pub const POLAR_FOLD_SPACING: f64 = 1.5e3;
+pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
+pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
+pub const POLAR_MARGIN_WOBBLE: f64 = 0.15;
+/// A shell renews its whole surface within the retention age only when it is thin
+/// against the body, under this share of the radius; a thick shell keeps its old craters
+/// and renews only where it is thin.
+pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
+/// Grooved terrain (F44): lanes of new ice drawn as great-circle swaths, their lengths
+/// log-uniform between these angles, rad, their widths between these, m, wobbling along
+/// them by this share, gathered in belts of extension drawn by a field of this many
+/// cycles round the body, this share of them laid beside an earlier lane turned by up to
+/// this angle and set this many widths to its side (so the lanes come in parallel sets,
+/// as sulci do), until they cover the resurfaced share, at most this many; this share of
+/// the lanes is smooth
+/// bright terrain without grooves; the old relief inside is smoothed over this length,
+/// m (or a twentieth of the radius), and dropped by this much, m; the grooves'
+/// amplitude, m, and spacing, m, which the grid coarsens to at least this many cells;
+/// the length over which groove sets turn, m, and the turn; the share of the surface
+/// resurfaced per unit of tidal flux above this floor, W/m², over this flux, W/m², on a
+/// shell thicker than the wholesale ratio, less what the focusing takes to the pole
+/// (Callisto's 0.08 mW/m² never stretched its shell); and the age of the
+/// resurfacing as a share of the body's age (Ganymede's bright terrain is about two
+/// gigayears old).
+pub const GROOVE_LANE_LENGTH_RAD: (f64, f64) = (0.2, 2.0);
+pub const GROOVE_LANE_WIDTH: (f64, f64) = (20e3, 200e3);
+pub const GROOVE_WIDTH_WOBBLE: f64 = 0.25;
+pub const GROOVE_BELT_FREQUENCY: f64 = 1.5;
+pub const GROOVE_NEIGHBOUR_SHARE: f64 = 0.6;
+pub const GROOVE_NEIGHBOUR_TURN_DEG: f64 = 12.0;
+pub const GROOVE_NEIGHBOUR_OFFSET: (f64, f64) = (1.0, 3.0);
+pub const GROOVE_MAX_LANES: u64 = 1500;
+pub const GROOVE_SMOOTH_LANE_SHARE: f64 = 0.2;
+pub const GROOVE_SMOOTH_LENGTH: f64 = 100e3;
+pub const GROOVE_LANE_DROP: f64 = 200.0;
+pub const GROOVE_AMPLITUDE: f64 = 250.0;
+pub const GROOVE_SPACING: f64 = 7e3;
+pub const GROOVE_MIN_CELLS: f64 = 3.0;
+pub const GROOVE_SET_LENGTH: f64 = 300e3;
+pub const GROOVE_SET_TURN: f64 = 0.4;
+pub const ICE_RESURFACING_FLUX_FLOOR: f64 = 0.005;
+pub const ICE_RESURFACING_FLUX: f64 = 0.05;
+pub const ICE_RESURFACING_AGE_FRACTION: f64 = 0.4;
 pub const GAS_CONSTANT: f64 = 8.314_462;
 /// Thermal segregation: the ice the warm latitudes sublime condenses again where it is
 /// cold, so a body that loses ice at its equator wears frost at its poles (Ganymede's

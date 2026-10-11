@@ -233,9 +233,9 @@ pub fn reference_checks() -> Vec<Check> {
         range(
             "Enceladus",
             "cratering.retention_age",
-            0.05,
-            0.2,
-            "young terrain where tidal heating is focused",
+            3.0,
+            5.0,
+            "the cratered plains are ancient; the south polar terrain renews itself on its own",
         ),
         // Mars
         range("Mars", "body.gravity", 3.64, 3.78, "3.71 m/s²"),
@@ -446,6 +446,13 @@ pub fn reference_checks() -> Vec<Check> {
             5.0e9,
             4.0e10,
             "16 GW observed, factor of two",
+        ),
+        range(
+            "Enceladus",
+            "tectonics.polar_thinning",
+            0.5,
+            0.8,
+            "a shell a few kilometres thick under the south pole against twenty elsewhere",
         ),
         // Triton
         range("Triton", "body.gravity", 0.76, 0.80, "0.78 m/s²"),

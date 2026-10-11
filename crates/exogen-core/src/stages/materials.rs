@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 14;
+pub const VERSION: u64 = 16;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -314,6 +314,7 @@ pub fn albedo(
     let deep_f = layers.deep.as_slice();
     let melt_f = layers.melt.as_slice();
     let cover_f = layers.cover.as_slice();
+    let clean_f = layers.clean.as_slice();
     let m = maturity.as_slice();
     // On an airless surface small impacts mix the regolith sideways, and a contact
     // between lava and its substrate blurs in colour as it ages.
@@ -328,6 +329,15 @@ pub fn albedo(
     };
     let frost_colour = end_member("water_ice").unwrap().fresh;
     let salt_colour = end_member("hydrated_salt").unwrap().fresh;
+    // Ice renewed from below, the grooved lanes and the polar terrain, is clean whatever
+    // lies around it.
+    let clean_ice = {
+        let w = end_member("water_ice").unwrap();
+        Pair {
+            fresh: w.fresh,
+            mature: w.mature,
+        }
+    };
     let ages_f = layers.surface_age.as_slice();
     let mixed = if gardened {
         mixed_cover(
@@ -403,6 +413,15 @@ pub fn albedo(
                     UNIT_CONTINENTAL => continental,
                     UNIT_OCEANIC => oceanic,
                     _ => base,
+                };
+                // Ice renewed from below stays clean under whatever cuts it.
+                let pair = if clean_f[k] > 0.0 {
+                    Pair {
+                        fresh: lerp3(pair.fresh, clean_ice.fresh, clean_f[k]),
+                        mature: lerp3(pair.mature, clean_ice.mature, clean_f[k]),
+                    }
+                } else {
+                    pair
                 };
                 // The substrate: deep-sourced material by its fraction. Lava lies over it
                 // by its coverage, mixed sideways into its surroundings, so a thin flow

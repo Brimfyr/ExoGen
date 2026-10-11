@@ -234,6 +234,10 @@ pub struct LayerSet {
     /// Coverage of a deposit laid over the substrate, 0 to 1: lava by its thickness,
     /// plume deposits by their density. What is not covered shows the substrate.
     pub cover: Field<f32>,
+    /// Share of the substrate that is clean ice renewed from below, 0 to 1: the lanes of
+    /// grooved terrain and the polar terrain of an ice shell, which stay bright under
+    /// whatever craters cut them.
+    pub clean: Field<f32>,
 }
 
 impl LayerSet {
@@ -252,6 +256,7 @@ impl LayerSet {
             deep: Field::new(grid),
             melt: Field::new(grid),
             cover: Field::new(grid),
+            clean: Field::new(grid),
         }
     }
 
@@ -285,6 +290,7 @@ impl LayerSet {
             deep: self.deep.resample(target),
             melt: self.melt.resample(target),
             cover: self.cover.resample(target),
+            clean: self.clean.resample(target),
         }
     }
 
@@ -302,6 +308,7 @@ impl LayerSet {
             self.deep.hash(),
             self.melt.hash(),
             self.cover.hash(),
+            self.clean.hash(),
         ];
         crate::rng::hash_words(&parts)
     }

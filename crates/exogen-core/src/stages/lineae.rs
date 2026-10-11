@@ -117,6 +117,8 @@ fn step(p: [f64; 3], d: [f64; 3], distance: f64, body_radius: f64) -> [f64; 3] {
 /// drawn per time bin.
 pub struct Cracks {
     pub shell: TidalShell,
+    /// The shell's thickness across the body: cracks favour where it is thin.
+    pub shell_map: crate::stages::ice::ShellMap,
     /// The field's largest peak tension, Pa.
     pub amplitude: f64,
     pub nsr_period_gyr: f64,
@@ -144,6 +146,7 @@ impl Cracks {
         }
         Some(Self {
             shell,
+            shell_map: crate::stages::ice::ShellMap::new(graph),
             amplitude,
             nsr_period_gyr,
             density,
@@ -152,6 +155,15 @@ impl Cracks {
             body_radius: graph.f64("body.radius"),
             orbit_period_s: graph.f64("orbit.period"),
         })
+    }
+
+    /// The direction a crack takes near a point in the present field, for the folds of
+    /// the polar terrain, which lie along the cracks between them.
+    pub fn crack_direction_near(&self, pole: [f64; 3], present: f64) -> [f64; 3] {
+        let p = normalize([pole[0] + 0.3, pole[1] + 0.1, pole[2]]);
+        let axis = mean_axis_at(present, present, self.nsr_period_gyr);
+        let (_, phase) = self.shell.peak_tension(axis, p);
+        crack_direction(p, &self.shell.total(axis, p, phase), None)
     }
 
     /// The expected total length of cracks on the surface, m: a transect crosses
@@ -167,7 +179,10 @@ impl Cracks {
         let rng = Rng::new(seed ^ 0x11CE_A000);
         let cell = grid.delta() * self.body_radius;
         let spacing = 0.5 * cell;
-        let (l_lo, l_hi) = LINEA_LENGTH;
+        let (l_lo, l_hi) = (
+            LINEA_LENGTH_RAD.0 * self.body_radius,
+            LINEA_LENGTH_RAD.1 * self.body_radius,
+        );
         let mean_length = (l_hi - l_lo) / (l_hi / l_lo).ln();
         let expected = self.total_length() / mean_length;
         let window_start = (present - self.retention).max(0.0);
@@ -184,8 +199,10 @@ impl Cracks {
                 let draw = 16 + j * 64;
                 let time = b0 + (b1 - b0) * rng.uniform(bin, draw);
                 let axis = mean_axis_at(time, present, self.nsr_period_gyr);
-                // Where: in proportion to the tension above the threshold, by rejection.
+                // Where: in proportion to the tension above the threshold and to how
+                // thin the shell is (the crack density goes as 1 / d), by rejection.
                 let scale = self.amplitude - ICE_CRACK_STRESS;
+                let thinnest = 1.0 - self.shell_map.thinning;
                 let mut start = None;
                 for attempt in 0..24u64 {
                     let p = rng.unit_direction(bin, draw + 1 + 2 * attempt);
@@ -194,12 +211,25 @@ impl Cracks {
                     if excess <= 0.0 {
                         continue;
                     }
-                    if rng.uniform(bin, draw + 2 + 2 * attempt) < excess / scale.max(excess) {
+                    let thin = thinnest / self.shell_map.factor(p).max(1e-3);
+                    if rng.uniform(bin, draw + 2 + 2 * attempt) < excess / scale.max(excess) * thin
+                    {
                         start = Some((p, phase));
                         break;
                     }
                 }
-                let Some((p0, phase)) = start else { continue };
+                let Some((p0, mut phase)) = start else {
+                    continue;
+                };
+                // The polar terrain renews itself: a crack there is as young as its
+                // surface, and opened in the field of its own time.
+                let mut time = time;
+                let mut axis = axis;
+                if self.shell_map.active(p0) {
+                    time = (present - POLAR_RENEWAL_GYR * rng.uniform(bin, draw + 54)).max(0.0);
+                    axis = mean_axis_at(time, present, self.nsr_period_gyr);
+                    phase = self.shell.peak_tension(axis, p0).1;
+                }
                 // What kind: the diurnal share of the tension decides between a cycloid
                 // and a ridge; a share of the ridges pull apart into bands.
                 let (d1, _, _) = self.shell.diurnal(axis, p0, phase).principal();
@@ -227,7 +257,10 @@ impl Cracks {
                 }
                 let (width, relief) = match kind {
                     LineaKind::Band => {
-                        let (w_lo, w_hi) = BAND_WIDTH;
+                        let (w_lo, w_hi) = (
+                            BAND_WIDTH_RAD.0 * self.body_radius,
+                            BAND_WIDTH_RAD.1 * self.body_radius,
+                        );
                         (
                             w_lo * (w_hi / w_lo).powf(rng.uniform(bin, draw + 52)),
                             BAND_DEPTH * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),

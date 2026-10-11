@@ -256,6 +256,12 @@ pub struct Sidecar {
     /// An ice shell's cracks present at the epoch: how many, and the longest.
     pub linea_count: usize,
     pub lineae: Vec<LineaInfo>,
+    /// An ice shell's lanes of grooved terrain, and the shares of the surface that are
+    /// grooved terrain and renewed polar terrain.
+    pub lane_count: usize,
+    pub lane_coverage: f64,
+    pub grooved_fraction: f64,
+    pub polar_terrain_fraction: f64,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
@@ -749,6 +755,10 @@ pub fn export(
         flow_field_count: out.io_flows.len(),
         plume_ring_count: out.plume_rings.len(),
         linea_count: out.lineae.len(),
+        lane_count: out.lanes.len(),
+        lane_coverage: out.lane_coverage,
+        grooved_fraction: out.grooved_fraction,
+        polar_terrain_fraction: out.polar_fraction,
         lineae: {
             let mut sorted: Vec<&crate::stages::lineae::Linea> = out.lineae.iter().collect();
             sorted.sort_by(|a, b| b.length.total_cmp(&a.length));

@@ -14,6 +14,7 @@
 pub mod deform;
 pub mod episodic;
 pub mod ice;
+pub mod ice_shell;
 pub mod impacts;
 pub mod io;
 pub mod lineae;
@@ -134,6 +135,15 @@ pub struct LoopOutput {
     pub mountains: Vec<io::Mountain>,
     pub io_flows: Vec<io::FlowField>,
     pub plume_rings: Vec<io::PlumeRing>,
+    /// An ice shell's lanes of grooved terrain and when they formed.
+    pub lanes: Vec<ice_shell::Lane>,
+    pub groove_time: Option<f64>,
+    /// The share of the surface the lanes cover.
+    pub lane_coverage: f64,
+    /// The lanes' floor at their time and the polar terrain's renewed surface, on the
+    /// coarse grid, for the finish to lay its grooves and folds on.
+    pub lane_floor: Option<Field<f32>>,
+    pub polar_floor: Option<Field<f32>>,
     pub hash: u64,
 }
 
@@ -196,6 +206,14 @@ pub struct FinishOutput {
     pub plume_rings: Vec<io::PlumeRing>,
     /// An ice shell's cracks present at the epoch.
     pub lineae: Vec<lineae::Linea>,
+    /// The lanes of grooved terrain present at the epoch, and the shares of the surface
+    /// that are grooved terrain and renewed polar terrain.
+    pub lanes: Vec<ice_shell::Lane>,
+    /// The share of the surface the lanes cover, and the shares that still show as
+    /// grooved terrain and as polar terrain, craters since having taken the rest.
+    pub lane_coverage: f64,
+    pub grooved_fraction: f64,
+    pub polar_fraction: f64,
     pub hash: u64,
 }
 
@@ -249,6 +267,7 @@ impl Runner {
             plume::VERSION,
             episodic::VERSION,
             io::VERSION,
+            ice_shell::VERSION,
         ])
     }
 
@@ -322,7 +341,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 24;
+pub const FINISH_VERSION: u64 = 26;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -365,6 +384,7 @@ pub fn run_coarse_loop(
     let mut episodic = episodic::EpisodicProcess::new(graph, grid);
     let mut io = io::IoProcess::new(graph, grid);
     let ice_shell = ice_shell_history(graph, &thermal);
+    let mut ice_shell_process = ice_shell::IceShellProcess::new(graph, grid);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -381,12 +401,23 @@ pub fn run_coarse_loop(
         // An ice shell relaxes what it carries, the longest wavelengths first, with the
         // shell as the thermal history has it now.
         if let Some(shell_at) = &ice_shell {
-            relaxation::relax(
+            let local = ice_shell_process
+                .as_ref()
+                .map_or(relaxation::Local::default(), |p| p.relaxation());
+            let floor = relaxation::relax(
                 &mut layers.bedrock,
                 graph.f64("body.radius"),
                 dt,
                 &shell_at(t1),
+                &local,
             );
+            if let (Some(p), Some(f)) = (&mut ice_shell_process, floor) {
+                p.set_floor(f);
+            }
+        }
+        // The shell's partial resurfacing: the lanes of grooved terrain at their time.
+        if let Some(p) = &mut ice_shell_process {
+            p.before(&mut layers, t0, t1);
         }
         // The slow processes first: the dome lifts, the shields grow, the canyon deepens;
         // an episodic lid's event renews the plains.
@@ -444,6 +475,17 @@ pub fn run_coarse_loop(
                         f.apply(&mut layers, eruptions[i]);
                     }
                 }
+            }
+        }
+        // The polar terrain renews itself after everything the step brought it.
+        if let Some(p) = &mut ice_shell_process {
+            p.after(&mut layers, t1);
+            if std::env::var_os("EXOGEN_DEBUG").is_some() && s % 10 == 0 {
+                let b = layers.bedrock.as_slice();
+                let (lo, hi) = b
+                    .iter()
+                    .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+                eprintln!("step {s}: bedrock {lo:.0} to {hi:.0} m");
             }
         }
         if s % keep_every == 0 || s == steps {
@@ -504,6 +546,16 @@ pub fn run_coarse_loop(
         }
         None => (Vec::new(), Vec::new(), Vec::new()),
     };
+    let (lanes, groove_time, lane_coverage, lane_floor, polar_floor) = match ice_shell_process {
+        Some(p) => (
+            p.lanes,
+            p.groove_time,
+            p.lane_coverage,
+            p.lane_floor.map(|v| ice_shell::field_from(grid, &v)),
+            p.polar_floor.map(|v| ice_shell::field_from(grid, &v)),
+        ),
+        None => (Vec::new(), None, 0.0, None, None),
+    };
     Ok(LoopOutput {
         grid,
         keyframes,
@@ -527,6 +579,11 @@ pub fn run_coarse_loop(
         mountains,
         io_flows,
         plume_rings,
+        lanes,
+        groove_time,
+        lane_coverage,
+        lane_floor,
+        polar_floor,
         hash,
     })
 }
@@ -563,6 +620,46 @@ pub fn finish(
     if sink.cancelled() {
         return Err(RunError::Cancelled);
     }
+    let shell_map = ice::ShellMap::new(graph);
+    // The lanes of grooved terrain if they lie before the epoch, and the polar terrain's
+    // renewal, which stands at the end of the sequence with its folds along the cracks.
+    let groove_time = loop_output.groove_time.filter(|&te| te <= present + 1e-9);
+    let lanes: Vec<ice_shell::Lane> = if groove_time.is_some() {
+        loop_output.lanes.clone()
+    } else {
+        Vec::new()
+    };
+    let polar = shell_map.has_active_terrain();
+    let polar_time = (present - POLAR_RENEWAL_GYR).max(0.0);
+    let fold_direction = lineae::Cracks::new(graph)
+        .and_then(|c| {
+            shell_map
+                .pole
+                .map(|pole| c.crack_direction_near(pole, present))
+        })
+        .unwrap_or([1.0, 0.0, 0.0]);
+    // The coarse loop drew the lanes and the polar terrain cell by cell: their edges are
+    // redrawn at this resolution before anything reads the ages they leave.
+    ice_shell::rasterize(
+        &mut layers,
+        body_radius,
+        cell,
+        &lanes,
+        groove_time,
+        &shell_map,
+        polar,
+        polar_time,
+    );
+    let lane_floor: Option<Field<f32>> = loop_output
+        .lane_floor
+        .as_ref()
+        .filter(|_| groove_time.is_some())
+        .map(|f| f.resample(grid));
+    let polar_floor: Option<Field<f32>> = loop_output
+        .polar_floor
+        .as_ref()
+        .filter(|_| polar)
+        .map(|f| f.resample(grid));
 
     // Loop craters that exist at this epoch. Their coarse form is in the resampled base;
     // their resolved detail is restored below, in age order among the replayed craters.
@@ -654,6 +751,8 @@ pub fn finish(
         .map(|c| c.generate(present, &grid, inputs.seed))
         .unwrap_or_default();
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
+    let lane_floor: &[f32] = lane_floor.as_ref().map_or(&base, |f| f.as_slice());
+    let polar_floor: &[f32] = polar_floor.as_ref().map_or(&base, |f| f.as_slice());
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let mut smear = volcanism::LavaSmear::new(
         loop_output.grid,
@@ -724,7 +823,13 @@ pub fn finish(
         Some(shell_at) => replay
             .par_iter()
             .map(|(c, _)| {
-                relaxation::survival_since(c.diameter, c.time_gyr, present, &*shell_at) as f32
+                relaxation::survival_since(
+                    c.diameter,
+                    c.time_gyr,
+                    present,
+                    &*shell_at,
+                    shell_map.factor(c.center),
+                ) as f32
             })
             .collect(),
         None => vec![1.0; replay.len()],
@@ -749,6 +854,8 @@ pub fn finish(
         IoFlow(usize),
         PlumeRing(usize),
         Linea(usize),
+        Groove(usize),
+        PolarTerrain,
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
@@ -760,6 +867,8 @@ pub fn finish(
             + canyons.len()
             + graben.len()
             + lineae.len()
+            + lanes.len()
+            + 1
             + replay.len(),
     );
     for (k, sh) in shields.iter().enumerate() {
@@ -799,6 +908,14 @@ pub fn finish(
     }
     for (k, l) in lineae.iter().enumerate() {
         events.push((l.time_gyr, 0, l.id ^ 0x11CE_0000_0000, Event::Linea(k)));
+    }
+    if let Some(te) = groove_time {
+        for (k, l) in lanes.iter().enumerate() {
+            events.push((te, 0, l.id ^ 0x6700_0000_0000, Event::Groove(k)));
+        }
+    }
+    if polar {
+        events.push((polar_time, 0, 0x5027_0000_0000, Event::PolarTerrain));
     }
     for (k, r) in ridges.iter().enumerate() {
         events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
@@ -906,6 +1023,14 @@ pub fn finish(
                     let l = &lineae[*k];
                     (l.midpoint(), l.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
+                Event::Groove(k) => {
+                    let l = &lanes[*k];
+                    (l.center, l.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::PolarTerrain => (
+                    shell_map.pole.unwrap_or([0.0, 0.0, 1.0]),
+                    shell_map.radius_rad + 2.0 * grid.delta(),
+                ),
             }
         })
         .collect();
@@ -1078,6 +1203,33 @@ pub fn finish(
                             &grid,
                             body_radius,
                             &plume_rings[*k],
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Groove(k) => {
+                        let out = ice_shell::groove_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            lane_floor,
+                            &lanes[*k],
+                            groove_time.unwrap_or(present),
+                            cell,
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::PolarTerrain => {
+                        let out = ice_shell::polar_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            polar_floor,
+                            &shell_map,
+                            fold_direction,
+                            polar_time,
+                            cell,
                             stamper,
                         );
                         Some((out, None, None))
@@ -1264,7 +1416,7 @@ pub fn finish(
     // temperature and the surface's age have left.
     let tau_sw = graph.f64("surface.space_weathering_timescale");
     let maturity = if ice::is_ice_surface(graph) {
-        ice::lag_maturity(graph, grid, &layers.surface_age, present)
+        ice::lag_maturity(graph, &layers, present)
     } else {
         Field::from_fn(grid, |c, _| {
             let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
@@ -1291,6 +1443,7 @@ pub fn finish(
         fraction: 1.0,
         message: "done".to_string(),
     });
+    let (grooved_fraction, polar_fraction) = ice_shell::terrain_shares(&layers);
     Ok(FinishOutput {
         grid,
         layers,
@@ -1320,6 +1473,14 @@ pub fn finish(
         io_flows,
         plume_rings,
         lineae,
+        lanes,
+        lane_coverage: if groove_time.is_some() {
+            loop_output.lane_coverage
+        } else {
+            0.0
+        },
+        grooved_fraction,
+        polar_fraction,
         hash,
     })
 }
@@ -2124,6 +2285,46 @@ mod tests {
         );
         let share = lineae::crack_fraction(&out.finish.layers);
         assert!(share > 0.005, "crack share {share}");
+    }
+
+    /// Ganymede has two terrains: the old dark cratered one and the lanes of bright
+    /// grooved terrain that cut it, which carry far fewer craters.
+    #[test]
+    fn ganymede_has_two_terrains() {
+        let mut r = Runner::new();
+        let g = preset_graph("Ganymede", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let grooved = out.finish.lane_coverage;
+        assert!(
+            (0.45..=0.85).contains(&grooved),
+            "{} lanes cover {grooved:.2} of the surface",
+            out.finish.lanes.len()
+        );
+        let body_radius = g.f64("body.radius");
+        let (mut inside, mut outside) = (0usize, 0usize);
+        for c in out.finish.craters.iter().filter(|c| c.visible) {
+            if out
+                .finish
+                .lanes
+                .iter()
+                .any(|l| l.inside(c.center, body_radius))
+            {
+                inside += 1;
+            } else {
+                outside += 1;
+            }
+        }
+        assert!(outside >= 10, "{outside} craters on the dark terrain");
+        let density_in = inside as f64 / grooved;
+        let density_out = outside as f64 / (1.0 - grooved);
+        eprintln!(
+            "ganymede: {inside} recorded craters on the {grooved:.2} of the surface the lanes cover, {outside} on the rest; density ratio {:.2}",
+            density_in / density_out
+        );
+        assert!(
+            density_in < 0.5 * density_out,
+            "{inside} craters on {grooved:.2} of the surface against {outside} on the rest"
+        );
     }
 
     /// Ganymede's ice relaxes its large craters into palimpsests and keeps its small ones.

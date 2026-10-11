@@ -128,7 +128,11 @@ impl CraterInputs {
 pub fn wholesale_resurfacing(graph: &ParamGraph) -> bool {
     match graph.str("interior.tectonic_regime") {
         "mobile_lid" | "episodic_lid" => true,
-        "ice_shell_ocean" => graph.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX,
+        "ice_shell_ocean" => {
+            graph.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX
+                && graph.f64("interior.ice_shell_thickness") / graph.f64("body.radius").max(1.0)
+                    < WHOLESALE_SHELL_RATIO
+        }
         _ => crate::stages::io::is_io_regime(graph),
     }
 }

@@ -16,8 +16,9 @@
 //! forms, and relaxes the replayed craters by the same law over their own lives.
 
 use crate::constants::*;
+
 use crate::fields::Field;
-use crate::grid::CubeSphere;
+use crate::grid::{Cell, CubeSphere};
 
 /// Viscosity of ice at a temperature, Pa s: an Arrhenius law about the melting point
 /// (Goldsby and Kohlstedt 2001, with the basal viscosity of a convecting shell).
@@ -92,6 +93,7 @@ pub fn survival_since(
     formed_gyr: f64,
     present: f64,
     shell_at: &dyn Fn(f64) -> Shell,
+    local_factor: f64,
 ) -> f64 {
     if present <= formed_gyr {
         return 1.0;
@@ -101,7 +103,13 @@ pub fn survival_since(
     let mut kept = 1.0;
     for i in 0..steps {
         let t = formed_gyr + (i as f64 + 0.5) * dt;
-        kept *= survival(wavelength, dt, &shell_at(t));
+        let s = shell_at(t);
+        let local = Shell {
+            thickness: s.thickness * local_factor,
+            elastic: s.elastic * local_factor,
+            ..s
+        };
+        kept *= survival(wavelength, dt, &local);
         if kept < 1e-6 {
             return 0.0;
         }
@@ -114,34 +122,128 @@ pub fn survival_since(
 fn pyramid(field: &Field<f32>, levels: usize) -> Vec<Field<f32>> {
     let grid = field.grid();
     let mut out = Vec::with_capacity(levels);
-    let mut face = grid.face_size();
+    let mut current = field.clone();
     for _ in 0..levels {
-        face = (face / 2).max(4);
-        let coarse = CubeSphere::new(face);
-        out.push(field.resample(coarse).resample(grid));
+        let Some(coarse) = halve(&current) else {
+            break;
+        };
+        out.push(coarse.resample(grid));
+        current = coarse;
     }
     out
 }
 
+/// The field averaged onto the grid with half the cells per face edge, each coarse cell
+/// the mean of its four fine cells: an area average, so that no single cell stands for a
+/// patch. None once a face is odd or down to four cells.
+fn halve(field: &Field<f32>) -> Option<Field<f32>> {
+    let grid = field.grid();
+    let f = grid.face_size();
+    if !f.is_multiple_of(2) || f < 8 {
+        return None;
+    }
+    let coarse = CubeSphere::new(f / 2);
+    let src = field.as_slice();
+    let mut out = Field::new(coarse);
+    for (k, v) in out.as_mut_slice().iter_mut().enumerate() {
+        let c = coarse.cell(k);
+        let mut sum = 0.0f32;
+        for (di, dj) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            sum += src[grid.index(Cell {
+                face: c.face,
+                i: 2 * c.i + di,
+                j: 2 * c.j + dj,
+            })];
+        }
+        *v = 0.25 * sum;
+    }
+    Some(out)
+}
+
 /// Relax a height field over a step: each wavelength band, from twice the cell up to
 /// the whole body, keeps the share of its relief the shell's viscosity lets it keep.
-pub fn relax(height: &mut Field<f32>, body_radius: f64, dt_gyr: f64, shell: &Shell) -> bool {
+/// What varies across the shell for one relaxation step: the equilibrium surface the
+/// topography relaxes towards, since an isostatic depression is not a load; and the
+/// cells of a renewed terrain, which drop the wavelengths shorter than its renewal
+/// length, m, and relax the rest with their neighbours.
+///
+/// The survival factors themselves are those of the mean shell everywhere. Giving a soft
+/// zone its own factors beside a stiff one does not work in a band decomposition: a soft
+/// cell told to relax a wavelength its neighbours keep subtracts a regional mean it cannot
+/// lower, step after step, and sinks many times its offset (the Phase 4 report). The local
+/// thickness acts through the replayed craters' survival and the crack density instead.
+#[derive(Default, Clone, Copy)]
+pub struct Local<'a> {
+    pub equilibrium: Option<&'a [f32]>,
+    pub renew: Option<(&'a [bool], f64)>,
+}
+
+/// The step. Returns the renewed terrain's surface, the low-pass at its renewal length,
+/// when there is one.
+pub fn relax(
+    height: &mut Field<f32>,
+    body_radius: f64,
+    dt_gyr: f64,
+    shell: &Shell,
+    local: &Local,
+) -> Option<Vec<f32>> {
     let grid = height.grid();
     let cell = grid.delta() * body_radius;
+    if let Some(eq) = local.equilibrium {
+        for (h, e) in height.as_mut_slice().iter_mut().zip(eq) {
+            *h -= e;
+        }
+    }
+    let result = relax_deviation(height, cell, dt_gyr, shell, local);
+    if let Some(eq) = local.equilibrium {
+        for (h, e) in height.as_mut_slice().iter_mut().zip(eq) {
+            *h += e;
+        }
+    }
+    result.map(|mut floor| {
+        if let Some(eq) = local.equilibrium {
+            for (f, e) in floor.iter_mut().zip(eq) {
+                *f += e;
+            }
+        }
+        floor
+    })
+}
+
+fn relax_deviation(
+    height: &mut Field<f32>,
+    cell: f64,
+    dt_gyr: f64,
+    shell: &Shell,
+    local: &Local,
+) -> Option<Vec<f32>> {
+    let grid = height.grid();
     let levels = ((grid.face_size() as f64).log2().floor() as usize)
         .saturating_sub(2)
         .max(1);
+    let lows = pyramid(height, levels);
+    let levels = lows.len().max(1);
     // Survival per band, from the finest the pyramid resolves to the longest. Nothing to
-    // do when even the longest wavelength keeps everything.
-    let factors: Vec<f32> = (0..=levels)
-        .map(|l| {
-            let wavelength = 2.0 * cell * (2u32.pow(l as u32 + 1) as f64);
-            survival(wavelength, dt_gyr, shell) as f32
-        })
+    // do when even the longest wavelength keeps everything and nothing is renewed.
+    let wavelengths: Vec<f64> = (0..=levels)
+        .map(|l| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64))
         .collect();
-    if factors.iter().all(|&f| f > 0.999) {
-        return false;
+    let factors: Vec<f32> = wavelengths
+        .iter()
+        .map(|&w| survival(w, dt_gyr, shell) as f32)
+        .collect();
+    if local.renew.is_none() && factors.iter().all(|&f| f > 0.999) {
+        return None;
     }
+    // A renewed terrain keeps nothing shorter than the first band at least its renewal
+    // length long.
+    let renew_level = local.renew.map(|(_, length)| {
+        wavelengths
+            .iter()
+            .position(|&w| w >= length)
+            .unwrap_or(levels)
+            .min(levels - 1)
+    });
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         eprintln!(
             "relax shell {:.0} m elastic {:.0} m survival by band {:?}",
@@ -153,21 +255,41 @@ pub fn relax(height: &mut Field<f32>, body_radius: f64, dt_gyr: f64, shell: &She
                 .collect::<Vec<_>>()
         );
     }
-    let lows = pyramid(height, levels);
+    let renewed_from = |k: usize| -> usize {
+        match (local.renew, renew_level) {
+            (Some((mask, _)), Some(level)) if mask[k] => level,
+            _ => 0,
+        }
+    };
     let h = height.as_mut_slice();
-    // Bands: h - low_0, low_0 - low_1, ..., low_{L-1}; the last is the global shape.
+    // Bands: h - low_0, low_0 - low_1, ..., low_{L-1}; the last is the global shape. A
+    // renewed cell drops the bands shorter than its renewal length and relaxes the rest
+    // like its neighbours, so that it never stands apart from them.
     for (k, cell) in h.iter_mut().enumerate() {
+        let from = renewed_from(k);
         let mut v = 0.0f32;
         let mut prev = *cell;
         for (l, low) in lows.iter().enumerate() {
             let band = prev - low.as_slice()[k];
-            v += band * factors[l];
+            if l >= from {
+                v += band * factors[l];
+            }
             prev = low.as_slice()[k];
         }
         v += prev * factors[levels];
         *cell = v;
     }
-    true
+    renew_level.map(|_| {
+        local
+            .renew
+            .map(|(mask, _)| {
+                h.iter()
+                    .zip(mask)
+                    .map(|(&v, &m)| if m { v } else { 0.0 })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
 }
 
 #[cfg(test)]
@@ -198,11 +320,13 @@ mod tests {
             viscosity_scale: 1.0,
         };
         assert!(relaxation_time_gyr(30e3, &europa) < 0.05);
-        assert!(survival_since(30e3, 4.0, 4.5, &|_| europa) < 1e-3);
-        assert!(survival_since(20e3, 0.0, 4.5, &|_| ganymede) > 0.95);
+        assert!(survival_since(30e3, 4.0, 4.5, &|_| europa, 1.0) < 1e-3);
+        assert!(survival_since(20e3, 0.0, 4.5, &|_| ganymede, 1.0) > 0.95);
         // The elastic lid holds a 60 km crater on today's Ganymede however warm the base.
-        assert!(survival_since(60e3, 0.0, 4.5, &|_| ganymede) > 0.95);
-        assert!(survival_since(400e3, 4.0, 4.5, &|_| ganymede) < 0.05);
+        assert!(survival_since(60e3, 0.0, 4.5, &|_| ganymede, 1.0) > 0.95);
+        assert!(survival_since(400e3, 4.0, 4.5, &|_| ganymede, 1.0) < 0.05);
+        // Where the shell is a fifth as thick the same crater goes.
+        assert!(survival_since(60e3, 0.0, 4.5, &|_| ganymede, 0.2) < 0.5);
         // Relaxation keeps a small bump and flattens a broad one.
         let grid = CubeSphere::new(64);
         let r = 2.6e6;
@@ -216,8 +340,7 @@ mod tests {
             }
         });
         let before: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
-        let changed = relax(&mut h, r, 0.05, &ganymede);
-        assert!(changed);
+        relax(&mut h, r, 0.05, &ganymede, &Local::default());
         let after: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
         assert!(after < 0.5 * before, "{after} vs {before}");
     }

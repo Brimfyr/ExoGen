@@ -30,6 +30,9 @@ pub const UNIT_MOUNTAIN: u16 = 18;
 /// An ice shell's cracks: double ridges and cycloids, and dilational bands.
 pub const UNIT_LINEA: u16 = 19;
 pub const UNIT_BAND: u16 = 20;
+/// Lanes of grooved terrain, and the renewed terrain under a pole where the shell is thin.
+pub const UNIT_GROOVED: u16 = 21;
+pub const UNIT_POLAR_TERRAIN: u16 = 22;
 
 pub fn unit_name(id: u16) -> &'static str {
     match id {
@@ -53,11 +56,15 @@ pub fn unit_name(id: u16) -> &'static str {
         UNIT_MOUNTAIN => "mountain block",
         UNIT_LINEA => "linea",
         UNIT_BAND => "band",
+        UNIT_GROOVED => "grooved terrain",
+        UNIT_POLAR_TERRAIN => "polar terrain",
         _ => "none",
     }
 }
 
 /// All known units with their names, for the sidecar legend.
 pub fn legend() -> Vec<(u16, &'static str)> {
-    (0..=UNIT_BAND).map(|id| (id, unit_name(id))).collect()
+    (0..=UNIT_POLAR_TERRAIN)
+        .map(|id| (id, unit_name(id)))
+        .collect()
 }

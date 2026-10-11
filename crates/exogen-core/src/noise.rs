@@ -8,7 +8,7 @@
 use crate::rng::Rng;
 
 /// Classic 3D gradient noise with a seeded permutation.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GradientNoise {
     perm: [u16; 512],
 }

@@ -758,6 +758,39 @@ pub fn tectonics_ice_crack_density(c: &Ctx) -> Value {
     .into()
 }
 
+pub fn tectonics_polar_thinning(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
+        return 0.0.into();
+    }
+    let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
+    let focus = 1.0 - (-ratio / POLAR_FOCUS_SHELL_RATIO).exp();
+    (POLAR_THINNING_MAX * (c.f64("interior.tidal_flux") / POLAR_FOCUS_FLUX).min(1.0) * focus).into()
+}
+
+pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
+        return 0.0.into();
+    }
+    let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
+    if ratio < WHOLESALE_SHELL_RATIO {
+        // A thin shell renews itself by cracking everywhere instead.
+        return 0.0.into();
+    }
+    // What the focusing takes to the pole does not spread as lanes.
+    let diffuse = (1.0 - c.f64("tectonics.polar_thinning") / POLAR_THINNING_MAX).max(0.0);
+    ((c.f64("interior.tidal_flux") - ICE_RESURFACING_FLUX_FLOOR) / ICE_RESURFACING_FLUX * diffuse)
+        .clamp(0.0, 0.95)
+        .into()
+}
+
+pub fn tectonics_ice_resurfacing_age(c: &Ctx) -> Value {
+    if c.f64("tectonics.ice_resurfaced_fraction") > 0.0 {
+        (ICE_RESURFACING_AGE_FRACTION * c.f64("body.age")).into()
+    } else {
+        0.0.into()
+    }
+}
+
 pub fn tectonics_nsr_period(c: &Ctx) -> Value {
     if c.f64("tectonics.ice_crack_density") > 0.0 {
         (NSR_PERIOD_RETENTION_FACTOR * c.f64("cratering.retention_age")).into()
@@ -1654,7 +1687,12 @@ pub fn cratering_retention_age(c: &Ctx) -> Value {
         "mobile_lid" => RETENTION_MOBILE_LID_GYR,
         "episodic_lid" => RETENTION_EPISODIC_GYR,
         "ice_shell_ocean" => {
-            if c.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX {
+            // A thin shell kept warm renews itself everywhere; a thick one keeps its
+            // craters and renews only where it is thin.
+            let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
+            if c.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX
+                && ratio < WHOLESALE_SHELL_RATIO
+            {
                 RETENTION_ICE_OCEAN_GYR
             } else {
                 age

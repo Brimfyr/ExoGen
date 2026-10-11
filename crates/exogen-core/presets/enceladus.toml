@@ -1,6 +1,6 @@
 version = "0.0.1"
 name = "Enceladus"
-description = "Reference body. Small ice moon with a south polar plume; about 16 GW of tidal heating."
+description = "Reference body. Small ice moon; ancient cratered plains and a renewed polar terrain over the thin shell where its 16 GW of tidal heating focuses."
 
 [values]
 "orbit.primary" = "planet"
