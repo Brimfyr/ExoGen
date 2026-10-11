@@ -386,7 +386,10 @@ impl PlumeProcess {
                     }
                     None => {
                         let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 5);
+                        // The extension is greatest on the rise: the longest faults
+                        // start on its flank, the short ones anywhere out past its foot.
                         let (r_lo, r_hi) = RIFT_START_FRACTION;
+                        let r_hi = r_hi - (r_hi - r_lo) * 0.75 * (length / l_max).min(1.0);
                         let r0 = rise.radius * (r_lo + (r_hi - r_lo) * rng.uniform(draw, 6));
                         let start = offset(rise.center, east, north, r0 / body_radius, phi);
                         radial_trace(start, rise.center, length, spacing, body_radius, &rng, draw)

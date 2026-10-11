@@ -177,6 +177,7 @@ pub struct FloodProcess {
     carry: f64,
     /// On an episodic lid: when the surface was renewed, before which no flows are kept.
     event_time: Option<f64>,
+    age: f64,
     pub records: Vec<FloodRecord>,
 }
 
@@ -247,6 +248,7 @@ impl FloodProcess {
             heap: BinaryHeap::new(),
             carry: 0.0,
             event_time,
+            age: graph.f64("body.age"),
             records: Vec::new(),
         })
     }
@@ -323,11 +325,11 @@ impl FloodProcess {
         boost: Option<&[f64]>,
         t0: f64,
         t1: f64,
-        step_index: u64,
     ) -> Vec<FloodEvent> {
-        let mut budget = self.budget(t0, t1) + self.carry;
-        if budget < VOLCANISM_EVENT_VOLUME.0 {
-            self.carry = budget;
+        let bins = crate::stages::time_bins(self.age, t0, t1);
+        let step_budget: f64 = bins.iter().map(|&(_, b0, b1)| self.budget(b0, b1)).sum();
+        if step_budget + self.carry < VOLCANISM_EVENT_VOLUME.0 {
+            self.carry += step_budget;
             return Vec::new();
         }
         let cumulative = self.vent_weights(layers, boost);
@@ -335,9 +337,29 @@ impl FloodProcess {
         if total <= 0.0 {
             return Vec::new();
         }
+        let mut out = Vec::new();
+        for (bin, b0, b1) in bins {
+            self.sample_bin(&cumulative, total, bin, b0, b1, &mut out);
+        }
+        out.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
+        out
+    }
+
+    /// The eruptions of one time bin, drawn with the bin as the random index against
+    /// the vent weights of the step.
+    fn sample_bin(
+        &mut self,
+        cumulative: &[f64],
+        total: f64,
+        bin: u64,
+        t0: f64,
+        t1: f64,
+        out: &mut Vec<FloodEvent>,
+    ) {
+        let step_index = bin;
+        let mut budget = self.budget(t0, t1) + self.carry;
         let (lo, hi) = VOLCANISM_EVENT_VOLUME;
         let mut j = 0u64;
-        let mut out = Vec::new();
         while budget >= lo && j < 100_000 {
             let draw = 16 + j * 4;
             let volume = lo * (hi / lo).powf(self.rng.uniform(step_index, draw));
@@ -357,8 +379,6 @@ impl FloodProcess {
             j += 1;
         }
         self.carry = budget.max(0.0);
-        out.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
-        out
     }
 
     /// Erupt one event onto the surface as it is now, and record it.
@@ -370,8 +390,8 @@ impl FloodProcess {
     }
 
     /// Sample and emplace a step's eruptions.
-    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, step_index: u64) {
-        for ev in self.sample(layers, None, t0, t1, step_index) {
+    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, _step_index: u64) {
+        for ev in self.sample(layers, None, t0, t1) {
             self.apply(layers, ev);
         }
     }

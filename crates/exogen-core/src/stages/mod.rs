@@ -46,6 +46,21 @@ use crate::units::UNIT_SECONDARY_FIELD;
 
 /// Loop steps by quality: preview, standard, high.
 pub const LOOP_STEPS: [usize; 3] = [30, 90, 90];
+/// The loop's fixed time bins. Every sampler draws per bin rather than per step, with the
+/// bin as its random index, so the population of craters, scarps, eruptions and the Io
+/// surface is the same at every quality and the preview predicts the export. The count is
+/// a multiple of every step count in `LOOP_STEPS`, so a bin never straddles a step.
+pub const LOOP_TIME_BINS: usize = 900;
+
+/// The bins a step covers, as (index, start, end) in order.
+pub fn time_bins(age: f64, t0: f64, t1: f64) -> Vec<(u64, f64, f64)> {
+    let w = age / LOOP_TIME_BINS as f64;
+    let b0 = (t0 / w).round() as usize;
+    let b1 = (t1 / w).round() as usize;
+    (b0..b1)
+        .map(|b| (b as u64, b as f64 * w, (b + 1) as f64 * w))
+        .collect()
+}
 /// Keyframes kept in memory, at most. The last step is always kept.
 pub const MAX_KEYFRAMES: usize = 24;
 
@@ -301,7 +316,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 21;
+pub const FINISH_VERSION: u64 = 22;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -378,13 +393,13 @@ pub fn run_coarse_loop(
         let boost = plume.as_ref().map(|p| p.vent_boost());
         // Everything that happens in the step, in order of time: craters, scarps and
         // eruptions interleaved as they come, so what is older is cut by what is younger.
-        let craters = impacts.sample(t0, t1, s as u64);
+        let craters = impacts.sample(t0, t1);
         let scarps = contraction
             .as_mut()
-            .map_or_else(Vec::new, |c| c.sample(t0, t1, s as u64));
-        let eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
-            f.sample(&layers, boost.as_deref(), t0, t1, s as u64)
-        });
+            .map_or_else(Vec::new, |c| c.sample(t0, t1));
+        let eruptions = floods
+            .as_mut()
+            .map_or_else(Vec::new, |f| f.sample(&layers, boost.as_deref(), t0, t1));
         let mut order: Vec<(f64, u8, usize)> =
             Vec::with_capacity(craters.len() + scarps.len() + eruptions.len());
         order.extend(craters.iter().enumerate().map(|(i, c)| (c.time_gyr, 0, i)));
@@ -1523,6 +1538,32 @@ pub fn hydrosphere_fill(graph: &ParamGraph, layers: &mut LayerSet) -> (f64, f64)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn time_bins_tile_every_quality_the_same_way() {
+        use super::{LOOP_STEPS, LOOP_TIME_BINS, time_bins};
+        for &steps in &LOOP_STEPS {
+            assert_eq!(LOOP_TIME_BINS % steps, 0, "{steps} steps");
+        }
+        let age = 4.52;
+        let mut seen = Vec::new();
+        let dt = age / 30.0;
+        for s in 1..=30 {
+            seen.extend(time_bins(age, dt * (s - 1) as f64, dt * s as f64));
+        }
+        assert_eq!(seen.len(), LOOP_TIME_BINS);
+        assert!(seen.iter().enumerate().all(|(i, b)| b.0 == i as u64));
+        let dt = age / 90.0;
+        let fine: Vec<_> = (1..=90)
+            .flat_map(|s| time_bins(age, dt * (s - 1) as f64, dt * s as f64))
+            .collect();
+        assert_eq!(fine.len(), LOOP_TIME_BINS);
+        assert!(
+            fine.iter()
+                .zip(&seen)
+                .all(|(a, b)| a.0 == b.0 && (a.1 - b.1).abs() < 1e-12)
+        );
+    }
+
     use super::*;
     use crate::presets::preset;
 
@@ -1859,38 +1900,36 @@ mod tests {
             summit - foot > 0.5 * big.height,
             "shield {summit} vs foot {foot}"
         );
-        // The canyon floor lies kilometres below the plateau either side: the main
-        // trough is the longest, and the rims are the highest ground within a few
-        // widths, past the en-echelon troughs beside it.
-        let canyon = lo
+        // Some trough the loop carried still stands kilometres deep below the plateau
+        // either side, the rims being the highest ground within a few widths past the
+        // en-echelon neighbours; a later flood may have filled another.
+        let relief = |canyon: &plume::Trough| {
+            let mid = canyon.midpoint();
+            let next = canyon.points[canyon.points.len() / 2 + 1];
+            let t = crate::geom::normalize([next[0] - mid[0], next[1] - mid[1], next[2] - mid[2]]);
+            let n = crate::geom::normalize(crate::geom::cross(mid, t));
+            let side = |s: f64| {
+                let d = canyon.width * s / radius;
+                at(crate::geom::normalize([
+                    mid[0] + d * n[0],
+                    mid[1] + d * n[1],
+                    mid[2] + d * n[2],
+                ]))
+            };
+            let rim = |sign: f64| {
+                [1.0, 1.5, 2.0, 2.5]
+                    .iter()
+                    .map(|&s| side(sign * s))
+                    .fold(f64::NEG_INFINITY, f64::max)
+            };
+            0.5 * (rim(1.0) + rim(-1.0)) - at(mid)
+        };
+        let deepest = lo
             .canyons
             .iter()
-            .max_by(|a, b| a.length.total_cmp(&b.length))
-            .unwrap();
-        let mid = canyon.midpoint();
-        let next = canyon.points[canyon.points.len() / 2 + 1];
-        let t = crate::geom::normalize([next[0] - mid[0], next[1] - mid[1], next[2] - mid[2]]);
-        let n = crate::geom::normalize(crate::geom::cross(mid, t));
-        let side = |s: f64| {
-            let d = canyon.width * s / radius;
-            at(crate::geom::normalize([
-                mid[0] + d * n[0],
-                mid[1] + d * n[1],
-                mid[2] + d * n[2],
-            ]))
-        };
-        let rim = |sign: f64| {
-            [1.0, 1.5, 2.0, 2.5]
-                .iter()
-                .map(|&s| side(sign * s))
-                .fold(f64::NEG_INFINITY, f64::max)
-        };
-        let rims = 0.5 * (rim(1.0) + rim(-1.0));
-        assert!(
-            rims - at(mid) > 3_000.0,
-            "canyon floor {} rims {rims}",
-            at(mid)
-        );
+            .map(relief)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(deepest > 3_000.0, "deepest standing trough {deepest} m");
         // The Moon raises none.
         let moon = r
             .run(&preset_graph("Moon", "preview"), &NoProgress)

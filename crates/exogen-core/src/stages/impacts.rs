@@ -196,42 +196,42 @@ impl ImpactProcess {
         self.records
     }
 
-    /// Emplace the craters of one time step, oldest first.
-    /// Craters formed between two times, in order of formation, not yet emplaced.
-    pub fn sample(&self, t_start: f64, t_end: f64, step_index: u64) -> Vec<CraterRecord> {
+    /// Craters formed between two times, in order of formation, not yet emplaced: drawn
+    /// per fixed time bin with the bin as the random index, so the population does not
+    /// depend on the step length.
+    pub fn sample(&self, t_start: f64, t_end: f64) -> Vec<CraterRecord> {
         let inp = &self.inputs;
         if inp.flux_scale <= 0.0 || self.d_max <= self.d_loop {
             return Vec::new();
         }
         // Craters that the regime would have removed by the present are not emplaced.
         let cutoff = inp.age - inp.loop_retention_age;
-        if t_end <= cutoff {
-            return Vec::new();
-        }
-        let t_start = t_start.max(cutoff);
-        let expected = expected_count_above(
-            &inp.pf,
-            &inp.flux,
-            inp.flux_scale,
-            inp.body_radius,
-            self.d_loop,
-            t_start,
-            t_end,
-        );
-        let (count, _) = poisson(&self.rng, step_index, 0, expected);
-        let mut batch: Vec<CraterRecord> = (0..count as u64)
-            .map(|j| {
+        let mut batch: Vec<CraterRecord> = Vec::new();
+        for (bin, b0, b1) in crate::stages::time_bins(inp.age, t_start, t_end) {
+            if b1 <= cutoff {
+                continue;
+            }
+            let b0 = b0.max(cutoff);
+            let expected = expected_count_above(
+                &inp.pf,
+                &inp.flux,
+                inp.flux_scale,
+                inp.body_radius,
+                self.d_loop,
+                b0,
+                b1,
+            );
+            let (count, _) = poisson(&self.rng, bin, 0, expected);
+            for j in 0..count as u64 {
                 let draw = 16 + j * 8;
-                let u_d = self.rng.uniform(step_index, draw);
-                let center = self.rng.unit_direction(step_index, draw + 1);
-                let time_gyr = inp.flux.time_at_fraction(
-                    t_start,
-                    t_end,
-                    self.rng.uniform(step_index, draw + 3),
-                );
+                let u_d = self.rng.uniform(bin, draw);
+                let center = self.rng.unit_direction(bin, draw + 1);
+                let time_gyr = inp
+                    .flux
+                    .time_at_fraction(b0, b1, self.rng.uniform(bin, draw + 3));
                 // From the early, basin-forming population or the steady asteroid flux,
                 // by their shares at the time.
-                let early = self.rng.uniform(step_index, draw + 6) < inp.flux.early_share(time_gyr);
+                let early = self.rng.uniform(bin, draw + 6) < inp.flux.early_share(time_gyr);
                 let diameter = if early {
                     inp.pf
                         .sample_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
@@ -239,10 +239,10 @@ impl ImpactProcess {
                     inp.pf
                         .sample_steady_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
                 } * 1e3;
-                let angle = impact_angle(self.rng.uniform(step_index, draw + 4));
-                let azimuth = self.rng.uniform(step_index, draw + 5) * 2.0 * std::f64::consts::PI;
+                let angle = impact_angle(self.rng.uniform(bin, draw + 4));
+                let azimuth = self.rng.uniform(bin, draw + 5) * 2.0 * std::f64::consts::PI;
                 let ellipticity = ellipticity_for(angle, inp.oblique_fraction);
-                CraterRecord {
+                batch.push(CraterRecord {
                     center,
                     diameter,
                     time_gyr,
@@ -254,10 +254,10 @@ impl ImpactProcess {
                     relief: 0.0,
                     visible: true,
                     on_lava: false,
-                    id: (step_index << 32) | j,
-                }
-            })
-            .collect();
+                    id: (bin << 32) | j,
+                });
+            }
+        }
         batch.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
         batch
     }
@@ -310,8 +310,8 @@ impl ImpactProcess {
     }
 
     /// Sample and emplace a step's craters.
-    pub fn step(&mut self, layers: &mut LayerSet, t_start: f64, t_end: f64, step_index: u64) {
-        for rec in self.sample(t_start, t_end, step_index) {
+    pub fn step(&mut self, layers: &mut LayerSet, t_start: f64, t_end: f64, _step_index: u64) {
+        for rec in self.sample(t_start, t_end) {
             self.apply(layers, rec);
         }
     }

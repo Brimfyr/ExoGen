@@ -896,6 +896,10 @@ pub const SECONDARY_DEPTH_FACTOR: f64 = 0.5;
 /// Split between simulated and replayed craters, in loop cells; the smallest replayed
 /// crater in finishing cells; and the size bins per octave of the replay.
 pub const LOOP_THRESHOLD_CELLS: f64 = 8.0;
+/// The loop threshold is taken on this coarse grid at every quality, the standard one,
+/// so the preview's loop population is the export's; a preview stamps its smallest loop
+/// craters on half as many cells, and the finish restores them.
+pub const LOOP_REFERENCE_FACE: f64 = 256.0;
 pub const FINISHING_MIN_CELLS: f64 = 2.0;
 pub const BINS_PER_OCTAVE: u32 = 4;
 /// Largest basin radius as a fraction of the body radius (South Pole–Aitken is 0.72).

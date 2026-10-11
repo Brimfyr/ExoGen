@@ -213,6 +213,7 @@ pub struct ContractionProcess {
     body_radius: f64,
     area: f64,
     thermal: ThermalHistory,
+    age: f64,
     rng: Rng,
     stamper: Stamper,
     /// Shortening area still to be taken up, carried between steps.
@@ -246,6 +247,7 @@ impl ContractionProcess {
             body_radius,
             area: 4.0 * std::f64::consts::PI * body_radius * body_radius,
             thermal: thermal.clone(),
+            age: graph.f64("body.age"),
             rng: Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x5CA2_9F11),
             stamper: Stamper::new(&grid),
             carry: 0.0,
@@ -265,10 +267,20 @@ impl ContractionProcess {
     /// Scarps formed between two times, in order of formation, not yet emplaced. The
     /// budget is spent on the whole population; only those the loop grid can carry are
     /// returned.
-    pub fn sample(&mut self, t0: f64, t1: f64, step_index: u64) -> Vec<ScarpRecord> {
+    pub fn sample(&mut self, t0: f64, t1: f64) -> Vec<ScarpRecord> {
+        let mut out = Vec::new();
+        for (bin, b0, b1) in crate::stages::time_bins(self.age, t0, t1) {
+            self.sample_bin(bin, b0, b1, &mut out);
+        }
+        out.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
+        out
+    }
+
+    /// The scarps of one time bin, drawn with the bin as the random index.
+    fn sample_bin(&mut self, bin: u64, t0: f64, t1: f64, out: &mut Vec<ScarpRecord>) {
+        let step_index = bin;
         let mut budget = self.budget(t0, t1) + self.carry;
         let mut j = 0u64;
-        let mut out = Vec::new();
         while budget > 0.0 && j < 200_000 {
             let draw = 16 + j * 12;
             let length = sample_length(self.rng.uniform(step_index, draw), self.l_min, self.l_max);
@@ -308,8 +320,6 @@ impl ContractionProcess {
             j += 1;
         }
         self.carry = budget.min(0.0);
-        out.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
-        out
     }
 
     /// Cut one scarp into the surface as it is now, and record it.
@@ -328,8 +338,8 @@ impl ContractionProcess {
     }
 
     /// Sample and emplace a step's scarps.
-    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, step_index: u64) {
-        for rec in self.sample(t0, t1, step_index) {
+    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, _step_index: u64) {
+        for rec in self.sample(t0, t1) {
             self.apply(layers, rec);
         }
     }

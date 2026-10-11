@@ -2138,9 +2138,9 @@ static NODES: &[NodeDef] = &[
         "km",
         1e3,
         f(0.0, 1e7),
-        &["body.radius", "detail.loop_resolution"],
+        &["body.radius"],
         d::cratering_loop_threshold,
-        "Craters above eight loop cells are emplaced inside the coarse loop; smaller ones are replayed at the finishing resolution.",
+        "Craters above eight cells of the standard coarse grid are emplaced inside the coarse loop at every quality, so the preview's loop population is the export's; smaller ones are replayed at the finishing resolution.",
         "ADR 0002",
     ),
     derived(

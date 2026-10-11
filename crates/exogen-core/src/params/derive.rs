@@ -1598,8 +1598,7 @@ fn cell_width(radius: f64, face: f64) -> f64 {
 }
 
 pub fn cratering_loop_threshold(c: &Ctx) -> Value {
-    (LOOP_THRESHOLD_CELLS * cell_width(c.f64("body.radius"), c.f64("detail.loop_resolution")))
-        .into()
+    (LOOP_THRESHOLD_CELLS * cell_width(c.f64("body.radius"), LOOP_REFERENCE_FACE)).into()
 }
 
 pub fn cratering_min_diameter(c: &Ctx) -> Value {

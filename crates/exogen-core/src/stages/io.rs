@@ -244,8 +244,8 @@ pub struct IoProcess {
     gravity: f64,
     /// The day's peak temperature at the subsolar point, K, from the insolation.
     subsolar_k: f64,
+    age: f64,
     dt: f64,
-    step_index: u64,
     rng: Rng,
     n_paterae: usize,
     n_mountains: usize,
@@ -273,8 +273,8 @@ impl IoProcess {
                     graph.f64("orbit.insolation") * (1.0 - graph.f64("atmosphere.bond_albedo"));
                 (absorbed.max(0.0) / SIGMA_SB).powf(0.25)
             },
+            age: graph.f64("body.age"),
             dt: 0.0,
-            step_index: 0,
             rng: Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x10_5EED_0001),
             n_paterae: graph.f64("volcanism.paterae_count").round().max(0.0) as usize,
             n_mountains: graph.f64("tectonics.mountain_count").round().max(0.0) as usize,
@@ -291,38 +291,44 @@ impl IoProcess {
         range.0 * (range.1 / range.0).powf(self.rng.uniform(index, draw))
     }
 
-    /// The features alive through a step: mountains retire and are replaced over their
-    /// lifetimes; paterae, flows and fallout are renewed every step, since the surface
-    /// is younger than the step.
-    fn populate(&mut self, t1: f64, lay: bool) {
-        let step = self.step_index;
-        let death = t1 + self.dt.max(1e-6);
-        // Mountains.
-        let alive = self.mountains.iter().filter(|m| m.alive(t1)).count();
-        for _ in alive..self.n_mountains {
-            let k = 5_000 + self.mountains.len() as u64;
-            let (lo, hi) = IO_MOUNTAIN_DIAMETER;
-            let diameter = lo * (hi / lo).powf(self.rng.uniform(k, 1));
-            let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
-            let life = self.log_uniform(k, 7, IO_MOUNTAIN_LIFETIME_GYR);
-            // The first population is of all ages; later ones are born now.
-            let birth = if step == 0 {
-                t1 - life * self.rng.uniform(k, 8)
-            } else {
-                t1
-            };
-            self.mountains.push(Mountain {
-                center: self.rng.unit_direction(k, 2),
-                radius: 0.5 * diameter,
-                height: h_lo * (h_hi / h_lo).powf(self.rng.uniform(k, 3)),
-                tilt_azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(k, 4),
-                tilt: IO_MOUNTAIN_TILT * self.rng.uniform(k, 5),
-                aspect: 1.0 + (IO_MOUNTAIN_ASPECT - 1.0) * self.rng.uniform(k, 6),
-                birth_gyr: birth,
-                death_gyr: birth + life,
-                id: k,
-            });
+    /// The mountains through the body's life: each of the standing count is a chain of
+    /// blocks, one raised as the last is buried, drawn from the seed alone.
+    fn raise_mountains(&mut self) {
+        for slot in 0..self.n_mountains as u64 {
+            let mut generation = 0u64;
+            let first = 5_000 + slot * 1_000;
+            let mut birth =
+                -self.log_uniform(first, 7, IO_MOUNTAIN_LIFETIME_GYR) * self.rng.uniform(first, 8);
+            while birth < self.age && generation < 900 {
+                let k = first + generation;
+                let (lo, hi) = IO_MOUNTAIN_DIAMETER;
+                let diameter = lo * (hi / lo).powf(self.rng.uniform(k, 1));
+                let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
+                let life = self.log_uniform(k, 7, IO_MOUNTAIN_LIFETIME_GYR);
+                self.mountains.push(Mountain {
+                    center: self.rng.unit_direction(k, 2),
+                    radius: 0.5 * diameter,
+                    height: h_lo * (h_hi / h_lo).powf(self.rng.uniform(k, 3)),
+                    tilt_azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(k, 4),
+                    tilt: IO_MOUNTAIN_TILT * self.rng.uniform(k, 5),
+                    aspect: 1.0 + (IO_MOUNTAIN_ASPECT - 1.0) * self.rng.uniform(k, 6),
+                    birth_gyr: birth,
+                    death_gyr: birth + life,
+                    id: k,
+                });
+                birth += life;
+                generation += 1;
+            }
         }
+    }
+
+    /// The features alive through a step: paterae, flows and fallout are renewed at
+    /// every kept step, since the surface is younger than the step.
+    fn populate(&mut self, t1: f64, lay: bool) {
+        // The time bin the step ends in is the random index, so the same surface comes
+        // out at every quality.
+        let step = (t1 / self.age * crate::stages::LOOP_TIME_BINS as f64).round() as u64;
+        let death = t1 + self.dt.max(1e-6);
         // Paterae, with their flows and fallout, for the steps whose surface is kept.
         if !lay {
             return;
@@ -448,8 +454,10 @@ impl IoProcess {
                 }
             }
         }
+        if self.mountains.is_empty() {
+            self.raise_mountains();
+        }
         self.populate(t1, lay);
-        self.step_index += 1;
         if !lay {
             return;
         }
