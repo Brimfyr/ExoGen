@@ -1353,9 +1353,11 @@ pub fn cratering_flux_relative_to_moon(c: &Ctx) -> Value {
 }
 
 pub fn cratering_simple_complex_transition(c: &Ctx) -> Value {
+    // The transition is a property of the target the crater forms in: the surface
+    // material, not the bulk composition.
     transition_diameter(
         c.f64("body.gravity"),
-        is_icy(c.str("body.composition_class")),
+        crate::stages::materials::is_ice(c.str("materials.bedrock")),
     )
     .into()
 }

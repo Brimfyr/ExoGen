@@ -1582,9 +1582,9 @@ static NODES: &[NodeDef] = &[
         "km",
         1e3,
         f(0.0, 1e6),
-        &["body.gravity", "body.composition_class"],
+        &["body.gravity", "materials.bedrock"],
         d::cratering_simple_complex_transition,
-        "16.5 km x (1.62 / g), times 0.15 on ice.",
+        "16.5 km x (1.62 / g), times 0.15 on an ice surface.",
         "Pike 1980; Schenk 2002 (F30)",
     ),
     derived(

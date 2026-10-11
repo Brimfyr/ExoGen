@@ -16,6 +16,8 @@ pub const G: f64 = 6.674_30e-11;
 pub const SIGMA_SB: f64 = 5.670_374_419e-8;
 /// Boltzmann constant, exact in the 2019 SI.
 pub const K_B: f64 = 1.380_649e-23;
+pub const SECONDS_PER_GYR: f64 = 3.155_76e16;
+pub const WATER_MOLECULE_MASS: f64 = 2.991e-26;
 /// Atomic mass unit, CODATA 2018.
 pub const M_U: f64 = 1.660_539_066_60e-27;
 /// Astronomical unit, IAU 2012, exact.
@@ -526,7 +528,7 @@ pub const IO_MOUNTAIN_BARE_SLOPE_DEG: (f64, f64) = (5.0, 15.0);
 pub const MAGMA_EFFICIENCY_MOBILE: f64 = 0.15;
 pub const MAGMA_EFFICIENCY_EPISODIC: f64 = 0.05;
 pub const MAGMA_EFFICIENCY_STAGNANT: f64 = 0.01;
-pub const MAGMA_EFFICIENCY_ICE: f64 = 0.02;
+pub const MAGMA_EFFICIENCY_ICE: f64 = 3e-5;
 pub const MAGMA_EFFICIENCY_TIDAL_MAX: f64 = 0.9;
 pub const MAGMA_TIDAL_FLUX_SCALE: f64 = 1.0;
 pub const MAGMA_HEAT_PER_M3_ROCK: f64 = 2_800.0 * (4.0e5 + 1_200.0 * 1_000.0);
@@ -924,6 +926,15 @@ pub const IO_REGIME_TIDAL_FLUX: f64 = 0.5;
 pub const REGOLITH_MIXING_LENGTH: f64 = 4.5e3;
 pub const REGOLITH_MIXING_REFERENCE_GYR: f64 = 3.5;
 pub const REGOLITH_MIXING_MAX_PASSES: usize = 24;
+/// Sublimation lag, the maturity of an icy surface: ice sublimes at the latitude's mean
+/// temperature (Murphy and Koop 2005 for the vapour pressure, the Hertz-Knudsen rate) and
+/// leaves its non-ice share behind; the lag is opaque past this mass per area, a couple
+/// of metres of dust, since gardening and frost keep a thinner one from hiding the ice
+/// (Moore et al. 1999 on Callisto's lag, metres thick after tens of metres of ice lost).
+/// The poles hold no less than this temperature. The non-ice share of each ice
+/// end-member is in the materials.
+pub const LAG_OPAQUE_KG_M2: f64 = 2_000.0;
+pub const ICE_POLAR_TEMPERATURE_FLOOR_K: f64 = 40.0;
 /// Space weathering timescale at 1 AU, Gyr, and the pressure above which it is off.
 pub const SPACE_WEATHERING_GYR_1AU: f64 = 0.3;
 pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;

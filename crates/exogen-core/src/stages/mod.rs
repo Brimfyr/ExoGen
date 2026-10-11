@@ -13,6 +13,7 @@
 
 pub mod deform;
 pub mod episodic;
+pub mod ice;
 pub mod impacts;
 pub mod io;
 pub mod materials;
@@ -316,7 +317,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 22;
+pub const FINISH_VERSION: u64 = 23;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1203,11 +1204,17 @@ pub fn finish(
         fraction: 0.8,
         message: "weathering and rays".to_string(),
     });
+    // Maturity: space weathering on rock; on ice, the sublimation lag the latitude's
+    // temperature and the surface's age have left.
     let tau_sw = graph.f64("surface.space_weathering_timescale");
-    let maturity = Field::from_fn(grid, |c, _| {
-        let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
-        (1.0 - (-exposure / tau_sw).exp()) as f32
-    });
+    let maturity = if ice::is_ice_surface(graph) {
+        ice::lag_maturity(graph, grid, &layers.surface_age, present)
+    } else {
+        Field::from_fn(grid, |c, _| {
+            let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
+            (1.0 - (-exposure / tau_sw).exp()) as f32
+        })
+    };
     let rays = ray_field(&grid, body_radius, &records, &inputs, present, cell);
 
     sink.report(Progress {

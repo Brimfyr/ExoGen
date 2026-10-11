@@ -137,8 +137,19 @@ pub const END_MEMBERS: &[EndMember] = &[
 ];
 
 /// Ice end-members, whose excavated bright material darkens back to the lag it came from.
-fn is_ice(id: &str) -> bool {
+pub fn is_ice(id: &str) -> bool {
     id.starts_with("water_ice") || id == "ammonia_water_ice" || id == "rock_ice_mixture"
+}
+
+/// The share of an end-member that is not ice and stays behind as lag when the ice
+/// sublimes: clean ices a trace, dirty ice a third, a rock-ice mixture half, rock all.
+pub fn non_ice_fraction(id: &str) -> f64 {
+    match id {
+        "water_ice" | "ammonia_water_ice" => 0.02,
+        "water_ice_dirty" => 0.3,
+        "rock_ice_mixture" => 0.5,
+        _ => 1.0,
+    }
 }
 
 pub fn end_member(id: &str) -> Option<&'static EndMember> {

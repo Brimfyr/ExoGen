@@ -30,7 +30,7 @@ use crate::stages::deform::Deformation;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
 #[derive(Clone, Copy, Debug)]
@@ -201,6 +201,11 @@ impl FloodProcess {
             "episodic_lid" => Some(
                 (graph.f64("body.age") - graph.f64("tectonics.resurfacing_event_age")).max(0.0),
             ),
+            // Cryolava on an ice shell over rock, from the ice magma budget: slush that
+            // is buoyant through the shell. Water under a shell over an ocean is denser
+            // than the ice and does not flood the surface; what that shell does with
+            // its heat, chaos, fissures and fallout, is its own process.
+            "ice_shell_rock" => None,
             _ => return None,
         };
         let body_radius = graph.f64("body.radius");
