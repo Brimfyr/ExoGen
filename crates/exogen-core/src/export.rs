@@ -207,6 +207,8 @@ pub struct Sidecar {
     pub radius_m: f64,
     pub datum: String,
     pub datum_offset_m: f64,
+    /// Vertical exaggeration of the slopes in the shaded preview.
+    pub preview_exaggeration: f64,
     pub epoch_gyr_before_present: f64,
     pub epoch_time_since_formation_gyr: f64,
     pub maps: BTreeMap<String, MapInfo>,
@@ -383,8 +385,16 @@ pub fn export(
     );
 
     // Shaded relief preview: the albedo, exposed to a common mean, lit from one fixed sun
-    // over the height map.
-    let shade = crate::shade::hillshade(&height_eq, width, height_px, graph.f64("body.radius"));
+    // over the height map, the slopes exaggerated where the terrain is gentle.
+    let exaggeration =
+        crate::shade::preview_exaggeration(&height_eq, width, height_px, graph.f64("body.radius"));
+    let shade = crate::shade::hillshade(
+        &height_eq,
+        width,
+        height_px,
+        graph.f64("body.radius"),
+        exaggeration,
+    );
     let gain = crate::shade::preview_gain(
         (0..width * height_px).map(|k| (channels[0][k] + channels[1][k] + channels[2][k]) / 3.0),
     );
@@ -539,6 +549,7 @@ pub fn export(
         radius_m: graph.f64("body.radius"),
         datum,
         datum_offset_m: datum_offset,
+        preview_exaggeration: exaggeration,
         epoch_gyr_before_present: graph.f64("output.epoch"),
         epoch_time_since_formation_gyr: out.epoch_time_gyr,
         maps,
