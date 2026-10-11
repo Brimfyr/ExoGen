@@ -480,7 +480,7 @@ Two consequences matter most. A sharp threshold applied to a smooth field gives 
 
 **Worked example: a tidally locked ocean world.** The substellar region is open ocean. Toward the terminator the sea surface crosses its freezing point and sea ice begins: a sharp edge on the ocean-surface freezing isoline, with a marginal zone of broken floes as texture. On nightside land, snow accumulates in the cold trap and the ice sheet flows under its own weight toward the terminator and down into valleys. Over land its margin is lobate, with tongues in valleys and a debris-darkened zone where ablation exposes entrained regolith. Where the ice sheet reaches a coast with open water it ends in a calving cliff: a sharp step in height and albedo, with icebergs as marginal texture. Where it reaches a frozen sea it floats as a shelf that merges into the sea ice. One cap, four different edges, chosen by the land-sea layout under the terminator rather than by a parameter. Convective cloud sits over the substellar point, and the terminator belt is where liquid, ice, land and cloud all meet.
 
-**Variation within units.** Colour and relief inside a unit come from three sources, in this order of weight: the process fields themselves (dust thickness varies continuously with wind stress, maturity with exposure), sub-resolution process statistics from the detail recipes (small-crater gardening, dune patches, flow lobes), and conditioned noise inside the recipes for grain size, mottling and roughness. Every detail recipe produces height, composition and roughness detail together, so colour variation is tied to relief variation rather than painted over it. Plain noise is never applied to albedo.
+**Variation within units.** Colour and relief inside a unit come from three sources, in this order of weight: the process fields themselves (dust thickness varies continuously with wind stress, maturity with exposure, frost with each slope's temperature), the resolved-scale surface processes of Phase 5 (small-crater gardening, sublimation pitting, regolith creep, dune patches, flow lobes), and, last and least, the sub-grid statistics of the Phase 7 detail pass for grain size and roughness below the simulation grid. Every detail recipe produces height, composition and roughness detail together, so colour variation is tied to relief variation rather than painted over it. Plain noise is never applied to albedo, and no process is deferred to the detail pass: the mottling of a real surface is physics, and it happens where the physics happens.
 
 ### 4.13 Outputs
 
@@ -678,6 +678,7 @@ Gate: Ganymede preset shows two terrains with a crater density contrast; Europa 
 - Moisture transport, precipitation, orographic effects.
 - Volatile phase states, sea-level fill, cold traps, hemispheric caps, volatile transport.
 - Fluvial erosion with implicit stream power, lakes, deltas. Glacial flow and erosion. Aeolian dust transport, streaks, dune fields. Mass wasting. Sublimation textures.
+- Resolved-scale surface physics, on every body with or without an atmosphere: thermal segregation of frost by slope (begun in Phase 4 for ice), sublimation pitting and knobby degradation of dirty ice, gardening of thin ejecta into the substrate, regolith creep and talus on slopes, the degradation and infilling of small craters by later impacts, dust and frost deposition that follows topography and wind. These are the processes that give a surface its natural variation; each is a stage with its own fields and its own gate, run at the finishing resolution, and none of it is left to a texturing pass (see "Variation within units" in 4.12 and Phase 7).
 - Chemical weathering: oxidation, tholins. Atmospheric crater filtering.
 - Weather model: two-layer moist shallow water on the coarse cubesphere with topography and zonal or day-night forcing, validated on the standard shallow-water test cases.
 - Cloud type classification, structured primitives for tropical cyclones, hoods, plumes and dust storms, per-class export.
@@ -697,7 +698,7 @@ Gate: hypsometry is bimodal with peaks near +0.5 km and -4.5 km; mountain belts 
 
 ### Phase 7: detail synthesis and studio export (L)
 
-- Tiled detail pass with per-unit recipes.
+- Tiled detail pass that carries no physics: it refines the process fields to export resolution with sub-grid roughness, grain size and micro-relief statistics conditioned on the units and fields the processes left. It adds no feature and colours nothing; anything that shapes or colours the surface is a process in Phases 4 to 6, and a look that is wrong at the simulation resolution is fixed there, not here.
 - Roughness, specular, normal, ambient occlusion, masks, cloud height, unit ID legend.
 - 16k single-file and 32k tiled export, cube maps, colour management options.
 - Sequence export of epochs from the CLI and the app.
