@@ -935,6 +935,18 @@ pub const REGOLITH_MIXING_MAX_PASSES: usize = 24;
 /// end-member is in the materials.
 pub const LAG_OPAQUE_KG_M2: f64 = 2_000.0;
 pub const ICE_POLAR_TEMPERATURE_FLOOR_K: f64 = 40.0;
+/// Clean ice that an impact brings up is mixed back into the regolith by gardening over
+/// this time, Gyr, whatever the temperature: Callisto's bright craters are its young ones.
+pub const ICE_EJECTA_FADE_GYR: f64 = 0.5;
+/// Thermal segregation: the ice the warm latitudes sublime condenses again where it is
+/// cold, so a body that loses ice at its equator wears frost at its poles (Ganymede's
+/// caps above about 40° latitude, Callisto's fainter ones). The frost covers up to this
+/// share where the mean temperature is below the half point by the width, K, once the
+/// equator has sublimed this much ice, kg/m².
+pub const FROST_COVER_MAX: f64 = 0.45;
+pub const FROST_HALF_K: f64 = 105.0;
+pub const FROST_WIDTH_K: f64 = 3.0;
+pub const FROST_SUPPLY_KG_M2: f64 = 500.0;
 /// Space weathering timescale at 1 AU, Gyr, and the pressure above which it is off.
 pub const SPACE_WEATHERING_GYR_1AU: f64 = 0.3;
 pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;

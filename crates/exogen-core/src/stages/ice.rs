@@ -65,11 +65,47 @@ pub fn regolith_impurity(graph: &ParamGraph) -> f64 {
 }
 
 /// Maturity of a cell of icy surface at an exposure: the lag its sublimation left,
-/// opaque past the reference mass.
+/// which chokes its own growth once it is thick (the ice under it sublimes through it
+/// ever more slowly, so the lag grows as the square root of time), opaque past the
+/// reference mass; and the gardening that mixes clean ice back into the regolith.
 pub fn lag_maturity_at(temperature: f64, impurity: f64, exposure_gyr: f64) -> f64 {
-    let mass =
-        ice_sublimation_flux(temperature) * exposure_gyr.max(0.0) * SECONDS_PER_GYR * impurity;
-    1.0 - (-mass / LAG_OPAQUE_KG_M2).exp()
+    let exposure = exposure_gyr.max(0.0);
+    let supply = ice_sublimation_flux(temperature) * exposure * SECONDS_PER_GYR * impurity
+        / LAG_OPAQUE_KG_M2;
+    let thickness = (1.0 + 2.0 * supply).sqrt() - 1.0;
+    let lag = 1.0 - (-thickness).exp();
+    let gardened = 1.0 - (-exposure / ICE_EJECTA_FADE_GYR).exp();
+    1.0 - (1.0 - lag) * (1.0 - gardened)
+}
+
+/// Thermal segregation: the share of a latitude covered by frost that condensed there
+/// out of what the warm latitudes sublimed over the body's life.
+pub struct FrostCover {
+    insolation: f64,
+    albedo: f64,
+    supply: f64,
+}
+
+impl FrostCover {
+    pub fn new(graph: &ParamGraph) -> Self {
+        let insolation = graph.f64("orbit.insolation");
+        let albedo = graph.f64("atmosphere.bond_albedo");
+        let t_eq = mean_surface_temperature(insolation, albedo, 1.0);
+        let sublimed = ice_sublimation_flux(t_eq) * graph.f64("body.age") * SECONDS_PER_GYR;
+        Self {
+            insolation,
+            albedo,
+            supply: (sublimed / FROST_SUPPLY_KG_M2).min(1.0),
+        }
+    }
+
+    /// Frost share at a direction on the sphere.
+    pub fn at(&self, d: [f64; 3]) -> f64 {
+        let cos_lat = (1.0 - d[2] * d[2]).max(0.0).sqrt();
+        let t = mean_surface_temperature(self.insolation, self.albedo, cos_lat);
+        let persist = 1.0 / (1.0 + ((t - FROST_HALF_K) / FROST_WIDTH_K).exp());
+        FROST_COVER_MAX * persist * self.supply
+    }
 }
 
 /// The maturity field of an icy surface from the surface ages.
@@ -110,7 +146,24 @@ mod tests {
         assert!(europa < 100.0, "{europa}");
         assert!(lag_maturity_at(callisto, 0.7, 4.5) > 0.95);
         assert!(lag_maturity_at(callisto, 0.7, 0.05) < 0.6);
-        assert!(lag_maturity_at(europa, 0.02, 0.06) < 0.01);
-        assert!(lag_maturity_at(mean_surface_temperature(50.25, 0.22, 0.05), 0.7, 4.5) < 0.1);
+        assert!(lag_maturity_at(europa, 0.02, 0.06) < 0.15);
+        // Old polar ice is gardened but carries no lag; the equator carries both.
+        let pole = lag_maturity_at(mean_surface_temperature(50.25, 0.22, 0.05), 0.7, 4.5);
+        assert!(
+            pole > 0.9 && pole < lag_maturity_at(callisto, 0.7, 4.5),
+            "{pole}"
+        );
+        let mid = lag_maturity_at(mean_surface_temperature(50.25, 0.22, 0.5), 0.7, 0.2);
+        let eq = lag_maturity_at(callisto, 0.7, 0.2);
+        assert!(mid < eq, "{mid} vs {eq}");
+        // Frost: a Ganymede-like body wears caps past 40° and nothing at the equator.
+        let frost = FrostCover {
+            insolation: 50.25,
+            albedo: 0.43,
+            supply: 1.0,
+        };
+        let lat = |deg: f64| [deg.to_radians().cos(), 0.0, deg.to_radians().sin()];
+        assert!(frost.at(lat(0.0)) < 0.05 && frost.at(lat(70.0)) > 0.5);
+        assert!(frost.at(lat(70.0)) > frost.at(lat(45.0)));
     }
 }

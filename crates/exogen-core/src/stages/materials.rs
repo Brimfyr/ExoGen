@@ -23,7 +23,7 @@ use crate::units::{
     UNIT_CONTINENTAL, UNIT_IO_FLOW, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 12;
+pub const VERSION: u64 = 13;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -63,7 +63,7 @@ pub const END_MEMBERS: &[EndMember] = &[
     EndMember {
         id: "water_ice",
         fresh: [0.80, 0.82, 0.86],
-        mature: [0.55, 0.56, 0.58],
+        mature: [0.64, 0.65, 0.68],
         roughness: 0.55,
     },
     EndMember {
@@ -310,6 +310,14 @@ pub fn albedo(
     // between lava and its substrate blurs in colour as it ages.
     let io = graph.str("materials.bedrock") == "sulfur_coated";
     let gardened = !io && graph.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
+    // An icy surface wears frost where it is cold enough to keep what the warm
+    // latitudes sublimed.
+    let frost = if is_ice(graph.str("materials.bedrock")) && !io {
+        Some(crate::stages::ice::FrostCover::new(graph))
+    } else {
+        None
+    };
+    let frost_colour = end_member("water_ice").unwrap().fresh;
     let mixed = if gardened {
         mixed_cover(
             grid,
@@ -400,7 +408,11 @@ pub fn albedo(
                     };
                 let fresh = lerp3(fresh, melt_pair.fresh, melt_f[k]);
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
-                lerp3(fresh, mature, effective)
+                let colour = lerp3(fresh, mature, effective);
+                match &frost {
+                    Some(f) => lerp3(colour, frost_colour, f.at(grid.center(grid.cell(k))) as f32),
+                    None => colour,
+                }
             }
         })
         .collect();
