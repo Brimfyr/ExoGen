@@ -938,6 +938,25 @@ pub const ICE_POLAR_TEMPERATURE_FLOOR_K: f64 = 40.0;
 /// Clean ice that an impact brings up is mixed back into the regolith by gardening over
 /// this time, Gyr, whatever the temperature: Callisto's bright craters are its young ones.
 pub const ICE_EJECTA_FADE_GYR: f64 = 0.5;
+/// Viscous relaxation of an ice shell (F39): the viscosity of ice at its melting point,
+/// Pa s, and the activation energy of its creep, J/mol (Goldsby and Kohlstedt 2001; the
+/// basal viscosity of a convecting shell is 1e13 to 1e15), below a temperature at which
+/// the law is capped; the depth a load of a wavelength reaches into the shell as a
+/// fraction of the wavelength.
+pub const ICE_VISCOSITY_MELT: f64 = 1.0e14;
+pub const ICE_CREEP_ACTIVATION: f64 = 60e3;
+pub const ICE_VISCOSITY_FLOOR_K: f64 = 60.0;
+pub const RELAXATION_DEPTH_FRACTION: f64 = 0.16;
+/// The cold elastic lid holds loads shorter than this many times its thickness up
+/// without flow; longer ones ride on the ductile ice below (the flexural wavelength of a
+/// thin plate is a few times its thickness).
+pub const ELASTIC_SUPPORT_FACTOR: f64 = 4.0;
+/// Rock in the ice stiffens it: the viscosity rises by this many decades per unit of the
+/// crust's non-ice share, so a crust a third rock and salts is some four thousand times
+/// stiffer than clean ice (Ceres's needs 1e25 Pa s near the surface against clean ice's
+/// 3e21 at the same temperature: Fu et al. 2017).
+pub const ICE_ROCK_VISCOSITY_DECADES: f64 = 12.0;
+pub const GAS_CONSTANT: f64 = 8.314_462;
 /// Thermal segregation: the ice the warm latitudes sublime condenses again where it is
 /// cold, so a body that loses ice at its equator wears frost at its poles (Ganymede's
 /// caps above about 40° latitude, Callisto's fainter ones). The frost covers up to this

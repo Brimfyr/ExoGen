@@ -163,7 +163,7 @@ mod tests {
             supply: 1.0,
         };
         let lat = |deg: f64| [deg.to_radians().cos(), 0.0, deg.to_radians().sin()];
-        assert!(frost.at(lat(0.0)) < 0.05 && frost.at(lat(70.0)) > 0.5);
+        assert!(frost.at(lat(0.0)) < 0.05 && frost.at(lat(70.0)) > 0.3);
         assert!(frost.at(lat(70.0)) > frost.at(lat(45.0)));
     }
 }

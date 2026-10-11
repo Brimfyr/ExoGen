@@ -17,12 +17,24 @@ The principle set in the Phase 3 reviews holds throughout: counts come from budg
 
 ## Gate results
 
-To come.
+- **Relaxation removes large craters first** (`stages::tests::ganymede_relaxes_its_large_craters_first`). On the Ganymede preset the median depth-to-diameter of craters 30 to 70 km across stays above 0.02 while that of craters over 150 km falls below a quarter of it. At standard quality: 20 to 40 km 0.072, 40 to 80 km 0.044, 80 to 160 km 0.001, over 160 km 0.000; Callisto, whose dirty ice is stiffer, keeps 0.060 at 40 to 80 km. Ganymede's relief fell from 30 km of basin to 11 km.
+- The Ganymede two-terrain gate and the Europa crack-orientation gate wait for milestones 3 and 4.
 
 ## Measurements
 
-To come.
+Standard quality, after milestone 2.
+
+| Body | Loop | Finish | What shows |
+|---|---|---|---|
+| Europa | 3.9 s | 3.9 s | a bright sheet of 0.83 reflectance, relief within 3 km, five craters |
+| Ganymede | 6.6 s | 21 s | relief 11 km, large craters flat, frost caps past 40°, mean reflectance 0.65 against 0.83 at the poles (sRGB) |
+| Callisto | 4.5 s | 11 s | dark lag at the equator (0.40) grading to frost caps (0.77), bright young craters |
+| Ceres | 10 s | 59 s | dark mixture with cryolava on 2% of the surface, large basins relaxed |
 
 ## Findings during the phase
 
-To come.
+- **The lag without a brake went opaque in a few million years at Callisto's equator**, and its caps began at a cliff of latitude, because the free sublimation rate at 120 K times the age is thousands of tonnes of ice per square metre. The lag chokes its own growth once it is thick and grows as the square root of time, which is what Moore et al. 1999 describe, and the transition spreads over twenty degrees.
+- **Every ancient cell was excavated clean ice.** The deep bedrock that Phase 2 gave icy bodies made Ganymede white once thousands of overlapping craters had spread their ejecta over everything. Gardening now mixes clean ice back into the regolith over half a gigayear, and a shell over rock has no clean ice below it at all.
+- **A ductile shell alone flattened everything.** With the viscous law alone, even 40 km craters relaxed on Ganymede, because the shell was thin and warm early and a step of fifty million years is an age to warm ice. The cold elastic lid holds loads shorter than a few times its thickness without flow, and the rock in a dirty crust stiffens it by orders of magnitude (Fu et al. 2017 on Ceres), which keeps the small craters and the dirty-ice bodies' craters where they are observed.
+- **Ceres is buried in its own basin ejecta.** The production function in the belt gives Ceres nine basins over 400 km, as the models in Marchi et al. 2016 also predict; the real body has none, having relaxed them. Ours relaxes their relief but keeps their ejecta blankets, which bury most of the older small craters. The crispness of Ceres's small craters waits for the Phase 5 look at ejecta burial on small bodies.
+- **Enceladus keeps four kilometres of primordial relief** at scales the elastic lid holds; the real body has a kilometre. The primordial crust's amplitude on small bodies is a Phase 1 setting to revisit with the polar terrain in milestone 4.

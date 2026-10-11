@@ -1726,7 +1726,15 @@ pub fn materials_deep_bedrock(c: &Ctx) -> Value {
                 "basalt"
             }
         }
-        "rock_ice" | "ice_dominated" => "water_ice",
+        // Under a shell that floats on an ocean the deep ice is clean; a crust over rock
+        // is the same mixture all the way down.
+        "rock_ice" | "ice_dominated" => {
+            if regime == "ice_shell_ocean" {
+                "water_ice"
+            } else {
+                c.str("materials.bedrock")
+            }
+        }
         _ => c.str("materials.bedrock"),
     };
     deep.into()

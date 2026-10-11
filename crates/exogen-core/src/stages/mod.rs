@@ -19,6 +19,7 @@ pub mod io;
 pub mod materials;
 pub mod plume;
 pub mod primordial_crust;
+pub mod relaxation;
 pub mod ridges;
 pub mod tectonics;
 pub mod volcanism;
@@ -359,6 +360,7 @@ pub fn run_coarse_loop(
     );
     let mut episodic = episodic::EpisodicProcess::new(graph, grid);
     let mut io = io::IoProcess::new(graph, grid);
+    let ice_shell = ice_shell_history(graph, &thermal);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -372,6 +374,16 @@ pub fn run_coarse_loop(
         }
         let t0 = dt * (s - 1) as f64;
         let t1 = dt * s as f64;
+        // An ice shell relaxes what it carries, the longest wavelengths first, with the
+        // shell as the thermal history has it now.
+        if let Some(shell_at) = &ice_shell {
+            relaxation::relax(
+                &mut layers.bedrock,
+                graph.f64("body.radius"),
+                dt,
+                &shell_at(t1),
+            );
+        }
         // The slow processes first: the dome lifts, the shields grow, the canyon deepens;
         // an episodic lid's event renews the plains.
         if let Some(p) = &mut plume {
@@ -698,6 +710,17 @@ pub fn finish(
         .map(|c| (c, false))
         .chain(secondaries.into_iter().map(|c| (c, true)))
         .collect();
+    // On an ice shell a replayed crater has relaxed over its own life by the shell's
+    // viscosity at its wavelength; what survives scales its whole relief.
+    let relaxed: Vec<f32> = match ice_shell_history(graph, &loop_output.thermal) {
+        Some(shell_at) => replay
+            .par_iter()
+            .map(|(c, _)| {
+                relaxation::survival_since(c.diameter, c.time_gyr, present, &*shell_at) as f32
+            })
+            .collect(),
+        None => vec![1.0; replay.len()],
+    };
 
     // One age-ordered sequence of loop craters and replayed craters. A loop crater goes
     // before anything else of the same time, so its own secondaries land on it; craters it
@@ -1121,11 +1144,12 @@ pub fn finish(
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,
-                            amplitude: if *secondary {
-                                SECONDARY_DEPTH_FACTOR
-                            } else {
-                                1.0
-                            },
+                            amplitude: relaxed[*j] as f64
+                                * if *secondary {
+                                    SECONDARY_DEPTH_FACTOR
+                                } else {
+                                    1.0
+                                },
                             replace_floor: true,
                             set_age: true,
                             bury: true,
@@ -1265,6 +1289,33 @@ pub fn finish(
         plume_rings,
         hash,
     })
+}
+
+/// The ice shell through time for relaxation, when the surface is ice: its thickness and
+/// basal temperature from the thermal history, the surface temperature from the climate.
+fn ice_shell_history(
+    graph: &ParamGraph,
+    thermal: &ThermalHistory,
+) -> Option<Box<dyn Fn(f64) -> relaxation::Shell + Sync>> {
+    if !ice::is_ice_surface(graph) {
+        return None;
+    }
+    let thermal = thermal.clone();
+    let surface_temperature = graph.f64("atmosphere.surface_temperature_mean");
+    let gravity = graph.f64("body.gravity");
+    let rock = crate::stages::materials::non_ice_fraction(graph.str("materials.bedrock"));
+    let viscosity_scale = 10f64.powf(ICE_ROCK_VISCOSITY_DECADES * rock);
+    Some(Box::new(move |t: f64| {
+        let state = thermal.at(t);
+        relaxation::Shell {
+            thickness: state.lithosphere,
+            elastic: state.elastic,
+            surface_temperature,
+            basal_temperature: state.mantle_temperature,
+            gravity,
+            viscosity_scale,
+        }
+    }))
 }
 
 /// Secondary craters of the loop craters: clusters at a few primary radii, formed at the
@@ -1992,6 +2043,48 @@ mod tests {
                 .iter()
                 .all(|c| c.time_gyr >= event - 1e-6)
         );
+    }
+
+    /// Ganymede's ice relaxes its large craters into palimpsests and keeps its small ones.
+    #[test]
+    fn ganymede_relaxes_its_large_craters_first() {
+        let mut r = Runner::new();
+        let g = preset_graph("Ganymede", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let grid = out.finish.grid;
+        let radius = g.f64("body.radius");
+        let height = out.finish.height.as_slice();
+        let at = |d: [f64; 3]| height[grid.index(grid.locate(d).0)] as f64;
+        let ring_mean = |center: [f64; 3], r_m: f64| -> f64 {
+            let (east, north) = crate::geom::local_basis(center);
+            (0..16)
+                .map(|k| {
+                    let phi = k as f64 * std::f64::consts::PI / 8.0;
+                    at(crate::geom::offset(center, east, north, r_m / radius, phi))
+                })
+                .sum::<f64>()
+                / 16.0
+        };
+        let depth_ratio = |lo: f64, hi: f64| -> f64 {
+            let mut ratios: Vec<f64> = out
+                .finish
+                .craters
+                .iter()
+                .filter(|c| c.diameter >= lo && c.diameter < hi)
+                .map(|c| {
+                    let rim = ring_mean(c.center, 0.5 * c.diameter);
+                    let floor = ring_mean(c.center, 0.1 * c.diameter);
+                    (rim - floor) / c.diameter
+                })
+                .collect();
+            assert!(ratios.len() >= 10, "{} craters in {lo}..{hi}", ratios.len());
+            ratios.sort_by(f64::total_cmp);
+            ratios[ratios.len() / 2]
+        };
+        let small = depth_ratio(30e3, 70e3);
+        let large = depth_ratio(150e3, 2_000e3);
+        assert!(small > 0.02, "small craters keep their depth: {small}");
+        assert!(large < 0.25 * small, "large {large} vs small {small}");
     }
 
     /// Io keeps no craters, carries hundreds of paterae and dozens of mountains, and its
