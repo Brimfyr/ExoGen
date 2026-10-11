@@ -23,7 +23,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::*;
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// A patera: a volcanic depression with a flat floor, active when its floor is a lake of
 /// fresh silicate lava.
@@ -64,6 +64,8 @@ pub struct FlowField {
 pub struct PlumeRing {
     pub center: [f64; 3],
     pub radius: f64,
+    /// The one Pele-class plume, whose ring is red; the rest are mostly frost.
+    pub giant: bool,
     pub id: u64,
 }
 
@@ -198,7 +200,7 @@ impl IoProcess {
         // Flow fields from the active paterae and a few quiet ones; plume rings round a
         // share of the active ones.
         let mut flows = Vec::new();
-        let mut rings = Vec::new();
+        let mut rings: Vec<PlumeRing> = Vec::new();
         for p in &paterae {
             let draw = 9_000 + p.id;
             let flowing = p.active || rng.uniform(draw, 1) < IO_QUIET_FLOW_FRACTION;
@@ -211,10 +213,17 @@ impl IoProcess {
                 });
             }
             if p.active && rng.uniform(draw, 3) < IO_PLUME_FRACTION {
-                let (lo, hi) = IO_PLUME_RING_RADIUS;
+                // The first plume drawn is the giant one.
+                let giant = rings.is_empty();
+                let (lo, hi) = if giant {
+                    IO_GIANT_RING_RADIUS
+                } else {
+                    IO_PLUME_RING_RADIUS
+                };
                 rings.push(PlumeRing {
                     center: p.center,
                     radius: lo * (hi / lo).powf(rng.uniform(draw, 4)),
+                    giant,
                     id: draw + 20_000,
                 });
             }
@@ -462,6 +471,7 @@ pub fn ring_compute(
     let bedrock = layers.bedrock.as_slice();
     let units = layers.unit_id.as_slice();
     let ages = layers.surface_age.as_slice();
+    let existing = layers.cover.as_slice();
     stamper.gather(
         grid,
         body_radius,
@@ -474,7 +484,9 @@ pub fn ring_compute(
         .footprint
         .iter()
         .filter_map(|&(idx, r, phi)| {
-            if units[idx] != UNIT_PRIMORDIAL {
+            // Over the plains, or over another ring's deposit where this one is denser.
+            let over_deposit = matches!(units[idx], UNIT_PLUME_RED | UNIT_PLUME_WHITE);
+            if units[idx] != UNIT_PRIMORDIAL && !over_deposit {
                 return None;
             }
             let d = grid.center(grid.cell(idx));
@@ -489,12 +501,17 @@ pub fn ring_compute(
                 * ((IO_RING_WHITE_OUTER + edge - x) / (IO_RING_WHITE_OUTER - 1.0)).clamp(0.0, 1.0);
             let mottle = 1.0
                 - IO_DEPOSIT_MOTTLING * (0.5 + 0.5 * noise.fbm(d, mottle_frequency, 2, 2.0, 0.5));
+            let (red, white) = if ring.giant {
+                (red, white * IO_GIANT_RING_WHITE)
+            } else {
+                (red * IO_SMALL_RING_RED, white)
+            };
             let (unit, cover) = if red >= white {
                 (UNIT_PLUME_RED, red * mottle)
             } else {
                 (UNIT_PLUME_WHITE, white * mottle)
             };
-            if cover < 0.02 {
+            if cover < 0.02 || (over_deposit && cover <= existing[idx] as f64) {
                 return None;
             }
             Some(CellWrite {

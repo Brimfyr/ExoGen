@@ -452,8 +452,15 @@ pub const IO_QUIET_FLOW_FRACTION: f64 = 0.15;
 pub const IO_FLOW_REACH: (f64, f64) = (40e3, 300e3);
 pub const IO_FLOW_LOBING: f64 = 0.45;
 pub const IO_FLOW_THICKNESS: f64 = 20.0;
-pub const IO_PLUME_FRACTION: f64 = 0.3;
-pub const IO_PLUME_RING_RADIUS: (f64, f64) = (80e3, 600e3);
+/// Plumes: the share of the active paterae with a plume ring; the rings' radii; and the
+/// one giant, Pele-class plume, whose ring is red sulfur 1,200 to 1,400 km across. The
+/// smaller, Prometheus-class rings are mostly white frost; the giant's is mostly red,
+/// each with a little of the other.
+pub const IO_PLUME_FRACTION: f64 = 0.12;
+pub const IO_PLUME_RING_RADIUS: (f64, f64) = (80e3, 250e3);
+pub const IO_GIANT_RING_RADIUS: (f64, f64) = (550e3, 700e3);
+pub const IO_GIANT_RING_WHITE: f64 = 0.35;
+pub const IO_SMALL_RING_RED: f64 = 0.35;
 pub const IO_RING_RED_INNER: f64 = 0.55;
 pub const IO_RING_WHITE_OUTER: f64 = 1.3;
 pub const IO_RING_EDGE_WOBBLE: f64 = 0.08;
