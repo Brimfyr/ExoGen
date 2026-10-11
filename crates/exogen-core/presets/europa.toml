@@ -1,6 +1,6 @@
 version = "0.0.1"
 name = "Europa"
-description = "Reference body. Ice shell over a water ocean; about 100 km of H2O."
+description = "Reference body. Thin ice shell over a water ocean, cracked along its tidal field into ridges, cycloids and bands, broken into chaos where it melts through, its trailing side browned by Jupiter's plasma."
 
 [values]
 "orbit.primary" = "planet"

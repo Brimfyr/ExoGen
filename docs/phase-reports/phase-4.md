@@ -1,6 +1,6 @@
 # Phase 4 report: ice worlds
 
-Status: in progress, started 2026-10-11.
+Status: complete, 2026-10-11, six milestones each committed to main on its own; awaiting the review before Phase 5 starts.
 
 Phase 4 gives the icy bodies their own physics. Phase 3 left them as cratered balls of ice with a regime name: Europa a blank sheet, Ganymede one terrain, and both carrying twenty kilometres of basin relief that warm ice cannot hold. The plan's list (PLAN.md, Phase 4 and section 4.3) is composition and shell thickness from density, viscous relaxation of craters into palimpsests, the tidal stress field with lineae, cycloids and bands, grooved terrain, focused polar heating, chaos, cryovolcanism with plume fallout and salt deposits, sublimation lag, hemispheric asymmetry for locked moons, and the ice and salt end-members. The gate is that Ganymede shows two terrains with a crater density contrast, that Europa's crack orientations follow the tidal stress field, and that relaxation removes large craters first.
 
@@ -13,7 +13,7 @@ The principle set in the Phase 3 reviews holds throughout: counts come from budg
 3. **Tidal stress and the cracked shell.** The degree-2 membrane stress of a thin shell over an ocean from the Love numbers, its diurnal and non-synchronous parts; lineae as double ridges along the most tensile direction at their time, cycloids where the diurnal stress turns the crack through an orbit, bands where extension dominates; salts in young cracks fading under frost.
 4. **Partial resurfacing.** Grooved terrain on a shell that extended: lanes of parallel grooves in clean ice, drawn as parts of great circles in belts and parallel sets until they cover the resurfaced share, cutting the old dark terrain, with the crater density contrast; the focused polar terrain of a shell whose heating concentrates under a pole, thinned there and floating lower, renewed every step, with its margin ridge, its folds and most of the cracks; the clean substrate as a layer; the wholesale renewal kept for thin shells only.
 5. **Chaos, cryovolcanism and asymmetry.** Chaos on a thin shell as a population of patches whose number comes from the disrupted share of the surface, placed in a heat field, their matrix dropped and broken into hummocks around rafts of the old surface and stained with the ocean's salts; on a shell over rock the dome share of the ice magma budget extruded as brine-rich domes that relax like any load, and salts on the floors of craters deep enough to reach the brines; a polar plume's fallout that buries lags and salts and keeps the body in frost; the ocean's salt end-member chosen by the parent's magnetosphere; and the trailing hemisphere darkened and reddened by the parent's plasma.
-6. **Documentation and review.** Parameter rows and formulas, this report, the presets' descriptions.
+6. **Documentation and review.** Parameter rows and formulas (F39 to F48, `docs/parameters.md`), this report, the presets' descriptions, the app rebuilt in debug and release against the Phase 4 engine.
 
 ## Gate results
 
@@ -34,6 +34,14 @@ Standard quality, after milestone 5.
 | Callisto | 4.1 s | 12 s | no lanes (0.08 mW/m² of tidal flux); dark lag at the equator grading to frost caps, bright young craters, as after milestone 2 |
 | Ceres | 9.5 s | 59 s | dark mixture with cryolava on under 1% of the surface, 18 domes of brine-rich ice over the body's life, the young ones standing and salted, white salts in the floors of its deep young craters, large basins relaxed |
 | Enceladus | 14 s | 65 s | ancient cratered plains; a renewed polar terrain over 6% of the surface, a kilometre low, with its margin ridge, its folds and 99 cracks mostly within it, two lanes over 3%; the plume's fallout keeps the whole body in frost (mean maturity near 0) and shows the cracks as faint blue-grey lines |
+
+## Deferred
+
+- **Triton and Pluto** render as cratered ice shells with Pluto's domes; the cantaloupe terrain, the nitrogen ice plains and the volatile cycle are later phases.
+- **Callisto's leading hemisphere** is darker in reality, from the dust of the irregular satellites; only the magnetospheric trailing tint exists, which on Callisto is weak and on the wrong side.
+- **Ceres's small craters** stay soft under the ejecta of its nine basins (Phase 5), and **Enceladus keeps four kilometres of primordial relief** where the real body has one (a Phase 1 amplitude).
+- **Ganymede's grooves** are cut at seven kilometres or three cells, whichever is coarser, so standard quality shows the coarse end of their spacing.
+- **Io's texture** waits for Phase 7, as agreed at the Phase 3 review.
 
 ## Findings during the phase
 
