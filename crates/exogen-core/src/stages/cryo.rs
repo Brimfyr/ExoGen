@@ -172,7 +172,9 @@ pub fn chaos_compute(
     let bedrock = layers.bedrock.as_slice();
     let noise = GradientNoise::new(chaos.id ^ 0xC4A0_0000);
     // Noise frequencies are lattice cells per radian: the radius over the feature length.
-    let outline_frequency = body_radius / (2.0 * chaos.radius);
+    // About CHAOS_EDGE_WAVES waves round the patch's circumference.
+    let outline_frequency =
+        body_radius * CHAOS_EDGE_WAVES / (2.0 * std::f64::consts::PI * chaos.radius);
     let raft_frequency = body_radius / CHAOS_RAFT_SCALE;
     let hummock_frequency = body_radius / CHAOS_HUMMOCK_SPACING;
     // The share of a patch standing as rafts sets the threshold on the raft field.

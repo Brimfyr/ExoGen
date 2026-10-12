@@ -43,6 +43,8 @@ pub struct Lane {
     pub grooved: bool,
     /// Phases of the two waves that wobble the width along the lane.
     pub wobble_phase: [f64; 2],
+    /// When the lane formed, Gyr since formation.
+    pub time_gyr: f64,
     pub id: u64,
 }
 
@@ -211,19 +213,13 @@ fn eroded(grid: &CubeSphere, mask: &[bool]) -> Vec<bool> {
         .collect()
 }
 
-/// Passes of the four-neighbour smoothing that blur over a length on a grid.
-fn smoothing_passes(length: f64, cell: f64) -> usize {
-    ((4.0 * (length / cell.max(1.0)).powi(2)).ceil() as usize).clamp(1, 400)
-}
-
 /// The shell's partial resurfacing through the loop.
 pub struct IceShellProcess {
     grid: CubeSphere,
     body_radius: f64,
     pub shell: ShellMap,
     mean_shell: f64,
-    /// When the lanes of grooved terrain formed, if any.
-    pub groove_time: Option<f64>,
+    /// The lanes of grooved terrain, each with its own time within the episode.
     pub lanes: Vec<Lane>,
     /// The share of the surface the lanes cover.
     pub lane_coverage: f64,
@@ -236,7 +232,6 @@ pub struct IceShellProcess {
     pub lane_floor: Option<Vec<f32>>,
     active: Vec<bool>,
     depressed: bool,
-    grooves_done: bool,
 }
 
 impl IceShellProcess {
@@ -252,9 +247,12 @@ impl IceShellProcess {
             .f64("tectonics.ice_resurfaced_fraction")
             .clamp(0.0, 0.95);
         let mut lanes: Vec<Lane> = Vec::new();
-        let mut groove_time = None;
         let mut lane_coverage = 0.0;
         if fraction > 0.0 {
+            // The episode: its centre and its length.
+            let age = graph.f64("body.age");
+            let te = (age - graph.f64("tectonics.ice_resurfacing_age")).max(0.0);
+            let duration = graph.f64("tectonics.ice_resurfacing_duration").max(0.0);
             // Lanes until they cover the share: parts of great circles at random, their
             // lengths and widths log-uniform, the coverage counted by area on the coarse
             // grid.
@@ -264,7 +262,10 @@ impl IceShellProcess {
             let total: f64 = areas.iter().sum();
             let mut covered = vec![false; n];
             let mut area = 0.0;
-            let (w_lo, w_hi) = GROOVE_LANE_WIDTH;
+            let (w_lo, w_hi) = (
+                GROOVE_LANE_WIDTH_SHARE.0 * body_radius,
+                GROOVE_LANE_WIDTH_SHARE.1 * body_radius,
+            );
             let (l_lo, l_hi) = GROOVE_LANE_LENGTH_RAD;
             let (o_lo, o_hi) = GROOVE_NEIGHBOUR_OFFSET;
             let tau = 2.0 * std::f64::consts::PI;
@@ -345,6 +346,7 @@ impl IceShellProcess {
                         .min(0.3 * body_radius),
                     grooved: rng.uniform(k, 102) >= GROOVE_SMOOTH_LANE_SHARE,
                     wobble_phase: [tau * rng.uniform(k, 103), tau * rng.uniform(k, 104)],
+                    time_gyr: (te + (rng.uniform(k, 111) - 0.5) * duration).clamp(0.0, age),
                     id: k,
                 };
                 for (i, c) in centers.iter().enumerate() {
@@ -358,12 +360,10 @@ impl IceShellProcess {
             lane_coverage = area / total.max(1e-300);
             if std::env::var_os("EXOGEN_DEBUG").is_some() {
                 eprintln!(
-                    "grooved terrain: {} lanes cover {lane_coverage:.3} of the surface for a share of {fraction:.3}",
+                    "grooved terrain: {} lanes cover {lane_coverage:.3} of the surface for a share of {fraction:.3}, over {duration:.2} Gyr about {te:.2} Gyr",
                     lanes.len()
                 );
             }
-            groove_time =
-                Some((graph.f64("body.age") - graph.f64("tectonics.ice_resurfacing_age")).max(0.0));
         }
         let mean_shell = graph.f64("interior.ice_shell_thickness");
         let equilibrium = shell.pole.is_some().then(|| {
@@ -390,7 +390,6 @@ impl IceShellProcess {
             body_radius,
             shell,
             mean_shell,
-            groove_time,
             lanes,
             lane_coverage,
             equilibrium,
@@ -398,7 +397,6 @@ impl IceShellProcess {
             lane_floor: None,
             active,
             depressed: false,
-            grooves_done: false,
         })
     }
 
@@ -446,23 +444,36 @@ impl IceShellProcess {
                 *h -= self.shell.depression(d, self.mean_shell) as f32;
             }
         }
-        if let Some(te) = self.groove_time
-            && !self.grooves_done
-            && te > t0
-            && te <= t1
-        {
-            self.grooves_done = true;
-            let passes = smoothing_passes(self.smooth_length(), cell);
+        // The lanes whose time falls in this step, youngest last: each takes the relief as
+        // it is now, smoothed and dropped, and the cells a younger lane also covers end up
+        // with the younger lane's time.
+        let mut due: Vec<usize> = (0..self.lanes.len())
+            .filter(|&i| {
+                let t = self.lanes[i].time_gyr;
+                t > t0 && t <= t1
+            })
+            .collect();
+        if !due.is_empty() {
+            due.sort_by(|&a, &b| self.lanes[a].time_gyr.total_cmp(&self.lanes[b].time_gyr));
             let smoothed: Vec<f32> =
-                crate::stages::episodic::smooth(&grid, layers.bedrock.as_slice(), passes)
+                crate::stages::relaxation::low_pass(&layers.bedrock, cell, self.smooth_length())
                     .into_iter()
                     .map(|h| h - GROOVE_LANE_DROP as f32)
                     .collect();
-            let inside: Vec<bool> = (0..n)
+            let body_radius = self.body_radius;
+            let inside: Vec<Option<f32>> = (0..n)
                 .into_par_iter()
-                .map(|k| self.in_lanes(grid.center(grid.cell(k))))
+                .map(|k| {
+                    let d = grid.center(grid.cell(k));
+                    due.iter()
+                        .rev()
+                        .find(|&&i| self.lanes[i].inside(d, body_radius))
+                        .map(|&i| self.lanes[i].time_gyr as f32)
+                })
                 .collect();
-            let inside = eroded(&grid, &inside);
+            let mask: Vec<bool> = inside.iter().map(|t| t.is_some()).collect();
+            let core = eroded(&grid, &mask);
+            let floor = self.lane_floor.get_or_insert_with(|| smoothed.clone());
             let bedrock = layers.bedrock.as_mut_slice();
             let ages = layers.surface_age.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
@@ -471,9 +482,12 @@ impl IceShellProcess {
             let cover = layers.cover.as_mut_slice();
             let clean = layers.clean.as_mut_slice();
             for k in 0..n {
-                if inside[k] {
+                if core[k]
+                    && let Some(t) = inside[k]
+                {
                     bedrock[k] = smoothed[k];
-                    ages[k] = te as f32;
+                    floor[k] = smoothed[k];
+                    ages[k] = t;
                     units[k] = UNIT_GROOVED;
                     deep[k] = 0.0;
                     melt[k] = 0.0;
@@ -481,7 +495,6 @@ impl IceShellProcess {
                     clean[k] = 1.0;
                 }
             }
-            self.lane_floor = Some(smoothed);
         }
     }
 
@@ -523,7 +536,6 @@ pub fn rasterize(
     body_radius: f64,
     cell: f64,
     lanes: &[Lane],
-    groove_time: Option<f64>,
     lane_floor: Option<&[f32]>,
     shell: &ShellMap,
     cracks: &[Linea],
@@ -533,11 +545,9 @@ pub fn rasterize(
 ) -> Option<Vec<f32>> {
     let grid = layers.grid;
     let n = grid.cell_count();
-    if let Some(te) = groove_time
-        && !lanes.is_empty()
-    {
+    if !lanes.is_empty() {
         // Each lane's coverage of the cells in its cap, where it covers anything or the
-        // coarse layers left a trace of it.
+        // coarse layers left a trace of it, with the lane's time.
         let old = layers.clean.as_slice();
         let hits: Vec<Vec<(u32, f32)>> = lanes
             .par_iter()
@@ -562,14 +572,18 @@ pub fn rasterize(
             .collect();
         let mut coverage = vec![0.0f32; n];
         let mut touched = vec![false; n];
-        for h in &hits {
+        let mut times = vec![0.0f32; n];
+        for (lane, h) in lanes.iter().zip(&hits) {
             for &(k, c) in h {
                 let k = k as usize;
                 touched[k] = true;
                 coverage[k] = coverage[k].max(c);
+                if c >= 0.5 {
+                    times[k] = times[k].max(lane.time_gyr as f32);
+                }
             }
         }
-        redraw(layers, &coverage, &touched, UNIT_GROOVED, te, false);
+        redraw(layers, &coverage, &touched, UNIT_GROOVED, &times, false);
         if let Some(floor) = lane_floor {
             lay_floor(layers, &coverage, floor);
         }
@@ -584,12 +598,13 @@ pub fn rasterize(
             .map(|&d| (0.5 + 0.5 * d).clamp(0.0, 1.0))
             .collect();
         let touched: Vec<bool> = dist.iter().map(|&d| d > -(limit as f32)).collect();
+        let times = vec![polar_time as f32; n];
         redraw(
             layers,
             &coverage,
             &touched,
             UNIT_POLAR_TERRAIN,
-            polar_time,
+            &times,
             true,
         );
         if let Some(floor) = polar_floor {
@@ -633,7 +648,7 @@ fn redraw(
     coverage: &[f32],
     touched: &[bool],
     unit: u16,
-    time: f64,
+    times: &[f32],
     raise_only: bool,
 ) {
     let ages = layers.surface_age.as_mut_slice();
@@ -647,6 +662,7 @@ fn redraw(
             continue;
         }
         let c = coverage[k];
+        let time = times[k] as f64;
         clean[k] = if raise_only { clean[k].max(c) } else { c };
         if c >= 0.5 {
             if ages[k] as f64 <= time + 1e-3 {
@@ -791,14 +807,21 @@ pub fn polar_compute(
                 }
                 return Some(write(k, bedrock[k] as f64 + ridge));
             }
-            let taper = (dk as f64 * cell / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
+            // Inside: folds along the cracks; towards the edge, the belt where the
+            // spreading is taken up, folds parallel to the edge instead.
+            let inward = dk as f64 * cell;
+            let taper = (inward / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
             let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
             let across = dot(d, normal) * body_radius;
             let along = dot(d, fold_direction) * body_radius;
             let phase = 2.0 * std::f64::consts::PI * across / spacing
                 + GROOVE_SET_TURN * sets * along / spacing;
             let folds = POLAR_FOLD_AMPLITUDE * (0.6 + 0.4 * sets.abs()) * taper * phase.sin();
-            let target = floor[k] as f64 + folds;
+            let belt_w = (1.0 - inward / POLAR_BELT_WIDTH).clamp(0.0, 1.0);
+            let belt = POLAR_BELT_HEIGHT
+                * belt_w
+                * (2.0 * std::f64::consts::PI * inward / POLAR_BELT_SPACING.max(3.0 * cell)).sin();
+            let target = floor[k] as f64 + folds * (1.0 - belt_w) + belt;
             Some(write(
                 k,
                 bedrock[k] as f64 + (target - bedrock[k] as f64) * c + ridge,
@@ -850,6 +873,7 @@ mod tests {
             half_width: 100e3,
             grooved: true,
             wobble_phase: [0.0, 0.0],
+            time_gyr: 0.0,
             id: 1,
         };
         assert!(lane.inside([1.0, 0.0, 0.0], r));
@@ -865,11 +889,5 @@ mod tests {
         assert!(lane.inside(near, r));
         let far = [0.5f64.cos(), -(0.5f64.sin()), 0.0];
         assert!(!lane.inside(far, r));
-    }
-
-    #[test]
-    fn smoothing_passes_follow_the_length_over_the_cell() {
-        assert_eq!(smoothing_passes(100e3, 50e3), 16);
-        assert_eq!(smoothing_passes(10e3, 50e3), 1);
     }
 }

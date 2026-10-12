@@ -843,6 +843,14 @@ pub fn surface_trailing_irradiation(c: &Ctx) -> Value {
     }
 }
 
+pub fn tectonics_ice_resurfacing_duration(c: &Ctx) -> Value {
+    if c.f64("tectonics.ice_resurfaced_fraction") > 0.0 {
+        (ICE_RESURFACING_DURATION_FRACTION * c.f64("body.age")).into()
+    } else {
+        0.0.into()
+    }
+}
+
 pub fn tectonics_ice_resurfacing_age(c: &Ctx) -> Value {
     if c.f64("tectonics.ice_resurfaced_fraction") > 0.0 {
         (ICE_RESURFACING_AGE_FRACTION * c.f64("body.age")).into()

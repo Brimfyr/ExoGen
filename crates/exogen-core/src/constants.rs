@@ -1036,12 +1036,19 @@ pub const POLAR_FOLD_SPACING: f64 = 1.5e3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
 pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
 pub const POLAR_MARGIN_WOBBLE: f64 = 0.15;
+/// The margin belt: within this distance of the renewed terrain's edge, m, the spreading
+/// is taken up in folds parallel to the edge at this spacing, m, this high, m, where
+/// the real body shows its belt of ridges and troughs round the polar terrain.
+pub const POLAR_BELT_WIDTH: f64 = 40e3;
+pub const POLAR_BELT_SPACING: f64 = 8e3;
+pub const POLAR_BELT_HEIGHT: f64 = 300.0;
 /// A shell renews its whole surface within the retention age only when it is thin
 /// against the body, under this share of the radius; a thick shell keeps its old craters
 /// and renews only where it is thin.
 pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
 /// Grooved terrain (F44): lanes of new ice drawn as great-circle swaths, their lengths
-/// log-uniform between these angles, rad, their widths between these, m, wobbling along
+/// log-uniform between these angles, rad, their widths between these shares of the
+/// radius (Ganymede 30 to 250 km, Enceladus 3 to 24 km, its ridged belts), wobbling along
 /// them by this share, gathered in belts of extension drawn by a field of this many
 /// cycles round the body raised to this power (the extension localises, so the dark
 /// terrain between the belts stays whole), this share of them laid beside an earlier
@@ -1059,7 +1066,7 @@ pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
 /// resurfacing as a share of the body's age (Ganymede's bright terrain is about two
 /// gigayears old).
 pub const GROOVE_LANE_LENGTH_RAD: (f64, f64) = (0.2, 1.5);
-pub const GROOVE_LANE_WIDTH: (f64, f64) = (30e3, 250e3);
+pub const GROOVE_LANE_WIDTH_SHARE: (f64, f64) = (0.011, 0.095);
 pub const GROOVE_WIDTH_WOBBLE: f64 = 0.25;
 pub const GROOVE_BELT_FREQUENCY: f64 = 1.2;
 pub const GROOVE_BELT_POWER: f64 = 4.0;
@@ -1078,6 +1085,11 @@ pub const GROOVE_SET_TURN: f64 = 0.4;
 pub const ICE_RESURFACING_FLUX_FLOOR: f64 = 0.005;
 pub const ICE_RESURFACING_FLUX: f64 = 0.05;
 pub const ICE_RESURFACING_AGE_FRACTION: f64 = 0.4;
+/// The resurfacing is an episode, not an instant: the lanes form at times spread
+/// uniformly over this share of the body's age about the resurfacing age (Ganymede's
+/// bright terrain spans a gigayear or more of crater densities), so that younger lanes
+/// cut older ones.
+pub const ICE_RESURFACING_DURATION_FRACTION: f64 = 0.3;
 /// Chaos (F45): on a shell over an ocean thin against the body, the share of the surface
 /// disrupted into chaos, up to this much, in proportion to the tidal flux over this flux,
 /// W/m²; the patches' diameters, m, log-uniform, placed in a heat field of this many
@@ -1092,9 +1104,11 @@ pub const CHAOS_HEAT_CONTRAST: f64 = 0.5;
 pub const CHAOS_DROP: f64 = 150.0;
 pub const CHAOS_HUMMOCK: f64 = 60.0;
 pub const CHAOS_HUMMOCK_SPACING: f64 = 1.5e3;
-pub const CHAOS_RAFT_SHARE: f64 = 0.35;
+pub const CHAOS_RAFT_SHARE: f64 = 0.45;
 pub const CHAOS_RAFT_SCALE: f64 = 15e3;
-pub const CHAOS_EDGE_WOBBLE: f64 = 0.3;
+pub const CHAOS_EDGE_WOBBLE: f64 = 0.35;
+/// The outline's wobble has about this many waves round a patch.
+pub const CHAOS_EDGE_WAVES: f64 = 6.0;
 /// Cryovolcanic domes (F46): on a shell over rock this share of the ice magma budget
 /// extrudes as domes of volumes drawn log-uniform between these shares of the body's
 /// radius cubed (Ceres 100 to 3,000 km³, Ahuna Mons about 1,500), with this height over
@@ -1130,8 +1144,8 @@ pub const VENT_ICE_TINT: [f32; 3] = [0.66, 0.78, 0.92];
 /// m, this wide, m, with flanking ridges this share of the depth (Enceladus's tiger
 /// stripes: 500 m troughs 2 km wide with 100 m flanks).
 pub const VENT_TROUGH_DEPTH: f64 = 450.0;
-pub const VENT_WIDTH: f64 = 3e3;
-pub const VENT_RIDGE_SHARE: f64 = 0.3;
+pub const VENT_WIDTH: f64 = 6e3;
+pub const VENT_RIDGE_SHARE: f64 = 0.4;
 /// Hemispheric asymmetry (F48): a locked moon's trailing hemisphere takes its parent's
 /// magnetospheric plasma, which darkens and reddens the ice there by this tint at the
 /// apex in a Jupiter-class magnetosphere (a parent over this mass, kg; Europa's and

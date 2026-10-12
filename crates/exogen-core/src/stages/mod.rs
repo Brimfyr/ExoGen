@@ -138,8 +138,7 @@ pub struct LoopOutput {
     pub plume_rings: Vec<io::PlumeRing>,
     /// An ice shell's lanes of grooved terrain and when they formed.
     pub lanes: Vec<ice_shell::Lane>,
-    pub groove_time: Option<f64>,
-    /// The share of the surface the lanes cover.
+    /// The share of the surface the lanes cover once all have formed.
     pub lane_coverage: f64,
     /// The lanes' floor at their time and the polar terrain's renewed surface, on the
     /// coarse grid, for the finish to lay its grooves and folds on.
@@ -347,7 +346,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 28;
+pub const FINISH_VERSION: u64 = 29;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -552,15 +551,14 @@ pub fn run_coarse_loop(
         }
         None => (Vec::new(), Vec::new(), Vec::new()),
     };
-    let (lanes, groove_time, lane_coverage, lane_floor, polar_floor) = match ice_shell_process {
+    let (lanes, lane_coverage, lane_floor, polar_floor) = match ice_shell_process {
         Some(p) => (
             p.lanes,
-            p.groove_time,
             p.lane_coverage,
             p.lane_floor.map(|v| ice_shell::field_from(grid, &v)),
             p.polar_floor.map(|v| ice_shell::field_from(grid, &v)),
         ),
-        None => (Vec::new(), None, 0.0, None, None),
+        None => (Vec::new(), 0.0, None, None),
     };
     Ok(LoopOutput {
         grid,
@@ -586,7 +584,6 @@ pub fn run_coarse_loop(
         io_flows,
         plume_rings,
         lanes,
-        groove_time,
         lane_coverage,
         lane_floor,
         polar_floor,
@@ -651,14 +648,14 @@ pub fn finish(
                 }
         })
         .collect();
-    // The lanes of grooved terrain if they lie before the epoch, and the polar terrain's
-    // renewal, which stands at the end of the sequence with its folds along the cracks.
-    let groove_time = loop_output.groove_time.filter(|&te| te <= present + 1e-9);
-    let lanes: Vec<ice_shell::Lane> = if groove_time.is_some() {
-        loop_output.lanes.clone()
-    } else {
-        Vec::new()
-    };
+    // The lanes of grooved terrain formed by the epoch, and the polar terrain's renewal,
+    // which stands at the end of the sequence with its folds along the cracks.
+    let lanes: Vec<ice_shell::Lane> = loop_output
+        .lanes
+        .iter()
+        .filter(|l| l.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
     let polar = shell_map.has_active_terrain();
     let polar_time = (present - POLAR_RENEWAL_GYR).max(0.0);
     let fold_direction = lineae::Cracks::new(graph)
@@ -673,7 +670,7 @@ pub fn finish(
     let lane_floor: Option<Field<f32>> = loop_output
         .lane_floor
         .as_ref()
-        .filter(|_| groove_time.is_some())
+        .filter(|_| !lanes.is_empty())
         .map(|f| f.resample(grid));
     let polar_floor: Option<Field<f32>> = loop_output
         .polar_floor
@@ -685,7 +682,6 @@ pub fn finish(
         body_radius,
         cell,
         &lanes,
-        groove_time,
         lane_floor.as_ref().map(|f| f.as_slice()),
         &shell_map,
         &lineae,
@@ -945,10 +941,8 @@ pub fn finish(
     for (k, l) in lineae.iter().enumerate() {
         events.push((l.time_gyr, 0, l.id ^ 0x11CE_0000_0000, Event::Linea(k)));
     }
-    if let Some(te) = groove_time {
-        for (k, l) in lanes.iter().enumerate() {
-            events.push((te, 0, l.id ^ 0x6700_0000_0000, Event::Groove(k)));
-        }
+    for (k, l) in lanes.iter().enumerate() {
+        events.push((l.time_gyr, 0, l.id ^ 0x6700_0000_0000, Event::Groove(k)));
     }
     if polar {
         events.push((polar_time, 0, 0x5027_0000_0000, Event::PolarTerrain));
@@ -1264,7 +1258,7 @@ pub fn finish(
                             body_radius,
                             lane_floor,
                             &lanes[*k],
-                            groove_time.unwrap_or(present),
+                            lanes[*k].time_gyr,
                             cell,
                             stamper,
                         );
@@ -1525,6 +1519,9 @@ pub fn finish(
         message: "done".to_string(),
     });
     let (grooved_fraction, polar_fraction) = ice_shell::terrain_shares(&layers);
+    // The share the lanes formed by this epoch cover, out of all of them.
+    let lane_coverage =
+        loop_output.lane_coverage * lanes.len() as f64 / loop_output.lanes.len().max(1) as f64;
     let chaos_fraction = cryo::chaos_share(&layers);
     Ok(FinishOutput {
         grid,
@@ -1559,11 +1556,7 @@ pub fn finish(
         cryodomes,
         chaos_fraction,
         lanes,
-        lane_coverage: if groove_time.is_some() {
-            loop_output.lane_coverage
-        } else {
-            0.0
-        },
+        lane_coverage,
         grooved_fraction,
         polar_fraction,
         hash,

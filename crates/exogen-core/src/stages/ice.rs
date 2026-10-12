@@ -170,7 +170,8 @@ pub fn lag_maturity(
 ) -> Field<f32> {
     let grid = layers.grid;
     let insolation = graph.f64("orbit.insolation");
-    let albedo = graph.f64("atmosphere.bond_albedo");
+    let body_albedo = graph.f64("atmosphere.bond_albedo");
+    let albedos = crate::stages::materials::surface_albedos(graph);
     let impurity = regolith_impurity(graph);
     let clean = crate::stages::materials::non_ice_fraction("water_ice");
     let clean_f = layers.clean.as_slice();
@@ -178,7 +179,7 @@ pub fn lag_maturity(
     let fallout = crate::stages::cryo::Fallout::new(graph);
     Field::from_fn(grid, |c, d| {
         let tilt = slope.map_or(0.0, |s| s.get(c) as f64);
-        let t = mean_surface_temperature(insolation, albedo, effective_cos_lat(d, tilt));
+        let cos_lat = effective_cos_lat(d, tilt);
         let exposure = present - layers.surface_age.get(c) as f64;
         let exposure = match &fallout {
             Some(f) => exposure.min(f.burial_gyr(d)),
@@ -186,7 +187,22 @@ pub fn lag_maturity(
         };
         let share = clean_f[grid.index(c)].clamp(0.0, 1.0) as f64;
         let impurity = impurity + (clean - impurity) * share;
-        lag_maturity_at(t, impurity, exposure) as f32
+        // The surface sits at its own temperature, not the body's mean: a fresh bright
+        // surface is cold and its lag grows slowly, a dark lag is warm and grows faster,
+        // which is the thermal segregation that keeps Callisto's young craters bright for
+        // an age. The body's Bond albedo scales with the cell's reflectance against the
+        // mature surface's; the fresh state is the starting point and the iteration
+        // settles on the state a fresh surface reaches.
+        let a_fresh = albedos.fresh + (albedos.clean_fresh - albedos.fresh) * share;
+        let a_mature = albedos.mature + (albedos.clean_mature - albedos.mature) * share;
+        let mut m = 0.0;
+        for _ in 0..6 {
+            let a_local = a_fresh + (a_mature - a_fresh) * m;
+            let bond = (body_albedo * a_local / a_mature.max(1e-3)).clamp(0.0, 0.95);
+            let t = mean_surface_temperature(insolation, bond, cos_lat);
+            m = lag_maturity_at(t, impurity, exposure);
+        }
+        m as f32
     })
 }
 

@@ -119,6 +119,23 @@ pub fn survival_since(
 
 /// A pyramid of low-passed copies of a field, each level smoothing over twice the
 /// scale of the last, by resampling down and up again.
+/// The field low-passed over a length, m: the area-average pyramid's first level at least
+/// that long, resampled back to the grid.
+pub fn low_pass(field: &Field<f32>, cell: f64, length: f64) -> Vec<f32> {
+    let grid = field.grid();
+    let levels = ((grid.face_size() as f64).log2().floor() as usize)
+        .saturating_sub(2)
+        .max(1);
+    let level = (0..levels)
+        .find(|&l| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64) >= length)
+        .unwrap_or(levels - 1);
+    let lows = pyramid(field, level + 1);
+    match lows.last() {
+        Some(low) => low.as_slice().to_vec(),
+        None => field.as_slice().to_vec(),
+    }
+}
+
 fn pyramid(field: &Field<f32>, levels: usize) -> Vec<Field<f32>> {
     let grid = field.grid();
     let mut out = Vec::with_capacity(levels);

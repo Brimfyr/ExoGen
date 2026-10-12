@@ -268,6 +268,33 @@ fn mixed_cover(
         .collect()
 }
 
+/// The reflectance a surface has when fresh and when mature, as the lag law needs them:
+/// the body's regolith and, for ice renewed from below, clean ice.
+pub struct SurfaceAlbedos {
+    pub fresh: f64,
+    pub mature: f64,
+    pub clean_fresh: f64,
+    pub clean_mature: f64,
+}
+
+pub fn surface_albedos(graph: &ParamGraph) -> SurfaceAlbedos {
+    let luminance = |c: [f32; 3]| (c[0] + c[1] + c[2]) as f64 / 3.0;
+    let bedrock =
+        end_member(graph.str("materials.bedrock")).unwrap_or_else(|| end_member("basalt").unwrap());
+    let regolith = graph
+        .get("materials.regolith_mix")
+        .as_map()
+        .map(resolve_mix)
+        .unwrap_or_else(|| vec![(bedrock, 1.0)]);
+    let ice = end_member("water_ice").unwrap();
+    SurfaceAlbedos {
+        fresh: luminance(bedrock.fresh),
+        mature: luminance(mixture_colour(&regolith, 1.0)),
+        clean_fresh: luminance(ice.fresh),
+        clean_mature: luminance(ice.mature),
+    }
+}
+
 /// Linear-reflectance albedo of the surface.
 pub fn albedo(
     graph: &ParamGraph,

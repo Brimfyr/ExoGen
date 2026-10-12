@@ -2227,6 +2227,18 @@ static NODES: &[NodeDef] = &[
         "PLAN.md 4.3",
     ),
     derived(
+        "tectonics.ice_resurfacing_duration",
+        "tectonics",
+        "Ice resurfacing duration",
+        "Gyr",
+        1.0,
+        f(0.0, 20.0),
+        &["tectonics.ice_resurfaced_fraction", "body.age"],
+        d::tectonics_ice_resurfacing_duration,
+        "How long the episode that laid the lanes of grooved terrain lasted: 0.3 of the body's age, the lanes' times spread uniformly over it about the resurfacing age (Ganymede 1.4 Gyr). Pin to choose.",
+        "PLAN.md 4.3",
+    ),
+    derived(
         "tectonics.rift_extension",
         "tectonics",
         "Rift extension",
