@@ -681,6 +681,7 @@ pub fn finish(
         &mut layers,
         body_radius,
         cell,
+        loop_output.grid.delta() * body_radius,
         &lanes,
         lane_floor.as_ref().map(|f| f.as_slice()),
         &shell_map,
@@ -1078,7 +1079,7 @@ pub fn finish(
                 }
                 Event::Groove(k) => {
                     let l = &lanes[*k];
-                    (l.center, l.cap_radius(body_radius) + 2.0 * grid.delta())
+                    (l.center(), l.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
                 Event::PolarTerrain => (
                     shell_map.pole.unwrap_or([0.0, 0.0, 1.0]),

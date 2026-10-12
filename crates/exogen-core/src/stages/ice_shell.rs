@@ -6,20 +6,26 @@
 //!
 //! A shell that has stretched renews part of its surface as lanes of new ice: swaths of
 //! parallel grooves, bright and clean, cutting the old dark cratered terrain into
-//! polygons, as two thirds of Ganymede were renewed. The lanes are great-circle swaths of
-//! random length and width drawn until they cover the resurfaced share of the surface;
-//! inside them the old relief is smoothed away at their time, the surface age resets, and
-//! the finish cuts the grooves. A shell over an ocean whose tidal heating focuses under a
+//! polygons, as two thirds of Ganymede were renewed. A lane is a swath about a centre
+//! line of random length and width, traced along the tidal field where the shell cracks
+//! (so it curves as the field turns, as Enceladus's sulci do) and along a great circle
+//! where nothing steers it (Ganymede's), closing in a lens at its ends; lanes are drawn
+//! until they cover the resurfaced share of the surface. Inside them the old relief is
+//! smoothed away at their time and sinks by the extension's subsidence, spread over the
+//! lithosphere's flexural parameter so that no lane ends on a step; the surface age
+//! resets, and the finish cuts the grooves. A shell over an ocean whose tidal heating focuses under a
 //! pole is thin there, floats lower there, and renews that polar terrain continuously, so
 //! it carries no craters, most of the cracks, and folds between them, as Enceladus's
 //! south polar terrain does.
+
+use std::collections::HashMap;
 
 use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper, with_stamper};
 use crate::fields::{Field, LayerSet};
-use crate::geom::{cross, dot, normalize};
+use crate::geom::{angle_between, cross, dot, normalize};
 use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
@@ -28,15 +34,18 @@ use crate::stages::ice::ShellMap;
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
-/// A lane of grooved terrain: a swath along part of a great circle.
+/// A lane of renewed terrain: a swath about a centre line traced across the shell,
+/// along the tidal field where the shell cracks, so that it curves as the field turns
+/// (Enceladus's sulci), and along a great circle where nothing steers it (Ganymede's);
+/// its width wobbles along it and closes in a lens at its ends.
 #[derive(Clone, Debug)]
 pub struct Lane {
-    /// Pole of the great circle the lane follows.
-    pub axis: [f64; 3],
-    /// The lane's midpoint, on the circle.
-    pub center: [f64; 3],
+    /// The centre line: points `spacing` apart, from one end to the other.
+    pub points: Vec<[f64; 3]>,
+    pub spacing: f64,
+    /// Half the centre line's length, m.
     pub half_length: f64,
     pub half_width: f64,
     /// Whether the lane is grooved or smooth bright terrain.
@@ -48,53 +57,196 @@ pub struct Lane {
     pub id: u64,
 }
 
+/// A cell near a lane: its signed distance across the centre line, m, its signed
+/// distance along it from the midpoint, m, and the centre line's tangent there.
+#[derive(Clone, Copy, Debug)]
+pub struct LaneSample {
+    pub idx: usize,
+    pub across: f64,
+    pub along: f64,
+    pub tangent: [f64; 3],
+}
+
 impl Lane {
-    /// Distance from the lane's centre line, m.
-    pub fn across(&self, d: [f64; 3], body_radius: f64) -> f64 {
-        dot(self.axis, d).clamp(-1.0, 1.0).asin().abs() * body_radius
+    /// The points of a centre line along the great circle with pole `axis` through
+    /// `center`, `half_length` each way at `spacing`.
+    pub fn great_circle(
+        axis: [f64; 3],
+        center: [f64; 3],
+        half_length: f64,
+        spacing: f64,
+        body_radius: f64,
+    ) -> Vec<[f64; 3]> {
+        let t = normalize(cross(axis, center));
+        let n = (half_length / spacing.max(1.0)).ceil().max(1.0) as i64;
+        (-n..=n)
+            .map(|i| {
+                let (s, c) = (i as f64 * spacing / body_radius).sin_cos();
+                normalize([
+                    center[0] * c + t[0] * s,
+                    center[1] * c + t[1] * s,
+                    center[2] * c + t[2] * s,
+                ])
+            })
+            .collect()
     }
 
-    /// Distance along the centre line from the midpoint, m, signed.
-    pub fn signed_along(&self, d: [f64; 3], body_radius: f64) -> f64 {
-        let t = cross(self.axis, self.center);
-        dot(d, t).atan2(dot(d, self.center)) * body_radius
+    /// A lane about a centre line.
+    pub fn from_points(
+        points: Vec<[f64; 3]>,
+        spacing: f64,
+        half_width: f64,
+        grooved: bool,
+        wobble_phase: [f64; 2],
+        time_gyr: f64,
+        id: u64,
+    ) -> Self {
+        let half_length = 0.5 * points.len().saturating_sub(1) as f64 * spacing;
+        Self {
+            points,
+            spacing,
+            half_length,
+            half_width,
+            grooved,
+            wobble_phase,
+            time_gyr,
+            id,
+        }
     }
 
-    /// Distance along the centre line from the midpoint, m.
-    pub fn along(&self, d: [f64; 3], body_radius: f64) -> f64 {
-        self.signed_along(d, body_radius).abs()
+    /// The lane's midpoint.
+    pub fn center(&self) -> [f64; 3] {
+        self.points[self.points.len() / 2]
+    }
+
+    /// The centre line's tangent at one of its points.
+    fn tangent_at(&self, i: usize) -> [f64; 3] {
+        let n = self.points.len();
+        let a = self.points[i.saturating_sub(1)];
+        let b = self.points[(i + 1).min(n - 1)];
+        let p = self.points[i];
+        let chord = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let radial = dot(chord, p);
+        normalize([
+            chord[0] - radial * p[0],
+            chord[1] - radial * p[1],
+            chord[2] - radial * p[2],
+        ])
+    }
+
+    /// Signed distance along the centre line from the midpoint to one of its points, m.
+    fn along_of(&self, i: usize) -> f64 {
+        (i as f64 - 0.5 * (self.points.len() - 1) as f64) * self.spacing
+    }
+
+    /// The nearest point of the centre line to a direction: the signed distance across
+    /// the line, m, the signed distance along it from the midpoint, m, and the tangent.
+    pub fn locate(&self, d: [f64; 3], body_radius: f64) -> (f64, f64, [f64; 3]) {
+        let (mut best, mut best_dot) = (0usize, f64::NEG_INFINITY);
+        for (i, p) in self.points.iter().enumerate() {
+            let x = dot(*p, d);
+            if x > best_dot {
+                best_dot = x;
+                best = i;
+            }
+        }
+        let p = self.points[best];
+        let t = self.tangent_at(best);
+        let normal = normalize(cross(p, t));
+        let across = dot(d, normal).clamp(-1.0, 1.0).asin() * body_radius;
+        let along = self.along_of(best) + dot(d, t).clamp(-1.0, 1.0).asin() * body_radius;
+        (across, along, t)
     }
 
     /// The lane's half width at a signed distance along it, m: the mean wobbled by two
-    /// waves three and seven widths long.
+    /// waves three and seven widths long, closing in a lens at the ends.
     pub fn half_width_at(&self, along: f64) -> f64 {
         let w = 2.0 * self.half_width;
         let turn = 2.0 * std::f64::consts::PI * along;
         let wobble = 0.5
             * ((turn / (3.0 * w) + self.wobble_phase[0]).sin()
                 + (turn / (7.0 * w) + self.wobble_phase[1]).sin());
-        self.half_width * (1.0 + GROOVE_WIDTH_WOBBLE * wobble)
+        let s = (0.5 + 0.5 * along / self.half_length.max(1.0)).clamp(0.0, 1.0);
+        let lens = (4.0 * s * (1.0 - s)).max(0.0).powf(GROOVE_LANE_TAPER_POWER);
+        self.half_width * (1.0 + GROOVE_WIDTH_WOBBLE * wobble) * lens
     }
 
-    pub fn inside(&self, d: [f64; 3], body_radius: f64) -> bool {
-        let along = self.signed_along(d, body_radius);
-        along.abs() < self.half_length && self.across(d, body_radius) < self.half_width_at(along)
-    }
-
-    /// How much of a cell at a direction the lane covers, 0 to 1: a one-cell ramp across
-    /// the lane's edges and ends, for edges drawn without stair steps.
-    pub fn coverage(&self, d: [f64; 3], body_radius: f64, cell: f64) -> f64 {
-        let along = self.signed_along(d, body_radius);
+    /// How much of a cell the lane covers at an across and an along, 0 to 1: a one-cell
+    /// ramp across the lane's edges and ends, for edges drawn without stair steps.
+    pub fn coverage_at(&self, across: f64, along: f64, cell: f64) -> f64 {
         let cell = cell.max(1.0);
-        let side = (self.half_width_at(along) - self.across(d, body_radius)) / cell + 0.5;
+        let side = (self.half_width_at(along) - across.abs()) / cell + 0.5;
         let end = (self.half_length - along.abs()) / cell + 0.5;
         side.clamp(0.0, 1.0) * end.clamp(0.0, 1.0)
     }
 
+    pub fn inside(&self, d: [f64; 3], body_radius: f64) -> bool {
+        let (across, along, _) = self.locate(d, body_radius);
+        along.abs() < self.half_length && across.abs() < self.half_width_at(along)
+    }
+
     /// Angular radius of a cap round the midpoint that holds the lane.
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        (self.half_length + self.half_width * (1.0 + GROOVE_WIDTH_WOBBLE)) / body_radius
+        let c = self.center();
+        let reach = self
+            .points
+            .iter()
+            .map(|p| angle_between(c, *p))
+            .fold(0.0, f64::max);
+        reach + (self.half_width * (1.0 + GROOVE_WIDTH_WOBBLE) + 2.0 * self.spacing) / body_radius
     }
+
+    /// The cells within `margin` of the lane with their across and along: a disc round
+    /// each point of the centre line, each cell kept with the point it lies nearest
+    /// along, in cell order.
+    pub fn sample(
+        &self,
+        grid: &CubeSphere,
+        body_radius: f64,
+        margin: f64,
+        stamper: &mut Stamper,
+    ) -> Vec<LaneSample> {
+        let half = 0.5 * self.spacing;
+        let reach = (self.half_width * (1.0 + GROOVE_WIDTH_WOBBLE) + margin).hypot(half + margin);
+        let mut best: HashMap<usize, (f64, LaneSample)> = HashMap::new();
+        for i in 0..self.points.len() {
+            let p = self.points[i];
+            let t = self.tangent_at(i);
+            let normal = normalize(cross(p, t));
+            let along0 = self.along_of(i);
+            stamper.gather(grid, body_radius, p, reach);
+            for &(idx, _, _) in &stamper.footprint {
+                let d = grid.center(grid.cell(idx));
+                let local = dot(d, t).clamp(-1.0, 1.0).asin() * body_radius;
+                if local.abs() > half + margin {
+                    continue;
+                }
+                let across = dot(d, normal).clamp(-1.0, 1.0).asin() * body_radius;
+                let sample = LaneSample {
+                    idx,
+                    across,
+                    along: along0 + local,
+                    tangent: t,
+                };
+                let e = best.entry(idx).or_insert((f64::INFINITY, sample));
+                if local.abs() < e.0 {
+                    *e = (local.abs(), sample);
+                }
+            }
+        }
+        let mut out: Vec<LaneSample> = best.into_values().map(|(_, s)| s).collect();
+        out.sort_by_key(|s| s.idx);
+        out
+    }
+}
+
+/// The flexural parameter of an elastic ice lithosphere `te` thick over an ocean, m: the
+/// length over which a load's deflection spreads (Turcotte and Schubert, (4 D / rho g)^1/4
+/// with D = E te^3 / 12 (1 - nu^2)).
+pub fn flexural_parameter(te: f64, gravity: f64) -> f64 {
+    let rigidity =
+        ICE_YOUNG_MODULUS * te.max(1.0).powi(3) / (12.0 * (1.0 - ICE_POISSON * ICE_POISSON));
+    (4.0 * rigidity / (DENSITY_ICE * gravity.max(1e-3))).powf(0.25)
 }
 
 /// Rodrigues rotation of a vector about a unit axis.
@@ -242,6 +394,9 @@ pub struct IceShellProcess {
     pub lane_floor: Option<Vec<f32>>,
     active: Vec<bool>,
     depressed: bool,
+    /// The thermal history, for the elastic lithosphere at each lane's time.
+    thermal: crate::thermal::ThermalHistory,
+    gravity: f64,
 }
 
 impl IceShellProcess {
@@ -258,18 +413,22 @@ impl IceShellProcess {
             .clamp(0.0, 0.95);
         let mut lanes: Vec<Lane> = Vec::new();
         let mut lane_coverage = 0.0;
+        // Where the shell cracks, the tidal field steers the lanes as it steers the
+        // cracks; where it does not, nothing does, and a lane follows a great circle.
+        let cracks = Cracks::new(graph);
+        let thermal = crate::thermal::ThermalHistory::from_graph(graph);
         if fraction > 0.0 {
             // The episode: its centre and its length.
             let age = graph.f64("body.age");
             let te = (age - graph.f64("tectonics.ice_resurfacing_age")).max(0.0);
             let duration = graph.f64("tectonics.ice_resurfacing_duration").max(0.0);
-            // Lanes until they cover the share: parts of great circles at random, their
-            // lengths and widths log-uniform, the coverage counted by area on the coarse
-            // grid.
+            // Lanes until they cover the share, their lengths and widths log-uniform, the
+            // coverage counted by area on the coarse grid.
             let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x6700_0E5A);
             let belts = GradientNoise::new(graph.f64("seed.tectonics") as u64 ^ 0x6700_BE17);
             let areas: Vec<f64> = (0..n).map(|k| grid.cell_area(grid.cell(k))).collect();
             let total: f64 = areas.iter().sum();
+            let cell = grid.delta() * body_radius;
             let mut covered = vec![false; n];
             let mut area = 0.0;
             let (w_lo, w_hi) = (
@@ -279,94 +438,127 @@ impl IceShellProcess {
             let (l_lo, l_hi) = GROOVE_LANE_LENGTH_RAD;
             let (o_lo, o_hi) = GROOVE_NEIGHBOUR_OFFSET;
             let tau = 2.0 * std::f64::consts::PI;
-            for k in 0..GROOVE_MAX_LANES {
-                if area >= fraction * total {
-                    break;
-                }
-                let parent = (!lanes.is_empty() && rng.uniform(k, 105) < GROOVE_NEIGHBOUR_SHARE)
-                    .then(|| {
-                        let i = (rng.uniform(k, 106) * lanes.len() as f64) as usize;
-                        lanes[i.min(lanes.len() - 1)].clone()
-                    });
-                let (axis, center) = match parent {
-                    // Beside an earlier lane: its direction turned a little, one to three
-                    // widths to its side, somewhere along its length.
-                    Some(p) => {
-                        let turn = GROOVE_NEIGHBOUR_TURN_DEG.to_radians()
-                            * (2.0 * rng.uniform(k, 107) - 1.0);
-                        let tangent = rotate(cross(p.axis, p.center), p.center, turn);
-                        let side = if rng.uniform(k, 108) < 0.5 { -1.0 } else { 1.0 };
-                        let offset = side * 2.0 * p.half_width / body_radius
-                            * (o_lo + (o_hi - o_lo) * rng.uniform(k, 109));
-                        let shift =
-                            (2.0 * rng.uniform(k, 110) - 1.0) * 0.5 * p.half_length / body_radius;
-                        let c = normalize([
-                            p.center[0] + offset * p.axis[0],
-                            p.center[1] + offset * p.axis[1],
-                            p.center[2] + offset * p.axis[2],
-                        ]);
-                        let t = normalize([
-                            tangent[0] - c[0] * dot(tangent, c),
-                            tangent[1] - c[1] * dot(tangent, c),
-                            tangent[2] - c[2] * dot(tangent, c),
-                        ]);
-                        let (ss, cs) = shift.sin_cos();
-                        let center = normalize([
-                            c[0] * cs + t[0] * ss,
-                            c[1] * cs + t[1] * ss,
-                            c[2] * cs + t[2] * ss,
-                        ]);
-                        (normalize(cross(center, t)), center)
+            with_stamper(&grid, |stamper| {
+                for k in 0..GROOVE_MAX_LANES {
+                    if area >= fraction * total {
+                        break;
                     }
-                    // Or anywhere, in the belts of extension, by rejection.
-                    None => {
-                        let axis = rng.unit_direction(k, 1);
-                        let u = normalize(cross(
-                            axis,
-                            if axis[0].abs() < 0.9 {
-                                [1.0, 0.0, 0.0]
-                            } else {
-                                [0.0, 1.0, 0.0]
-                            },
-                        ));
-                        let v = cross(axis, u);
-                        let mut center = u;
-                        for attempt in 0..16u64 {
-                            let ang = tau * rng.uniform(k, 3 + 2 * attempt);
-                            let (sa, ca) = ang.sin_cos();
-                            center = normalize([
-                                u[0] * ca + v[0] * sa,
-                                u[1] * ca + v[1] * sa,
-                                u[2] * ca + v[2] * sa,
+                    let half_width = (0.5 * w_lo * (w_hi / w_lo).powf(rng.uniform(k, 100)))
+                        .min(0.3 * body_radius);
+                    let half_length =
+                        0.5 * body_radius * l_lo * (l_hi / l_lo).powf(rng.uniform(k, 101));
+                    let spacing = half_width.min(GROOVE_LANE_POINT_SPACING_RAD * body_radius);
+                    let time_gyr = (te + (rng.uniform(k, 111) - 0.5) * duration).clamp(0.0, age);
+                    let parent = (!lanes.is_empty()
+                        && rng.uniform(k, 105) < GROOVE_NEIGHBOUR_SHARE)
+                        .then(|| {
+                            let i = (rng.uniform(k, 106) * lanes.len() as f64) as usize;
+                            i.min(lanes.len() - 1)
+                        });
+                    // The start and the heading: beside an earlier lane, one to three
+                    // widths to its side somewhere along it, its heading turned a little;
+                    // or anywhere in the belts of extension, by rejection, at random.
+                    let (start, heading) = match parent {
+                        Some(i) => {
+                            let p = &lanes[i];
+                            let j = ((rng.uniform(k, 110) * p.points.len() as f64) as usize)
+                                .min(p.points.len() - 1);
+                            let (pj, tj) = (p.points[j], p.tangent_at(j));
+                            let nj = normalize(cross(pj, tj));
+                            let side = if rng.uniform(k, 108) < 0.5 { -1.0 } else { 1.0 };
+                            let offset = side * 2.0 * p.half_width / body_radius
+                                * (o_lo + (o_hi - o_lo) * rng.uniform(k, 109));
+                            let start = normalize([
+                                pj[0] + nj[0] * offset,
+                                pj[1] + nj[1] * offset,
+                                pj[2] + nj[2] * offset,
                             ]);
-                            let w = 0.5
-                                + 0.5 * belts.fbm(center, GROOVE_BELT_FREQUENCY / tau, 2, 2.0, 0.5);
-                            if rng.uniform(k, 4 + 2 * attempt) < w.powf(GROOVE_BELT_POWER) {
-                                break;
-                            }
+                            let turn = GROOVE_NEIGHBOUR_TURN_DEG.to_radians()
+                                * (2.0 * rng.uniform(k, 107) - 1.0);
+                            (start, rotate(tj, start, turn))
                         }
-                        (axis, center)
+                        None => {
+                            let axis = rng.unit_direction(k, 1);
+                            let u = normalize(cross(
+                                axis,
+                                if axis[0].abs() < 0.9 {
+                                    [1.0, 0.0, 0.0]
+                                } else {
+                                    [0.0, 1.0, 0.0]
+                                },
+                            ));
+                            let v = cross(axis, u);
+                            let mut center = u;
+                            for attempt in 0..16u64 {
+                                let ang = tau * rng.uniform(k, 3 + 2 * attempt);
+                                let (sa, ca) = ang.sin_cos();
+                                center = normalize([
+                                    u[0] * ca + v[0] * sa,
+                                    u[1] * ca + v[1] * sa,
+                                    u[2] * ca + v[2] * sa,
+                                ]);
+                                let w = 0.5
+                                    + 0.5
+                                        * belts.fbm(
+                                            center,
+                                            GROOVE_BELT_FREQUENCY / tau,
+                                            2,
+                                            2.0,
+                                            0.5,
+                                        );
+                                if rng.uniform(k, 4 + 2 * attempt) < w.powf(GROOVE_BELT_POWER) {
+                                    break;
+                                }
+                            }
+                            (center, normalize(cross(axis, center)))
+                        }
+                    };
+                    // The centre line: along the field at the lane's time where the
+                    // shell cracks and the tension at the start opens it, else along the
+                    // great circle of the heading.
+                    let traced = cracks
+                        .as_ref()
+                        .and_then(|c| {
+                            let axis = crate::stages::lineae::mean_axis_at(
+                                time_gyr,
+                                age,
+                                c.nsr_period_gyr,
+                            );
+                            let (tension, phase) = c.shell.peak_tension(axis, start);
+                            (tension >= ICE_CRACK_STRESS).then(|| {
+                                c.trace(
+                                    axis,
+                                    start,
+                                    phase,
+                                    spacing,
+                                    2.0 * half_length,
+                                    k ^ 0x6700_7ACE,
+                                )
+                            })
+                        })
+                        .filter(|pts| pts.len() >= 3);
+                    let points = traced.unwrap_or_else(|| {
+                        let axis = normalize(cross(start, heading));
+                        Lane::great_circle(axis, start, half_length, spacing, body_radius)
+                    });
+                    let lane = Lane::from_points(
+                        points,
+                        spacing,
+                        half_width,
+                        rng.uniform(k, 102) >= GROOVE_SMOOTH_LANE_SHARE,
+                        [tau * rng.uniform(k, 103), tau * rng.uniform(k, 104)],
+                        time_gyr,
+                        k,
+                    );
+                    for sm in lane.sample(&grid, body_radius, 2.0 * cell, stamper) {
+                        if !covered[sm.idx] && lane.coverage_at(sm.across, sm.along, cell) >= 0.5 {
+                            covered[sm.idx] = true;
+                            area += areas[sm.idx];
+                        }
                     }
-                };
-                let lane = Lane {
-                    axis,
-                    center,
-                    half_length: 0.5 * body_radius * l_lo * (l_hi / l_lo).powf(rng.uniform(k, 101)),
-                    half_width: (0.5 * w_lo * (w_hi / w_lo).powf(rng.uniform(k, 100)))
-                        .min(0.3 * body_radius),
-                    grooved: rng.uniform(k, 102) >= GROOVE_SMOOTH_LANE_SHARE,
-                    wobble_phase: [tau * rng.uniform(k, 103), tau * rng.uniform(k, 104)],
-                    time_gyr: (te + (rng.uniform(k, 111) - 0.5) * duration).clamp(0.0, age),
-                    id: k,
-                };
-                for (i, c) in centers.iter().enumerate() {
-                    if !covered[i] && lane.inside(*c, body_radius) {
-                        covered[i] = true;
-                        area += areas[i];
-                    }
+                    lanes.push(lane);
                 }
-                lanes.push(lane);
-            }
+            });
             lane_coverage = area / total.max(1e-300);
             if std::env::var_os("EXOGEN_DEBUG").is_some() {
                 eprintln!(
@@ -387,10 +579,11 @@ impl IceShellProcess {
         let active = if shell.has_active_terrain() {
             let seed = graph.f64("seed.cratering") as u64;
             let fine = CubeSphere::new(graph.f64("detail.finishing_resolution") as u32);
-            let cracks = Cracks::new(graph)
+            let fissures = cracks
+                .as_ref()
                 .map(|c| c.generate(graph.f64("body.age"), &fine, seed))
                 .unwrap_or_default();
-            polar_mask(&grid, body_radius, &shell, &cracks)
+            polar_mask(&grid, body_radius, &shell, &fissures)
         } else {
             vec![false; n]
         };
@@ -407,6 +600,8 @@ impl IceShellProcess {
             lane_floor: None,
             active,
             depressed: false,
+            thermal,
+            gravity: graph.f64("body.gravity"),
         })
     }
 
@@ -466,23 +661,30 @@ impl IceShellProcess {
         if !due.is_empty() {
             due.sort_by(|&a, &b| self.lanes[a].time_gyr.total_cmp(&self.lanes[b].time_gyr));
             let smoothed: Vec<f32> =
-                crate::stages::relaxation::low_pass(&layers.bedrock, cell, self.smooth_length())
-                    .into_iter()
-                    .map(|h| h - GROOVE_LANE_DROP as f32)
-                    .collect();
+                crate::stages::relaxation::low_pass(&layers.bedrock, cell, self.smooth_length());
             let body_radius = self.body_radius;
-            let inside: Vec<Option<f32>> = (0..n)
-                .into_par_iter()
-                .map(|k| {
-                    let d = grid.center(grid.cell(k));
-                    due.iter()
-                        .rev()
-                        .find(|&&i| self.lanes[i].inside(d, body_radius))
-                        .map(|&i| self.lanes[i].time_gyr as f32)
-                })
-                .collect();
+            // The cells each due lane holds, the youngest lane's time winning.
+            let mut inside: Vec<Option<f32>> = vec![None; n];
+            with_stamper(&grid, |stamper| {
+                for &i in &due {
+                    let lane = &self.lanes[i];
+                    for sm in lane.sample(&grid, body_radius, 2.0 * cell, stamper) {
+                        if lane.coverage_at(sm.across, sm.along, cell) >= 0.5 {
+                            inside[sm.idx] = Some(lane.time_gyr as f32);
+                        }
+                    }
+                }
+            });
             let mask: Vec<bool> = inside.iter().map(|t| t.is_some()).collect();
             let core = eroded(&grid, &mask);
+            // The lanes' drop, the extension's subsidence, spreads over the lithosphere's
+            // flexural parameter at the time, so a lane narrower than it sinks little and
+            // none ends on a step.
+            let te = self.thermal.at(0.5 * (t0 + t1)).elastic;
+            let alpha = flexural_parameter(te, self.gravity);
+            let mask_field: Vec<f32> = core.iter().map(|&m| if m { 1.0 } else { 0.0 }).collect();
+            let ramp =
+                crate::stages::relaxation::low_pass(&field_from(grid, &mask_field), cell, alpha);
             let floor = self.lane_floor.get_or_insert_with(|| smoothed.clone());
             let bedrock = layers.bedrock.as_mut_slice();
             let ages = layers.surface_age.as_mut_slice();
@@ -492,17 +694,20 @@ impl IceShellProcess {
             let cover = layers.cover.as_mut_slice();
             let clean = layers.clean.as_mut_slice();
             for k in 0..n {
+                let drop = (GROOVE_LANE_DROP * ramp[k] as f64) as f32;
                 if core[k]
                     && let Some(t) = inside[k]
                 {
-                    bedrock[k] = smoothed[k];
-                    floor[k] = smoothed[k];
+                    bedrock[k] = smoothed[k] - drop;
+                    floor[k] = bedrock[k];
                     ages[k] = t;
                     units[k] = UNIT_GROOVED;
                     deep[k] = 0.0;
                     melt[k] = 0.0;
                     cover[k] = 0.0;
                     clean[k] = 1.0;
+                } else if drop > 0.0 {
+                    bedrock[k] -= drop;
                 }
             }
         }
@@ -545,6 +750,7 @@ pub fn rasterize(
     layers: &mut LayerSet,
     body_radius: f64,
     cell: f64,
+    coarse_cell: f64,
     lanes: &[Lane],
     lane_floor: Option<&[f32]>,
     shell: &ShellMap,
@@ -556,25 +762,20 @@ pub fn rasterize(
     let grid = layers.grid;
     let n = grid.cell_count();
     if !lanes.is_empty() {
-        // Each lane's coverage of the cells in its cap, where it covers anything or the
-        // coarse layers left a trace of it, with the lane's time.
+        // Each lane's coverage of the cells near it, out to a coarse cell beyond its
+        // edge, where it covers anything or the coarse layers left a trace of it, with
+        // the lane's time.
         let old = layers.clean.as_slice();
+        let margin = coarse_cell.max(2.0 * cell);
         let hits: Vec<Vec<(u32, f32)>> = lanes
             .par_iter()
             .map(|lane| {
                 with_stamper(&grid, |stamper| {
-                    stamper.gather(
-                        &grid,
-                        body_radius,
-                        lane.center,
-                        lane.cap_radius(body_radius) * body_radius,
-                    );
-                    stamper
-                        .footprint
-                        .iter()
-                        .filter_map(|&(k, _, _)| {
-                            let c = lane.coverage(grid.center(grid.cell(k)), body_radius, cell);
-                            (c > 0.0 || old[k] > 0.0).then_some((k as u32, c as f32))
+                    lane.sample(&grid, body_radius, margin, stamper)
+                        .into_iter()
+                        .filter_map(|sm| {
+                            let c = lane.coverage_at(sm.across, sm.along, cell);
+                            (c > 0.0 || old[sm.idx] > 0.0).then_some((sm.idx as u32, c as f32))
                         })
                         .collect()
                 })
@@ -724,19 +925,12 @@ pub fn groove_compute(
     let noise = GradientNoise::new(lane.id ^ 0x6700_0000);
     let set_frequency = body_radius / GROOVE_SET_LENGTH;
     let spacing = GROOVE_SPACING.max(GROOVE_MIN_CELLS * cell);
-    let along_axis = normalize(cross(lane.axis, lane.center));
-    stamper.gather(
-        grid,
-        body_radius,
-        lane.center,
-        lane.cap_radius(body_radius) * body_radius,
-    );
-    let mut cells: Vec<CellWrite> = stamper
-        .footprint
+    let samples = lane.sample(grid, body_radius, 2.0 * cell, stamper);
+    let mut cells: Vec<CellWrite> = samples
         .par_iter()
-        .filter_map(|&(k, _, _)| {
-            let d = grid.center(grid.cell(k));
-            let c = lane.coverage(d, body_radius, cell);
+        .filter_map(|sm| {
+            let k = sm.idx;
+            let c = lane.coverage_at(sm.across, sm.along, cell);
             if c <= 0.0 {
                 return None;
             }
@@ -746,13 +940,13 @@ pub fn groove_compute(
                 return None;
             }
             let target = if lane.grooved {
-                let across = lane.across(d, body_radius);
-                let half_width = lane.half_width_at(lane.signed_along(d, body_radius));
-                let edge = ((half_width - across) / (0.15 * half_width)).clamp(0.0, 1.0);
-                let along = dot(d, along_axis) * body_radius;
+                // Grooves parallel to the centre line, turning in sets along it.
+                let d = grid.center(grid.cell(k));
+                let half_width = lane.half_width_at(sm.along).max(1.0);
+                let edge = ((half_width - sm.across.abs()) / (0.15 * half_width)).clamp(0.0, 1.0);
                 let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
-                let phase = 2.0 * std::f64::consts::PI * across / spacing
-                    + GROOVE_SET_TURN * sets * along / spacing;
+                let phase = 2.0 * std::f64::consts::PI * sm.across / spacing
+                    + GROOVE_SET_TURN * sets * sm.along / spacing;
                 let amplitude = GROOVE_AMPLITUDE * (0.6 + 0.4 * sets.abs()) * edge;
                 floor[k] as f64 + amplitude * phase.sin()
             } else {
@@ -884,26 +1078,25 @@ mod tests {
     #[test]
     fn a_lane_is_a_swath_along_part_of_a_great_circle() {
         let r = 2.6e6;
-        let lane = Lane {
-            axis: [0.0, 0.0, 1.0],
-            center: [1.0, 0.0, 0.0],
-            half_length: 1000e3,
-            half_width: 100e3,
-            grooved: true,
-            wobble_phase: [0.0, 0.0],
-            time_gyr: 0.0,
-            id: 1,
-        };
+        let points = Lane::great_circle([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], 1000e3, 50e3, r);
+        let lane = Lane::from_points(points, 50e3, 100e3, true, [0.0, 0.0], 0.0, 1);
+        assert!((lane.half_length - 1000e3).abs() < 1.0);
         assert!(lane.inside([1.0, 0.0, 0.0], r));
         // Off the circle by atan(0.1): 259 km, outside the width however it wobbles.
         let off = normalize([1.0, 0.0, 0.1]);
-        assert!((lane.across(off, r) - 0.1f64.atan() * r).abs() < 1.0);
+        let (across, along, _) = lane.locate(off, r);
+        assert!((across.abs() - 0.1f64.atan() * r).abs() < 1.0);
+        assert!(along.abs() < 1.0);
         assert!(!lane.inside(off, r));
         assert!((lane.half_width_at(0.0) - 100e3).abs() < 1.0);
         assert!(lane.half_width_at(150e3) <= 125e3 && lane.half_width_at(150e3) >= 75e3);
+        // The lens: the width closes at the ends.
+        assert!(lane.half_width_at(990e3) < 0.5 * lane.half_width_at(0.0));
         // Along the circle by 0.3 rad: 780 km, inside the length; by 0.5 rad, outside.
         let near = [0.3f64.cos(), 0.3f64.sin(), 0.0];
-        assert!((lane.along(near, r) - 0.3 * r).abs() < 1.0);
+        let (_, along, tangent) = lane.locate(near, r);
+        assert!((along - 0.3 * r).abs() < 1.0);
+        assert!(dot(tangent, [-(0.3f64.sin()), 0.3f64.cos(), 0.0]) > 0.999);
         assert!(lane.inside(near, r));
         let far = [0.5f64.cos(), -(0.5f64.sin()), 0.0];
         assert!(!lane.inside(far, r));

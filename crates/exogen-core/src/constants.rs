@@ -1095,12 +1095,20 @@ pub const GROOVE_NEIGHBOUR_OFFSET: (f64, f64) = (1.0, 3.0);
 pub const GROOVE_MAX_LANES: u64 = 1500;
 pub const GROOVE_SMOOTH_LANE_SHARE: f64 = 0.2;
 pub const GROOVE_SMOOTH_LENGTH: f64 = 100e3;
+/// The lanes' drop spreads over the lithosphere's flexural parameter at their time, so a
+/// lane narrower than it sinks little and none ends on a step.
 pub const GROOVE_LANE_DROP: f64 = 200.0;
 pub const GROOVE_AMPLITUDE: f64 = 250.0;
 pub const GROOVE_SPACING: f64 = 7e3;
 pub const GROOVE_MIN_CELLS: f64 = 3.0;
 pub const GROOVE_SET_LENGTH: f64 = 300e3;
 pub const GROOVE_SET_TURN: f64 = 0.4;
+/// A lane's centre line is traced along the tidal field where the shell cracks and along
+/// a great circle where nothing steers it, in points this share of the radius apart (or
+/// the half width, if less); its width closes in a lens at the ends, (4 s (1 - s)) to
+/// this power along its length.
+pub const GROOVE_LANE_POINT_SPACING_RAD: f64 = 0.02;
+pub const GROOVE_LANE_TAPER_POWER: f64 = 0.35;
 /// The lanes' amount (F44): the share renewed is the peak tidal flux of the body's
 /// history above this floor, W/m², over this flux, W/m²: a fit, so that the resonance
 /// pulse that renews two thirds of Ganymede, 8 mW/m² at an eccentricity of 0.008 (the

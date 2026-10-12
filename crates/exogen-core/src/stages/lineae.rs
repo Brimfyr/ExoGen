@@ -304,6 +304,20 @@ impl Cracks {
         out
     }
 
+    /// A centre line for a lane of grooved terrain, traced along the field from a start
+    /// in both directions as a ridge is, with its wander and without the polar rules.
+    pub fn trace(
+        &self,
+        axis: [f64; 3],
+        p0: [f64; 3],
+        phase: f64,
+        spacing: f64,
+        length: f64,
+        id: u64,
+    ) -> Vec<[f64; 3]> {
+        self.ridge_trace(axis, p0, phase, spacing, length, id, false)
+    }
+
     /// A crack along the slowly turning field: from the start in both directions,
     /// perpendicular to the most tensile stress at the phase it opened, while the
     /// tension holds, with a little wander. A crack of the thinned polar zone refracts
