@@ -560,9 +560,10 @@ pub const WATER_COLUMN_REF_RH: f64 = 0.7;
 pub const WATER_L_OVER_RV: f64 = 5_420.0;
 pub const WATER_COLUMN_MAX: f64 = 1.0e4;
 /// Bond albedo guesses by class before the climate stage exists. Provisional, Phase 5.
-pub const ALBEDO_AIRLESS_ROCK: f64 = 0.10;
-pub const ALBEDO_AIRLESS_ROCK_ICE: f64 = 0.45;
-pub const ALBEDO_AIRLESS_ICE: f64 = 0.70;
+/// Below this pressure, Pa, a body is airless for its albedo: the surface's own
+/// reflectance stands for the Bond albedo (F52). Above it dust, haze and clouds take
+/// part, and until the climate stage computes them the pressure classes below stand in.
+pub const AIRLESS_PRESSURE: f64 = 10.0;
 pub const ALBEDO_THIN_ATMOSPHERE: f64 = 0.25;
 pub const ALBEDO_EARTHLIKE: f64 = 0.30;
 pub const ALBEDO_THICK_ATMOSPHERE: f64 = 0.75;

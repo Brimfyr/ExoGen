@@ -218,10 +218,12 @@ fn derive(
                     }
                 }
                 Kind::Derived => {
-                    if g.is_pinned(def.id) {
-                        "pinned"
-                    } else {
+                    if !g.is_pinned(def.id) {
                         "derived"
+                    } else if def.input {
+                        "set"
+                    } else {
+                        "pinned"
                     }
                 }
                 Kind::Multiplier => "multiplier",

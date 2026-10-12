@@ -237,6 +237,73 @@ pub fn reference_checks() -> Vec<Check> {
             5.0,
             "the cratered plains are ancient; the south polar terrain renews itself on its own",
         ),
+        // The surface's own reflectance as the Bond albedo (F52), against the measured
+        // Bond albedos, within about a third.
+        range(
+            "Moon",
+            "atmosphere.bond_albedo",
+            0.08,
+            0.16,
+            "0.11 measured; highlands at maturity",
+        ),
+        range(
+            "Mercury",
+            "atmosphere.bond_albedo",
+            0.06,
+            0.12,
+            "0.088 measured",
+        ),
+        range(
+            "Ceres",
+            "atmosphere.bond_albedo",
+            0.06,
+            0.12,
+            "0.09 measured",
+        ),
+        range(
+            "Io",
+            "atmosphere.bond_albedo",
+            0.30,
+            0.65,
+            "0.52 measured; sulfur-coated plains",
+        ),
+        range(
+            "Europa",
+            "atmosphere.bond_albedo",
+            0.50,
+            0.80,
+            "0.67 measured",
+        ),
+        range(
+            "Ganymede",
+            "atmosphere.bond_albedo",
+            0.30,
+            0.55,
+            "0.43 measured; the dark regolith alone, the bright lanes not counted",
+        ),
+        range(
+            "Callisto",
+            "atmosphere.bond_albedo",
+            0.10,
+            0.30,
+            "0.22 measured; the dark lag alone, the bright craters not counted",
+        ),
+        range(
+            "Enceladus",
+            "atmosphere.bond_albedo",
+            0.65,
+            0.90,
+            "0.81 measured; the plume's frost over the whole body",
+        ),
+        range(
+            "Triton",
+            "atmosphere.bond_albedo",
+            0.55,
+            0.85,
+            "0.76 measured",
+        ),
+        // Pluto is left out: its nitrogen and methane ices are not among the materials
+        // yet, so its dirty water ice gives 0.25 against the measured 0.5.
         // Mars
         range("Mars", "body.gravity", 3.64, 3.78, "3.71 m/s²"),
         range(

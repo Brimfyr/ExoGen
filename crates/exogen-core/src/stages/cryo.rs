@@ -36,6 +36,24 @@ pub struct Fallout {
     angle: f64,
 }
 
+/// The share of the body a plume's fallout keeps under frost (F47, F52): the frost cover
+/// at each distance from the pole, integrated over the sphere.
+pub fn mean_frost_share(rate_pole: f64) -> f64 {
+    if rate_pole <= 0.0 {
+        return 0.0;
+    }
+    let angle = PLUME_FALLOUT_ANGLE_DEG.to_radians();
+    let n = 360;
+    let mut sum = 0.0;
+    for k in 0..n {
+        let theta = (k as f64 + 0.5) / n as f64 * std::f64::consts::PI;
+        let rate =
+            rate_pole * (PLUME_FALLOUT_FAR + (1.0 - PLUME_FALLOUT_FAR) * (-theta / angle).exp());
+        sum += (rate / PLUME_FROST_RATE).min(1.0) * theta.sin();
+    }
+    0.5 * sum * std::f64::consts::PI / n as f64
+}
+
 impl Fallout {
     pub fn new(graph: &ParamGraph) -> Option<Self> {
         let rate = graph.f64("volcanism.plume_fallout_rate");

@@ -544,10 +544,12 @@ pub fn export(
                 }
             }
             Kind::Derived => {
-                if graph.is_pinned(def.id) {
-                    "pinned"
-                } else {
+                if !graph.is_pinned(def.id) {
                     "derived"
+                } else if def.input {
+                    "set"
+                } else {
+                    "pinned"
                 }
             }
             Kind::Multiplier => "multiplier",

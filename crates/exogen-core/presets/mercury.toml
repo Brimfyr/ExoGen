@@ -12,6 +12,5 @@ description = "Reference body. Airless, iron-rich. The 3:2 spin-orbit resonance 
 "rotation.mode" = "free"
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
-"atmosphere.bond_albedo" = 0.088
 "volatiles.inventory" = {}
 "seed.master" = 14.0

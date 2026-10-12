@@ -13,6 +13,5 @@ description = "Reference body. G2V star at 1 AU, 1.013 bar N2/O2, 2.7 km global 
 "rotation.obliquity" = 23.44
 "atmosphere.surface_pressure" = 101325.0
 "atmosphere.composition" = { N2 = 0.7808, O2 = 0.2095, Ar = 0.0093, CO2 = 0.00042, H2O = 0.004 }
-"atmosphere.bond_albedo" = 0.30
 "volatiles.inventory" = { H2O = 2700.0 }
 "seed.master" = 11.0

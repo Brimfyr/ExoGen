@@ -268,6 +268,17 @@ fn mixed_cover(
         .collect()
 }
 
+/// The luminance of a regolith mixture when fresh and when mature, for the body's own
+/// albedo (F52).
+pub fn mixture_luminance(map: &BTreeMap<String, f64>) -> (f64, f64) {
+    let mix = resolve_mix(map);
+    let lum = |c: [f32; 3]| (c[0] + c[1] + c[2]) as f64 / 3.0;
+    (
+        lum(mixture_colour(&mix, 0.0)),
+        lum(mixture_colour(&mix, 1.0)),
+    )
+}
+
 /// The reflectance a surface has when fresh and when mature, as the lag law needs them:
 /// the body's regolith and, for ice renewed from below, clean ice.
 pub struct SurfaceAlbedos {

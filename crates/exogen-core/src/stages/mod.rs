@@ -2493,7 +2493,8 @@ mod tests {
         );
     }
 
-    /// Ganymede's ice relaxes its large craters into palimpsests and keeps its small ones.
+    /// Ganymede's ice relaxes its large craters into palimpsests and keeps its small ones
+    /// shallow but present, as the dark terrain's craters are.
     #[test]
     fn ganymede_relaxes_its_large_craters_first() {
         let mut r = Runner::new();
@@ -2541,7 +2542,9 @@ mod tests {
                 (l + c.from_loop as usize, a + 1)
             });
         eprintln!("ganymede relaxation: {n_loop} of {n_all} small craters came from the loop");
-        assert!(small > 0.02, "small craters keep their depth: {small}");
+        // The dark terrain's 60 to 70 km craters are about a kilometre deep on the real
+        // body (Schenk 2002), a depth ratio near 0.012: relaxed, not flattened.
+        assert!(small > 0.008, "small craters keep their depth: {small}");
         assert!(large < 0.25 * small, "large {large} vs small {small}");
     }
 

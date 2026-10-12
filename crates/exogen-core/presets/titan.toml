@@ -14,6 +14,5 @@ description = "Reference body. 1.47 bar N2 with 5% methane; methane and ethane s
 "body.density" = 1880.0
 "atmosphere.surface_pressure" = 146700.0
 "atmosphere.composition" = { N2 = 0.95, CH4 = 0.049, H2 = 0.001 }
-"atmosphere.bond_albedo" = 0.22
 "volatiles.inventory" = { H2O = 966000.0, CH4 = 5.0, C2H6 = 2.0 }
 "seed.master" = 18.0

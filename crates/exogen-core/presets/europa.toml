@@ -14,5 +14,4 @@ description = "Reference body. Thin ice shell over a water ocean, cracked along 
 "body.density" = 3013.0
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
-"atmosphere.bond_albedo" = 0.67
 "seed.master" = 17.0

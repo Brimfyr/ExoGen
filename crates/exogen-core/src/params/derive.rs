@@ -1228,23 +1228,27 @@ pub fn atmosphere_column_mass(c: &Ctx) -> Value {
     (c.f64("atmosphere.surface_pressure") / c.f64("body.gravity")).into()
 }
 
+/// F52: an airless body's Bond albedo is its surface's own reflectance, the regolith
+/// mixture at maturity and fresh over the share a plume's fallout keeps under frost;
+/// both read from the previous pass of the graph, since the surface depends on the
+/// temperature the albedo sets. Under an atmosphere the clouds and haze set it, which
+/// the climate stage will compute (Phase 5); until then a guess by pressure class.
 pub fn atmosphere_bond_albedo(c: &Ctx) -> Value {
     let p = c.f64("atmosphere.surface_pressure");
-    let class = c.str("body.composition_class");
-    let a = if p < 10.0 {
-        match class {
-            "rock_ice" => ALBEDO_AIRLESS_ROCK_ICE,
-            "ice_dominated" => ALBEDO_AIRLESS_ICE,
-            _ => ALBEDO_AIRLESS_ROCK,
+    if p >= AIRLESS_PRESSURE {
+        return if p < THIN_ATMOSPHERE_PRESSURE {
+            ALBEDO_THIN_ATMOSPHERE
+        } else if p < THICK_ATMOSPHERE_PRESSURE {
+            ALBEDO_EARTHLIKE
+        } else {
+            ALBEDO_THICK_ATMOSPHERE
         }
-    } else if p < THIN_ATMOSPHERE_PRESSURE {
-        ALBEDO_THIN_ATMOSPHERE
-    } else if p < THICK_ATMOSPHERE_PRESSURE {
-        ALBEDO_EARTHLIKE
-    } else {
-        ALBEDO_THICK_ATMOSPHERE
-    };
-    a.into()
+        .into();
+    }
+    let (fresh, mature) =
+        crate::stages::materials::mixture_luminance(c.map("materials.regolith_mix"));
+    let frosted = crate::stages::cryo::mean_frost_share(c.f64("volcanism.plume_fallout_rate"));
+    (mature + (fresh - mature) * frosted).into()
 }
 
 pub fn atmosphere_equilibrium_temperature(c: &Ctx) -> Value {

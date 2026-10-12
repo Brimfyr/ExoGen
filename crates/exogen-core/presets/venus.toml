@@ -12,6 +12,5 @@ description = "Reference body. 92 bar CO2. Retrograde slow rotation is expressed
 "rotation.mode" = "free"
 "atmosphere.surface_pressure" = 9.2e6
 "atmosphere.composition" = { CO2 = 0.965, N2 = 0.035, SO2 = 0.00015 }
-"atmosphere.bond_albedo" = 0.76
 "volatiles.inventory" = {}
 "seed.master" = 15.0

@@ -35,9 +35,11 @@ const fn root(
         ty,
         default,
         deps: &[],
+        lagged: &[],
         derive: None,
         doc,
         source: "",
+        input: false,
     }
 }
 
@@ -65,9 +67,80 @@ const fn derived(
         ty,
         default: Default::None,
         deps,
+        lagged: &[],
         derive: Some(derive),
         doc,
         source,
+        input: false,
+    }
+}
+
+/// A derived node whose default a preset is expected to set: an input in spirit (what the
+/// body is made of, its volatile inventory, its rotation state), never an outcome.
+#[allow(clippy::too_many_arguments)]
+const fn input(
+    id: &'static str,
+    group: &'static str,
+    label: &'static str,
+    unit: &'static str,
+    scale: f64,
+    ty: ValueType,
+    deps: &'static [&'static str],
+    derive: fn(&Ctx) -> Value,
+    doc: &'static str,
+    source: &'static str,
+) -> NodeDef {
+    NodeDef {
+        id,
+        group,
+        label,
+        unit,
+        scale,
+        kind: Kind::Derived,
+        visibility: Visibility::Normal,
+        ty,
+        default: Default::None,
+        deps,
+        lagged: &[],
+        derive: Some(derive),
+        doc,
+        source,
+        input: true,
+    }
+}
+
+/// A derived node on the near side of a feedback: `lagged` names the upstream nodes it
+/// reads from the previous recompute pass.
+#[allow(clippy::too_many_arguments)]
+const fn derived_lagged(
+    id: &'static str,
+    group: &'static str,
+    label: &'static str,
+    unit: &'static str,
+    scale: f64,
+    ty: ValueType,
+    deps: &'static [&'static str],
+    lagged: &'static [&'static str],
+    derive: fn(&Ctx) -> Value,
+    doc: &'static str,
+    source: &'static str,
+) -> NodeDef {
+    NodeDef {
+        id,
+        group,
+        label,
+        unit,
+        scale,
+        kind: Kind::Derived,
+        visibility: Visibility::Normal,
+        ty,
+        default: Default::None,
+        deps,
+        lagged,
+        derive: Some(derive),
+        doc,
+        source,
+        input: false,
     }
 }
 
@@ -95,9 +168,11 @@ const fn expert(
         ty,
         default: Default::None,
         deps,
+        lagged: &[],
         derive: Some(derive),
         doc,
         source,
+        input: false,
     }
 }
 
@@ -121,9 +196,11 @@ const fn expert_root(
         ty,
         default,
         deps: &[],
+        lagged: &[],
         derive: None,
         doc,
         source: "",
+        input: false,
     }
 }
 
@@ -139,9 +216,11 @@ const fn multiplier(id: &'static str, label: &'static str, doc: &'static str) ->
         ty: f(0.0, 10.0),
         default: Default::F64(1.0),
         deps: &[],
+        lagged: &[],
         derive: None,
         doc,
         source: "",
+        input: false,
     }
 }
 
@@ -165,9 +244,11 @@ const fn stage_output(
         ty,
         default: Default::None,
         deps: &[],
+        lagged: &[],
         derive: None,
         doc,
         source: "",
+        input: false,
     }
 }
 
@@ -774,7 +855,7 @@ static NODES: &[NodeDef] = &[
         "Time to despin to synchronous rotation from the set period.",
         "Gladman et al. 1996 (F10)",
     ),
-    derived(
+    input(
         "rotation.mode",
         "rotation",
         "Rotation state",
@@ -1242,17 +1323,18 @@ static NODES: &[NodeDef] = &[
         "Pressure over gravity.",
         "",
     ),
-    derived(
+    derived_lagged(
         "atmosphere.bond_albedo",
         "atmosphere",
         "Bond albedo",
         "",
         1.0,
         f(0.0, 1.0),
-        &["body.composition_class", "atmosphere.surface_pressure"],
+        &["atmosphere.surface_pressure"],
+        &["materials.regolith_mix", "volcanism.plume_fallout_rate"],
         d::atmosphere_bond_albedo,
-        "Guess by composition class and pressure until the climate stage computes it. Pin it to match a known body.",
-        "provisional, Phase 5",
+        "Airless (under 10 Pa), the surface's own reflectance (F52): the regolith mixture at maturity, fresh over the share of the body a plume's fallout keeps under frost, read from the previous pass of the graph because the surface depends on the temperature it sets. Under an atmosphere a guess by pressure class until the climate stage computes the clouds and haze (Phase 5).",
+        "F52; provisional under an atmosphere, Phase 5",
     ),
     derived(
         "atmosphere.equilibrium_temperature",
@@ -1417,7 +1499,7 @@ static NODES: &[NodeDef] = &[
         "",
     ),
     // ------------------------------------------------------------------ volatiles
-    derived(
+    input(
         "volatiles.inventory",
         "volatiles",
         "Surface volatile inventory",
@@ -2360,7 +2442,7 @@ static NODES: &[NodeDef] = &[
         "Larger of the atmospheric cut-off and two finishing cells.",
         "",
     ),
-    derived(
+    input(
         "materials.salt",
         "materials",
         "Ocean salt end-member",
@@ -2591,7 +2673,7 @@ static NODES: &[NodeDef] = &[
         "provisional, Phase 2",
     ),
     // ------------------------------------------------------------------ materials
-    derived(
+    input(
         "materials.bedrock",
         "materials",
         "Bedrock",
@@ -2605,10 +2687,10 @@ static NODES: &[NodeDef] = &[
             "interior.tidal_flux",
         ],
         d::materials_bedrock,
-        "Default from composition class, regime, atmosphere and tidal state. Pin to choose.",
+        "What the crust is made of: a default from composition class, regime, atmosphere and tidal state, an input to set rather than an outcome.",
         "",
     ),
-    derived(
+    input(
         "materials.regolith_mix",
         "materials",
         "Regolith mix",
@@ -2617,10 +2699,10 @@ static NODES: &[NodeDef] = &[
         ValueType::Map(END_MEMBER_IDS),
         &["materials.bedrock"],
         d::materials_regolith_mix,
-        "Baseline surface mixture of end-members before deposits. Pin to compose the surface by hand.",
+        "Baseline surface mixture of end-members before deposits, an input: set it to compose the surface.",
         "",
     ),
-    derived(
+    input(
         "materials.lava",
         "materials",
         "Lava",
@@ -2637,7 +2719,7 @@ static NODES: &[NodeDef] = &[
         "What floods and flows leave at the surface: mare basalt on an airless rocky stagnant lid, the brighter smooth plains of an iron-rich body, basalt otherwise, dirty ice for cryolava. Pin to choose.",
         "provisional, Phase 3",
     ),
-    derived(
+    input(
         "materials.deep_bedrock",
         "materials",
         "Deep bedrock",
@@ -2706,7 +2788,12 @@ mod tests {
                     v
                 );
             }
-            let declared: BTreeSet<String> = def.deps.iter().map(|s| s.to_string()).collect();
+            let declared: BTreeSet<String> = def
+                .deps
+                .iter()
+                .chain(def.lagged.iter())
+                .map(|s| s.to_string())
+                .collect();
             let read = accessed.into_inner();
             let undeclared: Vec<&String> = read.iter().filter(|r| !declared.contains(*r)).collect();
             assert!(
@@ -2716,6 +2803,47 @@ mod tests {
                 undeclared
             );
         }
+    }
+
+    /// The emergent pillar: a preset gives inputs and pins no outcome. Every derived node
+    /// a preset sets must be one declared as an input (what the body is made of, its
+    /// volatile inventory, its rotation state).
+    #[test]
+    fn presets_set_only_inputs() {
+        for name in crate::presets::PRESET_NAMES {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let pinned: Vec<&str> = g
+                .defs()
+                .iter()
+                .filter(|d| g.is_pinned(d.id) && !d.input)
+                .map(|d| d.id)
+                .collect();
+            assert!(pinned.is_empty(), "{name} pins {pinned:?}");
+        }
+    }
+
+    /// The Bond albedo is the surface's own: Enceladus's plume frost, the Moon's
+    /// highlands; and the feedback through the temperature settles.
+    #[test]
+    fn bond_albedo_comes_from_the_surface() {
+        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let a = g.f64("atmosphere.bond_albedo");
+        assert!((0.75..=0.9).contains(&a), "Enceladus {a}");
+        let (g, _) = crate::presets::preset("Moon").unwrap().to_graph();
+        let a = g.f64("atmosphere.bond_albedo");
+        assert!((0.1..=0.16).contains(&a), "Moon {a}");
+        let (mut g, _) = crate::presets::preset("Callisto").unwrap().to_graph();
+        let before = g.f64("atmosphere.bond_albedo");
+        g.set(
+            "materials.regolith_mix",
+            Value::Map([("water_ice".to_string(), 1.0)].into_iter().collect()),
+        )
+        .unwrap();
+        let after = g.f64("atmosphere.bond_albedo");
+        assert!(
+            after > before + 0.3,
+            "clean ice {after} against lag {before}"
+        );
     }
 
     #[test]

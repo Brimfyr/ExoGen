@@ -11,7 +11,10 @@
 //!
 //! Recomputation is a full pass over the topological order. With a few hundred nodes this
 //! costs microseconds, which keeps the logic simple and makes every value consistent after
-//! every change.
+//! every change. A node may also declare lagged dependencies: the far side of a feedback
+//! (the surface's reflectance sets the temperature that sets the surface), read from the
+//! previous pass and left out of the order so the graph stays acyclic; recomputation
+//! repeats its pass until nothing changes, a few passes at most.
 
 pub mod derive;
 pub mod registry;
@@ -153,9 +156,16 @@ pub struct NodeDef {
     pub ty: ValueType,
     pub default: Default,
     pub deps: &'static [&'static str],
+    /// Upstream nodes read from the previous recompute pass: the far side of a feedback,
+    /// left out of the order so the graph stays acyclic and settled by repeated passes.
+    pub lagged: &'static [&'static str],
     pub derive: Option<fn(&Ctx) -> Value>,
     pub doc: &'static str,
     pub source: &'static str,
+    /// A derived node whose value is an input in spirit, a default the preset is expected
+    /// to set, such as what the body is made of: setting it is giving an input, not
+    /// pinning an outcome.
+    pub input: bool,
 }
 
 impl NodeDef {
@@ -183,6 +193,17 @@ pub enum SetError {
     ReadOnly(String),
     #[error("value has the wrong type for parameter {0}")]
     WrongType(String),
+}
+
+/// Passes a recompute makes at most while lagged feedbacks settle.
+const RECOMPUTE_PASSES: usize = 4;
+
+/// Equality that lets a NaN settle (a NaN is never equal to itself).
+fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::F64(x), Value::F64(y)) => x == y || (x.is_nan() && y.is_nan()),
+        _ => a == b,
+    }
 }
 
 /// The live graph: definitions, values and lock states.
@@ -355,8 +376,20 @@ impl ParamGraph {
         self.recompute();
     }
 
-    /// Recompute every unpinned derived node in topological order.
+    /// Recompute every unpinned derived node in topological order, and again while any
+    /// value changed, up to a few passes, so that the feedbacks the lagged dependencies
+    /// express settle. Without lagged edges the second pass changes nothing.
     pub fn recompute(&mut self) {
+        for _ in 0..RECOMPUTE_PASSES {
+            if !self.recompute_pass() {
+                break;
+            }
+        }
+    }
+
+    /// One pass over the order; whether any derived value changed.
+    fn recompute_pass(&mut self) -> bool {
+        let mut changed = false;
         for k in 0..self.order.len() {
             let i = self.order[k];
             let d = &self.defs[i];
@@ -370,8 +403,12 @@ impl ParamGraph {
             };
             let v = d.ty.normalise(v);
             debug_assert!(d.ty.accepts(&v), "derivation of {} produced {:?}", d.id, v);
-            self.values[i] = v;
+            if !same_value(&self.values[i], &v) {
+                self.values[i] = v;
+                changed = true;
+            }
         }
+        changed
     }
 
     /// Everything a project file needs to recreate this graph: modified roots and

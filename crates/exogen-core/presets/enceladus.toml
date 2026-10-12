@@ -14,5 +14,4 @@ description = "Reference body. Small ice moon; ancient cratered plains and a ren
 "body.density" = 1609.0
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
-"atmosphere.bond_albedo" = 0.81
 "seed.master" = 19.0
