@@ -19,6 +19,7 @@ use crate::constants::*;
 use crate::fields::{Field, LayerSet};
 use crate::geom::dot;
 use crate::grid::CubeSphere;
+use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::units::{
     UNIT_BAND, UNIT_CHAOS, UNIT_CONTINENTAL, UNIT_CRATER_FLOOR, UNIT_CRYODOME, UNIT_DEEP_FLOOR,
@@ -198,16 +199,13 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
-/// The factor on a flow unit's reflectance from its eruption's composition (F55): a
-/// share of the composition range, drawn from the event's time, the same for every cell
-/// the event laid.
-fn lava_tint(time_gyr: f32) -> f32 {
-    let mut h = time_gyr.to_bits() as u64 ^ 0x1A7A_71A7;
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    h ^= h >> 33;
-    let u = (h & 0xff_ffff) as f32 / 0xff_ffff as f32;
-    (1.0 + LAVA_COMPOSITION_RANGE as f32 * (2.0 * u - 1.0)).max(0.1)
+/// The factor on a flow unit's reflectance from its eruption's composition (F55): the
+/// body's lavas drift over the eruptive history, so units close in time are alike and
+/// units an age apart differ, by up to the composition range.
+fn lava_tint(noise: &GradientNoise, time_gyr: f32) -> f32 {
+    let t = time_gyr as f64 / LAVA_COMPOSITION_PERIOD_GYR;
+    let drift = noise.fbm([t, 0.3, 0.7], 1.0, 2, 2.0, 0.5) / 0.6;
+    (1.0 + LAVA_COMPOSITION_RANGE * drift.clamp(-1.0, 1.0)).max(0.1) as f32
 }
 
 /// Colour of a mixture at a given maturity.
@@ -418,6 +416,7 @@ pub fn albedo(
         }
     };
     let ages_f = layers.surface_age.as_slice();
+    let tint_noise = GradientNoise::new(0x1A7A_71A7);
     let mixed = if gardened {
         mixed_cover(
             grid,
@@ -523,7 +522,7 @@ pub fn albedo(
                 {
                     // Each eruption's lava differs in composition (F55): the flow unit's
                     // reflectance departs from the mean by a share drawn from its time.
-                    let t = lava_tint(ages_f[k]);
+                    let t = lava_tint(&tint_noise, ages_f[k]);
                     let tinted = |v: [f32; 3]| [v[0] * t, v[1] * t, v[2] * t];
                     (
                         lerp3(fresh, tinted(lava.fresh), c),

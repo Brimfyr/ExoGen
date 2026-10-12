@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 33;
+pub const FINISH_VERSION: u64 = 34;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1649,13 +1649,17 @@ pub fn finish(
     // bright walls and scarps of every airless body, from the ground's own slopes.
     let maturity = {
         let steep = ice::slope_magnitude(&height, body_radius);
-        let repose = REPOSE_SLOPE_DEG.to_radians();
+        let (start, repose) = (
+            SLOPE_SHED_START_DEG.to_radians(),
+            REPOSE_SLOPE_DEG.to_radians(),
+        );
         let mut m = maturity;
         m.as_mut_slice()
             .par_iter_mut()
             .zip(steep.as_slice())
             .for_each(|(v, &s)| {
-                *v *= 1.0 - (SLOPE_FRESHNESS * (s as f64 / repose).clamp(0.0, 1.0)) as f32;
+                let shed = ((s as f64 - start) / (repose - start)).clamp(0.0, 1.0);
+                *v *= 1.0 - (SLOPE_FRESHNESS * shed) as f32;
             });
         m
     };

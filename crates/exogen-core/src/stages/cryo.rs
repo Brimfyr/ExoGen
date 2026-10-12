@@ -49,7 +49,7 @@ pub fn mean_frost_share(rate_pole: f64) -> f64 {
         let theta = (k as f64 + 0.5) / n as f64 * std::f64::consts::PI;
         let rate =
             rate_pole * (PLUME_FALLOUT_FAR + (1.0 - PLUME_FALLOUT_FAR) * (-theta / angle).exp());
-        sum += (rate / PLUME_FROST_RATE).min(1.0) * theta.sin();
+        sum += (1.0 - (-rate / PLUME_FROST_RATE).exp()) * theta.sin();
     }
     0.5 * sum * std::f64::consts::PI / n as f64
 }
@@ -81,7 +81,9 @@ impl Fallout {
 
     /// The frost cover the fallout keeps at a direction, 0 to 1.
     pub fn frost_at(&self, d: [f64; 3]) -> f64 {
-        (self.rate_at(d) / PLUME_FROST_RATE).min(1.0)
+        // A soft saturation: the fallout wins against the lag and the gardening by
+        // degrees, so the far side keeps some of its own contrast under a thinner frost.
+        1.0 - (-self.rate_at(d) / PLUME_FROST_RATE).exp()
     }
 
     /// How much a fissure at a direction is one of the plume's warm vents, 0 to 1.
@@ -446,6 +448,10 @@ mod tests {
         let equator = f.rate_at([1.0, 0.0, 0.0]);
         assert!(equator > 1e3 && equator < 1e4, "{equator}");
         assert!(f.burial_gyr([1.0, 0.0, 0.0]) < 1e-5);
-        assert!(f.frost_at([1.0, 0.0, 0.0]) >= 1.0);
+        // The frost saturates softly: nearly full at the equator, part of the way on
+        // the far side, where the floor of the fallout is the frost threshold.
+        assert!(f.frost_at([1.0, 0.0, 0.0]) > 0.9);
+        let far = f.frost_at([0.0, 0.0, 1.0]);
+        assert!(far > 0.5 && far < 0.75, "{far}");
     }
 }

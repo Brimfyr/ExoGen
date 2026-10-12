@@ -463,8 +463,8 @@ pub const IO_QUIET_FLOW_FRACTION: f64 = 0.15;
 pub const IO_FLOW_REACH: (f64, f64) = (40e3, 300e3);
 pub const IO_FLOW_VENT: f64 = 0.15;
 pub const IO_FLOW_BODY: f64 = 0.25;
-pub const IO_FLOW_LOBES: (u32, u32) = (4, 10);
-pub const IO_FLOW_SPREAD: (f64, f64) = (0.4, 1.0);
+pub const IO_FLOW_LOBES: (u32, u32) = (6, 14);
+pub const IO_FLOW_SPREAD: (f64, f64) = (0.12, 0.45);
 pub const IO_FLOW_LOBING: f64 = 0.3;
 pub const IO_FLOW_EDGE: f64 = 0.08;
 pub const IO_FLOW_THICKNESS: f64 = 20.0;
@@ -476,8 +476,8 @@ pub const IO_FLOW_DARK_YR: f64 = 150.0;
 /// of flow fields and of plumes, the older ones faded by their age; and a flow's surface
 /// varies by this share over this length, m, the overlapping flow units within a lobe.
 pub const IO_FLOW_COAT_YR: f64 = 2.0e4;
-pub const IO_FLOW_GENERATIONS: u32 = 2;
-pub const IO_PLUME_GENERATIONS: u32 = 2;
+pub const IO_FLOW_GENERATIONS: u32 = 3;
+pub const IO_PLUME_GENERATIONS: u32 = 3;
 pub const IO_FLOW_TEXTURE: f64 = 0.4;
 pub const IO_FLOW_TEXTURE_LENGTH: f64 = 15e3;
 /// Plumes: the share of centres that are gas-rich, Pele-class, and the share of active
@@ -771,12 +771,16 @@ pub const EMPIRICAL_SATURATION_FRACTION: f64 = 0.05;
 /// relief falls toward finer scales (Rosenburg et al. 2011: 0.76 to 0.96 on the Moon).
 pub const ROUGHNESS_RMS_SHARE: f64 = 0.35;
 pub const ROUGHNESS_HURST: f64 = 0.8;
-/// Variation within units (F55): each eruption's lava differs in composition, so a flow
-/// unit's reflectance departs from the mean by up to this share (the maria's titanium:
-/// albedos 0.06 to 0.11); steep slopes shed their regolith and stay this share fresher
-/// than flat ground at the angle of repose, degrees (the bright crater walls of optical
-/// maturity maps); and a lane of renewed ice is clean by a share drawn in this range.
+/// Variation within units (F55): a body's lavas drift in composition over its eruptive
+/// history, so a flow unit's reflectance departs from the mean by up to this share,
+/// drifting over this period, Gyr (the maria's titanium: albedos 0.06 to 0.11, basins
+/// filled by flows of different ages and tones); slopes shed their regolith from this
+/// steepness, degrees, and stay this share fresher than flat ground at the angle of
+/// repose, degrees (the bright crater walls of optical maturity maps, where gentle old
+/// rims stay mature); and a lane of renewed ice is clean by a share drawn in this range.
 pub const LAVA_COMPOSITION_RANGE: f64 = 0.18;
+pub const LAVA_COMPOSITION_PERIOD_GYR: f64 = 0.3;
+pub const SLOPE_SHED_START_DEG: f64 = 15.0;
 pub const SLOPE_FRESHNESS: f64 = 0.6;
 pub const REPOSE_SLOPE_DEG: f64 = 30.0;
 pub const GROOVE_CLEAN_RANGE: (f64, f64) = (0.55, 1.0);
