@@ -24,6 +24,7 @@ pub mod plume;
 pub mod primordial_crust;
 pub mod relaxation;
 pub mod ridges;
+pub mod roughness;
 pub mod tectonics;
 pub mod tidal;
 pub mod volcanism;
@@ -357,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 30;
+pub const FINISH_VERSION: u64 = 31;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1610,6 +1611,9 @@ pub fn finish(
             present,
         );
     }
+    // The craters the finish does not resolve, as the relief their population leaves on
+    // each surface by its age (F54): rough where old, smooth where renewed.
+    roughness::apply(&mut layers, body_radius, cell, d_min, &inputs, present);
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
     let height = layers.height();
     // On ice, each slope sits at its own mean temperature: frost and lag follow it.

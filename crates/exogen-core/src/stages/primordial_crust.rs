@@ -10,7 +10,7 @@
 
 use rayon::prelude::*;
 
-use crate::constants::{DENSITY_CRUST_ICE, DENSITY_CRUST_ROCK};
+use crate::constants::{DENSITY_CRUST_ICE, DENSITY_CRUST_ROCK, ROUGHNESS_HURST};
 use crate::fields::{Field, LayerSet};
 use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
@@ -129,7 +129,11 @@ impl PrimordialCrust {
             .map(|k| {
                 let d = grid.center(grid.cell(k));
                 let isostatic = (crust[k] as f64 - mean_crust) * self.isostatic_factor;
-                let detail = self.relief * self.noise.fbm(d, 3.0, 6, 2.0, 0.5);
+                // The relief under everything is self-affine, falling toward finer scales
+                // with the Hurst exponent of cratered terrain (F54), so that what floods
+                // and renews it meets rough ground at every scale and embays it.
+                let detail =
+                    self.relief * self.noise.fbm(d, 3.0, 6, 2.0, 2f64.powf(-ROUGHNESS_HURST));
                 (isostatic + detail) as f32
             })
             .collect();

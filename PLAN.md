@@ -87,6 +87,8 @@ Single-file export to 16384 x 8192. Tiled export to 32768 x 16384. Cube-map expo
 8. Validation against real bodies is part of the test suite, not a one-time exercise.
 9. UI copy is technical, unit-labelled and free of adjectives.
 10. The simulated history is an output. Any epoch can be previewed, rendered or exported as a sequence.
+11. Emergent, never pinned. A reference body is matched by its inputs, its physics and documented calibrations; no preset pins a derived node and no formula is shaped to one body's outcome.
+12. Fidelity at every stage. Each process produces an organic, blended result when it runs: no analytic outline, no one-cell contact, no single-scale repetition, variation inside every unit and a named process at every edge. Organic shape comes first from the structured substrate and the process's coupling to it (a flood embays the relief it meets, a renewed zone follows weak ground), then from stochastic variation of the physical fields a process reads (heat flux, strength, thickness, deposit thickness), with a chosen spectrum and amplitude. Noise is never applied to a shape's outline or a colour directly, and no look is left to a later pass.
 
 ---
 
@@ -671,6 +673,18 @@ Gate: Mars preset produces a rise, a canyon system and giant shields consistent 
 - Presets: Europa, Ganymede, Callisto complete, Enceladus, Ceres, Pluto and Triton without a volatile cycle.
 
 Gate: Ganymede preset shows two terrains with a crater density contrast; Europa preset crack orientations follow the tidal stress field; relaxation removes large craters first.
+
+### Phase 4F: fidelity of the base (L)
+
+Added after the Phase 4 reviews (2026-10-12): the physics of Phases 1 to 4 produced diagrams of itself, idealized shapes with one-cell contacts and flat units, and a later texturing pass cannot invent the variation the processes never made. Principle 12 is applied to every existing stage before Phase 5 begins, with Enceladus, the Moon and Io as the test bodies.
+
+- A structured substrate: fractal relief from the unresolved crater population, growing with surface age to saturation with the spectrum the crater scaling gives, under every resolved feature; tectonic fabric; a smooth multi-scale filter in place of the box pyramid (which left block artefacts in renewed floors).
+- Features from fields, not shapes: the focused heating as a heat-flux field with convective structure, renewed terrain as a threshold on strain and strength, lane widths and polar folds from local fields rather than global sinusoids.
+- Contacts as processes: floods fill to a level over the rough substrate and embay it; gardening and ejecta mix materials across contacts; talus and creep soften scarps at the angle of repose; flexure spreads loads; Io's flows and plume deposits spread by rules of thickness and distance rather than stamps.
+- Fabric inside units: stripe ridge sets, ropy terrain between them, hummocky and lobate ejecta, groove sets of varied spacing, each from its process with variation in its inputs.
+- Material variation within units from the mixing fields rather than one colour per unit.
+
+Gate: on crops of the three test bodies, no feature shows an analytic outline, a one-cell contact or a single-scale repetition; the Moon's maria embay the highlands and mix across the contact; Enceladus's polar terrains and sulci read as terrain, not shapes; Io's flows and deposits grade into their surroundings.
 
 ### Phase 5: atmosphere, climate, volatiles and erosion (XL)
 

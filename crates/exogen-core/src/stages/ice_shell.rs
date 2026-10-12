@@ -34,7 +34,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns

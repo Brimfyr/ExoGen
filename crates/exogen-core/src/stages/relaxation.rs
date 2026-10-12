@@ -19,6 +19,7 @@ use crate::constants::*;
 
 use crate::fields::Field;
 use crate::grid::{Cell, CubeSphere};
+use crate::stages::episodic::smooth;
 
 /// Viscosity of ice at a temperature, Pa s: an Arrhenius law about the melting point
 /// (Goldsby and Kohlstedt 2001, with the basal viscosity of a convecting shell).
@@ -117,10 +118,8 @@ pub fn survival_since(
     kept
 }
 
-/// A pyramid of low-passed copies of a field, each level smoothing over twice the
-/// scale of the last, by resampling down and up again.
-/// The field low-passed over a length, m: the area-average pyramid's first level at least
-/// that long, resampled back to the grid.
+/// The field low-passed over a length, m: the Gaussian pyramid's first level at least
+/// that long, expanded back to the grid.
 pub fn low_pass(field: &Field<f32>, cell: f64, length: f64) -> Vec<f32> {
     let grid = field.grid();
     let levels = ((grid.face_size() as f64).log2().floor() as usize)
@@ -136,17 +135,45 @@ pub fn low_pass(field: &Field<f32>, cell: f64, length: f64) -> Vec<f32> {
     }
 }
 
+/// Passes of the smoothing kernel before each halving and after each expansion.
+const PYRAMID_BLUR_PASSES: usize = 2;
+
+/// A Gaussian pyramid of low-passed copies of a field, each level smoothing over twice
+/// the scale of the last: blurred before each halving, so the coarse level holds no
+/// aliased detail, and expanded back level by level with a blur after each step, so that
+/// no block or tent of a coarse grid shows in the result (a box pyramid left the blocks
+/// of the loop's cells in every renewed floor).
 fn pyramid(field: &Field<f32>, levels: usize) -> Vec<Field<f32>> {
-    let grid = field.grid();
-    let mut out = Vec::with_capacity(levels);
+    let mut grids = vec![field.grid()];
+    let mut coarse_levels: Vec<Field<f32>> = Vec::with_capacity(levels);
     let mut current = field.clone();
     for _ in 0..levels {
-        let Some(coarse) = halve(&current) else {
+        let Some(coarse) = halve(&blurred(&current, PYRAMID_BLUR_PASSES)) else {
             break;
         };
-        out.push(coarse.resample(grid));
+        grids.push(coarse.grid());
+        coarse_levels.push(coarse.clone());
         current = coarse;
     }
+    coarse_levels
+        .iter()
+        .enumerate()
+        .map(|(l, c)| {
+            let mut f = c.clone();
+            for g in grids[..=l].iter().rev() {
+                f = blurred(&f.resample(*g), PYRAMID_BLUR_PASSES);
+            }
+            f
+        })
+        .collect()
+}
+
+/// The field smoothed by passes of the 1/8, 1/2, 1/8 kernel on its own grid.
+fn blurred(field: &Field<f32>, passes: usize) -> Field<f32> {
+    let grid = field.grid();
+    let v = smooth(&grid, field.as_slice(), passes);
+    let mut out = Field::new(grid);
+    out.as_mut_slice().copy_from_slice(&v);
     out
 }
 
@@ -195,8 +222,8 @@ pub struct Local<'a> {
     pub renew: Option<(&'a [bool], f64)>,
 }
 
-/// The step. Returns the renewed terrain's surface, the low-pass at its renewal length,
-/// when there is one.
+/// The step. Returns the relaxed surface, which is the renewed terrain's floor where it
+/// is renewed, when there is such a terrain.
 pub fn relax(
     height: &mut Field<f32>,
     body_radius: f64,
@@ -253,12 +280,14 @@ fn relax_deviation(
         return None;
     }
     // A renewed terrain keeps nothing shorter than the first band at least its renewal
-    // length long.
+    // length long, and never the finest band: new ice has no cell-scale relief, whatever
+    // the grid's cell.
     let renew_level = local.renew.map(|(_, length)| {
         wavelengths
             .iter()
             .position(|&w| w >= length)
             .unwrap_or(levels)
+            .max(1)
             .min(levels - 1)
     });
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
@@ -296,17 +325,10 @@ fn relax_deviation(
         v += prev * factors[levels];
         *cell = v;
     }
-    renew_level.map(|_| {
-        local
-            .renew
-            .map(|(mask, _)| {
-                h.iter()
-                    .zip(mask)
-                    .map(|(&v, &m)| if m { v } else { 0.0 })
-                    .collect()
-            })
-            .unwrap_or_default()
-    })
+    // The whole relaxed surface, for the renewed terrain's floor: defined everywhere, so
+    // that a floor laid at a finer resolution, where the terrain reaches past the loop's
+    // cells, has something continuous to lay.
+    renew_level.map(|_| h.to_vec())
 }
 
 #[cfg(test)]

@@ -756,6 +756,11 @@ pub const SOLIDIFICATION_RANGE_GYR: (f64, f64) = (0.02, 1.0);
 /// at which crater populations reach equilibrium (below 5%).
 pub const GEOMETRIC_SATURATION: f64 = 1.54;
 pub const EMPIRICAL_SATURATION_FRACTION: f64 = 0.05;
+/// Sub-grid crater roughness (F54): the rms relief of a saturated field of craters as a
+/// share of one crater's depth, and the Hurst exponent of cratered terrain, by which the
+/// relief falls toward finer scales (Rosenburg et al. 2011: 0.76 to 0.96 on the Moon).
+pub const ROUGHNESS_RMS_SHARE: f64 = 0.35;
+pub const ROUGHNESS_HURST: f64 = 0.8;
 /// Pike 1977 lunar morphometry, (coefficient, exponent) in km: d = a D^b.
 pub const PIKE_SIMPLE_DEPTH: (f64, f64) = (0.196, 1.010);
 pub const PIKE_SIMPLE_RIM: (f64, f64) = (0.036, 1.014);
