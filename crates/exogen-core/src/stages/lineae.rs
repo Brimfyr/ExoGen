@@ -369,114 +369,122 @@ impl Cracks {
                         }
                     }
                 }
-                let Some((p0, mut phase)) = start else {
+                let Some((p0, phase)) = start else {
                     continue;
                 };
                 // The polar terrain renews itself: a crack there is as young as its
                 // surface, and opened in the field of its own time.
-                let mut time = time;
-                let mut axis = axis;
                 let polar = self.shell_map.thin(p0);
-                let mut carry: Option<&crate::stages::ice::FocusEpisode> = None;
+                // The thinned zone has a history (F53): it sits at the pole now and sat
+                // there through each past episode, between which the body reoriented.
+                // Each episode cracked the zone alike, so a crack of the zone is drawn
+                // once for the present episode, as young as the renewed surface, and once
+                // for each past one, at a time within it and carried to where the body
+                // left that terrain.
+                let mut variants: Vec<(f64, Option<&crate::stages::ice::FocusEpisode>)> =
+                    vec![(time, None)];
                 if polar {
-                    // The thinned zone has a history (F53): it sits at the pole now and
-                    // sat there through each past episode, between which the body
-                    // reoriented. A crack of the zone belongs to one episode, each as
-                    // likely as the next: the present one leaves it as young as the
-                    // renewed surface; a past one gives it a time within the episode and
-                    // carries it to where the body left that terrain.
-                    let n = self.episodes.len();
-                    let pick = ((rng.uniform(bin, draw + 63) * (n + 1) as f64) as usize).min(n);
-                    if pick < n {
-                        let e = &self.episodes[pick];
-                        time = e.start + (e.end - e.start) * rng.uniform(bin, draw + 54);
-                        carry = Some(e);
+                    variants[0].0 =
+                        (present - POLAR_RENEWAL_GYR * rng.uniform(bin, draw + 54)).max(0.0);
+                    for e in &self.episodes {
+                        variants.push((
+                            e.start + (e.end - e.start) * rng.uniform(bin, draw + 54),
+                            Some(e),
+                        ));
+                    }
+                }
+                for (vi, &(time, carry)) in variants.iter().enumerate() {
+                    let mut axis = axis;
+                    let mut phase = phase;
+                    if polar {
+                        axis = mean_axis_at(time, present, self.nsr_period_gyr);
+                        phase = self.shell.peak_tension(axis, p0).1;
+                    }
+                    // What kind: the diurnal share of the tension decides between a cycloid
+                    // and a ridge; a share of the ridges pull apart into bands.
+                    let (d1, _, _) = self.shell.diurnal(axis, p0, phase).principal();
+                    let (t1, _, _) = self.shell.total(axis, p0, phase).principal();
+                    let diurnal_share = if t1 > 0.0 {
+                        (d1 / t1).clamp(0.0, 1.0)
                     } else {
-                        time = (present - POLAR_RENEWAL_GYR * rng.uniform(bin, draw + 54)).max(0.0);
+                        0.0
+                    };
+                    let kind = if diurnal_share >= LINEA_DIURNAL_SHARE {
+                        LineaKind::Cycloid
+                    } else if rng.uniform(bin, draw + 50) < BAND_FRACTION {
+                        LineaKind::Band
+                    } else {
+                        LineaKind::Ridge
+                    };
+                    // Under a plume the fissures of the thinned shell are its vents.
+                    let kind = if self.vent && polar {
+                        LineaKind::Vent
+                    } else {
+                        kind
+                    };
+                    let length = l_lo * (l_hi / l_lo).powf(rng.uniform(bin, draw + 51));
+                    let id = (bin << 32) | j | ((vi as u64) << 56);
+                    let (width, relief) = match kind {
+                        LineaKind::Band => {
+                            let (w_lo, w_hi) = (
+                                BAND_WIDTH_RAD.0 * self.body_radius,
+                                BAND_WIDTH_RAD.1 * self.body_radius,
+                            );
+                            (
+                                w_lo * (w_hi / w_lo).powf(rng.uniform(bin, draw + 52)),
+                                BAND_DEPTH * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
+                            )
+                        }
+                        LineaKind::Vent => (
+                            VENT_WIDTH,
+                            VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, draw + 53)),
+                        ),
+                        _ => (
+                            LINEA_WIDTH,
+                            LINEA_RIDGE_HEIGHT * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
+                        ),
+                    };
+                    let rules = TraceRules {
+                        polar,
+                        // A carried crack traces in the pole's frame, where the present
+                        // cracks are not its neighbours.
+                        index: if carry.is_some() { None } else { Some(&index) },
+                        exclude: branch.map(|b| b.0),
+                        one_way: branch.map(|b| b.2),
+                        junction: (0.5 * width).max(cell),
+                    };
+                    let points = match kind {
+                        LineaKind::Cycloid => {
+                            self.cycloid(axis, p0, phase, spacing, length, &rules)
+                        }
+                        _ => self.ridge_trace(axis, p0, phase, spacing, length, id, &rules),
+                    };
+                    if points.len() < 3 {
+                        continue;
                     }
-                    axis = mean_axis_at(time, present, self.nsr_period_gyr);
-                    phase = self.shell.peak_tension(axis, p0).1;
+                    // A past episode's crack is carried to where the body left its terrain,
+                    // and is long healed.
+                    let points: Vec<[f64; 3]> = match carry {
+                        Some(e) => points.iter().map(|p| e.carry(*p)).collect(),
+                        None => points,
+                    };
+                    index.insert(
+                        out.len(),
+                        &points,
+                        kind == LineaKind::Vent && carry.is_none(),
+                    );
+                    out.push(Linea {
+                        length: (points.len() - 1) as f64 * spacing,
+                        points,
+                        spacing,
+                        width,
+                        relief,
+                        kind,
+                        phase,
+                        time_gyr: time,
+                        id,
+                    });
                 }
-                // What kind: the diurnal share of the tension decides between a cycloid
-                // and a ridge; a share of the ridges pull apart into bands.
-                let (d1, _, _) = self.shell.diurnal(axis, p0, phase).principal();
-                let (t1, _, _) = self.shell.total(axis, p0, phase).principal();
-                let diurnal_share = if t1 > 0.0 {
-                    (d1 / t1).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                let kind = if diurnal_share >= LINEA_DIURNAL_SHARE {
-                    LineaKind::Cycloid
-                } else if rng.uniform(bin, draw + 50) < BAND_FRACTION {
-                    LineaKind::Band
-                } else {
-                    LineaKind::Ridge
-                };
-                // Under a plume the fissures of the thinned shell are its vents.
-                let kind = if self.vent && polar {
-                    LineaKind::Vent
-                } else {
-                    kind
-                };
-                let length = l_lo * (l_hi / l_lo).powf(rng.uniform(bin, draw + 51));
-                let id = (bin << 32) | j;
-                let (width, relief) = match kind {
-                    LineaKind::Band => {
-                        let (w_lo, w_hi) = (
-                            BAND_WIDTH_RAD.0 * self.body_radius,
-                            BAND_WIDTH_RAD.1 * self.body_radius,
-                        );
-                        (
-                            w_lo * (w_hi / w_lo).powf(rng.uniform(bin, draw + 52)),
-                            BAND_DEPTH * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
-                        )
-                    }
-                    LineaKind::Vent => (
-                        VENT_WIDTH,
-                        VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, draw + 53)),
-                    ),
-                    _ => (
-                        LINEA_WIDTH,
-                        LINEA_RIDGE_HEIGHT * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
-                    ),
-                };
-                let rules = TraceRules {
-                    polar,
-                    index: Some(&index),
-                    exclude: branch.map(|b| b.0),
-                    one_way: branch.map(|b| b.2),
-                    junction: (0.5 * width).max(cell),
-                };
-                let points = match kind {
-                    LineaKind::Cycloid => self.cycloid(axis, p0, phase, spacing, length, &rules),
-                    _ => self.ridge_trace(axis, p0, phase, spacing, length, id, &rules),
-                };
-                if points.len() < 3 {
-                    continue;
-                }
-                // A past episode's crack is carried to where the body left its terrain,
-                // and is long healed.
-                let points: Vec<[f64; 3]> = match carry {
-                    Some(e) => points.iter().map(|p| e.carry(*p)).collect(),
-                    None => points,
-                };
-                index.insert(
-                    out.len(),
-                    &points,
-                    kind == LineaKind::Vent && carry.is_none(),
-                );
-                out.push(Linea {
-                    length: (points.len() - 1) as f64 * spacing,
-                    points,
-                    spacing,
-                    width,
-                    relief,
-                    kind,
-                    phase,
-                    time_gyr: time,
-                    id,
-                });
             }
         }
         out
