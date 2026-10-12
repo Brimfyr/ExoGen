@@ -160,6 +160,19 @@ pub fn effective_cos_lat(d: [f64; 3], poleward_slope: f64) -> f64 {
         .cos()
 }
 
+/// The slope of a height field at every cell, rad, whatever its direction, from the four
+/// neighbours' heights.
+pub fn slope_magnitude(height: &Field<f32>, body_radius: f64) -> Field<f32> {
+    let grid = height.grid();
+    let cell = grid.delta() * body_radius;
+    Field::from_fn(grid, |c, _| {
+        let h = |di: i32, dj: i32| height.get(grid.neighbor(c, di, dj)) as f64;
+        let gx = (h(1, 0) - h(-1, 0)) / (2.0 * cell);
+        let gy = (h(0, 1) - h(0, -1)) / (2.0 * cell);
+        gx.hypot(gy).atan() as f32
+    })
+}
+
 /// The slope of a height field towards the nearer pole at every cell, rad: positive where
 /// the ground rises polewards, from the four neighbours' heights.
 pub fn poleward_slope(height: &Field<f32>, body_radius: f64) -> Field<f32> {

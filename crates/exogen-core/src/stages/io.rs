@@ -34,7 +34,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::*;
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// A patera: a volcano-tectonic depression with a flat floor and a fault-bounded,
 /// irregular outline.
@@ -219,13 +219,20 @@ fn flow_at(d: [f64; 3], f: &FlowField, body_radius: f64, noise: &GradientNoise) 
                 );
         let extent =
             f.reach * (IO_FLOW_BODY + (1.0 - IO_FLOW_BODY) * lobe.reach_fraction * sector) * lobing;
-        let c = ((extent - r) / (IO_FLOW_EDGE * f.reach)).clamp(0.0, 1.0);
+        // An old lobe is coated over by the plains' fallout and fades.
+        let visible = (-lobe.age_yr / IO_FLOW_COAT_YR).exp();
+        let c = ((extent - r) / (IO_FLOW_EDGE * f.reach)).clamp(0.0, 1.0) * visible;
         if c > 0.0 {
             cover = cover.max(c);
             fresh = fresh.max(c * (-lobe.age_yr / IO_FLOW_DARK_YR).exp());
         }
     }
-    (cover, fresh)
+    // The flow units within a lobe overlap and differ: the surface varies along it.
+    let texture = 1.0
+        - IO_FLOW_TEXTURE
+            * 0.5
+            * (1.0 + noise.fbm(d, body_radius / IO_FLOW_TEXTURE_LENGTH, 2, 2.0, 0.5));
+    (cover * texture, fresh)
 }
 
 /// Fallout density of a plume at a fraction of its ring radius: the ring where the
@@ -369,72 +376,91 @@ impl IoProcess {
                 death_gyr: death,
                 id: idx,
             });
-            // Flow fields from the active paterae and a few quiet ones: lobes of
-            // different ages.
-            if active || self.rng.uniform(idx, 47) < IO_QUIET_FLOW_FRACTION {
+            // Flow fields: the active paterae's and a few quiet ones' now, and every
+            // patera's older generations, lobes of all ages fading into the plains as
+            // the fallout coats them (F56).
+            for g in 0..IO_FLOW_GENERATIONS {
+                let current = g == 0;
+                if current && !(active || self.rng.uniform(idx, 47) < IO_QUIET_FLOW_FRACTION) {
+                    continue;
+                }
+                let base = 60 + 40 * g as u64;
                 let (n_lo, n_hi) = IO_FLOW_LOBES;
-                let n = n_lo + (self.rng.bits(idx, 48) % (n_hi - n_lo + 1) as u64) as u32;
+                let n =
+                    n_lo + (self.rng.bits(idx, 48 + g as u64) % (n_hi - n_lo + 1) as u64) as u32;
+                let (a_lo, a_hi) = IO_FLOW_AGE_YR;
+                let age_range = if current {
+                    (a_lo, a_hi)
+                } else {
+                    (IO_FLOW_DARK_YR, a_hi)
+                };
                 let lobes = (0..n)
                     .map(|j| {
-                        let d = 60 + 4 * j as u64;
+                        let d = base + 4 * j as u64;
                         let (sp_lo, sp_hi) = IO_FLOW_SPREAD;
                         Lobe {
                             azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(idx, d),
                             spread: sp_lo + (sp_hi - sp_lo) * self.rng.uniform(idx, d + 1),
                             reach_fraction: 0.3 + 0.7 * self.rng.uniform(idx, d + 2),
-                            age_yr: self.log_uniform(idx, d + 3, IO_FLOW_AGE_YR),
+                            age_yr: self.log_uniform(idx, d + 3, age_range),
                         }
                     })
                     .collect();
                 self.flows.push(FlowField {
                     center,
-                    reach: self.log_uniform(idx, 49, IO_FLOW_REACH).max(2.0 * radius),
+                    reach: self
+                        .log_uniform(idx, 49 + 90 * g as u64, IO_FLOW_REACH)
+                        .max(2.0 * radius),
                     lobes,
                     birth_gyr: t1,
                     death_gyr: death,
-                    id: idx + 10_000_000,
+                    id: idx + 10_000_000 + 30_000_000 * g as u64,
                 });
             }
-            // Fallout: a plume now, or the fading fallout of the last one.
+            // Fallout: a plume now, or the fading fallout of the last ones, each
+            // generation older than the last (F56).
             let plume_fraction = if pele {
                 IO_PLUME_FRACTION_PELE
             } else {
                 IO_PLUME_FRACTION_PROMETHEUS
             };
-            let plume_age_yr = if active && self.rng.uniform(idx, 50) < plume_fraction {
-                0.0
-            } else {
-                self.log_uniform(idx, 51, IO_PLUME_AGE_YR)
-            };
-            // Red sulfur fades in a couple of years; frost lasts until it is buried,
-            // longer where the cold keeps it.
-            let cos_lat = (1.0 - center[2] * center[2]).max(0.0).sqrt();
-            let t_peak = self.subsolar_k * cos_lat.max(0.02).powf(0.25);
-            let persist = 1.0 / (1.0 + ((t_peak - IO_FROST_HALF_K) / IO_FROST_WIDTH_K).exp());
-            let frost_fade = IO_FALLOUT_FADE_YR * (1.0 + IO_FROST_COLD_FACTOR * persist);
-            let (red_share, white_share) = if pele {
-                (1.0, IO_PELE_FROST)
-            } else {
-                (IO_PROMETHEUS_RED, 1.0)
-            };
-            let red = red_share * (-plume_age_yr / IO_RED_FADE_YR).exp();
-            let white = white_share * (-plume_age_yr / frost_fade).exp();
-            if red.max(white) > 0.05 {
-                let speed = if pele {
-                    IO_PLUME_SPEED_PELE
+            for g in 0..IO_PLUME_GENERATIONS {
+                let plume_age_yr = if g == 0 && active && self.rng.uniform(idx, 50) < plume_fraction
+                {
+                    0.0
                 } else {
-                    IO_PLUME_SPEED_PROMETHEUS
-                } * (IO_PLUME_SPEED_SCATTER * self.rng.normal(idx, 52)).exp();
-                self.rings.push(PlumeRing {
-                    center,
-                    radius: speed * speed / self.gravity.max(0.01),
-                    pele,
-                    red,
-                    white,
-                    birth_gyr: t1,
-                    death_gyr: death,
-                    id: idx + 20_000_000,
-                });
+                    self.log_uniform(idx, 51 + 10 * g as u64, IO_PLUME_AGE_YR)
+                };
+                // Red sulfur fades in a couple of years; frost lasts until it is buried,
+                // longer where the cold keeps it.
+                let cos_lat = (1.0 - center[2] * center[2]).max(0.0).sqrt();
+                let t_peak = self.subsolar_k * cos_lat.max(0.02).powf(0.25);
+                let persist = 1.0 / (1.0 + ((t_peak - IO_FROST_HALF_K) / IO_FROST_WIDTH_K).exp());
+                let frost_fade = IO_FALLOUT_FADE_YR * (1.0 + IO_FROST_COLD_FACTOR * persist);
+                let (red_share, white_share) = if pele {
+                    (1.0, IO_PELE_FROST)
+                } else {
+                    (IO_PROMETHEUS_RED, 1.0)
+                };
+                let red = red_share * (-plume_age_yr / IO_RED_FADE_YR).exp();
+                let white = white_share * (-plume_age_yr / frost_fade).exp();
+                if red.max(white) > 0.05 {
+                    let speed = if pele {
+                        IO_PLUME_SPEED_PELE
+                    } else {
+                        IO_PLUME_SPEED_PROMETHEUS
+                    } * (IO_PLUME_SPEED_SCATTER * self.rng.normal(idx, 52)).exp();
+                    self.rings.push(PlumeRing {
+                        center,
+                        radius: speed * speed / self.gravity.max(0.01),
+                        pele,
+                        red,
+                        white,
+                        birth_gyr: t1,
+                        death_gyr: death,
+                        id: idx + 20_000_000 + 30_000_000 * g as u64,
+                    });
+                }
             }
         }
     }

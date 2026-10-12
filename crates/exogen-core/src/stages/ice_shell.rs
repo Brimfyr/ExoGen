@@ -34,7 +34,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 7;
+pub const VERSION: u64 = 8;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns
@@ -50,6 +50,8 @@ pub struct Lane {
     pub half_width: f64,
     /// Whether the lane is grooved or smooth bright terrain.
     pub grooved: bool,
+    /// How clean the lane's ice is, 0 to 1: lanes differ in the dirt the new ice took up.
+    pub clean: f64,
     /// The width's wander along the lane, a self-affine profile sampled from one end to
     /// the other, as a factor on the half width.
     pub width_profile: Vec<f32>,
@@ -99,6 +101,7 @@ impl Lane {
         spacing: f64,
         half_width: f64,
         grooved: bool,
+        clean: f64,
         time_gyr: f64,
         id: u64,
     ) -> Self {
@@ -126,6 +129,7 @@ impl Lane {
             half_length,
             half_width,
             grooved,
+            clean,
             width_profile,
             time_gyr,
             id,
@@ -262,13 +266,16 @@ impl Lane {
 /// The fissures' points bucketed on the sphere, for the folds to follow the nearest one.
 struct FabricIndex {
     scale: f64,
-    buckets: HashMap<(i32, i32, i32), Vec<([f64; 3], [f64; 3])>>,
+    buckets: HashMap<(i32, i32, i32), Vec<FabricPoint>>,
 }
+
+/// A fissure point and the tangent there.
+type FabricPoint = ([f64; 3], [f64; 3]);
 
 impl FabricIndex {
     fn new(cracks: &[Linea], range_rad: f64) -> Self {
         let scale = 1.0 / range_rad.max(1e-6);
-        let mut buckets: HashMap<(i32, i32, i32), Vec<([f64; 3], [f64; 3])>> = HashMap::new();
+        let mut buckets: HashMap<(i32, i32, i32), Vec<FabricPoint>> = HashMap::new();
         for l in cracks {
             let n = l.points.len();
             for i in 0..n {
@@ -649,6 +656,8 @@ impl IceShellProcess {
                         spacing,
                         half_width,
                         rng.uniform(k, 102) >= GROOVE_SMOOTH_LANE_SHARE,
+                        GROOVE_CLEAN_RANGE.0
+                            + (GROOVE_CLEAN_RANGE.1 - GROOVE_CLEAN_RANGE.0) * rng.uniform(k, 112),
                         time_gyr,
                         k,
                     );
@@ -843,13 +852,13 @@ impl IceShellProcess {
                 crate::stages::relaxation::low_pass(&layers.bedrock, cell, self.smooth_length());
             let body_radius = self.body_radius;
             // The cells each due lane holds, the youngest lane's time winning.
-            let mut inside: Vec<Option<f32>> = vec![None; n];
+            let mut inside: Vec<Option<(f32, f32)>> = vec![None; n];
             with_stamper(&grid, |stamper| {
                 for &i in &due {
                     let lane = &self.lanes[i];
                     for sm in lane.sample(&grid, body_radius, 2.0 * cell, stamper) {
                         if lane.coverage_at(sm.across, sm.along, cell) >= 0.5 {
-                            inside[sm.idx] = Some(lane.time_gyr as f32);
+                            inside[sm.idx] = Some((lane.time_gyr as f32, lane.clean as f32));
                         }
                     }
                 }
@@ -875,7 +884,7 @@ impl IceShellProcess {
             for k in 0..n {
                 let drop = (GROOVE_LANE_DROP * ramp[k] as f64) as f32;
                 if core[k]
-                    && let Some(t) = inside[k]
+                    && let Some((t, cl)) = inside[k]
                 {
                     bedrock[k] = smoothed[k] - drop;
                     floor[k] = bedrock[k];
@@ -884,7 +893,7 @@ impl IceShellProcess {
                     deep[k] = 0.0;
                     melt[k] = 0.0;
                     cover[k] = 0.0;
-                    clean[k] = 1.0;
+                    clean[k] = cl;
                 } else if drop > 0.0 {
                     bedrock[k] -= drop;
                 }
@@ -967,17 +976,29 @@ pub fn rasterize(
         let mut coverage = vec![0.0f32; n];
         let mut touched = vec![false; n];
         let mut times = vec![0.0f32; n];
+        let mut cleans = vec![1.0f32; n];
         for (lane, h) in lanes.iter().zip(&hits) {
             for &(k, c) in h {
                 let k = k as usize;
                 touched[k] = true;
-                coverage[k] = coverage[k].max(c);
+                if c > coverage[k] {
+                    coverage[k] = c;
+                    cleans[k] = lane.clean as f32;
+                }
                 if c >= 0.5 {
                     times[k] = times[k].max(lane.time_gyr as f32);
                 }
             }
         }
-        redraw(layers, &coverage, &touched, UNIT_GROOVED, &times, false);
+        redraw(
+            layers,
+            &coverage,
+            &touched,
+            UNIT_GROOVED,
+            &times,
+            &cleans,
+            false,
+        );
         if let Some(floor) = lane_floor {
             lay_floor(layers, &coverage, floor);
         }
@@ -1016,6 +1037,7 @@ pub fn rasterize_polar(
         &touched,
         UNIT_POLAR_TERRAIN,
         &times,
+        &vec![1.0f32; n],
         raise_only,
     );
     if let Some(floor) = floor {
@@ -1058,6 +1080,7 @@ fn redraw(
     touched: &[bool],
     unit: u16,
     times: &[f32],
+    cleans: &[f32],
     raise_only: bool,
 ) {
     let ages = layers.surface_age.as_mut_slice();
@@ -1072,7 +1095,8 @@ fn redraw(
         }
         let c = coverage[k];
         let time = times[k] as f64;
-        clean[k] = if raise_only { clean[k].max(c) } else { c };
+        let cl = c * cleans[k];
+        clean[k] = if raise_only { clean[k].max(cl) } else { cl };
         if c >= 0.5 {
             if ages[k] as f64 <= time + 1e-3 {
                 ages[k] = time as f32;
@@ -1084,7 +1108,7 @@ fn redraw(
         } else if units[k] == unit {
             // The coarse cell reached past the edge.
             units[k] = UNIT_PRIMORDIAL;
-            clean[k] = c;
+            clean[k] = c * cleans[k];
         }
     }
 }
@@ -1291,7 +1315,7 @@ mod tests {
     fn a_lane_is_a_swath_along_part_of_a_great_circle() {
         let r = 2.6e6;
         let points = Lane::great_circle([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], 1000e3, 50e3, r);
-        let lane = Lane::from_points(points, 50e3, 100e3, true, 0.0, 1);
+        let lane = Lane::from_points(points, 50e3, 100e3, true, 1.0, 0.0, 1);
         assert!((lane.half_length - 1000e3).abs() < 1.0);
         assert!(lane.inside([1.0, 0.0, 0.0], r));
         // Off the circle by atan(0.1): 259 km, outside the width however it wobbles.

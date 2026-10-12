@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_IO_FLOW, UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 18;
+pub const VERSION: u64 = 19;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -196,6 +196,18 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
         a[1] + (b[1] - a[1]) * t,
         a[2] + (b[2] - a[2]) * t,
     ]
+}
+
+/// The factor on a flow unit's reflectance from its eruption's composition (F55): a
+/// share of the composition range, drawn from the event's time, the same for every cell
+/// the event laid.
+fn lava_tint(time_gyr: f32) -> f32 {
+    let mut h = time_gyr.to_bits() as u64 ^ 0x1A7A_71A7;
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    let u = (h & 0xff_ffff) as f32 / 0xff_ffff as f32;
+    (1.0 + LAVA_COMPOSITION_RANGE as f32 * (2.0 * u - 1.0)).max(0.1)
 }
 
 /// Colour of a mixture at a given maturity.
@@ -432,7 +444,10 @@ pub fn albedo(
         .map(|k| {
             if io {
                 let d = grid.center(grid.cell(k));
-                let cos_lat = (1.0 - d[2] * d[2]).max(0.0).sqrt();
+                // Each slope sits at its own peak temperature: frost keeps to the
+                // pole-facing ones and the red to the cold.
+                let tilt = slope.map_or(0.0, |s| s.as_slice()[k] as f64);
+                let cos_lat = crate::stages::ice::effective_cos_lat(d, tilt);
                 let t_peak = io_subsolar_k * cos_lat.max(0.02).powf(0.25);
                 let logistic = |x: f64| 1.0 / (1.0 + (-x).exp());
                 let persist = logistic((IO_FROST_HALF_K - t_peak) / IO_FROST_WIDTH_K) as f32;
@@ -506,7 +521,14 @@ pub fn albedo(
                     && units[k] != UNIT_CONTINENTAL
                     && units[k] != UNIT_OCEANIC
                 {
-                    (lerp3(fresh, lava.fresh, c), lerp3(mature, lava.mature, c))
+                    // Each eruption's lava differs in composition (F55): the flow unit's
+                    // reflectance departs from the mean by a share drawn from its time.
+                    let t = lava_tint(ages_f[k]);
+                    let tinted = |v: [f32; 3]| [v[0] * t, v[1] * t, v[2] * t];
+                    (
+                        lerp3(fresh, tinted(lava.fresh), c),
+                        lerp3(mature, tinted(lava.mature), c),
+                    )
                 } else {
                     (fresh, mature)
                 };

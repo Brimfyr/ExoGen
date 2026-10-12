@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 32;
+pub const FINISH_VERSION: u64 = 33;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1626,7 +1626,8 @@ pub fn finish(
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
     let height = layers.height();
     // On ice, each slope sits at its own mean temperature: frost and lag follow it.
-    let slope = ice::is_ice_surface(graph).then(|| ice::poleward_slope(&height, body_radius));
+    let slope = (ice::is_ice_surface(graph) || io::is_io_regime(graph))
+        .then(|| ice::poleward_slope(&height, body_radius));
 
     sink.report(Progress {
         stage: "finishing",
@@ -1643,6 +1644,20 @@ pub fn finish(
             let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
             (1.0 - (-exposure / tau_sw).exp()) as f32
         })
+    };
+    // Steep ground sheds its regolith and stays fresher than flat ground (F55): the
+    // bright walls and scarps of every airless body, from the ground's own slopes.
+    let maturity = {
+        let steep = ice::slope_magnitude(&height, body_radius);
+        let repose = REPOSE_SLOPE_DEG.to_radians();
+        let mut m = maturity;
+        m.as_mut_slice()
+            .par_iter_mut()
+            .zip(steep.as_slice())
+            .for_each(|(v, &s)| {
+                *v *= 1.0 - (SLOPE_FRESHNESS * (s as f64 / repose).clamp(0.0, 1.0)) as f32;
+            });
+        m
     };
     let rays = ray_field(&grid, body_radius, &records, &inputs, present, cell);
 
