@@ -231,7 +231,10 @@ pub fn chaos_compute(
         })
         .collect();
     cells.sort_by_key(|c| c.idx);
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// A cryovolcanic dome: brine-rich ice extruded onto a shell over rock.
@@ -344,7 +347,10 @@ pub fn cryodome_compute(
         })
         .collect();
     cells.sort_by_key(|c| c.idx);
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// After the stamps: the domes' substrate is partly clean ice, and the floors of

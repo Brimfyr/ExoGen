@@ -638,7 +638,10 @@ pub fn patera_compute(
             write
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// Finishing pass of a mountain: ridged texture over the block.
@@ -691,7 +694,10 @@ pub fn mountain_compute(
             write
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// A flow field over the ground: its lobes' coverage and freshness, a little relief;
@@ -744,7 +750,10 @@ pub fn flow_compute(
             })
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// A plume's fallout over the ground: red sulfur or frost by the plume's class, at the
@@ -820,7 +829,10 @@ pub fn ring_compute(
             })
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 #[cfg(test)]

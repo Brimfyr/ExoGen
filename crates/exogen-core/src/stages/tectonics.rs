@@ -204,7 +204,10 @@ pub fn scarp_compute(
         })
         .collect();
     cells.sort_by_key(|c| c.idx);
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// Contraction scarps forming through the coarse loop.

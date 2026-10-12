@@ -1181,7 +1181,10 @@ pub fn groove_compute(
         })
         .collect();
     cells.sort_by_key(|c| c.idx);
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// The polar terrain on the resolved grid at its time: its surface back to its floor,
@@ -1287,7 +1290,10 @@ pub fn polar_compute(
             cells.len()
         );
     }
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// The shares of the surface, by area, that are grooved terrain and polar terrain.

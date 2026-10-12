@@ -525,6 +525,36 @@ pub fn export(
         })
         .collect();
     write_png8(&settings.dir.join("units.png"), width, height_px, &unit_eq)?;
+    // The hidden layers, nearest cell per pixel, for inspecting what the finish wrote:
+    // only when asked for, since they are not part of the map set.
+    if std::env::var_os("EXOGEN_DUMP_LAYERS").is_some() {
+        let dump = |name: &str, data: &[f32], lo: f32, hi: f32| -> Result<(), ExportError> {
+            let eq: Vec<f32> = (0..width * height_px)
+                .map(|k| {
+                    let (x, y) = (k % width, k / width);
+                    let lon = ((x as f64 + 0.5) / width as f64 - 0.5) * 2.0 * std::f64::consts::PI;
+                    let lat = (0.5 - (y as f64 + 0.5) / height_px as f64) * std::f64::consts::PI;
+                    let d = crate::grid::direction_from_lon_lat(lon, lat);
+                    data[grid.index(grid.locate(d).0)]
+                })
+                .collect();
+            write_png16(
+                &settings.dir.join(format!("dbg_{name}.png")),
+                width,
+                height_px,
+                &eq,
+                lo,
+                hi,
+            )
+        };
+        dump("cover", out.layers.cover.as_slice(), 0.0, 1.0)?;
+        dump("deep", out.layers.deep.as_slice(), 0.0, 1.0)?;
+        dump("melt", out.layers.melt.as_slice(), 0.0, 1.0)?;
+        dump("clean", out.layers.clean.as_slice(), 0.0, 1.0)?;
+        dump("composition", out.layers.composition.as_slice(), -1.0, 1.0)?;
+        dump("maturity", out.maturity.as_slice(), 0.0, 1.0)?;
+        dump("rays", out.rays.as_slice(), 0.0, 1.0)?;
+    }
     maps.insert(
         "units_png".to_string(),
         MapInfo {

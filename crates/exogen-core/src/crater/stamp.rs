@@ -109,6 +109,9 @@ pub struct CellWrite {
 #[derive(Default)]
 pub struct StampOutput {
     pub cells: Vec<CellWrite>,
+    /// The composition an eruption's lava cells take (F55); none for every other stamp,
+    /// whose cells keep the composition under them.
+    pub composition: Option<f32>,
 }
 
 impl StampOutput {
@@ -120,6 +123,7 @@ impl StampOutput {
         let deep = layers.deep.as_mut_slice();
         let melt = layers.melt.as_mut_slice();
         let cover = layers.cover.as_mut_slice();
+        let composition = layers.composition.as_mut_slice();
         for c in &self.cells {
             let i = c.idx as usize;
             bedrock[i] = c.bedrock;
@@ -129,6 +133,11 @@ impl StampOutput {
                 deep[i] = c.deep;
                 melt[i] = c.melt;
                 cover[i] = c.cover;
+                if let Some(x) = self.composition
+                    && c.unit == crate::units::UNIT_LAVA
+                {
+                    composition[i] = x;
+                }
             }
         }
     }
@@ -385,6 +394,7 @@ pub fn stamp_compute(
     };
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
+        composition: None,
     }
 }
 
@@ -1095,6 +1105,7 @@ pub fn restore_compute(
     };
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
+        composition: None,
     }
 }
 

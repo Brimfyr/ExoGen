@@ -487,7 +487,13 @@ pub fn resurfacing_compute(
             });
         }
     }
-    (StampOutput { cells }, taken)
+    (
+        StampOutput {
+            cells,
+            composition: None,
+        },
+        taken,
+    )
 }
 
 /// Finishing pass of a corona: the rim and moat the coarse grid could not carry.
@@ -531,7 +537,10 @@ pub fn corona_compute(
             }
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// Finishing pass of a pancake dome: the whole edifice, with a fractured top.
@@ -578,7 +587,10 @@ pub fn dome_compute(
             write
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// Fraction of the surface that is tessera.

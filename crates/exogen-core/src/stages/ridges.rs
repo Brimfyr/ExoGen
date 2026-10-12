@@ -334,7 +334,10 @@ pub fn ridge_compute(
         })
         .collect();
     cells.sort_by_key(|c| c.idx);
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// Total ridge length per unit of plains area for a laid-out set, 1/m.

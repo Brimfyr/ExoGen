@@ -886,7 +886,10 @@ pub fn trough_compute(
             write
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// Finishing pass of a shield: the calderas cut into the summit and the flank texture,
@@ -936,7 +939,10 @@ pub fn shield_compute(
             }
         })
         .collect();
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 #[cfg(test)]

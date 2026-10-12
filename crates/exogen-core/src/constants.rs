@@ -256,13 +256,15 @@ pub const LAVA_COVER_DEPTH: f64 = 6.0;
 /// How far from its vent a flow can travel, m: the longest flood-basalt flows run a
 /// thousand kilometres or so (Tharsis, the Deccan), not around the body.
 pub const FLOOD_MAX_REACH: f64 = 1.5e6;
-/// Flow fronts at the finishing resolution: the smeared coarse footprint is kept where
-/// it exceeds this threshold (below a half, so a single flooded cell keeps its area and
-/// fronts sit a little outside the coarse edge), with lobes of noise this many loop cells
-/// long moving the threshold by up to this much.
-pub const FLOOD_MARGIN_THRESHOLD: f64 = 0.35;
-pub const FLOOD_MARGIN_LOBE_CELLS: f64 = 1.5;
-pub const FLOOD_MARGIN_WOBBLE: f64 = 0.2;
+/// Flow fronts at the finishing resolution: the coarse footprint's indicator, each cell
+/// half its own and a sixteenth each of its neighbours', is kept where it exceeds this
+/// threshold (below a half, so a single flooded cell keeps its area and fronts sit a
+/// little outside the coarse edge, and the contour rounds the coarse cells' corners),
+/// with three octaves of lobes of noise this many loop cells long moving the threshold
+/// by up to this much, the unresolved shape of the front.
+pub const FLOOD_MARGIN_THRESHOLD: f64 = 0.45;
+pub const FLOOD_MARGIN_LOBE_CELLS: f64 = 2.0;
+pub const FLOOD_MARGIN_WOBBLE: f64 = 0.3;
 /// Subsidence of a lava fill as a fraction of its thickness, from compaction of the pile
 /// and the sag of the floor under it, so a surface over a buried crater dips over the
 /// deep fill and shows the rim as a ring (ghost craters).
@@ -773,15 +775,18 @@ pub const ROUGHNESS_RMS_SHARE: f64 = 0.35;
 pub const ROUGHNESS_HURST: f64 = 0.8;
 /// Variation within units (F55): a body's lavas drift in composition over its eruptive
 /// history, so a flow unit's reflectance departs from the mean by up to this share,
-/// drifting over this period, Gyr (the maria's titanium: albedos 0.06 to 0.11, basins
-/// filled by flows of different ages and tones); slopes shed their regolith from this
-/// steepness, degrees, and stay this share fresher than flat ground at the angle of
-/// repose, degrees (the bright crater walls of optical maturity maps, where gentle old
-/// rims stay mature); and a lane of renewed ice is clean by a share drawn in this range.
+/// drifting over this period, Gyr, and written by the eruption into the surface's
+/// composition layer, which its own ejecta keeps (the maria's titanium: albedos 0.06 to
+/// 0.11, basins filled by flows of different ages and tones); slopes shed their regolith from
+/// this steepness, degrees, the regolith's stable slope, and stay this share fresher than
+/// flat ground at the angle of repose, degrees (optical maturity maps: the walls of young
+/// craters bright, those of old craters near the stable slope only a little less mature
+/// than their surroundings); and a lane of renewed ice is clean by a share drawn in this
+/// range.
 pub const LAVA_COMPOSITION_RANGE: f64 = 0.18;
-pub const LAVA_COMPOSITION_PERIOD_GYR: f64 = 0.3;
-pub const SLOPE_SHED_START_DEG: f64 = 15.0;
-pub const SLOPE_FRESHNESS: f64 = 0.6;
+pub const LAVA_COMPOSITION_PERIOD_GYR: f64 = 1.0;
+pub const SLOPE_SHED_START_DEG: f64 = 20.0;
+pub const SLOPE_FRESHNESS: f64 = 0.3;
 pub const REPOSE_SLOPE_DEG: f64 = 30.0;
 pub const GROOVE_CLEAN_RANGE: (f64, f64) = (0.55, 1.0);
 /// Pike 1977 lunar morphometry, (coefficient, exponent) in km: d = a D^b.
@@ -1250,6 +1255,15 @@ pub const VENT_RIDGE_SHARE: f64 = 0.4;
 /// middle's at its tips.
 pub const VENT_TIP_WIDTH: f64 = 0.35;
 pub const VENT_TIP_DEPTH: f64 = 0.4;
+/// The fissures of a plume's thinned zone form in a cascade (F57; Hemingway, Rudolph and
+/// Manga 2020): the first through the thinnest shell, within this share of the cascade's
+/// spacing of the pole, then each next one where the bending tension of the last one's
+/// flanking ridges peaks on the plate broken at it, a quarter flexural parameter away
+/// (35 km on Enceladus for an elastic thickness of 5.2 km), up to this many on either
+/// side; and the time-bin tag the cascade's fissures carry in their ids.
+pub const VENT_CASCADE_FIRST_OFFSET: f64 = 0.5;
+pub const VENT_CASCADE_MAX: usize = 8;
+pub const VENT_CASCADE_BIN: u64 = 0xFFFF;
 /// Hemispheric asymmetry (F48): a locked moon's trailing hemisphere takes its parent's
 /// magnetospheric plasma, which darkens and reddens the ice there by this tint at the
 /// apex in a Jupiter-class magnetosphere (a parent over this mass, kg; Europa's and
@@ -1259,6 +1273,12 @@ pub const TRAILING_TINT: [f32; 3] = [0.76, 0.69, 0.62];
 pub const MAGNETOSPHERE_JUPITER_MASS: f64 = 1e27;
 pub const MAGNETOSPHERE_SATURN_MASS: f64 = 1e26;
 pub const MAGNETOSPHERE_SATURN_SHARE: f64 = 0.3;
+/// The plasma processes a trailing hemisphere's optical surface, its top millimetre, in
+/// this time, Gyr, in a Jupiter-class magnetosphere and proportionally longer in a weaker
+/// one (F58; Cooper et al. 2001: micrometres on Europa in about ten years, centimetres in
+/// under a million); a plume's fallout that buries the millimetre faster hides the
+/// darkening by the ratio of the two times.
+pub const TRAILING_DARKENING_GYR: f64 = 1e-5;
 pub const GAS_CONSTANT: f64 = 8.314_462;
 /// Thermal segregation: the ice the warm latitudes sublime condenses again where it is
 /// cold, so a body that loses ice at its equator wears frost at its poles (Ganymede's

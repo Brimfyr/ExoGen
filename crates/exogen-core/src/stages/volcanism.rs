@@ -15,7 +15,7 @@
 //! pass sharpens each flood's margins against the resolved terrain.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput};
@@ -30,7 +30,17 @@ use crate::stages::deform::Deformation;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 6;
+pub const VERSION: u64 = 12;
+
+/// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
+/// smooth function of the eruptive history with the composition period, so units close in
+/// time are alike and units an age apart differ, written by each eruption into the
+/// surface it lays and kept by the ejecta of that surface.
+pub fn composition_drift(time_gyr: f64) -> f32 {
+    let noise = GradientNoise::new(0x1A7A_71A7);
+    let t = time_gyr / LAVA_COMPOSITION_PERIOD_GYR;
+    (noise.fbm([t, 0.3, 0.7], 1.0, 1, 2.0, 0.5) / 0.6).clamp(-1.0, 1.0) as f32
+}
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
 #[derive(Clone, Copy, Debug)]
@@ -515,6 +525,8 @@ impl FloodProcess {
             let units = layers.unit_id.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
+            let composition = layers.composition.as_mut_slice();
+            let drift = composition_drift(time_gyr);
             for &(idx, h) in &popped {
                 let t = level - h as f64;
                 if t <= FLOOD_MIN_THICKNESS {
@@ -537,6 +549,7 @@ impl FloodProcess {
                 units[idx] = UNIT_LAVA;
                 melt[idx] = 0.0;
                 cover[idx] = (t / LAVA_COVER_DEPTH).min(1.0) as f32;
+                composition[idx] = drift;
             }
         }
         let ponds = if recorded.is_empty() {
@@ -657,7 +670,37 @@ pub fn flood_compute(
         *coarse,
         covered.iter().map(|(&idx, c)| (idx as usize, c.thickness)),
     );
-    let padded_ind = SparseField::new(*coarse, covered.keys().map(|&idx| (idx as usize, 1.0)));
+    // The footprint's indicator, each coarse cell half its own and a sixteenth each of
+    // its eight neighbours', so that its contour rounds the staircase of the coarse
+    // cells while a single flooded cell keeps its area; sampled bilinearly between, it
+    // is the flood's outline at the fine resolution, which the lobes then wander.
+    let padded_ind = {
+        let mut cells: HashSet<usize> = HashSet::new();
+        for &idx in covered.keys() {
+            let c = coarse.cell(idx as usize);
+            for di in -1..=1 {
+                for dj in -1..=1 {
+                    cells.insert(coarse.index(coarse.neighbor(c, di, dj)));
+                }
+            }
+        }
+        SparseField::new(
+            *coarse,
+            cells.into_iter().map(|i| {
+                let c = coarse.cell(i);
+                let mut v = 0.0f32;
+                for di in -1..=1 {
+                    for dj in -1..=1 {
+                        let n = coarse.index(coarse.neighbor(c, di, dj)) as u32;
+                        if covered.contains_key(&n) {
+                            v += if di == 0 && dj == 0 { 0.5 } else { 1.0 / 16.0 };
+                        }
+                    }
+                }
+                (i, v)
+            }),
+        )
+    };
     let lobes = GradientNoise::new(rec.id ^ 0x0F10_0D00);
     let lobe_frequency = 1.0 / (FLOOD_MARGIN_LOBE_CELLS * coarse.delta());
     // Coarse cells to visit: the footprint and its ring, with the level the lava could
@@ -701,9 +744,24 @@ pub fn flood_compute(
                 let own = sample_bilinear_sparse(coarse, &padded, d);
                 taken.push((idx as u32, own));
                 // A younger crater sits here: it was stamped on top of this lava in
-                // the loop, so the base is right as it is.
+                // the loop, so the ground is right as it is. The surface inside the
+                // flood's own footprint is still this lava's, under whatever the
+                // crater's own pass lays over it where its ejecta reaches, so that no
+                // cell keeps the loop's coarse patchwork of ages and compositions.
                 if smear.crater_time[idx] > time + 1e-6 {
                     stats[3] += 1;
+                    if previous.is_some() && !smear.touched[idx] {
+                        cells.push(CellWrite {
+                            idx: idx as u32,
+                            bedrock: bedrock[idx],
+                            surface: true,
+                            age: time,
+                            unit: UNIT_LAVA,
+                            deep: deep[idx],
+                            melt: 0.0,
+                            cover: 1.0,
+                        });
+                    }
                     continue;
                 }
                 // The ground as the flood found it: the base less the smears not yet
@@ -713,16 +771,37 @@ pub fn flood_compute(
                 let remaining = smear.total[idx] - smear.done[idx];
                 let later = deform.since_flood(d, rec.time_gyr) as f32;
                 let ground = bedrock[idx] - remaining - later;
+                // Inside the flood's own footprint, where the base still says this lava
+                // and no finer pass has written, the loop's surface was the flood's own
+                // sheet at its level: what stands above the level there is the
+                // resampling's ramp toward a higher neighbour, not ground the flood
+                // found, and the sheet lies level over it, at least its own thickness
+                // deep. Elsewhere what stands above the level is a rim or an older
+                // floor, and the flood ends against it. The lobed outline bounds the
+                // fill either way; what it leaves inside the coarse footprint keeps the
+                // loop's surface, the older lava's own.
+                let own_floor =
+                    previous.is_some() && units[idx] == UNIT_LAVA && !smear.touched[idx];
+                let ground = if own_floor {
+                    ground.min(level - FLOOD_SHEET_THICKNESS as f32)
+                } else {
+                    ground
+                };
                 let carry = remaining - own + later;
                 let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
-                if (outline - FLOOD_MARGIN_THRESHOLD).abs() < FLOOD_MARGIN_WOBBLE {
-                    outline += FLOOD_MARGIN_WOBBLE * lobes.fbm(d, lobe_frequency, 2, 2.0, 0.5);
+                if outline > 0.0 && outline < 1.0 {
+                    outline += FLOOD_MARGIN_WOBBLE * lobes.fbm(d, lobe_frequency, 3, 2.0, 0.5);
                 }
                 // A flow drapes what stands less than its own thickness above its level.
                 let drape = FLOOD_SHEET_THICKNESS as f32;
                 if ground < level + drape && outline >= FLOOD_MARGIN_THRESHOLD {
                     stats[0] += 1;
                     let fill = (level - ground).max(0.0);
+                    // A high the flow drapes carries a veneer, the sheet's thickness less
+                    // what the high stands above the level: thin lava over it, but lava,
+                    // not the ground it hides (the ghost craters of the maria show in
+                    // relief, not in albedo).
+                    let sheet = fill.max(drape - (ground - level).max(0.0));
                     let surface = ground + (1.0 - LAVA_SUBSIDENCE as f32) * fill;
                     cells.push(CellWrite {
                         idx: idx as u32,
@@ -732,7 +811,7 @@ pub fn flood_compute(
                         unit: UNIT_LAVA,
                         deep: deep[idx],
                         melt: 0.0,
-                        cover: (fill / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0),
+                        cover: (sheet / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0),
                     });
                 } else {
                     if ground >= level + drape {
@@ -761,7 +840,14 @@ pub fn flood_compute(
             }
         }
     }
-    (StampOutput { cells }, taken, stats)
+    (
+        StampOutput {
+            cells,
+            composition: Some(composition_drift(rec.time_gyr)),
+        },
+        taken,
+        stats,
+    )
 }
 
 /// Area fraction of the surface carrying a lava unit.

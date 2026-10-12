@@ -149,6 +149,16 @@ impl Field<f32> {
         })
     }
 
+    /// Resample by the nearest source cell: for a field of event times, which must not
+    /// blend across a cell's edge into times no event had.
+    pub fn resample_nearest(&self, target: CubeSphere) -> Field<f32> {
+        if target == self.grid {
+            return self.clone();
+        }
+        let src = self.grid;
+        Field::from_fn(target, |_, d| self.data[src.index(src.locate(d).0)])
+    }
+
     /// Stable content hash over the exact bit patterns.
     pub fn hash(&self) -> u64 {
         let mut bytes = Vec::with_capacity(self.data.len() * 4 + 8);
@@ -238,6 +248,10 @@ pub struct LayerSet {
     /// grooved terrain and the polar terrain of an ice shell, which stay bright under
     /// whatever craters cut them.
     pub clean: Field<f32>,
+    /// The composition of a lava surface as the drift of its eruption's lavas from the
+    /// material's mean, -1 to 1 (F55): a flow unit's tone, which the ejecta of the same
+    /// basalt keeps; 0 where no eruption set it.
+    pub composition: Field<f32>,
 }
 
 impl LayerSet {
@@ -257,6 +271,7 @@ impl LayerSet {
             melt: Field::new(grid),
             cover: Field::new(grid),
             clean: Field::new(grid),
+            composition: Field::new(grid),
         }
     }
 
@@ -285,12 +300,16 @@ impl LayerSet {
             liquid: self.liquid.resample(target),
             crust_thickness: self.crust_thickness.resample(target),
             crust_age: self.crust_age.resample(target),
-            surface_age: self.surface_age.resample(target),
+            // A surface age is the time of the event that made the surface: a cell takes
+            // its nearest coarse cell's, never a blend of two events' times, which the
+            // finish's passes would read as ramps of age along every coarse edge.
+            surface_age: self.surface_age.resample_nearest(target),
             unit_id: self.unit_id.resample_nearest(target),
             deep: self.deep.resample(target),
             melt: self.melt.resample(target),
             cover: self.cover.resample(target),
             clean: self.clean.resample(target),
+            composition: self.composition.resample_nearest(target),
         }
     }
 
@@ -309,6 +328,7 @@ impl LayerSet {
             self.melt.hash(),
             self.cover.hash(),
             self.clean.hash(),
+            self.composition.hash(),
         ];
         crate::rng::hash_words(&parts)
     }

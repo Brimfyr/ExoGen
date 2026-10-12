@@ -79,6 +79,21 @@ impl Linea {
     }
 }
 
+/// The unit tangent of a trace at its midpoint, from the chord of its neighbours.
+pub fn midpoint_tangent(points: &[[f64; 3]]) -> [f64; 3] {
+    let n = points.len();
+    let m = n / 2;
+    let mid = points[m];
+    let (a, b) = (points[m.saturating_sub(1)], points[(m + 1).min(n - 1)]);
+    let chord = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let radial = dot(chord, mid);
+    normalize([
+        chord[0] - radial * mid[0],
+        chord[1] - radial * mid[1],
+        chord[2] - radial * mid[2],
+    ])
+}
+
 /// The tidal axis in the shell's frame at a time: with non-synchronous rotation the
 /// shell has turned against it since.
 pub fn mean_axis_at(time_gyr: f64, present: f64, nsr_period_gyr: f64) -> [f64; 3] {
@@ -240,6 +255,10 @@ pub struct Cracks {
     pub vent: bool,
     /// The shell's mean thickness, m: the scale of a crack's stress shadow.
     pub mean_shell: f64,
+    /// The surface gravity, m/s^2, and the elastic thickness of the shell, m, for the
+    /// flexure of the thinned zone under its vents' ridges (F57).
+    pub gravity: f64,
+    pub elastic: f64,
     /// The past episodes of focused heating, whose fissures the body has carried from
     /// the pole.
     pub episodes: Vec<crate::stages::ice::FocusEpisode>,
@@ -275,6 +294,8 @@ impl Cracks {
             orbit_period_s: graph.f64("orbit.period"),
             vent: graph.f64("volcanism.plume_fallout_rate") > 0.0,
             mean_shell: graph.f64("interior.ice_shell_thickness"),
+            gravity: graph.f64("body.gravity"),
+            elastic: graph.f64("interior.elastic_thickness"),
         })
     }
 
@@ -309,6 +330,30 @@ impl Cracks {
         let window_start = (present - self.retention).max(0.0);
         let mut out: Vec<Linea> = Vec::new();
         let mut index = CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius);
+        // Under a plume the vents of the thinned zone come first, in their cascade (F57),
+        // for the present episode and for each past one; the zone's other cracks are its
+        // lesser fractures.
+        if self.vent
+            && self.shell_map.has_active_terrain()
+            && let Some(pole) = self.shell_map.pole
+        {
+            self.cascade(
+                pole, present, None, 0, spacing, cell, &rng, &mut out, &mut index,
+            );
+            for (vi, e) in self.episodes.iter().enumerate() {
+                self.cascade(
+                    pole,
+                    present,
+                    Some(e),
+                    vi as u64 + 1,
+                    spacing,
+                    cell,
+                    &rng,
+                    &mut out,
+                    &mut index,
+                );
+            }
+        }
         for (bin, b0, b1) in crate::stages::time_bins(self.age, 0.0, present) {
             if b1 <= window_start {
                 continue;
@@ -416,12 +461,6 @@ impl Cracks {
                     } else {
                         LineaKind::Ridge
                     };
-                    // Under a plume the fissures of the thinned shell are its vents.
-                    let kind = if self.vent && polar {
-                        LineaKind::Vent
-                    } else {
-                        kind
-                    };
                     let length = l_lo * (l_hi / l_lo).powf(rng.uniform(bin, draw + 51));
                     let id = (bin << 32) | j | ((vi as u64) << 56);
                     let (width, relief) = match kind {
@@ -488,6 +527,158 @@ impl Cracks {
             }
         }
         out
+    }
+
+    /// The fissures of a plume's thinned zone form in a cascade (F57; Hemingway, Rudolph
+    /// and Manga 2020): the first opens through the thinnest shell, at the pole; the ice
+    /// its eruptions pile along its flanks loads a plate broken at the fissure, whose
+    /// bending tension at the surface peaks a quarter flexural parameter away on either
+    /// side, where the next fissure opens, and so on outward while the site is still in
+    /// the thinned core and the bending and tidal tensions together exceed the strength.
+    /// Each fissure runs along the field while the thin shell lets it, as a polar crack
+    /// does, and refracts round the margin. The fissures are the vents of the present
+    /// episode, or the healed vents of a past one carried to where the body left its
+    /// terrain.
+    #[allow(clippy::too_many_arguments)]
+    fn cascade(
+        &self,
+        pole: [f64; 3],
+        present: f64,
+        carry: Option<&crate::stages::ice::FocusEpisode>,
+        vi: u64,
+        spacing: f64,
+        cell: f64,
+        rng: &Rng,
+        out: &mut Vec<Linea>,
+        index: &mut CrackIndex,
+    ) {
+        let bin = u64::MAX - vi;
+        let time = match carry {
+            None => present,
+            Some(e) => 0.5 * (e.start + e.end),
+        };
+        let axis = mean_axis_at(time, present, self.nsr_period_gyr);
+        let l_max = LINEA_LENGTH_RAD.1 * self.body_radius;
+        let junction = (0.5 * VENT_WIDTH).max(cell);
+        // The load of a fissure's flanking ridges, N/m: the two Gaussian flanks of the
+        // vent profile, each VENT_RIDGE_SHARE of the trough deep over an eighth of the
+        // width.
+        let load = DENSITY_ICE
+            * self.gravity
+            * 2.0
+            * VENT_RIDGE_SHARE
+            * VENT_TROUGH_DEPTH
+            * std::f64::consts::PI.sqrt()
+            * (VENT_WIDTH / 8.0);
+        // A line load V on a plate broken at the load (Turcotte and Schubert): the
+        // deflection V alpha^3 / (2 D) e^(-x / alpha) cos(x / alpha), whose surface
+        // tension peaks at x = alpha pi / 4 with the moment 0.3225 V alpha and the stress
+        // 6 M / te^2, with the elastic thickness the shell's local thinning leaves.
+        let site = |p: [f64; 3]| -> (f64, f64) {
+            let te = (self.elastic * self.shell_map.factor(p)).max(1.0);
+            let alpha = crate::stages::ice_shell::flexural_parameter(te, self.gravity);
+            (
+                std::f64::consts::FRAC_PI_4 * alpha,
+                6.0 * 0.3225 * load * alpha / (te * te),
+            )
+        };
+        // The first fissure: through the thinnest shell, a little off the pole.
+        let (east, north) = local_basis(pole);
+        let (d0, _) = site(pole);
+        let off = VENT_CASCADE_FIRST_OFFSET * d0 * rng.uniform(bin, 1) / self.body_radius;
+        let ang = std::f64::consts::TAU * rng.uniform(bin, 2);
+        let p0 = normalize([
+            pole[0] + off * (east[0] * ang.cos() + north[0] * ang.sin()),
+            pole[1] + off * (east[1] * ang.cos() + north[1] * ang.sin()),
+            pole[2] + off * (east[2] * ang.cos() + north[2] * ang.sin()),
+        ]);
+        let (peak, phase) = self.shell.peak_tension(axis, p0);
+        if peak <= ICE_CRACK_STRESS {
+            return;
+        }
+        let id_of = |k: u64| (VENT_CASCADE_BIN << 32) | k | (vi << 56);
+        let first = {
+            let rules = TraceRules {
+                polar: true,
+                index: if carry.is_none() { Some(&*index) } else { None },
+                exclude: None,
+                one_way: None,
+                junction,
+            };
+            self.ridge_trace(axis, p0, phase, spacing, l_max, id_of(0), &rules)
+        };
+        if first.len() < 3 {
+            return;
+        }
+        let push =
+            |pts: &[[f64; 3]], phase: f64, k: u64, out: &mut Vec<Linea>, index: &mut CrackIndex| {
+                let time_gyr = match carry {
+                    None => (present - POLAR_RENEWAL_GYR * rng.uniform(bin, 10 + 2 * k)).max(0.0),
+                    Some(e) => e.start + (e.end - e.start) * rng.uniform(bin, 10 + 2 * k),
+                };
+                let relief = VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, 11 + 2 * k));
+                let points: Vec<[f64; 3]> = match carry {
+                    Some(e) => pts.iter().map(|p| e.carry(*p)).collect(),
+                    None => pts.to_vec(),
+                };
+                index.insert(out.len(), &points, carry.is_none());
+                out.push(Linea {
+                    length: (points.len() - 1) as f64 * spacing,
+                    points,
+                    spacing,
+                    width: VENT_WIDTH,
+                    relief,
+                    kind: LineaKind::Vent,
+                    phase,
+                    time_gyr,
+                    id: id_of(k),
+                });
+            };
+        let mut k = 0u64;
+        push(&first, phase, k, out, index);
+        // Outward from the first on either side, each where the last one's load bends
+        // the plate most, while the shell there is still the thinned core's and the
+        // tension opens it.
+        for sign in [1.0f64, -1.0] {
+            let mut last = first.clone();
+            for _ in 0..VENT_CASCADE_MAX {
+                let mid = last[last.len() / 2];
+                let tangent = midpoint_tangent(&last);
+                let side = normalize(cross(mid, tangent));
+                let side = [sign * side[0], sign * side[1], sign * side[2]];
+                let (distance, _) = site(mid);
+                let theta = distance / self.body_radius;
+                let p = normalize([
+                    mid[0] * theta.cos() + side[0] * theta.sin(),
+                    mid[1] * theta.cos() + side[1] * theta.sin(),
+                    mid[2] * theta.cos() + side[2] * theta.sin(),
+                ]);
+                if self.shell_map.profile(p) <= POLAR_CORE_PROFILE {
+                    break;
+                }
+                let (_, bending) = site(p);
+                let (peak, phase) = self.shell.peak_tension(axis, p);
+                if peak + bending <= ICE_CRACK_STRESS {
+                    break;
+                }
+                k += 1;
+                let pts = {
+                    let rules = TraceRules {
+                        polar: true,
+                        index: if carry.is_none() { Some(&*index) } else { None },
+                        exclude: None,
+                        one_way: None,
+                        junction,
+                    };
+                    self.ridge_trace(axis, p, phase, spacing, l_max, id_of(k), &rules)
+                };
+                if pts.len() < 3 {
+                    break;
+                }
+                push(&pts, phase, k, out, index);
+                last = pts;
+            }
+        }
     }
 
     /// How a propagating crack answers the cracks already open near it (Pollard and
@@ -849,7 +1040,10 @@ pub fn linea_compute(
         })
         .collect();
     cells.sort_by_key(|c| c.idx);
-    StampOutput { cells }
+    StampOutput {
+        cells,
+        composition: None,
+    }
 }
 
 /// Where the lineae cross a cell as a unit: the share of the surface that is crack.
@@ -877,5 +1071,51 @@ mod tests {
         let floor = linea_profile(LineaKind::Band, 0.0, 20e3, 100.0, 0.0);
         let outside = linea_profile(LineaKind::Band, 15e3, 20e3, 100.0, 0.0);
         assert!(floor < -90.0 && outside > -5.0, "{floor} {outside}");
+    }
+
+    /// Under a plume the vents of the thinned zone come in a cascade (F57): a parallel
+    /// set a quarter flexural parameter apart, each long enough to cross the core.
+    #[test]
+    fn the_tiger_stripes_form_a_parallel_cascade() {
+        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let cracks = Cracks::new(&g).unwrap();
+        let present = g.f64("body.age");
+        let all = cracks.generate(present, &CubeSphere::new(128), 7);
+        let stripes: Vec<&Linea> = all
+            .iter()
+            .filter(|l| l.kind == LineaKind::Vent && l.time_gyr > present - 0.01)
+            .collect();
+        let r = cracks.body_radius;
+        let longest = stripes.iter().map(|l| l.length).fold(0.0, f64::max);
+        let first = stripes
+            .iter()
+            .find(|l| l.id == VENT_CASCADE_BIN << 32)
+            .expect("the first stripe");
+        let (mut nearest, mut parallel) = (f64::INFINITY, 0.0);
+        for l in &stripes {
+            if l.id == first.id {
+                continue;
+            }
+            let d = angle_between(first.midpoint(), l.midpoint()) * r;
+            if d < nearest {
+                nearest = d;
+                parallel = dot(midpoint_tangent(&first.points), midpoint_tangent(&l.points)).abs();
+            }
+        }
+        eprintln!(
+            "enceladus: {} stripes, longest {:.0} km, the first's neighbour {:.0} km away, parallel {parallel:.2}; {} cracks in all",
+            stripes.len(),
+            longest / 1e3,
+            nearest / 1e3,
+            all.len()
+        );
+        assert!(stripes.len() >= 2, "{} stripes", stripes.len());
+        assert!(longest > 80e3, "longest stripe {:.0} km", longest / 1e3);
+        assert!(
+            (15e3..=90e3).contains(&nearest),
+            "neighbour {:.0} km away",
+            nearest / 1e3
+        );
+        assert!(parallel > 0.6, "parallel {parallel:.2}");
     }
 }

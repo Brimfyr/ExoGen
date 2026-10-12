@@ -19,14 +19,13 @@ use crate::constants::*;
 use crate::fields::{Field, LayerSet};
 use crate::geom::dot;
 use crate::grid::CubeSphere;
-use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::units::{
     UNIT_BAND, UNIT_CHAOS, UNIT_CONTINENTAL, UNIT_CRATER_FLOOR, UNIT_CRYODOME, UNIT_DEEP_FLOOR,
     UNIT_IO_FLOW, UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
 };
 
-pub const VERSION: u64 = 19;
+pub const VERSION: u64 = 21;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -197,15 +196,6 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
         a[1] + (b[1] - a[1]) * t,
         a[2] + (b[2] - a[2]) * t,
     ]
-}
-
-/// The factor on a flow unit's reflectance from its eruption's composition (F55): the
-/// body's lavas drift over the eruptive history, so units close in time are alike and
-/// units an age apart differ, by up to the composition range.
-fn lava_tint(noise: &GradientNoise, time_gyr: f32) -> f32 {
-    let t = time_gyr as f64 / LAVA_COMPOSITION_PERIOD_GYR;
-    let drift = noise.fbm([t, 0.3, 0.7], 1.0, 2, 2.0, 0.5) / 0.6;
-    (1.0 + LAVA_COMPOSITION_RANGE * drift.clamp(-1.0, 1.0)).max(0.1) as f32
 }
 
 /// Colour of a mixture at a given maturity.
@@ -416,7 +406,7 @@ pub fn albedo(
         }
     };
     let ages_f = layers.surface_age.as_slice();
-    let tint_noise = GradientNoise::new(0x1A7A_71A7);
+    let comp_f = layers.composition.as_slice();
     let mixed = if gardened {
         mixed_cover(
             grid,
@@ -520,9 +510,9 @@ pub fn albedo(
                     && units[k] != UNIT_CONTINENTAL
                     && units[k] != UNIT_OCEANIC
                 {
-                    // Each eruption's lava differs in composition (F55): the flow unit's
-                    // reflectance departs from the mean by a share drawn from its time.
-                    let t = lava_tint(&tint_noise, ages_f[k]);
+                    // The flow unit's reflectance departs from the mean by its eruption's
+                    // composition (F55), which the unit's own ejecta keeps.
+                    let t = (1.0 + LAVA_COMPOSITION_RANGE as f32 * comp_f[k]).max(0.1);
                     let tinted = |v: [f32; 3]| [v[0] * t, v[1] * t, v[2] * t];
                     (
                         lerp3(fresh, tinted(lava.fresh), c),
@@ -578,9 +568,19 @@ pub fn albedo(
                             }
                             _ => colour,
                         };
-                        // The trailing hemisphere's plasma darkens and reddens the ice.
+                        // The trailing hemisphere's plasma darkens and reddens the ice
+                        // in the time it takes to process the optical surface (F58); a
+                        // plume's fallout that buries that surface first hides the
+                        // darkening by the ratio of the two times.
                         if trailing > 0.0 {
+                            let tau = TRAILING_DARKENING_GYR / trailing;
+                            let exposed = if burial.is_finite() {
+                                burial / (burial + tau)
+                            } else {
+                                1.0
+                            };
                             let w = (trailing
+                                * exposed
                                 * dot(d, crate::stages::cryo::TRAILING_APEX).max(0.0).powi(2))
                                 as f32;
                             let tinted = [
