@@ -34,7 +34,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 6;
+pub const VERSION: u64 = 7;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns
@@ -50,8 +50,9 @@ pub struct Lane {
     pub half_width: f64,
     /// Whether the lane is grooved or smooth bright terrain.
     pub grooved: bool,
-    /// Phases of the two waves that wobble the width along the lane.
-    pub wobble_phase: [f64; 2],
+    /// The width's wander along the lane, a self-affine profile sampled from one end to
+    /// the other, as a factor on the half width.
+    pub width_profile: Vec<f32>,
     /// When the lane formed, Gyr since formation.
     pub time_gyr: f64,
     pub id: u64,
@@ -91,24 +92,41 @@ impl Lane {
             .collect()
     }
 
-    /// A lane about a centre line.
+    /// A lane about a centre line, its edges wandering in a self-affine profile from
+    /// three widths down to half a width.
     pub fn from_points(
         points: Vec<[f64; 3]>,
         spacing: f64,
         half_width: f64,
         grooved: bool,
-        wobble_phase: [f64; 2],
         time_gyr: f64,
         id: u64,
     ) -> Self {
         let half_length = 0.5 * points.len().saturating_sub(1) as f64 * spacing;
+        let noise = GradientNoise::new(id ^ 0x6700_D1F7);
+        let samples = 128usize;
+        let width = 2.0 * half_width;
+        let gain = 2f64.powf(-ROUGHNESS_HURST);
+        let raw: Vec<f64> = (0..=samples)
+            .map(|i| {
+                let along = -half_length + 2.0 * half_length * i as f64 / samples as f64;
+                noise.fbm([along / (3.0 * width), 0.3, 0.7], 1.0, 3, 2.0, gain)
+            })
+            .collect();
+        let rms = (raw.iter().map(|v| v * v).sum::<f64>() / raw.len() as f64)
+            .sqrt()
+            .max(1e-9);
+        let width_profile = raw
+            .iter()
+            .map(|v| (1.0 + GROOVE_WIDTH_WOBBLE * v / rms).max(0.3) as f32)
+            .collect();
         Self {
             points,
             spacing,
             half_length,
             half_width,
             grooved,
-            wobble_phase,
+            width_profile,
             time_gyr,
             id,
         }
@@ -158,17 +176,18 @@ impl Lane {
         (across, along, t)
     }
 
-    /// The lane's half width at a signed distance along it, m: the mean wobbled by two
-    /// waves three and seven widths long, closing in a lens at the ends.
+    /// The lane's half width at a signed distance along it, m: the mean times the
+    /// wander profile there, closing in a lens at the ends.
     pub fn half_width_at(&self, along: f64) -> f64 {
-        let w = 2.0 * self.half_width;
-        let turn = 2.0 * std::f64::consts::PI * along;
-        let wobble = 0.5
-            * ((turn / (3.0 * w) + self.wobble_phase[0]).sin()
-                + (turn / (7.0 * w) + self.wobble_phase[1]).sin());
         let s = (0.5 + 0.5 * along / self.half_length.max(1.0)).clamp(0.0, 1.0);
+        let n = self.width_profile.len();
+        let x = s * (n - 1) as f64;
+        let i = (x.floor() as usize).min(n.saturating_sub(2));
+        let f = (x - i as f64).clamp(0.0, 1.0);
+        let wander =
+            self.width_profile[i] as f64 * (1.0 - f) + self.width_profile[i + 1] as f64 * f;
         let lens = (4.0 * s * (1.0 - s)).max(0.0).powf(GROOVE_LANE_TAPER_POWER);
-        self.half_width * (1.0 + GROOVE_WIDTH_WOBBLE * wobble) * lens
+        self.half_width * wander * lens
     }
 
     /// How much of a cell the lane covers at an across and an along, 0 to 1: a one-cell
@@ -238,6 +257,73 @@ impl Lane {
         out.sort_by_key(|s| s.idx);
         out
     }
+}
+
+/// The fissures' points bucketed on the sphere, for the folds to follow the nearest one.
+struct FabricIndex {
+    scale: f64,
+    buckets: HashMap<(i32, i32, i32), Vec<([f64; 3], [f64; 3])>>,
+}
+
+impl FabricIndex {
+    fn new(cracks: &[Linea], range_rad: f64) -> Self {
+        let scale = 1.0 / range_rad.max(1e-6);
+        let mut buckets: HashMap<(i32, i32, i32), Vec<([f64; 3], [f64; 3])>> = HashMap::new();
+        for l in cracks {
+            let n = l.points.len();
+            for i in 0..n {
+                let a = l.points[i.saturating_sub(1)];
+                let b = l.points[(i + 1).min(n - 1)];
+                let p = l.points[i];
+                let chord = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let radial = dot(chord, p);
+                let t = normalize([
+                    chord[0] - radial * p[0],
+                    chord[1] - radial * p[1],
+                    chord[2] - radial * p[2],
+                ]);
+                let key = (
+                    (p[0] * scale).floor() as i32,
+                    (p[1] * scale).floor() as i32,
+                    (p[2] * scale).floor() as i32,
+                );
+                buckets.entry(key).or_default().push((p, t));
+            }
+        }
+        Self { scale, buckets }
+    }
+
+    /// The tangent of the nearest fissure point within a bucket's reach of a direction.
+    fn nearest_tangent(&self, d: [f64; 3]) -> Option<[f64; 3]> {
+        let (i, j, k) = (
+            (d[0] * self.scale).floor() as i32,
+            (d[1] * self.scale).floor() as i32,
+            (d[2] * self.scale).floor() as i32,
+        );
+        let mut best: Option<(f64, [f64; 3])> = None;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dk in -1..=1 {
+                    let Some(v) = self.buckets.get(&(i + di, j + dj, k + dk)) else {
+                        continue;
+                    };
+                    for &(p, t) in v {
+                        let dist = angle_between(p, d);
+                        if best.is_none_or(|b| dist < b.0) {
+                            best = Some((dist, t));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|b| b.1)
+    }
+}
+
+/// How much of a structure of width `w`, m, survives gardening diffusion of `kappa_t`,
+/// m², as a factor on its height: it spreads and lowers as the craters do.
+fn degraded(w: f64, kappa_t: f64) -> f64 {
+    (w * w / (w * w + 4.0 * kappa_t.max(0.0))).sqrt()
 }
 
 /// The flexural parameter of an elastic ice lithosphere `te` thick over an ocean, m: the
@@ -563,7 +649,6 @@ impl IceShellProcess {
                         spacing,
                         half_width,
                         rng.uniform(k, 102) >= GROOVE_SMOOTH_LANE_SHARE,
-                        [tau * rng.uniform(k, 103), tau * rng.uniform(k, 104)],
                         time_gyr,
                         k,
                     );
@@ -1075,9 +1160,10 @@ pub fn groove_compute(
     StampOutput { cells }
 }
 
-/// The polar terrain on the resolved grid at the end of the sequence: its surface back
-/// to its floor, the smoothed coarse relief, with folds between the cracks along their
-/// direction, and the margin ridge where the spreading terrain meets the old.
+/// The polar terrain on the resolved grid at its time: its surface back to its floor,
+/// the smoothed coarse relief, with folds between the cracks parallel to the nearest
+/// one, and the margin ridge where the spreading terrain meets the old; a past terrain's
+/// structures spread and lowered by the gardening since (`kappa_t`, m²).
 #[allow(clippy::too_many_arguments)]
 pub fn polar_compute(
     layers: &LayerSet,
@@ -1086,8 +1172,10 @@ pub fn polar_compute(
     floor: &[f32],
     shell: &ShellMap,
     edge: &[f32],
+    cracks: &[Linea],
     fold_direction: [f64; 3],
     time_gyr: f64,
+    kappa_t: f64,
     cell: f64,
     stamper: &mut Stamper,
 ) -> StampOutput {
@@ -1101,6 +1189,10 @@ pub fn polar_compute(
     let reach = shell.radius_rad;
     let normal = normalize(cross(pole, fold_direction));
     let spacing = POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
+    let fabric = FabricIndex::new(cracks, POLAR_FABRIC_RANGE / body_radius);
+    let ridge_keep = degraded(POLAR_MARGIN_WIDTH, kappa_t);
+    let belt_keep = degraded(0.5 * POLAR_BELT_SPACING.max(3.0 * cell), kappa_t);
+    let fold_keep = degraded(0.5 * spacing, kappa_t);
     let noise = GradientNoise::new(0x5027_F01D);
     let belt_noise = GradientNoise::new(0x5027_BE17);
     let set_frequency = body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
@@ -1118,7 +1210,7 @@ pub fn polar_compute(
             // belt's segments are; inside, the folds fade in from it.
             let seg = belt_noise.fbm(d, body_radius / POLAR_BELT_SEGMENT, 2, 2.0, 0.5);
             let x = dk as f64 * cell / POLAR_MARGIN_WIDTH;
-            let ridge = POLAR_MARGIN_HEIGHT * (0.75 + 0.25 * seg) * (-x * x).exp();
+            let ridge = POLAR_MARGIN_HEIGHT * ridge_keep * (0.75 + 0.25 * seg) * (-x * x).exp();
             let c = (0.5 + 0.5 * dk as f64).clamp(0.0, 1.0);
             let held = units[k] != UNIT_POLAR_TERRAIN || ages[k] as f64 > time_gyr + 1e-3;
             if c <= 0.0 || (c >= 0.5 && held) {
@@ -1127,20 +1219,27 @@ pub fn polar_compute(
                 }
                 return Some(write(k, bedrock[k] as f64 + ridge));
             }
-            // Inside: folds along the cracks; towards the edge, the belt where the
-            // spreading is taken up, folds parallel to the edge instead.
+            // Inside: folds parallel to the nearest fissure, the field's direction where
+            // none is near; towards the edge, the belt where the spreading is taken up,
+            // folds parallel to the edge instead.
             let inward = dk as f64 * cell;
             let taper = (inward / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
             let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
-            let across = dot(d, normal) * body_radius;
-            let along = dot(d, fold_direction) * body_radius;
+            let (t, n) = match fabric.nearest_tangent(d) {
+                Some(t) => (t, normalize(cross(d, t))),
+                None => (fold_direction, normal),
+            };
+            let across = dot(d, n) * body_radius;
+            let along = dot(d, t) * body_radius;
             let phase = 2.0 * std::f64::consts::PI * across / spacing
                 + GROOVE_SET_TURN * sets * along / spacing;
-            let folds = POLAR_FOLD_AMPLITUDE * (0.6 + 0.4 * sets.abs()) * taper * phase.sin();
+            let folds =
+                POLAR_FOLD_AMPLITUDE * fold_keep * (0.6 + 0.4 * sets.abs()) * taper * phase.sin();
             // The belt decays inward from the edge; its folds come in segments that
             // shift against their neighbours, en echelon, never as concentric rings.
             let belt_w = (-inward / POLAR_BELT_WIDTH).exp();
             let belt = POLAR_BELT_HEIGHT
+                * belt_keep
                 * belt_w
                 * (0.6 + 0.4 * seg)
                 * (2.0 * std::f64::consts::PI * inward / POLAR_BELT_SPACING.max(3.0 * cell)
@@ -1192,7 +1291,7 @@ mod tests {
     fn a_lane_is_a_swath_along_part_of_a_great_circle() {
         let r = 2.6e6;
         let points = Lane::great_circle([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], 1000e3, 50e3, r);
-        let lane = Lane::from_points(points, 50e3, 100e3, true, [0.0, 0.0], 0.0, 1);
+        let lane = Lane::from_points(points, 50e3, 100e3, true, 0.0, 1);
         assert!((lane.half_length - 1000e3).abs() < 1.0);
         assert!(lane.inside([1.0, 0.0, 0.0], r));
         // Off the circle by atan(0.1): 259 km, outside the width however it wobbles.
@@ -1201,8 +1300,10 @@ mod tests {
         assert!((across.abs() - 0.1f64.atan() * r).abs() < 1.0);
         assert!(along.abs() < 1.0);
         assert!(!lane.inside(off, r));
-        assert!((lane.half_width_at(0.0) - 100e3).abs() < 1.0);
-        assert!(lane.half_width_at(150e3) <= 125e3 && lane.half_width_at(150e3) >= 75e3);
+        // The width wanders by a quarter or so, never to nothing.
+        let mid = lane.half_width_at(0.0);
+        assert!((50e3..=160e3).contains(&mid), "{mid}");
+        assert!(lane.half_width_at(150e3) <= 160e3 && lane.half_width_at(150e3) >= 40e3);
         // The lens: the width closes at the ends.
         assert!(lane.half_width_at(990e3) < 0.5 * lane.half_width_at(0.0));
         // Along the circle by 0.3 rad: 780 km, inside the length; by 0.5 rad, outside.

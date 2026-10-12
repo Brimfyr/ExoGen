@@ -776,13 +776,26 @@ pub fn linea_compute(
     }
     let time = rec.time_gyr as f32;
     let lineation_spacing = BAND_LINEATION_SPACING.max(3.0 * cell);
+    let variation = GradientNoise::new(rec.id ^ 0x11CE_7A47);
     let mut cells: Vec<CellWrite> = best
         .into_iter()
         .map(|(idx, (_, across, s))| {
             // A band is a lens, widest in the middle and closing at its ends, and is
             // lineated inside along its axis.
-            // A vent is an elliptical opening, narrowing and shallowing to its tips.
+            // A vent is an elliptical opening, narrowing and shallowing to its tips; and
+            // every crack's relief and width rise and fall along it, in segments.
             let lens = (4.0 * s * (1.0 - s)).max(0.0).sqrt();
+            let vary = (1.0
+                + CRACK_RELIEF_VARIATION
+                    * variation.fbm(
+                        [s * rec.length / CRACK_VARIATION_LENGTH, 0.3, 0.7],
+                        1.0,
+                        2,
+                        2.0,
+                        0.5,
+                    )
+                    / 0.6)
+                .max(0.3);
             let width_here = match rec.kind {
                 LineaKind::Band => {
                     width
@@ -794,10 +807,14 @@ pub fn linea_compute(
                 LineaKind::Vent => width * (VENT_TIP_WIDTH + (1.0 - VENT_TIP_WIDTH) * lens),
                 _ => width,
             };
-            let relief_here = match rec.kind {
-                LineaKind::Vent => rec.relief * (VENT_TIP_DEPTH + (1.0 - VENT_TIP_DEPTH) * lens),
-                _ => rec.relief,
-            };
+            let width_here = width_here * vary;
+            let relief_here = vary
+                * match rec.kind {
+                    LineaKind::Vent => {
+                        rec.relief * (VENT_TIP_DEPTH + (1.0 - VENT_TIP_DEPTH) * lens)
+                    }
+                    _ => rec.relief,
+                };
             let mut h = linea_profile(rec.kind, across, width_here, relief_here, blur);
             let inside = across.abs() < 0.5 * width_here;
             if rec.kind == LineaKind::Band && inside {

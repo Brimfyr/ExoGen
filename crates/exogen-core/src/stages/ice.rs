@@ -317,8 +317,11 @@ pub struct ShellMap {
     pub pole: Option<[f64; 3]>,
     pub thinning: f64,
     pub radius_rad: f64,
-    /// The field that wobbles the thinning's edge round the pole.
+    /// The field that wobbles the thinning's edge round the pole and structures the
+    /// thinning with the shell's convection.
     noise: GradientNoise,
+    /// The convection's cell scale, in lattice cells per radian.
+    structure_frequency: f64,
 }
 
 impl ShellMap {
@@ -326,12 +329,15 @@ impl ShellMap {
         let thinning = graph.f64("tectonics.polar_thinning").clamp(0.0, 0.95);
         let seed = graph.f64("seed.tectonics") as u64;
         let noise = GradientNoise::new(seed ^ 0x5027_B0B1);
+        let structure_frequency = graph.f64("body.radius")
+            / (CONVECTION_CELL_SHELLS * graph.f64("interior.ice_shell_thickness")).max(1.0);
         if thinning <= 0.0 {
             return Self {
                 pole: None,
                 thinning: 0.0,
                 radius_rad: 0.0,
                 noise,
+                structure_frequency,
             };
         }
         // Which pole is a coin the body tossed long ago.
@@ -342,6 +348,7 @@ impl ShellMap {
             thinning,
             radius_rad: POLAR_TERRAIN_RADIUS_DEG.to_radians(),
             noise,
+            structure_frequency,
         }
     }
 
@@ -364,17 +371,21 @@ impl ShellMap {
         }
     }
 
-    /// The focusing profile at a direction: 1 at the pole, 0 beyond the taper.
+    /// The focusing profile at a direction: 1 at the pole, 0 beyond the taper, and
+    /// structured in between by the shell's convection, up and down by the structure
+    /// share in cells a couple of shell thicknesses wide, so that nothing drawn from it
+    /// is a circle.
     pub fn profile(&self, d: [f64; 3]) -> f64 {
         let Some(pole) = self.pole else {
             return 0.0;
         };
         let x = crate::geom::angle_between(pole, d) / self.radius_at(d).max(1e-9);
         if x >= 1.0 {
-            0.0
-        } else {
-            0.5 * (1.0 + (std::f64::consts::PI * x).cos())
+            return 0.0;
         }
+        let taper = 0.5 * (1.0 + (std::f64::consts::PI * x).cos());
+        let structure = self.noise.fbm(d, self.structure_frequency, 2, 2.0, 0.5);
+        (taper * (1.0 + CONVECTION_STRUCTURE * structure)).clamp(0.0, 1.0)
     }
 
     /// The local shell thickness over the mean.

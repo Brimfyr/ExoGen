@@ -1016,6 +1016,10 @@ pub const LINEA_RIDGE_HEIGHT: f64 = 150.0;
 pub const LINEA_TROUGH_FRACTION: f64 = 0.6;
 pub const LINEA_WOBBLE_RAD: f64 = 0.08;
 pub const LINEA_WOBBLE_LENGTH: f64 = 200e3;
+/// A crack's relief and width vary along it by this rms share over segments this long,
+/// m: ridges rise and fall, troughs pinch and widen, as the real ones do.
+pub const CRACK_RELIEF_VARIATION: f64 = 0.35;
+pub const CRACK_VARIATION_LENGTH: f64 = 15e3;
 pub const LINEA_DIURNAL_SHARE: f64 = 0.6;
 pub const CYCLOID_SPEED: f64 = 0.8;
 pub const CYCLOID_MAX_ORBITS: usize = 12;
@@ -1078,6 +1082,15 @@ pub const POLAR_FOLD_SPACING: f64 = 1.5e3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
 pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
 pub const POLAR_MARGIN_WOBBLE: f64 = 0.15;
+/// The focused heating is a field, not a shape: the thinning varies across the zone by
+/// this share between the upwellings and downwellings of the shell's convection, in
+/// cells this many shell thicknesses wide (a layer's cells are about as wide as it is
+/// deep), so the thinned zone's outline, its depression and its renewed terrain are
+/// lobate rather than circular. The polar folds follow the nearest fissure within this
+/// distance, m, and only beyond it the field's direction.
+pub const CONVECTION_STRUCTURE: f64 = 0.3;
+pub const CONVECTION_CELL_SHELLS: f64 = 2.0;
+pub const POLAR_FABRIC_RANGE: f64 = 40e3;
 /// The margin belt: the spreading is taken up in folds parallel to the renewed terrain's
 /// edge, decaying inward over this distance, m, at this spacing, m, this high, m, broken
 /// into segments this long, m, along the edge that shift against their neighbours by up
@@ -1112,6 +1125,8 @@ pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
 /// gigayears old).
 pub const GROOVE_LANE_LENGTH_RAD: (f64, f64) = (0.2, 1.5);
 pub const GROOVE_LANE_WIDTH_SHARE: (f64, f64) = (0.011, 0.095);
+/// A lane's edges wander by this rms share of its width along it, in a self-affine
+/// profile from three widths down to half a width (the Hurst exponent of F54).
 pub const GROOVE_WIDTH_WOBBLE: f64 = 0.25;
 pub const GROOVE_BELT_FREQUENCY: f64 = 1.2;
 pub const GROOVE_BELT_POWER: f64 = 4.0;

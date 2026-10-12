@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 31;
+pub const FINISH_VERSION: u64 = 32;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1389,8 +1389,10 @@ pub fn finish(
                             polar_floor,
                             &shell_map,
                             &polar_edge,
+                            &lineae,
                             fold_direction,
                             polar_time,
+                            0.0,
                             cell,
                             stamper,
                         );
@@ -1398,6 +1400,11 @@ pub fn finish(
                     }
                     Event::FossilTerrain(k) => {
                         let edge = fossil_edges[*k].as_deref().unwrap_or(&[]);
+                        // Gardening since the episode spreads and lowers its structures,
+                        // as it degrades the craters of the time.
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(episodes[*k].end, present)
+                            * 1e3;
                         let out = ice_shell::polar_compute(
                             &layers,
                             &grid,
@@ -1405,8 +1412,10 @@ pub fn finish(
                             fossil_floor_slices[*k],
                             &episode_maps[*k],
                             edge,
+                            &lineae,
                             fossil_fold[*k],
                             episodes[*k].end,
+                            kappa_t,
                             cell,
                             stamper,
                         );
