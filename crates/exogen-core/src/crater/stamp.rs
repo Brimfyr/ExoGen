@@ -19,9 +19,9 @@ use crate::constants::{
     TEXTURE_MIN_CELLS, TEXTURE_RADIAL_CELLS,
 };
 use crate::constants::{
-    EJECTA_EDGE_FADE, EJECTA_EDGE_RAGGEDNESS, EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_POND_CELLS,
-    MELT_POND_THRESHOLD, OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE,
-    RING_WIDTH_FRACTION,
+    EJECTA_COVERAGE_TAPER, EJECTA_EDGE_RAGGEDNESS, EJECTA_EXPONENT, EJECTA_FULL_COVER,
+    EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_POND_CELLS, MELT_POND_THRESHOLD,
+    OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
 };
 use crate::constants::{
     FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD, PLANAR_TEXTURE_RADII,
@@ -207,6 +207,9 @@ pub struct StampParams {
     pub seed: u64,
     /// The crater excavated the deep bedrock: its floor and near ejecta are deep material.
     pub deep: bool,
+    /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
+    /// ejecta with the ground it covers (F51).
+    pub maturity_timescale: f64,
 }
 
 /// Stamp one crater. Returns the number of cells touched.
@@ -296,6 +299,9 @@ pub fn stamp_compute(
     };
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let melts = layers.melt.as_slice();
+    let covers = layers.cover.as_slice();
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
@@ -339,14 +345,14 @@ pub fn stamp_compute(
             melt: 0.0,
             cover: 0.0,
         };
-        let cont = continuous * edge.factor(phi);
-        if p.set_age && re <= cont {
-            // Thin ejecta near the edge renews the surface only partly.
-            let w_age = ((cont - re) / (EJECTA_EDGE_FADE * cont)).clamp(0.0, 1.0) as f32;
-            let mut age = ages[idx];
-            if p.time_gyr > age {
-                age += (p.time_gyr - age) * w_age;
-            }
+        let cont = continuous * edge.factor_at(phi, re / dim.radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius);
+        if p.set_age && cover > 0.0 {
+            // The deposit covers the ground by its cover (F51); the cell keeps the one
+            // age whose exposure gives the mixture's maturity. Where the cover is under
+            // a half the ground keeps its unit, its melt and its salts or lava.
+            let age = mixed_age(p.time_gyr, ages[idx], cover, p.maturity_timescale);
+            let thick = re <= dim.radius || cover >= 0.5;
             // Deep material by ballistic mixing: all ejecta near the rim, all local at the
             // continuous edge. Fresh ejecta covers older melt.
             let edge_x = cont / dim.radius;
@@ -355,13 +361,21 @@ pub fn stamp_compute(
             write.age = age;
             write.unit = if re <= dim.radius {
                 p.unit_floor
-            } else {
+            } else if thick {
                 p.unit_ejecta
+            } else {
+                units[idx]
             };
             write.deep = deep[idx] + ((source_deep - deep[idx] as f64) * mix) as f32;
-            write.melt = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
+            write.melt = if thick {
+                texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32
+            } else {
+                melts[idx]
+            };
             // A crater in lava is made of lava through and through.
-            write.cover = if crate::stages::volcanism::is_lava_unit(write.unit) {
+            write.cover = if !thick {
+                covers[idx]
+            } else if crate::stages::volcanism::is_lava_unit(write.unit) {
                 1.0
             } else {
                 0.0
@@ -708,10 +722,11 @@ pub fn crenulation(seed: u64, phi: f64) -> f64 {
     harmonics(seed ^ 0xC2E4_0A17, phi, &[3.0, 5.0, 8.0, 13.0])
 }
 
-/// Lobes of a continuous-ejecta edge as a function of azimuth: higher harmonics, so the
-/// lobes are a fraction of a radius wide at the edge.
+/// Lobes of a continuous-ejecta edge as a function of azimuth: high harmonics at
+/// irregular orders, so the edge is ragged in many small lobes, a fraction of a radius
+/// wide, rather than petalled in a few.
 pub fn lobes(seed: u64, phi: f64) -> f64 {
-    harmonics(seed ^ 0xED6E_5A1F, phi, &[5.0, 8.0, 12.0, 18.0])
+    harmonics(seed ^ 0xED6E_5A1F, phi, &[11.0, 17.0, 26.0, 40.0, 61.0])
 }
 
 /// The lobate outline of a crater's continuous ejecta, tabulated around the azimuth as a
@@ -739,6 +754,13 @@ impl EdgeShape {
         let i = (x.floor() as usize) % 64;
         let f = x - x.floor();
         self.table[i] * (1.0 - f) + self.table[(i + 1) % 64] * f
+    }
+
+    /// The factor at a distance `x` in crater radii: the blanket is continuous round the
+    /// rim and its lobes develop outward, in full from two radii on.
+    #[inline]
+    pub fn factor_at(&self, phi: f64, x: f64) -> f64 {
+        1.0 + (self.factor(phi) - 1.0) * (x - 1.0).clamp(0.0, 1.0)
     }
 }
 
@@ -867,6 +889,40 @@ pub struct RestoreParams {
     /// Degradation blur of the resolved profile and of its coarse-smoothed version, metres.
     pub fine_blur: f64,
     pub coarse_blur: f64,
+    /// The exposure on which the surface's maturity saturates, Gyr (F51).
+    pub maturity_timescale: f64,
+}
+
+/// The share of the ground an ejecta blanket covers at the elliptical radius `re` of a
+/// crater of radius `radius` with its continuous edge at `cont` (F51): the deposit thins
+/// as r^EJECTA_EXPONENT and the cover falls as 1 - 2^-(cont / r)^3, complete out to 1.3
+/// radii, half at the edge, tapering to nothing over the outer part of the footprint
+/// `r_max`, where the deposit is too thin to leave a record.
+pub fn ejecta_coverage(re: f64, radius: f64, cont: f64, r_max: f64) -> f64 {
+    if re <= radius {
+        return 1.0;
+    }
+    let raw = 1.0 - (-std::f64::consts::LN_2 * (cont / re).powf(-EJECTA_EXPONENT)).exp();
+    let cover = (raw / EJECTA_FULL_COVER).min(1.0);
+    let taper = ((r_max - re) / (EJECTA_COVERAGE_TAPER * r_max)).clamp(0.0, 1.0);
+    cover * taper
+}
+
+/// The surface age a cell carries after a deposit of the event's time covered the share
+/// `cover` of it (F51): the one age whose exposure gives the mixture's maturity under a
+/// law that saturates on `tau`, the covered ground keeping its own exposure; exact for
+/// an exponential law at every later time. All covered: the event's time; none: the old
+/// age.
+pub fn mixed_age(event: f32, old: f32, cover: f64, tau: f64) -> f32 {
+    if cover >= 1.0 {
+        return event;
+    }
+    if cover <= 0.0 || event <= old {
+        return old;
+    }
+    let tau = tau.max(1e-6);
+    let gap = (event - old) as f64;
+    (event as f64 + tau * (cover + (1.0 - cover) * (-gap / tau).exp()).ln()) as f32
 }
 
 /// Relief under ejecta of thickness `thickness` is damped by this factor: depressions fill
@@ -955,6 +1011,9 @@ pub fn restore_compute(
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let melts = layers.melt.as_slice();
+    let covers = layers.cover.as_slice();
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
@@ -996,28 +1055,37 @@ pub fn restore_compute(
             melt: 0.0,
             cover: 0.0,
         };
-        let cont = continuous * edge.factor(phi);
+        let cont = continuous * edge.factor_at(phi, re / dim.radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius);
         // The surface is the crater's only where nothing younger, lava or a later
         // crater, has resurfaced the cell since; its relief is restored regardless.
-        if re <= cont && ages[idx] <= p.time_gyr + 1e-6 {
-            // Thin ejecta near the edge renews the surface only partly.
-            let w_age = ((cont - re) / (EJECTA_EDGE_FADE * cont)).clamp(0.0, 1.0) as f32;
-            let mut age = ages[idx];
-            if p.time_gyr > age {
-                age += (p.time_gyr - age) * w_age;
-            }
+        if cover > 0.0 && ages[idx] <= p.time_gyr + 1e-6 {
+            // The loop mixed this crater's deposit into the ground already; here the
+            // cell is made at least as fresh as that cover on mature ground leaves it
+            // (F51), which redraws the edge at this resolution without mixing twice.
+            let floor_age =
+                p.time_gyr as f64 + p.maturity_timescale.max(1e-6) * cover.min(1.0).ln();
+            let thick = re <= dim.radius || cover >= 0.5;
             write.surface = true;
-            write.age = age;
+            write.age = ages[idx].max(floor_age as f32);
             write.unit = if re <= dim.radius {
                 p.unit_floor
-            } else {
+            } else if thick {
                 p.unit_ejecta
+            } else {
+                units[idx]
             };
             // The loop already laid down this crater's deep material; put it back over
             // whatever older craters left, and start the melt afresh.
             write.deep = base_deep[idx];
-            write.melt = texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32;
-            write.cover = if crate::stages::volcanism::is_lava_unit(write.unit) {
+            write.melt = if thick {
+                texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32
+            } else {
+                melts[idx]
+            };
+            write.cover = if !thick {
+                covers[idx]
+            } else if crate::stages::volcanism::is_lava_unit(write.unit) {
                 1.0
             } else {
                 0.0
@@ -1066,6 +1134,7 @@ mod tests {
             bury: true,
             seed: 0,
             deep: false,
+            maturity_timescale: 0.5,
         };
         let touched = stamp(
             &mut layers,
@@ -1095,14 +1164,15 @@ mod tests {
         assert_eq!(layers.unit_id.get(centre_cell), 3);
         let far = grid.locate(crate::geom::normalize([-0.9, 0.1, -0.3])).0;
         assert_eq!(layers.surface_age.get(far), 0.0);
-        // Cells reset: area of a disc of 2 R on the sphere.
+        // Cells covered by at least half (F51): a disc of 2 R, the continuous edge, by
+        // the age that cover leaves on ground of age 0 with the test's timescale.
+        let threshold = mixed_age(3.0, 0.0, 0.5 / EJECTA_FULL_COVER, 0.5);
         let reset: f64 = grid
             .cells()
-            .filter(|c| layers.surface_age.get(*c) >= 1.5)
+            .filter(|c| layers.surface_age.get(*c) >= threshold - 1e-4)
             .map(|c| grid.cell_area(c))
             .sum();
-        // At least half reset out to where the edge fade passes one half.
-        let half = (2.0 - EJECTA_EDGE_FADE) * dim.radius / body_radius;
+        let half = 2.0 * dim.radius / body_radius;
         let cap = 2.0 * std::f64::consts::PI * (1.0 - half.cos());
         assert!((reset - cap).abs() < 0.08 * cap, "reset {reset} cap {cap}");
     }
@@ -1153,6 +1223,7 @@ mod tests {
                 bury,
                 seed: 0,
                 deep: false,
+                maturity_timescale: 0.5,
             };
             stamp(
                 &mut layers,
@@ -1233,6 +1304,7 @@ mod tests {
                 bury: true,
                 seed: 0,
                 deep: false,
+                maturity_timescale: 0.5,
             };
             stamp(
                 &mut layers,
@@ -1339,6 +1411,7 @@ mod tests {
             bury: true,
             seed: 0,
             deep: false,
+            maturity_timescale: 0.5,
         };
         stamp(
             &mut layers,

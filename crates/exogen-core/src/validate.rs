@@ -413,6 +413,20 @@ pub fn reference_checks() -> Vec<Check> {
             3_500.0,
             "2 to 3 km on ice",
         ),
+        range(
+            "Ganymede",
+            "tectonics.ice_resurfaced_fraction",
+            0.55,
+            0.75,
+            "about two thirds bright terrain, from the resonance episode's heating pulse (F50)",
+        ),
+        range(
+            "Ganymede",
+            "tectonics.ice_resurfacing_age",
+            1.8,
+            2.2,
+            "bright terrain about 2 Gyr old (Zahnle et al. 2003)",
+        ),
         // Callisto
         range("Callisto", "body.gravity", 1.21, 1.26, "1.24 m/s²"),
         text("Callisto", "rotation.mode", "locked", ""),

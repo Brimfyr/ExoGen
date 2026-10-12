@@ -293,4 +293,29 @@ mod tests {
         let now = h.at(age);
         assert!((early.tidal_flux / now.tidal_flux - 4.0).abs() < 0.1);
     }
+
+    /// Ganymede's resonance episode (F50) pulses its eccentricity and its tidal flux two
+    /// gigayears ago, and the lanes take their amount and their time from the pulse.
+    #[test]
+    fn ganymede_resonance_episode_heats_the_shell_two_gigayears_ago() {
+        let (g, _) = preset("Ganymede").unwrap().to_graph();
+        let age = g.f64("body.age");
+        let e = g.curve("orbit.eccentricity_history").unwrap();
+        assert!((e.eval(0.0) - 0.0013).abs() < 1e-6);
+        assert!((e.eval(age) - 0.0013).abs() < 1e-6);
+        assert!((e.eval(age - 2.0) - 0.008).abs() < 1e-6);
+        // The plateau holds the forced value over the middle three fifths.
+        assert!((e.eval(age - 2.25) - 0.008).abs() < 1e-6);
+        assert!(e.eval(age - 2.45) < 0.005 && e.eval(age - 2.45) > 0.0013);
+        let h = ThermalHistory::from_graph(&g);
+        let peak = h.samples.iter().map(|s| s.tidal_flux).fold(0.0, f64::max);
+        assert!(peak > 0.007 && peak < 0.009, "peak tidal flux {peak}");
+        assert!(h.at(age).tidal_flux < 0.001);
+        let fraction = g.f64("tectonics.ice_resurfaced_fraction");
+        assert!((0.55..=0.75).contains(&fraction), "fraction {fraction}");
+        let t = g.f64("tectonics.ice_resurfacing_age");
+        assert!((1.9..=2.1).contains(&t), "age {t}");
+        let d = g.f64("tectonics.ice_resurfacing_duration");
+        assert!((0.3..=0.8).contains(&d), "duration {d}");
+    }
 }

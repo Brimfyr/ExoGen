@@ -231,7 +231,8 @@ impl Cracks {
                 // surface, and opened in the field of its own time.
                 let mut time = time;
                 let mut axis = axis;
-                if self.shell_map.thin(p0) {
+                let polar = self.shell_map.thin(p0);
+                if polar {
                     time = (present - POLAR_RENEWAL_GYR * rng.uniform(bin, draw + 54)).max(0.0);
                     axis = mean_axis_at(time, present, self.nsr_period_gyr);
                     phase = self.shell.peak_tension(axis, p0).1;
@@ -253,7 +254,7 @@ impl Cracks {
                     LineaKind::Ridge
                 };
                 // Under a plume the fissures of the thinned shell are its vents.
-                let kind = if self.vent && self.shell_map.thin(p0) {
+                let kind = if self.vent && polar {
                     LineaKind::Vent
                 } else {
                     kind
@@ -262,7 +263,7 @@ impl Cracks {
                 let id = (bin << 32) | j;
                 let points = match kind {
                     LineaKind::Cycloid => self.cycloid(axis, p0, phase, spacing, length, id),
-                    _ => self.ridge_trace(axis, p0, phase, spacing, length, id),
+                    _ => self.ridge_trace(axis, p0, phase, spacing, length, id, polar),
                 };
                 if points.len() < 3 {
                     continue;
@@ -305,7 +306,9 @@ impl Cracks {
 
     /// A crack along the slowly turning field: from the start in both directions,
     /// perpendicular to the most tensile stress at the phase it opened, while the
-    /// tension holds, with a little wander.
+    /// tension holds, with a little wander. A crack of the thinned polar zone refracts
+    /// round the zone's margin and stops in the thick shell beyond.
+    #[allow(clippy::too_many_arguments)]
     fn ridge_trace(
         &self,
         axis: [f64; 3],
@@ -314,6 +317,7 @@ impl Cracks {
         spacing: f64,
         length: f64,
         id: u64,
+        polar: bool,
     ) -> Vec<[f64; 3]> {
         let noise = GradientNoise::new(id ^ 0x7E1A_0000);
         let half = (0.5 * length / spacing).ceil() as usize;
@@ -342,11 +346,36 @@ impl Cracks {
                     )
                     / 0.6;
                 let side_dir = normalize(cross(p, d));
-                let d = normalize([
+                let mut d = normalize([
                     d[0] * turn.cos() + side_dir[0] * turn.sin(),
                     d[1] * turn.cos() + side_dir[1] * turn.sin(),
                     d[2] * turn.cos() + side_dir[2] * turn.sin(),
                 ]);
+                if polar {
+                    // Leaving the thinned core, the crack meets a thicker, stiffer shell
+                    // and refracts along the contrast: it turns to run round the margin,
+                    // and in the thick shell beyond the tension no longer opens it.
+                    let profile = self.shell_map.profile(p);
+                    if profile < CRACK_STOP_PROFILE && i > 2 {
+                        break;
+                    }
+                    let w = ((POLAR_CORE_PROFILE - profile)
+                        / (POLAR_CORE_PROFILE - POLAR_OUTER_PROFILE))
+                        .clamp(0.0, 1.0);
+                    if w > 0.0
+                        && let Some(pole) = self.shell_map.pole
+                    {
+                        let mut t = normalize(cross(pole, p));
+                        if dot(t, d) < 0.0 {
+                            t = [-t[0], -t[1], -t[2]];
+                        }
+                        d = normalize([
+                            d[0] + (t[0] - d[0]) * w,
+                            d[1] + (t[1] - d[1]) * w,
+                            d[2] + (t[2] - d[2]) * w,
+                        ]);
+                    }
+                }
                 p = step(p, d, spacing, self.body_radius);
                 along = Some(d);
                 sides[side].push(p);
@@ -500,6 +529,8 @@ pub fn linea_compute(
         .map(|(idx, (_, across, s))| {
             // A band is a lens, widest in the middle and closing at its ends, and is
             // lineated inside along its axis.
+            // A vent is an elliptical opening, narrowing and shallowing to its tips.
+            let lens = (4.0 * s * (1.0 - s)).max(0.0).sqrt();
             let width_here = match rec.kind {
                 LineaKind::Band => {
                     width
@@ -508,9 +539,14 @@ pub fn linea_compute(
                             .powf(BAND_TAPER_POWER)
                             .max(0.05)
                 }
+                LineaKind::Vent => width * (VENT_TIP_WIDTH + (1.0 - VENT_TIP_WIDTH) * lens),
                 _ => width,
             };
-            let mut h = linea_profile(rec.kind, across, width_here, rec.relief, blur);
+            let relief_here = match rec.kind {
+                LineaKind::Vent => rec.relief * (VENT_TIP_DEPTH + (1.0 - VENT_TIP_DEPTH) * lens),
+                _ => rec.relief,
+            };
+            let mut h = linea_profile(rec.kind, across, width_here, relief_here, blur);
             let inside = across.abs() < 0.5 * width_here;
             if rec.kind == LineaKind::Band && inside {
                 let edge = 1.0 - (across / (0.5 * width_here)).powi(2);

@@ -38,8 +38,8 @@ use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
     CraterRecord, CraterTexture, EdgeShape, PopulationConfig, ProfileTable, RestoreParams,
-    StampOutput, StampParams, Stamper, dimensions, ejecta_modulation, restore_compute,
-    sample_population, stamp_compute, with_stamper,
+    StampOutput, StampParams, Stamper, dimensions, ejecta_coverage, ejecta_modulation,
+    restore_compute, sample_population, stamp_compute, with_stamper,
 };
 use crate::fields::{Field, LayerSet};
 use crate::geom::{dot, local_basis, offset};
@@ -346,7 +346,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 29;
+pub const FINISH_VERSION: u64 = 30;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -862,6 +862,23 @@ pub fn finish(
             .collect(),
         None => vec![1.0; replay.len()],
     };
+    if std::env::var_os("EXOGEN_DEBUG").is_some() && shell_history.is_some() {
+        let median = |lo: f64, hi: f64| -> (f32, usize) {
+            let mut v: Vec<f32> = replay
+                .iter()
+                .zip(&relaxed)
+                .filter(|((c, _), _)| c.diameter >= lo && c.diameter < hi)
+                .map(|(_, r)| *r)
+                .collect();
+            v.sort_by(f32::total_cmp);
+            (v.get(v.len() / 2).copied().unwrap_or(f32::NAN), v.len())
+        };
+        let (s, ns) = median(30e3, 70e3);
+        let (l, nl) = median(150e3, 2_000e3);
+        eprintln!(
+            "replay survival: median {s:.3} for {ns} craters of 30 to 70 km, {l:.3} for {nl} over 150 km"
+        );
+    }
 
     // One age-ordered sequence of loop craters and replayed craters. A loop crater goes
     // before anything else of the same time, so its own secondaries land on it; craters it
@@ -1119,6 +1136,7 @@ pub fn finish(
                             deep,
                             fine_blur: detail.sigma,
                             coarse_blur: smooth.sigma,
+                            maturity_timescale: inputs.maturity_timescale,
                         };
                         let out = restore_compute(
                             &layers,
@@ -1400,6 +1418,7 @@ pub fn finish(
                             bury: true,
                             seed: c.key,
                             deep,
+                            maturity_timescale: inputs.maturity_timescale,
                         };
                         let out = stamp_compute(
                             &layers,
@@ -1728,9 +1747,10 @@ fn ray_field(
     rays
 }
 
-/// The ray brightening one crater adds: full inside the rim, fading to half at the
-/// continuous-ejecta edge and mottled there, then rays of constant linear width whose
-/// strength follows the oblique ejecta asymmetry, all scaled by freshness.
+/// The ray brightening one crater adds: full inside the rim, falling with the blanket's
+/// cover to half at its lobed edge and on past it, mottled, with rays of constant linear
+/// width running out from the rim whose strength follows the oblique ejecta asymmetry,
+/// all scaled by freshness.
 fn ray_cells(
     grid: &CubeSphere,
     body_radius: f64,
@@ -1769,29 +1789,27 @@ fn ray_cells(
             (phi, width, length, strength)
         })
         .collect();
-    let max_len = ray_params
-        .iter()
-        .map(|p| p.2)
-        .fold(0.0, f64::max)
-        .max(CONTINUOUS_EJECTA_MULTIPLE * radius);
+    let halo = EJECTA_RADIUS_MULTIPLE * radius;
+    let max_len = ray_params.iter().map(|p| p.2).fold(0.0, f64::max).max(halo);
     stamper.gather(grid, body_radius, c.center, max_len);
     let ejecta_edge = CONTINUOUS_EJECTA_MULTIPLE * radius;
     let mut cells = Vec::with_capacity(stamper.footprint.len());
     for &(idx, r, phi) in &stamper.footprint {
-        let edge = ejecta_edge * edge_shape.factor(phi);
+        let edge = ejecta_edge * edge_shape.factor_at(phi, r / radius);
+        // The blanket is bright where its deposit covers the ground (F51), fading with
+        // the cover past its lobed edge rather than ending there, mottled.
         let mut v: f64 = if r <= radius {
             1.0
-        } else if r <= edge {
-            (1.0 - 0.5 * (r - radius) / (edge - radius))
+        } else {
+            ejecta_coverage(r, radius, edge, halo)
                 * ejecta_modulation(phi, c.azimuth, c.angle).min(1.0)
                 * texture.as_ref().map_or(1.0, |t| {
                     1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / radius)
                 })
-        } else {
-            0.0
         };
-        if r > edge {
-            let falloff = (edge / r).powf(1.2);
+        // The rays run out from the rim, through the blanket where it is thin.
+        if r > radius {
+            let falloff = (edge / r).min(1.0).powf(1.2);
             for &(p, w, l, s) in &ray_params {
                 if r > l {
                     continue;
@@ -2513,6 +2531,16 @@ mod tests {
         };
         let small = depth_ratio(30e3, 70e3);
         let large = depth_ratio(150e3, 2_000e3);
+        eprintln!("ganymede relaxation: median depth ratio small {small:.4}, large {large:.4}");
+        let (n_loop, n_all) = out
+            .finish
+            .craters
+            .iter()
+            .filter(|c| c.diameter >= 30e3 && c.diameter < 70e3)
+            .fold((0usize, 0usize), |(l, a), c| {
+                (l + c.from_loop as usize, a + 1)
+            });
+        eprintln!("ganymede relaxation: {n_loop} of {n_all} small craters came from the loop");
         assert!(small > 0.02, "small craters keep their depth: {small}");
         assert!(large < 0.25 * small, "large {large} vs small {small}");
     }

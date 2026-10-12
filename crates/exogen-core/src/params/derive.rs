@@ -778,9 +778,24 @@ pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
     }
     // What the focusing takes to the pole does not spread as lanes.
     let diffuse = (1.0 - c.f64("tectonics.polar_thinning") / POLAR_THINNING_MAX).max(0.0);
-    ((c.f64("interior.tidal_flux") - ICE_RESURFACING_FLUX_FLOOR) / ICE_RESURFACING_FLUX * diffuse)
-        .clamp(0.0, 0.95)
-        .into()
+    // The peak tidal flux of the body's history, F13 over the eccentricity history: the
+    // pulse of a resonance episode (F50), or the steady flux.
+    let e_now = c.f64("orbit.eccentricity");
+    let e_max = c
+        .curve("orbit.eccentricity_history")
+        .points
+        .iter()
+        .map(|p| p.1)
+        .fold(e_now, f64::max);
+    let peak = if e_now > 0.0 {
+        c.f64("interior.tidal_flux") * (e_max / e_now).powi(2)
+    } else {
+        c.f64("interior.tidal_flux")
+    };
+    // A shell renews itself at most once over: the renewal share saturates at one, and
+    // the focusing's share is taken from that.
+    let renewal = ((peak - ICE_RESURFACING_FLUX_FLOOR) / ICE_RESURFACING_FLUX).clamp(0.0, 1.0);
+    (renewal * diffuse).clamp(0.0, 0.95).into()
 }
 
 pub fn tectonics_chaos_fraction(c: &Ctx) -> Value {
@@ -843,20 +858,44 @@ pub fn surface_trailing_irradiation(c: &Ctx) -> Value {
     }
 }
 
-pub fn tectonics_ice_resurfacing_duration(c: &Ctx) -> Value {
-    if c.f64("tectonics.ice_resurfaced_fraction") > 0.0 {
-        (ICE_RESURFACING_DURATION_FRACTION * c.f64("body.age")).into()
-    } else {
-        0.0.into()
+/// When the lanes of grooved terrain form (F44): the body's history weighted by the
+/// tidal flux above the resurfacing floor, as the mean time since formation and the
+/// width of the uniform episode with the same variance (sqrt(12) sigma). The history's
+/// samples are uniform in time, so plain sums serve.
+fn resurfacing_episode(c: &Ctx) -> Option<(f64, f64)> {
+    let curve = c.curve("interior.tidal_flux_history");
+    let (mut w, mut wt, mut wtt) = (0.0, 0.0, 0.0);
+    for p in &curve.points {
+        let x = (p.1 - ICE_RESURFACING_FLUX_FLOOR).max(0.0);
+        w += x;
+        wt += x * p.0;
+        wtt += x * p.0 * p.0;
     }
+    if w <= 0.0 {
+        return None;
+    }
+    let mean = wt / w;
+    let variance = (wtt / w - mean * mean).max(0.0);
+    Some((mean, (12.0 * variance).sqrt()))
+}
+
+pub fn tectonics_ice_resurfacing_duration(c: &Ctx) -> Value {
+    if c.f64("tectonics.ice_resurfaced_fraction") <= 0.0 {
+        return 0.0.into();
+    }
+    resurfacing_episode(c)
+        .map_or(0.0, |(_, width)| width)
+        .into()
 }
 
 pub fn tectonics_ice_resurfacing_age(c: &Ctx) -> Value {
-    if c.f64("tectonics.ice_resurfaced_fraction") > 0.0 {
-        (ICE_RESURFACING_AGE_FRACTION * c.f64("body.age")).into()
-    } else {
-        0.0.into()
+    if c.f64("tectonics.ice_resurfaced_fraction") <= 0.0 {
+        return 0.0.into();
     }
+    let age = c.f64("body.age");
+    resurfacing_episode(c)
+        .map_or(0.0, |(mean, _)| (age - mean).max(0.0))
+        .into()
 }
 
 pub fn tectonics_nsr_period(c: &Ctx) -> Value {
@@ -953,8 +992,44 @@ fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
     }
 }
 
+/// F50: the present eccentricity, with the pulse of a resonance episode centred
+/// `orbit.resonance_age` before the present and `orbit.resonance_duration` wide at its
+/// base, rising over the first fifth, holding at the forced value, falling over the
+/// last fifth; constant when there is none.
 pub fn orbit_eccentricity_history(c: &Ctx) -> Value {
-    Curve::constant(c.f64("orbit.eccentricity")).into()
+    let e = c.f64("orbit.eccentricity");
+    let age = c.f64("body.age");
+    let peak = c.f64("orbit.resonance_eccentricity");
+    let before = c.f64("orbit.resonance_age");
+    let width = c.f64("orbit.resonance_duration");
+    if peak <= e || width <= 0.0 || before <= 0.0 || before > age {
+        return Curve::constant(e).into();
+    }
+    let t_peak = age - before;
+    let half = 0.5 * width;
+    let pulse = |t: f64| {
+        let x = (t - t_peak).abs() / half;
+        e + (peak - e) * ((1.0 - x) / RESONANCE_RAMP_SHARE).clamp(0.0, 1.0)
+    };
+    let hold = half * (1.0 - RESONANCE_RAMP_SHARE);
+    let mut times = vec![
+        0.0,
+        t_peak - half,
+        t_peak - hold,
+        t_peak + hold,
+        t_peak + half,
+        age,
+    ];
+    times.retain(|t| (0.0..=age).contains(t));
+    times.sort_by(|a, b| a.total_cmp(b));
+    times.dedup();
+    Curve::new(times.into_iter().map(|t| (t, pulse(t))).collect()).into()
+}
+
+pub fn interior_tidal_flux_history(c: &Ctx) -> Value {
+    crate::thermal::ThermalHistory::new(&thermal_inputs(c))
+        .curve(|s| s.tidal_flux)
+        .into()
 }
 
 pub fn interior_heat_flux_history(c: &Ctx) -> Value {

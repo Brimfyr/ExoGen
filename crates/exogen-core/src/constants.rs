@@ -857,13 +857,22 @@ pub const DEEP_BEDROCK_DEPTH_ROCK: f64 = 25_000.0;
 pub const DEEP_BEDROCK_DEPTH_IRON_RICH: f64 = 10_000.0;
 pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
 /// Brightness mottling of fresh ejecta in the ray field, and the lobing of the continuous
-/// ejecta edge as a fraction of its radius. The lobing is off: at map resolution a few
-/// harmonics read as petals, and the real lumpy outline belongs to the detail pass.
+/// ejecta edge as a fraction of its radius: the edge wanders by 15% in eleven to
+/// sixty-one lobes round the crater, as the ragged margins of real blankets do; a few
+/// low harmonics read as petals at map scale.
 pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.25;
-pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.0;
-/// The surface-age reset fades out over this outer fraction of the continuous ejecta zone,
-/// where the ejecta is thin and renews the surface only partly.
-pub const EJECTA_EDGE_FADE: f64 = 0.35;
+pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.15;
+/// The blanket's cover of the ground (F51): the deposit thins as r^EJECTA_EXPONENT and
+/// covers the old surface by 1 - 2^-(edge / r)^3, all of it at the rim, half at the
+/// continuous edge, a fifth at three radii, tapering to nothing over this outer share of
+/// the footprint, where the deposit is too thin to leave a record. The surface age and
+/// the ray brightness both follow the cover, so a blanket grades into its rays and into
+/// the ground instead of ending on a circle.
+pub const EJECTA_COVERAGE_TAPER: f64 = 0.25;
+/// A raw cover above this counts as complete, the few per cent of old ground showing
+/// through a deposit that thick being below what the maturity can tell: the cover is
+/// scaled by it, so the blanket renews the ground wholly out to 1.3 radii.
+pub const EJECTA_FULL_COVER: f64 = 0.92;
 /// A loop crater counts as recognisable while its rim-to-floor relief on the coarse surface
 /// is above this fraction of the fresh relief.
 pub const VISIBLE_RELIEF_FRACTION: f64 = 0.15;
@@ -1022,12 +1031,18 @@ pub const POLAR_FOCUS_SHELL_RATIO: f64 = 0.03;
 pub const POLAR_TERRAIN_RADIUS_DEG: f64 = 70.0;
 pub const POLAR_ACTIVE_PROFILE: f64 = 0.5;
 /// The renewed terrain is the thinned shell's core, the taper above this, and the ground
-/// within this distance, m, of the fissures that opened in the thinned zone, wherever
-/// the taper stands above this; its folds fade over this distance, m, from its edge.
+/// round the fissures that opened in the thinned zone: within this distance, m, of them
+/// in the core, narrowing to nothing where the taper falls to this outer profile, so
+/// that the terrain follows the fissures out as tongues; its folds fade over this
+/// distance, m, from its edge. A fissure leaving the core meets a thicker, stiffer shell
+/// and refracts along the contrast, turning to run round the margin between the core
+/// and the outer profile, and stops in the thick shell where the taper falls below the
+/// last value.
 pub const POLAR_CORE_PROFILE: f64 = 0.75;
 pub const POLAR_SPREAD_WIDTH: f64 = 30e3;
-pub const POLAR_OUTER_PROFILE: f64 = 0.3;
+pub const POLAR_OUTER_PROFILE: f64 = 0.5;
 pub const POLAR_FOLD_TAPER: f64 = 20e3;
+pub const CRACK_STOP_PROFILE: f64 = 0.3;
 pub const POLAR_ACTIVE_THINNING: f64 = 0.3;
 pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
@@ -1036,12 +1051,15 @@ pub const POLAR_FOLD_SPACING: f64 = 1.5e3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
 pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
 pub const POLAR_MARGIN_WOBBLE: f64 = 0.15;
-/// The margin belt: within this distance of the renewed terrain's edge, m, the spreading
-/// is taken up in folds parallel to the edge at this spacing, m, this high, m, where
-/// the real body shows its belt of ridges and troughs round the polar terrain.
-pub const POLAR_BELT_WIDTH: f64 = 40e3;
-pub const POLAR_BELT_SPACING: f64 = 8e3;
+/// The margin belt: the spreading is taken up in folds parallel to the renewed terrain's
+/// edge, decaying inward over this distance, m, at this spacing, m, this high, m, broken
+/// into segments this long, m, along the edge that shift against their neighbours by up
+/// to this phase, rad, as the folds of a thrust belt do: en echelon, not concentric rings.
+pub const POLAR_BELT_WIDTH: f64 = 30e3;
+pub const POLAR_BELT_SPACING: f64 = 12e3;
 pub const POLAR_BELT_HEIGHT: f64 = 300.0;
+pub const POLAR_BELT_SEGMENT: f64 = 25e3;
+pub const POLAR_BELT_OFFSET: f64 = 2.5;
 /// A shell renews its whole surface within the retention age only when it is thin
 /// against the body, under this share of the radius; a thick shell keeps its old craters
 /// and renews only where it is thin.
@@ -1082,14 +1100,23 @@ pub const GROOVE_SPACING: f64 = 7e3;
 pub const GROOVE_MIN_CELLS: f64 = 3.0;
 pub const GROOVE_SET_LENGTH: f64 = 300e3;
 pub const GROOVE_SET_TURN: f64 = 0.4;
+/// The lanes' amount (F44): the share renewed is the peak tidal flux of the body's
+/// history above this floor, W/m², over this flux, W/m²: a fit, so that the resonance
+/// pulse that renews two thirds of Ganymede, 8 mW/m² at an eccentricity of 0.008 (the
+/// low end of Showman and Malhotra 1997's range), leaves its shell thick enough, near
+/// 40 km, to keep the dark terrain's 70 km craters through the episode while the 150 km
+/// ones relax to palimpsests; a stronger pulse thins the shell under 30 km and flattens
+/// the 70 km craters too, which the dark terrain does not show. The resurfacing is an
+/// episode, not an instant: the lanes'
+/// times are spread uniformly about the excess-weighted mean time of the flux above the
+/// floor, over the width that matches its spread, so that younger lanes cut older ones;
+/// a resonance episode (F50) gives a pulse, a steady flux the body's whole age.
 pub const ICE_RESURFACING_FLUX_FLOOR: f64 = 0.005;
-pub const ICE_RESURFACING_FLUX: f64 = 0.05;
-pub const ICE_RESURFACING_AGE_FRACTION: f64 = 0.4;
-/// The resurfacing is an episode, not an instant: the lanes form at times spread
-/// uniformly over this share of the body's age about the resurfacing age (Ganymede's
-/// bright terrain spans a gigayear or more of crater densities), so that younger lanes
-/// cut older ones.
-pub const ICE_RESURFACING_DURATION_FRACTION: f64 = 0.3;
+pub const ICE_RESURFACING_FLUX: f64 = 0.0045;
+/// A resonance episode (F50): captured, the eccentricity rises over this share of each
+/// half of the episode, holds at the forced value, and falls over the same share after
+/// the escape; a trapezoid with a plateau of three fifths.
+pub const RESONANCE_RAMP_SHARE: f64 = 0.4;
 /// Chaos (F45): on a shell over an ocean thin against the body, the share of the surface
 /// disrupted into chaos, up to this much, in proportion to the tidal flux over this flux,
 /// W/m²; the patches' diameters, m, log-uniform, placed in a heat field of this many
@@ -1146,6 +1173,10 @@ pub const VENT_ICE_TINT: [f32; 3] = [0.66, 0.78, 0.92];
 pub const VENT_TROUGH_DEPTH: f64 = 450.0;
 pub const VENT_WIDTH: f64 = 6e3;
 pub const VENT_RIDGE_SHARE: f64 = 0.4;
+/// A vent is an elliptical opening: its width and its depth fall to these shares of the
+/// middle's at its tips.
+pub const VENT_TIP_WIDTH: f64 = 0.35;
+pub const VENT_TIP_DEPTH: f64 = 0.4;
 /// Hemispheric asymmetry (F48): a locked moon's trailing hemisphere takes its parent's
 /// magnetospheric plasma, which darkens and reddens the ice there by this tint at the
 /// apex in a Jupiter-class magnetosphere (a parent over this mass, kg; Europa's and

@@ -28,7 +28,7 @@ use crate::stages::ice::ShellMap;
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 /// A lane of grooved terrain: a swath along part of a great circle.
 #[derive(Clone, Debug)]
@@ -134,9 +134,19 @@ pub fn polar_mask(
         .collect();
     with_stamper(grid, |stamper| {
         for l in cracks.iter().filter(|l| shell.thin(l.midpoint())) {
-            let every = ((0.5 * POLAR_SPREAD_WIDTH / l.spacing.max(1.0)) as usize).max(1);
+            let every = ((0.25 * POLAR_SPREAD_WIDTH / l.spacing.max(1.0)) as usize).max(1);
             for p in l.points.iter().step_by(every) {
-                stamper.gather(grid, body_radius, *p, POLAR_SPREAD_WIDTH);
+                // The terrain follows the fissure out of the core as a tongue that
+                // narrows to nothing where the taper falls to the outer profile, and
+                // ends where the discs along the fissure would no longer meet.
+                let reach = POLAR_SPREAD_WIDTH
+                    * ((shell.profile(*p) - POLAR_OUTER_PROFILE)
+                        / (POLAR_CORE_PROFILE - POLAR_OUTER_PROFILE))
+                        .clamp(0.0, 1.0);
+                if reach < 0.5 * every as f64 * l.spacing {
+                    continue;
+                }
+                stamper.gather(grid, body_radius, *p, reach);
                 for &(k, _, _) in &stamper.footprint {
                     if shell.profile(grid.center(grid.cell(k))) > POLAR_OUTER_PROFILE {
                         mask[k] = true;
@@ -785,6 +795,7 @@ pub fn polar_compute(
     let normal = normalize(cross(pole, fold_direction));
     let spacing = POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
     let noise = GradientNoise::new(0x5027_F01D);
+    let belt_noise = GradientNoise::new(0x5027_BE17);
     let set_frequency = body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
     stamper.gather(grid, body_radius, pole, reach * body_radius);
     let mut cells: Vec<CellWrite> = stamper
@@ -796,9 +807,11 @@ pub fn polar_compute(
             if dk <= -limit {
                 return None;
             }
-            // The margin ridge straddles the edge; inside, the folds fade in from it.
+            // The margin ridge straddles the edge, higher and lower along it as the
+            // belt's segments are; inside, the folds fade in from it.
+            let seg = belt_noise.fbm(d, body_radius / POLAR_BELT_SEGMENT, 2, 2.0, 0.5);
             let x = dk as f64 * cell / POLAR_MARGIN_WIDTH;
-            let ridge = POLAR_MARGIN_HEIGHT * (-x * x).exp();
+            let ridge = POLAR_MARGIN_HEIGHT * (0.75 + 0.25 * seg) * (-x * x).exp();
             let c = (0.5 + 0.5 * dk as f64).clamp(0.0, 1.0);
             let held = units[k] != UNIT_POLAR_TERRAIN || ages[k] as f64 > time_gyr + 1e-3;
             if c <= 0.0 || (c >= 0.5 && held) {
@@ -817,10 +830,15 @@ pub fn polar_compute(
             let phase = 2.0 * std::f64::consts::PI * across / spacing
                 + GROOVE_SET_TURN * sets * along / spacing;
             let folds = POLAR_FOLD_AMPLITUDE * (0.6 + 0.4 * sets.abs()) * taper * phase.sin();
-            let belt_w = (1.0 - inward / POLAR_BELT_WIDTH).clamp(0.0, 1.0);
+            // The belt decays inward from the edge; its folds come in segments that
+            // shift against their neighbours, en echelon, never as concentric rings.
+            let belt_w = (-inward / POLAR_BELT_WIDTH).exp();
             let belt = POLAR_BELT_HEIGHT
                 * belt_w
-                * (2.0 * std::f64::consts::PI * inward / POLAR_BELT_SPACING.max(3.0 * cell)).sin();
+                * (0.6 + 0.4 * seg)
+                * (2.0 * std::f64::consts::PI * inward / POLAR_BELT_SPACING.max(3.0 * cell)
+                    + POLAR_BELT_OFFSET * seg)
+                    .sin();
             let target = floor[k] as f64 + folds * (1.0 - belt_w) + belt;
             Some(write(
                 k,

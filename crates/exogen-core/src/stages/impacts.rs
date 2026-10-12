@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 13;
+pub const VERSION: u64 = 14;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -47,6 +47,9 @@ pub struct CraterInputs {
     pub ray_lifetime: f64,
     /// Thickness of the surface layer above the deep bedrock, metres.
     pub deep_bedrock_depth: f64,
+    /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
+    /// ejecta with the ground it covers (F51).
+    pub maturity_timescale: f64,
     pub seed: u64,
 }
 
@@ -118,6 +121,7 @@ impl CraterInputs {
             diffusivity_m2_per_myr: graph.f64("cratering.diffusivity"),
             ray_lifetime: graph.f64("cratering.ray_fading_timescale"),
             deep_bedrock_depth: graph.f64("materials.deep_bedrock_depth"),
+            maturity_timescale: crate::stages::ice::maturity_timescale(graph),
             seed: graph.f64("seed.cratering") as u64,
         }
     }
@@ -287,6 +291,7 @@ impl ImpactProcess {
                 bury: true,
                 seed: rec.id,
                 deep,
+                maturity_timescale: inp.maturity_timescale,
             };
             stamp(
                 layers,

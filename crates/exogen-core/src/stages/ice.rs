@@ -79,6 +79,36 @@ pub fn lag_maturity_at(temperature: f64, impurity: f64, exposure_gyr: f64) -> f6
     1.0 - (1.0 - lag) * (1.0 - gardened)
 }
 
+/// The exposure on which the surface's maturity saturates, Gyr, for mixing thin deposits
+/// with the ground they cover (F51): on rock the space-weathering timescale; on ice the
+/// exposure at which the lag of the body's mean temperature (the sphere's mean cosine of
+/// latitude, pi / 4) and regolith reaches 1 - 1/e.
+pub fn maturity_timescale(graph: &ParamGraph) -> f64 {
+    if !is_ice_surface(graph) {
+        return graph.f64("surface.space_weathering_timescale").max(1e-6);
+    }
+    let t = mean_surface_temperature(
+        graph.f64("orbit.insolation"),
+        graph.f64("atmosphere.bond_albedo"),
+        std::f64::consts::FRAC_PI_4,
+    );
+    let impurity = regolith_impurity(graph);
+    let target = 1.0 - (-1.0f64).exp();
+    let (mut lo, mut hi) = (0.0, graph.f64("body.age").max(1e-3));
+    if lag_maturity_at(t, impurity, hi) < target {
+        return hi;
+    }
+    for _ in 0..48 {
+        let mid = 0.5 * (lo + hi);
+        if lag_maturity_at(t, impurity, mid) < target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
 /// Thermal segregation: the share of a latitude covered by frost that condensed there
 /// out of what the warm latitudes sublimed over the body's life.
 pub struct FrostCover {

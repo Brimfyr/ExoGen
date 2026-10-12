@@ -15,8 +15,8 @@ pub use production::{
 };
 pub use stamp::{
     CellWrite, CraterTexture, EdgeShape, RestoreParams, StampOutput, StampParams, Stamper,
-    burial_factor, crenulation, ejecta_modulation, restore, restore_compute, stamp, stamp_compute,
-    with_stamper,
+    burial_factor, crenulation, ejecta_coverage, ejecta_modulation, restore, restore_compute,
+    stamp, stamp_compute, with_stamper,
 };
 
 /// A crater that was emplaced, kept for the sidecar, for rays and secondaries, and for
