@@ -240,6 +240,9 @@ pub struct Cracks {
     pub vent: bool,
     /// The shell's mean thickness, m: the scale of a crack's stress shadow.
     pub mean_shell: f64,
+    /// The past episodes of focused heating, whose fissures the body has carried from
+    /// the pole.
+    pub episodes: Vec<crate::stages::ice::FocusEpisode>,
 }
 
 impl Cracks {
@@ -257,9 +260,12 @@ impl Cracks {
         if amplitude <= ICE_CRACK_STRESS {
             return None;
         }
+        let shell_map = crate::stages::ice::ShellMap::new(graph);
+        let episodes = crate::stages::ice::focusing_episodes(graph, &shell_map);
         Some(Self {
             shell,
-            shell_map: crate::stages::ice::ShellMap::new(graph),
+            shell_map,
+            episodes,
             amplitude,
             nsr_period_gyr,
             density,
@@ -371,8 +377,23 @@ impl Cracks {
                 let mut time = time;
                 let mut axis = axis;
                 let polar = self.shell_map.thin(p0);
+                let mut carry: Option<&crate::stages::ice::FocusEpisode> = None;
                 if polar {
-                    time = (present - POLAR_RENEWAL_GYR * rng.uniform(bin, draw + 54)).max(0.0);
+                    // The thinned zone has a history (F53): it sits at the pole now and
+                    // sat there through each past episode, between which the body
+                    // reoriented. A crack of the zone belongs to one episode, each as
+                    // likely as the next: the present one leaves it as young as the
+                    // renewed surface; a past one gives it a time within the episode and
+                    // carries it to where the body left that terrain.
+                    let n = self.episodes.len();
+                    let pick = ((rng.uniform(bin, draw + 63) * (n + 1) as f64) as usize).min(n);
+                    if pick < n {
+                        let e = &self.episodes[pick];
+                        time = e.start + (e.end - e.start) * rng.uniform(bin, draw + 54);
+                        carry = Some(e);
+                    } else {
+                        time = (present - POLAR_RENEWAL_GYR * rng.uniform(bin, draw + 54)).max(0.0);
+                    }
                     axis = mean_axis_at(time, present, self.nsr_period_gyr);
                     phase = self.shell.peak_tension(axis, p0).1;
                 }
@@ -434,7 +455,17 @@ impl Cracks {
                 if points.len() < 3 {
                     continue;
                 }
-                index.insert(out.len(), &points, kind == LineaKind::Vent);
+                // A past episode's crack is carried to where the body left its terrain,
+                // and is long healed.
+                let points: Vec<[f64; 3]> = match carry {
+                    Some(e) => points.iter().map(|p| e.carry(*p)).collect(),
+                    None => points,
+                };
+                index.insert(
+                    out.len(),
+                    &points,
+                    kind == LineaKind::Vent && carry.is_none(),
+                );
                 out.push(Linea {
                     length: (points.len() - 1) as f64 * spacing,
                     points,

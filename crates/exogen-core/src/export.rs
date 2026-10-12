@@ -267,6 +267,10 @@ pub struct Sidecar {
     pub chaos_fraction: f64,
     pub cryodome_count: usize,
     pub polar_terrain_fraction: f64,
+    /// Past episodes of focused heating whose terrains the surface carries, and the share
+    /// of the surface the lanes and the polar terrains, present and past, renewed.
+    pub fossil_terrain_count: usize,
+    pub renewed_fraction: f64,
     /// Area fraction of the surface that is lava plains or craters formed in them.
     pub lava_area_fraction: f64,
     pub unit_legend: Vec<UnitInfo>,
@@ -769,6 +773,8 @@ pub fn export(
         lane_coverage: out.lane_coverage,
         grooved_fraction: out.grooved_fraction,
         polar_terrain_fraction: out.polar_fraction,
+        fossil_terrain_count: out.episodes.len(),
+        renewed_fraction: out.renewed_fraction,
         lineae: {
             let mut sorted: Vec<&crate::stages::lineae::Linea> = out.lineae.iter().collect();
             sorted.sort_by(|a, b| b.length.total_cmp(&a.length));

@@ -144,6 +144,12 @@ pub struct LoopOutput {
     /// coarse grid, for the finish to lay its grooves and folds on.
     pub lane_floor: Option<Field<f32>>,
     pub polar_floor: Option<Field<f32>>,
+    /// The past episodes of focused heating and the floor each left (F53).
+    pub episodes: Vec<ice::FocusEpisode>,
+    pub fossil_floors: Vec<Option<Field<f32>>>,
+    /// The share of the surface the lanes and the polar terrains, present and past,
+    /// renewed between them, by area.
+    pub renewed_fraction: f64,
     pub hash: u64,
 }
 
@@ -218,6 +224,11 @@ pub struct FinishOutput {
     pub lane_coverage: f64,
     pub grooved_fraction: f64,
     pub polar_fraction: f64,
+    /// The past episodes of focused heating whose terrains the surface carries (F53).
+    pub episodes: Vec<ice::FocusEpisode>,
+    /// The share of the surface the lanes and the polar terrains, present and past,
+    /// renewed between them, by area, whatever craters they have taken since.
+    pub renewed_fraction: f64,
     pub hash: u64,
 }
 
@@ -407,8 +418,8 @@ pub fn run_coarse_loop(
         // shell as the thermal history has it now.
         if let Some(shell_at) = &ice_shell {
             let local = ice_shell_process
-                .as_ref()
-                .map_or(relaxation::Local::default(), |p| p.relaxation());
+                .as_mut()
+                .map_or(relaxation::Local::default(), |p| p.relaxation(t1));
             let floor = relaxation::relax(
                 &mut layers.bedrock,
                 graph.f64("body.radius"),
@@ -551,15 +562,22 @@ pub fn run_coarse_loop(
         }
         None => (Vec::new(), Vec::new(), Vec::new()),
     };
-    let (lanes, lane_coverage, lane_floor, polar_floor) = match ice_shell_process {
-        Some(p) => (
-            p.lanes,
-            p.lane_coverage,
-            p.lane_floor.map(|v| ice_shell::field_from(grid, &v)),
-            p.polar_floor.map(|v| ice_shell::field_from(grid, &v)),
-        ),
-        None => (Vec::new(), 0.0, None, None),
-    };
+    let (lanes, lane_coverage, lane_floor, polar_floor, episodes, fossil_floors, renewed_fraction) =
+        match ice_shell_process {
+            Some(p) => (
+                p.lanes,
+                p.lane_coverage,
+                p.lane_floor.map(|v| ice_shell::field_from(grid, &v)),
+                p.polar_floor.map(|v| ice_shell::field_from(grid, &v)),
+                p.episodes,
+                p.episode_floors
+                    .into_iter()
+                    .map(|f| f.map(|v| ice_shell::field_from(grid, &v)))
+                    .collect(),
+                p.renewed_fraction,
+            ),
+            None => (Vec::new(), 0.0, None, None, Vec::new(), Vec::new(), 0.0),
+        };
     Ok(LoopOutput {
         grid,
         keyframes,
@@ -587,6 +605,9 @@ pub fn run_coarse_loop(
         lane_coverage,
         lane_floor,
         polar_floor,
+        episodes,
+        fossil_floors,
+        renewed_fraction,
         hash,
     })
 }
@@ -658,13 +679,39 @@ pub fn finish(
         .collect();
     let polar = shell_map.has_active_terrain();
     let polar_time = (present - POLAR_RENEWAL_GYR).max(0.0);
-    let fold_direction = lineae::Cracks::new(graph)
+    let cracks_now = lineae::Cracks::new(graph);
+    let fold_direction = cracks_now
+        .as_ref()
         .and_then(|c| {
             shell_map
                 .pole
                 .map(|pole| c.crack_direction_near(pole, present))
         })
         .unwrap_or([1.0, 0.0, 0.0]);
+    // The past episodes of focused heating (F53) that ended by this epoch: each terrain's
+    // shell map centred where the body left it, its folds along the fissures of its time
+    // carried the same way.
+    let episodes: Vec<ice::FocusEpisode> = loop_output
+        .episodes
+        .iter()
+        .filter(|e| e.end <= present + 1e-9)
+        .cloned()
+        .collect();
+    let episode_maps: Vec<ice::ShellMap> = episodes
+        .iter()
+        .map(|e| shell_map.with_pole(e.center))
+        .collect();
+    let fossil_fold: Vec<[f64; 3]> = episodes
+        .iter()
+        .map(|e| {
+            let d = cracks_now
+                .as_ref()
+                .zip(shell_map.pole)
+                .map(|(c, pole)| c.crack_direction_near(pole, e.end))
+                .unwrap_or([1.0, 0.0, 0.0]);
+            e.carry(d)
+        })
+        .collect();
     // The coarse loop drew the lanes and the polar terrain cell by cell: their edges are
     // redrawn at this resolution before anything reads the ages they leave.
     let lane_floor: Option<Field<f32>> = loop_output
@@ -677,20 +724,51 @@ pub fn finish(
         .as_ref()
         .filter(|_| polar)
         .map(|f| f.resample(grid));
-    let polar_edge = ice_shell::rasterize(
+    ice_shell::rasterize(
         &mut layers,
         body_radius,
         cell,
         loop_output.grid.delta() * body_radius,
         &lanes,
         lane_floor.as_ref().map(|f| f.as_slice()),
-        &shell_map,
-        &lineae,
-        polar,
-        polar_time,
-        polar_floor.as_ref().map(|f| f.as_slice()),
     );
-    let polar = polar && polar_edge.is_some();
+    // The fossil polar terrains, oldest first, then the present one, so that the
+    // youngest renewal wins where they overlap.
+    let fossil_floors: Vec<Option<Field<f32>>> = loop_output
+        .fossil_floors
+        .iter()
+        .take(episodes.len())
+        .map(|f| f.as_ref().map(|f| f.resample(grid)))
+        .collect();
+    let fossil_edges: Vec<Option<Vec<f32>>> = (0..episodes.len())
+        .map(|k| {
+            fossil_floors[k].as_ref().map(|floor| {
+                ice_shell::rasterize_polar(
+                    &mut layers,
+                    body_radius,
+                    cell,
+                    &episode_maps[k],
+                    &lineae,
+                    episodes[k].end,
+                    Some(floor.as_slice()),
+                    false,
+                )
+            })
+        })
+        .collect();
+    let polar_edge: Option<Vec<f32>> = (polar && shell_map.pole.is_some()).then(|| {
+        ice_shell::rasterize_polar(
+            &mut layers,
+            body_radius,
+            cell,
+            &shell_map,
+            &lineae,
+            polar_time,
+            polar_floor.as_ref().map(|f| f.as_slice()),
+            true,
+        )
+    });
+    let polar = polar_edge.is_some();
     let polar_edge: Vec<f32> = polar_edge.unwrap_or_default();
 
     // Loop craters that exist at this epoch. Their coarse form is in the resampled base;
@@ -782,6 +860,10 @@ pub fn finish(
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let lane_floor: &[f32] = lane_floor.as_ref().map_or(&base, |f| f.as_slice());
     let polar_floor: &[f32] = polar_floor.as_ref().map_or(&base, |f| f.as_slice());
+    let fossil_floor_slices: Vec<&[f32]> = fossil_floors
+        .iter()
+        .map(|f| f.as_ref().map_or(&base[..], |f| f.as_slice()))
+        .collect();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let mut smear = volcanism::LavaSmear::new(
         loop_output.grid,
@@ -902,6 +984,7 @@ pub fn finish(
         Linea(usize),
         Groove(usize),
         PolarTerrain,
+        FossilTerrain(usize),
         Chaos(usize),
         Cryodome(usize),
         Replay(usize),
@@ -964,6 +1047,16 @@ pub fn finish(
     }
     if polar {
         events.push((polar_time, 0, 0x5027_0000_0000, Event::PolarTerrain));
+    }
+    for (k, e) in episodes.iter().enumerate() {
+        if fossil_edges[k].is_some() {
+            events.push((
+                e.end,
+                0,
+                0x5027_F000_0000 + k as u64,
+                Event::FossilTerrain(k),
+            ));
+        }
     }
     for (k, c) in chaos.iter().enumerate() {
         events.push((c.time_gyr, 0, c.id ^ 0xC4A0_0000_0000, Event::Chaos(k)));
@@ -1083,6 +1176,10 @@ pub fn finish(
                 }
                 Event::PolarTerrain => (
                     shell_map.pole.unwrap_or([0.0, 0.0, 1.0]),
+                    shell_map.radius_rad + 2.0 * grid.delta(),
+                ),
+                Event::FossilTerrain(k) => (
+                    episodes[*k].center,
                     shell_map.radius_rad + 2.0 * grid.delta(),
                 ),
                 Event::Chaos(k) => {
@@ -1293,6 +1390,22 @@ pub fn finish(
                             &polar_edge,
                             fold_direction,
                             polar_time,
+                            cell,
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::FossilTerrain(k) => {
+                        let edge = fossil_edges[*k].as_deref().unwrap_or(&[]);
+                        let out = ice_shell::polar_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            fossil_floor_slices[*k],
+                            &episode_maps[*k],
+                            edge,
+                            fossil_fold[*k],
+                            episodes[*k].end,
                             cell,
                             stamper,
                         );
@@ -1579,6 +1692,8 @@ pub fn finish(
         lane_coverage,
         grooved_fraction,
         polar_fraction,
+        episodes,
+        renewed_fraction: loop_output.renewed_fraction,
         hash,
     })
 }
@@ -2492,6 +2607,25 @@ mod tests {
             density_in < 0.5 * density_out,
             "{inside} craters on {grooved:.2} of the surface against {outside} on the rest"
         );
+    }
+
+    /// Enceladus carries the terrains of its past episodes of focusing (F53): several of
+    /// them, which with the present one and the lanes take a good share of the surface
+    /// from the cratered plains.
+    #[test]
+    fn enceladus_keeps_the_terrains_of_its_past_episodes() {
+        let mut r = Runner::new();
+        let g = preset_graph("Enceladus", "preview");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let n = out.finish.episodes.len();
+        assert!(n >= 3, "{n} past episodes");
+        let renewed = out.finish.renewed_fraction;
+        eprintln!(
+            "enceladus: {n} past episodes; renewed {renewed:.3} of the surface, polar terrain units {:.3}, lanes {:.3}",
+            out.finish.polar_fraction, out.finish.lane_coverage
+        );
+        // Kirchoff and Schenk 2009 map 43% of the real body as cratered terrain.
+        assert!((0.35..=0.75).contains(&renewed), "renewed {renewed:.3}");
     }
 
     /// Ganymede's ice relaxes its large craters into palimpsests and keeps its small ones

@@ -12,6 +12,7 @@
 
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
+use crate::geom::{angle_between, cross, normalize, rotate};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
@@ -236,6 +237,78 @@ pub fn lag_maturity(
     })
 }
 
+/// An episode of focused heating (F53): the thinned zone sat at the pole from `start`
+/// to `end`, Gyr since formation, and the body has since reoriented, so the terrain it
+/// renewed lies about `center`, its fissures turned by the same rotation.
+#[derive(Clone, Debug)]
+pub struct FocusEpisode {
+    pub center: [f64; 3],
+    pub start: f64,
+    pub end: f64,
+    /// The rotation from the pole to the centre, and a spin about the centre.
+    axis: [f64; 3],
+    angle: f64,
+    spin: f64,
+}
+
+impl FocusEpisode {
+    /// A direction in the episode's own frame, the thinned zone at the pole, carried to
+    /// the present frame.
+    pub fn carry(&self, p: [f64; 3]) -> [f64; 3] {
+        rotate(rotate(p, self.axis, self.angle), self.center, self.spin)
+    }
+}
+
+/// The past episodes of focused heating (F53), oldest first: one every
+/// `tectonics.focusing_period` before the present one, each the episode's length, at a
+/// place of its own, where the overturn happened to start, which the body then turned to
+/// the pole.
+pub fn focusing_episodes(graph: &ParamGraph, shell: &ShellMap) -> Vec<FocusEpisode> {
+    let Some(pole) = shell.pole else {
+        return Vec::new();
+    };
+    if !shell.has_active_terrain() {
+        return Vec::new();
+    }
+    let period = graph.f64("tectonics.focusing_period");
+    if period <= 0.0 {
+        return Vec::new();
+    }
+    let age = graph.f64("body.age");
+    let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xF0C0_5E15);
+    let mut out = Vec::new();
+    let mut k = 1u64;
+    loop {
+        let end = age - k as f64 * period;
+        if end <= FOCUSING_EPISODE_DURATION_GYR {
+            break;
+        }
+        let center = rng.unit_direction(k, 0);
+        let mut axis = cross(pole, center);
+        if axis.iter().map(|x| x * x).sum::<f64>() < 1e-12 {
+            axis = cross(
+                pole,
+                if pole[0].abs() < 0.9 {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [0.0, 1.0, 0.0]
+                },
+            );
+        }
+        out.push(FocusEpisode {
+            center,
+            start: end - FOCUSING_EPISODE_DURATION_GYR,
+            end,
+            axis: normalize(axis),
+            angle: angle_between(pole, center),
+            spin: 2.0 * std::f64::consts::PI * rng.uniform(k, 1),
+        });
+        k += 1;
+    }
+    out.reverse();
+    out
+}
+
 /// The shell's thickness across the body (F43): thinned under one pole where the tidal
 /// heating focuses, as a share of the mean, tapering to the mean away from it; the
 /// terrain over the thinnest part is renewed.
@@ -280,6 +353,15 @@ impl ShellMap {
                     * self
                         .noise
                         .fbm(d, 2.0 / (2.0 * std::f64::consts::PI), 2, 2.0, 0.5))
+    }
+
+    /// The same shell map centred elsewhere: a past episode's, whose terrain the body's
+    /// reorientation has carried from the pole.
+    pub fn with_pole(&self, pole: [f64; 3]) -> ShellMap {
+        ShellMap {
+            pole: Some(pole),
+            ..self.clone()
+        }
     }
 
     /// The focusing profile at a direction: 1 at the pole, 0 beyond the taper.

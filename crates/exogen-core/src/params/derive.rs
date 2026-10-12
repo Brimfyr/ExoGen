@@ -767,6 +767,27 @@ pub fn tectonics_polar_thinning(c: &Ctx) -> Value {
     (POLAR_THINNING_MAX * (c.f64("interior.tidal_flux") / POLAR_FOCUS_FLUX).min(1.0) * focus).into()
 }
 
+/// F53: the focused heating returns every so many conductive times of the shell, where
+/// the thinning is deep enough to renew terrain.
+pub fn tectonics_focusing_period(c: &Ctx) -> Value {
+    if c.f64("tectonics.polar_thinning") <= POLAR_ACTIVE_THINNING {
+        return 0.0.into();
+    }
+    let d = c.f64("interior.ice_shell_thickness");
+    (FOCUSING_PERIOD_FACTOR * d * d / ICE_THERMAL_DIFFUSIVITY / SECONDS_PER_GYR).into()
+}
+
+pub fn tectonics_focusing_episode_count(c: &Ctx) -> Value {
+    let period = c.f64("tectonics.focusing_period");
+    if period <= 0.0 {
+        return 0.0.into();
+    }
+    ((c.f64("body.age") - FOCUSING_EPISODE_DURATION_GYR) / period)
+        .floor()
+        .max(0.0)
+        .into()
+}
+
 pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
         return 0.0.into();

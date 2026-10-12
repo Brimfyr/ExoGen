@@ -1055,6 +1055,17 @@ pub const POLAR_OUTER_PROFILE: f64 = 0.5;
 pub const POLAR_FOLD_TAPER: f64 = 20e3;
 pub const CRACK_STOP_PROFILE: f64 = 0.3;
 pub const POLAR_ACTIVE_THINNING: f64 = 0.3;
+/// The focusing comes and goes (F53; O'Neill and Nimmo 2010: overturns every 0.1 to 1
+/// Gyr, each active about 10 Myr): episodes recur every this many conductive times of
+/// the shell, d² / κ (a fit at the short end of their range, so that Enceladus's come
+/// 0.53 Gyr apart and with the lanes renew 0.40 of it, against the 57% mapped as
+/// tectonized), each this long, Gyr. Between them the thinned zone is thick again, and the
+/// body reorients to put each new one at the pole (Nimmo and Pappalardo 2006), so the
+/// terrain of each old one lies where the wander left it, its fissures turned with it.
+pub const FOCUSING_PERIOD_FACTOR: f64 = 10.0;
+pub const FOCUSING_EPISODE_DURATION_GYR: f64 = 0.01;
+/// Thermal diffusivity of ice, m²/s.
+pub const ICE_THERMAL_DIFFUSIVITY: f64 = 1.2e-6;
 pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
 pub const POLAR_FOLD_AMPLITUDE: f64 = 150.0;

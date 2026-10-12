@@ -30,11 +30,11 @@ use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
-use crate::stages::ice::ShellMap;
+use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns
@@ -397,6 +397,24 @@ pub struct IceShellProcess {
     /// The thermal history, for the elastic lithosphere at each lane's time.
     thermal: crate::thermal::ThermalHistory,
     gravity: f64,
+    /// When the present episode of focusing began, Gyr since formation: 0 where the
+    /// thinning is steady, the episode's length before the present where it renews.
+    present_start: f64,
+    /// The past episodes of focused heating (F53), their shell maps centred where the
+    /// body left their terrain, the terrain each renewed, and its floor when it ended.
+    pub episodes: Vec<FocusEpisode>,
+    episode_maps: Vec<ShellMap>,
+    episode_masks: Vec<Vec<bool>>,
+    pub episode_floors: Vec<Option<Vec<f32>>>,
+    episode_sunk: Vec<bool>,
+    episode_rebounded: Vec<bool>,
+    /// The terrain renewed at the current step: the present pole's while its episode
+    /// lasts, and each past episode's through its own.
+    active_now: Vec<bool>,
+    /// The share of the surface the lanes, the present polar terrain and the past
+    /// episodes' terrains renewed between them, by area: what is not old cratered ground,
+    /// whatever craters it has taken since.
+    pub renewed_fraction: f64,
 }
 
 impl IceShellProcess {
@@ -407,7 +425,6 @@ impl IceShellProcess {
         let body_radius = graph.f64("body.radius");
         let shell = ShellMap::new(graph);
         let n = grid.cell_count();
-        let centers: Vec<[f64; 3]> = (0..n).map(|k| grid.center(grid.cell(k))).collect();
         let fraction = graph
             .f64("tectonics.ice_resurfaced_fraction")
             .clamp(0.0, 0.95);
@@ -417,6 +434,9 @@ impl IceShellProcess {
         // cracks; where it does not, nothing does, and a lane follows a great circle.
         let cracks = Cracks::new(graph);
         let thermal = crate::thermal::ThermalHistory::from_graph(graph);
+        let areas: Vec<f64> = (0..n).map(|k| grid.cell_area(grid.cell(k))).collect();
+        let total: f64 = areas.iter().sum();
+        let mut covered = vec![false; n];
         if fraction > 0.0 {
             // The episode: its centre and its length.
             let age = graph.f64("body.age");
@@ -426,10 +446,7 @@ impl IceShellProcess {
             // coverage counted by area on the coarse grid.
             let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x6700_0E5A);
             let belts = GradientNoise::new(graph.f64("seed.tectonics") as u64 ^ 0x6700_BE17);
-            let areas: Vec<f64> = (0..n).map(|k| grid.cell_area(grid.cell(k))).collect();
-            let total: f64 = areas.iter().sum();
             let cell = grid.delta() * body_radius;
-            let mut covered = vec![false; n];
             let mut area = 0.0;
             let (w_lo, w_hi) = (
                 GROOVE_LANE_WIDTH_SHARE.0 * body_radius,
@@ -568,26 +585,44 @@ impl IceShellProcess {
             }
         }
         let mean_shell = graph.f64("interior.ice_shell_thickness");
-        let equilibrium = shell.pole.is_some().then(|| {
-            centers
-                .iter()
-                .map(|&c| -shell.depression(c, mean_shell) as f32)
-                .collect()
-        });
         // The renewed terrain follows the fissures of the thinned shell, traced here at the
-        // finishing grid's step so that the loop and the finish draw the same outline.
-        let active = if shell.has_active_terrain() {
+        // finishing grid's step so that the loop and the finish draw the same outline;
+        // and the past episodes' terrains follow theirs, carried to where the body left
+        // them (F53).
+        let age = graph.f64("body.age");
+        let fissures = if shell.has_active_terrain() {
             let seed = graph.f64("seed.cratering") as u64;
             let fine = CubeSphere::new(graph.f64("detail.finishing_resolution") as u32);
-            let fissures = cracks
+            cracks
                 .as_ref()
-                .map(|c| c.generate(graph.f64("body.age"), &fine, seed))
-                .unwrap_or_default();
-            polar_mask(&grid, body_radius, &shell, &fissures)
+                .map(|c| c.generate(age, &fine, seed))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let active = if shell.has_active_terrain() {
+            eroded(&grid, &polar_mask(&grid, body_radius, &shell, &fissures))
         } else {
             vec![false; n]
         };
-        let active = eroded(&grid, &active);
+        let episodes = crate::stages::ice::focusing_episodes(graph, &shell);
+        let episode_maps: Vec<ShellMap> =
+            episodes.iter().map(|e| shell.with_pole(e.center)).collect();
+        let episode_masks: Vec<Vec<bool>> = episode_maps
+            .iter()
+            .map(|m| eroded(&grid, &polar_mask(&grid, body_radius, m, &fissures)))
+            .collect();
+        let present_start = if shell.has_active_terrain() {
+            (age - FOCUSING_EPISODE_DURATION_GYR).max(0.0)
+        } else {
+            0.0
+        };
+        let count = episodes.len();
+        let renewed_fraction = (0..n)
+            .filter(|&k| covered[k] || active[k] || episode_masks.iter().any(|m| m[k]))
+            .map(|k| areas[k])
+            .sum::<f64>()
+            / total.max(1e-300);
         Some(Self {
             grid,
             body_radius,
@@ -595,13 +630,22 @@ impl IceShellProcess {
             mean_shell,
             lanes,
             lane_coverage,
-            equilibrium,
+            equilibrium: None,
             polar_floor: None,
             lane_floor: None,
             active,
             depressed: false,
             thermal,
             gravity: graph.f64("body.gravity"),
+            present_start,
+            episodes,
+            episode_maps,
+            episode_masks,
+            episode_floors: vec![None; count],
+            episode_sunk: vec![false; count],
+            episode_rebounded: vec![false; count],
+            active_now: vec![false; n],
+            renewed_fraction,
         })
     }
 
@@ -610,13 +654,24 @@ impl IceShellProcess {
     /// length. The loop relaxes with the mean shell (see `relaxation::Local`); the local
     /// thickness acts through the replayed craters' survival, the crack density and the
     /// renewal.
-    pub fn relaxation(&self) -> crate::stages::relaxation::Local<'_> {
+    pub fn relaxation(&mut self, t: f64) -> crate::stages::relaxation::Local<'_> {
+        // The terrain renewed at this step: the present pole's through its episode, each
+        // past episode's through its own.
+        let present = self.shell.has_active_terrain() && t >= self.present_start;
+        let mut any = false;
+        for k in 0..self.active_now.len() {
+            let mut on = present && self.active[k];
+            for (e, mask) in self.episodes.iter().zip(&self.episode_masks) {
+                if t >= e.start && t <= e.end + 1e-9 && mask[k] {
+                    on = true;
+                }
+            }
+            self.active_now[k] = on;
+            any |= on;
+        }
         crate::stages::relaxation::Local {
             equilibrium: self.equilibrium.as_deref(),
-            renew: self
-                .shell
-                .has_active_terrain()
-                .then(|| (self.active.as_slice(), self.smooth_length())),
+            renew: any.then(|| (self.active_now.as_slice(), self.smooth_length())),
         }
     }
 
@@ -639,15 +694,54 @@ impl IceShellProcess {
         let grid = self.grid;
         let n = grid.cell_count();
         let cell = grid.delta() * self.body_radius;
-        if !self.depressed && self.shell.pole.is_some() {
-            // The thinner shell floats lower, once: the depression is its equilibrium,
-            // which the relaxation keeps.
-            self.depressed = true;
+        // The thinned shell floats lower while the focusing lasts (F43, F53): the present
+        // zone's depression from its episode's start (from the first step where the
+        // thinning is steady), each past episode's through its own and back up when it
+        // ends. The shell floats to its equilibrium at once, and the relaxation keeps
+        // that equilibrium rather than taking the depression for a load.
+        let mut changed = false;
+        let mut shift = |layers: &mut LayerSet, map: &ShellMap, sign: f32| {
+            let mean = self.mean_shell;
             let bedrock = layers.bedrock.as_mut_slice();
             for (k, h) in bedrock.iter_mut().enumerate() {
                 let d = grid.center(grid.cell(k));
-                *h -= self.shell.depression(d, self.mean_shell) as f32;
+                *h += sign * map.depression(d, mean) as f32;
             }
+            changed = true;
+        };
+        if !self.depressed && self.shell.pole.is_some() && t1 >= self.present_start {
+            self.depressed = true;
+            shift(layers, &self.shell, -1.0);
+        }
+        for k in 0..self.episodes.len() {
+            if !self.episode_sunk[k] && t1 >= self.episodes[k].start {
+                self.episode_sunk[k] = true;
+                shift(layers, &self.episode_maps[k], -1.0);
+            }
+            if self.episode_sunk[k] && !self.episode_rebounded[k] && t0 >= self.episodes[k].end {
+                self.episode_rebounded[k] = true;
+                shift(layers, &self.episode_maps[k], 1.0);
+            }
+        }
+        if changed {
+            let mean = self.mean_shell;
+            let mut eq = vec![0.0f32; n];
+            let mut any = false;
+            if self.depressed {
+                for (k, e) in eq.iter_mut().enumerate() {
+                    *e -= self.shell.depression(grid.center(grid.cell(k)), mean) as f32;
+                }
+                any = true;
+            }
+            for (i, map) in self.episode_maps.iter().enumerate() {
+                if self.episode_sunk[i] && !self.episode_rebounded[i] {
+                    for (k, e) in eq.iter_mut().enumerate() {
+                        *e -= map.depression(grid.center(grid.cell(k)), mean) as f32;
+                    }
+                    any = true;
+                }
+            }
+            self.equilibrium = any.then_some(eq);
         }
         // The lanes whose time falls in this step, youngest last: each takes the relief as
         // it is now, smoothed and dropped, and the cells a younger lane also covers end up
@@ -727,7 +821,7 @@ impl IceShellProcess {
         let cover = layers.cover.as_mut_slice();
         let clean = layers.clean.as_mut_slice();
         let now = (t1 - POLAR_RENEWAL_GYR).max(0.0) as f32;
-        for (k, &active) in self.active.iter().enumerate() {
+        for (k, &active) in self.active_now.iter().enumerate() {
             if active {
                 bedrock[k] = floor[k];
                 ages[k] = now;
@@ -736,6 +830,15 @@ impl IceShellProcess {
                 melt[k] = 0.0;
                 cover[k] = 0.0;
                 clean[k] = 1.0;
+            }
+        }
+        // A past episode's floor as it ended, for the finish to lay back.
+        for k in 0..self.episodes.len() {
+            if self.episode_floors[k].is_none()
+                && self.episode_sunk[k]
+                && t1 >= self.episodes[k].end
+            {
+                self.episode_floors[k] = Some(floor.clone());
             }
         }
     }
@@ -753,12 +856,7 @@ pub fn rasterize(
     coarse_cell: f64,
     lanes: &[Lane],
     lane_floor: Option<&[f32]>,
-    shell: &ShellMap,
-    cracks: &[Linea],
-    polar: bool,
-    polar_time: f64,
-    polar_floor: Option<&[f32]>,
-) -> Option<Vec<f32>> {
+) {
     let grid = layers.grid;
     let n = grid.cell_count();
     if !lanes.is_empty() {
@@ -799,39 +897,54 @@ pub fn rasterize(
             lay_floor(layers, &coverage, floor);
         }
     }
-    if polar && shell.pole.is_some() {
-        let mask = polar_mask(&grid, body_radius, shell, cracks);
-        let limit = polar_edge_limit(cell);
-        let dist = edge_distance(&grid, &mask, limit);
-        // A two-cell ramp across the edge.
-        let coverage: Vec<f32> = dist
-            .iter()
-            .map(|&d| (0.5 + 0.5 * d).clamp(0.0, 1.0))
-            .collect();
-        let touched: Vec<bool> = dist.iter().map(|&d| d > -(limit as f32)).collect();
-        let times = vec![polar_time as f32; n];
-        redraw(
-            layers,
-            &coverage,
-            &touched,
-            UNIT_POLAR_TERRAIN,
-            &times,
-            true,
-        );
-        if let Some(floor) = polar_floor {
-            lay_floor(layers, &coverage, floor);
-        }
-        if std::env::var_os("EXOGEN_DEBUG").is_some() {
-            let inside = coverage.iter().filter(|&&c| c >= 0.5).count();
-            let partial = coverage.iter().filter(|&&c| c > 0.0 && c < 0.5).count();
-            eprintln!(
-                "polar terrain on the fine grid: {inside} cells inside, {partial} on the edge, {} touched",
-                touched.iter().filter(|&&t| t).count()
-            );
-        }
-        return Some(dist);
+}
+
+/// A renewed polar terrain on the resolved grid, the present one or a past episode's:
+/// its outline redrawn at this resolution from its shell map and the fissures, its unit
+/// and time set, and its floor laid back. Returns the signed distance to its edge, cells.
+#[allow(clippy::too_many_arguments)]
+pub fn rasterize_polar(
+    layers: &mut LayerSet,
+    body_radius: f64,
+    cell: f64,
+    shell: &ShellMap,
+    cracks: &[Linea],
+    time: f64,
+    floor: Option<&[f32]>,
+    raise_only: bool,
+) -> Vec<f32> {
+    let grid = layers.grid;
+    let n = grid.cell_count();
+    let mask = polar_mask(&grid, body_radius, shell, cracks);
+    let limit = polar_edge_limit(cell);
+    let dist = edge_distance(&grid, &mask, limit);
+    // A two-cell ramp across the edge.
+    let coverage: Vec<f32> = dist
+        .iter()
+        .map(|&d| (0.5 + 0.5 * d).clamp(0.0, 1.0))
+        .collect();
+    let touched: Vec<bool> = dist.iter().map(|&d| d > -(limit as f32)).collect();
+    let times = vec![time as f32; n];
+    redraw(
+        layers,
+        &coverage,
+        &touched,
+        UNIT_POLAR_TERRAIN,
+        &times,
+        raise_only,
+    );
+    if let Some(floor) = floor {
+        lay_floor(layers, &coverage, floor);
     }
-    None
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let inside = coverage.iter().filter(|&&c| c >= 0.5).count();
+        let partial = coverage.iter().filter(|&&c| c > 0.0 && c < 0.5).count();
+        eprintln!(
+            "polar terrain on the fine grid at {time:.3} Gyr: {inside} cells inside, {partial} on the edge, {} touched",
+            touched.iter().filter(|&&t| t).count()
+        );
+    }
+    dist
 }
 
 /// The renewed terrain's floor laid under it before anything is stamped, by the
