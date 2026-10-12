@@ -987,6 +987,16 @@ pub const ICE_TENSILE_STRENGTH: f64 = 1.0e6;
 pub const CRACK_DENSITY_FACTOR: f64 = 3.0;
 pub const NSR_SHIFT_DEG: f64 = 1.0;
 pub const NSR_PERIOD_RETENTION_FACTOR: f64 = 2.0;
+/// Cracks answer the cracks already open (Pollard and Aydin 1988): within this many
+/// shell thicknesses of an open fissure a propagating crack feels its stress shadow and
+/// turns toward meeting it at a right angle, by this share of the way at most; within
+/// half a width of it (or a cell) it stops, having reached a free surface; healed ridges
+/// and bands it crosses. This share of new cracks start at the tip of an older one,
+/// where its stress concentrates, and run on from it at the field's heading of their
+/// own time, so that sets branch and splay.
+pub const CRACK_SHADOW_SHELLS: f64 = 0.5;
+pub const CRACK_DEFLECTION: f64 = 0.6;
+pub const CRACK_BRANCH_SHARE: f64 = 0.35;
 /// Lineae (F42): lengths as a share of the radius, log-uniform (Europa 100 to 1,500 km; a
 /// crack scales with the body it crosses); the width of a double ridge and its ridge
 /// height, m, with the central trough as a fraction of it (Europa's ridges stand 100 to

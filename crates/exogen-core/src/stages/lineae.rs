@@ -14,14 +14,17 @@
 //! crack density the tidal stress and the shell thickness give, per fixed time bin so
 //! every quality sees the same cracks, within the surface's retention age; the cracks
 //! are cut at the finish, reset the surface along their width, and carry the salts of
-//! the ocean that fade under frost as they age.
+//! the ocean that fade under frost as they age. Cracks answer one another: a share of
+//! them start at the tip of an older one, where its stress concentrates, and a crack
+//! that comes within the stress shadow of an open fissure turns to meet it at a right
+//! angle and stops there, as at a free surface, while healed ridges are crossed.
 
 use std::collections::HashMap;
 
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
-use crate::geom::{cross, dot, local_basis, normalize};
+use crate::geom::{angle_between, cross, dot, local_basis, normalize};
 use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
@@ -116,6 +119,109 @@ fn step(p: [f64; 3], d: [f64; 3], distance: f64, body_radius: f64) -> [f64; 3] {
     normalize([p[0] + s * d[0], p[1] + s * d[1], p[2] + s * d[2]])
 }
 
+/// The cracks already open, bucketed on the sphere, for the ones that follow.
+struct CrackIndex {
+    /// Buckets per unit of direction: one over the shadow range in radians.
+    scale: f64,
+    /// Per bucket: the crack's index, a point of it, the tangent there, and whether it
+    /// is an open fissure.
+    buckets: HashMap<(i32, i32, i32), Bucket>,
+}
+
+/// A bucket's entries: the crack's index, a point of it, the tangent there, open or not.
+type Bucket = Vec<(usize, [f64; 3], [f64; 3], bool)>;
+
+impl CrackIndex {
+    fn new(range_rad: f64) -> Self {
+        Self {
+            scale: 1.0 / range_rad.max(1e-6),
+            buckets: HashMap::new(),
+        }
+    }
+
+    fn key(&self, p: [f64; 3]) -> (i32, i32, i32) {
+        (
+            (p[0] * self.scale).floor() as i32,
+            (p[1] * self.scale).floor() as i32,
+            (p[2] * self.scale).floor() as i32,
+        )
+    }
+
+    fn insert(&mut self, crack: usize, points: &[[f64; 3]], open: bool) {
+        let n = points.len();
+        for i in 0..n {
+            let a = points[i.saturating_sub(1)];
+            let b = points[(i + 1).min(n - 1)];
+            let p = points[i];
+            let chord = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let radial = dot(chord, p);
+            let t = normalize([
+                chord[0] - radial * p[0],
+                chord[1] - radial * p[1],
+                chord[2] - radial * p[2],
+            ]);
+            self.buckets
+                .entry(self.key(p))
+                .or_default()
+                .push((crack, p, t, open));
+        }
+    }
+
+    /// The nearest point of another crack to a direction, within a bucket's reach: its
+    /// distance, rad, its tangent and whether it is open.
+    fn nearest(&self, p: [f64; 3], exclude: Option<usize>) -> Option<(f64, [f64; 3], bool)> {
+        let (i, j, k) = self.key(p);
+        let mut best: Option<(f64, [f64; 3], bool)> = None;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dk in -1..=1 {
+                    let Some(v) = self.buckets.get(&(i + di, j + dj, k + dk)) else {
+                        continue;
+                    };
+                    for &(c, q, t, open) in v {
+                        if Some(c) == exclude {
+                            continue;
+                        }
+                        let dist = angle_between(p, q);
+                        if best.is_none_or(|b| dist < b.0) {
+                            best = Some((dist, t, open));
+                        }
+                    }
+                }
+            }
+        }
+        best
+    }
+}
+
+/// What a trace answers to besides the field.
+struct TraceRules<'a> {
+    /// The crack belongs to the thinned polar zone: it refracts round the margin and
+    /// stops in the thick shell.
+    polar: bool,
+    /// The cracks already open, if the trace is to answer them.
+    index: Option<&'a CrackIndex>,
+    /// A crack the trace does not answer: the parent it branched from.
+    exclude: Option<usize>,
+    /// A branch runs one way only, outward from the tip it starts at.
+    one_way: Option<[f64; 3]>,
+    /// Within this distance of an open fissure, m, the trace ends.
+    junction: f64,
+}
+
+impl TraceRules<'_> {
+    /// A trace that answers nothing but the field: the lanes' centre lines.
+    fn free() -> Self {
+        Self {
+            polar: false,
+            index: None,
+            exclude: None,
+            one_way: None,
+            junction: 0.0,
+        }
+    }
+}
+
 /// The population of cracks on the present surface: those within the retention age,
 /// drawn per time bin.
 pub struct Cracks {
@@ -132,6 +238,8 @@ pub struct Cracks {
     pub orbit_period_s: f64,
     /// Whether a plume vents from the fissures of the polar terrain.
     pub vent: bool,
+    /// The shell's mean thickness, m: the scale of a crack's stress shadow.
+    pub mean_shell: f64,
 }
 
 impl Cracks {
@@ -160,6 +268,7 @@ impl Cracks {
             body_radius: graph.f64("body.radius"),
             orbit_period_s: graph.f64("orbit.period"),
             vent: graph.f64("volcanism.plume_fallout_rate") > 0.0,
+            mean_shell: graph.f64("interior.ice_shell_thickness"),
         })
     }
 
@@ -192,7 +301,8 @@ impl Cracks {
         let mean_length = (l_hi - l_lo) / (l_hi / l_lo).ln();
         let expected = self.total_length() / mean_length;
         let window_start = (present - self.retention).max(0.0);
-        let mut out = Vec::new();
+        let mut out: Vec<Linea> = Vec::new();
+        let mut index = CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius);
         for (bin, b0, b1) in crate::stages::time_bins(self.age, 0.0, present) {
             if b1 <= window_start {
                 continue;
@@ -205,23 +315,52 @@ impl Cracks {
                 let draw = 16 + j * 64;
                 let time = b0 + (b1 - b0) * rng.uniform(bin, draw);
                 let axis = mean_axis_at(time, present, self.nsr_period_gyr);
-                // Where: in proportion to the tension above the threshold and to how
-                // thin the shell is (the crack density goes as 1 / d), by rejection.
+                // A share of cracks start at the tip of an older one, where its stress
+                // concentrates, and run on from it; the rest where the tension above the
+                // threshold and the thin shell favour (the crack density goes as 1 / d),
+                // by rejection.
+                let branch = (!out.is_empty() && rng.uniform(bin, draw + 60) < CRACK_BRANCH_SHARE)
+                    .then(|| {
+                        let i = ((rng.uniform(bin, draw + 61) * out.len() as f64) as usize)
+                            .min(out.len() - 1);
+                        let pts = &out[i].points;
+                        let (tip, prev) = if rng.uniform(bin, draw + 62) < 0.5 {
+                            (pts[0], pts[1])
+                        } else {
+                            (pts[pts.len() - 1], pts[pts.len() - 2])
+                        };
+                        let chord = [tip[0] - prev[0], tip[1] - prev[1], tip[2] - prev[2]];
+                        let radial = dot(chord, tip);
+                        let outward = normalize([
+                            chord[0] - radial * tip[0],
+                            chord[1] - radial * tip[1],
+                            chord[2] - radial * tip[2],
+                        ]);
+                        (i, tip, outward)
+                    });
                 let scale = self.amplitude - ICE_CRACK_STRESS;
                 let thinnest = 1.0 - self.shell_map.thinning;
                 let mut start = None;
-                for attempt in 0..24u64 {
-                    let p = rng.unit_direction(bin, draw + 1 + 2 * attempt);
-                    let (peak, phase) = self.shell.peak_tension(axis, p);
-                    let excess = peak - ICE_CRACK_STRESS;
-                    if excess <= 0.0 {
-                        continue;
+                if let Some((_, tip, _)) = branch {
+                    let (peak, phase) = self.shell.peak_tension(axis, tip);
+                    if peak > ICE_CRACK_STRESS {
+                        start = Some((tip, phase));
                     }
-                    let thin = thinnest / self.shell_map.factor(p).max(1e-3);
-                    if rng.uniform(bin, draw + 2 + 2 * attempt) < excess / scale.max(excess) * thin
-                    {
-                        start = Some((p, phase));
-                        break;
+                } else {
+                    for attempt in 0..24u64 {
+                        let p = rng.unit_direction(bin, draw + 1 + 2 * attempt);
+                        let (peak, phase) = self.shell.peak_tension(axis, p);
+                        let excess = peak - ICE_CRACK_STRESS;
+                        if excess <= 0.0 {
+                            continue;
+                        }
+                        let thin = thinnest / self.shell_map.factor(p).max(1e-3);
+                        if rng.uniform(bin, draw + 2 + 2 * attempt)
+                            < excess / scale.max(excess) * thin
+                        {
+                            start = Some((p, phase));
+                            break;
+                        }
                     }
                 }
                 let Some((p0, mut phase)) = start else {
@@ -261,13 +400,6 @@ impl Cracks {
                 };
                 let length = l_lo * (l_hi / l_lo).powf(rng.uniform(bin, draw + 51));
                 let id = (bin << 32) | j;
-                let points = match kind {
-                    LineaKind::Cycloid => self.cycloid(axis, p0, phase, spacing, length, id),
-                    _ => self.ridge_trace(axis, p0, phase, spacing, length, id, polar),
-                };
-                if points.len() < 3 {
-                    continue;
-                }
                 let (width, relief) = match kind {
                     LineaKind::Band => {
                         let (w_lo, w_hi) = (
@@ -288,6 +420,21 @@ impl Cracks {
                         LINEA_RIDGE_HEIGHT * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
                     ),
                 };
+                let rules = TraceRules {
+                    polar,
+                    index: Some(&index),
+                    exclude: branch.map(|b| b.0),
+                    one_way: branch.map(|b| b.2),
+                    junction: (0.5 * width).max(cell),
+                };
+                let points = match kind {
+                    LineaKind::Cycloid => self.cycloid(axis, p0, phase, spacing, length, &rules),
+                    _ => self.ridge_trace(axis, p0, phase, spacing, length, id, &rules),
+                };
+                if points.len() < 3 {
+                    continue;
+                }
+                index.insert(out.len(), &points, kind == LineaKind::Vent);
                 out.push(Linea {
                     length: (points.len() - 1) as f64 * spacing,
                     points,
@@ -304,6 +451,40 @@ impl Cracks {
         out
     }
 
+    /// How a propagating crack answers the cracks already open near it (Pollard and
+    /// Aydin 1988): within the stress shadow of an open fissure, half a shell thickness,
+    /// it turns toward meeting it at a right angle, and at the junction range it stops,
+    /// having reached a free surface; healed ridges and bands it crosses. None: stop.
+    fn steer(&self, p: [f64; 3], d: [f64; 3], rules: &TraceRules) -> Option<[f64; 3]> {
+        let Some(index) = rules.index else {
+            return Some(d);
+        };
+        let Some((dist_rad, tangent, open)) = index.nearest(p, rules.exclude) else {
+            return Some(d);
+        };
+        if !open {
+            return Some(d);
+        }
+        let dist = dist_rad * self.body_radius;
+        if dist <= rules.junction {
+            return None;
+        }
+        let range = CRACK_SHADOW_SHELLS * self.mean_shell * self.shell_map.factor(p).max(1e-3);
+        if dist >= range {
+            return Some(d);
+        }
+        let mut perp = normalize(cross(p, tangent));
+        if dot(perp, d) < 0.0 {
+            perp = [-perp[0], -perp[1], -perp[2]];
+        }
+        let w = CRACK_DEFLECTION * (1.0 - dist / range).powi(2);
+        Some(normalize([
+            d[0] + (perp[0] - d[0]) * w,
+            d[1] + (perp[1] - d[1]) * w,
+            d[2] + (perp[2] - d[2]) * w,
+        ]))
+    }
+
     /// A centre line for a lane of grooved terrain, traced along the field from a start
     /// in both directions as a ridge is, with its wander and without the polar rules.
     pub fn trace(
@@ -315,13 +496,14 @@ impl Cracks {
         length: f64,
         id: u64,
     ) -> Vec<[f64; 3]> {
-        self.ridge_trace(axis, p0, phase, spacing, length, id, false)
+        self.ridge_trace(axis, p0, phase, spacing, length, id, &TraceRules::free())
     }
 
     /// A crack along the slowly turning field: from the start in both directions,
     /// perpendicular to the most tensile stress at the phase it opened, while the
     /// tension holds, with a little wander. A crack of the thinned polar zone refracts
-    /// round the zone's margin and stops in the thick shell beyond.
+    /// round the zone's margin and stops in the thick shell beyond; a branch runs one
+    /// way, outward from the tip it starts at, for the whole length.
     #[allow(clippy::too_many_arguments)]
     fn ridge_trace(
         &self,
@@ -331,14 +513,23 @@ impl Cracks {
         spacing: f64,
         length: f64,
         id: u64,
-        polar: bool,
+        rules: &TraceRules,
     ) -> Vec<[f64; 3]> {
+        let polar = rules.polar;
         let noise = GradientNoise::new(id ^ 0x7E1A_0000);
-        let half = (0.5 * length / spacing).ceil() as usize;
+        let steps = (length / spacing).ceil() as usize;
+        let half = if rules.one_way.is_some() {
+            steps
+        } else {
+            steps.div_ceil(2)
+        };
         let mut sides: [Vec<[f64; 3]>; 2] = [Vec::new(), Vec::new()];
         for (side, sign) in [1.0f64, -1.0].iter().enumerate() {
+            if side == 1 && rules.one_way.is_some() {
+                break;
+            }
             let mut p = p0;
-            let mut along: Option<[f64; 3]> = None;
+            let mut along: Option<[f64; 3]> = rules.one_way;
             for i in 0..half {
                 let stress = self.shell.total(axis, p, phase);
                 let (s1, _, _) = stress.principal();
@@ -390,6 +581,11 @@ impl Cracks {
                         ]);
                     }
                 }
+                // The cracks already open: a turn toward an open fissure's perpendicular,
+                // or the end against it.
+                let Some(d) = self.steer(p, d, rules) else {
+                    break;
+                };
                 p = step(p, d, spacing, self.body_radius);
                 along = Some(d);
                 sides[side].push(p);
@@ -411,7 +607,7 @@ impl Cracks {
         phase0: f64,
         spacing: f64,
         length: f64,
-        _id: u64,
+        rules: &TraceRules,
     ) -> Vec<[f64; 3]> {
         let dt = self.orbit_period_s / CYCLOID_PHASE_STEPS as f64;
         let d_phase = 2.0 * std::f64::consts::PI / CYCLOID_PHASE_STEPS as f64;
@@ -419,7 +615,7 @@ impl Cracks {
         let mut points = vec![p0];
         let mut p = p0;
         let mut phase = phase0;
-        let mut along: Option<[f64; 3]> = None;
+        let mut along: Option<[f64; 3]> = rules.one_way;
         let mut run = 0.0;
         let mut since_point = 0.0;
         let mut idle = 0usize;
@@ -430,6 +626,9 @@ impl Cracks {
             if s1 >= ICE_CRACK_STRESS {
                 idle = 0;
                 let d = crack_direction(p, &stress, along);
+                let Some(d) = self.steer(p, d, rules) else {
+                    break;
+                };
                 p = step(p, d, advance, self.body_radius);
                 along = Some(d);
                 run += advance;
