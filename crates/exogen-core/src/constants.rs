@@ -455,21 +455,44 @@ pub const IO_MOUNTAIN_OUTLINE: f64 = 0.3;
 pub const IO_MOUNTAIN_TEXTURE: f64 = 0.08;
 pub const IO_MOUNTAIN_TEXTURE_LENGTH: f64 = 12e3;
 pub const IO_MOUNTAIN_LIFETIME_GYR: (f64, f64) = (0.1, 0.5);
+/// A block ends in a fault scarp on its upthrown side, the rim falling as 1 - x to this
+/// power, and slopes under the plains on the downthrown side, to this power.
+pub const IO_MOUNTAIN_SCARP_POWER: f64 = 12.0;
+pub const IO_MOUNTAIN_APRON_POWER: f64 = 2.0;
 /// Flow fields: from every active patera and this share of the quiet ones; their reach,
-/// m, log-uniform; the vent's pool as a fraction of the reach; lobes per field, the
-/// angular spread of a lobe, rad, the lobing of the margins, the softness of the edge as
-/// a fraction of the reach, the thickness, m; lobe ages, years, log-uniform, and the
-/// time over which a flow goes from black to brown under the sulfur rain. A field is a
-/// connected body of this fraction of the reach with the lobes reaching out from it.
+/// m, log-uniform; lobes per field; the lobing of the margins at the width's scale, the
+/// softness of the edge as a share of the width (or a cell and a half), the thickness,
+/// m; lobe ages, years, log-uniform, and the time over which a flow goes from black to
+/// brown under the sulfur rain.
 pub const IO_QUIET_FLOW_FRACTION: f64 = 0.15;
 pub const IO_FLOW_REACH: (f64, f64) = (40e3, 300e3);
-pub const IO_FLOW_VENT: f64 = 0.15;
-pub const IO_FLOW_BODY: f64 = 0.25;
 pub const IO_FLOW_LOBES: (u32, u32) = (6, 14);
-pub const IO_FLOW_SPREAD: (f64, f64) = (0.12, 0.45);
 pub const IO_FLOW_LOBING: f64 = 0.3;
-pub const IO_FLOW_EDGE: f64 = 0.08;
+pub const IO_FLOW_EDGE: f64 = 0.15;
 pub const IO_FLOW_THICKNESS: f64 = 20.0;
+/// Flows follow the ground (F59): a lobe is traced from the patera's rim downslope, its
+/// heading turning toward the fall line by this much times tanh(slope / this slope) per
+/// step, with a wander of this many radians over this length of path, m, stopping where
+/// a mountain stands or where going on would climb more than this depth, m, above the
+/// lowest ground it has reached (a flow ponds in a basin and crosses a bump no higher
+/// than its own pile); its half width this share of the reach, at least this, m, this
+/// share narrower at the vent than at the toe, wandering by this rms share; its points
+/// this far apart at most, m.
+pub const IO_FLOW_SLOPE_FOLLOW: f64 = 2.0;
+pub const IO_FLOW_SLOPE_SCALE: f64 = 0.005;
+pub const IO_FLOW_WANDER_RAD: f64 = 1.0;
+pub const IO_FLOW_WANDER_LENGTH: f64 = 40e3;
+pub const IO_FLOW_FILL_DEPTH: f64 = 150.0;
+/// The ground a flow answers to is the regional slope: the base smoothed over this
+/// length, m, since a flow front rides over the bumps shorter than its own width on its
+/// own pile, and a flow deflects sideways along a contour but never turns back on
+/// itself.
+pub const IO_FLOW_GROUND_SMOOTH: f64 = 40e3;
+pub const IO_FLOW_WIDTH_SHARE: (f64, f64) = (0.05, 0.15);
+pub const IO_FLOW_MIN_HALF_WIDTH: f64 = 3e3;
+pub const IO_FLOW_TOE: f64 = 0.6;
+pub const IO_FLOW_WIDTH_WOBBLE: f64 = 0.25;
+pub const IO_FLOW_POINT_SPACING: f64 = 2e3;
 pub const IO_FLOW_AGE_YR: (f64, f64) = (1.0, 3e5);
 pub const IO_FLOW_DARK_YR: f64 = 150.0;
 /// Io's deposits accumulate (F56): a flow's colour is coated over by the fallout of the

@@ -26,15 +26,17 @@
 
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
-use crate::fields::LayerSet;
-use crate::geom::{angle_between, azimuth_from, local_basis};
+use crate::fields::{Field, LayerSet};
+use crate::geom::{angle_between, azimuth_from, cross, dot, local_basis, normalize};
 use crate::grid::CubeSphere;
+use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::*;
+use std::collections::HashMap;
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 7;
 
 /// A patera: a volcano-tectonic depression with a flat floor and a fault-bounded,
 /// irregular outline.
@@ -76,12 +78,16 @@ pub struct Mountain {
     pub id: u64,
 }
 
-/// One lobe of a flow field: a sector of the field's reach, laid down some years ago.
+/// One lobe of a flow field: a tube about a centre line traced downslope from the
+/// patera's rim (F59), laid down some years ago.
 #[derive(Clone, Debug)]
 pub struct Lobe {
-    pub azimuth: f64,
-    pub spread: f64,
-    pub reach_fraction: f64,
+    /// The centre line from the rim outward, unit directions, `spacing` m apart.
+    pub points: Vec<[f64; 3]>,
+    pub spacing: f64,
+    /// The mean half width, m, and its factor at each point.
+    pub half_width: f64,
+    pub widths: Vec<f32>,
     pub age_yr: f64,
 }
 
@@ -131,7 +137,14 @@ impl Mountain {
 }
 impl FlowField {
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.1 * self.reach / body_radius
+        let mut far: f64 = 0.0;
+        for l in &self.lobes {
+            let hw = l.half_width * (1.0 + IO_FLOW_LOBING + IO_FLOW_WIDTH_WOBBLE) * 1.5;
+            for p in &l.points {
+                far = far.max(angle_between(self.center, *p) + hw / body_radius);
+            }
+        }
+        far.max(2.0 * IO_FLOW_MIN_HALF_WIDTH / body_radius)
     }
     pub fn alive(&self, t: f64) -> bool {
         self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
@@ -182,57 +195,11 @@ pub fn block_profile(r: f64, phi: f64, m: &Mountain, noise: &GradientNoise) -> f
     }
     let x = r / edge;
     let tilt = 1.0 - m.tilt * 0.5 * (1.0 + x * (phi - m.tilt_azimuth).cos());
-    let rim = (1.0 - x.powi(8)).max(0.0);
+    // The upthrown side ends in a fault scarp; the downthrown slopes under the plains.
+    let up = 0.5 * (1.0 - (phi - m.tilt_azimuth).cos());
+    let power = IO_MOUNTAIN_APRON_POWER + (IO_MOUNTAIN_SCARP_POWER - IO_MOUNTAIN_APRON_POWER) * up;
+    let rim = (1.0 - x.powf(power)).max(0.0);
     m.height * tilt * rim
-}
-
-/// A flow field's coverage and freshness at a point: the strongest lobe reaching it,
-/// and the freshest lava among the lobes that reach it.
-fn flow_at(d: [f64; 3], f: &FlowField, body_radius: f64, noise: &GradientNoise) -> (f64, f64) {
-    let r = angle_between(f.center, d) * body_radius;
-    if r > f.reach {
-        return (0.0, 0.0);
-    }
-    let (east, north) = local_basis(f.center);
-    let phi = azimuth_from(f.center, east, north, d);
-    // The vent's own pool at the centre; the lobes reach out of a connected body.
-    let mut cover: f64 = ((IO_FLOW_VENT * f.reach - r) / (IO_FLOW_EDGE * f.reach)).clamp(0.0, 1.0);
-    let mut fresh: f64 = 0.0;
-    for (j, lobe) in f.lobes.iter().enumerate() {
-        let mut da = (phi - lobe.azimuth).rem_euclid(2.0 * std::f64::consts::PI);
-        if da > std::f64::consts::PI {
-            da -= 2.0 * std::f64::consts::PI;
-        }
-        let sector = (-(da / lobe.spread).powi(2)).exp();
-        let lobing = 1.0
-            + IO_FLOW_LOBING
-                * noise.fbm(
-                    [
-                        phi.cos() * 2.0 + j as f64 * 3.1,
-                        phi.sin() * 2.0,
-                        r / f.reach * 2.0,
-                    ],
-                    1.0,
-                    2,
-                    2.0,
-                    0.5,
-                );
-        let extent =
-            f.reach * (IO_FLOW_BODY + (1.0 - IO_FLOW_BODY) * lobe.reach_fraction * sector) * lobing;
-        // An old lobe is coated over by the plains' fallout and fades.
-        let visible = (-lobe.age_yr / IO_FLOW_COAT_YR).exp();
-        let c = ((extent - r) / (IO_FLOW_EDGE * f.reach)).clamp(0.0, 1.0) * visible;
-        if c > 0.0 {
-            cover = cover.max(c);
-            fresh = fresh.max(c * (-lobe.age_yr / IO_FLOW_DARK_YR).exp());
-        }
-    }
-    // The flow units within a lobe overlap and differ: the surface varies along it.
-    let texture = 1.0
-        - IO_FLOW_TEXTURE
-            * 0.5
-            * (1.0 + noise.fbm(d, body_radius / IO_FLOW_TEXTURE_LENGTH, 2, 2.0, 0.5));
-    (cover * texture, fresh)
 }
 
 /// Fallout density of a plume at a fraction of its ring radius: the ring where the
@@ -298,6 +265,189 @@ impl IoProcess {
         range.0 * (range.1 / range.0).powf(self.rng.uniform(index, draw))
     }
 
+    /// A lobe's centre line (F59): from the patera's rim at an azimuth, downslope over
+    /// the ground with the inertia of a flow and a wander, deflecting along a contour
+    /// but never turning back, stopping where a mountain stands, where it would have to
+    /// climb out of the ground it has ponded in, or at its length. Returns the lobe and
+    /// how it ended: 0 at its length, 1 at a mountain, 2 ponded.
+    #[allow(clippy::too_many_arguments)]
+    fn trace_lobe(
+        &self,
+        idx: u64,
+        draw: u64,
+        center: [f64; 3],
+        rim: f64,
+        reach: f64,
+        ground: &PaddedField,
+        standing: &[(Mountain, GradientNoise)],
+        age_yr: f64,
+    ) -> (Lobe, usize) {
+        let r = self.body_radius;
+        let grid = &self.grid;
+        let (east, north) = local_basis(center);
+        let a0 = 2.0 * std::f64::consts::PI * self.rng.uniform(idx, draw);
+        let mut p = crate::geom::offset(center, east, north, rim / r, a0);
+        let outward = |p: [f64; 3]| {
+            let c = dot(center, p);
+            normalize([
+                c * p[0] - center[0],
+                c * p[1] - center[1],
+                c * p[2] - center[2],
+            ])
+        };
+        let mut h = outward(p);
+        let length = reach * (0.3 + 0.7 * self.rng.uniform(idx, draw + 2));
+        let spacing = (length / 64.0).max(IO_FLOW_POINT_SPACING);
+        let steps = (length / spacing).ceil() as usize;
+        let (w_lo, w_hi) = IO_FLOW_WIDTH_SHARE;
+        let half_width = (reach * (w_lo + (w_hi - w_lo) * self.rng.uniform(idx, draw + 1)))
+            .max(IO_FLOW_MIN_HALF_WIDTH);
+        let noise = GradientNoise::new(idx ^ (draw << 40) ^ 0x0F10_7ACE);
+        let delta = (0.5 * spacing / r).max(1e-7);
+        let mut points = vec![p];
+        let mut lowest = sample_bilinear(grid, ground, p) as f64;
+        let mut end = 0usize;
+        for i in 0..steps {
+            // The ground's fall line at the point.
+            let (e, n) = local_basis(p);
+            let at = |u: f64, v: f64| {
+                normalize([
+                    p[0] + delta * (u * e[0] + v * n[0]),
+                    p[1] + delta * (u * e[1] + v * n[1]),
+                    p[2] + delta * (u * e[2] + v * n[2]),
+                ])
+            };
+            let hx = (sample_bilinear(grid, ground, at(1.0, 0.0))
+                - sample_bilinear(grid, ground, at(-1.0, 0.0))) as f64
+                / (2.0 * delta * r);
+            let hy = (sample_bilinear(grid, ground, at(0.0, 1.0))
+                - sample_bilinear(grid, ground, at(0.0, -1.0))) as f64
+                / (2.0 * delta * r);
+            let grad = hx.hypot(hy);
+            let down = if grad > 1e-12 {
+                normalize([
+                    -(hx * e[0] + hy * n[0]),
+                    -(hx * e[1] + hy * n[1]),
+                    -(hx * e[2] + hy * n[2]),
+                ])
+            } else {
+                h
+            };
+            let follow = IO_FLOW_SLOPE_FOLLOW * (grad / IO_FLOW_SLOPE_SCALE).tanh();
+            // The fall line steers the flow sideways and speeds it on, but never turns it
+            // back: a front deflects along a contour and ponds rather than reverse.
+            let along = dot(down, h).max(0.0);
+            let lateral = {
+                let a = dot(down, h);
+                [down[0] - a * h[0], down[1] - a * h[1], down[2] - a * h[2]]
+            };
+            // The wander: a turn per step that sums to the wander over its length.
+            let turn = IO_FLOW_WANDER_RAD
+                * (spacing / IO_FLOW_WANDER_LENGTH)
+                * noise.fbm(
+                    [i as f64 * spacing / IO_FLOW_WANDER_LENGTH, 0.3, 0.7],
+                    1.0,
+                    2,
+                    2.0,
+                    0.5,
+                )
+                / 0.6;
+            let side = normalize(cross(p, h));
+            let ahead = 1.0 + follow * along;
+            let mut d = [
+                ahead * (h[0] * turn.cos() + side[0] * turn.sin()) + follow * lateral[0],
+                ahead * (h[1] * turn.cos() + side[1] * turn.sin()) + follow * lateral[1],
+                ahead * (h[2] * turn.cos() + side[2] * turn.sin()) + follow * lateral[2],
+            ];
+            let radial = dot(d, p);
+            d = normalize([
+                d[0] - radial * p[0],
+                d[1] - radial * p[1],
+                d[2] - radial * p[2],
+            ]);
+            let theta = spacing / r;
+            let q = normalize([
+                p[0] * theta.cos() + d[0] * theta.sin(),
+                p[1] * theta.cos() + d[1] * theta.sin(),
+                p[2] * theta.cos() + d[2] * theta.sin(),
+            ]);
+            // A mountain in the way stops the flow.
+            let blocked = standing.iter().any(|(m, mn)| {
+                let dist = angle_between(m.center, q) * r;
+                dist < m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE) && {
+                    let (me, mnn) = local_basis(m.center);
+                    dist < block_radius(azimuth_from(m.center, me, mnn, q), m, mn)
+                }
+            });
+            if blocked {
+                end = 1;
+                break;
+            }
+            // Lava ponds: it crosses a bump no higher than its own pile above the lowest
+            // ground it has reached, and stops where it would have to climb more.
+            let height = sample_bilinear(grid, ground, q) as f64;
+            if height > lowest + IO_FLOW_FILL_DEPTH {
+                end = 2;
+                break;
+            }
+            lowest = lowest.min(height);
+            let radial = dot(d, q);
+            h = normalize([
+                d[0] - radial * q[0],
+                d[1] - radial * q[1],
+                d[2] - radial * q[2],
+            ]);
+            p = q;
+            points.push(p);
+        }
+        // The width along the lobe: a channel at the vent widening to the toe, wandering.
+        let count = points.len();
+        let widths = (0..count)
+            .map(|i| {
+                let s = i as f64 / (count.max(2) - 1) as f64;
+                let wander = 1.0
+                    + IO_FLOW_WIDTH_WOBBLE
+                        * noise.fbm(
+                            [i as f64 * spacing / (3.0 * half_width), 1.3, 2.1],
+                            1.0,
+                            2,
+                            2.0,
+                            0.5,
+                        )
+                        / 0.6;
+                (wander.max(0.4) * (1.0 - IO_FLOW_TOE + IO_FLOW_TOE * s)) as f32
+            })
+            .collect();
+        (
+            Lobe {
+                points,
+                spacing,
+                half_width,
+                widths,
+                age_yr,
+            },
+            end,
+        )
+    }
+
+    /// The regime's surface afresh, as every step lays it: the plains' age and unit,
+    /// nothing on them.
+    pub fn clear_surface(layers: &mut LayerSet, t: f64) {
+        let now = (t - IO_SURFACE_AGE_GYR) as f32;
+        let ages = layers.surface_age.as_mut_slice();
+        let units = layers.unit_id.as_mut_slice();
+        let deep = layers.deep.as_mut_slice();
+        let melt = layers.melt.as_mut_slice();
+        let cover = layers.cover.as_mut_slice();
+        for k in 0..ages.len() {
+            ages[k] = now;
+            units[k] = UNIT_PRIMORDIAL;
+            deep[k] = 0.0;
+            melt[k] = 0.0;
+            cover[k] = 0.0;
+        }
+    }
+
     /// The mountains through the body's life: each of the standing count is a chain of
     /// blocks, one raised as the last is buried, drawn from the seed alone.
     fn raise_mountains(&mut self) {
@@ -331,7 +481,7 @@ impl IoProcess {
 
     /// The features alive through a step: paterae, flows and fallout are renewed at
     /// every kept step, since the surface is younger than the step.
-    fn populate(&mut self, t1: f64, lay: bool) {
+    fn populate(&mut self, t1: f64, lay: bool, bedrock: &Field<f32>) {
         // The time bin the step ends in is the random index, so the same surface comes
         // out at every quality.
         let step = (t1 / self.age * crate::stages::LOOP_TIME_BINS as f64).round() as u64;
@@ -340,6 +490,19 @@ impl IoProcess {
         if !lay {
             return;
         }
+        // The ground the flows run over, the regional slope of the base, and the
+        // mountains that stop them.
+        let cell = self.grid.delta() * self.body_radius;
+        let smoothed = crate::stages::relaxation::low_pass(bedrock, cell, IO_FLOW_GROUND_SMOOTH);
+        let ground = PaddedField::new(&self.grid, &smoothed);
+        let mut ends = [0usize; 3];
+        let mut lobe_lengths = (0usize, 0.0f64);
+        let standing: Vec<(Mountain, GradientNoise)> = self
+            .mountains
+            .iter()
+            .filter(|m| m.alive(t1))
+            .map(|m| (m.clone(), GradientNoise::new(m.id ^ 0x0B10_C000)))
+            .collect();
         for k in 0..self.n_paterae as u64 {
             let idx = 1_000_000 + step * 100_003 + k;
             // Low latitudes favoured: draw until the latitude weight accepts.
@@ -394,23 +557,25 @@ impl IoProcess {
                 } else {
                     (IO_FLOW_DARK_YR, a_hi)
                 };
+                let reach = self
+                    .log_uniform(idx, 49 + 90 * g as u64, IO_FLOW_REACH)
+                    .max(2.0 * radius);
+                let rim = radius * (1.0 + IO_PATERA_OUTLINE);
                 let lobes = (0..n)
                     .map(|j| {
                         let d = base + 4 * j as u64;
-                        let (sp_lo, sp_hi) = IO_FLOW_SPREAD;
-                        Lobe {
-                            azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(idx, d),
-                            spread: sp_lo + (sp_hi - sp_lo) * self.rng.uniform(idx, d + 1),
-                            reach_fraction: 0.3 + 0.7 * self.rng.uniform(idx, d + 2),
-                            age_yr: self.log_uniform(idx, d + 3, age_range),
-                        }
+                        let age_yr = self.log_uniform(idx, d + 3, age_range);
+                        let (lobe, end) =
+                            self.trace_lobe(idx, d, center, rim, reach, &ground, &standing, age_yr);
+                        ends[end] += 1;
+                        lobe_lengths.0 += 1;
+                        lobe_lengths.1 += (lobe.points.len() - 1) as f64 * lobe.spacing;
+                        lobe
                     })
                     .collect();
                 self.flows.push(FlowField {
                     center,
-                    reach: self
-                        .log_uniform(idx, 49 + 90 * g as u64, IO_FLOW_REACH)
-                        .max(2.0 * radius),
+                    reach,
                     lobes,
                     birth_gyr: t1,
                     death_gyr: death,
@@ -463,6 +628,16 @@ impl IoProcess {
                 }
             }
         }
+        if std::env::var_os("EXOGEN_DEBUG").is_some() && lobe_lengths.0 > 0 {
+            eprintln!(
+                "io flows at {t1:.3} Gyr: {} lobes, mean length {:.0} km; ended at their length {}, at a mountain {}, ponded {}",
+                lobe_lengths.0,
+                lobe_lengths.1 / lobe_lengths.0 as f64 / 1e3,
+                ends[0],
+                ends[1],
+                ends[2]
+            );
+        }
     }
 
     /// The surface at the end of a step: the base terrain, the mountains standing, the
@@ -483,28 +658,14 @@ impl IoProcess {
         if self.mountains.is_empty() {
             self.raise_mountains();
         }
-        self.populate(t1, lay);
+        self.populate(t1, lay, &layers.bedrock);
         if !lay {
             return;
         }
         let grid = self.grid;
         let body_radius = self.body_radius;
         let cell = grid.delta() * body_radius;
-        let now = (t1 - IO_SURFACE_AGE_GYR) as f32;
-        {
-            let ages = layers.surface_age.as_mut_slice();
-            let units = layers.unit_id.as_mut_slice();
-            let deep = layers.deep.as_mut_slice();
-            let melt = layers.melt.as_mut_slice();
-            let cover = layers.cover.as_mut_slice();
-            for k in 0..ages.len() {
-                ages[k] = now;
-                units[k] = UNIT_PRIMORDIAL;
-                deep[k] = 0.0;
-                melt[k] = 0.0;
-                cover[k] = 0.0;
-            }
-        }
+        Self::clear_surface(layers, t1);
         for m in self.mountains.iter().filter(|m| m.alive(t1)) {
             let noise = GradientNoise::new(m.id ^ 0x0B10_C000);
             self.stamper.gather(
@@ -700,9 +861,10 @@ pub fn mountain_compute(
     }
 }
 
-/// A flow field over the ground: its lobes' coverage and freshness, a little relief;
-/// over an earlier flow the stronger coverage and the fresher lava win, and the lava
-/// buries the fallout under it.
+/// A flow field over the ground: each lobe a tube about its centre line, its margin
+/// lobate at the width's scale and soft over a share of the width, an old lobe faded by
+/// the fallout coating it; the strongest coverage and the freshest lava win, a little
+/// relief goes with them, and the lava buries the fallout under it.
 pub fn flow_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -716,17 +878,46 @@ pub fn flow_compute(
     let deep = layers.deep.as_slice();
     let melt = layers.melt.as_slice();
     let covered = layers.cover.as_slice();
-    stamper.gather(grid, body_radius, f.center, f.reach);
+    let cell = grid.delta() * body_radius;
     let noise = GradientNoise::new(f.id ^ 0xF10_0000);
-    let cells = stamper
-        .footprint
-        .iter()
-        .filter_map(|&(idx, _, _)| {
+    let mut best: HashMap<usize, (f64, f64)> = HashMap::new();
+    for lobe in &f.lobes {
+        let visible = (-lobe.age_yr / IO_FLOW_COAT_YR).exp();
+        if visible < 0.01 {
+            continue;
+        }
+        let dark = (-lobe.age_yr / IO_FLOW_DARK_YR).exp();
+        for (i, p) in lobe.points.iter().enumerate() {
+            let hw = lobe.half_width * lobe.widths[i] as f64;
+            let edge = (IO_FLOW_EDGE * hw).max(1.5 * cell);
+            stamper.gather(grid, body_radius, *p, hw * (1.0 + IO_FLOW_LOBING) + edge);
+            for &(idx, r, _) in &stamper.footprint {
+                let d = grid.center(grid.cell(idx));
+                let lobing =
+                    1.0 + IO_FLOW_LOBING * noise.fbm(d, body_radius / (1.5 * hw), 2, 2.0, 0.5);
+                let c = ((hw * lobing - r) / edge).clamp(0.0, 1.0) * visible;
+                if c <= 0.0 {
+                    continue;
+                }
+                let e = best.entry(idx).or_insert((0.0, 0.0));
+                e.0 = e.0.max(c);
+                e.1 = e.1.max(c * dark);
+            }
+        }
+    }
+    let mut cells: Vec<CellWrite> = best
+        .into_iter()
+        .filter_map(|(idx, (cover, fresh))| {
             if units[idx] == UNIT_MOUNTAIN {
                 return None;
             }
+            // The flow units within a lobe overlap and differ: the surface varies.
             let d = grid.center(grid.cell(idx));
-            let (cover, fresh) = flow_at(d, f, body_radius, &noise);
+            let texture = 1.0
+                - IO_FLOW_TEXTURE
+                    * 0.5
+                    * (1.0 + noise.fbm(d, body_radius / IO_FLOW_TEXTURE_LENGTH, 2, 2.0, 0.5));
+            let cover = cover * texture;
             if cover <= 0.0 {
                 return None;
             }
@@ -750,6 +941,7 @@ pub fn flow_compute(
             })
         })
         .collect();
+    cells.sort_by_key(|c| c.idx);
     StampOutput {
         cells,
         composition: None,

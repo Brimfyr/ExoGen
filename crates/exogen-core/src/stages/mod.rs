@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 53;
+pub const FINISH_VERSION: u64 = 56;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -652,6 +652,12 @@ pub fn finish(
     }
     if sink.cancelled() {
         return Err(RunError::Cancelled);
+    }
+    // The Io regime lays its surface afresh at every step, and the finish is a step:
+    // the loop's coarse stamps of its features are cleared, so that each is drawn once
+    // at this resolution and no coarse halo of its unit or coverage outlives it.
+    if io::is_io_regime(graph) {
+        io::IoProcess::clear_surface(&mut layers, present);
     }
     let shell_map = ice::ShellMap::new(graph);
     let shell_history = ice_shell_history(graph, &loop_output.thermal);
