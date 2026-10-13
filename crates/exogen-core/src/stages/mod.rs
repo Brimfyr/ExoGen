@@ -141,13 +141,12 @@ pub struct LoopOutput {
     pub lanes: Vec<ice_shell::Lane>,
     /// The share of the surface the lanes cover once all have formed.
     pub lane_coverage: f64,
-    /// The lanes' floor at their time and the polar terrain's renewed surface, on the
-    /// coarse grid, for the finish to lay its grooves and folds on.
-    pub lane_floor: Option<Field<f32>>,
-    pub polar_floor: Option<Field<f32>>,
-    /// The past episodes of focused heating and the floor each left (F53).
+    /// How much of each cell's relief the lanes renewed at their times, 0 to 1, on the
+    /// coarse grid: the finish completes the renewal out to the lanes' resolved edges.
+    pub lane_core: Option<Field<f32>>,
+    /// The past episodes of focused heating (F53), and when the present one began.
     pub episodes: Vec<ice::FocusEpisode>,
-    pub fossil_floors: Vec<Option<Field<f32>>>,
+    pub polar_start: f64,
     /// The share of the surface the lanes and the polar terrains, present and past,
     /// renewed between them, by area.
     pub renewed_fraction: f64,
@@ -358,7 +357,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 56;
+pub const FINISH_VERSION: u64 = 58;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -420,7 +419,7 @@ pub fn run_coarse_loop(
         if let Some(shell_at) = &ice_shell {
             let local = ice_shell_process
                 .as_mut()
-                .map_or(relaxation::Local::default(), |p| p.relaxation(t1));
+                .map_or(relaxation::Local::default(), |p| p.relaxation(t0, t1));
             let floor = relaxation::relax(
                 &mut layers.bedrock,
                 graph.f64("body.radius"),
@@ -496,7 +495,7 @@ pub fn run_coarse_loop(
         }
         // The polar terrain renews itself after everything the step brought it.
         if let Some(p) = &mut ice_shell_process {
-            p.after(&mut layers, t1);
+            p.after(&mut layers);
             if std::env::var_os("EXOGEN_DEBUG").is_some() && s % 10 == 0 {
                 let b = layers.bedrock.as_slice();
                 let (lo, hi) = b
@@ -563,21 +562,17 @@ pub fn run_coarse_loop(
         }
         None => (Vec::new(), Vec::new(), Vec::new()),
     };
-    let (lanes, lane_coverage, lane_floor, polar_floor, episodes, fossil_floors, renewed_fraction) =
+    let (lanes, lane_coverage, lane_core, episodes, polar_start, renewed_fraction) =
         match ice_shell_process {
             Some(p) => (
                 p.lanes,
                 p.lane_coverage,
-                p.lane_floor.map(|v| ice_shell::field_from(grid, &v)),
-                p.polar_floor.map(|v| ice_shell::field_from(grid, &v)),
+                p.lane_core.map(|v| ice_shell::field_from(grid, &v)),
                 p.episodes,
-                p.episode_floors
-                    .into_iter()
-                    .map(|f| f.map(|v| ice_shell::field_from(grid, &v)))
-                    .collect(),
+                p.present_start,
                 p.renewed_fraction,
             ),
-            None => (Vec::new(), 0.0, None, None, Vec::new(), Vec::new(), 0.0),
+            None => (Vec::new(), 0.0, None, Vec::new(), 0.0, 0.0),
         };
     Ok(LoopOutput {
         grid,
@@ -604,10 +599,9 @@ pub fn run_coarse_loop(
         plume_rings,
         lanes,
         lane_coverage,
-        lane_floor,
-        polar_floor,
+        lane_core,
         episodes,
-        fossil_floors,
+        polar_start,
         renewed_fraction,
         hash,
     })
@@ -692,20 +686,10 @@ pub fn finish(
         .filter(|l| l.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
-    let polar = shell_map.has_active_terrain();
+    let polar = shell_map.has_active_terrain() && present + 1e-9 >= loop_output.polar_start;
     let polar_time = (present - POLAR_RENEWAL_GYR).max(0.0);
-    let cracks_now = lineae::Cracks::new(graph);
-    let fold_direction = cracks_now
-        .as_ref()
-        .and_then(|c| {
-            shell_map
-                .pole
-                .map(|pole| c.crack_direction_near(pole, present))
-        })
-        .unwrap_or([1.0, 0.0, 0.0]);
     // The past episodes of focused heating (F53) that ended by this epoch: each terrain's
-    // shell map centred where the body left it, its folds along the fissures of its time
-    // carried the same way.
+    // shell map centred where the body left it.
     let episodes: Vec<ice::FocusEpisode> = loop_output
         .episodes
         .iter()
@@ -716,85 +700,56 @@ pub fn finish(
         .iter()
         .map(|e| shell_map.with_pole(e.center))
         .collect();
-    let fossil_fold: Vec<[f64; 3]> = episodes
+    // The renewed terrains on the resolved grid (F60, F61). The loop renewed their relief
+    // on its own grid, with the ramp across each edge and the halo beyond it, and every
+    // crater since stands on that; here their outlines are drawn at this resolution and
+    // composed in the order they formed, so that the crater population that follows
+    // reads the ages they leave, the colour follows the true edge, and a younger terrain
+    // lies over an older one.
+    let halo = POLAR_HALO_SHELLS * graph.f64("interior.ice_shell_thickness");
+    let mut renewal = ice_shell::Renewal::new(grid.cell_count());
+    let fossil_edges: Vec<Vec<f32>> = episode_maps
         .iter()
-        .map(|e| {
-            let d = cracks_now
-                .as_ref()
-                .zip(shell_map.pole)
-                .map(|(c, pole)| c.crack_direction_near(pole, e.end))
-                .unwrap_or([1.0, 0.0, 0.0]);
-            e.carry(d)
-        })
+        .map(|map| ice_shell::polar_edge(&grid, body_radius, map, &lineae, halo))
         .collect();
-    // The coarse loop drew the lanes and the polar terrain cell by cell: their edges are
-    // redrawn at this resolution before anything reads the ages they leave, and a floor
-    // it left is resampled and then smoothed over the loop's cell, so no facet of the
-    // coarse grid shows in a renewed terrain.
-    let coarse_cell_m = loop_output.grid.delta() * body_radius;
-    let bring = |f: &Field<f32>| -> Field<f32> {
-        let fine = f.resample(grid);
-        let smoothed = relaxation::low_pass(&fine, cell, coarse_cell_m);
-        let mut out = Field::new(grid);
-        out.as_mut_slice().copy_from_slice(&smoothed);
-        out
+    let polar_edge: Vec<f32> = if polar && shell_map.pole.is_some() {
+        ice_shell::polar_edge(&grid, body_radius, &shell_map, &lineae, halo)
+    } else {
+        Vec::new()
     };
-    let lane_floor: Option<Field<f32>> = loop_output
-        .lane_floor
-        .as_ref()
-        .filter(|_| !lanes.is_empty())
-        .map(bring);
-    let polar_floor: Option<Field<f32>> = loop_output
-        .polar_floor
-        .as_ref()
-        .filter(|_| polar)
-        .map(bring);
-    ice_shell::rasterize(
-        &mut layers,
-        body_radius,
-        cell,
-        loop_output.grid.delta() * body_radius,
-        &lanes,
-        lane_floor.as_ref().map(|f| f.as_slice()),
-    );
-    // The fossil polar terrains, oldest first, then the present one, so that the
-    // youngest renewal wins where they overlap.
-    let fossil_floors: Vec<Option<Field<f32>>> = loop_output
-        .fossil_floors
-        .iter()
-        .take(episodes.len())
-        .map(|f| f.as_ref().map(bring))
-        .collect();
-    let fossil_edges: Vec<Option<Vec<f32>>> = (0..episodes.len())
-        .map(|k| {
-            fossil_floors[k].as_ref().map(|floor| {
-                ice_shell::rasterize_polar(
-                    &mut layers,
-                    body_radius,
-                    cell,
-                    &episode_maps[k],
-                    &lineae,
-                    episodes[k].end,
-                    Some(floor.as_slice()),
-                    false,
-                )
-            })
-        })
-        .collect();
-    let polar_edge: Option<Vec<f32>> = (polar && shell_map.pole.is_some()).then(|| {
-        ice_shell::rasterize_polar(
-            &mut layers,
-            body_radius,
-            cell,
-            &shell_map,
-            &lineae,
-            polar_time,
-            polar_floor.as_ref().map(|f| f.as_slice()),
-            true,
-        )
-    });
-    let polar = polar_edge.is_some();
-    let polar_edge: Vec<f32> = polar_edge.unwrap_or_default();
+    let polar = !polar_edge.is_empty();
+    {
+        let lane_hits = ice_shell::lane_hits(&grid, body_radius, cell, &lanes);
+        // Each terrain with its time: a lane (0), a past episode's terrain (1), the
+        // present polar terrain (2).
+        let mut order: Vec<(f64, u8, usize)> = (0..lanes.len())
+            .map(|i| (lanes[i].time_gyr, 0u8, i))
+            .collect();
+        order.extend((0..episodes.len()).map(|k| (episodes[k].end, 1u8, k)));
+        if polar {
+            order.push((polar_time, 2u8, 0));
+        }
+        order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        for (time, kind, i) in order {
+            match kind {
+                0 => renewal.take_lane(&lanes[i], &lane_hits[i]),
+                1 => renewal.take_polar(&fossil_edges[i], time, halo),
+                _ => renewal.take_polar(&polar_edge, time, halo),
+            }
+        }
+    }
+    // The lanes' floor where the loop's cells did not reach their edges: what the loop
+    // renewed of each cell, resampled and smoothed over its cell so that no facet of
+    // the coarse grid shows in a lane, and the rest taken here.
+    if !lanes.is_empty() {
+        let core: Option<Vec<f32>> = loop_output.lane_core.as_ref().map(|c| {
+            let fine = c.resample(grid);
+            relaxation::low_pass(&fine, cell, loop_output.grid.delta() * body_radius)
+        });
+        ice_shell::lay_lane_floor(&mut layers, body_radius, core.as_deref(), &renewal);
+    }
+    renewal.apply(&mut layers);
+    let renewed: &[f32] = &renewal.time;
 
     // Loop craters that exist at this epoch. Their coarse form is in the resampled base;
     // their resolved detail is restored below, in age order among the replayed craters.
@@ -883,12 +838,6 @@ pub fn finish(
         .collect();
     // An ice shell's cracks within the surface's retention age, drawn per time bin.
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
-    let lane_floor: &[f32] = lane_floor.as_ref().map_or(&base, |f| f.as_slice());
-    let polar_floor: &[f32] = polar_floor.as_ref().map_or(&base, |f| f.as_slice());
-    let fossil_floor_slices: Vec<&[f32]> = fossil_floors
-        .iter()
-        .map(|f| f.as_ref().map_or(&base[..], |f| f.as_slice()))
-        .collect();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     let mut smear = volcanism::LavaSmear::new(
         loop_output.grid,
@@ -1078,14 +1027,12 @@ pub fn finish(
         events.push((polar_time, 0, 0x5027_0000_0000, Event::PolarTerrain));
     }
     for (k, e) in episodes.iter().enumerate() {
-        if fossil_edges[k].is_some() {
-            events.push((
-                e.end,
-                0,
-                0x5027_F000_0000 + k as u64,
-                Event::FossilTerrain(k),
-            ));
-        }
+        events.push((
+            e.end,
+            0,
+            0x5027_F000_0000 + k as u64,
+            Event::FossilTerrain(k),
+        ));
     }
     for (k, c) in chaos.iter().enumerate() {
         events.push((c.time_gyr, 0, c.id ^ 0xC4A0_0000_0000, Event::Chaos(k)));
@@ -1201,7 +1148,10 @@ pub fn finish(
                 }
                 Event::Groove(k) => {
                     let l = &lanes[*k];
-                    (l.center(), l.cap_radius(body_radius) + 2.0 * grid.delta())
+                    (
+                        l.center(),
+                        l.cap_radius(body_radius, cell) + 2.0 * grid.delta(),
+                    )
                 }
                 Event::PolarTerrain => (
                     shell_map.pole.unwrap_or([0.0, 0.0, 1.0]),
@@ -1404,10 +1354,11 @@ pub fn finish(
                             &layers,
                             &grid,
                             body_radius,
-                            lane_floor,
                             &lanes[*k],
                             lanes[*k].time_gyr,
                             cell,
+                            renewed,
+                            &base,
                             stamper,
                         );
                         Some((out, None, None))
@@ -1417,20 +1368,20 @@ pub fn finish(
                             &layers,
                             &grid,
                             body_radius,
-                            polar_floor,
                             &shell_map,
                             &polar_edge,
                             &lineae,
-                            fold_direction,
                             polar_time,
                             0.0,
                             cell,
+                            halo,
+                            renewed,
+                            &base,
                             stamper,
                         );
                         Some((out, None, None))
                     }
                     Event::FossilTerrain(k) => {
-                        let edge = fossil_edges[*k].as_deref().unwrap_or(&[]);
                         // Gardening since the episode spreads and lowers its structures,
                         // as it degrades the craters of the time.
                         let kappa_t = inputs.diffusivity_m2_per_myr
@@ -1440,14 +1391,15 @@ pub fn finish(
                             &layers,
                             &grid,
                             body_radius,
-                            fossil_floor_slices[*k],
                             &episode_maps[*k],
-                            edge,
+                            &fossil_edges[*k],
                             &lineae,
-                            fossil_fold[*k],
                             episodes[*k].end,
                             kappa_t,
                             cell,
+                            halo,
+                            renewed,
+                            &base,
                             stamper,
                         );
                         Some((out, None, None))
@@ -1584,6 +1536,7 @@ pub fn finish(
                             seed: c.key,
                             deep,
                             maturity_timescale: inputs.maturity_timescale,
+                            renewal_guard: false,
                         };
                         let out = stamp_compute(
                             &layers,
@@ -1663,7 +1616,15 @@ pub fn finish(
     }
     // The craters the finish does not resolve, as the relief their population leaves on
     // each surface by its age (F54): rough where old, smooth where renewed.
-    roughness::apply(&mut layers, body_radius, cell, d_min, &inputs, present);
+    roughness::apply(
+        &mut layers,
+        body_radius,
+        cell,
+        d_min,
+        &inputs,
+        present,
+        Some(&renewal.keep),
+    );
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
     let height = layers.height();
     // On ice, each slope sits at its own mean temperature: frost and lag follow it.

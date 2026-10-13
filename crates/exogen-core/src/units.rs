@@ -37,6 +37,21 @@ pub const UNIT_POLAR_TERRAIN: u16 = 22;
 pub const UNIT_CHAOS: u16 = 23;
 pub const UNIT_CRYODOME: u16 = 24;
 
+/// Whether a unit is a crater's own ground: its floor or its continuous ejecta.
+pub fn is_crater_unit(unit: u16) -> bool {
+    matches!(
+        unit,
+        UNIT_CRATER_FLOOR
+            | UNIT_EJECTA
+            | UNIT_BASIN_FLOOR
+            | UNIT_SECONDARY_FIELD
+            | UNIT_DEEP_FLOOR
+            | UNIT_DEEP_EJECTA
+            | UNIT_LAVA_CRATER_FLOOR
+            | UNIT_LAVA_EJECTA
+    )
+}
+
 pub fn unit_name(id: u16) -> &'static str {
     match id {
         UNIT_PRIMORDIAL => "primordial crust",

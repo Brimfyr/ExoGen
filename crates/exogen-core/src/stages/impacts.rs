@@ -292,6 +292,7 @@ impl ImpactProcess {
                 seed: rec.id,
                 deep,
                 maturity_timescale: inp.maturity_timescale,
+                renewal_guard: true,
             };
             stamp(
                 layers,

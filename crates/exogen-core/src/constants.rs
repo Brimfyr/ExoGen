@@ -816,7 +816,7 @@ pub const LAVA_COMPOSITION_PERIOD_GYR: f64 = 1.0;
 pub const SLOPE_SHED_START_DEG: f64 = 20.0;
 pub const SLOPE_FRESHNESS: f64 = 0.3;
 pub const REPOSE_SLOPE_DEG: f64 = 30.0;
-pub const GROOVE_CLEAN_RANGE: (f64, f64) = (0.55, 1.0);
+pub const GROOVE_CLEAN_RANGE: (f64, f64) = (0.8, 1.0);
 /// Pike 1977 lunar morphometry, (coefficient, exponent) in km: d = a D^b.
 pub const PIKE_SIMPLE_DEPTH: (f64, f64) = (0.196, 1.010);
 pub const PIKE_SIMPLE_RIM: (f64, f64) = (0.036, 1.014);
@@ -1079,6 +1079,15 @@ pub const LINEA_WOBBLE_LENGTH: f64 = 200e3;
 /// m: ridges rise and fall, troughs pinch and widen, as the real ones do.
 pub const CRACK_RELIEF_VARIATION: f64 = 0.35;
 pub const CRACK_VARIATION_LENGTH: f64 = 15e3;
+/// A crack is a chain of segments (F62): each about this many widths long and opening
+/// as an ellipse along its length, as a crack in an elastic plate does (Pollard and
+/// Segall 1987), so that its relief falls to this share where one segment hands over to
+/// the next; each stands aside from the last by this share of the width, to the one
+/// side all along a crack, en echelon; and the whole crack closes toward its own tips
+/// the same way.
+pub const CRACK_SEGMENT_WIDTHS: f64 = 12.0;
+pub const CRACK_TIP_RELIEF: f64 = 0.3;
+pub const CRACK_STEP_SHARE: f64 = 0.5;
 pub const LINEA_DIURNAL_SHARE: f64 = 0.6;
 pub const CYCLOID_SPEED: f64 = 0.8;
 pub const CYCLOID_MAX_ORBITS: usize = 12;
@@ -1139,10 +1148,14 @@ pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 /// its episode lasts: in the thinned, hot zone every wavelength up to the zone's scale
 /// relaxes in a geological instant, so no ghost of an older crater survives there.
 pub const POLAR_RENEWAL_LENGTH_SHARE: f64 = 0.2;
-/// A renewed polar terrain's cells beyond its resolved edge, which the coarse loop gave
-/// it, are those of its unit within this much of its time, Gyr: another terrain's cells
-/// nearby, episodes apart, are not its to redraw.
-pub const POLAR_TERRAIN_AGE_TOLERANCE: f64 = 0.15;
+/// A renewed terrain takes the old relief by degrees (F60): all of it inside, a ramp
+/// across its edge (POLAR_MARGIN_RAMP), and beyond the edge a halo, where the terrain's
+/// heat and strain reached into the old ground: this share of the relief at the edge,
+/// falling to nothing over this many mean shell thicknesses (lateral conduction and the
+/// margin's flexure reach about as far as the shell is thick). The terrain's fabric
+/// fades across the same halo.
+pub const POLAR_HALO_PEAK: f64 = 0.5;
+pub const POLAR_HALO_SHELLS: f64 = 1.0;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
 pub const POLAR_FOLD_AMPLITUDE: f64 = 250.0;
 pub const POLAR_FOLD_SPACING: f64 = 2.5e3;
@@ -1183,10 +1196,9 @@ pub const POLAR_TECTONIC_LENGTH: f64 = 20e3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
 pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
 pub const POLAR_MARGIN_WOBBLE: f64 = 0.15;
-/// The renewed terrain's floor and folds blend into the old surface over this width, m,
-/// centred on the edge: the thermal transition at the margin, about a thin shell's
-/// thickness, across which the old craters sink part way and fade in rather than end on
-/// a cut.
+/// A renewed terrain takes the old relief across its edge over this width, m, centred on
+/// the edge: the thermal transition at the margin, about a thin shell's thickness,
+/// across which the old craters sink part way and fade in rather than end on a cut.
 pub const POLAR_MARGIN_RAMP: f64 = 15e3;
 /// The focused heating is a field, not a shape: the thinning varies across the zone by
 /// this share between the upwellings and downwellings of the shell's convection, in
@@ -1205,6 +1217,14 @@ pub const POLAR_BELT_WIDTH: f64 = 15e3;
 pub const POLAR_BELT_SPACING: f64 = 12e3;
 pub const POLAR_BELT_HEIGHT: f64 = 300.0;
 pub const POLAR_BELT_SEGMENT: f64 = 25e3;
+/// The belt and the margin ridge come in arcs: they stand where the segment field is
+/// high and are absent where it is low, this sharply; between the arcs the fabric's
+/// fractures run out into the old ground instead (the breaks in the belt about
+/// Enceladus's south pole; Porco et al. 2006).
+pub const POLAR_BELT_ARC_CONTRAST: f64 = 1.5;
+/// A past episode's fissures vented until it ended: they take a time this long after
+/// its end, Gyr, so that they stand on the last surface its terrain renewed.
+pub const FOSSIL_VENT_LAG_GYR: f64 = 1e-5;
 pub const POLAR_BELT_OFFSET: f64 = 2.5;
 /// A shell renews its whole surface within the retention age only when it is thin
 /// against the body, under this share of the radius; a thick shell keeps its old craters
@@ -1242,14 +1262,44 @@ pub const GROOVE_LANE_ASPECT: (f64, f64) = (6.0, 40.0);
 /// small bodies (Enceladus's sulci, 38 km).
 pub const GROOVE_LANE_MAX_WIDTH_SHARE: f64 = 0.15;
 pub const GROOVE_LANE_MAX_LENGTH_RAD: f64 = 1.5;
-/// A lane's edges wander by this rms share of its width along it, in a self-affine
-/// profile from three widths down to half a width (the Hurst exponent of F54).
-pub const GROOVE_WIDTH_WOBBLE: f64 = 0.25;
+/// A lane's edges are its bounding faults (F61). Each trace wanders by this rms share of
+/// the half width, self-affine with this Hurst exponent (fault traces are smoother than
+/// cratered ground) below this many widths; it is made of segments this many groove
+/// spacings long, and where one relays to the next the trace steps by this many groove
+/// spacings across a relay ramp this many spacings long, so that it runs straight and
+/// bends rather than notches, the offsets reverting to the mean trace by this factor a
+/// step and never passing this share of the half width; no edge strays from the mean by
+/// more than this share of the half width.
+pub const GROOVE_EDGE_WANDER: f64 = 0.08;
+pub const GROOVE_EDGE_HURST: f64 = 0.8;
+pub const GROOVE_EDGE_WANDER_WIDTHS: f64 = 6.0;
+pub const GROOVE_EDGE_SEGMENT_SPACINGS: f64 = 12.0;
+pub const GROOVE_EDGE_JOG: (f64, f64) = (0.5, 1.5);
+pub const GROOVE_EDGE_RELAY_SPACINGS: f64 = 3.0;
+pub const GROOVE_EDGE_REVERT: f64 = 0.6;
+pub const GROOVE_EDGE_STEP_LIMIT: f64 = 0.3;
+pub const GROOVE_EDGE_REACH: f64 = 0.6;
+/// A lane's ends (F61). Every end stops at a cut. Where a lane enters an older one that
+/// crosses it at more than this angle, the older lane takes up its extension with this
+/// probability, provided the lane has run this many of its widths: the cut runs along
+/// the older lane's strike, a cell and this share of that lane's half width inside its
+/// edge. A lane of a set ends on its parent's cut. An end that has run its length looks
+/// on to this multiple of it for either; finding none, it dies out in the old ground at
+/// a fault of its own across the lane, at this angle to it, degrees, as the transfer
+/// faults that end a rift segment are oblique to it.
+pub const GROOVE_JUNCTION_ANGLE_DEG: f64 = 30.0;
+pub const GROOVE_JUNCTION_STOP: f64 = 0.7;
+pub const GROOVE_JUNCTION_INSET: f64 = 0.25;
+pub const GROOVE_JUNCTION_MIN_WIDTHS: f64 = 1.5;
+pub const GROOVE_JUNCTION_REACH: f64 = 3.0;
+pub const GROOVE_END_OBLIQUITY_DEG: (f64, f64) = (55.0, 90.0);
 pub const GROOVE_BELT_FREQUENCY: f64 = 1.2;
 pub const GROOVE_BELT_POWER: f64 = 2.0;
 pub const GROOVE_NEIGHBOUR_SHARE: f64 = 0.85;
 pub const GROOVE_NEIGHBOUR_TURN_DEG: f64 = 3.0;
-pub const GROOVE_NEIGHBOUR_OFFSET: (f64, f64) = (0.5, 1.2);
+/// A lane of a set lies beside its parent with their centre lines this share of the sum
+/// of their half widths apart, so that the two always overlap and a set is one swath.
+pub const GROOVE_NEIGHBOUR_OFFSET: (f64, f64) = (0.4, 0.85);
 pub const GROOVE_MAX_LANES: u64 = 12000;
 /// A lane laid beside an earlier one belongs to its generation: its time is the
 /// parent's within this share of the episode, and it is no shorter than this share of
@@ -1268,38 +1318,91 @@ pub const GROOVE_SMOOTH_LENGTH: f64 = 100e3;
 /// The lanes' drop spreads over the lithosphere's flexural parameter at their time, so a
 /// lane narrower than it sinks little and none ends on a step.
 pub const GROOVE_LANE_DROP: f64 = 200.0;
-pub const GROOVE_AMPLITUDE: f64 = 250.0;
-pub const GROOVE_SPACING: f64 = 7e3;
+/// Grooves are the necking of the brittle lid under extension (F61): the dominant
+/// wavelength is this many thicknesses of the layer that necks (Fletcher and Hallet
+/// 1983 find 2.5 to 6 for the Basin and Range; Dombard and McKinnon 2001 apply the
+/// instability to Ganymede's ice), and that layer in a rift, hot as a rift is, is this
+/// share of the elastic lid. The product is what is calibrated, once, on Ganymede's
+/// grooves, 7 km apart on a lid the thermal history makes 11 km thick, and applied to
+/// every body. Their relief is this share of their spacing (Ganymede's, 250 m at 7 km,
+/// Squyres 1981; Enceladus's ridged plains, 100 to 400 m at 3 to 4 km, Bland et al.
+/// 2007, fall in the same ratio). On the necks ride the tilted fault blocks of the fine
+/// set, this many to a groove spacing and this share of the grooves' relief
+/// (Pappalardo et al. 1998 and Patel et al. 1999: necks about 8 km apart and fault
+/// blocks 1 to 2 km apart on Ganymede), each a long back slope and a short scarp,
+/// skewed by this much of a radian; a grid draws them where they span this many cells,
+/// and draws nothing closer. A lane meets the old ground across a border zone this
+/// many lid thicknesses wide, since its bounding faults cut the whole lid: a physical
+/// width, so that the same fault is the same on any grid. The polar terrain's sets
+/// change over GROOVE_SET_LENGTH, m.
+pub const GROOVE_NECKING_WAVELENGTH: f64 = 3.5;
+pub const GROOVE_RIFT_LID_SHARE: f64 = 0.18;
+pub const GROOVE_RELIEF_SHARE: f64 = 0.036;
+pub const GROOVE_FINE_RATIO: f64 = 6.0;
+pub const GROOVE_FINE_RELIEF: f64 = 0.4;
+pub const GROOVE_FINE_SKEW: f64 = 0.6;
+pub const GROOVE_BORDER_LIDS: f64 = 1.0;
+/// The finish completes a lane's renewal in full where the loop left more than this
+/// share of a cell's relief, and in proportion to what is left below it: where the loop
+/// took nearly everything, the little that remains is not worth a seam along the edge
+/// of a younger crater's ground, which the completion leaves alone.
+pub const GROOVE_FLOOR_RESIDUE: f64 = 0.25;
 pub const GROOVE_MIN_CELLS: f64 = 3.0;
 pub const GROOVE_SET_LENGTH: f64 = 300e3;
-pub const GROOVE_SET_TURN: f64 = 0.4;
 /// A lane's centre line is traced along the tidal field where the shell cracks and along
 /// a great circle where nothing steers it, in points this share of the radius apart (or
-/// the half width, if less); its width closes over this many widths at each end, as the
-/// bounding faults die out, (the distance to the end over that) to this power, so the
-/// ends are blunt rather than drawn to a point.
+/// the half width, if less). At an end where the bounding faults die out its width
+/// closes as a wedge over this many widths, or this share of its half length if that is
+/// less, (the distance to the end over that) to this power.
 pub const GROOVE_LANE_POINT_SPACING_RAD: f64 = 0.02;
-pub const GROOVE_END_TAPER_WIDTHS: f64 = 1.0;
-pub const GROOVE_LANE_TAPER_POWER: f64 = 0.35;
+pub const GROOVE_END_TAPER_WIDTHS: f64 = 2.0;
+pub const GROOVE_END_TAPER_SHARE: f64 = 0.6;
+pub const GROOVE_LANE_TAPER_POWER: f64 = 0.8;
 /// A lane's edge is drawn over this many cells: the resolution's own ramp, so that the cut
 /// through the old, rough terrain is not a staircase of cells.
 pub const GROOVE_EDGE_CELLS: f64 = 2.5;
-/// The grooves inside a lane (F44): their spacing varies by this share and their strength
-/// from this share of the full to the full with the set field; they wander by this many
-/// radians of phase over this length, m, and come in segments about this long, m, that
-/// die out and relay (this level sets how much of the lane carries a groove at all); a
-/// bounding trough this deep, m, runs just inside each edge; and under them lies the
-/// tectonic roughness of a swath deformed at every scale, this rms, m, self-affine from
-/// this longest wavelength, m, down to the grid.
+/// The grooves inside a lane (F44, F61), every length in groove spacings so that a lane
+/// carries the same fabric whatever lid it broke. Sets change over this many spacings,
+/// and with the set field the spacing varies by this share and the strength from this
+/// share of the full to the full. The grooves sway by this many radians of phase over
+/// this many spacings and wander by this many over this many, so that they fan and
+/// bend. Each groove lives in segments about this many spacings long that die out and
+/// relay (this level sets how much of a groove's length carries it at all). Under them
+/// lies the tectonic roughness of a swath deformed at every scale, this share of the
+/// grooves' relief, self-affine from this many spacings down to the grid.
+pub const GROOVE_SET_SPACINGS: f64 = 40.0;
 pub const GROOVE_SPACING_VARIATION: f64 = 0.3;
 pub const GROOVE_SLACK: f64 = 0.5;
+pub const GROOVE_SWAY: f64 = 6.0;
+pub const GROOVE_SWAY_SPACINGS: f64 = 15.0;
 pub const GROOVE_WANDER: f64 = 2.0;
-pub const GROOVE_WANDER_LENGTH: f64 = 25e3;
-pub const GROOVE_SEGMENT_LENGTH: f64 = 60e3;
+pub const GROOVE_WANDER_SPACINGS: f64 = 3.5;
+pub const GROOVE_SEGMENT_SPACINGS: f64 = 9.0;
 pub const GROOVE_SEGMENT_LEVEL: f64 = 0.7;
-pub const GROOVE_MARGIN_TROUGH: f64 = 150.0;
-pub const GROOVE_ROUGHNESS: f64 = 80.0;
-pub const GROOVE_ROUGH_LENGTH: f64 = 20e3;
+pub const GROOVE_ROUGH_SHARE: f64 = 0.3;
+pub const GROOVE_ROUGH_SPACINGS: f64 = 3.0;
+/// A smooth lane is smooth at a distance: its grooves have this share of a grooved
+/// lane's relief (Ganymede's smooth bright terrain is finely grooved at Galileo's
+/// resolution; Pappalardo et al. 2004).
+pub const GROOVE_SMOOTH_RELIEF: f64 = 0.3;
+/// A lane's margin (F61). The bounding fault throws this many times the grooves' relief
+/// where its segments stand (this level sets how much of the trace carries one): the
+/// lane's side down, decaying over a spacing, and the flank outside up, decaying over
+/// this many. Beyond it the damage zone reaches this many spacings: the grooves go on as
+/// open fractures this share of the grooves' relief deep, each in fewer and shorter
+/// segments the farther out (the segments' level falls by this much past zero at the
+/// zone's limit). The tone follows the structure: sets differ by up to this share,
+/// troughs gather the dark lag and are darker by up to this share, and a fracture's
+/// walls show ice this clean, as a share of the lane's, in the old ground.
+pub const GROOVE_BOUNDARY_THROW: f64 = 1.2;
+pub const GROOVE_BOUNDARY_LEVEL: f64 = 0.6;
+pub const GROOVE_FLANK_SPACINGS: f64 = 2.0;
+pub const GROOVE_DAMAGE_SPACINGS: f64 = 3.0;
+pub const GROOVE_DAMAGE_LEVEL_DROP: f64 = 0.5;
+pub const GROOVE_FRACTURE_SHARE: f64 = 0.6;
+pub const GROOVE_TONE_SETS: f64 = 0.15;
+pub const GROOVE_TONE_TROUGH: f64 = 0.3;
+pub const GROOVE_DAMAGE_CLEAN: f64 = 0.6;
 /// The lanes' amount (F44): the share renewed is the peak tidal flux of the body's
 /// history above this floor, W/m², over this flux, W/m²: a fit, so that the resonance
 /// pulse that renews two thirds of Ganymede, 8 mW/m² at an eccentricity of 0.008 (the

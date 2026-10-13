@@ -629,7 +629,9 @@ impl Cracks {
                     index: &mut CrackIndex| {
             let time_gyr = match carry {
                 None => (present - POLAR_RENEWAL_GYR * rng.uniform(bin, 10 + 2 * k)).max(0.0),
-                Some(e) => e.start + (e.end - e.start) * rng.uniform(bin, 10 + 2 * k),
+                // A past episode's fissures vented to its end and stand on the last
+                // surface its terrain renewed.
+                Some(e) => e.end + FOSSIL_VENT_LAG_GYR * (1.0 + rng.uniform(bin, 10 + 2 * k)),
             };
             let relief = scale * VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, 11 + 2 * k));
             let points: Vec<[f64; 3]> = match carry {
@@ -996,9 +998,43 @@ pub fn linea_compute(
     let ages = layers.surface_age.as_slice();
     let cell = grid.delta() * body_radius;
     let width = rec.width.max(2.0 * cell);
+    // A ridge or a cycloid is a chain of segments (F62): where each ends along the
+    // crack, as a share of its length, and how far each stands aside from the trace, to
+    // the one side from each to the next. A band and a vent are one opening.
+    let rng = Rng::new(rec.id ^ 0x11CE_5E61);
+    let chained = !matches!(rec.kind, LineaKind::Band | LineaKind::Vent);
+    let segments = if chained {
+        (rec.length / (CRACK_SEGMENT_WIDTHS * width))
+            .round()
+            .max(1.0) as usize
+    } else {
+        1
+    };
+    let bounds: Vec<f64> = (0..=segments)
+        .map(|i| {
+            if i == 0 {
+                0.0
+            } else if i == segments {
+                1.0
+            } else {
+                (i as f64 + 0.6 * (rng.uniform(i as u64, 1) - 0.5)) / segments as f64
+            }
+        })
+        .collect();
+    let sense = if rng.uniform(0, 0) < 0.5 { -1.0 } else { 1.0 };
+    let asides: Vec<f64> = (0..segments)
+        .map(|i| {
+            sense
+                * CRACK_STEP_SHARE
+                * width
+                * (i as f64 - 0.5 * (segments - 1) as f64)
+                * (0.5 + rng.uniform(i as u64, 2))
+        })
+        .collect();
+    let aside_reach = asides.iter().fold(0.0f64, |m, a| m.max(a.abs()));
     let reach = match rec.kind {
         LineaKind::Band => 0.5 * width + 0.3 * width + 2.0 * cell,
-        _ => width + 2.0 * cell,
+        _ => width + 2.0 * cell + aside_reach,
     };
     let half_band = 0.5 * rec.spacing + cell;
     let n = rec.points.len();
@@ -1040,6 +1076,21 @@ pub fn linea_compute(
     let mut cells: Vec<CellWrite> = best
         .into_iter()
         .map(|(idx, (_, across, s))| {
+            // The segment of the chain the cell lies along: how far it stands aside, and
+            // how open it is there, an ellipse along the segment and along the crack.
+            let segment = (0..segments)
+                .find(|&i| s < bounds[i + 1])
+                .unwrap_or(segments - 1);
+            let u = ((s - bounds[segment]) / (bounds[segment + 1] - bounds[segment]).max(1e-9))
+                .clamp(0.0, 1.0);
+            let across = across - asides[segment];
+            let open = if chained {
+                (CRACK_TIP_RELIEF
+                    + (1.0 - CRACK_TIP_RELIEF) * (4.0 * u * (1.0 - u)).max(0.0).sqrt())
+                    * (4.0 * s * (1.0 - s)).max(0.0).powf(0.25)
+            } else {
+                1.0
+            };
             // A band is a lens, widest in the middle and closing at its ends, and is
             // lineated inside along its axis.
             // A vent is an elliptical opening, narrowing and shallowing to its tips; and
@@ -1073,7 +1124,7 @@ pub fn linea_compute(
                     LineaKind::Vent => {
                         rec.relief * (VENT_TIP_DEPTH + (1.0 - VENT_TIP_DEPTH) * lens)
                     }
-                    _ => rec.relief,
+                    _ => rec.relief * open,
                 };
             let mut h = linea_profile(rec.kind, across, width_here, relief_here, blur);
             let inside = across.abs() < 0.5 * width_here;
@@ -1186,5 +1237,54 @@ mod tests {
             nearest / 1e3
         );
         assert!(parallel > 0.6, "parallel {parallel:.2}");
+    }
+
+    /// A ridge is a chain of segments (F62): its relief is greatest in the middle of a
+    /// segment, falls where one hands over to the next, and closes at the crack's tips.
+    #[test]
+    fn a_crack_opens_as_a_chain_of_segments() {
+        // A grid of 500 m cells, and a ridge 96 km long and 2 km wide along the equator.
+        let grid = CubeSphere::new(256);
+        let r = 500.0 / grid.delta();
+        let spacing = 250.0;
+        let n = (96e3 / spacing) as usize;
+        let points: Vec<[f64; 3]> = (0..=n)
+            .map(|i| {
+                let a = (i as f64 * spacing - 48e3) / r;
+                [a.cos(), a.sin(), 0.0]
+            })
+            .collect();
+        let rec = Linea {
+            points,
+            spacing,
+            length: 96e3,
+            width: 2e3,
+            relief: 150.0,
+            kind: LineaKind::Ridge,
+            phase: 0.0,
+            time_gyr: 1.0,
+            id: 7,
+        };
+        let layers = LayerSet::new(grid);
+        let out = crate::crater::with_stamper(&grid, |stamper| {
+            linea_compute(&layers, &grid, r, &rec, 0.0, stamper)
+        });
+        // The crest along the crack: the highest cell in each kilometre of its length.
+        let mut crest = vec![0.0f32; 96];
+        for c in &out.cells {
+            let d = grid.center(grid.cell(c.idx as usize));
+            let along = d[1].atan2(d[0]) * r + 48e3;
+            if (0.0..96e3).contains(&along) {
+                let b = (along / 1e3) as usize;
+                crest[b] = crest[b].max(c.bedrock);
+            }
+        }
+        let top = crest.iter().cloned().fold(0.0f32, f32::max);
+        assert!(top > 60.0 && top < 260.0, "{top}");
+        assert!(crest[0] < 0.5 * top && crest[95] < 0.5 * top);
+        // Four segments in 96 km of a 2 km crack: somewhere away from the tips the
+        // relief falls where one hands over to the next.
+        let low = crest[12..84].iter().cloned().fold(f32::INFINITY, f32::min);
+        assert!(low < 0.6 * top, "{low} against {top}");
     }
 }

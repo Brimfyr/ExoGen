@@ -219,6 +219,12 @@ pub struct StampParams {
     /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
     /// ejecta with the ground it covers (F51).
     pub maturity_timescale: f64,
+    /// Leave a cell alone where clean ice renewed it after this crater. The coarse loop
+    /// lays a step's lanes before the step's craters, so an older crater of the same step
+    /// must not land on them. The finish runs in the order things formed and needs no
+    /// such guard: there the renewal's own turn takes what stood before it, by its
+    /// weight, and a crater across its edge is softened rather than cut.
+    pub renewal_guard: bool,
 }
 
 /// Stamp one crater. Returns the number of cells touched.
@@ -314,9 +320,10 @@ pub fn stamp_compute(
     let cleans = layers.clean.as_slice();
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         // A cell whose substrate was renewed from below after this crater, the clean ice
-        // of a lane or a polar terrain, holds nothing of it: the renewal took its relief
-        // and its deposit alike.
-        if cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6 {
+        // of a lane or a polar terrain, holds nothing of its deposit; nor of its relief,
+        // where the renewal is not to take that at its own turn.
+        let renewed_later = cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6;
+        if p.renewal_guard && renewed_later {
             return CellWrite {
                 idx: idx as u32,
                 bedrock: bedrock[idx],
@@ -372,7 +379,7 @@ pub fn stamp_compute(
         };
         let cont = continuous * edge.factor_at(phi, re / dim.radius);
         let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius);
-        if p.set_age && cover > 0.0 {
+        if p.set_age && cover > 0.0 && !renewed_later {
             // The deposit covers the ground by its cover (F51); the cell keeps the one
             // age whose exposure gives the mixture's maturity. Where the cover is under
             // a half the ground keeps its unit, its melt and its salts or lava.
@@ -1051,23 +1058,7 @@ pub fn restore_compute(
     let units = layers.unit_id.as_slice();
     let melts = layers.melt.as_slice();
     let covers = layers.cover.as_slice();
-    let cleans = layers.clean.as_slice();
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
-        // A cell whose substrate was renewed from below after this crater, the clean ice
-        // of a lane or a polar terrain, holds nothing of it: the loop dropped its relief
-        // there, and the finish lays none of it back.
-        if cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6 {
-            return CellWrite {
-                idx: idx as u32,
-                bedrock: bedrock[idx],
-                surface: false,
-                age: 0.0,
-                unit: 0,
-                deep: 0.0,
-                melt: 0.0,
-                cover: 0.0,
-            };
-        }
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
         let fine = bedrock[idx] as f64 - base[idx] as f64;
@@ -1189,6 +1180,7 @@ mod tests {
             seed: 0,
             deep: false,
             maturity_timescale: 0.5,
+            renewal_guard: true,
         };
         let touched = stamp(
             &mut layers,
@@ -1278,6 +1270,7 @@ mod tests {
                 seed: 0,
                 deep: false,
                 maturity_timescale: 0.5,
+                renewal_guard: true,
             };
             stamp(
                 &mut layers,
@@ -1359,6 +1352,7 @@ mod tests {
                 seed: 0,
                 deep: false,
                 maturity_timescale: 0.5,
+                renewal_guard: true,
             };
             stamp(
                 &mut layers,
@@ -1466,6 +1460,7 @@ mod tests {
             seed: 0,
             deep: false,
             maturity_timescale: 0.5,
+            renewal_guard: true,
         };
         stamp(
             &mut layers,

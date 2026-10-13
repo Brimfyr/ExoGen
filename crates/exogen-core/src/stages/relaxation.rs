@@ -208,8 +208,9 @@ fn halve(field: &Field<f32>) -> Option<Field<f32>> {
 /// the whole body, keeps the share of its relief the shell's viscosity lets it keep.
 /// What varies across the shell for one relaxation step: the equilibrium surface the
 /// topography relaxes towards, since an isostatic depression is not a load; and the
-/// cells of a renewed terrain, which drop the wavelengths shorter than its renewal
-/// length, m, and relax the rest with their neighbours.
+/// cells of a renewed terrain, which give up the wavelengths shorter than its renewal
+/// length, m, by the weight each carries (1 inside, less across its edge and its halo),
+/// and relax the rest with their neighbours.
 ///
 /// The survival factors themselves are those of the mean shell everywhere. Giving a soft
 /// zone its own factors beside a stiff one does not work in a band decomposition: a soft
@@ -219,7 +220,7 @@ fn halve(field: &Field<f32>) -> Option<Field<f32>> {
 #[derive(Default, Clone, Copy)]
 pub struct Local<'a> {
     pub equilibrium: Option<&'a [f32]>,
-    pub renew: Option<(&'a [bool], f64)>,
+    pub renew: Option<(&'a [f32], f64)>,
 }
 
 /// The step. Returns the relaxed surface, which is the renewed terrain's floor where it
@@ -301,25 +302,26 @@ fn relax_deviation(
                 .collect::<Vec<_>>()
         );
     }
-    let renewed_from = |k: usize| -> usize {
+    // What a cell keeps of the bands shorter than the renewal length: all of them
+    // outside a renewed terrain, none inside, and by its weight across the edge and the
+    // halo.
+    let kept = |k: usize| -> (usize, f32) {
         match (local.renew, renew_level) {
-            (Some((mask, _)), Some(level)) if mask[k] => level,
-            _ => 0,
+            (Some((weights, _)), Some(level)) => (level, 1.0 - weights[k].clamp(0.0, 1.0)),
+            _ => (0, 1.0),
         }
     };
     let h = height.as_mut_slice();
     // Bands: h - low_0, low_0 - low_1, ..., low_{L-1}; the last is the global shape. A
-    // renewed cell drops the bands shorter than its renewal length and relaxes the rest
-    // like its neighbours, so that it never stands apart from them.
+    // renewed cell gives up the bands shorter than its renewal length by its weight and
+    // relaxes the rest like its neighbours, so that it never stands apart from them.
     for (k, cell) in h.iter_mut().enumerate() {
-        let from = renewed_from(k);
+        let (level, keep) = kept(k);
         let mut v = 0.0f32;
         let mut prev = *cell;
         for (l, low) in lows.iter().enumerate() {
             let band = prev - low.as_slice()[k];
-            if l >= from {
-                v += band * factors[l];
-            }
+            v += band * factors[l] * if l < level { keep } else { 1.0 };
             prev = low.as_slice()[k];
         }
         v += prev * factors[levels];

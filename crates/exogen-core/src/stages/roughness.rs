@@ -21,6 +21,9 @@ use crate::stages::impacts::CraterInputs;
 
 /// Add the roughness of the unresolved craters to the bedrock, by each cell's surface
 /// age: `d_min` is the smallest diameter the finish stamps, `cell` the grid's cell, m.
+/// `keep` is what a cell's old fine relief has kept where a renewal touched it without
+/// taking it (F60), across a renewed terrain's edge and halo: the unresolved craters
+/// were taken there in the same measure as the resolved ones.
 pub fn apply(
     layers: &mut LayerSet,
     body_radius: f64,
@@ -28,6 +31,7 @@ pub fn apply(
     d_min: f64,
     inputs: &CraterInputs,
     present: f64,
+    keep: Option<&[f32]>,
 ) {
     let grid = layers.grid;
     let depth = dimensions(d_min, &inputs.scaling).depth;
@@ -71,7 +75,7 @@ pub fn apply(
             let x = (ages[k] as f64).clamp(0.0, present) / present * bins as f64;
             let i = (x.floor() as usize).min(bins - 1);
             let f = x - i as f64;
-            (table[i] + (table[i + 1] - table[i]) * f) as f32
+            (table[i] + (table[i + 1] - table[i]) * f) as f32 * keep.map_or(1.0, |v| v[k])
         })
         .collect();
     let shares = crate::stages::episodic::smooth(&grid, &shares, ROUGHNESS_BLEND_PASSES);
@@ -109,7 +113,15 @@ mod tests {
                 present as f32 - 0.001
             };
         }
-        apply(&mut layers, body_radius, cell, 4.0 * cell, &inputs, present);
+        apply(
+            &mut layers,
+            body_radius,
+            cell,
+            4.0 * cell,
+            &inputs,
+            present,
+            None,
+        );
         let h = layers.bedrock.as_slice();
         // The strength blends over a cell or so at a contact, so the halves are judged
         // away from the face edges where old and young meet.
