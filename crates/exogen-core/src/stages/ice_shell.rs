@@ -34,7 +34,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 12;
+pub const VERSION: u64 = 13;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns
@@ -304,20 +304,17 @@ impl FabricIndex {
         Self { scale, buckets }
     }
 
-    /// The distance across the fissures within a bucket's reach of a direction, rad: a
-    /// soft minimum, over `softness` rad, of the perpendicular distances to each point's
-    /// local line, each point counted by a window on its straight distance of `window`
-    /// rad; and the true straight minimum. Measured across the line rather than to the
-    /// point, the ridges run parallel past a fissure's end instead of wrapping round it.
-    fn soft_distance(&self, d: [f64; 3], softness: f64, window: f64) -> Option<(f64, f64)> {
+    /// The fissures' direction about a direction: their tangents within a bucket's reach,
+    /// carried to the point's tangent plane and averaged as doubled angles with a
+    /// Gaussian weight of `sigma` rad, so that the field turns smoothly between fissures.
+    fn orientation(&self, d: [f64; 3], sigma: f64) -> Option<[f64; 3]> {
         let (i, j, k) = (
             (d[0] * self.scale).floor() as i32,
             (d[1] * self.scale).floor() as i32,
             (d[2] * self.scale).floor() as i32,
         );
-        let softness = softness.max(1e-9);
-        let window = window.max(1e-9);
-        let (mut sum, mut min) = (0.0f64, f64::INFINITY);
+        let (east, north) = crate::geom::local_basis(d);
+        let (mut c2, mut s2) = (0.0f64, 0.0f64);
         for di in -1..=1 {
             for dj in -1..=1 {
                 for dk in -1..=1 {
@@ -326,16 +323,239 @@ impl FabricIndex {
                     };
                     for &(p, t) in v {
                         let dist = angle_between(p, d);
-                        let n = normalize(cross(p, t));
-                        let perp = dot([d[0] - p[0], d[1] - p[1], d[2] - p[2]], n).abs();
-                        let w = (-(dist / window).powi(2)).exp();
-                        sum += w * (-perp / softness).exp();
-                        min = min.min(dist);
+                        let w = (-0.5 * (dist / sigma.max(1e-9)).powi(2)).exp();
+                        if w < 1e-4 {
+                            continue;
+                        }
+                        let theta = dot(t, north).atan2(dot(t, east));
+                        c2 += w * (2.0 * theta).cos();
+                        s2 += w * (2.0 * theta).sin();
                     }
                 }
             }
         }
-        (sum > 1e-300).then(|| (-softness * sum.ln(), min))
+        if c2.hypot(s2) < 1e-9 {
+            return None;
+        }
+        let theta = 0.5 * s2.atan2(c2);
+        Some(normalize([
+            east[0] * theta.cos() + north[0] * theta.sin(),
+            east[1] * theta.cos() + north[1] * theta.sin(),
+            east[2] * theta.cos() + north[2] * theta.sin(),
+        ]))
+    }
+
+    /// The nearest fissure point within a bucket's reach of a direction, and the tangent
+    /// there.
+    fn nearest(&self, d: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
+        let (i, j, k) = (
+            (d[0] * self.scale).floor() as i32,
+            (d[1] * self.scale).floor() as i32,
+            (d[2] * self.scale).floor() as i32,
+        );
+        let mut best: Option<(f64, [f64; 3], [f64; 3])> = None;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dk in -1..=1 {
+                    let Some(v) = self.buckets.get(&(i + di, j + dj, k + dk)) else {
+                        continue;
+                    };
+                    for &(p, t) in v {
+                        let dist = angle_between(p, d);
+                        if best.is_none_or(|b| dist < b.0) {
+                            best = Some((dist, p, t));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|b| (b.1, b.2))
+    }
+}
+
+/// One oriented segment of a renewed plain's fabric (F43): a wave windowed about its
+/// centre, laid along the fissure nearest the centre and in phase with that fissure's
+/// line.
+struct FoldKernel {
+    center: [f64; 3],
+    tangent: [f64; 3],
+    normal: [f64; 3],
+    wavenumber: f64,
+    phase: f64,
+    strength: f64,
+}
+
+/// The fabric of a renewed plain as a sum of oriented segments: one kernel per cell of a
+/// lattice at the segment scale over the terrain, each a wave windowed over half the
+/// segment length along the ridges and a spacing or so across, laid along the fissure
+/// nearest its centre and in phase with that fissure's line, so that the ridges parallel
+/// each fissure, run on past its ends and relay from one fissure's set to the next
+/// without a seam or a loop; the sum is normalized so that the amplitude holds where
+/// kernels overlap and fades where they thin.
+struct FoldKernels {
+    scale: f64,
+    body_radius: f64,
+    sigma_along: f64,
+    sigma_across: f64,
+    kernels: HashMap<(i32, i32, i32), FoldKernel>,
+}
+
+impl FoldKernels {
+    fn key(d: [f64; 3], scale: f64) -> (i32, i32, i32) {
+        (
+            (d[0] * scale).floor() as i32,
+            (d[1] * scale).floor() as i32,
+            (d[2] * scale).floor() as i32,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        fabric: &FabricIndex,
+        footprint: &[(usize, f64, f64)],
+        grid: &CubeSphere,
+        body_radius: f64,
+        spacing: f64,
+        sets: &GradientNoise,
+        set_frequency: f64,
+        seed: u64,
+    ) -> Self {
+        let lattice = POLAR_FOLD_KERNEL_LATTICE * POLAR_FOLD_SEGMENT;
+        let scale = body_radius / lattice;
+        let reach = POLAR_FOLD_KERNEL_REACH;
+        let rng = Rng::new(seed ^ 0x5027_4E12);
+        let mut cells: std::collections::HashSet<(i32, i32, i32)> =
+            std::collections::HashSet::new();
+        for &(k, _, _) in footprint {
+            cells.insert(Self::key(grid.center(grid.cell(k)), scale));
+        }
+        let mut keys: std::collections::HashSet<(i32, i32, i32)> = std::collections::HashSet::new();
+        for (i, j, l) in cells {
+            for di in -reach..=reach {
+                for dj in -reach..=reach {
+                    for dl in -reach..=reach {
+                        keys.insert((i + di, j + dj, l + dl));
+                    }
+                }
+            }
+        }
+        let kernels = keys
+            .into_iter()
+            .filter_map(|(i, j, l)| {
+                let id = ((i as i64 & 0xF_FFFF) as u64)
+                    | (((j as i64 & 0xF_FFFF) as u64) << 20)
+                    | (((l as i64 & 0xF_FFFF) as u64) << 40);
+                let center = normalize([
+                    (i as f64 + rng.uniform(id, 0)) / scale,
+                    (j as f64 + rng.uniform(id, 1)) / scale,
+                    (l as f64 + rng.uniform(id, 2)) / scale,
+                ]);
+                let (p, t) = fabric.nearest(center)?;
+                let dist = angle_between(p, center) * body_radius;
+                let near = {
+                    let x =
+                        ((POLAR_FABRIC_RANGE - dist) / (0.5 * POLAR_FABRIC_RANGE)).clamp(0.0, 1.0);
+                    x * x * (3.0 - 2.0 * x)
+                };
+                if near <= 0.0 {
+                    return None;
+                }
+                // The segment runs along the fissures' direction about its centre, the
+                // nearest fissure's tangent where no field forms.
+                let field = fabric
+                    .orientation(
+                        center,
+                        POLAR_FOLD_ORIENTATION_SHARE * POLAR_FABRIC_RANGE / body_radius,
+                    )
+                    .unwrap_or(t);
+                let radial = dot(field, center);
+                let tangent = normalize([
+                    field[0] - radial * center[0],
+                    field[1] - radial * center[1],
+                    field[2] - radial * center[2],
+                ]);
+                let normal = normalize(cross(center, tangent));
+                let n_p = normalize(cross(p, t));
+                let s = sets.fbm(center, set_frequency, 2, 2.0, 0.5);
+                let local_spacing = spacing
+                    * (1.0 + POLAR_FOLD_SPACING_VARIATION * s)
+                    * 2f64.powf(POLAR_FOLD_SPACING_JITTER * (2.0 * rng.uniform(id, 4) - 1.0));
+                let wavenumber = 2.0 * std::f64::consts::PI / local_spacing;
+                // In phase with the fissure's line: the centre's distance across it.
+                let phase = wavenumber
+                    * dot([center[0] - p[0], center[1] - p[1], center[2] - p[2]], n_p)
+                    * body_radius;
+                // A share of the segments are absent, so the fabric dies out and relays.
+                let present = {
+                    let x = (POLAR_FOLD_SEGMENT_LEVEL
+                        + sets.fbm(
+                            [center[0] + 7.1, center[1] - 3.3, center[2] + 1.9],
+                            body_radius / POLAR_FOLD_SEGMENT,
+                            2,
+                            2.0,
+                            0.5,
+                        ))
+                    .clamp(0.0, 1.0);
+                    x * x * (3.0 - 2.0 * x)
+                };
+                let (lo, hi) = POLAR_FOLD_STRENGTH_RANGE;
+                let strength = (POLAR_FOLD_SLACK
+                    + (1.0 - POLAR_FOLD_SLACK) * (s.abs() / POLAR_FOLD_SET_FULL).min(1.0))
+                    * near
+                    * present
+                    * (lo + (hi - lo) * rng.uniform(id, 3));
+                Some((
+                    (i, j, l),
+                    FoldKernel {
+                        center,
+                        tangent,
+                        normal,
+                        wavenumber,
+                        phase,
+                        strength,
+                    },
+                ))
+            })
+            .collect();
+        Self {
+            scale,
+            body_radius,
+            sigma_along: 0.5 * POLAR_FOLD_SEGMENT,
+            sigma_across: POLAR_FOLD_KERNEL_WIDTH * spacing,
+            kernels,
+        }
+    }
+
+    /// The fabric at a direction, in units of the fold amplitude.
+    fn fabric(&self, d: [f64; 3]) -> f64 {
+        let (i, j, l) = Self::key(d, self.scale);
+        let reach = POLAR_FOLD_KERNEL_REACH;
+        let (mut num, mut den) = (0.0f64, 0.0f64);
+        for di in -reach..=reach {
+            for dj in -reach..=reach {
+                for dl in -reach..=reach {
+                    let Some(k) = self.kernels.get(&(i + di, j + dj, l + dl)) else {
+                        continue;
+                    };
+                    let off = [d[0] - k.center[0], d[1] - k.center[1], d[2] - k.center[2]];
+                    let across = dot(off, k.normal) * self.body_radius;
+                    let along = dot(off, k.tangent) * self.body_radius;
+                    let w = (-0.5
+                        * ((across / self.sigma_across).powi(2)
+                            + (along / self.sigma_along).powi(2)))
+                    .exp();
+                    if w < 1e-4 {
+                        continue;
+                    }
+                    num += w * k.strength * (k.wavenumber * across + k.phase).sin();
+                    den += w * w;
+                }
+            }
+        }
+        if den <= 0.0 {
+            return 0.0;
+        }
+        (num / den.sqrt().max(POLAR_FOLD_KERNEL_FLOOR)).clamp(-1.5, 1.5)
     }
 }
 
@@ -1110,7 +1330,21 @@ pub fn rasterize_polar(
         .iter()
         .map(|&d| margin_coverage(d, cell) as f32)
         .collect();
-    let touched: Vec<bool> = dist.iter().map(|&d| d > -(limit as f32)).collect();
+    // The cells this terrain is to redraw: those it covers at all, and those the coarse
+    // loop gave it beyond its resolved edge (its own unit at its own time), not every
+    // cell within the margin's reach, which would take another terrain's clean ice and
+    // unit from it.
+    let touched: Vec<bool> = {
+        let units = layers.unit_id.as_slice();
+        let ages = layers.surface_age.as_slice();
+        (0..n)
+            .map(|k| {
+                coverage[k] > 0.0
+                    || (units[k] == UNIT_POLAR_TERRAIN
+                        && (ages[k] as f64 - time).abs() < POLAR_TERRAIN_AGE_TOLERANCE)
+            })
+            .collect()
+    };
     let times = vec![time as f32; n];
     redraw(
         layers,
@@ -1339,6 +1573,16 @@ pub fn polar_compute(
     let rough_gain = 2f64.powf(-ROUGHNESS_HURST);
     let set_frequency = body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
     stamper.gather(grid, body_radius, pole, reach * body_radius);
+    let kernels = FoldKernels::new(
+        &fabric,
+        &stamper.footprint,
+        grid,
+        body_radius,
+        spacing,
+        &noise,
+        set_frequency,
+        time_gyr.to_bits(),
+    );
     let mut cells: Vec<CellWrite> = stamper
         .footprint
         .par_iter()
@@ -1361,67 +1605,13 @@ pub fn polar_compute(
                 }
                 return Some(write(k, bedrock[k] as f64 + ridge));
             }
-            // Inside: folds parallel to the nearest fissure, measured from the point on
-            // it nearest this cell so that they curve with it, the field's direction
-            // where none is near; towards the edge, the belt where the spreading is
-            // taken up, folds parallel to the edge instead.
+            // Inside: the fabric of folds, a sum of oriented segments each laid along
+            // the fissure nearest its centre and in phase with its line; towards the
+            // edge, the belt where the spreading is taken up, folds parallel to the edge
+            // instead.
             let inward = dk as f64 * cell;
             let taper = (inward / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
-            let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
-            // The folds parallel the nearest fissure: their phase is the distance to it,
-            // continuous across the terrain and curving with it, and they fade with that
-            // distance so that each fissure carries its own belt of ridges; beyond the
-            // fabric's range the plain carries its roughness alone.
-            let (across, near) = match fabric.soft_distance(
-                d,
-                POLAR_FABRIC_SOFTNESS / body_radius,
-                0.5 * POLAR_FABRIC_RANGE / body_radius,
-            ) {
-                Some((soft, min)) => {
-                    let dist = min * body_radius;
-                    let x =
-                        ((POLAR_FABRIC_RANGE - dist) / (0.5 * POLAR_FABRIC_RANGE)).clamp(0.0, 1.0);
-                    (soft * body_radius, x * x * (3.0 - 2.0 * x))
-                }
-                None => (0.0, 0.0),
-            };
-            // The sets curve: the distance is warped by a smooth field.
-            let warp = POLAR_FOLD_WARP
-                * noise.fbm(
-                    [d[0] - 5.5, d[1] + 2.2, d[2] - 8.8],
-                    body_radius / POLAR_FOLD_WARP_LENGTH,
-                    2,
-                    2.0,
-                    0.5,
-                );
-            let across = across + warp;
-            // Fields of ridges: the spacing and the strength vary with the set field,
-            // the ridges wander so that they are sinuous, and they come in segments that
-            // die out and relay, so the fabric is not one grating.
-            let local_spacing = spacing * (1.0 + POLAR_FOLD_SPACING_VARIATION * sets);
-            let wander = POLAR_FOLD_WANDER
-                * noise.fbm(d, body_radius / POLAR_FOLD_WANDER_LENGTH, 3, 2.0, 0.5);
-            let segment = {
-                let x = (POLAR_FOLD_SEGMENT_LEVEL
-                    + noise.fbm(
-                        [d[0] + 7.1, d[1] - 3.3, d[2] + 1.9],
-                        body_radius / POLAR_FOLD_SEGMENT,
-                        2,
-                        2.0,
-                        0.5,
-                    ))
-                .clamp(0.0, 1.0);
-                x * x * (3.0 - 2.0 * x)
-            };
-            let phase = 2.0 * std::f64::consts::PI * across / local_spacing + wander;
-            let strength = (sets.abs() / POLAR_FOLD_SET_FULL).min(1.0);
-            let folds = POLAR_FOLD_AMPLITUDE
-                * fold_keep
-                * (POLAR_FOLD_SLACK + (1.0 - POLAR_FOLD_SLACK) * strength)
-                * segment
-                * taper
-                * near
-                * phase.sin();
+            let folds = POLAR_FOLD_AMPLITUDE * fold_keep * taper * kernels.fabric(d);
             // The tectonic roughness of a plain deformed at every scale, under the folds.
             let rough = POLAR_TECTONIC_RMS
                 * fold_keep
