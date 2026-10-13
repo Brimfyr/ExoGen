@@ -1089,7 +1089,7 @@ pub const POLAR_ACTIVE_PROFILE: f64 = 0.5;
 pub const POLAR_CORE_PROFILE: f64 = 0.75;
 pub const POLAR_SPREAD_WIDTH: f64 = 30e3;
 pub const POLAR_OUTER_PROFILE: f64 = 0.5;
-pub const POLAR_FOLD_TAPER: f64 = 20e3;
+pub const POLAR_FOLD_TAPER: f64 = 10e3;
 pub const CRACK_STOP_PROFILE: f64 = 0.3;
 pub const POLAR_ACTIVE_THINNING: f64 = 0.3;
 /// The focusing comes and goes (F53; O'Neill and Nimmo 2010: overturns every 0.1 to 1
@@ -1105,13 +1105,32 @@ pub const FOCUSING_EPISODE_DURATION_GYR: f64 = 0.01;
 pub const ICE_THERMAL_DIFFUSIVITY: f64 = 1.2e-6;
 pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
-pub const POLAR_FOLD_AMPLITUDE: f64 = 200.0;
+pub const POLAR_FOLD_AMPLITUDE: f64 = 250.0;
 pub const POLAR_FOLD_SPACING: f64 = 2.5e3;
 /// The folds' spacing varies by this share with the set field, and their amplitude runs
-/// from 0.3 of the full in the slack of a set to the full at its heart, so the fabric
-/// comes in fields of ridges of varied spacing rather than one grating.
+/// from this share of the full in the slack of a set to the full at its heart (the set
+/// field counted full at this value), so the fabric comes in fields of ridges of varied
+/// spacing rather than one grating; a segment dies out where its field falls below this.
 pub const POLAR_FOLD_SPACING_VARIATION: f64 = 0.3;
-pub const POLAR_FOLD_SLACK: f64 = 0.3;
+pub const POLAR_FOLD_SLACK: f64 = 0.5;
+pub const POLAR_FOLD_SET_FULL: f64 = 0.3;
+pub const POLAR_FOLD_SEGMENT_LEVEL: f64 = 0.75;
+/// The fabric of a renewed plain: its ridges wander by this many radians of phase over
+/// this length, m, so that they are sinuous rather than straight; they come in segments
+/// about this long, m, that die out and relay en echelon; and under them lies the
+/// tectonic roughness of a plain deformed at every scale, this rms, m, self-affine from
+/// this longest wavelength, m, down to the grid (the Hurst exponent of F54), so that the
+/// renewed plains are rough at every scale as the cratered terrain is.
+pub const POLAR_FOLD_WANDER: f64 = 3.0;
+/// The fold sets curve: the distance that sets a ridge's phase is warped by this much, m,
+/// over this length, m, so that the sets bend as ridge belts do instead of running
+/// straight across a terrain where no fissure steers them.
+pub const POLAR_FOLD_WARP: f64 = 8e3;
+pub const POLAR_FOLD_WARP_LENGTH: f64 = 60e3;
+pub const POLAR_FOLD_WANDER_LENGTH: f64 = 6e3;
+pub const POLAR_FOLD_SEGMENT: f64 = 10e3;
+pub const POLAR_TECTONIC_RMS: f64 = 120.0;
+pub const POLAR_TECTONIC_LENGTH: f64 = 20e3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
 pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
 pub const POLAR_MARGIN_WOBBLE: f64 = 0.15;
@@ -1133,7 +1152,7 @@ pub const POLAR_FABRIC_RANGE: f64 = 40e3;
 /// edge, decaying inward over this distance, m, at this spacing, m, this high, m, broken
 /// into segments this long, m, along the edge that shift against their neighbours by up
 /// to this phase, rad, as the folds of a thrust belt do: en echelon, not concentric rings.
-pub const POLAR_BELT_WIDTH: f64 = 30e3;
+pub const POLAR_BELT_WIDTH: f64 = 15e3;
 pub const POLAR_BELT_SPACING: f64 = 12e3;
 pub const POLAR_BELT_HEIGHT: f64 = 300.0;
 pub const POLAR_BELT_SEGMENT: f64 = 25e3;

@@ -304,14 +304,15 @@ impl FabricIndex {
         Self { scale, buckets }
     }
 
-    /// The tangent of the nearest fissure point within a bucket's reach of a direction.
-    fn nearest_tangent(&self, d: [f64; 3]) -> Option<[f64; 3]> {
+    /// The nearest fissure point within a bucket's reach of a direction, and the tangent
+    /// there.
+    fn nearest(&self, d: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
         let (i, j, k) = (
             (d[0] * self.scale).floor() as i32,
             (d[1] * self.scale).floor() as i32,
             (d[2] * self.scale).floor() as i32,
         );
-        let mut best: Option<(f64, [f64; 3])> = None;
+        let mut best: Option<(f64, [f64; 3], [f64; 3])> = None;
         for di in -1..=1 {
             for dj in -1..=1 {
                 for dk in -1..=1 {
@@ -321,13 +322,13 @@ impl FabricIndex {
                     for &(p, t) in v {
                         let dist = angle_between(p, d);
                         if best.is_none_or(|b| dist < b.0) {
-                            best = Some((dist, t));
+                            best = Some((dist, p, t));
                         }
                     }
                 }
             }
         }
-        best.map(|b| b.1)
+        best.map(|b| (b.1, b.2))
     }
 }
 
@@ -1288,6 +1289,8 @@ pub fn polar_compute(
     let fold_keep = degraded(0.5 * spacing, kappa_t);
     let noise = GradientNoise::new(0x5027_F01D);
     let belt_noise = GradientNoise::new(0x5027_BE17);
+    let rough_noise = GradientNoise::new(0x5027_0C4A);
+    let rough_gain = 2f64.powf(-ROUGHNESS_HURST);
     let set_frequency = body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
     stamper.gather(grid, body_radius, pole, reach * body_radius);
     let mut cells: Vec<CellWrite> = stamper
@@ -1312,28 +1315,68 @@ pub fn polar_compute(
                 }
                 return Some(write(k, bedrock[k] as f64 + ridge));
             }
-            // Inside: folds parallel to the nearest fissure, the field's direction where
-            // none is near; towards the edge, the belt where the spreading is taken up,
-            // folds parallel to the edge instead.
+            // Inside: folds parallel to the nearest fissure, measured from the point on
+            // it nearest this cell so that they curve with it, the field's direction
+            // where none is near; towards the edge, the belt where the spreading is
+            // taken up, folds parallel to the edge instead.
             let inward = dk as f64 * cell;
             let taper = (inward / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
             let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
-            let (t, n) = match fabric.nearest_tangent(d) {
-                Some(t) => (t, normalize(cross(d, t))),
-                None => (fold_direction, normal),
+            let (origin, t) = match fabric.nearest(d) {
+                Some((p, t)) => (p, t),
+                None => (pole, fold_direction),
             };
-            let across = dot(d, n) * body_radius;
-            let along = dot(d, t) * body_radius;
-            // Fields of ridges: the spacing and the strength vary with the set field, so
-            // the fabric is not one grating.
+            let n = if origin == pole {
+                normal
+            } else {
+                normalize(cross(origin, t))
+            };
+            let off = [d[0] - origin[0], d[1] - origin[1], d[2] - origin[2]];
+            // The sets curve: the across distance is warped by a smooth field.
+            let warp = POLAR_FOLD_WARP
+                * noise.fbm(
+                    [d[0] - 5.5, d[1] + 2.2, d[2] - 8.8],
+                    body_radius / POLAR_FOLD_WARP_LENGTH,
+                    2,
+                    2.0,
+                    0.5,
+                );
+            let across = dot(off, n) * body_radius + warp;
+            let along = dot(off, t) * body_radius;
+            // Fields of ridges: the spacing and the strength vary with the set field,
+            // the ridges wander so that they are sinuous, and they come in segments that
+            // die out and relay, so the fabric is not one grating.
             let local_spacing = spacing * (1.0 + POLAR_FOLD_SPACING_VARIATION * sets);
+            let wander = POLAR_FOLD_WANDER
+                * noise.fbm(d, body_radius / POLAR_FOLD_WANDER_LENGTH, 3, 2.0, 0.5);
+            let segment = {
+                let x = (POLAR_FOLD_SEGMENT_LEVEL
+                    + noise.fbm(
+                        [d[0] + 7.1, d[1] - 3.3, d[2] + 1.9],
+                        body_radius / POLAR_FOLD_SEGMENT,
+                        2,
+                        2.0,
+                        0.5,
+                    ))
+                .clamp(0.0, 1.0);
+                x * x * (3.0 - 2.0 * x)
+            };
             let phase = 2.0 * std::f64::consts::PI * across / local_spacing
-                + GROOVE_SET_TURN * sets * along / spacing;
+                + GROOVE_SET_TURN * sets * along / spacing
+                + wander;
+            let strength = (sets.abs() / POLAR_FOLD_SET_FULL).min(1.0);
             let folds = POLAR_FOLD_AMPLITUDE
                 * fold_keep
-                * (POLAR_FOLD_SLACK + (1.0 - POLAR_FOLD_SLACK) * sets.abs())
+                * (POLAR_FOLD_SLACK + (1.0 - POLAR_FOLD_SLACK) * strength)
+                * segment
                 * taper
                 * phase.sin();
+            // The tectonic roughness of a plain deformed at every scale, under the folds.
+            let rough = POLAR_TECTONIC_RMS
+                * fold_keep
+                * taper
+                * rough_noise.fbm(d, body_radius / POLAR_TECTONIC_LENGTH, 4, 2.0, rough_gain)
+                / 0.4;
             // The belt decays inward from the edge; its folds come in segments that
             // shift against their neighbours, en echelon, never as concentric rings.
             let belt_w = (-inward / POLAR_BELT_WIDTH).exp();
@@ -1344,7 +1387,7 @@ pub fn polar_compute(
                 * (2.0 * std::f64::consts::PI * inward / POLAR_BELT_SPACING.max(3.0 * cell)
                     + POLAR_BELT_OFFSET * seg)
                     .sin();
-            let target = floor[k] as f64 + folds * (1.0 - belt_w) + belt;
+            let target = floor[k] as f64 + folds * (1.0 - belt_w) + rough + belt;
             Some(write(
                 k,
                 bedrock[k] as f64 + (target - bedrock[k] as f64) * c + ridge,

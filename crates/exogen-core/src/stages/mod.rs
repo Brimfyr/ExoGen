@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 42;
+pub const FINISH_VERSION: u64 = 46;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -737,12 +737,12 @@ pub fn finish(
         .lane_floor
         .as_ref()
         .filter(|_| !lanes.is_empty())
-        .map(&bring);
+        .map(bring);
     let polar_floor: Option<Field<f32>> = loop_output
         .polar_floor
         .as_ref()
         .filter(|_| polar)
-        .map(&bring);
+        .map(bring);
     ice_shell::rasterize(
         &mut layers,
         body_radius,
@@ -757,7 +757,7 @@ pub fn finish(
         .fossil_floors
         .iter()
         .take(episodes.len())
-        .map(|f| f.as_ref().map(&bring))
+        .map(|f| f.as_ref().map(bring))
         .collect();
     let fossil_edges: Vec<Option<Vec<f32>>> = (0..episodes.len())
         .map(|k| {
