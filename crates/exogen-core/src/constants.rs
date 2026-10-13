@@ -773,6 +773,11 @@ pub const EMPIRICAL_SATURATION_FRACTION: f64 = 0.05;
 /// relief falls toward finer scales (Rosenburg et al. 2011: 0.76 to 0.96 on the Moon).
 pub const ROUGHNESS_RMS_SHARE: f64 = 0.35;
 pub const ROUGHNESS_HURST: f64 = 0.8;
+/// The roughness's strength follows the surface age smoothed over this many passes of
+/// the one-cell kernel (a sigma of half the square root of that in cells, about two
+/// cells), so that the edge of a young deposit on old ground is a short ramp of roughness
+/// and never a staircase of cells.
+pub const ROUGHNESS_BLEND_PASSES: usize = 12;
 /// Variation within units (F55): a body's lavas drift in composition over its eruptive
 /// history, so a flow unit's reflectance departs from the mean by up to this share,
 /// drifting over this period, Gyr, and written by the eruption into the surface's
@@ -896,6 +901,9 @@ pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
 /// low harmonics read as petals at map scale.
 pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.25;
 pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.15;
+/// A lobe of the edge narrower than this many cells along it is not drawn: at the grid's
+/// scale it would be a tooth, not a lobe.
+pub const EJECTA_LOBE_MIN_CELLS: f64 = 4.0;
 /// The blanket's cover of the ground (F51): the deposit thins as r^EJECTA_EXPONENT and
 /// covers the old surface by 1 - 2^-(edge / r)^3, all of it at the rim, half at the
 /// continuous edge, a fifth at three radii, tapering to nothing over this outer share of
@@ -1104,6 +1112,10 @@ pub const FOCUSING_EPISODE_DURATION_GYR: f64 = 0.01;
 /// Thermal diffusivity of ice, m²/s.
 pub const ICE_THERMAL_DIFFUSIVITY: f64 = 1.2e-6;
 pub const POLAR_RENEWAL_GYR: f64 = 0.002;
+/// A renewed polar terrain keeps no relief shorter than this share of the radius while
+/// its episode lasts: in the thinned, hot zone every wavelength up to the zone's scale
+/// relaxes in a geological instant, so no ghost of an older crater survives there.
+pub const POLAR_RENEWAL_LENGTH_SHARE: f64 = 0.2;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
 pub const POLAR_FOLD_AMPLITUDE: f64 = 250.0;
 pub const POLAR_FOLD_SPACING: f64 = 2.5e3;
@@ -1148,6 +1160,11 @@ pub const POLAR_MARGIN_RAMP: f64 = 15e3;
 pub const CONVECTION_STRUCTURE: f64 = 0.3;
 pub const CONVECTION_CELL_SHELLS: f64 = 2.0;
 pub const POLAR_FABRIC_RANGE: f64 = 40e3;
+/// The folds' phase is a soft minimum, over this length, m, of the distances across the
+/// fissures near (to each point's local line, not to the point, so that the ridges run
+/// parallel past a fissure's end instead of wrapping round it), so that the sets of
+/// neighbouring fissures bend into one another instead of meeting on a seam.
+pub const POLAR_FABRIC_SOFTNESS: f64 = 3e3;
 /// The margin belt: the spreading is taken up in folds parallel to the renewed terrain's
 /// edge, decaying inward over this distance, m, at this spacing, m, this high, m, broken
 /// into segments this long, m, along the edge that shift against their neighbours by up
@@ -1232,6 +1249,25 @@ pub const GROOVE_SET_TURN: f64 = 0.4;
 pub const GROOVE_LANE_POINT_SPACING_RAD: f64 = 0.02;
 pub const GROOVE_END_TAPER_WIDTHS: f64 = 1.0;
 pub const GROOVE_LANE_TAPER_POWER: f64 = 0.35;
+/// A lane's edge is drawn over this many cells: the resolution's own ramp, so that the cut
+/// through the old, rough terrain is not a staircase of cells.
+pub const GROOVE_EDGE_CELLS: f64 = 2.5;
+/// The grooves inside a lane (F44): their spacing varies by this share and their strength
+/// from this share of the full to the full with the set field; they wander by this many
+/// radians of phase over this length, m, and come in segments about this long, m, that
+/// die out and relay (this level sets how much of the lane carries a groove at all); a
+/// bounding trough this deep, m, runs just inside each edge; and under them lies the
+/// tectonic roughness of a swath deformed at every scale, this rms, m, self-affine from
+/// this longest wavelength, m, down to the grid.
+pub const GROOVE_SPACING_VARIATION: f64 = 0.3;
+pub const GROOVE_SLACK: f64 = 0.5;
+pub const GROOVE_WANDER: f64 = 2.0;
+pub const GROOVE_WANDER_LENGTH: f64 = 25e3;
+pub const GROOVE_SEGMENT_LENGTH: f64 = 60e3;
+pub const GROOVE_SEGMENT_LEVEL: f64 = 0.7;
+pub const GROOVE_MARGIN_TROUGH: f64 = 150.0;
+pub const GROOVE_ROUGHNESS: f64 = 80.0;
+pub const GROOVE_ROUGH_LENGTH: f64 = 20e3;
 /// The lanes' amount (F44): the share renewed is the peak tidal flux of the body's
 /// history above this floor, W/m², over this flux, W/m²: a fit, so that the resonance
 /// pulse that renews two thirds of Ganymede, 8 mW/m² at an eccentricity of 0.008 (the
@@ -1318,6 +1354,17 @@ pub const VENT_TIP_DEPTH: f64 = 0.4;
 pub const VENT_CASCADE_FIRST_OFFSET: f64 = 0.5;
 pub const VENT_CASCADE_MAX: usize = 8;
 pub const VENT_CASCADE_BIN: u64 = 0xFFFF;
+/// A plume's fissures wander by this many radians over this length, m, more than the
+/// lesser cracks do (the stripes' sinuous traces), and each ends in a fork: from each tip
+/// a branch leaves at this angle, degrees, and bends back to the field over this length,
+/// m, running this share of the fissure's length at this share of its width (the hooked,
+/// bifurcating terminations of the real stripes).
+pub const VENT_WOBBLE_RAD: f64 = 0.3;
+pub const VENT_WOBBLE_LENGTH: f64 = 50e3;
+pub const VENT_FORK_ANGLE_DEG: f64 = 60.0;
+pub const VENT_FORK_BIAS_LENGTH: f64 = 15e3;
+pub const VENT_FORK_LENGTH_SHARE: f64 = 0.25;
+pub const VENT_FORK_WIDTH_SHARE: f64 = 0.6;
 /// Hemispheric asymmetry (F48): a locked moon's trailing hemisphere takes its parent's
 /// magnetospheric plasma, which darkens and reddens the ice there by this tint at the
 /// apex in a Jupiter-class magnetosphere (a parent over this mass, kg; Europa's and

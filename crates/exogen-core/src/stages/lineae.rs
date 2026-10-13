@@ -222,6 +222,11 @@ struct TraceRules<'a> {
     one_way: Option<[f64; 3]>,
     /// Within this distance of an open fissure, m, the trace ends.
     junction: f64,
+    /// The trace's wander: radians of turn over a length, m.
+    wobble: (f64, f64),
+    /// A branch's bias: the turn it leaves its parent with, radians, fading over a
+    /// length, m, as it bends back to the field.
+    bias: (f64, f64),
 }
 
 impl TraceRules<'_> {
@@ -233,6 +238,8 @@ impl TraceRules<'_> {
             exclude: None,
             one_way: None,
             junction: 0.0,
+            wobble: (LINEA_WOBBLE_RAD, LINEA_WOBBLE_LENGTH),
+            bias: (0.0, 1.0),
         }
     }
 }
@@ -491,6 +498,8 @@ impl Cracks {
                         exclude: branch.map(|b| b.0),
                         one_way: branch.map(|b| b.2),
                         junction: (0.5 * width).max(cell),
+                        wobble: (LINEA_WOBBLE_RAD, LINEA_WOBBLE_LENGTH),
+                        bias: (0.0, 1.0),
                     };
                     let points = match kind {
                         LineaKind::Cycloid => {
@@ -604,38 +613,92 @@ impl Cracks {
                 exclude: None,
                 one_way: None,
                 junction,
+                wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
+                bias: (0.0, 1.0),
             };
             self.ridge_trace(axis, p0, phase, spacing, l_max, id_of(0), &rules)
         };
         if first.len() < 3 {
             return;
         }
-        let push =
-            |pts: &[[f64; 3]], phase: f64, k: u64, out: &mut Vec<Linea>, index: &mut CrackIndex| {
-                let time_gyr = match carry {
-                    None => (present - POLAR_RENEWAL_GYR * rng.uniform(bin, 10 + 2 * k)).max(0.0),
-                    Some(e) => e.start + (e.end - e.start) * rng.uniform(bin, 10 + 2 * k),
-                };
-                let relief = VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, 11 + 2 * k));
-                let points: Vec<[f64; 3]> = match carry {
-                    Some(e) => pts.iter().map(|p| e.carry(*p)).collect(),
-                    None => pts.to_vec(),
-                };
-                index.insert(out.len(), &points, carry.is_none());
-                out.push(Linea {
-                    length: (points.len() - 1) as f64 * spacing,
-                    points,
-                    spacing,
-                    width: VENT_WIDTH,
-                    relief,
-                    kind: LineaKind::Vent,
-                    phase,
-                    time_gyr,
-                    id: id_of(k),
-                });
+        let push = |pts: &[[f64; 3]],
+                    phase: f64,
+                    k: u64,
+                    scale: f64,
+                    out: &mut Vec<Linea>,
+                    index: &mut CrackIndex| {
+            let time_gyr = match carry {
+                None => (present - POLAR_RENEWAL_GYR * rng.uniform(bin, 10 + 2 * k)).max(0.0),
+                Some(e) => e.start + (e.end - e.start) * rng.uniform(bin, 10 + 2 * k),
             };
+            let relief = scale * VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, 11 + 2 * k));
+            let points: Vec<[f64; 3]> = match carry {
+                Some(e) => pts.iter().map(|p| e.carry(*p)).collect(),
+                None => pts.to_vec(),
+            };
+            index.insert(out.len(), &points, carry.is_none());
+            out.push(Linea {
+                length: (points.len() - 1) as f64 * spacing,
+                points,
+                spacing,
+                width: scale * VENT_WIDTH,
+                relief,
+                kind: LineaKind::Vent,
+                phase,
+                time_gyr,
+                id: id_of(k),
+            });
+        };
+        // Each fissure ends in a fork: from each tip a branch leaves at an angle and bends
+        // back to the field, the hooked termination, as young as its parent and narrower.
+        let fork = |pts: &[[f64; 3]], k: u64, out: &mut Vec<Linea>, index: &mut CrackIndex| {
+            let n = pts.len();
+            let parent = out.len() - 1;
+            let length = VENT_FORK_LENGTH_SHARE * (n as f64 - 1.0) * spacing;
+            for (end, (tip, prev)) in [(pts[0], pts[1]), (pts[n - 1], pts[n - 2])]
+                .into_iter()
+                .enumerate()
+            {
+                let chord = [tip[0] - prev[0], tip[1] - prev[1], tip[2] - prev[2]];
+                let radial = dot(chord, tip);
+                let outward = normalize([
+                    chord[0] - radial * tip[0],
+                    chord[1] - radial * tip[1],
+                    chord[2] - radial * tip[2],
+                ]);
+                let (peak, phase) = self.shell.peak_tension(axis, tip);
+                if peak <= ICE_CRACK_STRESS {
+                    continue;
+                }
+                let kf = 64 + 2 * k + end as u64;
+                let sign = if rng.uniform(bin, 40 + kf) < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let branch = {
+                    let rules = TraceRules {
+                        polar: true,
+                        index: if carry.is_none() { Some(&*index) } else { None },
+                        exclude: Some(parent),
+                        one_way: Some(outward),
+                        junction,
+                        wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
+                        bias: (
+                            sign * VENT_FORK_ANGLE_DEG.to_radians(),
+                            VENT_FORK_BIAS_LENGTH,
+                        ),
+                    };
+                    self.ridge_trace(axis, tip, phase, spacing, length, id_of(kf), &rules)
+                };
+                if branch.len() >= 3 {
+                    push(&branch, phase, kf, VENT_FORK_WIDTH_SHARE, out, index);
+                }
+            }
+        };
         let mut k = 0u64;
-        push(&first, phase, k, out, index);
+        push(&first, phase, k, 1.0, out, index);
+        fork(&first, k, out, index);
         // Outward from the first on either side, each where the last one's load bends
         // the plate most, while the shell there is still the thinned core's and the
         // tension opens it.
@@ -669,13 +732,16 @@ impl Cracks {
                         exclude: None,
                         one_way: None,
                         junction,
+                        wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
+                        bias: (0.0, 1.0),
                     };
                     self.ridge_trace(axis, p, phase, spacing, l_max, id_of(k), &rules)
                 };
                 if pts.len() < 3 {
                     break;
                 }
-                push(&pts, phase, k, out, index);
+                push(&pts, phase, k, 1.0, out, index);
+                fork(&pts, k, out, index);
                 last = pts;
             }
         }
@@ -770,16 +836,19 @@ impl Cracks {
                 if along.is_none() {
                     d = [sign * d[0], sign * d[1], sign * d[2]];
                 }
-                // Wander: a slow turn by noise along the trace.
-                let turn = LINEA_WOBBLE_RAD
+                // Wander: a slow turn by noise along the trace; and for a branch the
+                // bias it leaves its parent with, fading as it bends back to the field.
+                let (wobble, wobble_length) = rules.wobble;
+                let turn = wobble
                     * noise.fbm(
-                        [i as f64 * spacing / LINEA_WOBBLE_LENGTH, 0.3, 0.7],
+                        [i as f64 * spacing / wobble_length, 0.3, 0.7],
                         1.0,
                         2,
                         2.0,
                         0.5,
                     )
-                    / 0.6;
+                    / 0.6
+                    + rules.bias.0 * (-(i as f64 * spacing) / rules.bias.1.max(1.0)).exp();
                 let side_dir = normalize(cross(p, d));
                 let mut d = normalize([
                     d[0] * turn.cos() + side_dir[0] * turn.sin(),

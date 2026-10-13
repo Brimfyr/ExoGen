@@ -62,18 +62,26 @@ pub fn apply(
         .sqrt()
         .max(1e-9);
     let amplitude = ROUGHNESS_RMS_SHARE * depth / rms;
-    let ages: Vec<f32> = layers.surface_age.as_slice().to_vec();
+    let ages = layers.surface_age.as_slice();
+    // The strength from each cell's age, then smoothed over a cell or so: the edge of a
+    // young deposit on old ground is a short ramp of roughness, not a staircase of cells.
+    let shares: Vec<f32> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|k| {
+            let x = (ages[k] as f64).clamp(0.0, present) / present * bins as f64;
+            let i = (x.floor() as usize).min(bins - 1);
+            let f = x - i as f64;
+            (table[i] + (table[i + 1] - table[i]) * f) as f32
+        })
+        .collect();
+    let shares = crate::stages::episodic::smooth(&grid, &shares, ROUGHNESS_BLEND_PASSES);
     layers
         .bedrock
         .as_mut_slice()
         .par_iter_mut()
         .enumerate()
         .for_each(|(k, h)| {
-            let x = (ages[k] as f64).clamp(0.0, present) / present * bins as f64;
-            let i = (x.floor() as usize).min(bins - 1);
-            let f = x - i as f64;
-            let share = table[i] + (table[i + 1] - table[i]) * f;
-            *h += (amplitude * share) as f32 * raw[k];
+            *h += amplitude as f32 * shares[k] * raw[k];
         });
 }
 
@@ -103,15 +111,20 @@ mod tests {
         }
         apply(&mut layers, body_radius, cell, 4.0 * cell, &inputs, present);
         let h = layers.bedrock.as_slice();
-        let rms = |r: std::ops::Range<usize>| {
-            (h[r.clone()]
-                .iter()
-                .map(|v| (*v as f64).powi(2))
-                .sum::<f64>()
-                / r.len() as f64)
-                .sqrt()
+        // The strength blends over a cell or so at a contact, so the halves are judged
+        // away from the face edges where old and young meet.
+        let interior = |k: usize| {
+            let c = grid.cell(k);
+            (4..12u32).contains(&c.i) && (4..12u32).contains(&c.j)
         };
-        let (old, young) = (rms(0..n / 2), rms(n / 2..n));
+        let rms = |old_half: bool| {
+            let v: Vec<f64> = (0..n)
+                .filter(|&k| (k < n / 2) == old_half && interior(k))
+                .map(|k| (h[k] as f64).powi(2))
+                .collect();
+            (v.iter().sum::<f64>() / v.len().max(1) as f64).sqrt()
+        };
+        let (old, young) = (rms(true), rms(false));
         let depth = dimensions(4.0 * cell, &inputs.scaling).depth;
         assert!(
             old > 0.1 * depth && old < depth,

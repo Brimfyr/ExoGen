@@ -34,7 +34,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 10;
+pub const VERSION: u64 = 12;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns
@@ -201,9 +201,9 @@ impl Lane {
     /// How much of a cell the lane covers at an across and an along, 0 to 1: a one-cell
     /// ramp across the lane's edges and ends, for edges drawn without stair steps.
     pub fn coverage_at(&self, across: f64, along: f64, cell: f64) -> f64 {
-        let cell = cell.max(1.0);
-        let side = (self.half_width_at(along) - across.abs()) / cell + 0.5;
-        let end = (self.half_length - along.abs()) / cell + 0.5;
+        let ramp = GROOVE_EDGE_CELLS * cell.max(1.0);
+        let side = (self.half_width_at(along) - across.abs()) / ramp + 0.5;
+        let end = (self.half_length - along.abs()) / ramp + 0.5;
         side.clamp(0.0, 1.0) * end.clamp(0.0, 1.0)
     }
 
@@ -304,15 +304,20 @@ impl FabricIndex {
         Self { scale, buckets }
     }
 
-    /// The nearest fissure point within a bucket's reach of a direction, and the tangent
-    /// there.
-    fn nearest(&self, d: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
+    /// The distance across the fissures within a bucket's reach of a direction, rad: a
+    /// soft minimum, over `softness` rad, of the perpendicular distances to each point's
+    /// local line, each point counted by a window on its straight distance of `window`
+    /// rad; and the true straight minimum. Measured across the line rather than to the
+    /// point, the ridges run parallel past a fissure's end instead of wrapping round it.
+    fn soft_distance(&self, d: [f64; 3], softness: f64, window: f64) -> Option<(f64, f64)> {
         let (i, j, k) = (
             (d[0] * self.scale).floor() as i32,
             (d[1] * self.scale).floor() as i32,
             (d[2] * self.scale).floor() as i32,
         );
-        let mut best: Option<(f64, [f64; 3], [f64; 3])> = None;
+        let softness = softness.max(1e-9);
+        let window = window.max(1e-9);
+        let (mut sum, mut min) = (0.0f64, f64::INFINITY);
         for di in -1..=1 {
             for dj in -1..=1 {
                 for dk in -1..=1 {
@@ -321,14 +326,16 @@ impl FabricIndex {
                     };
                     for &(p, t) in v {
                         let dist = angle_between(p, d);
-                        if best.is_none_or(|b| dist < b.0) {
-                            best = Some((dist, p, t));
-                        }
+                        let n = normalize(cross(p, t));
+                        let perp = dot([d[0] - p[0], d[1] - p[1], d[2] - p[2]], n).abs();
+                        let w = (-(dist / window).powi(2)).exp();
+                        sum += w * (-perp / softness).exp();
+                        min = min.min(dist);
                     }
                 }
             }
         }
-        best.map(|b| (b.1, b.2))
+        (sum > 1e-300).then(|| (-softness * sum.ln(), min))
     }
 }
 
@@ -832,7 +839,14 @@ impl IceShellProcess {
         }
         crate::stages::relaxation::Local {
             equilibrium: self.equilibrium.as_deref(),
-            renew: any.then(|| (self.active_now.as_slice(), self.smooth_length())),
+            // The thinned zone keeps nothing up to its own scale while it is hot.
+            renew: any.then(|| {
+                (
+                    self.active_now.as_slice(),
+                    self.smooth_length()
+                        .max(POLAR_RENEWAL_LENGTH_SHARE * self.body_radius),
+                )
+            }),
         }
     }
 
@@ -1212,6 +1226,8 @@ pub fn groove_compute(
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
     let noise = GradientNoise::new(lane.id ^ 0x6700_0000);
+    let rough_noise = GradientNoise::new(lane.id ^ 0x6700_0C4A);
+    let rough_gain = 2f64.powf(-ROUGHNESS_HURST);
     let set_frequency = body_radius / GROOVE_SET_LENGTH;
     let spacing = GROOVE_SPACING.max(GROOVE_MIN_CELLS * cell);
     let samples = lane.sample(grid, body_radius, 2.0 * cell, stamper);
@@ -1228,18 +1244,49 @@ pub fn groove_compute(
             if c >= 0.5 && held {
                 return None;
             }
+            let d = grid.center(grid.cell(k));
+            // The tectonic roughness of a swath deformed at every scale, under the
+            // grooves.
+            let rough = GROOVE_ROUGHNESS
+                * rough_noise.fbm(d, body_radius / GROOVE_ROUGH_LENGTH, 4, 2.0, rough_gain)
+                / 0.4;
             let target = if lane.grooved {
-                // Grooves parallel to the centre line, turning in sets along it.
-                let d = grid.center(grid.cell(k));
+                // Grooves measured in from the nearer edge, so that they follow the
+                // edge's wander and the outermost sits just inside it as the bounding
+                // trough; their spacing and strength vary with the set field, they
+                // wander so that they are sinuous, and they come in segments that die
+                // out and relay, so that no groove runs the lane's length unbroken.
                 let half_width = lane.half_width_at(sm.along).max(1.0);
-                let edge = ((half_width - sm.across.abs()) / (0.15 * half_width)).clamp(0.0, 1.0);
+                let inward = (half_width - sm.across.abs()).max(0.0);
                 let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
-                let phase = 2.0 * std::f64::consts::PI * sm.across / spacing
-                    + GROOVE_SET_TURN * sets * sm.along / spacing;
-                let amplitude = GROOVE_AMPLITUDE * (0.6 + 0.4 * sets.abs()) * edge;
-                floor[k] as f64 + amplitude * phase.sin()
+                let local_spacing = spacing * (1.0 + GROOVE_SPACING_VARIATION * sets);
+                let wander = GROOVE_WANDER
+                    * noise.fbm(
+                        [d[0] + 3.1, d[1] - 1.7, d[2] + 4.3],
+                        body_radius / GROOVE_WANDER_LENGTH,
+                        3,
+                        2.0,
+                        0.5,
+                    );
+                let segment = {
+                    let x = (GROOVE_SEGMENT_LEVEL
+                        + noise.fbm(
+                            [d[0] - 7.7, d[1] + 2.9, d[2] - 1.1],
+                            body_radius / GROOVE_SEGMENT_LENGTH,
+                            2,
+                            2.0,
+                            0.5,
+                        ))
+                    .clamp(0.0, 1.0);
+                    x * x * (3.0 - 2.0 * x)
+                };
+                let strength = GROOVE_SLACK + (1.0 - GROOVE_SLACK) * (sets.abs() / 0.3).min(1.0);
+                let phase = 2.0 * std::f64::consts::PI * inward / local_spacing + wander;
+                let grooves = GROOVE_AMPLITUDE * strength * segment * phase.sin();
+                let trough = -GROOVE_MARGIN_TROUGH * (-(inward / (0.5 * spacing)).powi(2)).exp();
+                floor[k] as f64 + grooves + trough + rough
             } else {
-                floor[k] as f64
+                floor[k] as f64 + 0.5 * rough
             };
             Some(write(
                 k,
@@ -1267,7 +1314,7 @@ pub fn polar_compute(
     shell: &ShellMap,
     edge: &[f32],
     cracks: &[Linea],
-    fold_direction: [f64; 3],
+    _fold_direction: [f64; 3],
     time_gyr: f64,
     kappa_t: f64,
     cell: f64,
@@ -1281,7 +1328,6 @@ pub fn polar_compute(
     let units = layers.unit_id.as_slice();
     let limit = polar_edge_limit(cell) as f32;
     let reach = shell.radius_rad;
-    let normal = normalize(cross(pole, fold_direction));
     let spacing = POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
     let fabric = FabricIndex::new(cracks, POLAR_FABRIC_RANGE / body_radius);
     let ridge_keep = degraded(POLAR_MARGIN_WIDTH, kappa_t);
@@ -1322,17 +1368,24 @@ pub fn polar_compute(
             let inward = dk as f64 * cell;
             let taper = (inward / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
             let sets = noise.fbm(d, set_frequency, 2, 2.0, 0.5);
-            let (origin, t) = match fabric.nearest(d) {
-                Some((p, t)) => (p, t),
-                None => (pole, fold_direction),
+            // The folds parallel the nearest fissure: their phase is the distance to it,
+            // continuous across the terrain and curving with it, and they fade with that
+            // distance so that each fissure carries its own belt of ridges; beyond the
+            // fabric's range the plain carries its roughness alone.
+            let (across, near) = match fabric.soft_distance(
+                d,
+                POLAR_FABRIC_SOFTNESS / body_radius,
+                0.5 * POLAR_FABRIC_RANGE / body_radius,
+            ) {
+                Some((soft, min)) => {
+                    let dist = min * body_radius;
+                    let x =
+                        ((POLAR_FABRIC_RANGE - dist) / (0.5 * POLAR_FABRIC_RANGE)).clamp(0.0, 1.0);
+                    (soft * body_radius, x * x * (3.0 - 2.0 * x))
+                }
+                None => (0.0, 0.0),
             };
-            let n = if origin == pole {
-                normal
-            } else {
-                normalize(cross(origin, t))
-            };
-            let off = [d[0] - origin[0], d[1] - origin[1], d[2] - origin[2]];
-            // The sets curve: the across distance is warped by a smooth field.
+            // The sets curve: the distance is warped by a smooth field.
             let warp = POLAR_FOLD_WARP
                 * noise.fbm(
                     [d[0] - 5.5, d[1] + 2.2, d[2] - 8.8],
@@ -1341,8 +1394,7 @@ pub fn polar_compute(
                     2.0,
                     0.5,
                 );
-            let across = dot(off, n) * body_radius + warp;
-            let along = dot(off, t) * body_radius;
+            let across = across + warp;
             // Fields of ridges: the spacing and the strength vary with the set field,
             // the ridges wander so that they are sinuous, and they come in segments that
             // die out and relay, so the fabric is not one grating.
@@ -1361,15 +1413,14 @@ pub fn polar_compute(
                 .clamp(0.0, 1.0);
                 x * x * (3.0 - 2.0 * x)
             };
-            let phase = 2.0 * std::f64::consts::PI * across / local_spacing
-                + GROOVE_SET_TURN * sets * along / spacing
-                + wander;
+            let phase = 2.0 * std::f64::consts::PI * across / local_spacing + wander;
             let strength = (sets.abs() / POLAR_FOLD_SET_FULL).min(1.0);
             let folds = POLAR_FOLD_AMPLITUDE
                 * fold_keep
                 * (POLAR_FOLD_SLACK + (1.0 - POLAR_FOLD_SLACK) * strength)
                 * segment
                 * taper
+                * near
                 * phase.sin();
             // The tectonic roughness of a plain deformed at every scale, under the folds.
             let rough = POLAR_TECTONIC_RMS

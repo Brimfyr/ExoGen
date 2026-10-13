@@ -12,11 +12,11 @@
 use super::morphology::{CraterClass, Dimensions, ProfileTable};
 use crate::constants::{
     BASIN_SCULPTURE, BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE,
-    EJECTA_TEXTURE, FLOOR_TEXTURE, OBLIQUE_ASYMMETRY_DEG, OBLIQUE_BUTTERFLY_DEG,
-    OBLIQUE_BUTTERFLY_MAX, OBLIQUE_DOWNRANGE_MAX, OBLIQUE_FORBIDDEN_DEG, OBLIQUE_FORBIDDEN_DEPTH,
-    OBLIQUE_FORBIDDEN_HALF_WIDTH_DEG, RIM_CRENULATION_COMPLEX, RIM_CRENULATION_SIMPLE,
-    SCULPTURE_AZIMUTH_CELLS, SCULPTURE_RADIAL_CELLS, TEXTURE_AZIMUTH_CELLS, TEXTURE_FADE_RADII,
-    TEXTURE_MIN_CELLS, TEXTURE_RADIAL_CELLS,
+    EJECTA_LOBE_MIN_CELLS, EJECTA_TEXTURE, FLOOR_TEXTURE, OBLIQUE_ASYMMETRY_DEG,
+    OBLIQUE_BUTTERFLY_DEG, OBLIQUE_BUTTERFLY_MAX, OBLIQUE_DOWNRANGE_MAX, OBLIQUE_FORBIDDEN_DEG,
+    OBLIQUE_FORBIDDEN_DEPTH, OBLIQUE_FORBIDDEN_HALF_WIDTH_DEG, RIM_CRENULATION_COMPLEX,
+    RIM_CRENULATION_SIMPLE, SCULPTURE_AZIMUTH_CELLS, SCULPTURE_RADIAL_CELLS, TEXTURE_AZIMUTH_CELLS,
+    TEXTURE_FADE_RADII, TEXTURE_MIN_CELLS, TEXTURE_RADIAL_CELLS,
 };
 use crate::constants::{
     EJECTA_COVERAGE_TAPER, EJECTA_EDGE_RAGGEDNESS, EJECTA_EXPONENT, EJECTA_FULL_COVER,
@@ -261,7 +261,7 @@ pub fn stamp_compute(
         .then(|| CraterTexture::new(p.seed, dim));
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
-    let edge = EdgeShape::new(p.seed);
+    let edge = EdgeShape::new(p.seed, dim.ejecta_radius, grid.delta() * body_radius);
     let bedrock = layers.bedrock.as_slice();
     let deep = layers.deep.as_slice();
     // Reference height: area-weighted mean of the pre-impact surface inside the rim; and
@@ -311,7 +311,23 @@ pub fn stamp_compute(
     let units = layers.unit_id.as_slice();
     let melts = layers.melt.as_slice();
     let covers = layers.cover.as_slice();
+    let cleans = layers.clean.as_slice();
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
+        // A cell whose substrate was renewed from below after this crater, the clean ice
+        // of a lane or a polar terrain, holds nothing of it: the renewal took its relief
+        // and its deposit alike.
+        if cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6 {
+            return CellWrite {
+                idx: idx as u32,
+                bedrock: bedrock[idx],
+                surface: false,
+                age: 0.0,
+                unit: 0,
+                deep: 0.0,
+                melt: 0.0,
+                cover: 0.0,
+            };
+        }
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
         let mut v = profile.height(re)
@@ -735,8 +751,15 @@ pub fn crenulation(seed: u64, phi: f64) -> f64 {
 /// Lobes of a continuous-ejecta edge as a function of azimuth: high harmonics at
 /// irregular orders, so the edge is ragged in many small lobes, a fraction of a radius
 /// wide, rather than petalled in a few.
-pub fn lobes(seed: u64, phi: f64) -> f64 {
-    harmonics(seed ^ 0xED6E_5A1F, phi, &[11.0, 17.0, 26.0, 40.0, 61.0])
+pub fn lobes(seed: u64, phi: f64, max_order: f64) -> f64 {
+    let orders: Vec<f64> = [11.0, 17.0, 26.0, 40.0, 61.0]
+        .into_iter()
+        .filter(|&m| m <= max_order)
+        .collect();
+    if orders.is_empty() {
+        return 0.0;
+    }
+    harmonics(seed ^ 0xED6E_5A1F, phi, &orders)
 }
 
 /// The lobate outline of a crater's continuous ejecta, tabulated around the azimuth as a
@@ -747,12 +770,16 @@ pub struct EdgeShape {
 }
 
 impl EdgeShape {
-    pub fn new(seed: u64) -> Self {
+    /// The edge of a blanket of the given radius, m, drawn on a grid of the given cell,
+    /// m: lobes narrower than a few cells along the edge are left out.
+    pub fn new(seed: u64, ejecta_radius: f64, cell: f64) -> Self {
         let mut table = [1.0; 64];
         if seed != 0 {
+            let max_order = 2.0 * std::f64::consts::PI * ejecta_radius
+                / (EJECTA_LOBE_MIN_CELLS * cell.max(1.0));
             for (b, t) in table.iter_mut().enumerate() {
                 let phi = b as f64 / 64.0 * 2.0 * std::f64::consts::PI;
-                *t = 1.0 + EJECTA_EDGE_RAGGEDNESS * lobes(seed, phi);
+                *t = 1.0 + EJECTA_EDGE_RAGGEDNESS * lobes(seed, phi, max_order);
             }
         }
         Self { table }
@@ -1017,14 +1044,30 @@ pub fn restore_compute(
         .then(|| CraterTexture::new(p.seed, dim));
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
-    let edge = EdgeShape::new(p.seed);
+    let edge = EdgeShape::new(p.seed, dim.ejecta_radius, grid.delta() * body_radius);
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
     let melts = layers.melt.as_slice();
     let covers = layers.cover.as_slice();
+    let cleans = layers.clean.as_slice();
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
+        // A cell whose substrate was renewed from below after this crater, the clean ice
+        // of a lane or a polar terrain, holds nothing of it: the loop dropped its relief
+        // there, and the finish lays none of it back.
+        if cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6 {
+            return CellWrite {
+                idx: idx as u32,
+                bedrock: bedrock[idx],
+                surface: false,
+                age: 0.0,
+                unit: 0,
+                deep: 0.0,
+                melt: 0.0,
+                cover: 0.0,
+            };
+        }
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
         let fine = bedrock[idx] as f64 - base[idx] as f64;

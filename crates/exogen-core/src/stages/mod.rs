@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 46;
+pub const FINISH_VERSION: u64 = 51;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -941,7 +941,11 @@ pub fn finish(
         message: "sampling the crater population".to_string(),
     });
     let population = sample_population(&grid, &layers.surface_age, present, &cfg);
-    let secondaries = sample_secondaries(&loop_craters, &inputs, d_min, present);
+    let secondaries = if std::env::var_os("EXOGEN_SKIP_SECONDARIES").is_some() {
+        Vec::new()
+    } else {
+        sample_secondaries(&loop_craters, &inputs, d_min, present)
+    };
     let replay: Vec<(crate::crater::CraterSample, bool)> = population
         .into_iter()
         .map(|c| (c, false))
@@ -1224,6 +1228,9 @@ pub fn finish(
             .map(|&ei| {
                 with_stamper(&grid, |stamper| match &events[ei].3 {
                     Event::Loop(li) => {
+                        if std::env::var_os("EXOGEN_SKIP_LOOP_RESTORE").is_some() {
+                            return None;
+                        }
                         let c = &loop_craters[*li];
                         let dim = dimensions(c.diameter, &inputs.scaling);
                         // The detail the coarse grid could not carry: the resolved profile
@@ -1525,6 +1532,16 @@ pub fn finish(
                     }
                     Event::Replay(j) => {
                         let (c, secondary) = &replay[*j];
+                        // A secondary carries its parent's time: where the ground was
+                        // renewed from below since, it is gone with the parent.
+                        if *secondary {
+                            let k = grid.index(grid.locate(c.center).0);
+                            if layers.clean.as_slice()[k] > 0.0
+                                && layers.surface_age.as_slice()[k] as f64 > c.time_gyr + 1e-6
+                            {
+                                return None;
+                            }
+                        }
                         let dim = dimensions(c.diameter, &inputs.scaling);
                         // Degradation by the gardening that followed the crater: the
                         // diffusivity at the present flux times the equivalent flux since.
@@ -1938,7 +1955,11 @@ fn ray_cells(
     let (w_lo, w_hi) = RAY_WIDTH_FRACTION;
     let freshness = (1.0 - age / lifetime).powi(2);
     let radius = 0.5 * c.diameter;
-    let edge_shape = EdgeShape::new(c.id);
+    let edge_shape = EdgeShape::new(
+        c.id,
+        dimensions(c.diameter, &inputs.scaling).ejecta_radius,
+        cell,
+    );
     let texture = (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
         .then(|| CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling)));
     let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
