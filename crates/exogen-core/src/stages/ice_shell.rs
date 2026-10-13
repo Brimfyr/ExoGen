@@ -34,7 +34,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 8;
+pub const VERSION: u64 = 9;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns
@@ -181,7 +181,8 @@ impl Lane {
     }
 
     /// The lane's half width at a signed distance along it, m: the mean times the
-    /// wander profile there, closing in a lens at the ends.
+    /// wander profile there, closing over a width at each end as the bounding faults die
+    /// out.
     pub fn half_width_at(&self, along: f64) -> f64 {
         let s = (0.5 + 0.5 * along / self.half_length.max(1.0)).clamp(0.0, 1.0);
         let n = self.width_profile.len();
@@ -190,8 +191,11 @@ impl Lane {
         let f = (x - i as f64).clamp(0.0, 1.0);
         let wander =
             self.width_profile[i] as f64 * (1.0 - f) + self.width_profile[i + 1] as f64 * f;
-        let lens = (4.0 * s * (1.0 - s)).max(0.0).powf(GROOVE_LANE_TAPER_POWER);
-        self.half_width * wander * lens
+        let to_end = (self.half_length - along.abs()).max(0.0);
+        let taper = (to_end / (GROOVE_END_TAPER_WIDTHS * 2.0 * self.half_width).max(1.0))
+            .clamp(0.0, 1.0)
+            .powf(GROOVE_LANE_TAPER_POWER);
+        self.half_width * wander * taper
     }
 
     /// How much of a cell the lane covers at an across and an along, 0 to 1: a one-cell
@@ -340,6 +344,30 @@ pub fn flexural_parameter(te: f64, gravity: f64) -> f64 {
     let rigidity =
         ICE_YOUNG_MODULUS * te.max(1.0).powi(3) / (12.0 * (1.0 - ICE_POISSON * ICE_POISSON));
     (4.0 * rigidity / (DENSITY_ICE * gravity.max(1e-3))).powf(0.25)
+}
+
+/// The strike of the shell's extension at a point (F44): the direction lanes run in
+/// where no crack field steers them, the regional pattern the stress alone does not
+/// resolve, as an angle from east that turns smoothly over the body (a field of a few
+/// cells about it; not the contours of a scalar, which would close in loops about its
+/// extrema) and drifts through the episode by `phase` (0 at the start, 1 at the end) so
+/// that generations cross-cut.
+pub fn extension_heading(noise: &GradientNoise, d: [f64; 3], phase: f64) -> [f64; 3] {
+    let drift = GROOVE_HEADING_DRIFT * phase;
+    let v = noise.fbm(
+        [d[0] + drift, d[1] - 0.5 * drift, d[2]],
+        GROOVE_HEADING_FREQUENCY,
+        2,
+        2.0,
+        0.5,
+    ) / 0.6;
+    let theta = std::f64::consts::PI * v.clamp(-1.0, 1.0);
+    let (east, north) = crate::geom::local_basis(d);
+    normalize([
+        east[0] * theta.cos() + north[0] * theta.sin(),
+        east[1] * theta.cos() + north[1] * theta.sin(),
+        east[2] * theta.cos() + north[2] * theta.sin(),
+    ])
 }
 
 /// Rodrigues rotation of a vector about a unit axis.
@@ -539,13 +567,15 @@ impl IceShellProcess {
             // coverage counted by area on the coarse grid.
             let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x6700_0E5A);
             let belts = GradientNoise::new(graph.f64("seed.tectonics") as u64 ^ 0x6700_BE17);
+            let strikes = GradientNoise::new(graph.f64("seed.tectonics") as u64 ^ 0x6700_4EAD);
             let cell = grid.delta() * body_radius;
             let mut area = 0.0;
+            // Widths from the shell that breaks: the elastic thickness at the episode.
+            let elastic = thermal.at(te).elastic.max(1e3);
             let (w_lo, w_hi) = (
-                GROOVE_LANE_WIDTH_SHARE.0 * body_radius,
-                GROOVE_LANE_WIDTH_SHARE.1 * body_radius,
+                GROOVE_LANE_WIDTH_ELASTIC.0 * elastic,
+                GROOVE_LANE_WIDTH_ELASTIC.1 * elastic,
             );
-            let (l_lo, l_hi) = GROOVE_LANE_LENGTH_RAD;
             let (o_lo, o_hi) = GROOVE_NEIGHBOUR_OFFSET;
             let tau = 2.0 * std::f64::consts::PI;
             with_stamper(&grid, |stamper| {
@@ -554,20 +584,42 @@ impl IceShellProcess {
                         break;
                     }
                     let half_width = (0.5 * w_lo * (w_hi / w_lo).powf(rng.uniform(k, 100)))
-                        .min(0.3 * body_radius);
-                    let half_length =
-                        0.5 * body_radius * l_lo * (l_hi / l_lo).powf(rng.uniform(k, 101));
+                        .min(0.5 * GROOVE_LANE_MAX_WIDTH_SHARE * body_radius);
                     let spacing = half_width.min(GROOVE_LANE_POINT_SPACING_RAD * body_radius);
-                    let time_gyr = (te + (rng.uniform(k, 111) - 0.5) * duration).clamp(0.0, age);
+                    // A set grows beside one of the lanes laid lately, while the
+                    // extension is there, not beside any lane ever laid, which would
+                    // crowd the crowded regions further.
                     let parent = (!lanes.is_empty()
                         && rng.uniform(k, 105) < GROOVE_NEIGHBOUR_SHARE)
                         .then(|| {
-                            let i = (rng.uniform(k, 106) * lanes.len() as f64) as usize;
-                            i.min(lanes.len() - 1)
+                            let recent = lanes.len().min(GROOVE_SET_RECENT);
+                            let back = (rng.uniform(k, 106) * recent as f64) as usize;
+                            lanes.len() - 1 - back.min(recent - 1)
                         });
+                    // A lane of a set belongs to its parent's generation and is no longer
+                    // than it; a lane on its own takes its time from the episode.
+                    let (time_gyr, half_length) = match parent {
+                        Some(i) => (
+                            (lanes[i].time_gyr
+                                + (rng.uniform(k, 111) - 0.5) * GROOVE_SET_TIME_SPREAD * duration)
+                                .clamp(0.0, age),
+                            lanes[i].half_length
+                                * (GROOVE_SET_LENGTH_SHARE
+                                    + (1.0 - GROOVE_SET_LENGTH_SHARE) * rng.uniform(k, 101)),
+                        ),
+                        None => (
+                            (te + (rng.uniform(k, 111) - 0.5) * duration).clamp(0.0, age),
+                            (half_width
+                                * GROOVE_LANE_ASPECT.0
+                                * (GROOVE_LANE_ASPECT.1 / GROOVE_LANE_ASPECT.0)
+                                    .powf(rng.uniform(k, 101)))
+                            .min(0.5 * GROOVE_LANE_MAX_LENGTH_RAD * body_radius),
+                        ),
+                    };
                     // The start and the heading: beside an earlier lane, one to three
                     // widths to its side somewhere along it, its heading turned a little;
-                    // or anywhere in the belts of extension, by rejection, at random.
+                    // or anywhere in the belts of extension, by rejection, along the
+                    // strike of the field of extension at the lane's time.
                     let (start, heading) = match parent {
                         Some(i) => {
                             let p = &lanes[i];
@@ -620,7 +672,12 @@ impl IceShellProcess {
                                     break;
                                 }
                             }
-                            (center, normalize(cross(axis, center)))
+                            let phase = if duration > 0.0 {
+                                ((time_gyr - (te - 0.5 * duration)) / duration).clamp(0.0, 1.0)
+                            } else {
+                                0.5
+                            };
+                            (center, extension_heading(&strikes, center, phase))
                         }
                     };
                     // The centre line: along the field at the lane's time where the
@@ -673,7 +730,7 @@ impl IceShellProcess {
             lane_coverage = area / total.max(1e-300);
             if std::env::var_os("EXOGEN_DEBUG").is_some() {
                 eprintln!(
-                    "grooved terrain: {} lanes cover {lane_coverage:.3} of the surface for a share of {fraction:.3}, over {duration:.2} Gyr about {te:.2} Gyr",
+                    "grooved terrain: {} lanes cover {lane_coverage:.3} of the surface for a share of {fraction:.3}, over {duration:.2} Gyr about {te:.2} Gyr, elastic {elastic:.0} m",
                     lanes.len()
                 );
             }

@@ -1151,17 +1151,40 @@ pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
 /// (Callisto's 0.08 mW/m² never stretched its shell); and the age of the
 /// resurfacing as a share of the body's age (Ganymede's bright terrain is about two
 /// gigayears old).
-pub const GROOVE_LANE_LENGTH_RAD: (f64, f64) = (0.2, 1.5);
-pub const GROOVE_LANE_WIDTH_SHARE: (f64, f64) = (0.011, 0.095);
+/// A lane is a swath of grooved terrain, a rift zone of the shell: its width is this many
+/// elastic thicknesses of the shell at the episode's time, log-uniform, as rift zones are
+/// a few to a few tens of times the layer that breaks, and does not scale with the body
+/// (Ganymede's swaths run 50 to 300 km on an 11 km lithosphere); its length is
+/// this many widths, log-uniform, and at most this share of the radius in radians
+/// (Ganymede's lanes run hundreds to a couple of thousand kilometres, Enceladus's sulci
+/// to 380 km, a quarter of the way round it).
+pub const GROOVE_LANE_WIDTH_ELASTIC: (f64, f64) = (4.0, 24.0);
+pub const GROOVE_LANE_ASPECT: (f64, f64) = (6.0, 40.0);
+/// No lane is wider than this share of the radius, whatever the shell: a geometric cap for
+/// small bodies (Enceladus's sulci, 38 km).
+pub const GROOVE_LANE_MAX_WIDTH_SHARE: f64 = 0.15;
+pub const GROOVE_LANE_MAX_LENGTH_RAD: f64 = 1.5;
 /// A lane's edges wander by this rms share of its width along it, in a self-affine
 /// profile from three widths down to half a width (the Hurst exponent of F54).
 pub const GROOVE_WIDTH_WOBBLE: f64 = 0.25;
 pub const GROOVE_BELT_FREQUENCY: f64 = 1.2;
-pub const GROOVE_BELT_POWER: f64 = 4.0;
-pub const GROOVE_NEIGHBOUR_SHARE: f64 = 0.75;
-pub const GROOVE_NEIGHBOUR_TURN_DEG: f64 = 12.0;
-pub const GROOVE_NEIGHBOUR_OFFSET: (f64, f64) = (1.0, 3.0);
-pub const GROOVE_MAX_LANES: u64 = 1500;
+pub const GROOVE_BELT_POWER: f64 = 2.0;
+pub const GROOVE_NEIGHBOUR_SHARE: f64 = 0.85;
+pub const GROOVE_NEIGHBOUR_TURN_DEG: f64 = 3.0;
+pub const GROOVE_NEIGHBOUR_OFFSET: (f64, f64) = (0.5, 1.2);
+pub const GROOVE_MAX_LANES: u64 = 12000;
+/// A lane laid beside an earlier one belongs to its generation: its time is the
+/// parent's within this share of the episode, and it is no shorter than this share of
+/// the parent. A lane that starts on its own runs along the strike of the shell's field
+/// of extension, which the stress alone does not resolve (Ganymede's sets): a smooth
+/// field of this many cells per radian about the body, read as an angle from east, which
+/// drifts by this much through the episode so that generations cross-cut.
+pub const GROOVE_SET_TIME_SPREAD: f64 = 0.05;
+pub const GROOVE_SET_LENGTH_SHARE: f64 = 0.5;
+/// A set grows beside one of this many lanes laid lately, while the extension is there.
+pub const GROOVE_SET_RECENT: usize = 24;
+pub const GROOVE_HEADING_FREQUENCY: f64 = 1.2;
+pub const GROOVE_HEADING_DRIFT: f64 = 1.0;
 pub const GROOVE_SMOOTH_LANE_SHARE: f64 = 0.2;
 pub const GROOVE_SMOOTH_LENGTH: f64 = 100e3;
 /// The lanes' drop spreads over the lithosphere's flexural parameter at their time, so a
@@ -1174,9 +1197,11 @@ pub const GROOVE_SET_LENGTH: f64 = 300e3;
 pub const GROOVE_SET_TURN: f64 = 0.4;
 /// A lane's centre line is traced along the tidal field where the shell cracks and along
 /// a great circle where nothing steers it, in points this share of the radius apart (or
-/// the half width, if less); its width closes in a lens at the ends, (4 s (1 - s)) to
-/// this power along its length.
+/// the half width, if less); its width closes over this many widths at each end, as the
+/// bounding faults die out, (the distance to the end over that) to this power, so the
+/// ends are blunt rather than drawn to a point.
 pub const GROOVE_LANE_POINT_SPACING_RAD: f64 = 0.02;
+pub const GROOVE_END_TAPER_WIDTHS: f64 = 1.0;
 pub const GROOVE_LANE_TAPER_POWER: f64 = 0.35;
 /// The lanes' amount (F44): the share renewed is the peak tidal flux of the body's
 /// history above this floor, W/m², over this flux, W/m²: a fit, so that the resonance

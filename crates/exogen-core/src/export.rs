@@ -554,6 +554,40 @@ pub fn export(
         dump("composition", out.layers.composition.as_slice(), -1.0, 1.0)?;
         dump("maturity", out.maturity.as_slice(), 0.0, 1.0)?;
         dump("rays", out.rays.as_slice(), 0.0, 1.0)?;
+        // The lanes of grooved terrain as polylines in degrees, for plotting.
+        #[derive(Serialize)]
+        struct LaneDump {
+            id: u64,
+            time: f64,
+            half_width: f64,
+            half_length: f64,
+            grooved: bool,
+            pts: Vec<[f64; 2]>,
+        }
+        let lanes: Vec<LaneDump> = out
+            .lanes
+            .iter()
+            .map(|l| LaneDump {
+                id: l.id,
+                time: l.time_gyr,
+                half_width: l.half_width,
+                half_length: l.half_length,
+                grooved: l.grooved,
+                pts: l
+                    .points
+                    .iter()
+                    .map(|p| {
+                        let (lon, lat) = crate::grid::lon_lat_from_direction(*p);
+                        [lon.to_degrees(), lat.to_degrees()]
+                    })
+                    .collect(),
+            })
+            .collect();
+        let path = settings.dir.join("dbg_lanes.json");
+        std::fs::write(&path, serde_json::to_vec(&lanes)?).map_err(|source| ExportError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
     }
     maps.insert(
         "units_png".to_string(),
