@@ -34,7 +34,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea};
 use crate::units::*;
 
-pub const VERSION: u64 = 9;
+pub const VERSION: u64 = 10;
 
 /// A lane of renewed terrain: a swath about a centre line traced across the shell,
 /// along the tidal field where the shell cracks, so that it curves as the field turns
@@ -474,9 +474,18 @@ pub fn edge_distance(grid: &CubeSphere, mask: &[bool], limit: usize) -> Vec<f32>
 }
 
 /// How far from the polar terrain's edge, in cells, the finish keeps a distance: the
-/// margin ridge's reach.
+/// margin ridge's reach, or the margin ramp's, whichever is further.
 pub fn polar_edge_limit(cell: f64) -> usize {
-    (4.0 * POLAR_MARGIN_WIDTH / cell.max(1.0)).ceil() as usize + 2
+    ((4.0 * POLAR_MARGIN_WIDTH).max(POLAR_MARGIN_RAMP) / cell.max(1.0)).ceil() as usize + 2
+}
+
+/// How much of a renewed terrain a cell takes at a signed distance from its edge, in
+/// cells: a smooth ramp over the margin width centred on the edge, 0.5 at the edge
+/// itself, so the floor and the folds fade into the old surface and the old craters sink
+/// part way across it instead of ending on a cut.
+pub fn margin_coverage(edge_cells: f32, cell: f64) -> f64 {
+    let x = (edge_cells as f64 * cell / POLAR_MARGIN_RAMP + 0.5).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
 }
 
 /// A mask eroded by one cell: a cell stays only with all four neighbours. The coarse loop
@@ -1081,10 +1090,10 @@ pub fn rasterize_polar(
     let mask = polar_mask(&grid, body_radius, shell, cracks);
     let limit = polar_edge_limit(cell);
     let dist = edge_distance(&grid, &mask, limit);
-    // A two-cell ramp across the edge.
+    // The margin ramp across the edge.
     let coverage: Vec<f32> = dist
         .iter()
-        .map(|&d| (0.5 + 0.5 * d).clamp(0.0, 1.0))
+        .map(|&d| margin_coverage(d, cell) as f32)
         .collect();
     let touched: Vec<bool> = dist.iter().map(|&d| d > -(limit as f32)).collect();
     let times = vec![time as f32; n];
@@ -1295,7 +1304,7 @@ pub fn polar_compute(
             let seg = belt_noise.fbm(d, body_radius / POLAR_BELT_SEGMENT, 2, 2.0, 0.5);
             let x = dk as f64 * cell / POLAR_MARGIN_WIDTH;
             let ridge = POLAR_MARGIN_HEIGHT * ridge_keep * (0.75 + 0.25 * seg) * (-x * x).exp();
-            let c = (0.5 + 0.5 * dk as f64).clamp(0.0, 1.0);
+            let c = margin_coverage(dk, cell);
             let held = units[k] != UNIT_POLAR_TERRAIN || ages[k] as f64 > time_gyr + 1e-3;
             if c <= 0.0 || (c >= 0.5 && held) {
                 if ridge < 1.0 {
@@ -1315,10 +1324,16 @@ pub fn polar_compute(
             };
             let across = dot(d, n) * body_radius;
             let along = dot(d, t) * body_radius;
-            let phase = 2.0 * std::f64::consts::PI * across / spacing
+            // Fields of ridges: the spacing and the strength vary with the set field, so
+            // the fabric is not one grating.
+            let local_spacing = spacing * (1.0 + POLAR_FOLD_SPACING_VARIATION * sets);
+            let phase = 2.0 * std::f64::consts::PI * across / local_spacing
                 + GROOVE_SET_TURN * sets * along / spacing;
-            let folds =
-                POLAR_FOLD_AMPLITUDE * fold_keep * (0.6 + 0.4 * sets.abs()) * taper * phase.sin();
+            let folds = POLAR_FOLD_AMPLITUDE
+                * fold_keep
+                * (POLAR_FOLD_SLACK + (1.0 - POLAR_FOLD_SLACK) * sets.abs())
+                * taper
+                * phase.sin();
             // The belt decays inward from the edge; its folds come in segments that
             // shift against their neighbours, en echelon, never as concentric rings.
             let belt_w = (-inward / POLAR_BELT_WIDTH).exp();

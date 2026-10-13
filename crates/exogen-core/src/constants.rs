@@ -1105,11 +1105,21 @@ pub const FOCUSING_EPISODE_DURATION_GYR: f64 = 0.01;
 pub const ICE_THERMAL_DIFFUSIVITY: f64 = 1.2e-6;
 pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
-pub const POLAR_FOLD_AMPLITUDE: f64 = 150.0;
-pub const POLAR_FOLD_SPACING: f64 = 1.5e3;
+pub const POLAR_FOLD_AMPLITUDE: f64 = 200.0;
+pub const POLAR_FOLD_SPACING: f64 = 2.5e3;
+/// The folds' spacing varies by this share with the set field, and their amplitude runs
+/// from 0.3 of the full in the slack of a set to the full at its heart, so the fabric
+/// comes in fields of ridges of varied spacing rather than one grating.
+pub const POLAR_FOLD_SPACING_VARIATION: f64 = 0.3;
+pub const POLAR_FOLD_SLACK: f64 = 0.3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
 pub const POLAR_MARGIN_WIDTH: f64 = 8e3;
 pub const POLAR_MARGIN_WOBBLE: f64 = 0.15;
+/// The renewed terrain's floor and folds blend into the old surface over this width, m,
+/// centred on the edge: the thermal transition at the margin, about a thin shell's
+/// thickness, across which the old craters sink part way and fade in rather than end on
+/// a cut.
+pub const POLAR_MARGIN_RAMP: f64 = 15e3;
 /// The focused heating is a field, not a shape: the thinning varies across the zone by
 /// this share between the upwellings and downwellings of the shell's convection, in
 /// cells this many shell thicknesses wide (a layer's cells are about as wide as it is

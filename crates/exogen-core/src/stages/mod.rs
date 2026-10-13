@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 40;
+pub const FINISH_VERSION: u64 = 42;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -642,6 +642,14 @@ pub fn finish(
         message: format!("resampling to face size {face}"),
     });
     let mut layers = kf.layers.resample(grid);
+    // The coarse bedrock resampled bilinearly carries the facets of the loop's cells on
+    // every slope the loop relaxed or built; smoothed over the loop's cell it carries the
+    // same relief without them, and the passes lay their resolved detail on it after.
+    {
+        let coarse_cell_m = kf.layers.grid.delta() * body_radius;
+        let smoothed = relaxation::low_pass(&layers.bedrock, cell, coarse_cell_m);
+        layers.bedrock.as_mut_slice().copy_from_slice(&smoothed);
+    }
     if sink.cancelled() {
         return Err(RunError::Cancelled);
     }
@@ -714,17 +722,27 @@ pub fn finish(
         })
         .collect();
     // The coarse loop drew the lanes and the polar terrain cell by cell: their edges are
-    // redrawn at this resolution before anything reads the ages they leave.
+    // redrawn at this resolution before anything reads the ages they leave, and a floor
+    // it left is resampled and then smoothed over the loop's cell, so no facet of the
+    // coarse grid shows in a renewed terrain.
+    let coarse_cell_m = loop_output.grid.delta() * body_radius;
+    let bring = |f: &Field<f32>| -> Field<f32> {
+        let fine = f.resample(grid);
+        let smoothed = relaxation::low_pass(&fine, cell, coarse_cell_m);
+        let mut out = Field::new(grid);
+        out.as_mut_slice().copy_from_slice(&smoothed);
+        out
+    };
     let lane_floor: Option<Field<f32>> = loop_output
         .lane_floor
         .as_ref()
         .filter(|_| !lanes.is_empty())
-        .map(|f| f.resample(grid));
+        .map(&bring);
     let polar_floor: Option<Field<f32>> = loop_output
         .polar_floor
         .as_ref()
         .filter(|_| polar)
-        .map(|f| f.resample(grid));
+        .map(&bring);
     ice_shell::rasterize(
         &mut layers,
         body_radius,
@@ -739,7 +757,7 @@ pub fn finish(
         .fossil_floors
         .iter()
         .take(episodes.len())
-        .map(|f| f.as_ref().map(|f| f.resample(grid)))
+        .map(|f| f.as_ref().map(&bring))
         .collect();
     let fossil_edges: Vec<Option<Vec<f32>>> = (0..episodes.len())
         .map(|k| {
