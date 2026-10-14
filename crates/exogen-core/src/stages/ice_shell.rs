@@ -18,7 +18,8 @@
 //! it carries no craters, most of the cracks, and folds between them, as Enceladus's
 //! south polar terrain does.
 
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 
 use rayon::prelude::*;
 
@@ -31,7 +32,7 @@ use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::ice::{FocusEpisode, ShellMap};
-use crate::stages::lineae::{Cracks, Linea, crack_direction, mean_axis_at};
+use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
 pub const VERSION: u64 = 16;
@@ -894,21 +895,41 @@ impl Lane {
     }
 }
 
-/// The fissures' points bucketed on the sphere, for the folds to follow the nearest one.
+/// The fissures' points bucketed on the sphere, for the folds to follow the nearest one,
+/// and the same points thinned along each fissure for the fissures' direction about a
+/// place, each standing for the points about it.
 struct FabricIndex {
     scale: f64,
     buckets: HashMap<(i32, i32, i32), Vec<FabricPoint>>,
+    thinned: HashMap<(i32, i32, i32), Vec<(FabricPoint, f64)>>,
 }
 
 /// A fissure point and the tangent there.
 type FabricPoint = ([f64; 3], [f64; 3]);
 
 impl FabricIndex {
-    fn new(cracks: &[Linea], range_rad: f64) -> Self {
-        let scale = 1.0 / range_rad.max(1e-6);
-        let mut buckets: HashMap<(i32, i32, i32), Vec<FabricPoint>> = HashMap::new();
+    /// The points of the direction's average stand a tenth of its smoothing length apart.
+    const THINNING: f64 = 0.1;
+
+    fn key(&self, d: [f64; 3]) -> (i32, i32, i32) {
+        (
+            (d[0] * self.scale).floor() as i32,
+            (d[1] * self.scale).floor() as i32,
+            (d[2] * self.scale).floor() as i32,
+        )
+    }
+
+    fn new<'a>(cracks: impl IntoIterator<Item = &'a Linea>, range_rad: f64) -> Self {
+        let mut index = Self {
+            scale: 1.0 / range_rad.max(1e-6),
+            buckets: HashMap::new(),
+            thinned: HashMap::new(),
+        };
+        let gap = Self::THINNING * POLAR_FOLD_ORIENTATION_SHARE * range_rad;
         for l in cracks {
             let n = l.points.len();
+            let (mut run, mut count) = (f64::INFINITY, 0.0);
+            let mut last: Option<FabricPoint> = None;
             for i in 0..n {
                 let a = l.points[i.saturating_sub(1)];
                 let b = l.points[(i + 1).min(n - 1)];
@@ -920,43 +941,64 @@ impl FabricIndex {
                     chord[1] - radial * p[1],
                     chord[2] - radial * p[2],
                 ]);
-                let key = (
-                    (p[0] * scale).floor() as i32,
-                    (p[1] * scale).floor() as i32,
-                    (p[2] * scale).floor() as i32,
-                );
-                buckets.entry(key).or_default().push((p, t));
+                index.buckets.entry(index.key(p)).or_default().push((p, t));
+                if i > 0 {
+                    run += angle_between(l.points[i - 1], p);
+                }
+                count += 1.0;
+                if run >= gap {
+                    if let Some(q) = last {
+                        index
+                            .thinned
+                            .entry(index.key(q.0))
+                            .or_default()
+                            .push((q, count - 1.0));
+                        count = 1.0;
+                    }
+                    last = Some((p, t));
+                    run = 0.0;
+                }
+            }
+            if let Some(q) = last {
+                index
+                    .thinned
+                    .entry(index.key(q.0))
+                    .or_default()
+                    .push((q, count));
             }
         }
-        Self { scale, buckets }
+        index
     }
 
     /// The fissures' direction about a direction: their tangents within a bucket's reach,
     /// carried to the point's tangent plane and averaged as doubled angles with a
     /// Gaussian weight of `sigma` rad, so that the field turns smoothly between fissures.
     fn orientation(&self, d: [f64; 3], sigma: f64) -> Option<[f64; 3]> {
-        let (i, j, k) = (
-            (d[0] * self.scale).floor() as i32,
-            (d[1] * self.scale).floor() as i32,
-            (d[2] * self.scale).floor() as i32,
-        );
+        let (i, j, k) = self.key(d);
         let (east, north) = crate::geom::local_basis(d);
+        let inv = 1.0 / (sigma.max(1e-9) * sigma.max(1e-9));
         let (mut c2, mut s2) = (0.0f64, 0.0f64);
         for di in -1..=1 {
             for dj in -1..=1 {
                 for dk in -1..=1 {
-                    let Some(v) = self.buckets.get(&(i + di, j + dj, k + dk)) else {
+                    let Some(v) = self.thinned.get(&(i + di, j + dj, k + dk)) else {
                         continue;
                     };
-                    for &(p, t) in v {
-                        let dist = angle_between(p, d);
-                        let w = (-0.5 * (dist / sigma.max(1e-9)).powi(2)).exp();
-                        if w < 1e-4 {
+                    for &((p, t), count) in v {
+                        // The chord stands for the arc: the two differ by a part in a few
+                        // hundred at the reach of the weight.
+                        let chord2 = 2.0 - 2.0 * dot(p, d);
+                        if chord2 * inv > 18.42 {
                             continue;
                         }
-                        let theta = dot(t, north).atan2(dot(t, east));
-                        c2 += w * (2.0 * theta).cos();
-                        s2 += w * (2.0 * theta).sin();
+                        let w = count * (-0.5 * chord2 * inv).exp();
+                        let (a, b) = (dot(t, east), dot(t, north));
+                        let r2 = a * a + b * b;
+                        if r2 <= 0.0 {
+                            continue;
+                        }
+                        c2 += w * (a * a - b * b) / r2;
+                        s2 += w * 2.0 * a * b / r2;
                     }
                 }
             }
@@ -975,11 +1017,7 @@ impl FabricIndex {
     /// The nearest fissure point within a bucket's reach of a direction, and the tangent
     /// there.
     fn nearest(&self, d: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
-        let (i, j, k) = (
-            (d[0] * self.scale).floor() as i32,
-            (d[1] * self.scale).floor() as i32,
-            (d[2] * self.scale).floor() as i32,
-        );
+        let (i, j, k) = self.key(d);
         let mut best: Option<(f64, [f64; 3], [f64; 3])> = None;
         for di in -1..=1 {
             for dj in -1..=1 {
@@ -988,9 +1026,10 @@ impl FabricIndex {
                         continue;
                     };
                     for &(p, t) in v {
-                        let dist = angle_between(p, d);
-                        if best.is_none_or(|b| dist < b.0) {
-                            best = Some((dist, p, t));
+                        // Nearest by the cosine, which falls as the angle grows.
+                        let far = -dot(p, d);
+                        if best.is_none_or(|b| far < b.0) {
+                            best = Some((far, p, t));
                         }
                     }
                 }
@@ -1169,12 +1208,14 @@ impl FoldKernels {
                     x * x * (3.0 - 2.0 * x)
                 };
                 // Each packet of folds has a depth of its own, from the heavy tail fault
-                // throws have (F63), narrowed as the mean of a packet's few folds is.
+                // throws have (F63), narrowed as the mean of a packet's few folds is, and
+                // capped where the tail turns deep: the deep folds are the train's (F65).
                 let strength = (POLAR_FOLD_SLACK
                     + (1.0 - POLAR_FOLD_SLACK) * (s.abs() / POLAR_FOLD_SET_FULL).min(1.0))
                     * near
                     * present
-                    * fault_depth(rng.uniform(id, 3)).powf(POLAR_FOLD_PACKET_SPREAD)
+                    * fault_depth(rng.uniform(id, 3).max(POLAR_FOLD_TAIL_CAP))
+                        .powf(POLAR_FOLD_PACKET_SPREAD)
                     * if earlier { POLAR_PULSE_RELIEF } else { 1.0 };
                 Some((
                     (i, j, l),
@@ -1228,6 +1269,803 @@ impl FoldKernels {
             return 0.0;
         }
         (num / den.sqrt().max(POLAR_FOLD_KERNEL_FLOOR)).clamp(-GROOVE_DEPTH_MAX, GROOVE_DEPTH_MAX)
+    }
+}
+
+/// A hinge of the first-order train of deep folds (F65): its lattice cell, for a fixed
+/// order; where it stands; and its depth against the middling fold (F63).
+#[derive(Clone, Copy, Debug)]
+struct DeepNucleus {
+    key: (i32, i32, i32),
+    center: [f64; 3],
+    depth: f64,
+}
+
+/// What a growing hinge reads where it stands (F65): the folds' direction, where a
+/// fabric stands; the fabric's strength, 0 to 1; the deep folds' wavelength, m, which
+/// goes as the lid that folds; and the distance to the nearest of the terrain's own
+/// vents, m.
+#[derive(Clone, Copy, Debug)]
+struct DeepSite {
+    direction: Option<[f64; 3]>,
+    strength: f64,
+    wavelength: f64,
+    fissure: f64,
+}
+
+/// How an arm of a deep fold ended: still growing; free, out of time or of fabric or at a
+/// vent, where it plunges; or linked into a neighbour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArmEnd {
+    Growing,
+    Free,
+    Linked,
+}
+
+/// One arm of a deep fold: its hinge as it grew one way from the nucleus, the time each
+/// point was reached (in wavelengths per unit of depth), the wavelength there, and, once
+/// grown, the fold's height there in units of the fold amplitude.
+#[derive(Clone, Debug)]
+struct DeepArm {
+    line: usize,
+    depth: f64,
+    points: Vec<[f64; 3]>,
+    times: Vec<f64>,
+    wavelengths: Vec<f64>,
+    heights: Vec<f64>,
+    heading: [f64; 3],
+    /// The folds' direction where the arm's tip stands.
+    direction: Option<[f64; 3]>,
+    end: ArmEnd,
+}
+
+/// A piece of a deep fold's hinge as the relief reads it: the fold it belongs to, its
+/// ends, the fold's height at each in units of the fold amplitude, and its wavelength at
+/// each, m.
+#[derive(Clone, Copy, Debug)]
+struct DeepSegment {
+    line: usize,
+    a: [f64; 3],
+    b: [f64; 3],
+    height: [f64; 2],
+    wavelength: [f64; 2],
+}
+
+/// The hinges' points bucketed on the sphere: each entry an arm and a point's index.
+type HingePoints = HashMap<(i32, i32, i32), Vec<(u32, u32)>>;
+
+/// The deep folds of a renewed plain (F65): a first-order train whose hinges nucleate one
+/// to a wavelength, each grown both ways along the folds' direction from where it
+/// nucleated, at a rate that goes with its depth, until it links with a neighbour whose
+/// hinge passes within about half a wavelength (bending into it where the two run alike,
+/// a Y where the neighbour runs on; abutting it where they meet across), runs out of
+/// fabric or of time, or meets one of its terrain's vents, and there its end plunges.
+/// Each hinge comes up when its fold has amplified enough, the deeper sooner, so that the
+/// deep hinges grow long and the shallow fill the gaps and link into them; once up they
+/// grow together, in the order of the time each step is reached, and who links with whom
+/// is decided by who got there first. Where the train converges its hinges merge, and
+/// where they run apart they end en echelon. A hinge stands highest where it nucleated
+/// and lower where it reached last, so that a linkage leaves a saddle (Grasemann and
+/// Schmalholz 2012).
+struct DeepFolds {
+    scale: f64,
+    body_radius: f64,
+    /// How far the folds' surface is softened where two hinges are nearly as near, m.
+    blend: f64,
+    segments: Vec<DeepSegment>,
+    buckets: HashMap<(i32, i32, i32), Vec<u32>>,
+    /// The arms as they grew.
+    arms: Vec<DeepArm>,
+}
+
+/// A vector carried into the tangent plane at `p` and normalized.
+fn tangential(p: [f64; 3], v: [f64; 3]) -> [f64; 3] {
+    let r = dot(v, p);
+    normalize([v[0] - r * p[0], v[1] - r * p[1], v[2] - r * p[2]])
+}
+
+/// The point `angle` rad from `p` along the great circle that leaves it along `heading`.
+fn step_along(p: [f64; 3], heading: [f64; 3], angle: f64) -> [f64; 3] {
+    let (s, c) = angle.sin_cos();
+    normalize([
+        p[0] * c + heading[0] * s,
+        p[1] * c + heading[1] * s,
+        p[2] * c + heading[2] * s,
+    ])
+}
+
+/// A fold's profile across its hinge at `s` widths (the Ricker profile): a crest, and a
+/// trough each side that takes up what the crest stands above.
+fn ricker(s: f64) -> f64 {
+    let s2 = s * s;
+    (1.0 - s2) * (-0.5 * s2).exp()
+}
+
+impl DeepFolds {
+    /// A profile is read out to this many widths, where it is under a thousandth.
+    const REACH_WIDTHS: f64 = 4.5;
+    /// The folds' surface is softened over this share of a fold's width where two hinges
+    /// are nearly as near, so that the trough between them has no crease.
+    const BLEND_WIDTHS: f64 = 0.25;
+    /// A tip whose heading parts from its neighbour's hinge by more than this sine (about
+    /// three degrees) is running away from it.
+    const PARTING: f64 = 0.05;
+    /// The steepest flank of the Ricker profile, per width.
+    const STEEPEST: f64 = 1.3801;
+
+    fn key(d: [f64; 3], scale: f64) -> (i32, i32, i32) {
+        (
+            (d[0] * scale).floor() as i32,
+            (d[1] * scale).floor() as i32,
+            (d[2] * scale).floor() as i32,
+        )
+    }
+
+    /// The width of a deep fold's Ricker profile, m: a narrow crest, its troughs close by
+    /// and the train's broad troughs between.
+    fn width(wavelength: f64) -> f64 {
+        POLAR_DEEP_CREST * wavelength
+    }
+
+    fn insert(points: &mut HingePoints, d: [f64; 3], arm: usize, k: usize, scale: f64) {
+        points
+            .entry(Self::key(d, scale))
+            .or_default()
+            .push((arm as u32, k as u32));
+    }
+
+    /// The nearest point within `reach` rad of `d` on the hinge of a line other than
+    /// `line`: its arm and index.
+    fn nearest_point(
+        points: &HingePoints,
+        arms: &[DeepArm],
+        d: [f64; 3],
+        line: usize,
+        reach: f64,
+        scale: f64,
+    ) -> Option<(usize, usize)> {
+        let (i, j, l) = Self::key(d, scale);
+        let mut best: Option<(f64, usize, usize)> = None;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dl in -1..=1 {
+                    let Some(v) = points.get(&(i + di, j + dj, l + dl)) else {
+                        continue;
+                    };
+                    for &(a, k) in v {
+                        let (a, k) = (a as usize, k as usize);
+                        if arms[a].line == line {
+                            continue;
+                        }
+                        let dist = angle_between(arms[a].points[k], d);
+                        if dist < reach && best.is_none_or(|b| dist < b.0) {
+                            best = Some((dist, a, k));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|b| (b.1, b.2))
+    }
+
+    /// Where the arc from `p` to `q` first meets the hinge of a line other than `line`, the
+    /// pieces of hinge sought among the points within `reach` rad of the arc's middle (the
+    /// longest piece of hinge is shorter than that).
+    fn crossing(
+        points: &HingePoints,
+        arms: &[DeepArm],
+        p: [f64; 3],
+        q: [f64; 3],
+        line: usize,
+        reach: f64,
+        scale: f64,
+    ) -> Option<[f64; 3]> {
+        // The gnomonic plane about `p`, where arcs of great circles are straight.
+        let (e1, e2) = crate::geom::local_basis(p);
+        let flat = |v: [f64; 3]| {
+            let s = dot(v, p);
+            (s > 0.0).then(|| (dot(v, e1) / s, dot(v, e2) / s))
+        };
+        let end = flat(q)?;
+        let mid = normalize([p[0] + q[0], p[1] + q[1], p[2] + q[2]]);
+        let near = 0.5 * angle_between(p, q) + reach;
+        let (i, j, l) = Self::key(mid, scale);
+        let mut first: Option<f64> = None;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dl in -1..=1 {
+                    let Some(v) = points.get(&(i + di, j + dj, l + dl)) else {
+                        continue;
+                    };
+                    for &(a, k) in v {
+                        let (a, k) = (a as usize, k as usize);
+                        let hinge = &arms[a].points;
+                        if arms[a].line == line || angle_between(hinge[k], mid) > near {
+                            continue;
+                        }
+                        for (u, w) in [(k.wrapping_sub(1), k), (k, k + 1)] {
+                            if u >= hinge.len() || w >= hinge.len() {
+                                continue;
+                            }
+                            let (Some(c), Some(d)) = (flat(hinge[u]), flat(hinge[w])) else {
+                                continue;
+                            };
+                            let r = end;
+                            let s = (d.0 - c.0, d.1 - c.1);
+                            let denom = r.0 * s.1 - r.1 * s.0;
+                            if denom.abs() < 1e-18 {
+                                continue;
+                            }
+                            let t = (c.0 * s.1 - c.1 * s.0) / denom;
+                            let v = (c.0 * r.1 - c.1 * r.0) / denom;
+                            if t > 1e-9 && t <= 1.0 && (0.0..=1.0).contains(&v) {
+                                first = Some(first.map_or(t, |f: f64| f.min(t)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        first.map(|t| {
+            normalize([
+                p[0] + t * end.0 * e1[0] + t * end.1 * e2[0],
+                p[1] + t * end.0 * e1[1] + t * end.1 * e2[1],
+                p[2] + t * end.0 * e1[2] + t * end.1 * e2[2],
+            ])
+        })
+    }
+
+    /// Adds points to an arm, reached at time `t`.
+    fn extend(
+        arms: &mut [DeepArm],
+        points: &mut HingePoints,
+        id: usize,
+        path: &[[f64; 3]],
+        t: f64,
+        wavelength: f64,
+        scale: f64,
+    ) {
+        let arm = &mut arms[id];
+        for &pt in path {
+            arm.points.push(pt);
+            arm.times.push(t);
+            arm.wavelengths.push(wavelength);
+            Self::insert(points, pt, id, arm.points.len() - 1, scale);
+        }
+    }
+
+    /// An arm's direction at its point `k`, the way it grew.
+    fn tangent(arm: &DeepArm, k: usize) -> [f64; 3] {
+        let n = arm.points.len();
+        if n < 2 {
+            return arm.heading;
+        }
+        let (a, b) = (
+            arm.points[k.saturating_sub(1)],
+            arm.points[(k + 1).min(n - 1)],
+        );
+        tangential(arm.points[k], [b[0] - a[0], b[1] - a[1], b[2] - a[2]])
+    }
+
+    /// The point `lead` rad along a fold's hinge from point `k` of arm `a`, going the way
+    /// the arm grew (`forward`) or back toward its nucleus and on along the arm that grew
+    /// the other way, and the hinge's direction there in the sense of travel; at the end
+    /// of a hinge, that end, and the arm whose end it is.
+    fn walk(
+        arms: &[DeepArm],
+        a: usize,
+        k: usize,
+        forward: bool,
+        lead: f64,
+    ) -> ([f64; 3], [f64; 3], Option<usize>) {
+        let (mut arm, mut k, mut forward, mut left) = (a, k, forward, lead);
+        loop {
+            let points = &arms[arm].points;
+            let next = if forward {
+                (k + 1 < points.len()).then_some(k + 1)
+            } else if k > 0 {
+                Some(k - 1)
+            } else {
+                // Back through the nucleus onto the arm that grew the other way.
+                let other = arm ^ 1;
+                if other < arms.len()
+                    && arms[other].line == arms[arm].line
+                    && arms[other].points.len() > 1
+                {
+                    arm = other;
+                    forward = true;
+                    continue;
+                }
+                None
+            };
+            let Some(n) = next else {
+                break;
+            };
+            let step = angle_between(points[k], points[n]);
+            if step >= left {
+                let f = left / step.max(1e-12);
+                let (u, v) = (points[k], points[n]);
+                let at = normalize([
+                    u[0] + f * (v[0] - u[0]),
+                    u[1] + f * (v[1] - u[1]),
+                    u[2] + f * (v[2] - u[2]),
+                ]);
+                return (
+                    at,
+                    tangential(at, [v[0] - u[0], v[1] - u[1], v[2] - u[2]]),
+                    None,
+                );
+            }
+            left -= step;
+            k = n;
+        }
+        let points = &arms[arm].points;
+        let at = points[k];
+        let way = if forward {
+            if k > 0 {
+                let u = points[k - 1];
+                [at[0] - u[0], at[1] - u[1], at[2] - u[2]]
+            } else {
+                arms[arm].heading
+            }
+        } else if k + 1 < points.len() {
+            let u = points[k + 1];
+            [at[0] - u[0], at[1] - u[1], at[2] - u[2]]
+        } else {
+            let h = arms[arm].heading;
+            [-h[0], -h[1], -h[2]]
+        };
+        (at, tangential(at, way), forward.then_some(arm))
+    }
+
+    /// A tip that came within linking distance of a neighbour's hinge joins it where the
+    /// neighbour lies ahead. Where the two run alike it bends into the neighbour at the
+    /// merging angle, along a cubic that leaves the tip along its heading and arrives
+    /// along the neighbour, and beyond the junction the two are one fold: a Y where the
+    /// neighbour runs on; where the neighbour ends there, its end, which then neither
+    /// plunges nor, if it was coming the other way, grows on. A neighbour's tip coming the
+    /// other way past the junction stops too, the two one fold. Where they meet across the
+    /// tip abuts the neighbour. A neighbour beside or behind the tip is passed: returns
+    /// whether the tip linked.
+    #[allow(clippy::too_many_arguments)]
+    fn link(
+        arms: &mut [DeepArm],
+        points: &mut HingePoints,
+        id: usize,
+        (host, k): (usize, usize),
+        q: [f64; 3],
+        heading: [f64; 3],
+        t: f64,
+        wavelength: f64,
+        body_radius: f64,
+        scale: f64,
+    ) -> bool {
+        let hp = arms[host].points[k];
+        let th = Self::tangent(&arms[host], k);
+        let forward = dot(th, heading) >= 0.0;
+        let along = if forward {
+            th
+        } else {
+            [-th[0], -th[1], -th[2]]
+        };
+        let angle = dot(along, heading).clamp(-1.0, 1.0).acos();
+        let ahead = |p: [f64; 3]| dot([p[0] - q[0], p[1] - q[1], p[2] - q[2]], heading) > 0.0;
+        let (joint, arrival, end) = if angle > POLAR_DEEP_ABUT_DEG.to_radians() {
+            (hp, None, None)
+        } else {
+            let normal = normalize(cross(hp, along));
+            let side = dot([q[0] - hp[0], q[1] - hp[1], q[2] - hp[2]], normal);
+            // Hinges that run apart do not link.
+            if dot(heading, normal) * side.signum() > Self::PARTING {
+                return false;
+            }
+            let lateral = side.abs();
+            let lead = lateral / POLAR_DEEP_MERGE_DEG.to_radians().tan();
+            let (j, tj, end) = Self::walk(arms, host, k, forward, lead);
+            (j, Some(tj), end)
+        };
+        if !ahead(joint) {
+            return false;
+        }
+        let mut path = vec![q];
+        match arrival {
+            Some(tj) => {
+                let chord = angle_between(q, joint);
+                let step = POLAR_DEEP_STEP * wavelength / body_radius;
+                let n = ((chord / step).ceil() as usize).max(1);
+                for s in 1..=n {
+                    let u = s as f64 / n as f64;
+                    let (u2, u3) = (u * u, u * u * u);
+                    let (h00, h10, h01, h11) = (
+                        2.0 * u3 - 3.0 * u2 + 1.0,
+                        u3 - 2.0 * u2 + u,
+                        3.0 * u2 - 2.0 * u3,
+                        u3 - u2,
+                    );
+                    path.push(normalize([
+                        h00 * q[0]
+                            + h10 * chord * heading[0]
+                            + h01 * joint[0]
+                            + h11 * chord * tj[0],
+                        h00 * q[1]
+                            + h10 * chord * heading[1]
+                            + h01 * joint[1]
+                            + h11 * chord * tj[1],
+                        h00 * q[2]
+                            + h10 * chord * heading[2]
+                            + h01 * joint[2]
+                            + h11 * chord * tj[2],
+                    ]));
+                }
+            }
+            None => path.push(joint),
+        }
+        let line = arms[id].line;
+        let reach = 0.5 / scale;
+        for i in 1..path.len() {
+            if let Some(x) = Self::crossing(points, arms, path[i - 1], path[i], line, reach, scale)
+            {
+                path.truncate(i);
+                path.push(x);
+                break;
+            }
+        }
+        Self::extend(arms, points, id, &path, t, wavelength, scale);
+        arms[id].end = ArmEnd::Linked;
+        let head_on = |a: &DeepArm| a.end == ArmEnd::Growing && dot(a.heading, heading) < 0.0;
+        match end {
+            Some(e) => {
+                if arms[e].end == ArmEnd::Free || head_on(&arms[e]) {
+                    arms[e].end = ArmEnd::Linked;
+                }
+            }
+            None => {
+                let tip = *arms[host].points.last().expect("an arm holds its nucleus");
+                if head_on(&arms[host])
+                    && angle_between(tip, joint) < 2.0 * POLAR_DEEP_LINK * wavelength / body_radius
+                {
+                    arms[host].end = ArmEnd::Linked;
+                }
+            }
+        }
+        true
+    }
+
+    /// Grows the deep folds from their nuclei through the field the hinges read, the
+    /// lid's heterogeneity deflecting them where `wander` is given.
+    fn grow(
+        nuclei: &[DeepNucleus],
+        field: &dyn Fn([f64; 3]) -> DeepSite,
+        wander: Option<&GradientNoise>,
+        body_radius: f64,
+    ) -> Self {
+        let sites: Vec<DeepSite> = nuclei.iter().map(|n| field(n.center)).collect();
+        let mut lengths: Vec<f64> = sites
+            .iter()
+            .map(|s| s.wavelength)
+            .filter(|&w| w > 0.0)
+            .collect();
+        if lengths.is_empty() {
+            return Self::from_arms(Vec::new(), body_radius);
+        }
+        lengths.sort_by(f64::total_cmp);
+        let longest = lengths[lengths.len() - 1];
+        let typical = lengths[lengths.len() / 2];
+        // The neighbour test reaches no further than a bucket, twice the longest distance
+        // it looks at a nucleus.
+        let bucket = 2.0 * POLAR_DEEP_LINK.max(POLAR_DEEP_SPACE) * longest / body_radius;
+        let scale = 1.0 / bucket;
+        let wander_frequency = body_radius / (POLAR_DEEP_WANDER_LENGTH * typical);
+        let max_turn = POLAR_DEEP_TURN_DEG.to_radians();
+        let mut points: HingePoints = HashMap::new();
+        let mut arms: Vec<DeepArm> = Vec::new();
+        // Events in time: a nucleus coming up (0) or an arm's next step (1).
+        let mut heap: BinaryHeap<Reverse<(u64, u8, usize)>> = BinaryHeap::new();
+        for (i, n) in nuclei.iter().enumerate() {
+            let onset = POLAR_DEEP_ONSET * (GROOVE_DEPTH_MAX / n.depth.max(1e-6)).ln().max(0.0);
+            if onset < POLAR_DEEP_REACH {
+                heap.push(Reverse((onset.to_bits(), 0, i)));
+            }
+        }
+        let mut lines = 0;
+        while let Some(Reverse((bits, kind, id))) = heap.pop() {
+            if kind == 0 {
+                let (n, site, onset) = (nuclei[id], sites[id], f64::from_bits(bits));
+                let Some(o) = site.direction else {
+                    continue;
+                };
+                if site.strength < POLAR_DEEP_STOP
+                    || site.fissure < POLAR_DEEP_FISSURE_NUCLEUS * site.wavelength
+                {
+                    continue;
+                }
+                // A hinge that comes up beside a fold already grown is part of it.
+                let space = (POLAR_DEEP_SPACE * site.wavelength / body_radius).min(bucket);
+                if Self::nearest_point(&points, &arms, n.center, usize::MAX, space, scale).is_some()
+                {
+                    continue;
+                }
+                for sign in [1.0, -1.0] {
+                    let arm = arms.len();
+                    Self::insert(&mut points, n.center, arm, 0, scale);
+                    arms.push(DeepArm {
+                        line: lines,
+                        depth: n.depth,
+                        points: vec![n.center],
+                        times: vec![onset],
+                        wavelengths: vec![site.wavelength],
+                        heights: Vec::new(),
+                        heading: [o[0] * sign, o[1] * sign, o[2] * sign],
+                        direction: site.direction,
+                        end: ArmEnd::Growing,
+                    });
+                    heap.push(Reverse((bits, 1, arm)));
+                }
+                lines += 1;
+                continue;
+            }
+            if arms[id].end != ArmEnd::Growing {
+                continue;
+            }
+            let arm = &arms[id];
+            let p = *arm.points.last().expect("an arm holds its nucleus");
+            let lambda = *arm.wavelengths.last().expect("a wavelength per point");
+            let (heading, line) = (arm.heading, arm.line);
+            // A hinge grows while the shortening lasts, the deeper the faster.
+            let t = f64::from_bits(bits) + POLAR_DEEP_STEP / arm.depth;
+            if t > POLAR_DEEP_REACH {
+                arms[id].end = ArmEnd::Free;
+                continue;
+            }
+            let Some(o) = arms[id].direction else {
+                arms[id].end = ArmEnd::Free;
+                continue;
+            };
+            let o = if dot(o, heading) < 0.0 {
+                [-o[0], -o[1], -o[2]]
+            } else {
+                o
+            };
+            // The lid's unresolved heterogeneity deflects the hinge as it grows.
+            let target = match wander {
+                Some(noise) => rotate(
+                    o,
+                    p,
+                    POLAR_DEEP_WANDER_DEG.to_radians()
+                        * (noise.fbm(p, wander_frequency, 2, 2.0, 0.5) / 0.5).clamp(-1.0, 1.0),
+                ),
+                None => o,
+            };
+            let turn = dot(cross(heading, target), p)
+                .atan2(dot(heading, target))
+                .clamp(-max_turn, max_turn);
+            let heading = tangential(p, rotate(heading, p, turn));
+            let q = step_along(p, heading, POLAR_DEEP_STEP * lambda / body_radius);
+            let site = field(q);
+            if site.direction.is_none()
+                || site.strength < POLAR_DEEP_STOP
+                || site.fissure < POLAR_DEEP_FISSURE * site.wavelength
+            {
+                arms[id].end = ArmEnd::Free;
+                continue;
+            }
+            if let Some(x) = Self::crossing(&points, &arms, p, q, line, 0.5 * bucket, scale) {
+                Self::extend(&mut arms, &mut points, id, &[x], t, site.wavelength, scale);
+                arms[id].end = ArmEnd::Linked;
+                continue;
+            }
+            let link = (POLAR_DEEP_LINK * site.wavelength / body_radius).min(bucket);
+            if let Some(host) = Self::nearest_point(&points, &arms, q, line, link, scale)
+                && Self::link(
+                    &mut arms,
+                    &mut points,
+                    id,
+                    host,
+                    q,
+                    heading,
+                    t,
+                    site.wavelength,
+                    body_radius,
+                    scale,
+                )
+            {
+                continue;
+            }
+            let arm = &mut arms[id];
+            arm.points.push(q);
+            arm.times.push(t);
+            arm.wavelengths.push(site.wavelength);
+            arm.heading = tangential(q, heading);
+            arm.direction = site.direction;
+            let k = arm.points.len() - 1;
+            Self::insert(&mut points, q, id, k, scale);
+            heap.push(Reverse((t.to_bits(), 1, id)));
+        }
+        Self::from_arms(arms, body_radius)
+    }
+
+    /// The grown arms as segments to read: each point's height from the time the hinge
+    /// reached it, a free end plunging.
+    fn from_arms(mut arms: Vec<DeepArm>, body_radius: f64) -> Self {
+        for arm in &mut arms {
+            arm.heights = arm
+                .times
+                .iter()
+                .map(|&t| arm.depth * (1.0 - POLAR_DEEP_SADDLE * (t / POLAR_DEEP_REACH).min(1.0)))
+                .collect();
+        }
+        // A free end plunges: the end of an arm that did not link, and the nucleus of a
+        // fold whose other arm never grew.
+        let lone: Vec<bool> = (0..arms.len())
+            .map(|a| {
+                arms.get(a ^ 1)
+                    .is_none_or(|o| o.line != arms[a].line || o.points.len() < 2)
+            })
+            .collect();
+        for (a, arm) in arms.iter_mut().enumerate() {
+            if arm.end != ArmEnd::Linked {
+                Self::plunge(arm, true, body_radius);
+            }
+            if lone[a] {
+                Self::plunge(arm, false, body_radius);
+            }
+        }
+        let mut segments = Vec::new();
+        let mut reaches = Vec::new();
+        let mut lengths = Vec::new();
+        for arm in &arms {
+            lengths.push(arm.wavelengths[0]);
+            for i in 1..arm.points.len() {
+                let segment = DeepSegment {
+                    line: arm.line,
+                    a: arm.points[i - 1],
+                    b: arm.points[i],
+                    height: [arm.heights[i - 1], arm.heights[i]],
+                    wavelength: [arm.wavelengths[i - 1], arm.wavelengths[i]],
+                };
+                let widest = Self::width(segment.wavelength[0].max(segment.wavelength[1]));
+                reaches.push(
+                    0.5 * angle_between(segment.a, segment.b)
+                        + Self::REACH_WIDTHS * widest / body_radius,
+                );
+                segments.push(segment);
+            }
+        }
+        lengths.sort_by(f64::total_cmp);
+        let blend = lengths
+            .get(lengths.len() / 2)
+            .map_or(1.0, |&l| Self::BLEND_WIDTHS * Self::width(l));
+        // Each segment goes into every bucket its reach touches, so that a direction reads
+        // only its own.
+        let mut sorted = reaches.clone();
+        sorted.sort_by(f64::total_cmp);
+        let scale = sorted.get(sorted.len() / 2).map_or(1.0, |&r| 1.0 / r);
+        let mut buckets: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
+        for (i, s) in segments.iter().enumerate() {
+            let mid = normalize([s.a[0] + s.b[0], s.a[1] + s.b[1], s.a[2] + s.b[2]]);
+            let r = reaches[i];
+            let lo = Self::key([mid[0] - r, mid[1] - r, mid[2] - r], scale);
+            let hi = Self::key([mid[0] + r, mid[1] + r, mid[2] + r], scale);
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        buckets.entry((x, y, z)).or_default().push(i as u32);
+                    }
+                }
+            }
+        }
+        Self {
+            scale,
+            body_radius,
+            blend,
+            segments,
+            buckets,
+            arms,
+        }
+    }
+
+    /// Lowers an arm's heights over the taper from its end (`from_end`) or its nucleus, to
+    /// nothing there.
+    fn plunge(arm: &mut DeepArm, from_end: bool, body_radius: f64) {
+        let n = arm.points.len();
+        let mut run = 0.0;
+        for step in 0..n {
+            let i = if from_end { n - 1 - step } else { step };
+            if step > 0 {
+                let before = if from_end { i + 1 } else { i - 1 };
+                run += angle_between(arm.points[i], arm.points[before]) * body_radius;
+            }
+            let x = run / (POLAR_DEEP_TAPER * arm.wavelengths[i]);
+            if x >= 1.0 {
+                break;
+            }
+            arm.heights[i] *= x * x * (3.0 - 2.0 * x);
+        }
+    }
+
+    /// The deep folds at a direction: their relief in units of the fold amplitude, and how
+    /// fully a deep fold holds the ground, 0 to 1, for the fabric's folds to give way to
+    /// it. The folds are one surface: a fold's profile about the distance to the nearest
+    /// hinge, softened where two are nearly as near, with the height and wavelength of
+    /// the hinges in the same measure, so that two hinges merge where they meet, the one
+    /// that runs on unbroken, and a trough between two folds is shared.
+    fn at(&self, d: [f64; 3]) -> (f64, f64) {
+        // The nearest point of each fold about (up to a few, the nearest kept): its
+        // distance, m, and the fold's height and wavelength there.
+        const FOLDS: usize = 8;
+        let mut nearest = [(usize::MAX, 0.0f64, 0.0f64, 0.0f64); FOLDS];
+        let mut count = 0;
+        if let Some(v) = self.buckets.get(&Self::key(d, self.scale)) {
+            for &k in v {
+                let s = &self.segments[k as usize];
+                let ab = [s.b[0] - s.a[0], s.b[1] - s.a[1], s.b[2] - s.a[2]];
+                let ad = [d[0] - s.a[0], d[1] - s.a[1], d[2] - s.a[2]];
+                let len2 = dot(ab, ab);
+                let t = if len2 > 0.0 {
+                    (dot(ad, ab) / len2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let off = [ad[0] - t * ab[0], ad[1] - t * ab[1], ad[2] - t * ab[2]];
+                let x = dot(off, off).sqrt() * self.body_radius;
+                let wavelength = s.wavelength[0] + t * (s.wavelength[1] - s.wavelength[0]);
+                if x > Self::REACH_WIDTHS * Self::width(wavelength) {
+                    continue;
+                }
+                let height = s.height[0] + t * (s.height[1] - s.height[0]);
+                let entry = (s.line, x, height, wavelength);
+                match nearest[..count].iter_mut().find(|e| e.0 == s.line) {
+                    Some(e) => {
+                        if x < e.1 {
+                            *e = entry;
+                        }
+                    }
+                    None if count < FOLDS => {
+                        nearest[count] = entry;
+                        count += 1;
+                    }
+                    None => {
+                        let far = (0..FOLDS)
+                            .max_by(|&a, &b| nearest[a].1.total_cmp(&nearest[b].1))
+                            .expect("a full list");
+                        if x < nearest[far].1 {
+                            nearest[far] = entry;
+                        }
+                    }
+                }
+            }
+        }
+        if count == 0 {
+            return (0.0, 0.0);
+        }
+        let nearest = &nearest[..count];
+        let x0 = nearest.iter().map(|e| e.1).fold(f64::INFINITY, f64::min);
+        let (mut sum, mut height, mut wavelength) = (0.0, 0.0, 0.0);
+        for &(_, x, h, w) in nearest {
+            let p = (-(x - x0) / self.blend).exp();
+            sum += p;
+            height += p * h;
+            wavelength += p * w;
+        }
+        let (height, wavelength) = (height / sum, wavelength / sum);
+        let x = (x0 - self.blend * sum.ln()).max(0.0);
+        (
+            height * ricker(x / Self::width(wavelength)),
+            height.min(1.0) * (-(0.5 * x / Self::width(wavelength)).powi(2)).exp(),
+        )
+    }
+}
+
+/// The fold fabric's strength at a signed distance `dist` from a renewed terrain's edge,
+/// m: in full inside past the folds' taper, the halo's share at the edge, and fading
+/// across the halo beyond it.
+fn fabric_strength(dist: f64, halo: f64) -> f64 {
+    if dist >= 0.0 {
+        let x = (dist / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
+        POLAR_HALO_PEAK + (1.0 - POLAR_HALO_PEAK) * x * x * (3.0 - 2.0 * x)
+    } else {
+        let x = (1.0 + dist / halo.max(1.0)).clamp(0.0, 1.0);
+        POLAR_HALO_PEAK * x * x
     }
 }
 
@@ -2571,15 +3409,33 @@ pub fn polar_compute(
     let spacing = POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
     let belt_spacing = POLAR_BELT_SPACING.max(3.0 * cell);
     let fabric = FabricIndex::new(cracks, POLAR_FABRIC_RANGE / body_radius);
+    // The terrain's own vents, which opened in its episode, bound its deep folds (F65).
+    let vents = FabricIndex::new(
+        cracks.iter().filter(|l| {
+            l.kind == LineaKind::Vent
+                && (l.time_gyr - time_gyr).abs() < FOCUSING_EPISODE_DURATION_GYR + 1e-3
+        }),
+        POLAR_FABRIC_RANGE / body_radius,
+    );
+    let clock = std::time::Instant::now();
     let ridge_keep = degraded(POLAR_MARGIN_WIDTH, kappa_t);
     let belt_keep = degraded(0.5 * belt_spacing, kappa_t);
     let fold_keep = degraded(0.5 * spacing, kappa_t);
+    let deep_keep = degraded(2.0 * POLAR_DEEP_CREST * POLAR_DEEP_ORDER * spacing, kappa_t);
+    // A deep fold of the middling depth is as steep as the fabric's folds (F65).
+    let deep_unit = POLAR_DEEP_RELIEF
+        * POLAR_FOLD_AMPLITUDE
+        * std::f64::consts::TAU
+        * POLAR_DEEP_CREST
+        * POLAR_DEEP_ORDER
+        / DeepFolds::STEEPEST;
     let noise = GradientNoise::new(0x5027_F01D);
     let belt_noise = GradientNoise::new(0x5027_BE17);
     let rough_noise = GradientNoise::new(0x5027_0C4A);
     let rough_gain = 2f64.powf(-ROUGHNESS_HURST);
     let set_frequency = body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
     stamper.gather(grid, body_radius, pole, reach * body_radius);
+    let gathered = clock.elapsed().as_secs_f64();
     let kernels = FoldKernels::new(
         &fabric,
         shell,
@@ -2591,6 +3447,105 @@ pub fn polar_compute(
         set_frequency,
         time_gyr.to_bits(),
     );
+    let kerneled = clock.elapsed().as_secs_f64();
+    // The deep folds (F65) grow from the fabric's deepest hinges through the same field:
+    // the fissures' direction, the fabric's strength, a wavelength that goes as the lid.
+    let edge_factor = (1.0 - shell.thinning * POLAR_CORE_PROFILE).max(0.05);
+    let finest = GROOVE_MIN_CELLS * grid.delta() * body_radius;
+    let sigma = POLAR_FOLD_ORIENTATION_SHARE * POLAR_FABRIC_RANGE / body_radius;
+    let site = |p: [f64; 3]| {
+        let dist = edge[grid.index(grid.locate(p).0)] as f64;
+        let nearest = fabric.nearest(p);
+        let from = |n: Option<([f64; 3], [f64; 3])>| {
+            n.map_or(f64::INFINITY, |(f, _)| angle_between(f, p) * body_radius)
+        };
+        let near = {
+            let x =
+                ((POLAR_FABRIC_RANGE - from(nearest)) / (0.5 * POLAR_FABRIC_RANGE)).clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+        DeepSite {
+            direction: fabric
+                .orientation(p, sigma)
+                .or(nearest.map(|(_, t)| t))
+                .map(|t| tangential(p, t)),
+            strength: fabric_strength(dist, halo) * near,
+            wavelength: POLAR_DEEP_ORDER * (spacing * shell.factor(p) / edge_factor).max(finest),
+            fissure: from(vents.nearest(p)),
+        }
+    };
+    let nuclei = {
+        let lattice = body_radius / (POLAR_DEEP_ORDER * spacing);
+        let rng = Rng::new(time_gyr.to_bits() ^ 0x5027_DEE1);
+        let mut keys = std::collections::HashSet::new();
+        for &(k, _, _) in &stamper.footprint {
+            if f64::from(edge[k]) > -halo {
+                keys.insert(FoldKernels::key(grid.center(grid.cell(k)), lattice));
+            }
+        }
+        let mut nuclei: Vec<DeepNucleus> = keys
+            .into_iter()
+            .map(|(i, j, l)| {
+                let id = ((i as i64 & 0xF_FFFF) as u64)
+                    | (((j as i64 & 0xF_FFFF) as u64) << 20)
+                    | (((l as i64 & 0xF_FFFF) as u64) << 40);
+                DeepNucleus {
+                    key: (i, j, l),
+                    center: normalize([
+                        (i as f64 + rng.uniform(id, 0)) / lattice,
+                        (j as f64 + rng.uniform(id, 1)) / lattice,
+                        (l as f64 + rng.uniform(id, 2)) / lattice,
+                    ]),
+                    depth: fault_depth(rng.uniform(id, 3)),
+                }
+            })
+            .collect();
+        // In a fixed order, whatever order the lattice came in.
+        nuclei.sort_by_key(|n| n.key);
+        nuclei
+    };
+    let wander = GradientNoise::new(0x5027_DEE9 ^ time_gyr.to_bits());
+    let laid = clock.elapsed().as_secs_f64();
+    let deep = DeepFolds::grow(&nuclei, &site, Some(&wander), body_radius);
+    let grown = clock.elapsed().as_secs_f64();
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let ends = |e: ArmEnd| deep.arms.iter().filter(|a| a.end == e).count();
+        eprintln!(
+            "deep folds at {time_gyr:.4} Gyr: {} nuclei, {} arms, {} linked, {} free; gather {gathered:.1} s, kernels {:.1} s, nuclei {:.1} s, growth {:.1} s",
+            nuclei.len(),
+            deep.arms.len(),
+            ends(ArmEnd::Linked),
+            ends(ArmEnd::Free),
+            kerneled - gathered,
+            laid - kerneled,
+            grown - laid
+        );
+    }
+    if let Some(dir) = std::env::var_os("EXOGEN_DEEP_DUMP") {
+        let arms: Vec<serde_json::Value> = deep
+            .arms
+            .iter()
+            .map(|a| {
+                let pts: Vec<[f64; 2]> = a
+                    .points
+                    .iter()
+                    .map(|p| {
+                        let (lon, lat) = crate::grid::lon_lat_from_direction(*p);
+                        [lon.to_degrees(), lat.to_degrees()]
+                    })
+                    .collect();
+                serde_json::json!({
+                    "line": a.line,
+                    "end": format!("{:?}", a.end),
+                    "depth": a.depth,
+                    "heights": a.heights,
+                    "pts": pts,
+                })
+            })
+            .collect();
+        let path = std::path::Path::new(&dir).join(format!("deep_{time_gyr:.5}.json"));
+        let _ = std::fs::write(path, serde_json::to_vec(&arms).unwrap_or_default());
+    }
     let mut cells: Vec<CellWrite> = stamper
         .footprint
         .par_iter()
@@ -2614,25 +3569,36 @@ pub fn polar_compute(
             };
             let x = dist / POLAR_MARGIN_WIDTH;
             let ridge = POLAR_MARGIN_HEIGHT * ridge_keep * arc * (-x * x).exp();
-            // The fabric's strength: in full inside past the folds' taper, the halo's
-            // share at the edge, and fading across the halo beyond it.
-            let strength = if dist >= 0.0 {
-                let x = (dist / POLAR_FOLD_TAPER).clamp(0.0, 1.0);
-                POLAR_HALO_PEAK + (1.0 - POLAR_HALO_PEAK) * x * x * (3.0 - 2.0 * x)
-            } else {
-                let x = (1.0 + dist / halo.max(1.0)).clamp(0.0, 1.0);
-                POLAR_HALO_PEAK * x * x
-            };
+            let strength = fabric_strength(dist, halo);
             // The fabric of folds, a sum of oriented segments each laid along the
             // fissures' direction about its centre and in phase with the nearest one's
-            // line, and under it the tectonic roughness of a plain deformed at every
-            // scale.
-            let folds = POLAR_FOLD_AMPLITUDE * fold_keep * strength * kernels.fabric(d);
-            let rough = POLAR_TECTONIC_RMS
-                * fold_keep
-                * strength
-                * rough_noise.fbm(d, body_radius / POLAR_TECTONIC_LENGTH, 4, 2.0, rough_gain)
-                / 0.4;
+            // line, giving way in part to the deep folds where they stand (F65), and
+            // under it the tectonic roughness of a plain deformed at every scale; none
+            // past the halo.
+            let (folds, rough) = if strength > 0.0 {
+                let (deep_relief, hold) = deep.at(d);
+                (
+                    strength
+                        * (POLAR_FOLD_AMPLITUDE
+                            * fold_keep
+                            * kernels.fabric(d)
+                            * (1.0 - POLAR_DEEP_REPLACE * hold)
+                            + deep_unit * deep_keep * deep_relief),
+                    POLAR_TECTONIC_RMS
+                        * fold_keep
+                        * strength
+                        * rough_noise.fbm(
+                            d,
+                            body_radius / POLAR_TECTONIC_LENGTH,
+                            4,
+                            2.0,
+                            rough_gain,
+                        )
+                        / 0.4,
+                )
+            } else {
+                (0.0, 0.0)
+            };
             // The belt where the spreading is taken up, about the edge and decaying from
             // it: its folds parallel the edge in segments that shift against their
             // neighbours, en echelon, never as concentric rings; the fissures' folds give
@@ -2656,7 +3622,11 @@ pub fn polar_compute(
         .collect();
     cells.sort_by_key(|c| c.idx);
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
-        eprintln!("polar terrain stamp: {} cells written", cells.len());
+        eprintln!(
+            "polar terrain stamp: {} cells written, cells {:.1} s",
+            cells.len(),
+            clock.elapsed().as_secs_f64() - grown
+        );
     }
     StampOutput {
         cells,
@@ -3155,5 +4125,182 @@ mod tests {
         );
         assert!((1.0..45.0).contains(&at(&ganymede, 0.5)));
         assert!(at(&enceladus, 1.0) < 5.0);
+    }
+
+    /// A point on a flat patch about [1, 0, 0], km east and north of it, and back.
+    fn patch_point(east_km: f64, north_km: f64, r: f64) -> [f64; 3] {
+        normalize([1.0, east_km * 1e3 / r, north_km * 1e3 / r])
+    }
+
+    fn patch_coords(p: [f64; 3], r: f64) -> (f64, f64) {
+        (p[1] / p[0] * r / 1e3, p[2] / p[0] * r / 1e3)
+    }
+
+    /// Two deep folds 30 km apart on one strike, the second offset across it by a share
+    /// of the wavelength, grown in a uniform field with no wander.
+    fn two_hinges(offset: f64) -> (DeepFolds, f64) {
+        let r = 2.52e5;
+        let wavelength = 7.5e3;
+        let field = move |p: [f64; 3]| {
+            let (x, y) = patch_coords(p, r);
+            DeepSite {
+                direction: Some(tangential(p, [0.0, 1.0, 0.0])),
+                strength: if x.abs() < 80.0 && y.abs() < 40.0 {
+                    1.0
+                } else {
+                    0.0
+                },
+                wavelength,
+                fissure: f64::INFINITY,
+            }
+        };
+        let nuclei = [
+            DeepNucleus {
+                key: (0, 0, 0),
+                center: patch_point(-15.0, 0.0, r),
+                depth: 2.0,
+            },
+            DeepNucleus {
+                key: (1, 0, 0),
+                center: patch_point(15.0, offset * wavelength / 1e3, r),
+                depth: 2.0,
+            },
+        ];
+        (DeepFolds::grow(&nuclei, &field, None, r), r)
+    }
+
+    #[test]
+    fn hinges_link_within_half_a_wavelength() {
+        // A third of a wavelength apart, the two link into one fold, lower where they
+        // joined than where either nucleated (Grasemann and Schmalholz 2012).
+        let (near, _) = two_hinges(0.3);
+        let linked: Vec<&DeepArm> = near
+            .arms
+            .iter()
+            .filter(|a| a.end == ArmEnd::Linked)
+            .collect();
+        assert!(!linked.is_empty());
+        for a in &linked {
+            let joint = *a.heights.last().unwrap();
+            assert!(joint < a.depth && joint > 0.5 * a.depth, "{joint}");
+        }
+        // Four fifths of a wavelength apart, they pass each other en echelon and end
+        // free, plunging to nothing.
+        let (far, r) = two_hinges(0.8);
+        assert!(far.arms.iter().all(|a| a.end == ArmEnd::Free));
+        let (tip, _) = patch_coords(*far.arms[0].points.last().unwrap(), r);
+        assert!(
+            tip > 15.0,
+            "the first fold's tip, at {tip} km, passes the second's nucleus"
+        );
+        for a in &far.arms {
+            assert_eq!(*a.heights.last().unwrap(), 0.0);
+        }
+    }
+
+    #[test]
+    fn a_deep_fold_is_a_crest_between_two_troughs() {
+        // Across the first fold 15 km west of its nucleus, where the second has no arm.
+        let (far, r) = two_hinges(0.8);
+        let at = |north_km: f64| far.at(patch_point(-30.0, north_km, r));
+        let (crest, hold) = at(0.0);
+        assert!(crest > 1.0, "{crest}");
+        assert!((hold - 1.0).abs() < 1e-6, "{hold}");
+        // The troughs either side take up what the crest stands above.
+        let out = 3f64.sqrt() * DeepFolds::width(7.5e3) / 1e3;
+        for side in [-out, out] {
+            let ratio = at(side).0 / crest;
+            assert!((ratio + 2.0 * (-1.5f64).exp()).abs() < 0.02, "{ratio}");
+        }
+        assert!(at(-30.0).0.abs() < 1e-3);
+    }
+
+    #[test]
+    fn deep_folds_join_into_a_network() {
+        let r = 2.52e5;
+        let wavelength = 7.5e3;
+        // A field whose lines converge toward the middle as they run east.
+        let field = move |p: [f64; 3]| {
+            let (x, y) = patch_coords(p, r);
+            DeepSite {
+                direction: Some(tangential(p, [0.0, 1.0, -0.3 * y / 45.0])),
+                strength: if x.abs() < 70.0 && y.abs() < 45.0 {
+                    1.0
+                } else {
+                    0.0
+                },
+                wavelength,
+                fissure: f64::INFINITY,
+            }
+        };
+        let rng = Rng::new(11);
+        let mut nuclei = Vec::new();
+        for i in -7i32..=7 {
+            for j in -5i32..=5 {
+                let id = ((i + 64) * 256 + (j + 64)) as u64;
+                if rng.uniform(id, 3) > 0.4 {
+                    continue;
+                }
+                let x = i as f64 * 9.0 + 6.0 * (rng.uniform(id, 0) - 0.5);
+                let y = j as f64 * 9.0 + 6.0 * (rng.uniform(id, 1) - 0.5);
+                nuclei.push(DeepNucleus {
+                    key: (i, j, 0),
+                    center: patch_point(x, y, r),
+                    depth: fault_depth(rng.uniform(id, 2)),
+                });
+            }
+        }
+        let noise = GradientNoise::new(5);
+        let folds = DeepFolds::grow(&nuclei, &field, Some(&noise), r);
+        // Of the arms that ended well inside the field, most linked into a neighbour.
+        let inside = |p: [f64; 3]| {
+            let (x, y) = patch_coords(p, r);
+            x.abs() < 62.5 && y.abs() < 37.5
+        };
+        let ended: Vec<&DeepArm> = folds
+            .arms
+            .iter()
+            .filter(|a| inside(*a.points.last().unwrap()))
+            .collect();
+        let linked = ended.iter().filter(|a| a.end == ArmEnd::Linked).count();
+        eprintln!(
+            "{} nuclei, {} arms, {} ended inside, {linked} linked",
+            nuclei.len(),
+            folds.arms.len(),
+            ended.len()
+        );
+        assert!(linked * 2 >= ended.len(), "{linked} of {}", ended.len());
+        // No two folds cross: where they meet, they join.
+        type Piece = (usize, (f64, f64), (f64, f64));
+        let pieces: Vec<Piece> = folds
+            .arms
+            .iter()
+            .flat_map(|a| {
+                a.points
+                    .windows(2)
+                    .map(move |w| (a.line, patch_coords(w[0], r), patch_coords(w[1], r)))
+            })
+            .collect();
+        let orient = |p: (f64, f64), q: (f64, f64), s: (f64, f64)| {
+            (q.0 - p.0) * (s.1 - p.1) - (q.1 - p.1) * (s.0 - p.0)
+        };
+        let mut crossings = 0;
+        for (i, a) in pieces.iter().enumerate() {
+            for b in &pieces[i + 1..] {
+                if a.0 == b.0 {
+                    continue;
+                }
+                let d = [
+                    orient(b.1, b.2, a.1),
+                    orient(b.1, b.2, a.2),
+                    orient(a.1, a.2, b.1),
+                    orient(a.1, a.2, b.2),
+                ];
+                if d[0] * d[1] < 0.0 && d[2] * d[3] < 0.0 && d.iter().all(|v| v.abs() > 1e-9) {
+                    crossings += 1;
+                }
+            }
+        }
+        assert_eq!(crossings, 0);
     }
 }

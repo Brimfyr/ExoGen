@@ -1204,6 +1204,65 @@ pub const POLAR_PULSE_RELIEF: f64 = 0.7;
 /// tail of F63) to this power, one over the root of three.
 pub const POLAR_FOLD_PACKET_SPREAD: f64 = 0.58;
 pub const POLAR_FOLD_ORIENTATION_SHARE: f64 = 0.5;
+/// Deep folds (F65). A renewed plain's fold fabric rides on a first-order train of deep
+/// folds, its wavelength this many times the fabric's (the highest known ridge on
+/// Enceladus, at Samarkand Sulcus, is 10 km wide, 100 km long and 1.75 km high, Giese et
+/// al. 2017; its ridge-and-trough terrain is spaced 3 to 4 km, Bland et al. 2007; its
+/// funiscular folds 1.1 km, Barr and Preuss 2010: the order is a choice in that range).
+/// Its hinges nucleate one to a wavelength, each with a depth of its own from the heavy
+/// tail of F63, and their crests are narrow, a Ricker profile this share of the
+/// wavelength wide, between broad troughs, as the folds of a thin-skinned belt are
+/// (ejective folds). The fabric's packets keep the body of their depths' tail, capped at
+/// the depth this share into it (1.6 times the middling fold): the deep folds are the
+/// train's.
+pub const POLAR_DEEP_ORDER: f64 = 3.0;
+pub const POLAR_DEEP_CREST: f64 = 0.125;
+pub const POLAR_FOLD_TAIL_CAP: f64 = 0.15;
+/// A deep fold comes up when its fold has amplified enough, growing exponentially from
+/// its initial depth, so the deeper come up sooner: this long, in the time of the growth
+/// below, for each factor e by which its depth falls short of the deepest a lid holds
+/// (GROOVE_DEPTH_MAX); one that comes up within this share of a wavelength of a fold
+/// already grown is part of it. It grows from its nucleus both ways along the folds'
+/// direction, a step of this share of its wavelength at a time, at a rate that goes with
+/// its depth, until this time: a fold of twice the middling depth, unhindered, reaches
+/// about four and a half wavelengths each way, nine in all, as Samarkand's ridge is ten
+/// times as long as it is wide (Giese et al. 2017). It turns no more than this many
+/// degrees in a step, and the lid's unresolved heterogeneity deflects it by up to this
+/// many degrees in patches this many wavelengths across.
+pub const POLAR_DEEP_ONSET: f64 = 1.2;
+pub const POLAR_DEEP_SPACE: f64 = 0.8;
+pub const POLAR_DEEP_STEP: f64 = 0.25;
+pub const POLAR_DEEP_REACH: f64 = 2.5;
+pub const POLAR_DEEP_TURN_DEG: f64 = 15.0;
+pub const POLAR_DEEP_WANDER_DEG: f64 = 12.0;
+pub const POLAR_DEEP_WANDER_LENGTH: f64 = 4.0;
+/// Two hinges link where they pass within this share of their wavelength of each other
+/// (Grasemann and Schmalholz 2012: slightly more than half the wavelength; farther apart
+/// they overlap en echelon and do not link). Where the two run within this many degrees
+/// of each other, the one that reached the other bends into it ahead at this angle, and
+/// beyond the junction the two are one fold; across a wider angle it abuts the other.
+pub const POLAR_DEEP_LINK: f64 = 0.55;
+pub const POLAR_DEEP_ABUT_DEG: f64 = 50.0;
+pub const POLAR_DEEP_MERGE_DEG: f64 = 25.0;
+/// A hinge stands highest where it nucleated and lower, by up to this share, where it
+/// reached last, so that a linkage leaves a saddle, as linked folds do (Grasemann and
+/// Schmalholz 2012; the share is a choice); a free end plunges over this many
+/// wavelengths. A hinge stops where the fabric's strength falls under this, and this
+/// many wavelengths short of one of its terrain's own vents, and it nucleates no nearer
+/// one than this many (a younger crack across the terrain cuts its folds, and does not
+/// bound them).
+pub const POLAR_DEEP_SADDLE: f64 = 0.3;
+pub const POLAR_DEEP_TAPER: f64 = 1.0;
+pub const POLAR_DEEP_STOP: f64 = 0.25;
+pub const POLAR_DEEP_FISSURE: f64 = 0.5;
+pub const POLAR_DEEP_FISSURE_NUCLEUS: f64 = 1.0;
+/// A deep fold's profile is a crest with a trough each side that takes up what the crest
+/// stands above; one of the middling depth is as steep as the fabric's folds (their
+/// amplitude over a sixth of their wavelength, against the profile's steepest flank over
+/// its width), a deeper one steeper in proportion, times this. The fabric's folds give
+/// way to it by this share where it stands, and the rest ride on its limbs.
+pub const POLAR_DEEP_RELIEF: f64 = 1.0;
+pub const POLAR_DEEP_REPLACE: f64 = 0.5;
 pub const POLAR_TECTONIC_RMS: f64 = 120.0;
 pub const POLAR_TECTONIC_LENGTH: f64 = 20e3;
 pub const POLAR_MARGIN_HEIGHT: f64 = 400.0;
