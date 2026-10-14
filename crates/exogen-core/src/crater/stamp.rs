@@ -26,6 +26,11 @@ use crate::constants::{
 use crate::constants::{
     FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD, PLANAR_TEXTURE_RADII,
 };
+use crate::constants::{
+    TERRACE_ABSENT, TERRACE_BENCH_SLOPE, TERRACE_BLOCK_LENGTH, TERRACE_BOW, TERRACE_HUMMOCK_SCALE,
+    TERRACE_HUMMOCKS, TERRACE_INWARD, TERRACE_LEAST, TERRACE_OFFSET, TERRACE_RIM_SCALLOP,
+    TERRACE_SCARP, TERRACE_SCARP_SPREAD, TERRACE_TOE, TERRACE_WALL_SHARE, TERRACE_WOBBLE,
+};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
@@ -225,6 +230,10 @@ pub struct StampParams {
     /// such guard: there the renewal's own turn takes what stood before it, by its
     /// weight, and a crater across its edge is softened rather than cut.
     pub renewal_guard: bool,
+    /// Draw a complex crater's wall terraced as it collapsed (F67): in the finish, where
+    /// the grid resolves it. The coarse loop keeps the plain wall, and the finish restores
+    /// its terraces with the rest of its detail.
+    pub terraced: bool,
 }
 
 /// Stamp one crater. Returns the number of cells touched.
@@ -265,6 +274,10 @@ pub fn stamp_compute(
     let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
         .then(|| CraterTexture::new(p.seed, dim));
+    // The wall as it collapsed (F67), where the grid draws it.
+    let terraces = (p.terraced && p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
+        .then(|| Terraces::new(p.seed, dim))
+        .flatten();
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
     let edge = EdgeShape::new(p.seed, dim.ejecta_radius, grid.delta() * body_radius);
@@ -337,11 +350,17 @@ pub fn stamp_compute(
         }
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.factor(phi);
-        let mut v = profile.height(re)
+        let rw = terraces
+            .as_ref()
+            .map_or(re, |t| t.radius(re, phi, dim, profile.sigma));
+        let mut v = profile.height(rw)
             * p.amplitude
             * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
         if let Some(t) = &texture {
-            v = t.height(re, phi, v);
+            v = t.height(rw, phi, v);
+        }
+        if let Some(t) = &terraces {
+            v += t.relief(re, phi, dim) * p.amplitude;
         }
         if let Some(rg) = &rings {
             // Rings follow the rim's scalloped shape with a small wobble of their own.
@@ -400,7 +419,7 @@ pub fn stamp_compute(
             };
             write.deep = deep[idx] + ((source_deep - deep[idx] as f64) * mix) as f32;
             write.melt = if thick {
-                texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32
+                texture.as_ref().map_or(0.0, |t| t.melt_fraction(rw, phi)) as f32
             } else {
                 melts[idx]
             };
@@ -880,6 +899,226 @@ impl Rings {
     }
 }
 
+/// Azimuth bins of a crater's terrace tables.
+const TERRACE_BINS: usize = 256;
+
+/// The wall of a complex crater as it collapsed (F67): the transient cavity's rim slumped
+/// inward on inward-facing normal faults in rings of blocks, terrace after terrace from
+/// the rim inward, each narrower than the one outside it (Pearce and Melosh 1986). A ring
+/// is broken into blocks of their own length, throw and bow, some of which slumped no
+/// terrace at all, so that the terraces come and go around the crater and the wall's width
+/// changes from block to block; the outermost blocks scallop the rim crest and the
+/// innermost blocks' toes the floor's edge.
+struct Terraces {
+    /// Per terrace, from the rim inward, by azimuth: its inner scarp's radius, whether the
+    /// terrace stands there and its scarp's width, in crater radii.
+    levels: Vec<(Vec<f32>, Vec<f32>, Vec<f32>)>,
+    /// The broken surface of the slumped blocks, and its relief, m.
+    hummocks: PlanarLattice,
+    hummock_relief: f64,
+    /// The floor's edge by azimuth, crater radii.
+    toe: Vec<f32>,
+    /// The rim crest's radius factor by azimuth, as `RimShape` keeps it.
+    rim: [f64; 64],
+    /// The width of the rim's headscarp, crater radii.
+    head: f64,
+}
+
+impl Terraces {
+    fn new(seed: u64, dim: &Dimensions) -> Option<Self> {
+        if !matches!(dim.class, CraterClass::Complex | CraterClass::PeakRing)
+            || dim.terrace_width <= 0.0
+            || dim.radius <= 0.0
+        {
+            return None;
+        }
+        let r = dim.radius;
+        let wall = (r - dim.floor_radius).max(0.0);
+        // The terraces' widths from the rim inward.
+        let mut widths = Vec::new();
+        let (mut w, mut sum) = (dim.terrace_width, 0.0);
+        while w >= TERRACE_LEAST * dim.terrace_width && sum + w <= TERRACE_WALL_SHARE * wall {
+            widths.push(w);
+            sum += w;
+            w *= TERRACE_INWARD;
+        }
+        if widths.is_empty() {
+            return None;
+        }
+        let tau = 2.0 * std::f64::consts::PI;
+        let rng = Rng::new(seed ^ 0x7E44_ACE5);
+        // A ring of blocks round a circumference of `length` m, each about `block` m long:
+        // by bin, the position within the block (0 to 1), the block's offset draw (-1 to
+        // 1), whether it stands and its scarp's width draw (-1 to 1).
+        let ring = |level: u64, length: f64, block: f64| -> Vec<(f64, f64, bool, f64)> {
+            let n = ((length / block).round() as usize).max(3);
+            let key = |i: usize| level * 4096 + i as u64;
+            let lengths: Vec<f64> = (0..n)
+                .map(|i| 2f64.powf(2.0 * rng.uniform(key(i), 0) - 1.0))
+                .collect();
+            let total: f64 = lengths.iter().sum();
+            let mut cuts = Vec::with_capacity(n);
+            let mut acc = 0.0;
+            for l in &lengths {
+                cuts.push(acc);
+                acc += l / total;
+            }
+            let start = rng.uniform(key(4095), 1);
+            (0..TERRACE_BINS)
+                .map(|b| {
+                    let turn = (b as f64 / TERRACE_BINS as f64 - start).rem_euclid(1.0);
+                    let i = cuts.partition_point(|&c| c <= turn).max(1) - 1;
+                    let end = if i + 1 < n { cuts[i + 1] } else { 1.0 };
+                    let u = ((turn - cuts[i]) / (end - cuts[i]).max(1e-12)).clamp(0.0, 1.0);
+                    let offset = 2.0 * rng.uniform(key(i), 2) - 1.0;
+                    let stands = rng.uniform(key(i), 3) >= TERRACE_ABSENT;
+                    let width = 2.0 * rng.uniform(key(i), 4) - 1.0;
+                    (u, offset, stands, width)
+                })
+                .collect()
+        };
+        let bow = |u: f64| (std::f64::consts::PI * u).sin() - 2.0 / std::f64::consts::PI;
+        let mut levels = Vec::with_capacity(widths.len());
+        let mut outer = r;
+        let mut first = Vec::new();
+        let mut last = Vec::new();
+        for (k, &w) in widths.iter().enumerate() {
+            let inner = outer - w;
+            let blocks = ring(k as u64, tau * (inner + 0.5 * w), TERRACE_BLOCK_LENGTH * w);
+            // The scarp's trace wanders at the scale of a few terrace widths.
+            let wander_seed = seed ^ (0x7E44_0000 + k as u64);
+            let orders = tau * (inner + 0.5 * w) / (2.0 * w);
+            let scarp: Vec<f32> = blocks
+                .iter()
+                .enumerate()
+                .map(|(b, &(u, offset, _, _))| {
+                    let phi = b as f64 / TERRACE_BINS as f64 * tau;
+                    let at = inner
+                        + w * (TERRACE_OFFSET * offset
+                            + TERRACE_BOW * (std::f64::consts::PI * u).sin()
+                            + TERRACE_WOBBLE * lobes(wander_seed, phi, orders));
+                    (at / r) as f32
+                })
+                .collect();
+            let stands: Vec<f32> = blocks
+                .iter()
+                .map(|&(_, _, s, _)| if s { 1.0 } else { 0.0 })
+                .collect();
+            let scarp_width: Vec<f32> = blocks
+                .iter()
+                .map(|&(_, _, _, d)| {
+                    (TERRACE_SCARP * w * (1.0 + TERRACE_SCARP_SPREAD * d) / r) as f32
+                })
+                .collect();
+            levels.push((scarp, stands, scarp_width));
+            if k == 0 {
+                first = blocks.clone();
+            }
+            last = blocks;
+            outer = inner;
+        }
+        // The rim crest, scalloped by the outermost slumps: out in each one's middle, in
+        // at the cusps between them.
+        let w1 = widths[0];
+        let mut rim = [1.0; 64];
+        for (b, t) in rim.iter_mut().enumerate() {
+            let (u, _, _, _) = first[b * TERRACE_BINS / 64];
+            *t = 1.0 / (1.0 + TERRACE_RIM_SCALLOP * w1 / r * bow(u));
+        }
+        // The floor's edge at the innermost blocks' toes, bulging in at each one's middle.
+        let wk = widths[widths.len() - 1];
+        let toe: Vec<f32> = last
+            .iter()
+            .map(|&(u, _, _, _)| ((dim.floor_radius - TERRACE_TOE * wk * bow(u)) / r) as f32)
+            .collect();
+        // The slumped blocks are broken: hummocks at half the outermost terrace's width,
+        // standing a share of a terrace's drop.
+        let cells = ((r / (TERRACE_HUMMOCK_SCALE * w1)).round() as u32).clamp(2, 64);
+        let hummocks = PlanarLattice::new(&Rng::new(seed ^ 0x40CC_0C55), 0, cells, 1.1);
+        let hummock_relief =
+            TERRACE_HUMMOCKS * (dim.depth + dim.rim_height) / (widths.len() + 1) as f64;
+        Some(Self {
+            levels,
+            hummocks,
+            hummock_relief,
+            toe,
+            rim,
+            head: TERRACE_SCARP * w1 / r,
+        })
+    }
+
+    /// The radius, m, at which to read a crater's plain profile for the terraced wall at
+    /// the elliptical radius `re`, m, and azimuth `phi`, with the scarps softened by the
+    /// crater's degradation `blur`, m: the floor reaches the blocks' toes, each terrace's
+    /// bench keeps a little of the wall's slope and its scarp drops to the next, and the
+    /// wall below the terraces is a plain slope to the floor.
+    fn radius(&self, re: f64, phi: f64, dim: &Dimensions, blur: f64) -> f64 {
+        let r = dim.radius;
+        let x = re / r;
+        if x >= 1.0 {
+            return re;
+        }
+        let xf = dim.floor_radius / r;
+        let blur = blur / r;
+        let turn = (phi / (2.0 * std::f64::consts::PI)).rem_euclid(1.0) * TERRACE_BINS as f64;
+        let i = (turn.floor() as usize) % TERRACE_BINS;
+        let j = (i + 1) % TERRACE_BINS;
+        let f = turn - turn.floor();
+        let at = |v: &[f32]| v[i] as f64 * (1.0 - f) + v[j] as f64 * f;
+        let toe = at(&self.toe).clamp(0.05, 0.98);
+        if x <= toe {
+            return x * xf / toe * r;
+        }
+        let lin = |y: f64| xf + (y - toe) * (1.0 - xf) / (1.0 - toe);
+        let soft = |t: f64| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let mut value = lin(x);
+        let (mut outer, mut outer_w) = (1.0, self.head.hypot(blur));
+        for (k, (scarp, stands, width)) in self.levels.iter().enumerate() {
+            let w = at(width).hypot(blur);
+            let inner = at(scarp).min(outer - 0.5 * w).max(toe + 0.5 * w);
+            let mid = 0.5 * (inner + outer);
+            let dev = (1.0 - TERRACE_BENCH_SLOPE) * (lin(mid) - lin(x));
+            // The bench rises across its own scarp and gives way across the one above it;
+            // the outermost gives way to the rim's headscarp before the crest.
+            let rise = soft((x - inner) / w + 0.5);
+            let fall = if k == 0 {
+                soft((outer - x) / outer_w - 0.5)
+            } else {
+                soft((outer - x) / outer_w + 0.5)
+            };
+            value += at(stands) * rise * fall * dev;
+            outer = inner;
+            outer_w = w;
+        }
+        value * r
+    }
+
+    /// The broken surface of the slumped blocks at the elliptical radius `re`, m, and
+    /// azimuth `phi`: hummocks across the terraced wall, fading at the floor's edge and the
+    /// rim's headscarp, m.
+    fn relief(&self, re: f64, phi: f64, dim: &Dimensions) -> f64 {
+        let r = dim.radius;
+        let x = re / r;
+        if x >= 1.0 {
+            return 0.0;
+        }
+        let xf = dim.floor_radius / r;
+        let soft = |t: f64| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let window = soft((x - xf) / (0.5 * (1.0 - xf))) * soft((1.0 - x) / self.head - 0.5);
+        if window <= 0.0 {
+            return 0.0;
+        }
+        let (s, c) = phi.sin_cos();
+        self.hummock_relief * window * self.hummocks.sample(x * c, x * s)
+    }
+}
+
 /// Rim scalloping of one crater, tabulated around the azimuth as a radius factor.
 struct RimShape {
     table: [f64; 64],
@@ -890,6 +1129,13 @@ impl RimShape {
     fn new(seed: u64, dim: &Dimensions, enabled: bool) -> Self {
         let mut table = [1.0; 64];
         let flat = seed == 0 || !enabled;
+        // A complex crater's rim is scalloped by the slumps of its outermost terrace (F67).
+        if !flat && let Some(t) = Terraces::new(seed, dim) {
+            return Self {
+                table: t.rim,
+                flat: false,
+            };
+        }
         if !flat {
             let amplitude = if dim.class == CraterClass::Simple {
                 RIM_CRENULATION_SIMPLE
@@ -1049,6 +1295,9 @@ pub fn restore_compute(
     let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
         .then(|| CraterTexture::new(p.seed, dim));
+    let terraces = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
+        .then(|| Terraces::new(p.seed, dim))
+        .flatten();
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
     let edge = EdgeShape::new(p.seed, dim.ejecta_radius, grid.delta() * body_radius);
@@ -1074,11 +1323,21 @@ pub fn restore_compute(
             0.0
         };
         let kept = fine * (1.0 - cut) * burial_factor(fine, thickness);
+        let rw = terraces
+            .as_ref()
+            .map_or(re, |t| t.radius(re, phi, dim, p.fine_blur));
         let mut d = detail.height(re)
             * p.detail_weight
             * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
         if let Some(t) = &texture {
-            d = t.height(re, phi, d);
+            d = t.height(rw, phi, d);
+        }
+        // The terraces the coarse grid could not carry: the wall as it collapsed, less the
+        // plain wall the loop drew (F67).
+        if let Some(t) = &terraces
+            && re < dim.radius
+        {
+            d += (fresh.height(rw) - fresh.height(re) + t.relief(re, phi, dim)) * p.detail_weight;
         }
         if let Some(rg) = &rings {
             // The ring detail the coarse grid could not carry.
@@ -1123,7 +1382,7 @@ pub fn restore_compute(
             // whatever older craters left, and start the melt afresh.
             write.deep = base_deep[idx];
             write.melt = if thick {
-                texture.as_ref().map_or(0.0, |t| t.melt_fraction(re, phi)) as f32
+                texture.as_ref().map_or(0.0, |t| t.melt_fraction(rw, phi)) as f32
             } else {
                 melts[idx]
             };
@@ -1181,6 +1440,7 @@ mod tests {
             deep: false,
             maturity_timescale: 0.5,
             renewal_guard: true,
+            terraced: false,
         };
         let touched = stamp(
             &mut layers,
@@ -1271,6 +1531,7 @@ mod tests {
                 deep: false,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
+                terraced: false,
             };
             stamp(
                 &mut layers,
@@ -1353,6 +1614,7 @@ mod tests {
                 deep: false,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
+                terraced: false,
             };
             stamp(
                 &mut layers,
@@ -1461,6 +1723,7 @@ mod tests {
             deep: false,
             maturity_timescale: 0.5,
             renewal_guard: true,
+            terraced: false,
         };
         stamp(
             &mut layers,
@@ -1505,5 +1768,88 @@ mod tests {
                 "{n} vs {expected}"
             );
         }
+    }
+
+    #[test]
+    fn a_complex_crater_wall_is_terraced_and_differs_around_it() {
+        // F67: a lunar crater the size of Copernicus.
+        let moon = Scaling {
+            simple_complex: 16_457.0,
+            peak_ring: 140_000.0,
+            multi_ring: 330_000.0,
+            gravity: 1.62,
+        };
+        let dim = dimensions(93e3, &moon);
+        // The outermost terrace is Pearce and Melosh's 0.09 D^0.87 km.
+        let expected = 0.09 * 93f64.powf(0.87);
+        assert!(
+            (dim.terrace_width / 1e3 - expected).abs() < 0.01,
+            "{}",
+            dim.terrace_width
+        );
+        // Mercury's, at its smaller strength length, is a tenth narrower.
+        let mercury = Scaling {
+            simple_complex: 7_221.0,
+            ..moon
+        };
+        let ratio = dimensions(93e3, &mercury).terrace_width / dim.terrace_width;
+        assert!((0.88..0.92).contains(&ratio), "{ratio}");
+        let t = Terraces::new(7, &dim).expect("a terraced wall");
+        assert!(t.levels.len() >= 3, "{}", t.levels.len());
+        let table = ProfileTable::new(dim, 0.0);
+        let r = dim.radius;
+        let relief = dim.depth + dim.rim_height;
+        let n = 800;
+        let (mut edges, mut firsts, mut benches) = (Vec::new(), Vec::new(), 0usize);
+        for a in 0..16 {
+            let phi = a as f64 * std::f64::consts::TAU / 16.0;
+            let heights: Vec<f64> = (0..=n)
+                .map(|i| table.height(t.radius(i as f64 / n as f64 * r, phi, &dim, 0.0)))
+                .collect();
+            // The wall never falls on the way out to the crest (the profile's table, not the
+            // terraces, rounds the crest itself between its samples).
+            for w in heights[..(0.97 * n as f64) as usize].windows(2) {
+                assert!(w[1] >= w[0] - 1e-6 * relief, "{a}");
+            }
+            let edge = heights
+                .iter()
+                .position(|&h| h > -dim.depth + 0.01 * relief)
+                .expect("a wall");
+            edges.push(edge as f64 / n as f64);
+            // Benches: runs of the wall that climb at under 0.6 of its mean slope.
+            let mean = relief / (n - edge) as f64;
+            let mut run = 0;
+            let mut first = None;
+            for (i, w) in heights.windows(2).enumerate().skip(edge) {
+                if w[1] - w[0] < 0.6 * mean {
+                    run += 1;
+                    if run == 4 {
+                        benches += 1;
+                        first.get_or_insert(i as f64 / n as f64);
+                    }
+                } else {
+                    run = 0;
+                }
+            }
+            firsts.push(first.unwrap_or(0.0));
+        }
+        let spread = |v: &[f64]| {
+            v.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+                - v.iter().cloned().fold(f64::INFINITY, f64::min)
+        };
+        // Two benches or more on most radii, and neither the floor's edge nor the benches
+        // copy one another round the crater.
+        assert!(benches >= 2 * 16, "{benches}");
+        assert!(spread(&edges) > 0.01, "{edges:?}");
+        assert!(spread(&firsts) > 0.01, "{firsts:?}");
+        // The rim crest is scalloped by the outermost slumps.
+        let rim = RimShape::new(7, &dim, true);
+        let (lo, hi) = rim
+            .table
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| {
+                (lo.min(v), hi.max(v))
+            });
+        assert!(hi - lo > 0.02, "{lo} {hi}");
     }
 }

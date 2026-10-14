@@ -60,6 +60,8 @@ pub struct Dimensions {
     pub depth: f64,
     pub rim_height: f64,
     pub floor_radius: f64,
+    /// The width of the outermost wall terrace, m (F67); none for a simple crater.
+    pub terrace_width: f64,
     pub peak_height: f64,
     pub peak_radius: f64,
     /// Ridge rings inside the rim as (radius, height), outermost first.
@@ -85,6 +87,7 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
             depth: pow_law(PIKE_SIMPLE_DEPTH, d_km) * 1e3,
             rim_height: pow_law(PIKE_SIMPLE_RIM, d_km) * 1e3,
             floor_radius: 0.0,
+            terrace_width: 0.0,
             peak_height: 0.0,
             peak_radius: 0.0,
             rings: [(0.0, 0.0); MAX_RINGS],
@@ -100,6 +103,13 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
             let floor_radius = (0.5 * pow_law(FLOOR_DIAMETER, d_km) * 1e3)
                 .min(0.75 * radius)
                 .max(0.3 * radius);
+            // The outermost terrace's width, scaled from the Moon's by the strength
+            // length the transition diameter measures (F67).
+            let terrace_width = pow_law(TERRACE_WIDTH, d_km)
+                * 1e3
+                * (s.simple_complex / TERRACE_REFERENCE_TRANSITION)
+                    .max(1e-3)
+                    .powf(1.0 - TERRACE_WIDTH.1);
             let (peak_height, peak_radius) = if class == CraterClass::Complex {
                 (
                     pow_law(CENTRAL_PEAK_HEIGHT, d_km) * 1e3,
@@ -142,6 +152,7 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
                 depth,
                 rim_height,
                 floor_radius,
+                terrace_width,
                 peak_height,
                 peak_radius,
                 rings,

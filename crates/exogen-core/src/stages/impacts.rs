@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 15;
+pub const VERSION: u64 = 16;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -293,6 +293,7 @@ impl ImpactProcess {
                 deep,
                 maturity_timescale: inp.maturity_timescale,
                 renewal_guard: true,
+                terraced: false,
             };
             stamp(
                 layers,

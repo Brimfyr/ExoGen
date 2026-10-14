@@ -895,6 +895,48 @@ pub const RAY_TEXTURE_MIN_CELLS: f64 = 24.0;
 /// floor texture amplitudes. Provisional, to be tuned against imagery in Phase 7.
 pub const RIM_CRENULATION_SIMPLE: f64 = 0.015;
 pub const RIM_CRENULATION_COMPLEX: f64 = 0.035;
+/// Wall terraces of complex craters (F67). The outermost terrace of a lunar crater D km
+/// across is 0.09 D^0.87 km wide (Pearce and Melosh 1986, a least-squares fit to lunar
+/// craters, whose widths a slump model with a constant yield strength reproduces). If a
+/// terrace's width depends only on the crater's size and the strength length Y / (rho g)
+/// of the collapsing target, it goes as that length to the remaining power, 0.13; the
+/// simple-to-complex transition diameter measures the same length, so a body's terraces
+/// scale with its transition against the Moon's (this, m): Mercury's come out a tenth
+/// narrower than the Moon's at a given size, as Leith and McKinnon (1991) measured them
+/// narrower.
+pub const TERRACE_WIDTH: (f64, f64) = (0.09, 0.87);
+pub const TERRACE_REFERENCE_TRANSITION: f64 = 16_457.0;
+/// Each terrace inward is this share of the one outside it, terrace widths growing outward
+/// toward the rim (Pearce and Melosh 1986; the share is a choice), until a terrace would be
+/// narrower than this share of the outermost or the terraces would fill more than this
+/// share of the wall; below them the wall is a plain slope of debris down to the floor.
+pub const TERRACE_INWARD: f64 = 0.75;
+pub const TERRACE_LEAST: f64 = 0.35;
+pub const TERRACE_WALL_SHARE: f64 = 0.85;
+/// A terrace is a ring of slump blocks, each this many of the terrace's widths long on
+/// average, longer or shorter by up to a factor of two; a block's scarp stands off its
+/// neighbours' by up to this share of the terrace's width, the throw of the faults
+/// varying around a crater, and bows out toward the rim by this share in its middle, as a
+/// slump's headscarp does; this share of the blocks slumped no terrace at all.
+pub const TERRACE_BLOCK_LENGTH: f64 = 5.0;
+pub const TERRACE_OFFSET: f64 = 0.35;
+pub const TERRACE_BOW: f64 = 0.25;
+pub const TERRACE_ABSENT: f64 = 0.2;
+/// A terrace's bench keeps this share of the wall's slope; its scarp is this share of its
+/// width wide, wider or narrower by up to this share from block to block, and wanders
+/// along its trace by this share of the width at the scale of a few widths; a slumped
+/// block is broken, its bench hummocky by this share of a terrace's drop at this share of
+/// the outermost terrace's width. The outermost blocks scallop the rim crest, bowing it
+/// out by this share of the outermost terrace's width in each one's middle; the innermost
+/// blocks' toes bulge the floor's edge in by this share of the innermost terrace's width.
+pub const TERRACE_BENCH_SLOPE: f64 = 0.35;
+pub const TERRACE_SCARP: f64 = 0.2;
+pub const TERRACE_SCARP_SPREAD: f64 = 0.5;
+pub const TERRACE_WOBBLE: f64 = 0.15;
+pub const TERRACE_HUMMOCKS: f64 = 0.25;
+pub const TERRACE_HUMMOCK_SCALE: f64 = 0.5;
+pub const TERRACE_RIM_SCALLOP: f64 = 0.4;
+pub const TERRACE_TOE: f64 = 0.5;
 pub const EJECTA_TEXTURE: f64 = 0.5;
 pub const BASIN_SCULPTURE: f64 = 0.25;
 pub const FLOOR_TEXTURE: f64 = 0.04;

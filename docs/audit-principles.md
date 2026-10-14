@@ -6,7 +6,7 @@ Principles 13 to 15 went into PLAN.md on 2026-10-14, after most of the model was
 - **14, features from fields.** Where, when, how large and in what form a feature appears is read from physical fields at its place and time. Events (impacts, eruptions) stay objects. Noise stands only for the unresolved variation of a named quantity.
 - **15, in-between worlds.** A calibration fixes a constant of a process, never one body's outcome. A class of feature comes or goes only where a named physical threshold is crossed. Validation carries interpolated bodies.
 
-Status at commit 7088060: every entry is open.
+Status: every entry is open unless marked closed, with the milestone that closed it.
 
 Which reference bodies trigger which switch today (from `exogen derive` on the presets):
 
@@ -156,11 +156,11 @@ These features take a fixed profile, with noise for variety, rather than a form 
 | Io's mountains | `block_radius`, `block_profile` (stages/io.rs) | thrust blocks on faults across a compressive field, their outline noise now |
 | Io's plume rings | `ring_profile` (stages/io.rs) | ballistic deposit from the vent speed, which sets the ring's radius |
 | Paterae | `patera_compute` (stages/io.rs) | outline from the faults of the block it sank into, a polygon share with noise now |
-| Crater walls and rims | `fresh_height` (crater/morphology.rs), `RimShape` (crater/stamp.rs) | one radial profile read at a radius stretched by a crenulation of the outline, so the floor's edge, the wall and the rim are scaled copies of the outline and the wall is as wide all round; the wall should come from its collapse: slump blocks on arcuate faults, each with its own arc, width and drop, terraces that come and go around the crater, the floor's edge at their toes and a rim crest scalloped where large slumps took it back |
+| Crater walls and rims | `fresh_height` (crater/morphology.rs), `RimShape` (crater/stamp.rs) | closed by F67, the sixteenth milestone: the wall is made by its collapse, terraces of slump blocks on arcuate faults whose widths follow Pearce and Melosh (1986) and the strength length, a scalloped rim and the floor's edge at the blocks' toes |
 
-Impact craters are events and stay objects. Their sizes follow scaling laws, but their walls do not yet (the last row).
+Impact craters are events and stay objects. Their sizes follow scaling laws, and since F67 their walls follow their collapse (the last row).
 
-When: crater walls with the ring systems of large impacts, the next ice milestone; chaos with Europa; Io's features with Io; the rest in the earlier-phases revisit.
+When: chaos with Europa; Io's features with Io; the rest in the earlier-phases revisit.
 
 ## Calibrations on one body (principle 15)
 
