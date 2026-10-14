@@ -87,6 +87,23 @@ pub fn survival(wavelength: f64, dt_gyr: f64, shell: &Shell) -> f64 {
     1.0 - ductile * (1.0 - flowed)
 }
 
+/// The share of a wavelength's relief that a thinned shell, `factor` of the shell's
+/// thickness and lid where it stands, lets survive for a time beyond what the shell
+/// itself would (F66): the ground beside a renewed terrain, under the episode's thinned
+/// shell while the episode lasts.
+pub fn thinned_survival(wavelength: f64, dt_gyr: f64, shell: &Shell, factor: f64) -> f64 {
+    let thinned = Shell {
+        thickness: shell.thickness * factor,
+        elastic: shell.elastic * factor,
+        ..*shell
+    };
+    let base = survival(wavelength, dt_gyr, shell);
+    if base <= 0.0 {
+        return 1.0;
+    }
+    (survival(wavelength, dt_gyr, &thinned) / base).clamp(0.0, 1.0)
+}
+
 /// The fraction of a crater's relief that survives from its formation to the present,
 /// the shell changing as the thermal history has it, sampled in steps.
 pub fn survival_since(
@@ -221,6 +238,11 @@ fn halve(field: &Field<f32>) -> Option<Field<f32>> {
 pub struct Local<'a> {
     pub equilibrium: Option<&'a [f32]>,
     pub renew: Option<(&'a [f32], f64)>,
+    /// While a terrain renews, the factor its episode's thinning puts on the shell under
+    /// each cell, and for how long, Gyr: the ground beside the terrain relaxes the
+    /// wavelengths shorter than the renewal length under that thinner shell (F66), each
+    /// by its own survival.
+    pub halo: Option<(&'a [f32], f64)>,
 }
 
 /// The step. Returns the relaxed surface, which is the renewed terrain's floor where it
@@ -302,13 +324,37 @@ fn relax_deviation(
                 .collect::<Vec<_>>()
         );
     }
-    // What a cell keeps of the bands shorter than the renewal length: all of them
-    // outside a renewed terrain, none inside, and by its weight across the edge and the
-    // halo.
+    // What a cell keeps of the bands shorter than the renewal length: none inside a
+    // renewed terrain, by its weight across the edge, and beside it what the episode's
+    // thinner shell lets each band keep (F66), from a table over the thinning factor.
     let kept = |k: usize| -> (usize, f32) {
         match (local.renew, renew_level) {
             (Some((weights, _)), Some(level)) => (level, 1.0 - weights[k].clamp(0.0, 1.0)),
             _ => (0, 1.0),
+        }
+    };
+    const STEPS: usize = 100;
+    let thinned: Vec<Vec<f32>> = match (local.halo, renew_level) {
+        (Some((_, dt)), Some(level)) if dt > 0.0 => (0..level)
+            .map(|l| {
+                (0..=STEPS)
+                    .map(|i| {
+                        thinned_survival(wavelengths[l], dt, shell, i as f64 / STEPS as f64) as f32
+                    })
+                    .collect()
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let beside = |l: usize, k: usize| -> f32 {
+        match (local.halo, thinned.get(l)) {
+            (Some((factors, _)), Some(table)) => {
+                let x = factors[k].clamp(0.0, 1.0) * STEPS as f32;
+                let i = (x.floor() as usize).min(STEPS - 1);
+                let f = x - i as f32;
+                table[i] + (table[i + 1] - table[i]) * f
+            }
+            _ => 1.0,
         }
     };
     let h = height.as_mut_slice();
@@ -321,7 +367,7 @@ fn relax_deviation(
         let mut prev = *cell;
         for (l, low) in lows.iter().enumerate() {
             let band = prev - low.as_slice()[k];
-            v += band * factors[l] * if l < level { keep } else { 1.0 };
+            v += band * factors[l] * if l < level { keep * beside(l, k) } else { 1.0 };
             prev = low.as_slice()[k];
         }
         v += prev * factors[levels];
@@ -336,6 +382,31 @@ fn relax_deviation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_thinned_shell_relaxes_the_long_wavelengths_beside_a_terrain_first() {
+        // F66: under an Enceladus shell thinned to 0.45 of its 44 km for an episode of 10
+        // Myr, a 100 km load relaxes and a 12 km crater keeps its relief; the shell as it
+        // is relaxes neither.
+        let shell = Shell {
+            thickness: 44e3,
+            elastic: 23e3,
+            surface_temperature: 75.0,
+            basal_temperature: 273.0,
+            gravity: 0.113,
+            viscosity_scale: 1.0,
+        };
+        assert!(thinned_survival(100e3, 0.01, &shell, 0.45) < 0.05);
+        assert!(thinned_survival(12e3, 0.01, &shell, 0.45) > 0.99);
+        assert!((thinned_survival(100e3, 0.01, &shell, 1.0) - 1.0).abs() < 1e-9);
+        // A thinner shell, a larger body's, relaxes a crater of 25 km beside the terrain.
+        let thin = Shell {
+            thickness: 13.3e3,
+            elastic: 6.9e3,
+            ..shell
+        };
+        assert!(thinned_survival(25e3, 0.01, &thin, 0.3) < 0.05);
+    }
 
     #[test]
     fn warm_shells_relax_long_wavelengths_first() {

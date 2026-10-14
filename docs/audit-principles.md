@@ -156,10 +156,11 @@ These features take a fixed profile, with noise for variety, rather than a form 
 | Io's mountains | `block_radius`, `block_profile` (stages/io.rs) | thrust blocks on faults across a compressive field, their outline noise now |
 | Io's plume rings | `ring_profile` (stages/io.rs) | ballistic deposit from the vent speed, which sets the ring's radius |
 | Paterae | `patera_compute` (stages/io.rs) | outline from the faults of the block it sank into, a polygon share with noise now |
+| Crater walls and rims | `fresh_height` (crater/morphology.rs), `RimShape` (crater/stamp.rs) | one radial profile read at a radius stretched by a crenulation of the outline, so the floor's edge, the wall and the rim are scaled copies of the outline and the wall is as wide all round; the wall should come from its collapse: slump blocks on arcuate faults, each with its own arc, width and drop, terraces that come and go around the crater, the floor's edge at their toes and a rim crest scalloped where large slumps took it back |
 
-Impact craters are events and stay objects; their forms already follow scaling laws.
+Impact craters are events and stay objects. Their sizes follow scaling laws, but their walls do not yet (the last row).
 
-When: chaos with Europa; Io's features with Io; the rest in the earlier-phases revisit.
+When: crater walls with the ring systems of large impacts, the next ice milestone; chaos with Europa; Io's features with Io; the rest in the earlier-phases revisit.
 
 ## Calibrations on one body (principle 15)
 

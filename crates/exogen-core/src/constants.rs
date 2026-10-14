@@ -1148,12 +1148,12 @@ pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 /// its episode lasts: in the thinned, hot zone every wavelength up to the zone's scale
 /// relaxes in a geological instant, so no ghost of an older crater survives there.
 pub const POLAR_RENEWAL_LENGTH_SHARE: f64 = 0.2;
-/// A renewed terrain takes the old relief by degrees (F60): all of it inside, a ramp
-/// across its edge (POLAR_MARGIN_RAMP), and beyond the edge a halo, where the terrain's
-/// heat and strain reached into the old ground: this share of the relief at the edge,
-/// falling to nothing over this many mean shell thicknesses (lateral conduction and the
-/// margin's flexure reach about as far as the shell is thick). The terrain's fabric
-/// fades across the same halo.
+/// A renewed terrain takes the old relief inside and across a ramp at its edge
+/// (POLAR_MARGIN_RAMP, F60); beside it the old ground relaxes under the episode's thinned
+/// shell by the law of F39 (F66). The terrain's fabric runs out into the old ground and
+/// fades over a halo: this share of its strength at the edge, falling to nothing over this
+/// many mean shell thicknesses (the margin's flexure reaches about as far as the shell is
+/// thick).
 pub const POLAR_HALO_PEAK: f64 = 0.5;
 pub const POLAR_HALO_SHELLS: f64 = 1.0;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
@@ -1239,11 +1239,13 @@ pub const POLAR_DEEP_WANDER_LENGTH: f64 = 4.0;
 /// Two hinges link where they pass within this share of their wavelength of each other
 /// (Grasemann and Schmalholz 2012: slightly more than half the wavelength; farther apart
 /// they overlap en echelon and do not link). Where the two run within this many degrees
-/// of each other, the one that reached the other bends into it ahead at this angle, and
-/// beyond the junction the two are one fold; across a wider angle it abuts the other.
+/// of each other, the one that reached the other bends into it where its own heading
+/// meets it, or, running alongside, no more steeply than this angle, and beyond the
+/// junction the two are one fold; across a wider angle it runs straight on into the
+/// other.
 pub const POLAR_DEEP_LINK: f64 = 0.55;
 pub const POLAR_DEEP_ABUT_DEG: f64 = 50.0;
-pub const POLAR_DEEP_MERGE_DEG: f64 = 25.0;
+pub const POLAR_DEEP_MERGE_DEG: f64 = 10.0;
 /// A hinge stands highest where it nucleated and lower, by up to this share, where it
 /// reached last, so that a linkage leaves a saddle, as linked folds do (Grasemann and
 /// Schmalholz 2012; the share is a choice); a free end plunges over this many

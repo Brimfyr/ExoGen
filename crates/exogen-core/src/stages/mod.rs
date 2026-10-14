@@ -357,7 +357,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 60;
+pub const FINISH_VERSION: u64 = 61;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -751,8 +751,8 @@ pub fn finish(
         for (time, kind, i) in order {
             match kind {
                 0 => renewal.take_lane(&lanes[i], &lane_hits[i]),
-                1 => renewal.take_polar(&fossil_edges[i], time, halo),
-                _ => renewal.take_polar(&polar_edge, time, halo),
+                1 => renewal.take_polar(&fossil_edges[i], time),
+                _ => renewal.take_polar(&polar_edge, time),
             }
         }
     }
@@ -927,20 +927,39 @@ pub fn finish(
         .chain(secondaries.into_iter().map(|c| (c, true)))
         .collect();
     // On an ice shell a replayed crater has relaxed over its own life by the shell's
-    // viscosity at its wavelength; what survives scales its whole relief.
+    // viscosity at its wavelength, and under each past episode's thinned shell while
+    // that lasted (F66); what survives scales its whole relief.
     let relaxed: Vec<f32> = match &shell_history {
-        Some(shell_at) => replay
-            .par_iter()
-            .map(|(c, _)| {
-                relaxation::survival_since(
-                    c.diameter,
-                    c.time_gyr,
-                    present,
-                    &**shell_at,
-                    shell_map.factor(c.center),
-                ) as f32
-            })
-            .collect(),
+        Some(shell_at) => {
+            let episode_shells: Vec<relaxation::Shell> = episodes
+                .iter()
+                .map(|e| shell_at(0.5 * (e.start + e.end)))
+                .collect();
+            replay
+                .par_iter()
+                .map(|(c, _)| {
+                    let mut kept = relaxation::survival_since(
+                        c.diameter,
+                        c.time_gyr,
+                        present,
+                        &**shell_at,
+                        shell_map.factor(c.center),
+                    );
+                    for ((e, map), shell) in episodes.iter().zip(&episode_maps).zip(&episode_shells)
+                    {
+                        if e.end > c.time_gyr {
+                            kept *= relaxation::thinned_survival(
+                                c.diameter,
+                                e.end - e.start.max(c.time_gyr),
+                                shell,
+                                map.factor(c.center),
+                            );
+                        }
+                    }
+                    kept as f32
+                })
+                .collect()
+        }
         None => vec![1.0; replay.len()],
     };
     if std::env::var_os("EXOGEN_DEBUG").is_some() && shell_history.is_some() {

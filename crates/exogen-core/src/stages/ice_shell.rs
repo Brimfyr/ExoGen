@@ -35,7 +35,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 16;
+pub const VERSION: u64 = 17;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -1392,6 +1392,9 @@ impl DeepFolds {
     const PARTING: f64 = 0.05;
     /// The steepest flank of the Ricker profile, per width.
     const STEEPEST: f64 = 1.3801;
+    /// A join is not taken where the neighbour ends more than this share of the way
+    /// short of where the tip would meet it.
+    const SHORTFALL: f64 = 0.2;
 
     fn key(d: [f64; 3], scale: f64) -> (i32, i32, i32) {
         (
@@ -1448,15 +1451,15 @@ impl DeepFolds {
         best.map(|b| (b.1, b.2))
     }
 
-    /// Where the arc from `p` to `q` first meets the hinge of a line other than `line`, the
-    /// pieces of hinge sought among the points within `reach` rad of the arc's middle (the
-    /// longest piece of hinge is shorter than that).
+    /// Where the arc from `p` to `q` first meets the hinge of a line other than the two in
+    /// `ignore`, the pieces of hinge sought among the points within `reach` rad of the
+    /// arc's middle (the longest piece of hinge is shorter than that).
     fn crossing(
         points: &HingePoints,
         arms: &[DeepArm],
         p: [f64; 3],
         q: [f64; 3],
-        line: usize,
+        ignore: [usize; 2],
         reach: f64,
         scale: f64,
     ) -> Option<[f64; 3]> {
@@ -1480,7 +1483,7 @@ impl DeepFolds {
                     for &(a, k) in v {
                         let (a, k) = (a as usize, k as usize);
                         let hinge = &arms[a].points;
-                        if arms[a].line == line || angle_between(hinge[k], mid) > near {
+                        if ignore.contains(&arms[a].line) || angle_between(hinge[k], mid) > near {
                             continue;
                         }
                         for (u, w) in [(k.wrapping_sub(1), k), (k, k + 1)] {
@@ -1550,14 +1553,15 @@ impl DeepFolds {
     /// The point `lead` rad along a fold's hinge from point `k` of arm `a`, going the way
     /// the arm grew (`forward`) or back toward its nucleus and on along the arm that grew
     /// the other way, and the hinge's direction there in the sense of travel; at the end
-    /// of a hinge, that end, and the arm whose end it is.
+    /// of a hinge, that end, the arm whose end it is and how far short of the lead it
+    /// stopped, rad.
     fn walk(
         arms: &[DeepArm],
         a: usize,
         k: usize,
         forward: bool,
         lead: f64,
-    ) -> ([f64; 3], [f64; 3], Option<usize>) {
+    ) -> ([f64; 3], [f64; 3], Option<usize>, f64) {
         let (mut arm, mut k, mut forward, mut left) = (a, k, forward, lead);
         loop {
             let points = &arms[arm].points;
@@ -1594,6 +1598,7 @@ impl DeepFolds {
                     at,
                     tangential(at, [v[0] - u[0], v[1] - u[1], v[2] - u[2]]),
                     None,
+                    0.0,
                 );
             }
             left -= step;
@@ -1615,18 +1620,20 @@ impl DeepFolds {
             let h = arms[arm].heading;
             [-h[0], -h[1], -h[2]]
         };
-        (at, tangential(at, way), forward.then_some(arm))
+        (at, tangential(at, way), forward.then_some(arm), left)
     }
 
-    /// A tip that came within linking distance of a neighbour's hinge joins it where the
-    /// neighbour lies ahead. Where the two run alike it bends into the neighbour at the
-    /// merging angle, along a cubic that leaves the tip along its heading and arrives
-    /// along the neighbour, and beyond the junction the two are one fold: a Y where the
-    /// neighbour runs on; where the neighbour ends there, its end, which then neither
-    /// plunges nor, if it was coming the other way, grows on. A neighbour's tip coming the
-    /// other way past the junction stops too, the two one fold. Where they meet across the
-    /// tip abuts the neighbour. A neighbour beside or behind the tip is passed: returns
-    /// whether the tip linked.
+    /// A tip that came within linking distance of a neighbour's hinge joins it. Where the
+    /// two run alike it bends into the neighbour where its own heading meets it, or, if it
+    /// runs alongside, no more steeply than the least merging angle, along a cubic that
+    /// leaves the tip along its heading and arrives along the neighbour; beyond the
+    /// junction the two are one fold: a Y where the neighbour runs on; where the neighbour
+    /// ends there, its end, which then neither plunges nor, if it was coming the other way,
+    /// grows on. A neighbour's tip coming the other way past the junction stops too, the
+    /// two one fold. Where they meet across the tip runs straight on into the fold ahead.
+    /// The tip passes a neighbour that it is running away from, that ends short of where
+    /// it would join it or lies behind it, and one it could join only across a third fold:
+    /// returns whether the tip linked.
     #[allow(clippy::too_many_arguments)]
     fn link(
         arms: &mut [DeepArm],
@@ -1650,64 +1657,59 @@ impl DeepFolds {
         };
         let angle = dot(along, heading).clamp(-1.0, 1.0).acos();
         let ahead = |p: [f64; 3]| dot([p[0] - q[0], p[1] - q[1], p[2] - q[2]], heading) > 0.0;
-        let (joint, arrival, end) = if angle > POLAR_DEEP_ABUT_DEG.to_radians() {
-            (hp, None, None)
-        } else {
-            let normal = normalize(cross(hp, along));
-            let side = dot([q[0] - hp[0], q[1] - hp[1], q[2] - hp[2]], normal);
-            // Hinges that run apart do not link.
-            if dot(heading, normal) * side.signum() > Self::PARTING {
+        let (line, host_line) = (arms[id].line, arms[host].line);
+        let reach = 0.5 / scale;
+        if angle > POLAR_DEEP_ABUT_DEG.to_radians() {
+            // Across: the tip runs straight on until it meets a fold.
+            let far = step_along(q, heading, 2.0 * POLAR_DEEP_LINK * wavelength / body_radius);
+            let Some(x) = Self::crossing(points, arms, q, far, [line, line], reach, scale) else {
                 return false;
-            }
-            let lateral = side.abs();
-            let lead = lateral / POLAR_DEEP_MERGE_DEG.to_radians().tan();
-            let (j, tj, end) = Self::walk(arms, host, k, forward, lead);
-            (j, Some(tj), end)
-        };
-        if !ahead(joint) {
+            };
+            Self::extend(arms, points, id, &[q, x], t, wavelength, scale);
+            arms[id].end = ArmEnd::Linked;
+            return true;
+        }
+        let normal = normalize(cross(hp, along));
+        let side = dot([q[0] - hp[0], q[1] - hp[1], q[2] - hp[2]], normal);
+        // The sine of the angle at which the tip closes on the neighbour; hinges that run
+        // apart do not link.
+        let closing = -dot(heading, normal) * side.signum();
+        if closing < -Self::PARTING {
+            return false;
+        }
+        let approach = closing
+            .clamp(0.0, 1.0)
+            .asin()
+            .max(POLAR_DEEP_MERGE_DEG.to_radians());
+        let lead = side.abs() / approach.tan();
+        let (joint, tj, end, short) = Self::walk(arms, host, k, forward, lead);
+        if short > Self::SHORTFALL * lead || !ahead(joint) {
             return false;
         }
         let mut path = vec![q];
-        match arrival {
-            Some(tj) => {
-                let chord = angle_between(q, joint);
-                let step = POLAR_DEEP_STEP * wavelength / body_radius;
-                let n = ((chord / step).ceil() as usize).max(1);
-                for s in 1..=n {
-                    let u = s as f64 / n as f64;
-                    let (u2, u3) = (u * u, u * u * u);
-                    let (h00, h10, h01, h11) = (
-                        2.0 * u3 - 3.0 * u2 + 1.0,
-                        u3 - 2.0 * u2 + u,
-                        3.0 * u2 - 2.0 * u3,
-                        u3 - u2,
-                    );
-                    path.push(normalize([
-                        h00 * q[0]
-                            + h10 * chord * heading[0]
-                            + h01 * joint[0]
-                            + h11 * chord * tj[0],
-                        h00 * q[1]
-                            + h10 * chord * heading[1]
-                            + h01 * joint[1]
-                            + h11 * chord * tj[1],
-                        h00 * q[2]
-                            + h10 * chord * heading[2]
-                            + h01 * joint[2]
-                            + h11 * chord * tj[2],
-                    ]));
-                }
-            }
-            None => path.push(joint),
+        let chord = angle_between(q, joint);
+        let step = POLAR_DEEP_STEP * wavelength / body_radius;
+        let n = ((chord / step).ceil() as usize).max(1);
+        for s in 1..=n {
+            let u = s as f64 / n as f64;
+            let (u2, u3) = (u * u, u * u * u);
+            let (h00, h10, h01, h11) = (
+                2.0 * u3 - 3.0 * u2 + 1.0,
+                u3 - 2.0 * u2 + u,
+                3.0 * u2 - 2.0 * u3,
+                u3 - u2,
+            );
+            path.push(normalize([
+                h00 * q[0] + h10 * chord * heading[0] + h01 * joint[0] + h11 * chord * tj[0],
+                h00 * q[1] + h10 * chord * heading[1] + h01 * joint[1] + h11 * chord * tj[1],
+                h00 * q[2] + h10 * chord * heading[2] + h01 * joint[2] + h11 * chord * tj[2],
+            ]));
         }
-        let line = arms[id].line;
-        let reach = 0.5 / scale;
+        // A join that would cross a third fold on its way is not taken.
         for i in 1..path.len() {
-            if let Some(x) = Self::crossing(points, arms, path[i - 1], path[i], line, reach, scale)
-            {
-                path.truncate(i);
-                path.push(x);
-                break;
+            let ignore = [line, host_line];
+            if Self::crossing(points, arms, path[i - 1], path[i], ignore, reach, scale).is_some() {
+                return false;
             }
         }
         Self::extend(arms, points, id, &path, t, wavelength, scale);
@@ -1849,7 +1851,8 @@ impl DeepFolds {
                 arms[id].end = ArmEnd::Free;
                 continue;
             }
-            if let Some(x) = Self::crossing(&points, &arms, p, q, line, 0.5 * bucket, scale) {
+            if let Some(x) = Self::crossing(&points, &arms, p, q, [line, line], 0.5 * bucket, scale)
+            {
                 Self::extend(&mut arms, &mut points, id, &[x], t, site.wavelength, scale);
                 arms[id].end = ArmEnd::Linked;
                 continue;
@@ -2242,20 +2245,6 @@ pub fn margin_coverage(dist: f64) -> f64 {
     x * x * (3.0 - 2.0 * x)
 }
 
-/// The share of the relief below the renewal length that a renewed terrain took from a
-/// cell at a signed distance from its edge, m (F60): all of it inside, the margin's ramp
-/// across the edge, and beyond it a halo that falls to nothing over `halo` m, where the
-/// terrain's heat and strain reached into the old ground, so that the old craters fade
-/// towards the terrain rather than end at it.
-pub fn renewal_weight(dist: f64, halo: f64) -> f64 {
-    let ramp = margin_coverage(dist);
-    if dist >= 0.0 || halo <= 0.0 {
-        return ramp;
-    }
-    let x = (1.0 + dist / halo).clamp(0.0, 1.0);
-    ramp.max(POLAR_HALO_PEAK * x * x)
-}
-
 /// A mask eroded by one cell: a cell stays only with all four neighbours. The coarse loop
 /// gives a lane's surface to these alone; the finish draws the true edge around them at
 /// its own resolution, so the coarse cells never reach past it.
@@ -2293,8 +2282,7 @@ pub struct IceShellProcess {
     polar_floor: Option<Vec<f32>>,
     pub lane_core: Option<Vec<f32>>,
     /// How much of its relief below the renewal length each cell gives up to the present
-    /// polar terrain when it renews (F60): all of it inside, a ramp across the edge and a
-    /// halo beyond.
+    /// polar terrain when it renews (F60): all of it inside and a ramp across the edge.
     active: Vec<f32>,
     depressed: bool,
     /// The thermal history, for the elastic lithosphere at each lane's time.
@@ -2313,6 +2301,10 @@ pub struct IceShellProcess {
     active_now: Vec<f32>,
     renewal_time: Vec<f32>,
     renewing: bool,
+    /// The factor the thinning of the terrain renewed at the current step puts on the
+    /// shell under each cell, and how long it lasted within the step, Gyr (F66).
+    thinned_now: Vec<f32>,
+    thinned_for: f64,
     /// The share of the surface the lanes, the present polar terrain and the past
     /// episodes' terrains renewed between them, by area: what is not old cratered ground,
     /// whatever craters it has taken since.
@@ -2831,14 +2823,14 @@ impl IceShellProcess {
             Vec::new()
         };
         // Each renewed terrain's weights on this grid (F60): all of the relief below the
-        // renewal length inside it, a ramp across its edge, and a halo a shell thickness
-        // wide beyond.
+        // renewal length inside it and a ramp across its edge; the ground beside it relaxes
+        // under the thinned shell instead (F66).
         let halo = POLAR_HALO_SHELLS * mean_shell;
         let weights_of = |map: &ShellMap| -> Vec<f32> {
             let mask = polar_mask(&grid, body_radius, map, &fissures);
             edge_distance_m(&grid, body_radius, &mask, polar_reach(halo))
                 .iter()
-                .map(|&d| renewal_weight(d as f64, halo) as f32)
+                .map(|&d| margin_coverage(d as f64) as f32)
                 .collect()
         };
         let active = if shell.has_active_terrain() {
@@ -2883,6 +2875,8 @@ impl IceShellProcess {
             active_now: vec![0.0; n],
             renewal_time: vec![0.0; n],
             renewing: false,
+            thinned_now: vec![1.0; n],
+            thinned_for: 0.0,
             renewed_fraction,
         })
     }
@@ -2894,7 +2888,10 @@ impl IceShellProcess {
     /// shell (see `relaxation::Local`); the local thickness acts through the replayed
     /// craters' survival, the crack density and the renewal.
     pub fn relaxation(&mut self, t0: f64, t1: f64) -> crate::stages::relaxation::Local<'_> {
+        let grid = self.grid;
         self.active_now.iter_mut().for_each(|w| *w = 0.0);
+        self.thinned_now.iter_mut().for_each(|f| *f = 1.0);
+        self.thinned_for = 0.0;
         self.renewing = false;
         for (e, weights) in self.episodes.iter().zip(&self.episode_weights) {
             if e.end > t0 && e.end <= t1 {
@@ -2905,6 +2902,13 @@ impl IceShellProcess {
                         self.renewal_time[k] = e.end as f32;
                     }
                 }
+                // The episode's thinned shell under the ground beside its terrain, for as
+                // long as the episode lasted (F66).
+                let map = self.shell.with_pole(e.center);
+                for (k, f) in self.thinned_now.iter_mut().enumerate() {
+                    *f = f.min(map.factor(grid.center(grid.cell(k))) as f32);
+                }
+                self.thinned_for = self.thinned_for.max(e.end - e.start);
             }
         }
         if self.shell.has_active_terrain() && t1 >= self.present_start {
@@ -2916,6 +2920,10 @@ impl IceShellProcess {
                     self.renewal_time[k] = now;
                 }
             }
+            for (k, f) in self.thinned_now.iter_mut().enumerate() {
+                *f = f.min(self.shell.factor(grid.center(grid.cell(k))) as f32);
+            }
+            self.thinned_for = self.thinned_for.max(t1 - t0.max(self.present_start));
         }
         crate::stages::relaxation::Local {
             equilibrium: self.equilibrium.as_deref(),
@@ -2927,6 +2935,9 @@ impl IceShellProcess {
                         .max(POLAR_RENEWAL_LENGTH_SHARE * self.body_radius),
                 )
             }),
+            halo: self
+                .renewing
+                .then_some((self.thinned_now.as_slice(), self.thinned_for)),
         }
     }
 
@@ -3149,16 +3160,15 @@ impl Renewal {
     }
 
     /// A polar terrain's hold of the cells within its reach, from the signed distance to
-    /// its edge, m: its clean ice across the margin's ramp, and its weight on the old
-    /// relief out across its halo.
-    pub fn take_polar(&mut self, edge: &[f32], time: f64, halo: f64) {
+    /// its edge, m: its clean ice and its weight on the old relief, across the margin's
+    /// ramp.
+    pub fn take_polar(&mut self, edge: &[f32], time: f64) {
         for (k, &d) in edge.iter().enumerate() {
-            let weight = renewal_weight(d as f64, halo) as f32;
-            if weight <= 0.0 {
+            let cover = margin_coverage(d as f64) as f32;
+            if cover <= 0.0 {
                 continue;
             }
-            let cover = margin_coverage(d as f64) as f32;
-            self.take(k, cover, weight, 1.0, time as f32, UNIT_POLAR_TERRAIN);
+            self.take(k, cover, cover, 1.0, time as f32, UNIT_POLAR_TERRAIN);
         }
     }
 
@@ -3614,7 +3624,7 @@ pub fn polar_compute(
                     .sin();
             let relief =
                 folds * (1.0 - belt_w * arc * (2.0 * inside).min(1.0)) + rough + belt + ridge;
-            let weight = renewal_weight(dist, halo);
+            let weight = margin_coverage(dist);
             let h = bedrock[k] as f64;
             (weight > 0.0 || relief.abs() >= 0.5)
                 .then(|| write(k, h + (base[k] as f64 - h) * weight + relief))
@@ -4167,6 +4177,20 @@ mod tests {
             },
         ];
         (DeepFolds::grow(&nuclei, &field, None, r), r)
+    }
+
+    #[test]
+    fn a_renewed_terrain_takes_nothing_beyond_its_ramp() {
+        // F66: no halo is drawn from the outline; the ground beside a terrain relaxes by
+        // its own law under the thinned shell instead.
+        assert_eq!(margin_coverage(-0.5 * POLAR_MARGIN_RAMP), 0.0);
+        assert!((margin_coverage(0.0) - 0.5).abs() < 1e-12);
+        assert_eq!(margin_coverage(0.5 * POLAR_MARGIN_RAMP), 1.0);
+        // A cell beyond the ramp keeps its old relief whole; one on the ramp gives up part.
+        let mut renewal = Renewal::new(2);
+        renewal.take_polar(&[-20e3, -0.25 * POLAR_MARGIN_RAMP as f32], 1.0);
+        assert_eq!(renewal.keep[0], 1.0);
+        assert!(renewal.keep[1] < 1.0);
     }
 
     #[test]
