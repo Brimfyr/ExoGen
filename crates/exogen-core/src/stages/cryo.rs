@@ -92,6 +92,82 @@ impl Fallout {
     }
 }
 
+/// The loose cover the plumes' fallout has laid on the ground (F64): the snow of the
+/// present plume and of each past episode's, each falling off from its own pole as the
+/// fallout does (F47), summed over the time a surface has stood.
+pub struct LooseCover {
+    /// Each plume's pole in the present frame, and when it ran, Gyr.
+    plumes: Vec<([f64; 3], f64, f64)>,
+    /// The rate at a plume's pole, m/Gyr.
+    rate: f64,
+    angle: f64,
+    /// The depth a crack stays open to, m: what it can drain.
+    crack_depth: f64,
+}
+
+impl LooseCover {
+    /// The plumes that have run by `present`: one at the centre of each episode of
+    /// focusing (F53) while it lasted, each venting as the present one does.
+    pub fn new(
+        graph: &ParamGraph,
+        episodes: &[crate::stages::ice::FocusEpisode],
+        present: f64,
+    ) -> Option<Self> {
+        let rate = graph.f64("volcanism.plume_fallout_rate");
+        if rate <= 0.0 {
+            return None;
+        }
+        let shell = crate::stages::ice::ShellMap::new(graph);
+        let pole = shell.pole?;
+        let mut plumes: Vec<([f64; 3], f64, f64)> = episodes
+            .iter()
+            .filter(|e| e.start < present)
+            .map(|e| (e.center, e.start, e.end.min(present)))
+            .collect();
+        let start = (graph.f64("body.age") - FOCUSING_EPISODE_DURATION_GYR).max(0.0);
+        if shell.has_active_terrain() && present > start {
+            plumes.push((pole, start, present));
+        }
+        // A crack stays open down to where the weight of the ice matches the tension
+        // that opened it.
+        let crack_depth =
+            ICE_CRACK_STRESS / (DENSITY_CRUST_ICE * graph.f64("body.gravity").max(1e-6));
+        Some(Self::of_plumes(plumes, rate, crack_depth))
+    }
+
+    /// The cover of given plumes: each one's pole and the times it ran between, Gyr, all
+    /// at one rate at the pole, m/Gyr; and the depth a crack can drain, m.
+    pub fn of_plumes(plumes: Vec<([f64; 3], f64, f64)>, rate: f64, crack_depth: f64) -> Self {
+        Self {
+            plumes,
+            rate,
+            angle: PLUME_FALLOUT_ANGLE_DEG.to_radians(),
+            crack_depth,
+        }
+    }
+
+    /// How much of a cover a crack drains, m: no more than the crack is deep.
+    pub fn drained(&self, cover: f64) -> f64 {
+        cover.min(self.crack_depth)
+    }
+
+    /// The cover laid at a direction between two times, m: what lies on a surface that
+    /// formed at `since` by the time `until`.
+    pub fn thickness_between(&self, d: [f64; 3], since: f64, until: f64) -> f64 {
+        self.plumes
+            .iter()
+            .map(|&(pole, t0, t1)| {
+                let span = t1.min(until) - t0.max(since);
+                if span <= 0.0 {
+                    return 0.0;
+                }
+                let x = angle_between(pole, d) / self.angle;
+                self.rate * (PLUME_FALLOUT_FAR + (1.0 - PLUME_FALLOUT_FAR) * (-x).exp()) * span
+            })
+            .sum()
+    }
+}
+
 /// A patch of chaos: the shell melted through or disrupted from below.
 #[derive(Clone, Debug)]
 pub struct Chaos {
@@ -459,5 +535,48 @@ mod tests {
         assert!(f.frost_at([1.0, 0.0, 0.0]) > 0.9);
         let far = f.frost_at([0.0, 0.0, 1.0]);
         assert!(far > 0.5 && far < 0.75, "{far}");
+    }
+
+    /// The loose cover is the fallout of every plume that has run (F64): the present
+    /// episode's at the present pole at least, the far share of every episode's far
+    /// from the poles, and nothing on a surface that has only just formed.
+    #[test]
+    fn loose_cover_is_the_sum_of_the_plumes_fallout() {
+        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let shell = crate::stages::ice::ShellMap::new(&g);
+        let episodes = crate::stages::ice::focusing_episodes(&g, &shell);
+        let present = g.f64("body.age");
+        let cover = LooseCover::new(&g, &episodes, present).unwrap();
+        let pole = shell.pole.unwrap();
+        let rate = g.f64("volcanism.plume_fallout_rate");
+        let one = rate * FOCUSING_EPISODE_DURATION_GYR;
+        let at_pole = cover.thickness_between(pole, 0.0, present);
+        assert!(at_pole >= 0.999 * one, "{at_pole} against {one}");
+        assert_eq!(cover.thickness_between(pole, present, present), 0.0);
+        // The least any old surface carries: the far share of every plume.
+        let floor = PLUME_FALLOUT_FAR * one * (episodes.len() + 1) as f64;
+        let mut least = f64::INFINITY;
+        let mut most: f64 = 0.0;
+        for k in 0..2000u64 {
+            let d = Rng::new(7).unit_direction(k, 0);
+            let h = cover.thickness_between(d, 0.0, present);
+            least = least.min(h);
+            most = most.max(h);
+        }
+        eprintln!(
+            "enceladus: {} past episodes; loose cover {least:.0} to {most:.0} m on old ground, {at_pole:.0} m at the pole",
+            episodes.len()
+        );
+        assert!(least >= 0.999 * floor, "{least} against {floor}");
+        // The same order as the pit chains of its cratered plains have it (Martin et al.
+        // 2017: 250 m on average, to 700 m), and two to three times over: nine plumes'
+        // fallout, where the real body's history is not known.
+        assert!(least > 100.0 && most < 3000.0, "{least} to {most}");
+        // A crack there drains a few hundred metres of it.
+        assert!(
+            (300.0..500.0).contains(&cover.drained(most)),
+            "{}",
+            cover.drained(most)
+        );
     }
 }

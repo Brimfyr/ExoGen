@@ -1189,7 +1189,20 @@ pub const POLAR_FOLD_KERNEL_FLOOR: f64 = 1.0;
 /// orientation is the fissures' direction averaged (as doubled angles) over this many
 /// fissure ranges about its centre, so that neighbouring kernels agree and no two cross.
 pub const POLAR_FOLD_SPACING_JITTER: f64 = 0.4;
-pub const POLAR_FOLD_STRENGTH_RANGE: (f64, f64) = (0.4, 1.6);
+/// The folds of a renewed terrain were laid in pulses too (F63): where a field about
+/// this many kernel cells across stands high (this level sets the share), a kernel may
+/// belong to an earlier pulse, and then keeps the strike of the field as it stood then,
+/// turned from the last by up to this many degrees (the stress field's turn through an
+/// episode, as the body reorients, is not resolved: a field stands for it), at this
+/// share of the relief, as older folds are lower.
+pub const POLAR_PULSE_LEVEL: f64 = 0.35;
+pub const POLAR_PULSE_PATCH: f64 = 3.0;
+pub const POLAR_PULSE_TURN_DEG: f64 = 25.0;
+pub const POLAR_PULSE_RELIEF: f64 = 0.7;
+/// A kernel of the fold fabric is a packet of about three folds, and the mean depth of
+/// three varies less than the depth of one: the packet's depth is a fold's (the heavy
+/// tail of F63) to this power, one over the root of three.
+pub const POLAR_FOLD_PACKET_SPREAD: f64 = 0.58;
 pub const POLAR_FOLD_ORIENTATION_SHARE: f64 = 0.5;
 pub const POLAR_TECTONIC_RMS: f64 = 120.0;
 pub const POLAR_TECTONIC_LENGTH: f64 = 20e3;
@@ -1250,18 +1263,20 @@ pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
 /// resurfacing as a share of the body's age (Ganymede's bright terrain is about two
 /// gigayears old).
 /// A lane is a swath of grooved terrain, a rift zone of the shell: its width is this many
-/// elastic thicknesses of the shell at the episode's time, log-uniform, as rift zones are
-/// a few to a few tens of times the layer that breaks, and does not scale with the body
-/// (Ganymede's swaths run 50 to 300 km on an 11 km lithosphere); its length is
-/// this many widths, log-uniform, and at most this share of the radius in radians
-/// (Ganymede's lanes run hundreds to a couple of thousand kilometres, Enceladus's sulci
-/// to 380 km, a quarter of the way round it).
+/// thicknesses of the elastic lid where and when it opens, log-uniform, as rift zones
+/// are a few to a few tens of times the layer that breaks, and does not scale with the
+/// body (Ganymede's swaths run 50 to 300 km on an 11 km lithosphere); its length is this
+/// many widths, log-uniform, and at most this share of the radius in radians (Ganymede's
+/// lanes run hundreds to a couple of thousand kilometres). A rift is long: a lane too
+/// wide to be the least of those lengths within the greatest is not a lane and is not
+/// formed (F61), which on a small body with a thick lid leaves lanes only where and
+/// when the lid is thinned. The generator tries this many draws of a lane's place, time
+/// and width before it gives the lane up, and stops after this many given up in a row.
 pub const GROOVE_LANE_WIDTH_ELASTIC: (f64, f64) = (4.0, 24.0);
 pub const GROOVE_LANE_ASPECT: (f64, f64) = (6.0, 40.0);
-/// No lane is wider than this share of the radius, whatever the shell: a geometric cap for
-/// small bodies (Enceladus's sulci, 38 km).
-pub const GROOVE_LANE_MAX_WIDTH_SHARE: f64 = 0.15;
 pub const GROOVE_LANE_MAX_LENGTH_RAD: f64 = 1.5;
+pub const GROOVE_LANE_ATTEMPTS: u64 = 4000;
+pub const GROOVE_LANE_MISSES: usize = 40;
 /// A lane's edges are its bounding faults (F61). Each trace wanders by this rms share of
 /// the half width, self-affine with this Hurst exponent (fault traces are smoother than
 /// cratered ground) below this many widths; it is made of segments this many groove
@@ -1347,6 +1362,42 @@ pub const GROOVE_BORDER_LIDS: f64 = 1.0;
 /// took nearly everything, the little that remains is not worth a seam along the edge
 /// of a younger crater's ground, which the completion leaves alone.
 pub const GROOVE_FLOOR_RESIDUE: f64 = 0.25;
+/// A rift works in pulses (F63). The first lays a set of grooves along the whole lane;
+/// each of the rest, this many in all, reworks part of it with a set of its own, struck
+/// along the field as it stands later in the lane's working life (a set's spread of the
+/// episode, or what a focusing episode leaves of it), in patches about this many groove
+/// spacings across: where a field stands above this level, two fifths of the lane, with
+/// an edge this wide in the field's own units, so that the rest of the lane keeps what
+/// it had. Each of a pulse's grooves cuts what stood there before across its own width.
+pub const GROOVE_PULSES: usize = 3;
+pub const GROOVE_PULSE_LEVEL: f64 = 0.05;
+pub const GROOVE_PULSE_EDGE: f64 = 0.2;
+pub const GROOVE_PULSE_SPACINGS: f64 = 20.0;
+/// A groove's depth has a heavy tail (F63). Fault throws along a line across an array
+/// follow a power law with a cumulative exponent of 0.5 to 1 (Marrett and Allmendinger
+/// 1992); a necked lid spaces and sizes its grooves more evenly than faults at random, so
+/// the share of grooves more than x times as deep as the middling one is taken to fall
+/// as x to minus this, a choice between the two and not a measurement. The depth is
+/// bounded, softly, at this many times the middling one, about the deepest measured
+/// (Ganymede's grooves reach 700 m crest to trough against a middling 350 m, Squyres
+/// 1981). What a groove has beyond the middling depth goes into its trough, a master
+/// trough, and not onto its crest.
+pub const GROOVE_DEPTH_TAIL: f64 = 2.0;
+pub const GROOVE_DEPTH_MAX: f64 = 2.5;
+/// Pit chains (F64). An open fracture under loose cover drains the cover into itself,
+/// and shows at the surface as a row of pits (Wyrick et al. 2004 on Mars; Martin et al.
+/// 2017 on Enceladus, where the pits give 250 to 700 m of cover). A fracture drains no
+/// more cover than it is deep: a lane's fracture its own depth, a crack the depth to
+/// which its tension holds it open against the weight of the ice, the stress that cracks
+/// the shell over the ice's density and the gravity (380 m on Enceladus). A pit is a
+/// cone at the cover's angle of repose, so this many drained thicknesses across (2 /
+/// tan 35 degrees) and as deep as what drained; pits stand one every this many widths
+/// along the fracture, each off its place by up to this share of a step; and a grid
+/// draws them where they span this many cells.
+pub const PIT_WIDTH_COVERS: f64 = 2.9;
+pub const PIT_SPACING: f64 = 1.5;
+pub const PIT_JITTER: f64 = 0.6;
+pub const PIT_MIN_CELLS: f64 = 1.5;
 pub const GROOVE_MIN_CELLS: f64 = 3.0;
 pub const GROOVE_SET_LENGTH: f64 = 300e3;
 /// A lane's centre line is traced along the tidal field where the shell cracks and along

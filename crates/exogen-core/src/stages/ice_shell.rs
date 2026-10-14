@@ -31,10 +31,10 @@ use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::ice::{FocusEpisode, ShellMap};
-use crate::stages::lineae::{Cracks, Linea};
+use crate::stages::lineae::{Cracks, Linea, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 15;
+pub const VERSION: u64 = 16;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -64,6 +64,8 @@ pub struct Lane {
     pub stops: [Option<LaneStop>; 2],
     /// The spacing of the lane's grooves, m.
     pub groove_spacing: f64,
+    /// The strike of each later pulse's grooves against the lane's own, rad (F63).
+    pub turns: Vec<f64>,
     /// When the lane formed, Gyr since formation.
     pub time_gyr: f64,
     pub id: u64,
@@ -115,6 +117,43 @@ pub struct LaneNoise {
     grooves: GradientNoise,
     rough: GradientNoise,
     cuts: [Option<GradientNoise>; 2],
+    /// The draws that belong to one groove or one pit: its depth, its place, its size.
+    draws: Rng,
+}
+
+/// One pulse's set of grooves at a cell: the phase across the set in turns, with the
+/// groove the cell lies in and how far across it; the spacing there and the distance
+/// along the set, m; how far down the groove's trough the cell lies, 0 to 1; how present
+/// the groove's segment is there, 0 to 1; the groove's depth against the middling one;
+/// and its relief there in units of the middling amplitude.
+struct GrooveSet {
+    turns: f64,
+    stripe: f64,
+    frac: f64,
+    local: f64,
+    along: f64,
+    trough: f64,
+    gate: f64,
+    depth: f64,
+    shape: f64,
+}
+
+/// A fault's depth against the middling one of its population, from a uniform draw
+/// (F63): a power-law tail, so that half are shallower than the middling one by up to
+/// three tenths and a few are much deeper, bounded softly at the deepest a lid holds.
+fn fault_depth(u: f64) -> f64 {
+    let raw = (u.max(1e-6) / 0.5).powf(-1.0 / GROOVE_DEPTH_TAIL);
+    if raw <= 1.0 {
+        raw
+    } else {
+        let room = GROOVE_DEPTH_MAX - 1.0;
+        1.0 + room * (1.0 - (-(raw - 1.0) / room).exp())
+    }
+}
+
+/// A groove's index among its set's, as a key for its own draws.
+fn stripe_key(stripe: f64) -> u64 {
+    (stripe as i64 + (1 << 30)) as u64
 }
 
 impl LaneNoise {
@@ -128,6 +167,7 @@ impl LaneNoise {
             grooves: GradientNoise::new(lane.id ^ 0x6700_0000),
             rough: GradientNoise::new(lane.id ^ 0x6700_0C4A),
             cuts: [cut(0), cut(1)],
+            draws: Rng::new(lane.id ^ 0x6700_D0A5),
         }
     }
 }
@@ -271,6 +311,7 @@ impl Lane {
             edges,
             stops,
             groove_spacing,
+            turns: Vec::new(),
             time_gyr,
             id,
         }
@@ -465,15 +506,18 @@ impl Lane {
     /// goes along the trace as the fault's segments do and dies with the faults at a
     /// tapering end. Beyond the edge the damage zone: the same grooves as open fractures
     /// cut into the old ground, each in fewer and shorter segments the farther out, so
-    /// that the lane's strain thins out through discrete breaks rather than fading. The
-    /// tone follows the structure: sets differ, troughs gather the dark lag, and a
-    /// fracture's walls show clean ice in the old ground.
+    /// that the lane's strain thins out through discrete breaks rather than fading; and
+    /// where `loose` m of loose cover lie on that ground, the fractures drain it and
+    /// show as chains of pits (F64). The tone follows the structure: sets differ,
+    /// troughs gather the dark lag, and a fracture's walls show clean ice in the old
+    /// ground.
     pub fn fabric_at(
         &self,
         sm: &LaneSample,
         d: [f64; 3],
         body_radius: f64,
         cell: f64,
+        loose: f64,
         noise: &LaneNoise,
     ) -> LaneFabric {
         let tau = 2.0 * std::f64::consts::PI;
@@ -524,48 +568,48 @@ impl Lane {
             2.0,
             0.5,
         );
-        let local = spacing * (1.0 + GROOVE_SPACING_VARIATION * sets);
-        let sway = GROOVE_SWAY
-            * g.fbm(
-                [d[0] + 9.2, d[1] + 0.4, d[2] - 6.1],
-                body_radius / (GROOVE_SWAY_SPACINGS * spacing),
-                2,
-                2.0,
-                0.5,
-            );
-        let wander = GROOVE_WANDER
-            * g.fbm(
-                [d[0] + 3.1, d[1] - 1.7, d[2] + 4.3],
-                body_radius / (GROOVE_WANDER_SPACINGS * spacing),
-                3,
-                2.0,
-                0.5,
-            );
-        let turns = sm.across / local + (sway + wander) / tau;
-        let stripe = turns.floor();
-        let wave = (tau * (turns - stripe)).sin();
-        // 1 in a groove's trough, 0 on its crest.
-        let trough = 0.5 - 0.5 * wave;
         // Each groove's segments along itself; fewer and shorter the farther beyond the
         // fault.
         let out = (-inward / damage).clamp(0.0, 1.0);
         let level = GROOVE_SEGMENT_LEVEL - (GROOVE_SEGMENT_LEVEL + GROOVE_DAMAGE_LEVEL_DROP) * out;
-        let gate = {
-            let run = g.fbm(
-                [
-                    stripe * 12.9898 + 0.37,
-                    sm.along / (GROOVE_SEGMENT_SPACINGS * spacing),
-                    0.11,
-                ],
-                1.0,
-                2,
-                2.0,
-                0.5,
-            );
-            let x = (level + run).clamp(0.0, 1.0);
-            x * x * (3.0 - 2.0 * x)
-        };
         let strength = GROOVE_SLACK + (1.0 - GROOVE_SLACK) * (sets.abs() / 0.3).min(1.0);
+        // The first pulse's set runs the whole lane. Each later pulse reworked part of
+        // it (F63): in the patches it took, each of its grooves stands where its own
+        // segment does, and across its own width cuts whatever stood there before, so
+        // that the sets overlap groove by groove and never interfere as two waves would.
+        let base = self.set_at(sm, d, body_radius, spacing, sets, level, 0, 0.0, noise);
+        let mut shape = base.gate * base.shape;
+        let mut lag = base.gate * base.trough * base.trough * base.depth.min(2.0);
+        // The set that stands at the cell, and how fully.
+        let mut top = (base.turns, 1.0);
+        for (j, &turn) in self.turns.iter().enumerate() {
+            let pulse = j + 1;
+            let shift = 23.7 * pulse as f64;
+            let patch = {
+                let field = g.fbm(
+                    [d[0] + shift, d[1] - 4.4, d[2] + 1.6],
+                    body_radius / (GROOVE_PULSE_SPACINGS * spacing),
+                    2,
+                    2.0,
+                    0.5,
+                );
+                let x = ((field - GROOVE_PULSE_LEVEL) / GROOVE_PULSE_EDGE + 0.5).clamp(0.0, 1.0);
+                x * x * (3.0 - 2.0 * x)
+            };
+            if patch <= 0.0 {
+                continue;
+            }
+            let set = self.set_at(sm, d, body_radius, spacing, sets, level, pulse, turn, noise);
+            // The groove's own footprint: its segment along it, and its width across.
+            let own = patch * set.gate * (0.5 - 0.5 * (tau * set.frac).cos());
+            shape += (set.shape - shape) * own;
+            lag += (set.trough * set.trough * set.depth.min(2.0) - lag) * own;
+            top = if own > 0.5 {
+                (set.turns, 2.0 * own - 1.0)
+            } else {
+                (top.0, top.1 * (1.0 - 2.0 * own))
+            };
+        }
         let rough_octaves = ((GROOVE_ROUGH_SPACINGS * spacing) / (2.0 * cell.max(1.0)))
             .log2()
             .ceil()
@@ -580,12 +624,13 @@ impl Lane {
                 2f64.powf(-ROUGHNESS_HURST),
             )
             / 0.4;
-        // The fine set: the tilted fault blocks that ride on the necks (Collins et al.
-        // 1998; Patel et al. 1999), where the grid resolves them. They follow the
-        // grooves with a wander of their own, face the lane's axis from either side, a
-        // long back slope and a short scarp, and each lives in its own segments.
+        // The fine set: the tilted fault blocks that ride on the necks (Pappalardo et
+        // al. 1998; Patel et al. 1999), where the grid resolves them. They follow the
+        // grooves of the set that stands at the cell with a wander of their own, face
+        // the lane's axis from either side, a long back slope and a short scarp, and
+        // each lives in its own segments.
         let fine = if self.groove_spacing / GROOVE_FINE_RATIO >= GROOVE_MIN_CELLS * cell {
-            let turns = GROOVE_FINE_RATIO * turns
+            let turns = GROOVE_FINE_RATIO * top.0
                 + GROOVE_WANDER
                     * g.fbm(
                         [d[0] - 5.3, d[1] + 8.1, d[2] - 0.9],
@@ -612,6 +657,7 @@ impl Lane {
             let x = (level + run).clamp(0.0, 1.0);
             GROOVE_FINE_RELIEF
                 * amplitude
+                * top.1
                 * x
                 * x
                 * (3.0 - 2.0 * x)
@@ -649,12 +695,29 @@ impl Lane {
         } else {
             (GROOVE_SMOOTH_RELIEF, 0.5)
         };
-        let grooves = depth * (strength * (amplitude * gate * wave + fine) + rough);
-        let crack = breaking * gate * trough.powi(3);
+        let grooves = depth * (strength * (amplitude * shape + fine) + rough);
+        // Beyond the fault the first set's grooves go on as open fractures. Under loose
+        // cover a fracture drains what lies on it and shows as a chain of pits (F64):
+        // the cover fills the fracture by its depth over the fracture's, and where it
+        // fills, the pits stand in its place, each as wide as the cover's slope of
+        // repose makes it and as deep as the cover, where the grid can draw them.
+        let fracture_depth = GROOVE_FRACTURE_SHARE * amplitude;
+        let open = breaking * base.gate * base.trough.powi(3);
+        let filled = (loose / fracture_depth.max(1.0)).clamp(0.0, 1.0);
+        let pit_width = PIT_WIDTH_COVERS * loose.min(fracture_depth);
+        let pits = if filled > 0.0 && pit_width >= PIT_MIN_CELLS * cell {
+            let axis = (base.frac - 0.75) * base.local;
+            breaking * self.pits_at(axis, base.along, base.stripe, pit_width, base.gate, noise)
+        } else {
+            0.0
+        };
+        let crack = open * (1.0 - filled) + pits * filled;
+        let dug =
+            fracture_depth * open * (1.0 - filled) + loose.min(fracture_depth) * pits * filled;
         let relief = grooves + down;
-        let outer = beyond * (1.0 - out) * (up - GROOVE_FRACTURE_SHARE * amplitude * crack);
+        let outer = beyond * (1.0 - out) * (up - dug);
         let set_tone = 1.0 - GROOVE_TONE_SETS * (0.5 + 0.5 * (tones / 0.5).clamp(-1.0, 1.0));
-        let lag = depth * GROOVE_TONE_TROUGH * gate * strength * trough * trough;
+        let lag = depth * GROOVE_TONE_TROUGH * strength * lag.clamp(0.0, 1.0);
         LaneFabric {
             cover,
             relief,
@@ -662,6 +725,129 @@ impl Lane {
             tone: self.clean * set_tone * (1.0 - lag),
             fracture: beyond * GROOVE_DAMAGE_CLEAN * self.clean * (1.0 - out) * crack,
         }
+    }
+
+    /// One pulse's set of grooves at a cell (F61, F63): a wave across the lane, struck
+    /// `turn` rad from the lane's own strike, whose spacing follows the set field and
+    /// which sways and wanders so that the grooves fan and bend; each groove lives in
+    /// segments along itself; and each has a depth of its own, drawn from the heavy tail
+    /// faults have, so that most are shallow and a few are master troughs several times
+    /// as deep, the extra depth going down and not up.
+    #[allow(clippy::too_many_arguments)]
+    fn set_at(
+        &self,
+        sm: &LaneSample,
+        d: [f64; 3],
+        body_radius: f64,
+        spacing: f64,
+        sets: f64,
+        level: f64,
+        pulse: usize,
+        turn: f64,
+        noise: &LaneNoise,
+    ) -> GrooveSet {
+        let tau = 2.0 * std::f64::consts::PI;
+        let g = &noise.grooves;
+        let shift = 17.3 * pulse as f64;
+        let (sin, cos) = turn.sin_cos();
+        let across = sm.across * cos + sm.along * sin;
+        let along = sm.along * cos - sm.across * sin;
+        let local = spacing * (1.0 + GROOVE_SPACING_VARIATION * sets);
+        let sway = GROOVE_SWAY
+            * g.fbm(
+                [d[0] + 9.2 + shift, d[1] + 0.4, d[2] - 6.1],
+                body_radius / (GROOVE_SWAY_SPACINGS * spacing),
+                2,
+                2.0,
+                0.5,
+            );
+        let wander = GROOVE_WANDER
+            * g.fbm(
+                [d[0] + 3.1, d[1] - 1.7 + shift, d[2] + 4.3],
+                body_radius / (GROOVE_WANDER_SPACINGS * spacing),
+                3,
+                2.0,
+                0.5,
+            );
+        let turns = across / local + (sway + wander) / tau;
+        let stripe = turns.floor();
+        let frac = turns - stripe;
+        let wave = (tau * frac).sin();
+        let gate = {
+            let run = g.fbm(
+                [
+                    stripe * 12.9898 + 0.37 + shift,
+                    along / (GROOVE_SEGMENT_SPACINGS * spacing),
+                    0.11,
+                ],
+                1.0,
+                2,
+                2.0,
+                0.5,
+            );
+            let x = (level + run).clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+        let u = noise
+            .draws
+            .uniform(stripe_key(stripe), 40 + pulse as u64)
+            .max(1e-3);
+        let depth = fault_depth(u);
+        let shape = if depth >= 1.0 {
+            wave.max(0.0) + depth * wave.min(0.0)
+        } else {
+            depth * wave
+        };
+        GrooveSet {
+            turns,
+            stripe,
+            frac,
+            local,
+            along,
+            trough: 0.5 - 0.5 * wave,
+            gate,
+            depth,
+            shape,
+        }
+    }
+
+    /// A chain of pits along a fracture (F64), 0 to 1 at a cell `axis` m off the
+    /// fracture's line and `along` m along it: pits `width` m across, one every pit
+    /// and a half or so, each a little off its place and of its own size, and standing
+    /// only where the fracture's own segment does, so that the chain breaks as the
+    /// fracture does.
+    fn pits_at(
+        &self,
+        axis: f64,
+        along: f64,
+        stripe: f64,
+        width: f64,
+        gate: f64,
+        noise: &LaneNoise,
+    ) -> f64 {
+        if axis.abs() > width {
+            return 0.0;
+        }
+        let step = PIT_SPACING * width;
+        let key = stripe_key(stripe);
+        let place = along / step + noise.draws.uniform(key, 50);
+        let nearest = place.floor() as i64;
+        let mut best = 0.0f64;
+        for m in nearest - 1..=nearest + 1 {
+            let pit = key ^ ((m as u64) << 32);
+            if noise.draws.uniform(pit, 51) > gate {
+                continue;
+            }
+            let centre = (m as f64 + 0.5 + PIT_JITTER * (noise.draws.uniform(pit, 52) - 0.5)
+                - noise.draws.uniform(key, 50))
+                * step;
+            let radius = 0.5 * width * (0.7 + 0.6 * noise.draws.uniform(pit, 53));
+            let rho = axis.hypot(along - centre) / radius;
+            if rho < 1.0 {
+                best = best.max((1.0 - rho * rho).powf(1.5));
+            }
+        }
+        best
     }
 
     /// The cells within `margin` of the lane with their across and along: a disc round
@@ -922,8 +1108,42 @@ impl FoldKernels {
                     field[1] - radial * center[1],
                     field[2] - radial * center[2],
                 ]);
+                // An earlier pulse (F63): where its patches stand, a kernel may keep the
+                // strike of the field as it stood then, and lies in phase with its own
+                // neighbours, not with the fissure's line.
+                let patch = {
+                    let x = (POLAR_PULSE_LEVEL
+                        + sets.fbm(
+                            [center[0] - 3.9, center[1] + 6.2, center[2] + 2.5],
+                            scale / POLAR_PULSE_PATCH,
+                            2,
+                            2.0,
+                            0.5,
+                        ))
+                    .clamp(0.0, 1.0);
+                    x * x * (3.0 - 2.0 * x)
+                };
+                let earlier = rng.uniform(id, 5) < patch;
+                let tangent = if earlier {
+                    let turn = POLAR_PULSE_TURN_DEG.to_radians()
+                        * (sets.fbm(
+                            [center[0] + 8.8, center[1] - 0.6, center[2] - 4.1],
+                            scale / POLAR_PULSE_PATCH,
+                            2,
+                            2.0,
+                            0.5,
+                        ) / 0.5)
+                            .clamp(-1.0, 1.0);
+                    rotate(tangent, center, turn)
+                } else {
+                    tangent
+                };
                 let normal = normalize(cross(center, tangent));
-                let n_p = normalize(cross(p, t));
+                let n_p = if earlier {
+                    normal
+                } else {
+                    normalize(cross(p, t))
+                };
                 let s = sets.fbm(center, set_frequency, 2, 2.0, 0.5);
                 let local_spacing = (spacing
                     * (shell.factor(center) / edge_factor)
@@ -948,12 +1168,14 @@ impl FoldKernels {
                     .clamp(0.0, 1.0);
                     x * x * (3.0 - 2.0 * x)
                 };
-                let (lo, hi) = POLAR_FOLD_STRENGTH_RANGE;
+                // Each packet of folds has a depth of its own, from the heavy tail fault
+                // throws have (F63), narrowed as the mean of a packet's few folds is.
                 let strength = (POLAR_FOLD_SLACK
                     + (1.0 - POLAR_FOLD_SLACK) * (s.abs() / POLAR_FOLD_SET_FULL).min(1.0))
                     * near
                     * present
-                    * (lo + (hi - lo) * rng.uniform(id, 3));
+                    * fault_depth(rng.uniform(id, 3)).powf(POLAR_FOLD_PACKET_SPREAD)
+                    * if earlier { POLAR_PULSE_RELIEF } else { 1.0 };
                 Some((
                     (i, j, l),
                     FoldKernel {
@@ -1005,7 +1227,7 @@ impl FoldKernels {
         if den <= 0.0 {
             return 0.0;
         }
-        (num / den.sqrt().max(POLAR_FOLD_KERNEL_FLOOR)).clamp(-1.5, 1.5)
+        (num / den.sqrt().max(POLAR_FOLD_KERNEL_FLOOR)).clamp(-GROOVE_DEPTH_MAX, GROOVE_DEPTH_MAX)
     }
 }
 
@@ -1298,21 +1520,72 @@ impl IceShellProcess {
             // an older one.
             let mut oldest = vec![0u32; n];
             let (o_lo, o_hi) = GROOVE_NEIGHBOUR_OFFSET;
+            // The lid a lane breaks is the lid where and when it opens (F61): the elastic
+            // lid of the time, thinner by the shell's own thinning where a focusing
+            // episode, a past one or the present, has the shell thinned at that time.
+            // With it comes the thinning's profile there, which says whether the ground
+            // is being renewed.
+            let episodes = crate::stages::ice::focusing_episodes(graph, &shell);
+            let episode_maps: Vec<ShellMap> =
+                episodes.iter().map(|e| shell.with_pole(e.center)).collect();
+            let present_start = if shell.has_active_terrain() {
+                (age - FOCUSING_EPISODE_DURATION_GYR).max(0.0)
+            } else {
+                f64::INFINITY
+            };
+            let lid_at = |d: [f64; 3], t: f64| -> (f64, f64) {
+                let mut thinnest = (1.0, 0.0);
+                for (e, m) in episodes.iter().zip(&episode_maps) {
+                    if t >= e.start && t <= e.end {
+                        let f = m.factor(d);
+                        if f < thinnest.0 {
+                            thinnest = (f, m.profile(d));
+                        }
+                    }
+                }
+                if t >= present_start {
+                    let f = shell.factor(d);
+                    if f < thinnest.0 {
+                        thinnest = (f, shell.profile(d));
+                    }
+                }
+                (thermal.at(t).elastic.max(1e3) * thinnest.0, thinnest.1)
+            };
+            // A lane must be able to be the least of its lengths within the greatest:
+            // the widest a lane may be on this body.
+            let widest = GROOVE_LANE_MAX_LENGTH_RAD * body_radius / GROOVE_LANE_ASPECT.0;
+            // The times the lanes may take, and within them the episodes' own. Where
+            // the lid of the time is too thick everywhere for the narrowest lane, only
+            // an episode's thinned zone can hold one, and the times are drawn from the
+            // episodes, which is the same as drawing from all and keeping those.
+            let (t_lo, t_hi) = (
+                (te - 0.5 * duration).max(0.0),
+                (te + 0.5 * duration).min(age),
+            );
+            let mut windows: Vec<(f64, f64)> = episodes
+                .iter()
+                .map(|e| (e.start.max(t_lo), e.end.min(t_hi)))
+                .filter(|w| w.1 > w.0)
+                .collect();
+            if present_start.is_finite() && t_hi > present_start {
+                windows.push((present_start.max(t_lo), t_hi));
+            }
+            let thinnest_lid = (0..=16)
+                .map(|i| {
+                    thermal
+                        .at(t_lo + (t_hi - t_lo) * i as f64 / 16.0)
+                        .elastic
+                        .max(1e3)
+                })
+                .fold(f64::INFINITY, f64::min);
+            let only_thinned = lid_lo * thinnest_lid > widest && !windows.is_empty();
+            let mut misses = 0usize;
             let tau = 2.0 * std::f64::consts::PI;
             with_stamper(&grid, |stamper| {
                 for k in 0..GROOVE_MAX_LANES {
                     if area >= fraction * total {
                         break;
                     }
-                    // The lane's width in thicknesses of the lid it broke, the elastic
-                    // lid of the episode; its grooves are the necking of that lid (F61),
-                    // whatever width the body let the lane have.
-                    let lids = lid_lo * (lid_hi / lid_lo).powf(rng.uniform(k, 100));
-                    let half_width =
-                        (0.5 * lids * elastic).min(0.5 * GROOVE_LANE_MAX_WIDTH_SHARE * body_radius);
-                    let groove_spacing =
-                        GROOVE_NECKING_WAVELENGTH * GROOVE_RIFT_LID_SHARE * elastic;
-                    let spacing = half_width.min(GROOVE_LANE_POINT_SPACING_RAD * body_radius);
                     // A set grows beside one of the lanes laid lately, while the
                     // extension is there, not beside any lane ever laid, which would
                     // crowd the crowded regions further.
@@ -1323,89 +1596,147 @@ impl IceShellProcess {
                             let back = (rng.uniform(k, 106) * recent as f64) as usize;
                             lanes.len() - 1 - back.min(recent - 1)
                         });
-                    // A lane of a set belongs to its parent's generation and is no longer
-                    // than it; a lane on its own takes its time from the episode.
-                    let (time_gyr, half_length) = match parent {
-                        Some(i) => (
-                            (lanes[i].time_gyr
-                                + (rng.uniform(k, 111) - 0.5) * GROOVE_SET_TIME_SPREAD * duration)
+                    // The lane's time, where it opens and its width in lid thicknesses
+                    // are drawn together, and drawn again until the lid there and then
+                    // lets a lane that wide be a lane: a draw on a lid too thick is a
+                    // rift that never formed. The first draw of each lane uses the
+                    // streams it always did, so a body whose lid lets every lane form is
+                    // not changed by the rule.
+                    let mut made = None;
+                    for attempt in 0..GROOVE_LANE_ATTEMPTS {
+                        let st = |base: u64| base + 4096 * attempt;
+                        let lids = lid_lo * (lid_hi / lid_lo).powf(rng.uniform(k, st(100)));
+                        // A lane of a set belongs to its parent's generation; a lane on
+                        // its own takes its time from the episode.
+                        let time_gyr = match parent {
+                            Some(i) => (lanes[i].time_gyr
+                                + (rng.uniform(k, st(111)) - 0.5)
+                                    * GROOVE_SET_TIME_SPREAD
+                                    * duration)
                                 .clamp(0.0, age),
+                            None if only_thinned => {
+                                let w = windows[((rng.uniform(k, st(113)) * windows.len() as f64)
+                                    as usize)
+                                    .min(windows.len() - 1)];
+                                w.0 + (w.1 - w.0) * rng.uniform(k, st(111))
+                            }
+                            None => {
+                                (te + (rng.uniform(k, st(111)) - 0.5) * duration).clamp(0.0, age)
+                            }
+                        };
+                        // Where it opens: beside an earlier lane, somewhere along it; or
+                        // anywhere in the belts of extension, by rejection.
+                        let (anchor, beside) = match parent {
+                            Some(i) => {
+                                let p = &lanes[i];
+                                let j = (((0.1 + 0.8 * rng.uniform(k, st(110)))
+                                    * p.points.len() as f64)
+                                    as usize)
+                                    .min(p.points.len() - 1);
+                                (p.points[j], Some(p.tangent_at(j)))
+                            }
+                            None => {
+                                let axis = rng.unit_direction(k, st(1));
+                                let u = normalize(cross(
+                                    axis,
+                                    if axis[0].abs() < 0.9 {
+                                        [1.0, 0.0, 0.0]
+                                    } else {
+                                        [0.0, 1.0, 0.0]
+                                    },
+                                ));
+                                let v = cross(axis, u);
+                                let mut center = u;
+                                for inner in 0..16u64 {
+                                    let ang = tau * rng.uniform(k, st(3 + 2 * inner));
+                                    let (sa, ca) = ang.sin_cos();
+                                    center = normalize([
+                                        u[0] * ca + v[0] * sa,
+                                        u[1] * ca + v[1] * sa,
+                                        u[2] * ca + v[2] * sa,
+                                    ]);
+                                    let w = 0.5
+                                        + 0.5
+                                            * belts.fbm(
+                                                center,
+                                                GROOVE_BELT_FREQUENCY / tau,
+                                                2,
+                                                2.0,
+                                                0.5,
+                                            );
+                                    if rng.uniform(k, st(4 + 2 * inner)) < w.powf(GROOVE_BELT_POWER)
+                                    {
+                                        break;
+                                    }
+                                }
+                                (center, None)
+                            }
+                        };
+                        // A lane wider than a lane can be is not formed; nor is one that
+                        // opens in ground being renewed about it, which keeps no trace.
+                        let (lid, profile) = lid_at(anchor, time_gyr);
+                        let half_width = 0.5 * lids * lid;
+                        if 2.0 * half_width > widest || profile >= POLAR_CORE_PROFILE {
+                            continue;
+                        }
+                        made = Some((time_gyr, anchor, beside, lid, half_width, attempt));
+                        break;
+                    }
+                    let Some((time_gyr, anchor, beside, lid, half_width, attempt)) = made else {
+                        misses += 1;
+                        if misses > GROOVE_LANE_MISSES {
+                            break;
+                        }
+                        continue;
+                    };
+                    misses = 0;
+                    let st = |base: u64| base + 4096 * attempt;
+                    // Its grooves are the necking of the lid it broke (F61).
+                    let groove_spacing = GROOVE_NECKING_WAVELENGTH * GROOVE_RIFT_LID_SHARE * lid;
+                    let spacing = half_width.min(GROOVE_LANE_POINT_SPACING_RAD * body_radius);
+                    // A lane of a set is no longer than its parent.
+                    let half_length = match parent {
+                        Some(i) => {
                             lanes[i].half_length
                                 * (GROOVE_SET_LENGTH_SHARE
-                                    + (1.0 - GROOVE_SET_LENGTH_SHARE) * rng.uniform(k, 101)),
-                        ),
-                        None => (
-                            (te + (rng.uniform(k, 111) - 0.5) * duration).clamp(0.0, age),
-                            (half_width
-                                * GROOVE_LANE_ASPECT.0
-                                * (GROOVE_LANE_ASPECT.1 / GROOVE_LANE_ASPECT.0)
-                                    .powf(rng.uniform(k, 101)))
-                            .min(0.5 * GROOVE_LANE_MAX_LENGTH_RAD * body_radius),
-                        ),
+                                    + (1.0 - GROOVE_SET_LENGTH_SHARE) * rng.uniform(k, st(101)))
+                        }
+                        None => (half_width
+                            * GROOVE_LANE_ASPECT.0
+                            * (GROOVE_LANE_ASPECT.1 / GROOVE_LANE_ASPECT.0)
+                                .powf(rng.uniform(k, st(101))))
+                        .min(0.5 * GROOVE_LANE_MAX_LENGTH_RAD * body_radius),
                     };
-                    // The start and the heading: beside an earlier lane, one to three
-                    // widths to its side somewhere along it, its heading turned a little;
-                    // or anywhere in the belts of extension, by rejection, along the
-                    // strike of the field of extension at the lane's time.
-                    let (start, heading) = match parent {
-                        Some(i) => {
+                    // The start and the heading: beside the parent, to one side of it with
+                    // the two overlapping, its heading turned a little; or where it
+                    // opened, along the strike of the field of extension at its time.
+                    let (start, heading) = match (parent, beside) {
+                        (Some(i), Some(tj)) => {
                             let p = &lanes[i];
-                            let j = (((0.1 + 0.8 * rng.uniform(k, 110)) * p.points.len() as f64)
-                                as usize)
-                                .min(p.points.len() - 1);
-                            let (pj, tj) = (p.points[j], p.tangent_at(j));
-                            let nj = normalize(cross(pj, tj));
-                            let side = if rng.uniform(k, 108) < 0.5 { -1.0 } else { 1.0 };
+                            let nj = normalize(cross(anchor, tj));
+                            let side = if rng.uniform(k, st(108)) < 0.5 {
+                                -1.0
+                            } else {
+                                1.0
+                            };
                             let offset = side * (p.half_width + half_width) / body_radius
-                                * (o_lo + (o_hi - o_lo) * rng.uniform(k, 109));
+                                * (o_lo + (o_hi - o_lo) * rng.uniform(k, st(109)));
                             let start = normalize([
-                                pj[0] + nj[0] * offset,
-                                pj[1] + nj[1] * offset,
-                                pj[2] + nj[2] * offset,
+                                anchor[0] + nj[0] * offset,
+                                anchor[1] + nj[1] * offset,
+                                anchor[2] + nj[2] * offset,
                             ]);
                             let turn = GROOVE_NEIGHBOUR_TURN_DEG.to_radians()
-                                * (2.0 * rng.uniform(k, 107) - 1.0);
+                                * (2.0 * rng.uniform(k, st(107)) - 1.0);
                             (start, rotate(tj, start, turn))
                         }
-                        None => {
-                            let axis = rng.unit_direction(k, 1);
-                            let u = normalize(cross(
-                                axis,
-                                if axis[0].abs() < 0.9 {
-                                    [1.0, 0.0, 0.0]
-                                } else {
-                                    [0.0, 1.0, 0.0]
-                                },
-                            ));
-                            let v = cross(axis, u);
-                            let mut center = u;
-                            for attempt in 0..16u64 {
-                                let ang = tau * rng.uniform(k, 3 + 2 * attempt);
-                                let (sa, ca) = ang.sin_cos();
-                                center = normalize([
-                                    u[0] * ca + v[0] * sa,
-                                    u[1] * ca + v[1] * sa,
-                                    u[2] * ca + v[2] * sa,
-                                ]);
-                                let w = 0.5
-                                    + 0.5
-                                        * belts.fbm(
-                                            center,
-                                            GROOVE_BELT_FREQUENCY / tau,
-                                            2,
-                                            2.0,
-                                            0.5,
-                                        );
-                                if rng.uniform(k, 4 + 2 * attempt) < w.powf(GROOVE_BELT_POWER) {
-                                    break;
-                                }
-                            }
+                        _ => {
                             let phase = if duration > 0.0 {
                                 ((time_gyr - (te - 0.5 * duration)) / duration).clamp(0.0, 1.0)
                             } else {
                                 0.5
                             };
-                            (center, extension_heading(&strikes, center, phase))
+                            (anchor, extension_heading(&strikes, anchor, phase))
                         }
                     };
                     // The centre line is traced on past the lane's length, as far as an
@@ -1433,6 +1764,7 @@ impl IceShellProcess {
                             })
                         })
                         .filter(|pts| pts.len() >= 3);
+                    let tidal = traced.is_some();
                     let points = traced.unwrap_or_else(|| {
                         let axis = normalize(cross(start, heading));
                         Lane::great_circle(axis, start, long, spacing, body_radius)
@@ -1573,6 +1905,51 @@ impl IceShellProcess {
                         groove_spacing,
                         stops,
                     );
+                    // The strike of each later pulse (F63): the field the lane follows,
+                    // as it stands later in the lane's working life, against its strike
+                    // when the lane opened. The life is a set's spread of the episode,
+                    // or what is left of the focusing episode that thinned the lid.
+                    let mut lane = lane;
+                    let life = windows
+                        .iter()
+                        .find(|w| time_gyr >= w.0 && time_gyr <= w.1)
+                        .map_or(f64::INFINITY, |w| w.1 - time_gyr)
+                        .min(GROOVE_SET_TIME_SPREAD * duration);
+                    let strike_at = |t: f64| -> [f64; 3] {
+                        if tidal && let Some(c) = cracks.as_ref() {
+                            let axis = mean_axis_at(t, age, c.nsr_period_gyr);
+                            let (_, phase) = c.shell.peak_tension(axis, start);
+                            return crack_direction(
+                                start,
+                                &c.shell.total(axis, start, phase),
+                                None,
+                            );
+                        }
+                        let phase = if duration > 0.0 {
+                            ((t - (te - 0.5 * duration)) / duration).clamp(0.0, 1.0)
+                        } else {
+                            0.5
+                        };
+                        extension_heading(&strikes, start, phase)
+                    };
+                    let opened = strike_at(time_gyr);
+                    lane.turns = (1..GROOVE_PULSES)
+                        .map(|j| {
+                            let later = strike_at(
+                                time_gyr + life * j as f64 / (GROOVE_PULSES - 1).max(1) as f64,
+                            );
+                            // A strike has no sense: the turn is the lesser way round.
+                            let turn = dot(cross(opened, later), start).atan2(dot(opened, later));
+                            let half = std::f64::consts::FRAC_PI_2;
+                            if turn > half {
+                                turn - 2.0 * half
+                            } else if turn < -half {
+                                turn + 2.0 * half
+                            } else {
+                                turn
+                            }
+                        })
+                        .collect();
                     let index = lanes.len() as u32 + 1;
                     let noise = LaneNoise::new(&lane);
                     for sm in lane.sample(&grid, body_radius, 2.0 * cell, stamper) {
@@ -1985,6 +2362,7 @@ pub fn lane_hits(
     body_radius: f64,
     cell: f64,
     lanes: &[Lane],
+    loose: Option<&[f32]>,
 ) -> Vec<Vec<LaneHit>> {
     lanes
         .par_iter()
@@ -1995,7 +2373,8 @@ pub fn lane_hits(
                     .into_iter()
                     .filter_map(|sm| {
                         let d = grid.center(grid.cell(sm.idx));
-                        let f = lane.fabric_at(&sm, d, body_radius, cell, &noise);
+                        let snow = loose.map_or(0.0, |l| l[sm.idx] as f64);
+                        let f = lane.fabric_at(&sm, d, body_radius, cell, snow, &noise);
                         (f.cover > 0.0 || f.fracture > 0.004).then_some(LaneHit {
                             k: sm.idx as u32,
                             cover: f.cover as f32,
@@ -2122,6 +2501,7 @@ pub fn groove_compute(
     cell: f64,
     renewed: &[f32],
     base: &[f32],
+    loose: Option<&[f32]>,
     stamper: &mut Stamper,
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
@@ -2136,7 +2516,8 @@ pub fn groove_compute(
                 return None;
             }
             let d = grid.center(grid.cell(k));
-            let f = lane.fabric_at(sm, d, body_radius, cell, &noise);
+            let snow = loose.map_or(0.0, |l| l[k] as f64);
+            let f = lane.fabric_at(sm, d, body_radius, cell, snow, &noise);
             if f.cover <= 0.0 && f.outer.abs() < 0.5 {
                 return None;
             }
@@ -2397,7 +2778,7 @@ mod tests {
         assert!(lane.cover_at(&sm, d, r, cell, &noise) > 0.999);
         let (d, sm) = on_equator_lane(r, 0.0, 900e3);
         assert!(lane.cover_at(&sm, d, r, cell, &noise) < 1e-6);
-        let f = lane.fabric_at(&sm, d, r, cell, &noise);
+        let f = lane.fabric_at(&sm, d, r, cell, 0.0, &noise);
         assert!(f.cover == 0.0 && f.outer == 0.0 && f.fracture == 0.0);
         // Far from the stop the cut does not reach.
         let (d, sm) = on_equator_lane(r, 0.0, -700e3);
@@ -2419,7 +2800,7 @@ mod tests {
                 for j in 0..40 {
                     let (d, sm) =
                         on_equator_lane(r, -40e3 + 2e3 * j as f64, -400e3 + 2e3 * i as f64);
-                    let f = lane.fabric_at(&sm, d, r, cell, &noise);
+                    let f = lane.fabric_at(&sm, d, r, cell, 0.0, &noise);
                     sum += f.relief * f.relief;
                     n += 1;
                 }
@@ -2540,5 +2921,239 @@ mod tests {
             "{} fronts",
             fronts.len()
         );
+    }
+
+    /// A lane takes the lid where and when it opens (F61). On Enceladus the lid of the
+    /// time is too thick for any lane, so every lane opens in a zone a focusing episode
+    /// has thinned, during that episode, on a lid thinner than the mean; and none is
+    /// wider than a lane can be.
+    #[test]
+    fn a_lane_opens_where_the_lid_lets_it() {
+        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let p = IceShellProcess::new(&g, CubeSphere::new(64)).unwrap();
+        assert!(!p.lanes.is_empty());
+        let widest = GROOVE_LANE_MAX_LENGTH_RAD * g.f64("body.radius") / GROOVE_LANE_ASPECT.0;
+        let mean_lid = g.f64("interior.elastic_thickness");
+        assert!(GROOVE_LANE_WIDTH_ELASTIC.0 * mean_lid > widest);
+        for l in &p.lanes {
+            assert!(2.0 * l.half_width <= widest * 1.0001, "{}", l.half_width);
+            let t = l.time_gyr;
+            assert!(
+                p.episodes.iter().any(|e| t >= e.start && t <= e.end) || t >= p.present_start,
+                "a lane at {t} Gyr, outside every episode"
+            );
+            assert!(l.lid() < 0.8 * mean_lid, "lid {}", l.lid());
+            // The lane is as wide as its own lid makes it.
+            let lids = 2.0 * l.half_width / l.lid();
+            assert!(
+                (GROOVE_LANE_WIDTH_ELASTIC.0 * 0.999..=GROOVE_LANE_WIDTH_ELASTIC.1 * 1.001)
+                    .contains(&lids),
+                "{lids}"
+            );
+        }
+        let span = |of: &dyn Fn(&Lane) -> f64| {
+            let v: Vec<f64> = p.lanes.iter().map(of).collect();
+            (
+                v.iter().cloned().fold(f64::INFINITY, f64::min),
+                v.iter().cloned().fold(0.0, f64::max),
+            )
+        };
+        let (lid, width, grooves) = (
+            span(&|l| l.lid() / 1e3),
+            span(&|l| 2.0 * l.half_width / 1e3),
+            span(&|l| l.groove_spacing / 1e3),
+        );
+        eprintln!(
+            "enceladus: {} lanes on lids of {:.1} to {:.1} km, {:.0} to {:.0} km wide, grooves {:.1} to {:.1} km apart",
+            p.lanes.len(),
+            lid.0,
+            lid.1,
+            width.0,
+            width.1,
+            grooves.0,
+            grooves.1
+        );
+    }
+
+    /// Between a body whose lid lets no lane form outside its thinned zones and one whose
+    /// lid lets every lane form lie bodies that get some of each (principle 15): as an
+    /// Enceladus is made larger its lid takes up less of it, and lanes open on the lid of
+    /// the time, outside any focusing episode, a few and then many, beside those its
+    /// episodes still make.
+    #[test]
+    fn lanes_come_in_by_degrees_as_the_lid_thins_against_the_body() {
+        let mut outside_counts = Vec::new();
+        let mut inside_counts = Vec::new();
+        for scale in [1.0, 1.2, 1.5, 2.0] {
+            let (mut g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+            let r = g.f64("body.radius") * scale;
+            g.set("body.radius", r).unwrap();
+            g.set("detail.quality", "preview").unwrap();
+            let p = IceShellProcess::new(&g, CubeSphere::new(48)).unwrap();
+            let in_episode = |t: f64| {
+                p.episodes.iter().any(|e| t >= e.start && t <= e.end) || t >= p.present_start
+            };
+            let outside = p.lanes.iter().filter(|l| !in_episode(l.time_gyr)).count();
+            let widest = GROOVE_LANE_MAX_LENGTH_RAD * r / GROOVE_LANE_ASPECT.0;
+            for l in &p.lanes {
+                assert!(2.0 * l.half_width <= widest * 1.0001);
+            }
+            eprintln!(
+                "x{scale}: radius {:.0} km, shell {:.3} of it, lid {:.1} km, widest lane {:.0} km, share to lanes {:.3}, {} lanes, {} outside episodes",
+                r / 1e3,
+                g.f64("interior.ice_shell_thickness") / r,
+                g.f64("interior.elastic_thickness") / 1e3,
+                widest / 1e3,
+                g.f64("tectonics.ice_resurfaced_fraction"),
+                p.lanes.len(),
+                outside,
+            );
+            // A body with no share for lanes has none: at twice the size the shell is
+            // thinner than F44's thin-shell rule allows lanes on, a step that is not
+            // this rule's and is on the list for the audit against principle 15.
+            assert_eq!(
+                p.lanes.is_empty(),
+                g.f64("tectonics.ice_resurfaced_fraction") <= 0.0
+            );
+            outside_counts.push(outside);
+            inside_counts.push(p.lanes.len() - outside);
+        }
+        assert_eq!(outside_counts[0], 0);
+        assert!(inside_counts[0] > 0);
+        assert!(outside_counts[1] > 0 && outside_counts[2] > 4 * outside_counts[1]);
+        // The largest of them is a world in between: lanes of both kinds.
+        assert!(inside_counts[2] > 0, "{inside_counts:?}");
+    }
+
+    /// A groove's depth has a heavy tail (F63): the middling one at one, half of them a
+    /// little shallower, an eighth much deeper, none past the bound.
+    #[test]
+    fn groove_depths_have_a_heavy_tail() {
+        assert!((fault_depth(0.5) - 1.0).abs() < 1e-9);
+        assert!(fault_depth(1.0) > 0.7 && fault_depth(1.0) < 1.0);
+        // One groove in eight is more than 1.7 times as deep as the middling one.
+        assert!(fault_depth(0.125) > 1.7 && fault_depth(0.125) < 2.0);
+        assert!(
+            fault_depth(1e-9) <= GROOVE_DEPTH_MAX && fault_depth(1e-9) > 0.95 * GROOVE_DEPTH_MAX
+        );
+        let mut last = f64::INFINITY;
+        for i in 1..=100 {
+            let v = fault_depth(i as f64 / 100.0);
+            assert!(v <= last);
+            last = v;
+        }
+    }
+
+    /// A later pulse reworks part of a lane (F63): its grooves cut the first set where
+    /// they stand and leave it elsewhere.
+    #[test]
+    fn a_later_pulse_cuts_the_first_set_in_patches() {
+        let (plain, r) = equator_lane([None, None]);
+        let mut worked = plain.clone();
+        worked.turns = vec![0.3, -0.25];
+        let noise = LaneNoise::new(&plain);
+        let (mut same, mut cut, mut n) = (0usize, 0usize, 0usize);
+        for i in 0..300 {
+            for j in 0..30 {
+                let (d, sm) = on_equator_lane(r, -30e3 + 2e3 * j as f64, -300e3 + 2e3 * i as f64);
+                let a = plain.fabric_at(&sm, d, r, 1e3, 0.0, &noise).relief;
+                let b = worked.fabric_at(&sm, d, r, 1e3, 0.0, &noise).relief;
+                n += 1;
+                if (a - b).abs() < 1.0 {
+                    same += 1;
+                } else if (a - b).abs() > 20.0 {
+                    cut += 1;
+                }
+            }
+        }
+        let (same, cut) = (same as f64 / n as f64, cut as f64 / n as f64);
+        assert!(same > 0.15, "untouched share {same}");
+        assert!(cut > 0.1, "reworked share {cut}");
+    }
+
+    /// Under loose cover a fracture beyond a lane's fault shows as a chain of pits (F64):
+    /// pits along its line where its segment stands, none where the cover is too thin
+    /// for the grid to draw them, and the open fracture itself where there is no cover.
+    #[test]
+    fn a_covered_fracture_shows_as_pits() {
+        let (lane, r) = equator_lane([None, None]);
+        let noise = LaneNoise::new(&lane);
+        let width = 1000.0;
+        let along_line = |gate: f64| -> Vec<f64> {
+            (0..4000)
+                .map(|i| lane.pits_at(0.0, 50.0 * i as f64, 3.0, width, gate, &noise))
+                .collect()
+        };
+        let share = |v: &[f64]| v.iter().filter(|&&x| x > 0.0).count() as f64 / v.len() as f64;
+        // A pit every pit and a half: most of the line is pit, with ground between.
+        let whole = along_line(1.0);
+        let pitted = share(&whole);
+        assert!(pitted > 0.45 && pitted < 0.8, "{pitted}");
+        assert!(whole.iter().cloned().fold(0.0, f64::max) > 0.9);
+        assert!(whole.contains(&0.0));
+        // The chain breaks as the fracture does, and nothing stands off its line.
+        let broken = share(&along_line(0.3));
+        assert!(
+            broken > 0.05 && broken < 0.6 * pitted,
+            "{broken} against {pitted}"
+        );
+        assert_eq!(
+            lane.pits_at(1.1 * width, 12_345.0, 3.0, width, 1.0, &noise),
+            0.0
+        );
+        // In the damage zone, thin cover fills its share of the open fractures and makes
+        // no pits a grid of 250 m can draw: the walls show less by that share.
+        let edge = lane.edge_at(0.0, 1);
+        let shown = |loose: f64| -> f64 {
+            (0..2000)
+                .map(|i| {
+                    let (d, sm) = on_equator_lane(r, edge + 6.4e3, -200e3 + 200.0 * i as f64);
+                    lane.fabric_at(&sm, d, r, 250.0, loose, &noise).fracture
+                })
+                .sum()
+        };
+        let (open, thin) = (shown(0.0), shown(20.0));
+        assert!(open > 0.0);
+        let fracture_depth = GROOVE_FRACTURE_SHARE * GROOVE_RELIEF_SHARE * 7e3;
+        assert!(
+            (thin / open - (1.0 - 20.0 / fracture_depth)).abs() < 1e-6,
+            "{}",
+            thin / open
+        );
+        // Thick cover fills them, and pits the grid can draw stand in their place.
+        let thick = shown(400.0);
+        assert!(thick > 0.0 && thick < open, "{thick} against {open}");
+    }
+
+    /// A later pulse's grooves are struck along the field as it stands later in the
+    /// lane's working life (F63): on Ganymede the strike field of extension drifts, and
+    /// the later sets are turned by degrees to tens of degrees; on Enceladus the tidal
+    /// field barely turns within an episode, and they run nearly parallel to the first.
+    #[test]
+    fn later_pulses_take_the_field_as_it_turns() {
+        let turns_of = |name: &str| -> Vec<f64> {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let p = IceShellProcess::new(&g, CubeSphere::new(64)).unwrap();
+            assert!(p.lanes.iter().all(|l| l.turns.len() == GROOVE_PULSES - 1));
+            let mut v: Vec<f64> = p
+                .lanes
+                .iter()
+                .flat_map(|l| l.turns.iter().map(|t| t.abs().to_degrees()))
+                .collect();
+            v.sort_by(f64::total_cmp);
+            v
+        };
+        let ganymede = turns_of("Ganymede");
+        let enceladus = turns_of("Enceladus");
+        let at = |v: &[f64], q: f64| v[((v.len() - 1) as f64 * q) as usize];
+        eprintln!(
+            "later pulses' turns, degrees: ganymede median {:.1}, nine tenths under {:.1}; enceladus median {:.2}, largest {:.2}",
+            at(&ganymede, 0.5),
+            at(&ganymede, 0.9),
+            at(&enceladus, 0.5),
+            at(&enceladus, 1.0)
+        );
+        assert!((1.0..45.0).contains(&at(&ganymede, 0.5)));
+        assert!(at(&enceladus, 1.0) < 5.0);
     }
 }

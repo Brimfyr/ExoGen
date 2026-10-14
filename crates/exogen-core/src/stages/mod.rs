@@ -357,7 +357,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 58;
+pub const FINISH_VERSION: u64 = 59;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -707,6 +707,23 @@ pub fn finish(
     // reads the ages they leave, the colour follows the true edge, and a younger terrain
     // lies over an older one.
     let halo = POLAR_HALO_SHELLS * graph.f64("interior.ice_shell_thickness");
+    // The loose cover the plumes' fallout has laid on each cell's surface since it
+    // formed (F64), which an open fracture drains into pits: on the ground as the loop
+    // left it, for the lanes' damage zones, and again once the terrains hold their
+    // cells.
+    let loose = cryo::LooseCover::new(graph, &loop_output.episodes, present);
+    let cover_on = |layers: &LayerSet| -> Option<Vec<f32>> {
+        loose.as_ref().map(|l| {
+            let ages = layers.surface_age.as_slice();
+            (0..grid.cell_count())
+                .into_par_iter()
+                .map(|k| {
+                    l.thickness_between(grid.center(grid.cell(k)), ages[k] as f64, present) as f32
+                })
+                .collect()
+        })
+    };
+    let loose_before = cover_on(&layers);
     let mut renewal = ice_shell::Renewal::new(grid.cell_count());
     let fossil_edges: Vec<Vec<f32>> = episode_maps
         .iter()
@@ -719,7 +736,8 @@ pub fn finish(
     };
     let polar = !polar_edge.is_empty();
     {
-        let lane_hits = ice_shell::lane_hits(&grid, body_radius, cell, &lanes);
+        let lane_hits =
+            ice_shell::lane_hits(&grid, body_radius, cell, &lanes, loose_before.as_deref());
         // Each terrain with its time: a lane (0), a past episode's terrain (1), the
         // present polar terrain (2).
         let mut order: Vec<(f64, u8, usize)> = (0..lanes.len())
@@ -750,6 +768,8 @@ pub fn finish(
     }
     renewal.apply(&mut layers);
     let renewed: &[f32] = &renewal.time;
+    drop(loose_before);
+    let loose_cover = cover_on(&layers);
 
     // Loop craters that exist at this epoch. Their coarse form is in the resampled base;
     // their resolved detail is restored below, in age order among the replayed craters.
@@ -1359,6 +1379,7 @@ pub fn finish(
                             cell,
                             renewed,
                             &base,
+                            loose_cover.as_deref(),
                             stamper,
                         );
                         Some((out, None, None))
@@ -1431,6 +1452,8 @@ pub fn finish(
                             body_radius,
                             l,
                             (4.0 * kappa_t).sqrt(),
+                            loose.as_ref(),
+                            present,
                             stamper,
                         );
                         Some((out, None, None))

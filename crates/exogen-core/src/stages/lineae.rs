@@ -985,13 +985,19 @@ pub fn linea_profile(kind: LineaKind, d: f64, width: f64, relief: f64, blur: f64
 }
 
 /// Stamp a crack on the resolved grid: its relief across the trace, and its unit, age
-/// and salts along it.
+/// and salts along it. A ridge or a cycloid that opened under loose cover deeper than
+/// its own relief built no ridges at the surface: the cover drained into it, and it
+/// shows as a chain of pits (F64), as wide and as deep as the cover that lies on it at
+/// `present`.
+#[allow(clippy::too_many_arguments)]
 pub fn linea_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
     body_radius: f64,
     rec: &Linea,
     blur: f64,
+    loose: Option<&crate::stages::cryo::LooseCover>,
+    present: f64,
     stamper: &mut Stamper,
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
@@ -1127,7 +1133,45 @@ pub fn linea_compute(
                     _ => rec.relief * open,
                 };
             let mut h = linea_profile(rec.kind, across, width_here, relief_here, blur);
-            let inside = across.abs() < 0.5 * width_here;
+            // Under loose cover (F64): by how much the crack shows as pits and not as
+            // ridges, from the cover that lay there when it opened against its relief;
+            // and the pits, from the cover that lies there now.
+            let mut buried = 0.0;
+            if chained && let Some(cover) = loose {
+                let d = grid.center(grid.cell(idx));
+                let since = ages[idx] as f64;
+                let x = (cover.thickness_between(d, since, rec.time_gyr) / rec.relief.max(1.0))
+                    .clamp(0.0, 1.0);
+                buried = x * x * (3.0 - 2.0 * x);
+                if buried > 0.0 {
+                    let snow = cover.drained(cover.thickness_between(d, since, present));
+                    let pit_width = PIT_WIDTH_COVERS * snow;
+                    let mut pits = 0.0f64;
+                    if pit_width >= PIT_MIN_CELLS * cell && across.abs() < pit_width {
+                        let step = PIT_SPACING * pit_width;
+                        let along = s * rec.length;
+                        let offset = rng.uniform(0, 60);
+                        let nearest = (along / step + offset).floor() as i64;
+                        for m in nearest - 1..=nearest + 1 {
+                            let pit = (m + (1 << 30)) as u64;
+                            if rng.uniform(pit, 61) > open {
+                                continue;
+                            }
+                            let centre =
+                                (m as f64 + 0.5 + PIT_JITTER * (rng.uniform(pit, 62) - 0.5)
+                                    - offset)
+                                    * step;
+                            let radius = 0.5 * pit_width * (0.7 + 0.6 * rng.uniform(pit, 63));
+                            let rho = across.hypot(along - centre) / radius;
+                            if rho < 1.0 {
+                                pits = pits.max((1.0 - rho * rho).powf(1.5));
+                            }
+                        }
+                    }
+                    h = h * (1.0 - buried) - snow * pits * buried;
+                }
+            }
+            let inside = across.abs() < 0.5 * width_here && buried < 0.5;
             if rec.kind == LineaKind::Band && inside {
                 let edge = 1.0 - (across / (0.5 * width_here)).powi(2);
                 h += BAND_LINEATION
@@ -1267,7 +1311,7 @@ mod tests {
         };
         let layers = LayerSet::new(grid);
         let out = crate::crater::with_stamper(&grid, |stamper| {
-            linea_compute(&layers, &grid, r, &rec, 0.0, stamper)
+            linea_compute(&layers, &grid, r, &rec, 0.0, None, 1.0, stamper)
         });
         // The crest along the crack: the highest cell in each kilometre of its length.
         let mut crest = vec![0.0f32; 96];
@@ -1286,5 +1330,69 @@ mod tests {
         // relief falls where one hands over to the next.
         let low = crest[12..84].iter().cloned().fold(f32::INFINITY, f32::min);
         assert!(low < 0.6 * top, "{low} against {top}");
+    }
+
+    /// A crack that opens under loose cover deeper than its relief builds no ridges at
+    /// the surface (F64): the cover drains into it, and pits follow its line.
+    #[test]
+    fn a_crack_under_loose_cover_shows_as_pits() {
+        let grid = CubeSphere::new(256);
+        let r = 500.0 / grid.delta();
+        let spacing = 250.0;
+        let n = (96e3 / spacing) as usize;
+        let points: Vec<[f64; 3]> = (0..=n)
+            .map(|i| {
+                let a = (i as f64 * spacing - 48e3) / r;
+                [a.cos(), a.sin(), 0.0]
+            })
+            .collect();
+        let rec = Linea {
+            points,
+            spacing,
+            length: 96e3,
+            width: 2e3,
+            relief: 150.0,
+            kind: LineaKind::Ridge,
+            phase: 0.0,
+            time_gyr: 1.0,
+            id: 7,
+        };
+        let layers = LayerSet::new(grid);
+        // A plume at the crack's middle that laid 300 m there before the crack opened.
+        let cover = crate::stages::cryo::LooseCover::of_plumes(
+            vec![([1.0, 0.0, 0.0], 0.0, 0.5)],
+            600.0,
+            1e3,
+        );
+        let out = crate::crater::with_stamper(&grid, |stamper| {
+            linea_compute(&layers, &grid, r, &rec, 0.0, Some(&cover), 1.0, stamper)
+        });
+        // The middle of the crack, where the cover is deepest.
+        let middle: Vec<&CellWrite> = out
+            .cells
+            .iter()
+            .filter(|c| {
+                let d = grid.center(grid.cell(c.idx as usize));
+                (d[1].atan2(d[0]) * r).abs() < 8e3
+            })
+            .collect();
+        assert!(middle.len() > 100);
+        let high = middle.iter().map(|c| c.bedrock).fold(f32::MIN, f32::max);
+        let low = middle.iter().map(|c| c.bedrock).fold(f32::MAX, f32::min);
+        assert!(high < 20.0, "a ridge of {high} m stands under the cover");
+        assert!(low < -100.0 && low > -301.0, "{low}");
+        // The surface there is the cover's, not the crack's.
+        assert!(middle.iter().all(|c| !c.surface));
+        // Without the cover the same crack builds its ridges.
+        let bare = crate::crater::with_stamper(&grid, |stamper| {
+            linea_compute(&layers, &grid, r, &rec, 0.0, None, 1.0, stamper)
+        });
+        assert!(
+            bare.cells
+                .iter()
+                .map(|c| c.bedrock)
+                .fold(f32::MIN, f32::max)
+                > 60.0
+        );
     }
 }
