@@ -245,6 +245,33 @@ pub mod physics {
         10.5 * (k2 / q) * G * m_primary * m_primary * r.powi(5) * n * e * e / a.powi(6)
     }
 
+    /// F68: the mean porosity of a body's rocky interior under its H2O layer, by volume:
+    /// each depth's porosity from the pressure there, the H2O layer's weight and the
+    /// interior's own above it, as sediments compact (Athy's law).
+    pub fn core_porosity(radius: f64, mass: f64, ice_fraction: f64, ice_layer: f64) -> f64 {
+        let rc = (radius - ice_layer).max(0.0);
+        if rc <= 0.0 || mass <= 0.0 {
+            return 0.0;
+        }
+        let core_mass = mass * (1.0 - ice_fraction).clamp(0.0, 1.0);
+        let rho = core_mass / (4.0 / 3.0 * PI * rc.powi(3));
+        // The H2O layer's weight at the interior's surface, under the mean of the gravity
+        // there and at the surface.
+        let g_top = G * core_mass / (rc * rc);
+        let g_surface = G * mass / (radius * radius);
+        let top = DENSITY_ICE * 0.5 * (g_top + g_surface) * ice_layer;
+        const SHELLS: usize = 64;
+        let (mut sum, mut volume) = (0.0, 0.0);
+        for i in 0..SHELLS {
+            let r = (i as f64 + 0.5) / SHELLS as f64 * rc;
+            let pressure = top + 2.0 / 3.0 * PI * G * rho * rho * (rc * rc - r * r);
+            let dv = r * r;
+            sum += POROSITY_GRANULAR * (-pressure / POROSITY_PRESSURE).exp() * dv;
+            volume += dv;
+        }
+        sum / volume
+    }
+
     pub fn secular_fraction(r: f64) -> f64 {
         let t = ((r - SECULAR_RADIUS_SMALL) / (SECULAR_RADIUS_LARGE - SECULAR_RADIUS_SMALL))
             .clamp(0.0, 1.0);
@@ -959,11 +986,41 @@ pub fn interior_radiogenic_flux(c: &Ctx) -> Value {
 }
 
 pub fn interior_tidal_power(c: &Ctx) -> Value {
-    tidal_power(
+    (tidal_power(
         c.f64("interior.love_number_k2"),
         c.f64("interior.dissipation_q"),
         c.f64("orbit.primary_mass"),
         c.f64("body.radius"),
+        c.f64("orbit.mean_motion"),
+        c.f64("orbit.eccentricity"),
+        c.f64("orbit.semi_major_axis"),
+    ) + c.f64("interior.core_tidal_power"))
+    .into()
+}
+
+pub fn interior_core_porosity(c: &Ctx) -> Value {
+    core_porosity(
+        c.f64("body.radius"),
+        c.f64("body.mass"),
+        c.f64("body.ice_mass_fraction"),
+        c.f64("body.ice_layer_thickness"),
+    )
+    .into()
+}
+
+/// F68: the tides a porous rocky interior dissipates: the eccentricity tides of F13 on the
+/// interior's radius, with an imaginary Love number from its porosity above that of a
+/// consolidated rock.
+pub fn interior_core_tidal_power(c: &Ctx) -> Value {
+    let excess = (c.f64("interior.core_porosity") - POROSITY_CONSOLIDATED).max(0.0);
+    if excess <= 0.0 {
+        return 0.0.into();
+    }
+    tidal_power(
+        POROUS_DISSIPATION * excess,
+        1.0,
+        c.f64("orbit.primary_mass"),
+        (c.f64("body.radius") - c.f64("body.ice_layer_thickness")).max(0.0),
         c.f64("orbit.mean_motion"),
         c.f64("orbit.eccentricity"),
         c.f64("orbit.semi_major_axis"),
@@ -2068,6 +2125,28 @@ mod tests {
         assert!((kepler_period(AU, M_SUN + m) / 86_400.0 - 365.25).abs() < 0.5);
         let f = oblateness(7.2921e-5, r, m, 0.3307);
         assert!((f - 1.0 / 298.0).abs() < 2e-4, "flattening {f}");
+    }
+
+    #[test]
+    fn a_small_moon_s_porous_core_dissipates_its_tides() {
+        // F68: Enceladus's rocky interior stays porous, about a quarter of it pores, and
+        // dissipates 10 to 30 GW (Choblet et al. 2017), which brings its shell to its
+        // measured thickness; the large moons' interiors are consolidated.
+        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let porosity = g.f64("interior.core_porosity");
+        assert!((0.2..0.3).contains(&porosity), "{porosity}");
+        let core = g.f64("interior.core_tidal_power");
+        assert!((10e9..30e9).contains(&core), "{core}");
+        let shell = g.f64("interior.ice_shell_thickness");
+        assert!((15e3..30e3).contains(&shell), "{shell}");
+        for name in ["Europa", "Ganymede", "Callisto", "Titan"] {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            assert!(
+                g.f64("interior.core_porosity") < POROSITY_CONSOLIDATED,
+                "{name}"
+            );
+            assert_eq!(g.f64("interior.core_tidal_power"), 0.0, "{name}");
+        }
     }
 
     #[test]

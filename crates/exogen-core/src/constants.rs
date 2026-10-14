@@ -139,6 +139,20 @@ pub const K2_ROCK_ICE: f64 = 0.25;
 pub const Q_ROCK_ICE: f64 = 50.0;
 pub const K2_ICE: f64 = 0.2;
 pub const Q_ICE: f64 = 20.0;
+/// A porous core dissipates tides (F68). The rocky interior under an H2O layer is a pile
+/// of grains whose porosity falls with the pressure in it as sediments compact: this
+/// share at no pressure (loose granular rock), falling by a factor e for each this much
+/// effective pressure, Pa (Athy's law for sandstone, porosity 0.49 falling by e over 3.7
+/// km of burial, Sclater and Christie 1980: an effective pressure of about 60 MPa);
+/// below this share the rock is consolidated and dissipates as a solid does. The pores
+/// above that share dissipate tides by the friction of grains and the flow of water
+/// through them: an imaginary Love number this many times the excess porosity, set so that
+/// Enceladus's core dissipates 15 GW, within the 10 to 30 GW Choblet et al. (2017) model
+/// for a core of 20 to 30 percent porosity.
+pub const POROSITY_GRANULAR: f64 = 0.4;
+pub const POROSITY_PRESSURE: f64 = 60e6;
+pub const POROSITY_CONSOLIDATED: f64 = 0.05;
+pub const POROUS_DISSIPATION: f64 = 0.84;
 
 /// Mantle temperature model: T_m = a + b (q / q_earth)^0.5 K. Earth 1600 K. Provisional, Phase 3.
 pub const MANTLE_T_BASE: f64 = 1_400.0;
@@ -1176,12 +1190,13 @@ pub const CRACK_STOP_PROFILE: f64 = 0.3;
 pub const POLAR_ACTIVE_THINNING: f64 = 0.3;
 /// The focusing comes and goes (F53; O'Neill and Nimmo 2010: overturns every 0.1 to 1
 /// Gyr, each active about 10 Myr): episodes recur every this many conductive times of
-/// the shell, d² / κ (a fit at the short end of their range, so that Enceladus's come
-/// 0.53 Gyr apart and with the lanes renew 0.40 of it, against the 57% mapped as
-/// tectonized), each this long, Gyr. Between them the thinned zone is thick again, and the
-/// body reorients to put each new one at the pole (Nimmo and Pappalardo 2006), so the
-/// terrain of each old one lies where the wander left it, its fissures turned with it.
-pub const FOCUSING_PERIOD_FACTOR: f64 = 10.0;
+/// the shell, d² / κ (a fit in their range, so that Enceladus's come about 0.5 Gyr apart
+/// and with the lanes renew some 0.4 of it, against the 57% mapped as tectonized; refitted
+/// from 10 when its shell came to its measured 22 km, F68), each this long, Gyr. Between
+/// them the thinned zone is thick again, and the body reorients to put each new one at the
+/// pole (Nimmo and Pappalardo 2006), so the terrain of each old one lies where the wander
+/// left it, its fissures turned with it.
+pub const FOCUSING_PERIOD_FACTOR: f64 = 40.0;
 pub const FOCUSING_EPISODE_DURATION_GYR: f64 = 0.01;
 /// Thermal diffusivity of ice, m²/s.
 pub const ICE_THERMAL_DIFFUSIVITY: f64 = 1.2e-6;

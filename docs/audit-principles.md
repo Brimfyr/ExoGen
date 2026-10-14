@@ -169,19 +169,20 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | Constant | Fitted to | Note |
 |---|---|---|
 | ICE_RESURFACING_FLUX, ICE_RESURFACING_FLUX_FLOOR | Ganymede: two thirds renewed, the shell left near 40 km | a constant of renewal per excess flux, or the strain an episode's extension opens |
-| FOCUSING_PERIOD_FACTOR | Enceladus: episodes 0.53 Gyr apart, 0.40 renewed | O'Neill and Nimmo 2010 give 0.1 to 1 Gyr from the shell's convection |
+| FOCUSING_PERIOD_FACTOR | Enceladus: episodes 0.52 Gyr apart (refitted from 10 to 40 when F68 thinned its shell to 22 km) | O'Neill and Nimmo 2010 give 0.1 to 1 Gyr from the shell's convection; the direction is a recurrence from the heating cycle of the Dione resonance, not a factor on the conductive time |
 | POLAR_FOCUS_FLUX, POLAR_THINNING_MAX | Enceladus | how strongly tidal heating focuses at a pole |
 | PLUME_FALLOUT_RATE | Enceladus: about 0.1 mm/yr near the stripes | scale by the plume's mass flux, which the vent sets |
 | CHAOS_FRACTION_MAX, CHAOS_FLUX | Europa's share of chaos | replaced under S4 |
 | IO_PATERAE_PER_TW | Io's count over its tidal power | per heat-pipe power once S3 is done |
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |
 | CENTRAL_PEAK_HEIGHT | Copernicus | check how it scales with gravity |
+| POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core: 15 GW | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
 
 Constants marked provisional for Phases 5 and 7 (atmosphere, albedo, imagery) are left to those phases.
 
 ## Checks against measurement
 
-### M1. Enceladus's ice shell
+### M1. Enceladus's ice shell (closed by F68)
 
 The model derives a mean shell of 44 km for Enceladus: a conductive shell under 18.9 mW/m², from 14.9 GW of tidal heating, inside validate's range of 5 to 40 GW. Gravity, shape and libration give a mean of about 18 to 25 km, about 5 km at the south pole (Čadek et al. 2016; Beuthe et al. 2016; Hemingway and Mittal 2019), and conducting through a shell that thin loses some 25 to 40 GW.
 
@@ -190,6 +191,8 @@ The consequence shows on the maps. Under a 44 km shell no crater relaxes, so a 1
 Direction: the heat budget, never a pinned shell. Tidal heating in a porous, unconsolidated core can supply 10 to 30 GW and keep the ocean warm from below (Choblet et al. 2017); with it the shell follows from the heat it must carry. Add the shell thickness to validate so that the result is checked.
 
 When: with the ring systems of large impacts, whose palimpsests and relaxed rings depend on the same heat flow history.
+
+Closed by F68, the seventeenth milestone: tides dissipated in a porous rocky interior, its porosity from the pressure in it, bring Enceladus's tides to 30 GW and its shell to 22 km, and validate checks the shell against 15 to 30 km. Its craters relax more beside its terrains and across its plains; the rims of the largest stand on its 12 km lid, which holds wavelengths of a few kilometres up.
 
 ## Validation (principle 15)
 

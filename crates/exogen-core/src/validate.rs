@@ -535,6 +535,13 @@ pub fn reference_checks() -> Vec<Check> {
             0.8,
             "a shell a few kilometres thick under the south pole against twenty elsewhere",
         ),
+        range(
+            "Enceladus",
+            "interior.ice_shell_thickness",
+            15e3,
+            30e3,
+            "18 to 25 km mean, Čadek et al. 2016, Beuthe et al. 2016",
+        ),
         // Triton
         range("Triton", "body.gravity", 0.76, 0.80, "0.78 m/s²"),
         text("Triton", "rotation.mode", "locked", ""),

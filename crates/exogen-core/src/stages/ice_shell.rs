@@ -3909,17 +3909,25 @@ mod tests {
     /// wider than a lane can be.
     #[test]
     fn a_lane_opens_where_the_lid_lets_it() {
-        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
-        let p = IceShellProcess::new(&g, CubeSphere::new(64)).unwrap();
+        // A less heated Enceladus, its eccentricity 0.8 of the real one's, has a lid too
+        // thick for any lane on the lid of the time: its lanes open only where and when its
+        // episodes thinned the shell, on the thinned lid.
+        let (g, p) = enceladus_heated(0.8, 64);
         assert!(!p.lanes.is_empty());
         let widest = GROOVE_LANE_MAX_LENGTH_RAD * g.f64("body.radius") / GROOVE_LANE_ASPECT.0;
         let mean_lid = g.f64("interior.elastic_thickness");
-        assert!(GROOVE_LANE_WIDTH_ELASTIC.0 * mean_lid > widest);
+        assert!(
+            GROOVE_LANE_WIDTH_ELASTIC.0 * mean_lid > widest,
+            "{mean_lid}"
+        );
+        let in_episode = |p: &IceShellProcess, t: f64| {
+            p.episodes.iter().any(|e| t >= e.start && t <= e.end) || t >= p.present_start
+        };
         for l in &p.lanes {
             assert!(2.0 * l.half_width <= widest * 1.0001, "{}", l.half_width);
             let t = l.time_gyr;
             assert!(
-                p.episodes.iter().any(|e| t >= e.start && t <= e.end) || t >= p.present_start,
+                in_episode(&p, t),
                 "a lane at {t} Gyr, outside every episode"
             );
             assert!(l.lid() < 0.8 * mean_lid, "lid {}", l.lid());
@@ -3931,41 +3939,66 @@ mod tests {
                 "{lids}"
             );
         }
-        let span = |of: &dyn Fn(&Lane) -> f64| {
+        // The real one's lid, over the shell its porous core keeps thin (F68), lets lanes
+        // open on the lid of the time too, each as wide as its own lid makes it.
+        let (g1, p1) = enceladus_heated(1.0, 64);
+        let mean1 = g1.f64("interior.elastic_thickness");
+        assert!(GROOVE_LANE_WIDTH_ELASTIC.0 * mean1 < widest, "{mean1}");
+        assert!(p1.lanes.iter().any(|l| !in_episode(&p1, l.time_gyr)));
+        for l in &p1.lanes {
+            let lids = 2.0 * l.half_width / l.lid();
+            assert!(
+                (GROOVE_LANE_WIDTH_ELASTIC.0 * 0.999..=GROOVE_LANE_WIDTH_ELASTIC.1 * 1.001)
+                    .contains(&lids),
+                "{lids}"
+            );
+        }
+        let span = |p: &IceShellProcess, of: &dyn Fn(&Lane) -> f64| {
             let v: Vec<f64> = p.lanes.iter().map(of).collect();
             (
                 v.iter().cloned().fold(f64::INFINITY, f64::min),
                 v.iter().cloned().fold(0.0, f64::max),
             )
         };
-        let (lid, width, grooves) = (
-            span(&|l| l.lid() / 1e3),
-            span(&|l| 2.0 * l.half_width / 1e3),
-            span(&|l| l.groove_spacing / 1e3),
-        );
-        eprintln!(
-            "enceladus: {} lanes on lids of {:.1} to {:.1} km, {:.0} to {:.0} km wide, grooves {:.1} to {:.1} km apart",
-            p.lanes.len(),
-            lid.0,
-            lid.1,
-            width.0,
-            width.1,
-            grooves.0,
-            grooves.1
-        );
+        for (name, p) in [("less heated", &p), ("enceladus", &p1)] {
+            let (lid, width) = (
+                span(p, &|l| l.lid() / 1e3),
+                span(p, &|l| 2.0 * l.half_width / 1e3),
+            );
+            eprintln!(
+                "{name}: {} lanes on lids of {:.1} to {:.1} km, {:.0} to {:.0} km wide",
+                p.lanes.len(),
+                lid.0,
+                lid.1,
+                width.0,
+                width.1
+            );
+        }
+    }
+
+    /// Enceladus with its eccentricity scaled, and so its tides by the square: a body less
+    /// or more heated than the real one, on the path between them.
+    fn enceladus_heated(eccentricity: f64, face: u32) -> (ParamGraph, IceShellProcess) {
+        let (mut g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let e = g.f64("orbit.eccentricity") * eccentricity;
+        g.set("orbit.eccentricity", e).unwrap();
+        let p = IceShellProcess::new(&g, CubeSphere::new(face)).unwrap();
+        (g, p)
     }
 
     /// Between a body whose lid lets no lane form outside its thinned zones and one whose
-    /// lid lets every lane form lie bodies that get some of each (principle 15): as an
-    /// Enceladus is made larger its lid takes up less of it, and lanes open on the lid of
-    /// the time, outside any focusing episode, a few and then many, beside those its
-    /// episodes still make.
+    /// lid lets every lane form lie bodies that get some of each (principle 15): as a less
+    /// heated Enceladus (its eccentricity 0.8 of the real one's) is made larger its lid
+    /// takes up less of it, and lanes open on the lid of the time, outside any focusing
+    /// episode, a few and then many, beside those its episodes still make.
     #[test]
     fn lanes_come_in_by_degrees_as_the_lid_thins_against_the_body() {
         let mut outside_counts = Vec::new();
         let mut inside_counts = Vec::new();
         for scale in [1.0, 1.2, 1.5, 2.0] {
             let (mut g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+            let e = g.f64("orbit.eccentricity") * 0.8;
+            g.set("orbit.eccentricity", e).unwrap();
             let r = g.f64("body.radius") * scale;
             g.set("body.radius", r).unwrap();
             g.set("detail.quality", "preview").unwrap();
@@ -4124,7 +4157,19 @@ mod tests {
             v
         };
         let ganymede = turns_of("Ganymede");
-        let enceladus = turns_of("Enceladus");
+        // A less heated Enceladus's lanes all open in its episodes, within which its tidal
+        // field barely turns.
+        let enceladus: Vec<f64> = {
+            let (_, p) = enceladus_heated(0.8, 64);
+            assert!(p.lanes.iter().all(|l| l.turns.len() == GROOVE_PULSES - 1));
+            let mut v: Vec<f64> = p
+                .lanes
+                .iter()
+                .flat_map(|l| l.turns.iter().map(|t| t.abs().to_degrees()))
+                .collect();
+            v.sort_by(f64::total_cmp);
+            v
+        };
         let at = |v: &[f64], q: f64| v[((v.len() - 1) as f64 * q) as usize];
         eprintln!(
             "later pulses' turns, degrees: ganymede median {:.1}, nine tenths under {:.1}; enceladus median {:.2}, largest {:.2}",
