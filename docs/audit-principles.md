@@ -179,6 +179,18 @@ Each constant here was fitted so that one body comes out right. Each should beco
 
 Constants marked provisional for Phases 5 and 7 (atmosphere, albedo, imagery) are left to those phases.
 
+## Checks against measurement
+
+### M1. Enceladus's ice shell
+
+The model derives a mean shell of 44 km for Enceladus: a conductive shell under 18.9 mW/m², from 14.9 GW of tidal heating, inside validate's range of 5 to 40 GW. Gravity, shape and libration give a mean of about 18 to 25 km, about 5 km at the south pole (Čadek et al. 2016; Beuthe et al. 2016; Hemingway and Mittal 2019), and conducting through a shell that thin loses some 25 to 40 GW.
+
+The consequence shows on the maps. Under a 44 km shell no crater relaxes, so a 140 km crater stays crisp, where the real cratered plains have nothing crisp above about 40 km and their craters are relaxed in step with the heat flow (Bland et al. 2012; the reference map in research/reference/maps).
+
+Direction: the heat budget, never a pinned shell. Tidal heating in a porous, unconsolidated core can supply 10 to 30 GW and keep the ocean warm from below (Choblet et al. 2017); with it the shell follows from the heat it must carry. Add the shell thickness to validate so that the result is checked.
+
+When: with the ring systems of large impacts, whose palimpsests and relaxed rings depend on the same heat flow history.
+
 ## Validation (principle 15)
 
 ### V1. Interpolated bodies in validation
