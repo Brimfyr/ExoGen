@@ -289,3 +289,34 @@ What they still do not show:
 - Titan's k₂ comes out 0.43 under the rigid-core limit, against the measured 0.59 to 0.62, which a dense ocean would raise.
 
 Tests 139 (three new: a floating shell's Love numbers follow the membrane spring; the diurnal strain rate matches Europa's, with its shell at Juno's thickness; Europa's shell breathes with the Laplace cycle; and the lanes test re-anchored, at full heating, on a body that makes lanes of both kinds), clippy clean, validate 117 checks (Europa's shell against Juno in place of its old tidal flux range). Io renders byte-identical; Europa's maps move by under a metre with the cycle.
+
+## The twenty-first milestone: Europa's lineae age, and streams that crowded
+
+The user on the twentieth: "Enceladus' crater walls still appear more 'laddered' than real Enceladus shows. If that's later work, then go ahead and continue with the next milestone." It is later work. The real Enceladus has no crater in its plains larger than about 40 km, all relaxed and muted (Bland et al. 2012; Kirchoff and Schenk 2009), and every laddered crater on the model's is larger than that; M3 and the crater population's high end own both. The terraces' rings of aligned blocks, which read as rungs on any deep crater, are recorded in the audit (T2).
+
+Europa came next, the weakest of the ice bodies: lace discs for chaos, hairlines broken in steps for lineae, flat plains between them. Surveying it against the real moon found two problems first.
+
+A shared stream. Cracks are placed by rejection: a point drawn at random is kept with a probability set by the tension there. The point's longitude and the test's draw came from the same stream, so a point was kept more often when its longitude was small. Europa's lineae were four times denser in one quarter of the moon than in another, and its chaos left a sector of 60° empty. The same fault, in milder forms, tied Io's mountain heights and Ceres's cryodome ages to their longitudes, and a plume rise's retries tested one point sixteen times. Each draw now has a stream of its own. Tests check that Europa's cracks and chaos reach every longitude, and they fail on the old streams. That fix was committed on its own, as c1b396d.
+
+The lineae (F78). At the standard grid Europa's cells are 2.4 km, and its double ridges are 1 to 2 km wide. No ridge could be drawn, and every crack was a hairline of whole cells. What a map shows of Europa's lineae is the sequence Geissler et al. (1998) found they age through:
+
+- incipient cracks, colourless;
+- ridges, 3 to 6 km wide;
+- triple bands, a dim medial stripe with diffuse red-brown margins 8 to 12 km wide;
+- ancient bands, only slightly darker than the plains.
+
+The drawn lineae are these. A ridge is 2 to 7 km wide, from a heavy tail, and 0.05 of its width high. It lays its margins as a stain in a new surface layer: about 9 km across a 3 km ridge, dimmer over the medial stripe, absent while the crack is fresh, and fading over 30 Myr to the ancient band's tone. The stain follows the trace while the relief follows the segments. A younger crack cuts the older stain under its own width, and a surface renewed later carries none. A ridge narrower than two cells is drawn by the area of its cross-section, and only a resolved ridge or band writes a surface of its own, so no crack is drawn in whole cells. The double ridges narrower than about 2 km make the ridged plains' fabric. They belong to the next milestone, with the chaos whose rafts carry them.
+
+What the maps show:
+
+- **Europa:** its lineae cover the whole moon as soft red-brown lines in long arcs and cycloids, the young ones dark and the old ones faint, without steps. At map scale they read as the real moon's do. Its chaos is unchanged, and the lace discs are now the most artificial thing on it.
+- **Enceladus:** unchanged to the eye. Its fallout frost and white carbonate salts hide any stain, and its vents keep their sintered tint.
+
+What they still do not show:
+
+- **The ridged plains' fabric:** Europa's narrow double ridges, crosscutting at every scale (Doggett et al. 2009).
+- **Chaos from the shell's heat:** the next milestone.
+- **Bands and the thickening shell:** bands as spreading lanes, and the stresses of a thickening shell; the milestone after.
+- **Stated choices:** the timescales of a crack's margins.
+
+Tests 142. One is new in this milestone: a ridge stains its margins as it ages, colourless when fresh, a triple band some 9 km across at a few million years, and the ancient band later, drawn by its area on a coarse grid. Two came with the stream fix. Clippy is clean and validate passes its 117 checks.

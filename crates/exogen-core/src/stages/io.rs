@@ -804,6 +804,7 @@ pub fn patera_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
@@ -860,6 +861,7 @@ pub fn mountain_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
@@ -947,6 +949,7 @@ pub fn flow_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
@@ -1026,6 +1029,7 @@ pub fn ring_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 

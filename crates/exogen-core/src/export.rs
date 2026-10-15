@@ -552,6 +552,7 @@ pub fn export(
         dump("melt", out.layers.melt.as_slice(), 0.0, 1.0)?;
         dump("clean", out.layers.clean.as_slice(), 0.0, 1.0)?;
         dump("composition", out.layers.composition.as_slice(), -1.0, 1.0)?;
+        dump("stain", out.layers.stain.as_slice(), 0.0, 1.0)?;
         dump("maturity", out.maturity.as_slice(), 0.0, 1.0)?;
         dump("rays", out.rays.as_slice(), 0.0, 1.0)?;
         // The lanes of grooved terrain as polylines in degrees, for plotting.

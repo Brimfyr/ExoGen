@@ -497,10 +497,19 @@ impl Cracks {
                             VENT_WIDTH,
                             VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, draw + 53)),
                         ),
-                        _ => (
-                            LINEA_WIDTH,
-                            LINEA_RIDGE_HEIGHT * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
-                        ),
+                        _ => {
+                            // A heavy tail of widths (F78): the inverse of the cumulative
+                            // share of a truncated power law.
+                            let (w_lo, w_hi) = LINEA_WIDTH_RANGE;
+                            let k = 1.0 - LINEA_WIDTH_EXPONENT;
+                            let u = rng.uniform(bin, draw + 52);
+                            let w =
+                                (w_lo.powf(k) + u * (w_hi.powf(k) - w_lo.powf(k))).powf(1.0 / k);
+                            (
+                                w,
+                                LINEA_RELIEF_SHARE * w * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
+                            )
+                        }
                     };
                     let rules = TraceRules {
                         polar,
@@ -986,7 +995,10 @@ pub fn linea_profile(kind: LineaKind, d: f64, width: f64, relief: f64, blur: f64
             trough + flanks
         }
         _ => {
+            // Degraded or drawn wider than it is, a ridge keeps the area of its
+            // cross-section: its height falls as its width grows.
             let w = width.hypot(2.0 * blur).max(1.0);
+            let relief = relief * width / w;
             let crest = 0.25 * w;
             let sigma = (w / 6.0).max(1.0);
             let ridges = relief * (-((x - crest) / sigma).powi(2)).exp();
@@ -1016,6 +1028,26 @@ pub fn linea_compute(
     let ages = layers.surface_age.as_slice();
     let cell = grid.delta() * body_radius;
     let width = rec.width.max(2.0 * cell);
+    // A ridge narrower than the grid draws is drawn at the grid's width by the area of
+    // its cross-section, and makes no surface of its own (F78).
+    let ridged = matches!(rec.kind, LineaKind::Ridge | LineaKind::Cycloid);
+    let area_share = if ridged {
+        (rec.width / width).min(1.0)
+    } else {
+        1.0
+    };
+    let resolved = !ridged || rec.width >= LINEA_RESOLVED_CELLS * cell;
+    // Its margins' stain as it stands at the present (F78): laid after the crack opens,
+    // faded since, to the ancient band's.
+    let age = (present - rec.time_gyr).max(0.0);
+    let stain_now = if rec.kind == LineaKind::Vent {
+        0.0
+    } else {
+        LINEA_STAIN
+            * (1.0 - (-age / LINEA_MARGIN_ONSET_GYR).exp())
+            * (LINEA_STAIN_RESIDUAL + (1.0 - LINEA_STAIN_RESIDUAL) * (-age / SALT_FADE_GYR).exp())
+    };
+    let margin = (LINEA_MARGIN_SHARE * rec.width).hypot(0.5 * cell);
     // A ridge or a cycloid is a chain of segments (F62): where each ends along the
     // crack, as a share of its length, and how far each stands aside from the trace, to
     // the one side from each to the next. A band and a vent are one opening.
@@ -1052,7 +1084,7 @@ pub fn linea_compute(
     let aside_reach = asides.iter().fold(0.0f64, |m, a| m.max(a.abs()));
     let reach = match rec.kind {
         LineaKind::Band => 0.5 * width + 0.3 * width + 2.0 * cell,
-        _ => width + 2.0 * cell + aside_reach,
+        _ => (width + 2.0 * cell + aside_reach).max(2.5 * margin + aside_reach),
     };
     let half_band = 0.5 * rec.spacing + cell;
     let n = rec.points.len();
@@ -1091,7 +1123,7 @@ pub fn linea_compute(
     let time = rec.time_gyr as f32;
     let lineation_spacing = BAND_LINEATION_SPACING.max(3.0 * cell);
     let variation = GradientNoise::new(rec.id ^ 0x11CE_7A47);
-    let mut cells: Vec<CellWrite> = best
+    let mut cells: Vec<(CellWrite, [f32; 2])> = best
         .into_iter()
         .map(|(idx, (_, across, s))| {
             // The segment of the chain the cell lies along: how far it stands aside, and
@@ -1101,6 +1133,9 @@ pub fn linea_compute(
                 .unwrap_or(segments - 1);
             let u = ((s - bounds[segment]) / (bounds[segment + 1] - bounds[segment]).max(1e-9))
                 .clamp(0.0, 1.0);
+            // The margins' stain follows the crack's trace, a deposit spread over the
+            // whole lineament; the relief follows its segments.
+            let from_trace = across;
             let across = across - asides[segment];
             let open = if chained {
                 (CRACK_TIP_RELIEF
@@ -1138,6 +1173,7 @@ pub fn linea_compute(
             };
             let width_here = width_here * vary;
             let relief_here = vary
+                * area_share
                 * match rec.kind {
                     LineaKind::Vent => {
                         rec.relief * (VENT_TIP_DEPTH + (1.0 - VENT_TIP_DEPTH) * lens)
@@ -1183,7 +1219,11 @@ pub fn linea_compute(
                     h = h * (1.0 - buried) - snow * pits * buried;
                 }
             }
-            let inside = across.abs() < 0.5 * width_here && buried < 0.5;
+            // Where the grid resolves it: a ridge by its width, a band by its width here,
+            // which closes to nothing toward its tips.
+            let drawn = resolved
+                && (rec.kind != LineaKind::Band || width_here >= LINEA_RESOLVED_CELLS * cell);
+            let inside = drawn && across.abs() < 0.5 * width_here && buried < 0.5;
             if rec.kind == LineaKind::Band && inside {
                 let edge = 1.0 - (across / (0.5 * width_here)).powi(2);
                 h += BAND_LINEATION
@@ -1209,16 +1249,38 @@ pub fn linea_compute(
                 };
                 write.deep = 0.0;
                 write.melt = 0.0;
-                // The ocean's salts, full strength when the crack is fresh.
-                write.cover = 1.0;
+                // A vent's warm ice sinters coarse (the plume's tint); a crack's colour
+                // is its stain.
+                write.cover = if rec.kind == LineaKind::Vent {
+                    1.0
+                } else {
+                    0.0
+                };
             }
-            write
+            // The stain (F78): a ridge's margins, a Gaussian about its axis dimmer over
+            // its medial stripe, cutting away the older stain under its own width; a
+            // band's floor, stained across it. A crack buried under loose cover laid it
+            // under the snow.
+            let core = (0.5 * width_here).hypot(0.5 * cell);
+            let cut = (1.0 - (across / core).powi(2)).clamp(0.0, 1.0);
+            let laid = match rec.kind {
+                LineaKind::Vent => 0.0,
+                LineaKind::Band => stain_now * cut,
+                _ => {
+                    stain_now
+                        * (-(from_trace / margin).powi(2)).exp()
+                        * (1.0 - LINEA_STRIPE_DIM * (-(from_trace / (0.6 * core)).powi(2)).exp())
+                }
+            } * (1.0 - buried);
+            (write, [laid as f32, cut as f32])
         })
         .collect();
-    cells.sort_by_key(|c| c.idx);
+    cells.sort_by_key(|c| c.0.idx);
+    let stain = (rec.kind != LineaKind::Vent).then(|| cells.iter().map(|c| c.1).collect());
     StampOutput {
-        cells,
+        cells: cells.into_iter().map(|c| c.0).collect(),
         composition: None,
+        stain,
     }
 }
 
@@ -1364,6 +1426,77 @@ mod tests {
         // relief falls where one hands over to the next.
         let low = crest[12..84].iter().cloned().fold(f32::INFINITY, f32::min);
         assert!(low < 0.6 * top, "{low} against {top}");
+    }
+
+    /// A ridge's margins (F78): a red-brown stain about twice its width across, dimmer
+    /// over its medial stripe, absent while the crack is fresh and faded to the ancient
+    /// band's when it is old; on a grid coarser than the ridge, its relief keeps the area
+    /// of its cross-section and it makes no surface of its own.
+    #[test]
+    fn a_ridge_stains_its_margins_as_it_ages() {
+        // A grid of 2 km cells and a ridge 3 km wide along the equator.
+        let grid = CubeSphere::new(256);
+        let r = 2e3 / grid.delta();
+        let spacing = 1e3;
+        let n = (400e3 / spacing) as usize;
+        let points: Vec<[f64; 3]> = (0..=n)
+            .map(|i| {
+                let a = (i as f64 * spacing - 200e3) / r;
+                [a.cos(), a.sin(), 0.0]
+            })
+            .collect();
+        let stamp = |present: f64| {
+            let rec = Linea {
+                points: points.clone(),
+                spacing,
+                length: 400e3,
+                width: 3e3,
+                relief: 180.0,
+                kind: LineaKind::Ridge,
+                phase: 0.0,
+                time_gyr: 1.0,
+                id: 9,
+            };
+            let layers = LayerSet::new(grid);
+            crate::crater::with_stamper(&grid, |stamper| {
+                linea_compute(&layers, &grid, r, &rec, 0.0, None, present, stamper)
+            })
+        };
+        // The stain across the middle of the ridge, by distance from its axis in 2 km
+        // bins, a cell each.
+        let across = |out: &StampOutput| {
+            let mut by_km = vec![0.0f32; 12];
+            let stain = out.stain.as_ref().expect("a ridge lays a stain");
+            for (c, s) in out.cells.iter().zip(stain) {
+                let d = grid.center(grid.cell(c.idx as usize));
+                if (d[1].atan2(d[0]) * r).abs() < 50e3 {
+                    let x = (d[2].asin() * r / 2e3).abs() as usize;
+                    if x < 12 {
+                        by_km[x] = by_km[x].max(s[0]);
+                    }
+                }
+            }
+            by_km
+        };
+        let fresh = across(&stamp(1.0 + 1e-5));
+        let young = across(&stamp(1.003));
+        let old = across(&stamp(1.2));
+        assert!(fresh.iter().all(|&v| v < 0.05), "{fresh:?}");
+        // A triple band: margins some 9 km across on a 3 km ridge (Geissler et al.: 8 to
+        // 12 km on 3 to 6 km ridges).
+        assert!(
+            young[0] > 0.3 && young[1] > 0.3 && young[2] > 0.1,
+            "{young:?}"
+        );
+        assert!(young[3] < 0.1 && young[5] < 0.02, "{young:?}");
+        // The ancient band: faded to a sixth or so of the triple band's.
+        let ratio = old[1] / young[1];
+        assert!((0.1..0.3).contains(&ratio), "{ratio}");
+        // A 3 km ridge on 2 km cells: drawn by its area, no surface of its own.
+        let out = stamp(1.003);
+        assert!(out.cells.iter().all(|c| !c.surface));
+        let top = out.cells.iter().map(|c| c.bedrock).fold(0.0f32, f32::max);
+        assert!(top > 50.0 && top < 160.0, "{top}");
     }
 
     /// A crack that opens under loose cover deeper than its relief builds no ridges at

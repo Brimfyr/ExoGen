@@ -118,6 +118,10 @@ pub struct StampOutput {
     /// The composition an eruption's lava cells take (F55); none for every other stamp,
     /// whose cells keep the composition under them.
     pub composition: Option<f32>,
+    /// Per cell, the stain a crack lays (F78) and the share of the older stain it cuts
+    /// away; none for a stamp that lays none, whose renewed cells lose the stain under
+    /// them.
+    pub stain: Option<Vec<[f32; 2]>>,
 }
 
 impl StampOutput {
@@ -130,7 +134,8 @@ impl StampOutput {
         let melt = layers.melt.as_mut_slice();
         let cover = layers.cover.as_mut_slice();
         let composition = layers.composition.as_mut_slice();
-        for c in &self.cells {
+        let stain = layers.stain.as_mut_slice();
+        for (j, c) in self.cells.iter().enumerate() {
             let i = c.idx as usize;
             bedrock[i] = c.bedrock;
             if c.surface {
@@ -144,6 +149,13 @@ impl StampOutput {
                 {
                     composition[i] = x;
                 }
+                if self.stain.is_none() {
+                    stain[i] = 0.0;
+                }
+            }
+            if let Some(s) = &self.stain {
+                let [laid, cut] = s[j];
+                stain[i] = (stain[i] * (1.0 - cut)).max(laid);
             }
         }
     }
@@ -452,6 +464,7 @@ pub fn stamp_compute(
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
+        stain: None,
     }
 }
 
@@ -1581,6 +1594,7 @@ pub fn restore_compute(
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
+        stain: None,
     }
 }
 

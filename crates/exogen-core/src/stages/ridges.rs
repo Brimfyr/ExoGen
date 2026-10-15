@@ -337,6 +337,7 @@ pub fn ridge_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 

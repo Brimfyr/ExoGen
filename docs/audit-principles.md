@@ -178,6 +178,14 @@ These features take a fixed profile, with noise for variety, rather than a form 
 
 Impact craters are events and stay objects. Their sizes follow scaling laws, and since F67 their walls follow their collapse (the last row).
 
+### T2. Terraces as rings
+
+Each terrace level of F67 is a ring of slump blocks aligned round the crater, so a deep crater shows four or five evenly spaced scarps on its wall, like the rungs of a ladder. Real terraced walls are fewer, wider slump blocks that merge and split, with scarps of varying height, and near the simple-to-complex transition they are a few slumps rather than terraces. The user saw it on Enceladus (2026-10-15), whose largest craters are laddered; but every crater it shows there is larger than any on the real Enceladus, whose plains' craters are under about 40 km, relaxed by its past heat and muted by fallout (Bland et al. 2012; Kirchoff and Schenk 2009), which M3 and the crater population's high end own.
+
+Direction: terrace levels whose blocks are not aligned round the crater, merging and splitting, with the count rising with the diameter over the transition.
+
+When: the earlier-phases revisit, with the crater population.
+
 When: chaos with Europa; Io's features with Io; the rest in the earlier-phases revisit.
 
 ## Calibrations on one body (principle 15)
@@ -191,6 +199,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | POLAR_FOCUS_FLUX, POLAR_THINNING_MAX | Enceladus | how strongly tidal heating focuses at a pole |
 | PLUME_FALLOUT_RATE | Enceladus: about 0.1 mm/yr near the stripes | scale by the plume's mass flux, which the vent sets |
 | CHAOS_FRACTION_MAX, CHAOS_FLUX | Europa's share of chaos (CHAOS_FLUX refitted from 0.05 to 0.012 W/m² when F75 brought Europa's tidal flux from 76 to 14 mW/m²) | replaced under S4 |
+| LINEA_WIDTH_EXPONENT, LINEA_MARGIN_ONSET_GYR, LINEA_STAIN, LINEA_STRIPE_DIM, LINEA_STAIN_RESIDUAL | stated choices for Europa's lineae (F78): the heavy tail of widths, the time margins take to show, the stain's strength, the medial stripe's dimming and the ancient band's residue | the time scales of the margins' deposit and fading (Fagents et al. 2000's cryoclastic margins; sputtering and frost) |
 | CRACK_DENSITY_FACTOR | Europa: one crack per 31 km of transect (refitted from 3 to 12 when F75 brought its shell from 7.7 to 30 km) | crack spacing from the brittle layer's mechanics, the spacing at which a crack's stress shadow lets the next open |
 | IO_PATERAE_PER_TW | Io's count over its tidal power | per heat-pipe power once S3 is done |
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |

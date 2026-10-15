@@ -844,6 +844,7 @@ pub fn flood_compute(
         StampOutput {
             cells,
             composition: Some(composition_drift(rec.time_gyr)),
+            stain: None,
         },
         taken,
         stats,

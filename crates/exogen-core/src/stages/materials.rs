@@ -407,6 +407,7 @@ pub fn albedo(
     };
     let ages_f = layers.surface_age.as_slice();
     let comp_f = layers.composition.as_slice();
+    let stain_f = layers.stain.as_slice();
     let mixed = if gardened {
         mixed_cover(
             grid,
@@ -524,6 +525,13 @@ pub fn albedo(
                 let fresh = lerp3(fresh, melt_pair.fresh, melt_f[k]);
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
                 let colour = lerp3(fresh, mature, effective);
+                // A crack's margins, stained red-brown by the non-ice material it brought
+                // up, under whatever frost lies on them (F78).
+                let colour = if stain_f[k] > 0.0 {
+                    lerp3(colour, salt_colour, stain_f[k].clamp(0.0, 1.0))
+                } else {
+                    colour
+                };
                 match &frost {
                     Some(f) => {
                         let d = grid.center(grid.cell(k));

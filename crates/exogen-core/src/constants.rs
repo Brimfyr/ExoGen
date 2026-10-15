@@ -1247,16 +1247,41 @@ pub const CRACK_DEFLECTION: f64 = 0.6;
 pub const CRACK_BRANCH_SHARE: f64 = 0.35;
 /// Lineae (F42): lengths as a share of the radius, log-uniform (Europa 100 to 1,500 km; a
 /// crack scales with the body it crosses); the width of a double ridge and its ridge
-/// height, m, with the central trough as a fraction of it (Europa's ridges stand 100 to
-/// 300 m over 1 to 2 km); the wander of a crack along the slow field; the share of the
+/// height, with the central trough as a fraction of it; the wander of a crack along the
+/// slow field; the share of the
 /// tension that must be diurnal for a crack to be a cycloid; a cycloid's propagation
 /// speed, m/s (Hoppa et al. 1999: about 3 km/h), the orbits it may run and the steps per
 /// orbit; the share of cracks that pull apart into bands, their widths as a share of the
 /// radius (Europa 10 to 30 km) and floor depth, m; and the time the ocean's salts take to fade under frost, Gyr.
 pub const LINEA_LENGTH_RAD: (f64, f64) = (0.064, 0.96);
-pub const LINEA_WIDTH: f64 = 2e3;
-pub const LINEA_RIDGE_HEIGHT: f64 = 150.0;
 pub const LINEA_TROUGH_FRACTION: f64 = 0.6;
+/// A ridge's size (F78): the drawn lineae are those a map shows, the ridges and triple
+/// bands of Galileo's regional images, 3 to 6 km wide (Geissler et al. 1998; double
+/// ridges are a few kilometres wide, Hurford and Brunt 2014); the narrower ones are the
+/// ridged plains' fabric. Its full width, m, between these bounds, drawn from a heavy
+/// tail, the number per unit width falling as the width to this power (a stated choice:
+/// many narrow, few wide); its height this share of its width, varied by +-40% (300 m at
+/// 6 km: their crests are usually no higher than 300 m, Haslebacher et al. 2024; a height
+/// over the peak-to-peak distance of 0.1, under the 0.58 Culha et al. 2022 cite); and the
+/// width in cells under which it is drawn only by the area of its cross-section and its
+/// stain, not as a surface of its own.
+pub const LINEA_WIDTH_RANGE: (f64, f64) = (2e3, 7e3);
+pub const LINEA_WIDTH_EXPONENT: f64 = 2.0;
+pub const LINEA_RELIEF_SHARE: f64 = 0.05;
+pub const LINEA_RESOLVED_CELLS: f64 = 2.0;
+/// A crack's margins (F78): Geissler et al. (1998) find Europa's lineae age through four
+/// stages, colourless incipient cracks, ridges, triple bands (a dim medial stripe with
+/// broad diffuse margins, 8 to 12 km wide on 3 to 6 km ridges, tinted by a red-brown
+/// non-ice contaminant) and ancient bands only slightly darker than the plains. The
+/// margins reach this many ridge widths from the axis, a Gaussian; the stain peaks at this
+/// share of the surface and dips by this share over the medial stripe; it is laid over this
+/// time after the crack opens, Gyr, so the youngest cracks are colourless (a stated
+/// choice), and fades with the salts (SALT_FADE_GYR) to this share, the ancient band.
+pub const LINEA_MARGIN_SHARE: f64 = 1.1;
+pub const LINEA_STAIN: f64 = 1.0;
+pub const LINEA_STRIPE_DIM: f64 = 0.5;
+pub const LINEA_MARGIN_ONSET_GYR: f64 = 0.001;
+pub const LINEA_STAIN_RESIDUAL: f64 = 0.15;
 pub const LINEA_WOBBLE_RAD: f64 = 0.08;
 pub const LINEA_WOBBLE_LENGTH: f64 = 200e3;
 /// A crack's relief and width vary along it by this rms share over segments this long,

@@ -912,6 +912,7 @@ pub fn trough_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
@@ -965,6 +966,7 @@ pub fn shield_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 

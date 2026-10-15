@@ -207,6 +207,7 @@ pub fn scarp_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 

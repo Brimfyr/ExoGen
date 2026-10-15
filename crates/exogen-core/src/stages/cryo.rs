@@ -390,6 +390,7 @@ pub fn chaos_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
@@ -506,6 +507,7 @@ pub fn cryodome_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 

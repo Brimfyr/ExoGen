@@ -492,6 +492,7 @@ pub fn resurfacing_compute(
         StampOutput {
             cells,
             composition: None,
+            stain: None,
         },
         taken,
     )
@@ -541,6 +542,7 @@ pub fn corona_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
@@ -591,6 +593,7 @@ pub fn dome_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 

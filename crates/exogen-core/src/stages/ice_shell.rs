@@ -3380,6 +3380,7 @@ pub fn groove_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
@@ -3641,6 +3642,7 @@ pub fn polar_compute(
     StampOutput {
         cells,
         composition: None,
+        stain: None,
     }
 }
 
