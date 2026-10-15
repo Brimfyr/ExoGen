@@ -250,7 +250,7 @@ impl EpisodicProcess {
             let sag = rng.uniform(k, 2) < CORONA_SAG_FRACTION;
             let relief = CORONA_CENTRE_RELIEF * (0.5 + rng.uniform(k, 3));
             coronae.push(Corona {
-                center: rng.unit_direction(k, 4),
+                center: rng.unit_direction(k, 8),
                 radius,
                 centre_relief: if sag { -relief } else { relief },
                 rim_height: CORONA_RIM_HEIGHT * (0.6 + 0.8 * rng.uniform(k, 5)),
@@ -264,7 +264,7 @@ impl EpisodicProcess {
             let (lo, hi) = DOME_DIAMETER;
             let diameter = lo * (hi / lo).powf(rng.uniform(1_000 + k, 1));
             domes.push(Dome {
-                center: rng.unit_direction(1_000 + k, 2),
+                center: rng.unit_direction(1_000 + k, 5),
                 radius: 0.5 * diameter,
                 height: DOME_HEIGHT * (0.6 + 0.8 * rng.uniform(1_000 + k, 3)),
                 time_gyr: (event_time + (age - event_time) * rng.uniform(1_000 + k, 4)).min(age),

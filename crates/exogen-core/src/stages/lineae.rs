@@ -425,7 +425,7 @@ impl Cracks {
                             continue;
                         }
                         let thin = thinnest / self.shell_map.factor(p).max(1e-3);
-                        if rng.uniform(bin, draw + 2 + 2 * attempt)
+                        if rng.uniform(bin ^ crate::rng::ACCEPT_STREAM, draw + attempt)
                             < excess / scale.max(excess) * thin
                         {
                             start = Some((p, phase));
@@ -1247,6 +1247,28 @@ mod tests {
         let floor = linea_profile(LineaKind::Band, 0.0, 20e3, 100.0, 0.0);
         let outside = linea_profile(LineaKind::Band, 15e3, 20e3, 100.0, 0.0);
         assert!(floor < -90.0 && outside > -5.0, "{floor} {outside}");
+    }
+
+    /// Europa's cracks nucleate over every longitude: no sector of the body is short of
+    /// them, as a test drawn from the stream that placed the candidate would make it.
+    #[test]
+    fn europa_s_cracks_reach_every_longitude() {
+        let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
+        let cracks = Cracks::new(&g).unwrap();
+        let present = g.f64("body.age");
+        let all = cracks.generate(present, &CubeSphere::new(64), 7);
+        let mut sectors = [0usize; 6];
+        for l in &all {
+            let m = l.midpoint();
+            let lon = m[1].atan2(m[0]).to_degrees() + 180.0;
+            sectors[((lon / 60.0) as usize).min(5)] += 1;
+        }
+        let mean = all.len() as f64 / 6.0;
+        assert!(
+            sectors.iter().all(|&n| n as f64 > 0.5 * mean),
+            "{sectors:?} of {}",
+            all.len()
+        );
     }
 
     /// Under a plume the vents of the thinned zone come in a cascade (F57): a parallel

@@ -238,13 +238,13 @@ impl PlumeProcess {
         for i in 0..count as u64 {
             let mut center = rng.unit_direction(i, 1);
             // Rises keep apart.
-            for _ in 0..16 {
+            for attempt in 0..16u64 {
                 if rises.iter().all(|r: &Rise| {
                     angle_between(r.center, center) > 2.5 * rise_radius / body_radius
                 }) {
                     break;
                 }
-                center = rng.unit_direction(i, 2 + rng.bits(i, 3) % 64);
+                center = rng.unit_direction(i, 10 + 2 * attempt);
             }
             rises.push(Rise {
                 center,

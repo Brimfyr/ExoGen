@@ -50,6 +50,11 @@ pub fn stream_seed(master: u64, stream: &str) -> u64 {
 }
 
 /// A keyed source of random draws.
+/// An index offset for a rejection loop's acceptance draws, so that the test never shares
+/// a stream with the candidate it tests (a candidate's longitude drawn from the stream its
+/// acceptance reads makes the accepted ones crowd toward small longitudes).
+pub const ACCEPT_STREAM: u64 = 0xACCE_7000_0000_0000;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Rng {
     seed: u64,
@@ -85,7 +90,8 @@ impl Rng {
         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
     }
 
-    /// Uniformly distributed unit direction using draws `draw` and `draw + 1`.
+    /// Uniformly distributed unit direction using draws `draw` and `draw + 1`: `draw + 1`
+    /// is the longitude, so no other quantity may take it.
     pub fn unit_direction(&self, index: u64, draw: u64) -> [f64; 3] {
         let z = self.range(index, draw, -1.0, 1.0);
         let phi = self.range(index, draw + 1, 0.0, 2.0 * std::f64::consts::PI);

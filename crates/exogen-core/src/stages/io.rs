@@ -463,7 +463,7 @@ impl IoProcess {
                 let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
                 let life = self.log_uniform(k, 7, IO_MOUNTAIN_LIFETIME_GYR);
                 self.mountains.push(Mountain {
-                    center: self.rng.unit_direction(k, 2),
+                    center: self.rng.unit_direction(k, 9),
                     radius: 0.5 * diameter,
                     height: h_lo * (h_hi / h_lo).powf(self.rng.uniform(k, 3)),
                     tilt_azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(k, 4),
@@ -510,10 +510,12 @@ impl IoProcess {
             for attempt in 0..12u64 {
                 let lat = center[2].asin();
                 let w = IO_PATERA_POLAR_WEIGHT + (1.0 - IO_PATERA_POLAR_WEIGHT) * lat.cos().powi(2);
-                if self.rng.uniform(idx, 2 + attempt) < w {
+                if self.rng.uniform(idx ^ crate::rng::ACCEPT_STREAM, attempt) < w {
                     break;
                 }
-                center = self.rng.unit_direction(idx, 20 + attempt);
+                center = self
+                    .rng
+                    .unit_direction(idx ^ crate::rng::ACCEPT_STREAM, 100 + 2 * attempt);
             }
             let (lo, hi) = IO_PATERA_DIAMETER;
             let diameter = lo * (hi / lo).powf(self.rng.uniform(idx, 40).powf(IO_PATERA_SIZE_SKEW));

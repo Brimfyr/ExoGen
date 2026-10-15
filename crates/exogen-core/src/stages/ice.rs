@@ -314,7 +314,7 @@ pub fn focusing_episodes(graph: &ParamGraph, shell: &ShellMap) -> Vec<FocusEpiso
             end,
             axis: normalize(axis),
             angle: angle_between(pole, center),
-            spin: 2.0 * std::f64::consts::PI * rng.uniform(k, 1),
+            spin: 2.0 * std::f64::consts::PI * rng.uniform(k, 2),
         });
         k += 1;
     }

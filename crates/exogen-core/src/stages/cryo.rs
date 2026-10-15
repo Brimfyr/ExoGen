@@ -304,7 +304,7 @@ pub fn chaos_population(graph: &ParamGraph, present: f64, seed: u64) -> Vec<Chao
                             0.5,
                         );
                 let w = 1.0 - CHAOS_HEAT_CONTRAST * (1.0 - field.clamp(0.0, 1.0));
-                if rng.uniform(bin, draw + 2 + 2 * attempt) < w {
+                if rng.uniform(bin ^ crate::rng::ACCEPT_STREAM, draw + attempt) < w {
                     center = Some(p);
                     break;
                 }
@@ -456,7 +456,7 @@ pub fn cryodome_population(graph: &ParamGraph, present: f64, seed: u64) -> Vec<C
                 center: rng.unit_direction(bin, draw + 1),
                 radius,
                 height: 2.0 * CRYODOME_ASPECT * radius,
-                time_gyr: b0 + (b1 - b0) * rng.uniform(bin, draw + 2),
+                time_gyr: b0 + (b1 - b0) * rng.uniform(bin, draw + 3),
                 id: (bin << 32) | j,
             });
             j += 1;
@@ -598,6 +598,26 @@ pub const TRAILING_APEX: [f64; 3] = [0.0, 1.0, 0.0];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Europa's chaos is placed over every longitude (the acceptance draw has a stream
+    /// of its own).
+    #[test]
+    fn europa_s_chaos_reaches_every_longitude() {
+        let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
+        let chaos = chaos_population(&g, g.f64("body.age"), 11);
+        let mut sectors = [0usize; 6];
+        for c in &chaos {
+            let lon = c.center[1].atan2(c.center[0]).to_degrees() + 180.0;
+            sectors[((lon / 60.0) as usize).min(5)] += 1;
+        }
+        let mean = chaos.len() as f64 / 6.0;
+        assert!(chaos.len() > 300);
+        assert!(
+            sectors.iter().all(|&n| n as f64 > 0.6 * mean),
+            "{sectors:?} of {}",
+            chaos.len()
+        );
+    }
 
     #[test]
     fn fallout_falls_off_from_the_pole_and_buries_quickly() {
