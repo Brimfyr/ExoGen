@@ -1761,7 +1761,7 @@ pub const PLUME_FALLOUT_ANGLE_DEG: f64 = 25.0;
 /// covers, filling hollows and thinning on crests, and evens the ground out over this many
 /// times its thickness (a stated choice), burying relief smaller than the deposit and
 /// rounding what stands larger by no more than it.
-pub const MANTLE_SPREAD: f64 = 4.0;
+pub const MANTLE_SPREAD: f64 = 2.0;
 pub const PLUME_FALLOUT_FAR: f64 = 0.01;
 pub const PLUME_BURIAL_DEPTH: f64 = 1e-3;
 pub const PLUME_FROST_RATE: f64 = 1e3;

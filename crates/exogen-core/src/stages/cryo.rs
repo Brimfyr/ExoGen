@@ -99,8 +99,10 @@ impl Fallout {
 /// 2009). Its loose top, what drains into fractures, is a few hundred metres (Martin et al.
 /// 2023); the whole deposit, sintered below that, mantles. The ground is drawn toward its
 /// own low-pass over MANTLE_SPREAD times the deposit's thickness `cover`, m, by no more
-/// than the thickness down and twice it up; the deposit's mean, which only raises the
-/// ground, is left out.
+/// than the thickness either way; the deposit's mean, which only raises the ground, is
+/// left out. The mantle buries only what is older than it: the finish lays it before the
+/// unresolved craters, which count only those dug since the cover above them grew
+/// thinner than they are deep (LooseCover::buried_before).
 pub fn mantle(layers: &mut LayerSet, body_radius: f64, cover: &[f32]) {
     let grid = layers.grid;
     let cell = grid.delta() * body_radius;
@@ -147,7 +149,7 @@ pub fn mantle(layers: &mut LayerSet, body_radius: f64, cover: &[f32]) {
                 }
                 None => lows[lows.len() - 1].1[k] as f64,
             };
-            *z = (here + (low - here).clamp(-h, 2.0 * h)) as f32;
+            *z = (here + (low - here).clamp(-h, h)) as f32;
         });
 }
 
@@ -208,6 +210,25 @@ impl LooseCover {
     /// How much of a cover a crack drains, m: no more than the crack is deep.
     pub fn drained(&self, cover: f64) -> f64 {
         cover.min(self.crack_depth)
+    }
+
+    /// The time before which what was dug at a direction lies buried by `until`, Gyr:
+    /// after it no more than `depth` of cover fell. `since` when even all the cover
+    /// since then is thinner (F74).
+    pub fn buried_before(&self, d: [f64; 3], since: f64, until: f64, depth: f64) -> f64 {
+        if self.thickness_between(d, since, until) <= depth {
+            return since;
+        }
+        let (mut lo, mut hi) = (since, until);
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            if self.thickness_between(d, mid, until) > depth {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
     }
 
     /// The cover laid at a direction between two times, m: what lies on a surface that

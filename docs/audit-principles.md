@@ -189,7 +189,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core: 15 GW | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
 | RING_STRAIN | the strain of Tyre's and Callanish's inner graben (Singer et al. 2023) | check against the graben depths of Valhalla and Ganymede's furrows once measured |
 | PIT_DIAMETER_SHARE, PIT_GROWTH, PIT_DEPTH_SHARE, DOME_PIT_SHARE, DOME_RISE | Ganymede's pits and domes (Alzate and Barlow 2011; Bray et al. 2012; Schenk 1993) | check against Callisto's dome craters and Ceres's pits (Occator, Dantu) |
-| MANTLE_SPREAD | a stated choice: the length over which a mantle evens the ground, four times its thickness | check against the rim profiles of Enceladus's muted craters (Kirchoff and Schenk 2009) |
+| MANTLE_SPREAD | a stated choice: the length over which a mantle evens the ground, twice its thickness | check against the rim profiles of Enceladus's muted craters (Kirchoff and Schenk 2009) |
 
 Constants marked provisional for Phases 5 and 7 (atmosphere, albedo, imagery) are left to those phases.
 

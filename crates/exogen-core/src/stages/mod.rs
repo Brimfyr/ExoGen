@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 66;
+pub const FINISH_VERSION: u64 = 67;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1815,6 +1815,29 @@ pub fn finish(
             present,
         );
     }
+    // The plumes' fallout mantles the ground it has lain on since each surface formed
+    // (F74), before the unresolved craters are laid: those dug before the cover above them
+    // grew thinner than they are deep lie buried, the younger ones pit its surface.
+    let mantle = loose
+        .as_ref()
+        .filter(|_| std::env::var_os("EXOGEN_SKIP_MANTLE").is_none());
+    let buried: Option<Vec<f32>> = match (mantle, cover_on(&layers)) {
+        (Some(l), Some(cover)) => {
+            cryo::mantle(&mut layers, body_radius, &cover);
+            let depth = dimensions(d_min, &inputs.scaling).depth;
+            let ages = layers.surface_age.as_slice();
+            Some(
+                (0..grid.cell_count())
+                    .into_par_iter()
+                    .map(|k| {
+                        l.buried_before(grid.center(grid.cell(k)), ages[k] as f64, present, depth)
+                            as f32
+                    })
+                    .collect(),
+            )
+        }
+        _ => None,
+    };
     // The craters the finish does not resolve, as the relief their population leaves on
     // each surface by its age (F54): rough where old, smooth where renewed.
     roughness::apply(
@@ -1825,14 +1848,8 @@ pub fn finish(
         &inputs,
         present,
         Some(&renewal.keep),
+        buried.as_deref(),
     );
-    // The plumes' fallout mantles the ground it has lain on since each surface formed
-    // (F74).
-    if std::env::var_os("EXOGEN_SKIP_MANTLE").is_none()
-        && let Some(cover) = cover_on(&layers)
-    {
-        cryo::mantle(&mut layers, body_radius, &cover);
-    }
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
     let height = layers.height();
     // On ice, each slope sits at its own mean temperature: frost and lag follow it.
