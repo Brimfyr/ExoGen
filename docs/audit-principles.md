@@ -160,6 +160,14 @@ When: the earlier-phases revisit.
 
 Floors that are not entries: GROOVE_EDGE_CELLS, GROOVE_MIN_CELLS, PIT_MIN_CELLS, EJECTA_LOBE_MIN_CELLS, FINISHING_MIN_CELLS, LOOP_THRESHOLD_CELLS, SCARP_LOOP_MIN_CELLS and RIFT_LOOP_WIDTH_CELLS decide where a feature is drawn (in the loop or the finish) or keep it from aliasing. None of them decides whether the feature forms or how wide it is. MELT_POND_CELLS counts cells of a lattice per crater radius, not grid cells.
 
+### W5. Sub-grid crests of narrow ridges
+
+A drawn ridge narrower than two cells is drawn two cells wide by the area of its cross-section (F78), but its double-ridge profile keeps two crests a quarter of that width apart, each narrower than a cell. On a diagonal they bead along the ridge in the shaded relief, as the narrow stains did before F81 spread them over at least 1.2 cells by their share.
+
+Direction: a narrow ridge's relief drawn as the cell-averaged cross-section, a single bump of the same area, where its crests are finer than the grid.
+
+When: the earlier-phases revisit.
+
 ## Stamped shapes (principle 14)
 
 ### T1. Shapes from a profile and noise
@@ -192,6 +200,14 @@ Direction: terrace levels whose blocks are not aligned round the crater, merging
 
 When: the earlier-phases revisit, with the crater population.
 
+
+### T3. Bands as lenses, apart from the lanes
+
+A band (F83) opens as a symmetric lens along its crack, widest in the middle. Many of Europa's bands open as wedges, the plates on either side rotating about a pole as they part, as in Argadnel Regio. Bands are drawn by their own stamp, while Ganymede's grooved terrain uses the lane mechanism (F61) of a rifting lid: the two are one process, a lid pulling apart, in lids of different thickness. Lanes also still trace the tide alone, without the freezing and heterogeneity of the shell (F82).
+
+Direction: a band's opening from the rotation of the plates it parts, about the pole their motion defines; bands and lanes as one rift process whose width and fabric follow the lid; the lanes' strikes in the shell's whole stress.
+
+When: the earlier-phases revisit, with the lanes.
 
 ## Calibrations on one body (principle 15)
 
@@ -253,6 +269,22 @@ Direction: the stresses that crack a shell beyond the diurnal tide: the tension 
 Since F82 (2026-10-15, the twenty-fourth milestone) a shell that thickens stands at the cracking stress in tension. Enceladus's mean shell, held by its porous core's steady heat (F68), thickens by only 0.6 km over its life, some 650 Pa of tension, so its plains still do not crack; the thickening that would crack them is local, the zone refreezing at each focusing episode's end, which F82's global history of the shell does not see.
 
 When: with a local history of the shell under the focusing episodes.
+
+### M5. Europa's old bands are bright
+
+Galileo's young bands are dark grey wedges and its old ones brighter than the plains around them; the reference shows bright bands in the south. A band (F83) is grey when young and fades with the salts to the ancient band's faint stain, never brighter than the plains.
+
+Direction: the brightening of old band ice from what it is made of and how it weathers, against the plains' radiolytic darkening.
+
+When: Phase 5's materials work.
+
+### M6. Europa's cracks follow the tide closely
+
+Europa's cracks, under the tide, the shell's freezing and its heterogeneity (F82), still trace the tidal field's great arcs more plainly than the real moon's, whose lineae cross more and undulate more at every scale. The user found the look acceptable (2026-10-15).
+
+Direction: the stresses that free cracks from the tide's pattern beyond those modelled: the interaction of cracks with the open cracks about them for the narrow fabric (F81), whose tracing answers no other crack; non-synchronous rotation's rate against the margins' life; true polar wander.
+
+When: the earlier-phases revisit, or sooner if the user asks.
 
 ## Validation (principle 15)
 
