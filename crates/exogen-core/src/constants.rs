@@ -887,7 +887,7 @@ pub const RING_HEIGHT_DECAY: f64 = 0.8;
 /// swing (a few gaps where it drops to zero), and the subdued outer ring of a multi-ring
 /// basin at sqrt(2) radii as a fraction of the rim height.
 pub const RING_WIDTH_FRACTION: f64 = 0.04;
-pub const RING_CRENULATION: f64 = 0.02;
+pub const RING_CRENULATION: f64 = 0.035;
 pub const RING_PRESENCE: (f64, f64) = (0.85, 0.25);
 pub const OUTER_RING_HEIGHT_FRACTION: f64 = 0.3;
 /// Central peaks: basal radius as a fraction of the crater radius (peak diameters are a
@@ -920,6 +920,44 @@ pub const RIM_CRENULATION_COMPLEX: f64 = 0.035;
 /// narrower.
 pub const TERRACE_WIDTH: (f64, f64) = (0.09, 0.87);
 pub const TERRACE_REFERENCE_TRANSITION: f64 = 16_457.0;
+/// Central pits and domes (F72). On an ice target a complex crater's central uplift
+/// collapses into a pit, by the drainage of its abundant melt or the failure of a weak
+/// uplift (Schenk 1993; Alzate and Barlow 2011; Bray et al. 2012), where rock's overshoots
+/// and collapses outward into a peak ring: from PEAK_RING_MULTIPLE transitions a crater on
+/// ice has a central pit (Ganymede's peaks give way to pits near 30 km, Alzate and Barlow
+/// 2011) and from MULTIRING_MULTIPLE a dome rises in the pit (near 60 km; central dome
+/// craters span 60 to 180 km on Ganymede and Callisto, Schenk 1993). The pit is this share
+/// of the crater's diameter across (the median of 471 pits on Ganymede, Alzate and Barlow
+/// 2011), ringed by a raised rim that spans this share of the diameter, as a central peak
+/// would (Bray et al. 2012: pit rims follow the peaks' 0.34 D), stands as high as a central
+/// peak would (both about 200 m below 50 km, Bray et al. 2012) and breaks up around the
+/// larger pits (Schenk 1993), present over this share of its circuit with this much
+/// variation; it is this share of the crater's depth deep (Bray et al. 2012: 0.2 to 0.8 km
+/// in craters 0.9 to 1.2 km deep). A dome is this share of its pit across and rises to this
+/// share of the crater's depth above the floor (domes up to 1.5 km high in craters 0.8 to
+/// 1.6 km deep, Schenk et al. 2004). The pit's outline, its rim and its dome wander by
+/// this share of their radii, each its own.
+pub const PIT_DIAMETER_SHARE: f64 = 0.19;
+/// The pit widens with the crater (Schenk 1993: the pit-to-crater ratio grows linearly with
+/// the crater; Bray et al. 2012: Dp = 3.23 exp(0.023 D) km, 0.2 of a 40 km crater and 0.32
+/// of a 100 km one): its share of the diameter grows as the crater over the pit's onset to
+/// this power, up to this share.
+pub const PIT_GROWTH: f64 = 0.4;
+pub const PIT_SHARE_MAX: f64 = 0.4;
+pub const PIT_RIM_DIAMETER_SHARE: f64 = 0.34;
+pub const PIT_RIM_PRESENCE: (f64, f64) = (0.7, 0.5);
+pub const PIT_DEPTH_SHARE: f64 = 0.5;
+pub const DOME_PIT_SHARE: f64 = 0.6;
+pub const DOME_RISE: f64 = 0.3;
+pub const PIT_WANDER: f64 = 0.12;
+/// A crater's rim stands higher or lower around it by this share, root mean square, in
+/// low orders (Bray et al. 2012: from 16 to 74 percent around Ganymede's craters), and only
+/// the rim and its flanks carry the rim's scalloped outline: inward the share falls to
+/// none across the outer this share of the wall, where the outermost slump blocks that
+/// scallop it stand, so the inner terraces, the floor and the central features keep
+/// shapes of their own (F73).
+pub const RIM_HEIGHT_VARIATION: f64 = 0.15;
+pub const RIM_SHARE_BAND: f64 = 0.3;
 /// Each terrace inward is this share of the one outside it, terrace widths growing outward
 /// toward the rim (Pearce and Melosh 1986; the share is a choice), until a terrace would be
 /// narrower than this share of the outermost or the terraces would fill more than this
@@ -1719,6 +1757,11 @@ pub const FACULA_FADE_GYR: f64 = 0.15;
 /// a salt, m; and the rate that keeps a full frost cover, m/Gyr.
 pub const PLUME_FALLOUT_RATE: f64 = 1e5;
 pub const PLUME_FALLOUT_ANGLE_DEG: f64 = 25.0;
+/// The fallout mantles the ground (F74): the deposit creeps down the slopes of what it
+/// covers, filling hollows and thinning on crests, and evens the ground out over this many
+/// times its thickness (a stated choice), burying relief smaller than the deposit and
+/// rounding what stands larger by no more than it.
+pub const MANTLE_SPREAD: f64 = 4.0;
 pub const PLUME_FALLOUT_FAR: f64 = 0.01;
 pub const PLUME_BURIAL_DEPTH: f64 = 1e-3;
 pub const PLUME_FROST_RATE: f64 = 1e3;

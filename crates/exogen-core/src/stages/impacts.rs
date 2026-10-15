@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 16;
+pub const VERSION: u64 = 20;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -104,6 +104,7 @@ impl CraterInputs {
                 peak_ring: graph.f64("cratering.peak_ring_onset"),
                 multi_ring: graph.f64("cratering.multiring_onset"),
                 gravity: graph.f64("body.gravity"),
+                icy: crate::stages::materials::is_ice(graph.str("materials.bedrock")),
             },
             flux_scale: graph.f64("cratering.flux_relative_to_moon")
                 * graph.f64("multiplier.crater_density"),

@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 63;
+pub const FINISH_VERSION: u64 = 66;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1826,6 +1826,13 @@ pub fn finish(
         present,
         Some(&renewal.keep),
     );
+    // The plumes' fallout mantles the ground it has lain on since each surface formed
+    // (F74).
+    if std::env::var_os("EXOGEN_SKIP_MANTLE").is_none()
+        && let Some(cover) = cover_on(&layers)
+    {
+        cryo::mantle(&mut layers, body_radius, &cover);
+    }
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
     let height = layers.height();
     // On ice, each slope sits at its own mean temperature: frost and lag follow it.
@@ -2902,7 +2909,9 @@ mod tests {
                 .filter(|c| c.diameter >= lo && c.diameter < hi)
                 .map(|c| {
                     let rim = ring_mean(c.center, 0.5 * c.diameter);
-                    let floor = ring_mean(c.center, 0.1 * c.diameter);
+                    // The flat floor between a central pit's rim and the wall's foot
+                    // (F72).
+                    let floor = ring_mean(c.center, 0.22 * c.diameter);
                     (rim - floor) / c.diameter
                 })
                 .collect();

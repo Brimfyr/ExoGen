@@ -92,6 +92,65 @@ impl Fallout {
     }
 }
 
+/// The plumes' fallout mantles the ground it lies on (F74). Snow laid over billions of
+/// years creeps down the slopes of what it covers, filling the hollows and thinning on the
+/// crests, so relief smaller than its thickness is buried and what stands larger is
+/// rounded by no more than it: Enceladus's old craters are muted (Kirchoff and Schenk
+/// 2009). Its loose top, what drains into fractures, is a few hundred metres (Martin et al.
+/// 2023); the whole deposit, sintered below that, mantles. The ground is drawn toward its
+/// own low-pass over MANTLE_SPREAD times the deposit's thickness `cover`, m, by no more
+/// than the thickness down and twice it up; the deposit's mean, which only raises the
+/// ground, is left out.
+pub fn mantle(layers: &mut LayerSet, body_radius: f64, cover: &[f32]) {
+    let grid = layers.grid;
+    let cell = grid.delta() * body_radius;
+    let thickest = cover.iter().cloned().fold(0.0f32, f32::max) as f64;
+    if thickest <= 0.0 {
+        return;
+    }
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let mut sorted: Vec<f32> = cover.iter().copied().filter(|h| *h > 0.0).collect();
+        sorted.sort_by(f32::total_cmp);
+        let at = |q: f64| sorted[((sorted.len() - 1) as f64 * q) as usize];
+        eprintln!(
+            "mantle: fallout {:.0} m at the 10th percentile, {:.0} at the median, {:.0} at the 90th, {:.0} at most",
+            at(0.1),
+            at(0.5),
+            at(0.9),
+            thickest
+        );
+    }
+    let lows =
+        crate::stages::relaxation::low_passes(&layers.bedrock, cell, MANTLE_SPREAD * thickest);
+    if lows.is_empty() {
+        return;
+    }
+    layers
+        .bedrock
+        .as_mut_slice()
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(k, z)| {
+            let h = cover[k] as f64;
+            if h <= 0.0 {
+                return;
+            }
+            let here = *z as f64;
+            let want = MANTLE_SPREAD * h;
+            // The low-pass at that length, between the pyramid's levels about it.
+            let low = match lows.iter().position(|(len, _)| *len >= want) {
+                Some(0) => here + (want / lows[0].0) * (lows[0].1[k] as f64 - here),
+                Some(i) => {
+                    let (l0, l1) = (lows[i - 1].0, lows[i].0);
+                    let t = (want / l0).ln() / (l1 / l0).ln();
+                    lows[i - 1].1[k] as f64 * (1.0 - t) + lows[i].1[k] as f64 * t
+                }
+                None => lows[lows.len() - 1].1[k] as f64,
+            };
+            *z = (here + (low - here).clamp(-h, 2.0 * h)) as f32;
+        });
+}
+
 /// The loose cover the plumes' fallout has laid on the ground (F64): the snow of the
 /// present plume and of each past episode's, each falling off from its own pole as the
 /// fallout does (F47), summed over the time a surface has stood.

@@ -24,7 +24,8 @@ use crate::constants::{
     OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
 };
 use crate::constants::{
-    FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD, PLANAR_TEXTURE_RADII,
+    FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD, PIT_RIM_PRESENCE,
+    PIT_WANDER, PLANAR_TEXTURE_RADII, RIM_HEIGHT_VARIATION, RIM_SHARE_BAND,
 };
 use crate::constants::{
     TERRACE_ABSENT, TERRACE_BENCH_SLOPE, TERRACE_BLOCK_LENGTH, TERRACE_BOW, TERRACE_HUMMOCK_SCALE,
@@ -284,6 +285,8 @@ pub fn stamp_compute(
         .flatten();
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
+    let pit = Pit::new(p.seed, dim);
+    let rise = RimRise::new(p.seed, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let edge = EdgeShape::new(p.seed, dim.ejecta_radius, grid.delta() * body_radius);
     let bedrock = layers.bedrock.as_slice();
     let deep = layers.deep.as_slice();
@@ -353,7 +356,7 @@ pub fn stamp_compute(
             };
         }
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
-        let re = re0 * shape.factor(phi);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
         let rw = terraces
             .as_ref()
             .map_or(re, |t| t.radius(re, phi, dim, profile.sigma));
@@ -363,15 +366,23 @@ pub fn stamp_compute(
         if let Some(t) = &texture {
             v = t.height(rw, phi, v);
         }
+        if let Some(rr) = &rise
+            && v > 0.0
+        {
+            v *= rr.at(re0 / dim.radius, phi);
+        }
         if let Some(t) = &terraces {
             v += t.relief(re, phi, dim) * p.feature_amplitude;
         }
         if let Some(rg) = &rings {
-            // Rings follow the rim's scalloped shape with a small wobble of their own.
-            v += rg.relief(re, phi, profile.sigma) * p.feature_amplitude;
+            // Each ring keeps an outline of its own, as irregular as the rim's (F73).
+            v += rg.relief(re0, phi, profile.sigma) * p.feature_amplitude;
         }
         if let Some(pk) = &peak {
             v += pk.relief(re0 / dim.radius, phi, profile.sigma / dim.radius) * p.feature_amplitude;
+        }
+        if let Some(pt) = &pit {
+            v += pt.relief(re0 / dim.radius, phi, profile.sigma / dim.radius) * p.feature_amplitude;
         }
         let mut old = bedrock[idx] as f64;
         if p.bury && re > dim.radius && v > 0.0 {
@@ -758,6 +769,129 @@ impl Peak {
     }
 }
 
+/// The central pit of a crater on ice (F72): a depression its uplift collapsed into,
+/// flat-floored over its inner half, ringed by a raised rim that breaks up around the
+/// larger pits, and in the largest craters a dome risen in it; the pit's outline, its rim
+/// and its dome each of their own shape.
+struct Pit {
+    /// Radii in crater radii; depth, rim height and dome height in metres.
+    radius: f64,
+    rim_radius: f64,
+    depth: f64,
+    rim_height: f64,
+    dome_radius: f64,
+    dome_height: f64,
+    seed: u64,
+}
+
+impl Pit {
+    fn new(seed: u64, dim: &Dimensions) -> Option<Self> {
+        if dim.pit_radius <= 0.0 || dim.radius <= 0.0 {
+            return None;
+        }
+        let r = dim.radius;
+        Some(Self {
+            radius: dim.pit_radius / r,
+            rim_radius: dim.pit_rim_radius.max(1.2 * dim.pit_radius) / r,
+            depth: dim.pit_depth,
+            rim_height: dim.pit_rim_height,
+            dome_radius: dim.dome_radius / r,
+            dome_height: dim.dome_height,
+            seed,
+        })
+    }
+
+    /// The outline factor of one of the pit's parts at an azimuth.
+    fn wander(&self, salt: u64, phi: f64) -> f64 {
+        if self.seed == 0 {
+            return 1.0;
+        }
+        1.0 + PIT_WANDER * harmonics(self.seed ^ salt, phi, &[2.0, 3.0, 5.0]).clamp(-2.0, 2.0)
+    }
+
+    /// Relief at a radius in crater radii and an azimuth, after a blur in radii, m.
+    fn relief(&self, x: f64, phi: f64, blur: f64) -> f64 {
+        let reach = self.rim_radius * (1.0 + 2.0 * PIT_WANDER) + 3.0 * blur;
+        if x > reach {
+            return 0.0;
+        }
+        let soft = |t: f64| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let rp = self.radius * self.wander(0x9171_0001, phi);
+        let rr = (self.rim_radius * self.wander(0x9171_0002, phi)).max(1.1 * rp);
+        // The pit, flat-floored over its inner half.
+        let wall = (0.55 * rp).hypot(blur);
+        let pit = 1.0 - soft((x - 0.45 * rp) / wall);
+        // Its rim: a crest at the pit's edge, falling into the pit and outward to the
+        // rim's outer radius, broken around its circuit.
+        let presence = if self.seed == 0 {
+            1.0
+        } else {
+            (PIT_RIM_PRESENCE.0
+                + PIT_RIM_PRESENCE.1 * harmonics(self.seed ^ 0x9171_0003, phi, &[3.0, 5.0, 8.0]))
+            .clamp(0.0, 1.0)
+        };
+        let inner = soft((x - 0.7 * rp) / (0.3 * rp).hypot(blur));
+        let outer = 1.0 - soft((x - rp) / (rr - rp).hypot(blur));
+        let mut h = self.rim_height * presence * inner * outer - self.depth * pit;
+        if self.dome_radius > 0.0 {
+            let rd = self.dome_radius * self.wander(0x9171_0004, phi);
+            let t = (x / rd.hypot(blur)).min(1.0);
+            h += self.dome_height * (1.0 - t * t).max(0.0).powf(1.5);
+        }
+        h
+    }
+}
+
+/// A crater's rim height around it (F73): a factor by azimuth, applied in full on the rim
+/// and its flanks and fading out over the ejecta beyond.
+struct RimRise {
+    table: [f64; 64],
+}
+
+impl RimRise {
+    fn new(seed: u64, enabled: bool) -> Option<Self> {
+        if seed == 0 || !enabled {
+            return None;
+        }
+        let mut table = [1.0; 64];
+        for (b, t) in table.iter_mut().enumerate() {
+            let phi = b as f64 / 64.0 * 2.0 * std::f64::consts::PI;
+            *t = (1.0
+                + RIM_HEIGHT_VARIATION * harmonics(seed ^ 0x81E5_0000, phi, &[1.0, 2.0, 3.0, 5.0]))
+            .max(0.3);
+        }
+        Some(Self { table })
+    }
+
+    /// The factor at an elliptical radius in crater radii and an azimuth.
+    fn at(&self, x: f64, phi: f64) -> f64 {
+        let tau = 2.0 * std::f64::consts::PI;
+        let u = phi.rem_euclid(tau) / tau * 64.0;
+        let i = (u.floor() as usize) % 64;
+        let f = u - u.floor();
+        let t = self.table[i] * (1.0 - f) + self.table[(i + 1) % 64] * f;
+        let fade = 1.0 - ((x - 1.3) / 0.7).clamp(0.0, 1.0);
+        1.0 + (t - 1.0) * fade
+    }
+}
+
+/// The share of the rim's scalloped outline a radius carries (F73): all of it at the rim
+/// and beyond, none inward of the outer RIM_SHARE_BAND of the wall, so the inner terraces,
+/// the floor and the central features keep shapes of their own.
+fn rim_share(x: f64, dim: &Dimensions) -> f64 {
+    let floor = if dim.class == CraterClass::Simple || dim.radius <= 0.0 {
+        0.0
+    } else {
+        (dim.floor_radius / dim.radius).clamp(0.0, 0.95)
+    };
+    let x_in = 1.0 - RIM_SHARE_BAND * (1.0 - floor);
+    let t = ((x - x_in) / (1.0 - x_in).max(1e-3)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// A sum of azimuthal harmonics with seeded phases and weights, scaled to unit
 /// root-mean-square.
 fn harmonics(seed: u64, phi: f64, orders: &[f64]) -> f64 {
@@ -831,9 +965,9 @@ impl EdgeShape {
     }
 }
 
-/// The ridge rings of one crater, following the rim's scalloped outline with a small
-/// wobble and a few gaps of their own, tabulated around the azimuth; a multi-ring basin
-/// also carries a subdued outer ring at sqrt(2) radii. Degradation widens and lowers the
+/// The ridge rings of one crater, each with an outline of its own as irregular as the
+/// rim's and a few gaps, tabulated around the azimuth (F73); a multi-ring basin also
+/// carries a subdued outer ring at sqrt(2) radii. Degradation widens and lowers the
 /// ridges.
 struct Rings {
     /// Per ring: radius by azimuth, presence by azimuth, height.
@@ -930,8 +1064,13 @@ struct Terraces {
 
 impl Terraces {
     fn new(seed: u64, dim: &Dimensions) -> Option<Self> {
-        if !matches!(dim.class, CraterClass::Complex | CraterClass::PeakRing)
-            || dim.terrace_width <= 0.0
+        if !matches!(
+            dim.class,
+            CraterClass::Complex
+                | CraterClass::PeakRing
+                | CraterClass::CentralPit
+                | CraterClass::CentralDome
+        ) || dim.terrace_width <= 0.0
             || dim.radius <= 0.0
         {
             return None;
@@ -1126,17 +1265,23 @@ impl Terraces {
 /// Rim scalloping of one crater, tabulated around the azimuth as a radius factor.
 struct RimShape {
     table: [f64; 64],
+    /// The outline of the floor and the bowl where no terraces shape them, a crenulation
+    /// of their own (F73).
+    inner: [f64; 64],
     flat: bool,
 }
 
 impl RimShape {
     fn new(seed: u64, dim: &Dimensions, enabled: bool) -> Self {
         let mut table = [1.0; 64];
+        let mut inner = [1.0; 64];
         let flat = seed == 0 || !enabled;
-        // A complex crater's rim is scalloped by the slumps of its outermost terrace (F67).
+        // A complex crater's rim is scalloped by the slumps of its outermost terrace (F67),
+        // and its terraces and their toes shape the wall and the floor's edge within.
         if !flat && let Some(t) = Terraces::new(seed, dim) {
             return Self {
                 table: t.rim,
+                inner,
                 flat: false,
             };
         }
@@ -1146,12 +1291,21 @@ impl RimShape {
             } else {
                 RIM_CRENULATION_COMPLEX
             };
-            for (b, t) in table.iter_mut().enumerate() {
+            for (b, (t, u)) in table.iter_mut().zip(inner.iter_mut()).enumerate() {
                 let phi = b as f64 / 64.0 * 2.0 * std::f64::consts::PI;
                 *t = 1.0 / (1.0 + amplitude * crenulation(seed, phi));
+                *u = 1.0 / (1.0 + amplitude * crenulation(seed ^ 0x1DE5_0000, phi));
             }
         }
-        Self { table, flat }
+        Self { table, inner, flat }
+    }
+
+    #[inline]
+    fn lookup(table: &[f64; 64], phi: f64) -> f64 {
+        let x = phi.rem_euclid(2.0 * std::f64::consts::PI) / (2.0 * std::f64::consts::PI) * 64.0;
+        let i = (x.floor() as usize) % 64;
+        let f = x - x.floor();
+        table[i] * (1.0 - f) + table[(i + 1) % 64] * f
     }
 
     #[inline]
@@ -1159,10 +1313,19 @@ impl RimShape {
         if self.flat {
             return 1.0;
         }
-        let x = phi.rem_euclid(2.0 * std::f64::consts::PI) / (2.0 * std::f64::consts::PI) * 64.0;
-        let i = (x.floor() as usize) % 64;
-        let f = x - x.floor();
-        self.table[i] * (1.0 - f) + self.table[(i + 1) % 64] * f
+        Self::lookup(&self.table, phi)
+    }
+
+    /// The stretch of an elliptical radius in crater radii at an azimuth (F73): the rim's
+    /// outline at the rim and beyond, the floor's own within.
+    #[inline]
+    fn stretch(&self, x: f64, phi: f64, dim: &Dimensions) -> f64 {
+        if self.flat {
+            return 1.0;
+        }
+        let share = rim_share(x, dim);
+        1.0 + (Self::lookup(&self.table, phi) - 1.0) * share
+            + (Self::lookup(&self.inner, phi) - 1.0) * (1.0 - share)
     }
 }
 
@@ -1306,6 +1469,8 @@ pub fn restore_compute(
         .flatten();
     let rings = Rings::new(p.seed, dim);
     let peak = Peak::new(p.seed, dim);
+    let pit = Pit::new(p.seed, dim);
+    let rise = RimRise::new(p.seed, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let edge = EdgeShape::new(p.seed, dim.ejecta_radius, grid.delta() * body_radius);
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let bedrock = layers.bedrock.as_slice();
@@ -1315,7 +1480,7 @@ pub fn restore_compute(
     let covers = layers.cover.as_slice();
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
-        let re = re0 * shape.factor(phi);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
         let fine = bedrock[idx] as f64 - base[idx] as f64;
         // 1 inside 0.95 R, 0 outside 1.05 R: the cavity removes the fine relief.
         let cut = ((1.05 - re / dim.radius) / 0.10).clamp(0.0, 1.0);
@@ -1336,6 +1501,11 @@ pub fn restore_compute(
         if let Some(t) = &texture {
             d = t.height(rw, phi, d);
         }
+        if let Some(rr) = &rise
+            && d > 0.0
+        {
+            d *= rr.at(re0 / dim.radius, phi);
+        }
         // The terraces the coarse grid could not carry: the wall as it collapsed, less the
         // plain wall the loop drew (F67).
         if let Some(t) = &terraces
@@ -1345,13 +1515,19 @@ pub fn restore_compute(
         }
         if let Some(rg) = &rings {
             // The ring detail the coarse grid could not carry.
-            d += (rg.relief(re, phi, p.fine_blur) - rg.relief(re, phi, p.coarse_blur))
+            d += (rg.relief(re0, phi, p.fine_blur) - rg.relief(re0, phi, p.coarse_blur))
                 * p.detail_weight;
         }
         if let Some(pk) = &peak {
             let x = re0 / dim.radius;
             d += (pk.relief(x, phi, p.fine_blur / dim.radius)
                 - pk.relief(x, phi, p.coarse_blur / dim.radius))
+                * p.detail_weight;
+        }
+        if let Some(pt) = &pit {
+            let x = re0 / dim.radius;
+            d += (pt.relief(x, phi, p.fine_blur / dim.radius)
+                - pt.relief(x, phi, p.coarse_blur / dim.radius))
                 * p.detail_weight;
         }
         let mut write = CellWrite {
@@ -1426,6 +1602,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
+            icy: false,
         };
         let dim = dimensions(200_000.0, &s);
         let table = ProfileTable::new(dim, 0.0);
@@ -1501,6 +1678,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
+            icy: false,
         };
         let small = dimensions(20_000.0, &s);
         let big = dimensions(200_000.0, &s);
@@ -1591,6 +1769,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
+            icy: false,
         };
         let dim = dimensions(200_000.0, &s);
         let table = ProfileTable::new(dim, 0.0);
@@ -1660,6 +1839,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
+            icy: false,
         };
         let dim = dimensions(90_000.0, &s);
         let tex = CraterTexture::new(0x5EED, &dim);
@@ -1711,6 +1891,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
+            icy: false,
         };
         let dim = dimensions(60_000.0, &s);
         assert!(dim.peak_height > 500.0);
@@ -1788,6 +1969,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
+            icy: false,
         };
         let dim = dimensions(93e3, &moon);
         // The outermost terrace is Pearce and Melosh's 0.09 D^0.87 km.

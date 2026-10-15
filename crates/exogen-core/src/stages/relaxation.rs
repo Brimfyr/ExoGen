@@ -152,6 +152,24 @@ pub fn low_pass(field: &Field<f32>, cell: f64, length: f64) -> Vec<f32> {
     }
 }
 
+/// Low-passed copies of a field from one Gaussian pyramid, each with its length, m, as
+/// `low_pass` reads a level's, up to the first level at least `max_length` long.
+pub fn low_passes(field: &Field<f32>, cell: f64, max_length: f64) -> Vec<(f64, Vec<f32>)> {
+    let grid = field.grid();
+    let levels = ((grid.face_size() as f64).log2().floor() as usize)
+        .saturating_sub(2)
+        .max(1);
+    let length = |l: usize| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64);
+    let level = (0..levels)
+        .find(|&l| length(l) >= max_length)
+        .unwrap_or(levels - 1);
+    pyramid(field, level + 1)
+        .into_iter()
+        .enumerate()
+        .map(|(l, f)| (length(l), f.as_slice().to_vec()))
+        .collect()
+}
+
 /// Passes of the smoothing kernel before each halving and after each expansion.
 const PYRAMID_BLUR_PASSES: usize = 2;
 

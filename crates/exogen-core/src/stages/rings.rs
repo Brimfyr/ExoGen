@@ -316,6 +316,7 @@ mod tests {
             peak_ring: 27_577.0,
             multi_ring: 64_887.0,
             gravity: 1.235,
+            icy: true,
         }
     }
 

@@ -16,6 +16,10 @@ pub enum CraterClass {
     Complex,
     PeakRing,
     MultiRing,
+    /// On ice, where rock makes a peak ring: the uplift collapsed into a pit (F72).
+    CentralPit,
+    /// On ice, where rock makes a multi-ring basin: a dome risen in the pit (F72).
+    CentralDome,
 }
 
 impl CraterClass {
@@ -25,6 +29,8 @@ impl CraterClass {
             CraterClass::Complex => "complex",
             CraterClass::PeakRing => "peak_ring",
             CraterClass::MultiRing => "multi_ring",
+            CraterClass::CentralPit => "central_pit",
+            CraterClass::CentralDome => "central_dome",
         }
     }
 }
@@ -36,6 +42,8 @@ pub struct Scaling {
     pub peak_ring: f64,
     pub multi_ring: f64,
     pub gravity: f64,
+    /// The target is ice: its larger complex craters have central pits and domes (F72).
+    pub icy: bool,
 }
 
 impl Scaling {
@@ -45,7 +53,13 @@ impl Scaling {
         } else if diameter < self.peak_ring {
             CraterClass::Complex
         } else if diameter < self.multi_ring {
-            CraterClass::PeakRing
+            if self.icy {
+                CraterClass::CentralPit
+            } else {
+                CraterClass::PeakRing
+            }
+        } else if self.icy {
+            CraterClass::CentralDome
         } else {
             CraterClass::MultiRing
         }
@@ -64,6 +78,15 @@ pub struct Dimensions {
     pub terrace_width: f64,
     pub peak_height: f64,
     pub peak_radius: f64,
+    /// A central pit's radius, its raised rim's outer radius, m, its depth below the floor
+    /// and its rim's height, m (F72); none outside the pit classes.
+    pub pit_radius: f64,
+    pub pit_rim_radius: f64,
+    pub pit_depth: f64,
+    pub pit_rim_height: f64,
+    /// A dome's radius and its height above the pit's floor, m (F72).
+    pub dome_radius: f64,
+    pub dome_height: f64,
     /// Ridge rings inside the rim as (radius, height), outermost first.
     pub rings: [(f64, f64); MAX_RINGS],
     pub ring_count: usize,
@@ -79,7 +102,11 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
     let class = s.classify(diameter);
     let d_km = diameter / 1e3;
     let radius = 0.5 * diameter;
-    let g_scale = (GRAVITY_MOON / s.gravity.max(0.05)).powf(0.25);
+    // A complex crater's relief scales with the strength length its transition measures
+    // (F71): the lunar crater of the same multiple of the transition, scaled by the
+    // body's transition against the Moon's.
+    let strength = (s.simple_complex / TERRACE_REFERENCE_TRANSITION).max(1e-3);
+    let lunar = |law: (f64, f64)| pow_law(law, d_km / strength) * 1e3 * strength;
     match class {
         CraterClass::Simple => Dimensions {
             class,
@@ -90,16 +117,20 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
             terrace_width: 0.0,
             peak_height: 0.0,
             peak_radius: 0.0,
+            pit_radius: 0.0,
+            pit_rim_radius: 0.0,
+            pit_depth: 0.0,
+            pit_rim_height: 0.0,
+            dome_radius: 0.0,
+            dome_height: 0.0,
             rings: [(0.0, 0.0); MAX_RINGS],
             ring_count: 0,
             ejecta_radius: EJECTA_RADIUS_MULTIPLE * radius,
             ejecta_exponent: EJECTA_EXPONENT,
         },
         _ => {
-            let depth =
-                (pow_law(PIKE_COMPLEX_DEPTH, d_km) * 1e3).min(MAX_BASIN_DEPTH_LUNAR * g_scale);
-            let rim_height =
-                (pow_law(PIKE_COMPLEX_RIM, d_km) * 1e3).min(MAX_RIM_HEIGHT_LUNAR * g_scale);
+            let depth = lunar(PIKE_COMPLEX_DEPTH).min(MAX_BASIN_DEPTH_LUNAR * strength);
+            let rim_height = lunar(PIKE_COMPLEX_RIM).min(MAX_RIM_HEIGHT_LUNAR * strength);
             let floor_radius = (0.5 * pow_law(FLOOR_DIAMETER, d_km) * 1e3)
                 .min(0.75 * radius)
                 .max(0.3 * radius);
@@ -110,11 +141,30 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
                 * (s.simple_complex / TERRACE_REFERENCE_TRANSITION)
                     .max(1e-3)
                     .powf(1.0 - TERRACE_WIDTH.1);
+            let uplift = lunar(CENTRAL_PEAK_HEIGHT);
             let (peak_height, peak_radius) = if class == CraterClass::Complex {
+                (uplift, PEAK_RADIUS_FRACTION * radius)
+            } else {
+                (0.0, 0.0)
+            };
+            // On ice the uplift collapsed into a pit, and in the largest craters a dome
+            // rose in it (F72).
+            let pitted = matches!(class, CraterClass::CentralPit | CraterClass::CentralDome);
+            let (pit_radius, pit_rim_radius, pit_depth, pit_rim_height) = if pitted {
+                let share = (PIT_DIAMETER_SHARE
+                    * (diameter / s.peak_ring.max(1.0)).max(1.0).powf(PIT_GROWTH))
+                .min(PIT_SHARE_MAX);
                 (
-                    pow_law(CENTRAL_PEAK_HEIGHT, d_km) * 1e3,
-                    PEAK_RADIUS_FRACTION * radius,
+                    0.5 * share * diameter,
+                    0.5 * (PIT_RIM_DIAMETER_SHARE * diameter).max(1.5 * share * diameter),
+                    PIT_DEPTH_SHARE * depth,
+                    uplift,
                 )
+            } else {
+                (0.0, 0.0, 0.0, 0.0)
+            };
+            let (dome_radius, dome_height) = if class == CraterClass::CentralDome {
+                (DOME_PIT_SHARE * pit_radius, pit_depth + DOME_RISE * depth)
             } else {
                 (0.0, 0.0)
             };
@@ -155,6 +205,12 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
                 terrace_width,
                 peak_height,
                 peak_radius,
+                pit_radius,
+                pit_rim_radius,
+                pit_depth,
+                pit_rim_height,
+                dome_radius,
+                dome_height,
                 rings,
                 ring_count,
                 ejecta_radius,
@@ -362,6 +418,7 @@ mod tests {
             peak_ring: 25_922.0,
             multi_ring: 60_993.0,
             gravity: 1.315,
+            icy: true,
         };
         let tyre = transient_diameter(38e3, &europa);
         assert!((21e3..26e3).contains(&tyre), "{tyre}");
@@ -408,6 +465,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
+            icy: false,
         }
     }
 
@@ -504,18 +562,77 @@ mod tests {
     }
 
     #[test]
+    fn craters_on_ice_are_shallow_and_pitted() {
+        // F71: Ganymede's complex craters are 60 to 70 percent shallower than the Moon's
+        // (Croft 1981); its central pit craters are 0.5 to 1.7 km deep (Bray et al. 2012).
+        let ganymede = Scaling {
+            simple_complex: 2_812.0,
+            peak_ring: 23_904.0,
+            multi_ring: 56_246.0,
+            gravity: 1.428,
+            icy: true,
+        };
+        let moon = Scaling {
+            simple_complex: TERRACE_REFERENCE_TRANSITION,
+            peak_ring: 139_900.0,
+            multi_ring: 329_100.0,
+            gravity: 1.62,
+            icy: false,
+        };
+        let g40 = dimensions(40e3, &ganymede);
+        let m40 = dimensions(40e3, &moon);
+        assert!((0.5e3..1.7e3).contains(&g40.depth), "{}", g40.depth);
+        assert!(g40.depth < 0.4 * m40.depth, "{} {}", g40.depth, m40.depth);
+        // The Moon keeps Pike's laws.
+        assert!((m40.depth - 1.044e3 * 40f64.powf(0.301)).abs() < 1.0);
+        // F72: a 40 km crater on Ganymede has a central pit a fifth of it across and no
+        // peak or rings; a 70 km one a dome in its pit; the Moon's do not.
+        assert_eq!(g40.class, CraterClass::CentralPit);
+        assert_eq!(g40.peak_height, 0.0);
+        assert_eq!(g40.ring_count, 0);
+        let share40 = g40.pit_radius / g40.radius;
+        assert!((0.15..0.3).contains(&share40), "{share40}");
+        assert!(g40.pit_depth > 0.0 && g40.pit_rim_height > 0.0 && g40.dome_radius == 0.0);
+        let g70 = dimensions(70e3, &ganymede);
+        assert_eq!(g70.class, CraterClass::CentralDome);
+        assert!(g70.dome_radius > 0.0 && g70.dome_height > g70.pit_depth);
+        assert_eq!(g70.ring_count, 0);
+        // The pit widens with the crater: a third of a 100 km crater (Bray et al. 2012).
+        let g100 = dimensions(100e3, &ganymede);
+        let share100 = g100.pit_radius / g100.radius;
+        assert!(
+            share100 > share40 && (0.28..0.4).contains(&share100),
+            "{share100}"
+        );
+        assert_eq!(m40.pit_radius, 0.0);
+        // Mimas's Herschel, 139 km across on a body whose transition is near 63 km, is 10
+        // to 12 km deep.
+        let mimas = Scaling {
+            simple_complex: 63e3,
+            peak_ring: 535e3,
+            multi_ring: 1_260e3,
+            gravity: 0.064,
+            icy: true,
+        };
+        let herschel = dimensions(139e3, &mimas);
+        assert!((9e3..13e3).contains(&herschel.depth), "{}", herschel.depth);
+    }
+
+    #[test]
     fn gravity_moves_the_transition() {
         let big = Scaling {
             simple_complex: 2_900.0,
             peak_ring: 24_650.0,
             multi_ring: 58_000.0,
             gravity: 9.2,
+            icy: false,
         };
         let small = Scaling {
             simple_complex: 19_400.0,
             peak_ring: 164_900.0,
             multi_ring: 388_000.0,
             gravity: 1.38,
+            icy: false,
         };
         let d = 12_000.0;
         assert_eq!(dimensions(d, &small).class, CraterClass::Simple);
