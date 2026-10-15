@@ -323,3 +323,36 @@ Tests 142. One is new in this milestone: a ridge stains its margins as it ages, 
 
 The user on the twenty-first: "I'm happy with the lineae, but can you check why some of them have a 'staircase' look to them? That doesn't look natural to me." On the equator the tidal field is symmetric about the equatorial plane, so its principal directions lie east and north, and where the two principal stresses cross, or as the orbit turns them, the most tensile direction swaps by a right angle. A trace took the field's heading at every step, and a cycloid ran whenever the most tensile stress passed the cracking stress, whatever its direction, so the cracks turned at right angles there. Now a crack runs on only while the stress across its own plane opens it, and it kinks toward the field's heading by the maximum tangential stress criterion of fracture mechanics (F79). Under near-equal tension in all directions it runs straight on, and where the field swaps through the orbit a cycloid waits for the next orbit instead of turning. Making the trace remember its heading exposed a fault of its own: the heading, carried from step to step, was left tilted out of the tangent plane, and the trace zigzagged at every step, by up to 48 degrees, until each step laid it back in the plane. The sharpest turn of a crack traced from the equator is under 45 degrees, where it was 90, and the cycloids keep their arcs and cusps. Two tests guard it: no right-angle steps from the equator, and no step-by-step zigzag across Europa's cracks. Tests 144, clippy clean, validate 117.
 
+## The twenty-second milestone: chaos from the shell's warmth
+
+After the staircases, as the user asked, the next milestone: Europa's chaos. Its patches (F45) were discs of log-uniform size, each a wobbling outline round a fixed profile of matrix and rafts, and they read on the map as lace discs, the most artificial thing on the moon.
+
+Chaos now forms from a field (F80). The ocean brings warmth up under the ice, most of it at low latitudes (Soderlund et al. 2014). The shell disrupts where that warmth stands high: over melt lenses a few km down, as under Thera and Conamara (Schmidt et al. 2011). The warmth is structured at every scale, from 1,300 km, the largest contiguous chaos Riley et al. (2000) map, down to the rafts, which no finer structure can show. Chaos comes in generations, four in each retention age, since Riley et al. find chaos and the tectonics took turns. Each generation has a warmth of its own and disrupts the share of the surface that leaves Europa's chaos fraction disrupted by all of them together. The lid over the warm ice breaks into rafts two lens depths across, which group into plates two rafts across. A plate founders into the matrix with a chance that grows with the warmth's excess; in a foundered plate, single rafts stand as blocks. What stands drifts and turns, carrying the old surface with its ridges, ages and stains. Leads of matrix open between plates, round blocks and round the chaos itself. The matrix settles 150 m below the old surface's smoothed level, stained by the ocean's material as a crack's margins are, and fades with the salts. Each generation is one event over the whole body, between the cracks and craters older and younger than it.
+
+It took three tries, each judged on the maps:
+
+- **Single rafts.** The first try broke the lid into rafts of one size, 6 km, each foundering on its own. On a 2.4 km grid a raft is two or three cells, and rafts foundering independently read as salt-and-pepper speckle.
+- **Plates of rafts.** Grouping the rafts into plates that founder whole made the edges of each chaos a mosaic of plates parted by leads. But the cores became flat pools of matrix: each octave of the warmth had half the last one's amplitude, so its excursions were a few smooth blobs.
+- **Warmth at every scale.** With each octave keeping three quarters of the last one's amplitude, the small scales break a chaos into patches of every size, clustered in large regions. That is how the real moon's mottled trailing hemisphere looks in the reference.
+
+What the maps show:
+
+- **Europa:** chaos covers 30% of the surface in clusters of patches of every size, denser at low latitudes. About half of it is brown matrix, against Spaun et al.'s (1998) 59% for Conamara. Plates stand at the margins and blocks inside. The youngest generation is vivid. The older ones are faded to tints, with their plates and leads, and crossed by the lineae younger than them.
+- **Every other preset:** unchanged; only Europa has chaos.
+
+What surveying the maps found:
+
+- **Europa's plains carry the body's age.** More than half of Europa's surface keeps a surface age of 4.5 Gyr. The wholesale renewal of a thin shell (S6) sets the retention age of the crater record, but it renews no surface. The plains between the drawn lineae and chaos are left as the coarse loop's first crust. The sub-grid crater roughness (F54) reads their age and roughens them as a saturated ancient surface: the grain on Europa's plains in the shaded maps, against which the young matrix looks smooth. What renews them is the ridged plains' fabric of narrow ridges. It was planned for this milestone and moves to the next, with S6, since its renewal is what gives the plains their ages.
+
+What they still do not show:
+
+- **The ridged plains' fabric and the plains' ages:** the next milestone.
+- **Bands and the thickening shell:** bands as spreading lanes, and the stresses of a thickening shell.
+- **Coupling:** the warmth does not yet thin the shell that the cracks read (F76).
+- **Stated choices:**
+  - the generations' count and spacing;
+  - the warmth's equatorial excess and persistence;
+  - the rafts' and plates' sizes, drifts and turns;
+  - the leads' width, the disruption's scale and the matrix level's smoothing length.
+
+Tests 146. Three are new, and one is gone: Europa's chaos covers its share at every longitude; it favours low latitudes; and a generation breaks the lid into rafts in a lower matrix, with untouched ground outside. The old test that chaos patches reach every longitude went with the patches. Clippy is clean and validate passes its 117 checks.

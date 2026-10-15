@@ -261,7 +261,7 @@ pub struct Sidecar {
     pub lane_count: usize,
     pub lane_coverage: f64,
     pub grooved_fraction: f64,
-    /// Chaos patches and the share of the surface that is chaos matrix; cryovolcanic
+    /// Chaos generations and the share of the surface that is chaos matrix; cryovolcanic
     /// domes built over the body's life.
     pub chaos_count: usize,
     pub chaos_fraction: f64,

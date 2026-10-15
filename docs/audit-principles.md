@@ -84,9 +84,11 @@ When: the Europa milestone, whose plumes are the test.
 
 `cratering_retention_age` gives a thin shell (S4) over ICE_RESURFACING_TIDAL_FLUX (0.01 W/m²) a retention of RETENTION_ICE_OCEAN_GYR, and any other shell the body's age: a step in the crater count.
 
-Direction: the retention age from the area that lanes and chaos renew per unit time, so that it follows the same quantities they do.
+Measured (2026-10-15, the twenty-second milestone): the rule renews no surface. It sets the retention age of the crater record, but the plains between Europa's drawn lineae and chaos keep the coarse loop's first crust, so more than half of the moon's surface carries a surface age of 4.5 Gyr. The sub-grid crater roughness (F54) reads that age and roughens the plains as a saturated ancient surface: the grain the shaded maps show on Europa's plains, against which its young chaos matrix looks smooth.
 
-When: the Europa milestone.
+Direction: the retention age from the area that lanes and chaos renew per unit time, so that it follows the same quantities they do; and the plains' ages from what renews them, the narrow ridges of the ridged plains (Doggett et al. 2009).
+
+When: the next Europa milestone, with the ridged plains' fabric.
 
 ### S7. Materials by name
 
@@ -164,7 +166,7 @@ These features take a fixed profile, with noise for variety, rather than a form 
 
 | Feature | Where | First idea of the field |
 |---|---|---|
-| Chaos | `chaos_population`, `chaos_compute` (stages/cryo.rs) | outline from the thin or warm patch of the shell and a brine lens under it (Schmidt et al. 2011); matrix and rafts from the lens's collapse |
+| Chaos | `chaos_population`, `chaos_compute` (stages/cryo.rs) | closed by F80, the twenty-second milestone: generations where the warmth the ocean brings up stands above a threshold, structured at every scale from 1,300 km down to the rafts and strongest at low latitudes; the lid breaks into rafts grouped in plates that founder with the warmth's excess, or drift and turn carrying the old surface, in a matrix at the old surface's smoothed level. The warmth does not yet thin the shell that the cracks read (F76) |
 | Cryodomes | `cryodome_population`, `cryodome_compute` (stages/cryo.rs) | form from the extruded volume and the viscosity of the cryolava (Ahuna Mons; Ruesch et al. 2016) |
 | Coronae | `corona_core` (stages/episodic.rs) | a plume head under a lid: uplift, then a moat and rim as it spreads and sinks |
 | Tessera texture | `tessera_texture` (stages/episodic.rs) | fold and fault fabric oriented by the stress of the event |
@@ -178,6 +180,8 @@ These features take a fixed profile, with noise for variety, rather than a form 
 
 Impact craters are events and stay objects. Their sizes follow scaling laws, and since F67 their walls follow their collapse (the last row).
 
+When: Io's features with Io; the rest in the earlier-phases revisit.
+
 ### T2. Terraces as rings
 
 Each terrace level of F67 is a ring of slump blocks aligned round the crater, so a deep crater shows four or five evenly spaced scarps on its wall, like the rungs of a ladder. Real terraced walls are fewer, wider slump blocks that merge and split, with scarps of varying height, and near the simple-to-complex transition they are a few slumps rather than terraces. The user saw it on Enceladus (2026-10-15), whose largest craters are laddered; but every crater it shows there is larger than any on the real Enceladus, whose plains' craters are under about 40 km, relaxed by its past heat and muted by fallout (Bland et al. 2012; Kirchoff and Schenk 2009), which M3 and the crater population's high end own.
@@ -186,7 +190,6 @@ Direction: terrace levels whose blocks are not aligned round the crater, merging
 
 When: the earlier-phases revisit, with the crater population.
 
-When: chaos with Europa; Io's features with Io; the rest in the earlier-phases revisit.
 
 ## Calibrations on one body (principle 15)
 

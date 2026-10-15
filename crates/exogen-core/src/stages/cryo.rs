@@ -19,8 +19,9 @@ use rayon::prelude::*;
 use crate::constants::*;
 use crate::crater::{CellWrite, CraterRecord, StampOutput, Stamper, dimensions};
 use crate::fields::LayerSet;
-use crate::geom::angle_between;
+use crate::geom::{angle_between, cross, dot, local_basis, normalize, rotate};
 use crate::grid::CubeSphere;
+use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
@@ -248,78 +249,245 @@ impl LooseCover {
     }
 }
 
-/// A patch of chaos: the shell melted through or disrupted from below.
+/// A generation of chaos (F80): at one time the shell disrupts wherever the warmth the
+/// ocean brings up under it stands above a threshold. The brittle lid over the warm ice
+/// breaks into rafts, grouped into plates, along leads that the matrix fills; a plate
+/// founders into the matrix with a chance that grows with the warmth's excess, leaving
+/// some of its rafts standing as blocks, and what stands drifts and turns, carrying the
+/// old surface on it.
 #[derive(Clone, Debug)]
-pub struct Chaos {
-    pub center: [f64; 3],
-    pub radius: f64,
+pub struct ChaosGeneration {
     pub time_gyr: f64,
     pub id: u64,
+    warmth: Warmth,
+    /// The warmth above which the shell disrupts, in spreads of its structured part.
+    threshold: f64,
+    rafts: Lattice,
+    plates: Lattice,
+    radius: f64,
 }
 
-impl Chaos {
-    pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        (1.0 + CHAOS_EDGE_WOBBLE + 0.1) * self.radius / body_radius
+/// The warmth the ocean brings up under the shell at one time (F80): structured at every
+/// scale from the largest chaos down to the rafts, which no finer structure can show,
+/// and strongest at low latitudes.
+#[derive(Clone, Debug)]
+struct Warmth {
+    noise: GradientNoise,
+    frequency: f64,
+    octaves: u32,
+    /// The structured part's spread, which the field is measured in.
+    spread: f64,
+}
+
+/// Points on which a generation's warmth is measured to find its threshold.
+const CHAOS_SAMPLES: usize = 1 << 16;
+
+/// The `i`-th of `n` points spread evenly over the sphere (a Fibonacci lattice).
+fn even_point(i: usize, n: usize) -> [f64; 3] {
+    let z = 1.0 - (2.0 * i as f64 + 1.0) / n as f64;
+    let r = (1.0 - z * z).max(0.0).sqrt();
+    let phi = i as f64 * std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    [r * phi.cos(), r * phi.sin(), z]
+}
+
+/// The ocean's heat at a latitude, in spreads of the structured warmth: the square of the
+/// cosine of the latitude less its mean over the sphere, two thirds, so the equator
+/// stands CHAOS_EQUATOR above the poles.
+fn latitude_warmth(d: [f64; 3]) -> f64 {
+    CHAOS_EQUATOR * (1.0 - d[2] * d[2] - 2.0 / 3.0)
+}
+
+impl Warmth {
+    fn structured(&self, d: [f64; 3]) -> f64 {
+        self.noise.fbm(
+            d,
+            self.frequency,
+            self.octaves,
+            2.0,
+            CHAOS_WARMTH_PERSISTENCE,
+        )
+    }
+
+    fn at(&self, d: [f64; 3]) -> f64 {
+        self.structured(d) / self.spread + latitude_warmth(d)
     }
 }
 
-/// The chaos present at the epoch: patches drawn per time bin within the retention age,
-/// their number from the disrupted share of the surface over the mean patch area, their
-/// places in the shell's heat field.
-pub fn chaos_population(graph: &ParamGraph, present: f64, seed: u64) -> Vec<Chaos> {
-    let fraction = graph.f64("tectonics.chaos_fraction");
+/// Jittered points, one in each cell of a cubic lattice in space: each place on the
+/// sphere belongs to the nearest, so the points break the sphere into polygons.
+#[derive(Clone, Debug)]
+struct Lattice {
+    seed: u64,
+    /// The spacing as a share of the body's radius, and in metres.
+    step: f64,
+    spacing: f64,
+}
+
+/// A lattice point and its key.
+type Site = ([f64; 3], u64);
+
+impl Lattice {
+    fn new(seed: u64, spacing: f64, body_radius: f64) -> Self {
+        Self {
+            seed,
+            step: spacing / body_radius,
+            spacing,
+        }
+    }
+
+    /// The points of the 27 cells round a place's, and which of them is nearest.
+    fn around(&self, p: [f64; 3]) -> ([Site; 27], usize) {
+        let h = self.step;
+        let base = [
+            (p[0] / h).floor() as i64,
+            (p[1] / h).floor() as i64,
+            (p[2] / h).floor() as i64,
+        ];
+        let rng = Rng::new(self.seed);
+        let mut sites = [([0.0f64; 3], 0u64); 27];
+        let mut nearest = (f64::INFINITY, 0usize);
+        let mut n = 0;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dk in -1..=1 {
+                    let c = [base[0] + di, base[1] + dj, base[2] + dk];
+                    let pack = |v: i64| ((v + (1 << 20)) as u64) & 0x1F_FFFF;
+                    let key = (pack(c[0]) << 42) | (pack(c[1]) << 21) | pack(c[2]);
+                    let bits = rng.bits(key, 0);
+                    let jitter = |s: u32| ((bits >> s) & 0x1F_FFFF) as f64 / (1u64 << 21) as f64;
+                    let site = [
+                        (c[0] as f64 + jitter(0)) * h,
+                        (c[1] as f64 + jitter(21)) * h,
+                        (c[2] as f64 + jitter(42)) * h,
+                    ];
+                    let r = [p[0] - site[0], p[1] - site[1], p[2] - site[2]];
+                    if dot(r, r) < nearest.0 {
+                        nearest = (dot(r, r), n);
+                    }
+                    sites[n] = (site, key);
+                    n += 1;
+                }
+            }
+        }
+        (sites, nearest.1)
+    }
+
+    fn nearest(&self, p: [f64; 3]) -> Site {
+        let (sites, i) = self.around(p);
+        sites[i]
+    }
+}
+
+/// How a raft stands in a generation: on its plate, which stands; on its own, its plate
+/// foundered; or foundered with it.
+#[derive(Clone, Copy, PartialEq)]
+enum Standing {
+    Plate,
+    Block,
+    Foundered,
+}
+
+/// The stand of a raft whose disruption is known: its plate founders with a chance of
+/// the plate's disruption, and then the raft with a chance of its own.
+struct RaftState {
+    plate: u64,
+    standing: Standing,
+}
+
+impl ChaosGeneration {
+    fn new(g: u64, time_gyr: f64, seed: u64, body_radius: f64, share: f64) -> ChaosGeneration {
+        let spacing = CHAOS_RAFT_LIDS * CHAOS_LENS_DEPTH;
+        let rng = Rng::new(seed);
+        // Noise frequencies are lattice cells per radian: the radius over the length.
+        let octaves = ((CHAOS_LARGEST / spacing).log2().ceil() as u32).max(1);
+        let mut warmth = Warmth {
+            noise: GradientNoise::new(rng.bits(g, 1)),
+            frequency: body_radius / CHAOS_LARGEST,
+            octaves,
+            spread: 1.0,
+        };
+        let structured: Vec<f64> = (0..CHAOS_SAMPLES)
+            .into_par_iter()
+            .map(|i| warmth.structured(even_point(i, CHAOS_SAMPLES)))
+            .collect();
+        let mean = structured.iter().sum::<f64>() / CHAOS_SAMPLES as f64;
+        let variance =
+            structured.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / CHAOS_SAMPLES as f64;
+        warmth.spread = variance.sqrt().max(1e-12);
+        let mut values: Vec<f64> = structured
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v / warmth.spread + latitude_warmth(even_point(i, CHAOS_SAMPLES)))
+            .collect();
+        values.sort_by(f64::total_cmp);
+        let at = (((1.0 - share) * CHAOS_SAMPLES as f64) as usize).min(CHAOS_SAMPLES - 1);
+        ChaosGeneration {
+            time_gyr,
+            id: (0xC4A0 << 32) | g,
+            warmth,
+            threshold: values[at],
+            rafts: Lattice::new(rng.bits(g, 2), spacing, body_radius),
+            plates: Lattice::new(rng.bits(g, 3), CHAOS_PLATE_RAFTS * spacing, body_radius),
+            radius: body_radius,
+        }
+    }
+
+    /// How far the shell under a point is disrupted, 0 to 1, or none where its warmth is
+    /// below the threshold and it stays whole.
+    fn disruption(&self, d: [f64; 3]) -> Option<f64> {
+        let excess = self.warmth.at(d) - self.threshold;
+        (excess > 0.0).then(|| (excess / CHAOS_DISRUPTION_SPREADS).min(1.0))
+    }
+
+    /// How a raft, given by its lattice point, stands, with its own disruption.
+    fn raft_state(&self, site: Site, disruption: f64) -> RaftState {
+        let (plate, plate_key) = self.plates.nearest(site.0);
+        let plate_disruption = self.disruption(normalize(plate)).unwrap_or(0.0);
+        let standing = if Rng::new(self.plates.seed).uniform(plate_key, 1) >= plate_disruption {
+            Standing::Plate
+        } else if Rng::new(self.rafts.seed).uniform(site.1, 1) >= disruption {
+            Standing::Block
+        } else {
+            Standing::Foundered
+        };
+        RaftState {
+            plate: plate_key,
+            standing,
+        }
+    }
+
+    /// Whether the generation disrupted the shell at a point: whether the raft it lies on
+    /// stands over warmth above the threshold.
+    pub fn disrupts(&self, d: [f64; 3]) -> bool {
+        let site = self.rafts.nearest(d);
+        self.disruption(normalize(site.0)).is_some()
+    }
+}
+
+/// The chaos present at the epoch (F80): the generations within the retention age, one
+/// every CHAOS_GENERATIONS-th of it through the body's life, so that the retention age
+/// always holds as many, each with a warmth field of its own and a share of the surface
+/// that leaves the chaos share disrupted by them all together.
+pub fn chaos_population(graph: &ParamGraph, present: f64, seed: u64) -> Vec<ChaosGeneration> {
+    let fraction = graph.f64("tectonics.chaos_fraction").clamp(0.0, 0.99);
     if fraction <= 0.0 {
         return Vec::new();
     }
     let body_radius = graph.f64("body.radius");
-    let age = graph.f64("body.age");
     let retention = graph.f64("cratering.retention_age").max(1e-6);
-    let (lo, hi) = CHAOS_DIAMETER;
-    let mean_area = std::f64::consts::FRAC_PI_4 * (hi * hi - lo * lo) / (2.0 * (hi / lo).ln());
-    let expected = fraction * 4.0 * std::f64::consts::PI * body_radius * body_radius / mean_area;
-    let rng = Rng::new(seed ^ 0xC4A0_5000);
-    let heat = GradientNoise::new(graph.f64("seed.tectonics") as u64 ^ 0xC4A0_4EA7);
-    let window_start = (present - retention).max(0.0);
-    let mut out = Vec::new();
-    for (bin, b0, b1) in crate::stages::time_bins(age, 0.0, present) {
-        if b1 <= window_start {
-            continue;
-        }
-        let b0 = b0.max(window_start);
-        let share = ((b1 - b0) / retention).min(1.0);
-        let (count, _) = crate::crater::production::poisson(&rng, bin, 0, expected * share);
-        for j in 0..count as u64 {
-            let draw = 16 + j * 40;
-            // Where: in the heat field, by rejection.
-            let mut center = None;
-            for attempt in 0..16u64 {
-                let p = rng.unit_direction(bin, draw + 1 + 2 * attempt);
-                let field = 0.5
-                    + 0.5
-                        * heat.fbm(
-                            p,
-                            CHAOS_HEAT_FREQUENCY / (2.0 * std::f64::consts::PI),
-                            2,
-                            2.0,
-                            0.5,
-                        );
-                let w = 1.0 - CHAOS_HEAT_CONTRAST * (1.0 - field.clamp(0.0, 1.0));
-                if rng.uniform(bin ^ crate::rng::ACCEPT_STREAM, draw + attempt) < w {
-                    center = Some(p);
-                    break;
-                }
-            }
-            let Some(center) = center else { continue };
-            let diameter = lo * (hi / lo).powf(rng.uniform(bin, draw + 34));
-            out.push(Chaos {
-                center,
-                radius: 0.5 * diameter,
-                time_gyr: b0 + (b1 - b0) * rng.uniform(bin, draw + 35),
-                id: (bin << 32) | j,
-            });
-        }
-    }
-    out
+    let n = CHAOS_GENERATIONS.max(1) as f64;
+    let slot = retention / n;
+    let share = 1.0 - (1.0 - fraction).powf(1.0 / n);
+    let seed = seed ^ 0xC4A0_5000;
+    let first = ((present - retention) / slot).floor().max(0.0) as u64;
+    let last = (present / slot).floor().max(0.0) as u64;
+    (first..=last)
+        .filter_map(|g| {
+            let time = (g as f64 + 0.5) * slot;
+            (time <= present && time > present - retention)
+                .then(|| ChaosGeneration::new(g, time, seed, body_radius, share))
+        })
+        .collect()
 }
 
 fn write(idx: usize, bedrock: f64) -> CellWrite {
@@ -335,62 +503,154 @@ fn write(idx: usize, bedrock: f64) -> CellWrite {
     }
 }
 
-/// A chaos patch on the resolved grid: inside a wobbling outline the matrix drops and
-/// breaks into hummocks, stained with the ocean's salts, around rafts of the old surface
-/// that keep what was on them.
+/// The stain of a chaos matrix as it stands at an age, Gyr: the ocean's material stains
+/// it as it stains a crack's margins (F78), from the start, and fades with the salts to
+/// the ancient band's share.
+fn matrix_stain(age: f64) -> f64 {
+    LINEA_STAIN
+        * (LINEA_STAIN_RESIDUAL + (1.0 - LINEA_STAIN_RESIDUAL) * (-age / SALT_FADE_GYR).exp())
+}
+
+/// A generation of chaos on the resolved grid (F80). Each cell lies on a raft; where the
+/// raft's warmth is above the threshold, the matrix fills the share of the cell that a
+/// lead covers, or the whole cell where the raft foundered, and the rest shows the old
+/// surface from where the raft's plate, or the raft on its own, carried it. Leads open
+/// along the edges between plates, round a block, and round the chaos, where the lid
+/// breaks from the shell that stays whole; a cell of a plate takes the plate's width of
+/// lead and a block's cell the block's. The matrix lies at the old surface's level
+/// smoothed over a few rafts, below it by the drop, stained by the ocean's material; what
+/// stands keeps the age, the unit and the stain of what it carries.
 pub fn chaos_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
-    body_radius: f64,
-    chaos: &Chaos,
-    stamper: &mut Stamper,
+    cell: f64,
+    present: f64,
+    generation: &ChaosGeneration,
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
-    let noise = GradientNoise::new(chaos.id ^ 0xC4A0_0000);
-    // Noise frequencies are lattice cells per radian: the radius over the feature length.
-    // About CHAOS_EDGE_WAVES waves round the patch's circumference.
-    let outline_frequency =
-        body_radius * CHAOS_EDGE_WAVES / (2.0 * std::f64::consts::PI * chaos.radius);
-    let raft_frequency = body_radius / CHAOS_RAFT_SCALE;
-    let hummock_frequency = body_radius / CHAOS_HUMMOCK_SPACING;
-    // The share of a patch standing as rafts sets the threshold on the raft field.
-    let raft_threshold = 0.55 * (1.0 - 2.0 * CHAOS_RAFT_SHARE);
-    let time = chaos.time_gyr as f32;
-    stamper.gather(
-        grid,
-        body_radius,
-        chaos.center,
-        chaos.cap_radius(body_radius) * body_radius,
+    let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let deep = layers.deep.as_slice();
+    let melt = layers.melt.as_slice();
+    let cover = layers.cover.as_slice();
+    let padded_bedrock = PaddedField::new(grid, bedrock);
+    let padded_stain = PaddedField::new(grid, layers.stain.as_slice());
+    let level = crate::stages::relaxation::low_pass(
+        &layers.bedrock,
+        cell,
+        CHAOS_MATRIX_LEVEL_RAFTS * generation.rafts.spacing,
     );
-    let mut cells: Vec<CellWrite> = stamper
-        .footprint
-        .par_iter()
-        .filter_map(|&(k, r, _)| {
+    let radius = generation.radius;
+    // Hummocks finer than the grid average out over a cell, to the share of their
+    // relief that one cell's mean keeps.
+    let hummocks = GradientNoise::new(generation.id ^ 0x4B0C_0000);
+    let hummock_frequency = radius / CHAOS_HUMMOCK_SPACING;
+    let hummock = CHAOS_HUMMOCK * (CHAOS_HUMMOCK_SPACING / cell).min(1.0);
+    let time = generation.time_gyr as f32;
+    let stain_matrix = matrix_stain((present - generation.time_gyr).max(0.0)) as f32;
+    let turn_max = CHAOS_RAFT_TURN_DEG.to_radians();
+    let writes: Vec<(CellWrite, [f32; 2])> = (0..grid.cell_count())
+        .into_par_iter()
+        .filter_map(|k| {
             let d = grid.center(grid.cell(k));
-            let edge = chaos.radius
-                * (1.0 + CHAOS_EDGE_WOBBLE * noise.fbm(d, outline_frequency, 2, 2.0, 0.5));
-            if r >= edge {
-                return None;
+            let (sites, ia) = generation.rafts.around(d);
+            let a = sites[ia];
+            let disruption = generation.disruption(normalize(a.0))?;
+            let state = generation.raft_state(a, disruption);
+            // What carries the cell's surface: the plate, or the block on its own.
+            let (centre, key, lattice, carried) = match state.standing {
+                Standing::Plate => {
+                    let (p, key) = generation.plates.nearest(a.0);
+                    let centre = normalize(p);
+                    let e = generation.disruption(centre).unwrap_or(0.0);
+                    (centre, key, &generation.plates, e)
+                }
+                _ => (normalize(a.0), a.1, &generation.rafts, disruption),
+            };
+            let half_lead = 0.5 * CHAOS_LEAD_SHARE * lattice.spacing;
+            // The nearest open edge: the planes halfway to the other rafts' points, the
+            // edge open between plates, round a block, and round the chaos.
+            let r = [d[0] - a.0[0], d[1] - a.0[1], d[2] - a.0[2]];
+            let near = dot(r, r);
+            let mut edge = f64::INFINITY;
+            for (i, &b) in sites.iter().enumerate() {
+                if i == ia {
+                    continue;
+                }
+                let ab = [b.0[0] - a.0[0], b.0[1] - a.0[1], b.0[2] - a.0[2]];
+                let len = dot(ab, ab).sqrt();
+                if len <= 0.0 {
+                    continue;
+                }
+                let rb = [d[0] - b.0[0], d[1] - b.0[1], d[2] - b.0[2]];
+                let distance = (dot(rb, rb) - near) / (2.0 * len) * radius;
+                if distance >= edge || distance >= half_lead + 0.5 * cell {
+                    continue;
+                }
+                let open = state.standing != Standing::Plate
+                    || match generation.disruption(normalize(b.0)) {
+                        None => true,
+                        Some(e) => {
+                            let other = generation.raft_state(b, e);
+                            other.plate != state.plate || other.standing != Standing::Plate
+                        }
+                    };
+                if open {
+                    edge = distance;
+                }
             }
-            let raft = noise.fbm(d, raft_frequency, 1, 2.0, 0.5) > raft_threshold;
-            if raft {
-                return None;
-            }
-            let taper = ((edge - r) / (0.1 * edge)).clamp(0.0, 1.0);
-            let hummocks = CHAOS_HUMMOCK * noise.fbm(d, hummock_frequency, 2, 2.0, 0.5);
-            let mut w = write(k, bedrock[k] as f64 + taper * (hummocks - CHAOS_DROP));
+            // The share of the cell the lead covers: the overlap of the cell's width with
+            // the lead's along the line to the edge.
+            let lead = ((edge + 0.5 * cell).min(half_lead) - (edge - 0.5 * cell).max(-half_lead))
+                .max(0.0)
+                / cell;
+            let matrix = if state.standing == Standing::Foundered {
+                1.0
+            } else {
+                lead.min(1.0)
+            };
+            let matrix_bedrock = level[k] as f64 - CHAOS_DROP
+                + hummock * hummocks.fbm(d, hummock_frequency, 2, 2.0, 0.5);
+            // What stands carries the cell's surface from where its drift and its turn
+            // about its centre brought it.
+            let rng = Rng::new(lattice.seed);
+            let (east, north) = local_basis(centre);
+            let heading = 2.0 * std::f64::consts::PI * rng.uniform(key, 2);
+            let (s, c) = heading.sin_cos();
+            let along = [
+                east[0] * c + north[0] * s,
+                east[1] * c + north[1] * s,
+                east[2] * c + north[2] * s,
+            ];
+            let drift = CHAOS_RAFT_DRIFT * lattice.spacing * carried * rng.uniform(key, 3);
+            let turn = turn_max * carried * (2.0 * rng.uniform(key, 4) - 1.0);
+            let back = rotate(d, normalize(cross(centre, along)), -drift / radius);
+            let source = rotate(back, centre, -turn);
+            let raft_bedrock = sample_bilinear(grid, &padded_bedrock, source) as f64;
+            let raft_stain = sample_bilinear(grid, &padded_stain, source);
+            let from = grid.index(grid.locate(source).0);
+            let mut w = write(k, matrix * matrix_bedrock + (1.0 - matrix) * raft_bedrock);
             w.surface = true;
-            w.age = time;
-            w.unit = UNIT_CHAOS;
-            w.cover = 1.0;
-            Some(w)
+            if matrix > 0.5 {
+                w.age = time;
+                w.unit = UNIT_CHAOS;
+            } else {
+                w.age = ages[from];
+                w.unit = units[from];
+                w.deep = deep[from];
+                w.melt = melt[from];
+                w.cover = cover[from];
+            }
+            let m = matrix as f32;
+            let stain = m * stain_matrix + (1.0 - m) * raft_stain;
+            Some((w, [stain, 1.0]))
         })
         .collect();
-    cells.sort_by_key(|c| c.idx);
+    let (cells, stain): (Vec<CellWrite>, Vec<[f32; 2]>) = writes.into_iter().unzip();
     StampOutput {
         cells,
         composition: None,
-        stain: None,
+        stain: Some(stain),
     }
 }
 
@@ -601,23 +861,123 @@ pub const TRAILING_APEX: [f64; 3] = [0.0, 1.0, 0.0];
 mod tests {
     use super::*;
 
-    /// Europa's chaos is placed over every longitude (the acceptance draw has a stream
-    /// of its own).
+    /// Europa's chaos (F80) covers its share of the surface, at every longitude.
     #[test]
-    fn europa_s_chaos_reaches_every_longitude() {
+    fn europa_s_chaos_covers_its_share_at_every_longitude() {
         let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
-        let chaos = chaos_population(&g, g.f64("body.age"), 11);
-        let mut sectors = [0usize; 6];
-        for c in &chaos {
-            let lon = c.center[1].atan2(c.center[0]).to_degrees() + 180.0;
-            sectors[((lon / 60.0) as usize).min(5)] += 1;
+        let fraction = g.f64("tectonics.chaos_fraction");
+        let generations = chaos_population(&g, g.f64("body.age"), 11);
+        assert_eq!(generations.len(), CHAOS_GENERATIONS);
+        let n = 20_000;
+        let mut sectors = [(0usize, 0usize); 6];
+        for i in 0..n {
+            let d = even_point(i, n);
+            let lon = d[1].atan2(d[0]).to_degrees() + 180.0;
+            let s = &mut sectors[((lon / 60.0) as usize).min(5)];
+            s.1 += 1;
+            if generations.iter().any(|c| c.disrupts(d)) {
+                s.0 += 1;
+            }
         }
-        let mean = chaos.len() as f64 / 6.0;
-        assert!(chaos.len() > 300);
+        let share = sectors.iter().map(|s| s.0).sum::<usize>() as f64 / n as f64;
         assert!(
-            sectors.iter().all(|&n| n as f64 > 0.6 * mean),
-            "{sectors:?} of {}",
-            chaos.len()
+            (share / fraction - 1.0).abs() < 0.15,
+            "share {share:.3} of {fraction:.3}"
+        );
+        for s in &sectors {
+            assert!(s.0 as f64 / s.1 as f64 > 0.4 * share, "{sectors:?}");
+        }
+    }
+
+    /// The ocean brings the most heat to the ice at low latitudes, where chaos is most
+    /// common (F80).
+    #[test]
+    fn chaos_favours_low_latitudes() {
+        let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
+        let n = 20_000;
+        let edge = 40f64.to_radians().sin();
+        let (mut low, mut high) = ([0usize; 2], [0usize; 2]);
+        for seed in 1..=4 {
+            let generations = chaos_population(&g, g.f64("body.age"), seed);
+            for i in 0..n {
+                let d = even_point(i, n);
+                let chaos = generations.iter().any(|c| c.disrupts(d)) as usize;
+                let band = if d[2].abs() < edge {
+                    &mut low
+                } else {
+                    &mut high
+                };
+                band[0] += chaos;
+                band[1] += 1;
+            }
+        }
+        let low = low[0] as f64 / low[1] as f64;
+        let high = high[0] as f64 / high[1] as f64;
+        assert!(
+            low > 1.2 * high,
+            "{low:.3} within 40 degrees, {high:.3} beyond"
+        );
+    }
+
+    /// A generation breaks the lid over its warm ice into rafts in a lower matrix (F80):
+    /// the rafts keep what they carry, the matrix is renewed at a level the old relief
+    /// does not show through and stained by the ocean's material, and the surface
+    /// outside is untouched.
+    #[test]
+    fn a_generation_breaks_the_lid_into_rafts_in_a_matrix() {
+        let radius = 100e3;
+        let grid = CubeSphere::new(64);
+        let cell = grid.delta() * radius;
+        let generation = ChaosGeneration::new(0, 0.05, 7, radius, 0.3);
+        let mut layers = LayerSet::new(grid);
+        for k in 0..grid.cell_count() {
+            let d = grid.center(grid.cell(k));
+            layers.bedrock.as_mut_slice()[k] = (300.0 * (60.0 * d[0]).sin()) as f32;
+            layers.surface_age.as_mut_slice()[k] = 0.01;
+            layers.unit_id.as_mut_slice()[k] = UNIT_LINEA;
+        }
+        let out = chaos_compute(&layers, &grid, cell, 0.06, &generation);
+        let stain = out.stain.as_ref().unwrap();
+        let region = (0..grid.cell_count())
+            .filter(|&k| generation.disrupts(grid.center(grid.cell(k))))
+            .count();
+        assert_eq!(out.cells.len(), region);
+        assert!(
+            (0.2..0.45).contains(&(region as f64 / grid.cell_count() as f64)),
+            "region {region}"
+        );
+        let (mut matrix, mut old, mut new) = (0usize, Vec::new(), Vec::new());
+        for (w, s) in out.cells.iter().zip(stain) {
+            let k = w.idx as usize;
+            assert!(generation.disrupts(grid.center(grid.cell(k))));
+            if w.unit == UNIT_CHAOS {
+                matrix += 1;
+                assert_eq!(w.age, 0.05);
+                assert!(s[0] > 0.3, "matrix stain {}", s[0]);
+                old.push(layers.bedrock.as_slice()[k] as f64);
+                new.push(w.bedrock as f64);
+            } else {
+                assert_eq!(w.unit, UNIT_LINEA);
+                assert_eq!(w.age, 0.01);
+            }
+        }
+        let share = matrix as f64 / out.cells.len() as f64;
+        assert!((0.2..0.9).contains(&share), "matrix share {share:.3}");
+        let spread = |v: &[f64]| {
+            let m = v.iter().sum::<f64>() / v.len() as f64;
+            (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+        };
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        assert!(
+            spread(&new) < 0.5 * spread(&old),
+            "matrix relief {:.0} m over {:.0} m",
+            spread(&new),
+            spread(&old)
+        );
+        assert!(
+            (mean(&new) - mean(&old) + CHAOS_DROP).abs() < 0.3 * CHAOS_DROP,
+            "matrix drop {:.0} m",
+            mean(&old) - mean(&new)
         );
     }
 

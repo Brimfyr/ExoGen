@@ -214,7 +214,7 @@ pub struct FinishOutput {
     /// An ice shell's cracks present at the epoch, its chaos, and the domes a shell over
     /// rock has built, with the share of the surface that is chaos matrix.
     pub lineae: Vec<lineae::Linea>,
-    pub chaos: Vec<cryo::Chaos>,
+    pub chaos: Vec<cryo::ChaosGeneration>,
     pub cryodomes: Vec<cryo::Cryodome>,
     pub chaos_fraction: f64,
     /// The lanes of grooved terrain present at the epoch, and the shares of the surface
@@ -358,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 69;
+pub const FINISH_VERSION: u64 = 70;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1310,10 +1310,8 @@ pub fn finish(
                     episodes[*k].center,
                     shell_map.radius_rad + 2.0 * grid.delta(),
                 ),
-                Event::Chaos(k) => {
-                    let c = &chaos[*k];
-                    (c.center, c.cap_radius(body_radius) + 2.0 * grid.delta())
-                }
+                // A generation of chaos reads the whole shell's warmth.
+                Event::Chaos(_) => ([0.0, 0.0, 1.0], std::f64::consts::PI + 2.0 * grid.delta()),
                 Event::Cryodome(k) => {
                     let d = &cryodomes[*k];
                     (d.center, d.cap_radius(body_radius) + 2.0 * grid.delta())
@@ -1574,8 +1572,7 @@ pub fn finish(
                         Some((out, None, None))
                     }
                     Event::Chaos(k) => {
-                        let out =
-                            cryo::chaos_compute(&layers, &grid, body_radius, &chaos[*k], stamper);
+                        let out = cryo::chaos_compute(&layers, &grid, cell, present, &chaos[*k]);
                         Some((out, None, None))
                     }
                     Event::Cryodome(k) => {
@@ -2775,8 +2772,8 @@ mod tests {
         let g = preset_graph("Europa", "preview");
         let out = r.run(&g, &NoProgress).unwrap();
         assert!(
-            out.finish.chaos.len() > 20,
-            "{} chaos patches",
+            out.finish.chaos.len() == CHAOS_GENERATIONS,
+            "{} chaos generations",
             out.finish.chaos.len()
         );
         let share = out.finish.chaos_fraction;

@@ -1755,23 +1755,50 @@ pub const THERMAL_SAMPLES_MAX: usize = 2048;
 /// Chaos (F45): on a shell over an ocean thin against the body, the share of the surface
 /// disrupted into chaos, up to this much, in proportion to the tidal flux over this flux,
 /// W/m² (a fit that gives Europa's 14 mW/m², F75, the whole share, refitted from 0.05
-/// when its flux came down from 76 mW/m²); the patches' diameters, m, log-uniform, placed in a heat field of this many
-/// cycles round the body whose troughs take this share fewer than its crests; the drop of the matrix, m, its hummocks, m, at this spacing, m;
-/// the share of a patch left standing as rafts of the old surface and their scale, m;
-/// and the wobble of a patch's outline.
+/// when its flux came down from 76 mW/m²; Riley et al. 2000 map nearly 30% of the imaged
+/// surface as chaos); the drop of its matrix, m, and the matrix's hummocks, m, at this
+/// spacing, m.
 pub const CHAOS_FRACTION_MAX: f64 = 0.3;
 pub const CHAOS_FLUX: f64 = 0.012;
-pub const CHAOS_DIAMETER: (f64, f64) = (5e3, 300e3);
-pub const CHAOS_HEAT_FREQUENCY: f64 = 2.0;
-pub const CHAOS_HEAT_CONTRAST: f64 = 0.5;
 pub const CHAOS_DROP: f64 = 150.0;
 pub const CHAOS_HUMMOCK: f64 = 60.0;
 pub const CHAOS_HUMMOCK_SPACING: f64 = 1.5e3;
-pub const CHAOS_RAFT_SHARE: f64 = 0.45;
-pub const CHAOS_RAFT_SCALE: f64 = 15e3;
-pub const CHAOS_EDGE_WOBBLE: f64 = 0.35;
-/// The outline's wobble has about this many waves round a patch.
-pub const CHAOS_EDGE_WAVES: f64 = 6.0;
+/// Chaos from the shell's warmth (F80): it forms in this many generations through the
+/// surface's age (a stated choice: Riley et al. 2000 find chaos and tectonics have taken
+/// turns, newer chaos disrupting older), each where a warmth field stands above the share
+/// of the surface that leaves the chaos share in all of them. The field is the heat the
+/// ocean brings up, strongest at low latitudes, the equator this many of the field's
+/// spreads above the poles (a stated choice; Soderlund et al. 2014: chaos most common
+/// within 40 degrees of the equator, where rotating ocean convection carries the most
+/// heat to the ice), structured at every scale
+/// up to this length, m (Riley et al.: no characteristic size, the largest contiguous chaos
+/// some 1,300 km across). Disrupted, the brittle ice over a melt lens this deep, m
+/// (Schmidt et al. 2011: Thera and Conamara over lenses about 3 km down), breaks into
+/// rafts this many lens depths across, which group into plates this many rafts across
+/// (stated choices: Greenberg et al. 1999 find rafts up to several km across that carry
+/// the old terrain, the largest a few percent of their chaos's area); a plate or a block
+/// drifts up to this share of its size and turns up to this many degrees (stated
+/// choices: Conamara's rafts are translated and rotated, Spaun et al. 1998); matrix fills
+/// the leads, this share of the size of what they part; the disruption grows with the
+/// field's excess over the threshold, whole at this many spreads (a stated choice), where
+/// every plate and every raft has foundered.
+pub const CHAOS_GENERATIONS: usize = 4;
+pub const CHAOS_EQUATOR: f64 = 0.6;
+pub const CHAOS_LARGEST: f64 = 1.3e6;
+/// Each finer octave of the warmth keeps this share of the last's amplitude (a stated
+/// choice), so that the small scales carry enough of it to break a chaos into patches of
+/// every size rather than a few large pools.
+pub const CHAOS_WARMTH_PERSISTENCE: f64 = 0.75;
+pub const CHAOS_LENS_DEPTH: f64 = 3e3;
+pub const CHAOS_RAFT_LIDS: f64 = 2.0;
+pub const CHAOS_PLATE_RAFTS: f64 = 2.0;
+pub const CHAOS_RAFT_DRIFT: f64 = 0.3;
+pub const CHAOS_RAFT_TURN_DEG: f64 = 20.0;
+pub const CHAOS_LEAD_SHARE: f64 = 0.12;
+pub const CHAOS_DISRUPTION_SPREADS: f64 = 1.0;
+/// A chaos matrix settles to the old surface's level smoothed over this many rafts (a
+/// stated choice), so that the old relief does not show through it.
+pub const CHAOS_MATRIX_LEVEL_RAFTS: f64 = 4.0;
 /// Cryovolcanic domes (F46): on a shell over rock this share of the ice magma budget
 /// extrudes as domes of volumes drawn log-uniform between these shares of the body's
 /// radius cubed (Ceres 100 to 3,000 km³, Ahuna Mons about 1,500), with this height over
