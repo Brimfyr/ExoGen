@@ -156,10 +156,11 @@ impl FabricSlice {
             // Where the tension above the threshold and the thin shell favour, by
             // rejection, as a drawn crack starts.
             let mut start = None;
+            let freezing = cracks.freezing_at(Some(time));
             for attempt in 0..24u64 {
                 let p = rng.unit_direction(j, 2 + 2 * attempt);
                 let (peak, phase) = cracks.shell.peak_tension(axis, p);
-                let excess = peak - ICE_CRACK_STRESS;
+                let excess = peak + freezing - ICE_CRACK_STRESS;
                 if excess <= 0.0 {
                     continue;
                 }
@@ -180,7 +181,7 @@ impl FabricSlice {
             let relief = LINEA_RELIEF_SHARE * width * (0.6 + 0.8 * rng.uniform(j, 61));
             let length = l_lo * (l_hi / l_lo).powf(rng.uniform(j, 62));
             let id = (self.index << 32) ^ j ^ 0xFAB0_0000_0000_0000;
-            let points = cracks.trace(axis, p0, phase, step, length, id);
+            let points = cracks.trace_at(axis, p0, phase, step, length, id, time);
             (points.len() >= 3).then_some(FabricRidge {
                 points,
                 width,

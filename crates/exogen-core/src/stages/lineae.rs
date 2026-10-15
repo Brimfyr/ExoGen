@@ -297,6 +297,11 @@ struct TraceRules<'a> {
     /// of its neighbours' flanking ridges, which place it (F57), and by its own venting.
     /// It runs while its zone lets it, whatever the tide across its own plane.
     held_open: bool,
+    /// When the crack opened, Gyr, for the shell's stresses besides the tide (F82); none
+    /// for a trace of the tide alone, and for a plume's fissure, which the bending of its
+    /// neighbours' flanking ridges steers along them far more strongly than the shell's
+    /// heterogeneity could (some 135 kPa on Enceladus against 16).
+    time: Option<f64>,
 }
 
 impl TraceRules<'_> {
@@ -311,6 +316,7 @@ impl TraceRules<'_> {
             wobble: (LINEA_WOBBLE_RAD, LINEA_WOBBLE_LENGTH),
             bias: (0.0, 1.0),
             held_open: false,
+            time: None,
         }
     }
 }
@@ -340,6 +346,10 @@ pub struct Cracks {
     /// The past episodes of focused heating, whose fissures the body has carried from
     /// the pole.
     pub episodes: Vec<crate::stages::ice::FocusEpisode>,
+    /// The shell's stresses besides the tide (F82): its freezing, once its thermal history
+    /// is known (`with_freezing`), and its heterogeneity.
+    pub freezing: Option<crate::stages::tidal::Freezing>,
+    pub heterogeneity: Option<crate::stages::tidal::Heterogeneity>,
 }
 
 impl Cracks {
@@ -371,10 +381,20 @@ impl Cracks {
             return None;
         }
         let episodes = crate::stages::ice::focusing_episodes(graph, &shell_map);
+        let heterogeneity = Some(crate::stages::tidal::Heterogeneity::new(
+            graph.f64("seed.tectonics") as u64,
+            graph.f64("body.radius"),
+            crate::stages::ice_shell::flexural_parameter(
+                graph.f64("interior.elastic_thickness"),
+                graph.f64("body.gravity"),
+            ),
+        ));
         Some(Self {
             shell,
             shell_map,
             episodes,
+            freezing: None,
+            heterogeneity,
             amplitude,
             nsr_period_gyr,
             density,
@@ -387,6 +407,86 @@ impl Cracks {
             gravity: graph.f64("body.gravity"),
             elastic: graph.f64("interior.elastic_thickness"),
         })
+    }
+
+    /// The cracks of a shell whose thermal history is known, which freezes and thaws as
+    /// it thickens and thins (F82).
+    pub fn with_freezing(mut self, thermal: &crate::thermal::ThermalHistory) -> Self {
+        self.freezing = crate::stages::tidal::Freezing::new(thermal, self.body_radius);
+        self
+    }
+
+    /// The isotropic stress the shell's freezing adds at a time, Pa (F82).
+    pub fn freezing_at(&self, time: Option<f64>) -> f64 {
+        match (&self.freezing, time) {
+            (Some(f), Some(t)) => f.at(t),
+            _ => 0.0,
+        }
+    }
+
+    /// The whole stress a crack opening at a time meets at a point and phase: the tide's,
+    /// the shell's freezing and its heterogeneity (F82); the tide's alone without a time.
+    pub fn stress_at(
+        &self,
+        axis: [f64; 3],
+        p: [f64; 3],
+        phase: f64,
+        time: Option<f64>,
+    ) -> crate::stages::tidal::Stress {
+        let (field, heterogeneity) = self.stress_parts(axis, p, phase, time);
+        field + heterogeneity
+    }
+
+    /// The stress at a point and phase in its two parts: the field, the tide's and the
+    /// shell's freezing, and the heterogeneity (F82), which a crack feels along its length.
+    fn stress_parts(
+        &self,
+        axis: [f64; 3],
+        p: [f64; 3],
+        phase: f64,
+        time: Option<f64>,
+    ) -> (crate::stages::tidal::Stress, crate::stages::tidal::Stress) {
+        let tide = self.shell.total(axis, p, phase);
+        let none = crate::stages::tidal::Stress {
+            ee: 0.0,
+            nn: 0.0,
+            en: 0.0,
+        };
+        let Some(t) = time else {
+            return (tide, none);
+        };
+        let iso = self.freezing_at(time);
+        let field = tide
+            + crate::stages::tidal::Stress {
+                ee: iso,
+                nn: iso,
+                en: 0.0,
+            };
+        let heterogeneity = match &self.heterogeneity {
+            Some(h) => {
+                let (s1, s2, _) = field.principal();
+                h.at(p, t, s1.abs().max(s2.abs()))
+            }
+            None => none,
+        };
+        (field, heterogeneity)
+    }
+
+    /// The heterogeneity a crack's tip feels, `felt` so far, as the crack grows by `step`
+    /// to `run` long, meeting `local` at its tip (F82): the tip's stress intensity weighs
+    /// the stress along the crack by the inverse square root of the distance back from
+    /// the tip, whose mean is a third of the crack's length, so the crack answers a
+    /// heterogeneity finer than itself less than a coarser one.
+    fn felt(
+        felt: Option<crate::stages::tidal::Stress>,
+        local: crate::stages::tidal::Stress,
+        step: f64,
+        run: f64,
+    ) -> crate::stages::tidal::Stress {
+        match felt {
+            None => local,
+            Some(f) => f + (local - f).scaled((step / (run / 3.0).max(step)).min(1.0)),
+        }
     }
 
     /// The direction a crack takes near a point in the present field, for the folds of
@@ -484,14 +584,15 @@ impl Cracks {
                 let mut start = None;
                 if let Some((_, tip, _)) = branch {
                     let (peak, phase) = self.shell.peak_tension(axis, tip);
-                    if peak > ICE_CRACK_STRESS {
+                    if peak + self.freezing_at(Some(time)) > ICE_CRACK_STRESS {
                         start = Some((tip, phase));
                     }
                 } else {
+                    let freezing = self.freezing_at(Some(time));
                     for attempt in 0..24u64 {
                         let p = rng.unit_direction(bin, draw + 1 + 2 * attempt);
                         let (peak, phase) = self.shell.peak_tension(axis, p);
-                        let excess = peak - ICE_CRACK_STRESS;
+                        let excess = peak + freezing - ICE_CRACK_STRESS;
                         if excess <= 0.0 {
                             continue;
                         }
@@ -538,7 +639,7 @@ impl Cracks {
                     // What kind: the diurnal share of the tension decides between a cycloid
                     // and a ridge; a share of the ridges pull apart into bands.
                     let (d1, _, _) = self.shell.diurnal(axis, p0, phase).principal();
-                    let (t1, _, _) = self.shell.total(axis, p0, phase).principal();
+                    let (t1, _, _) = self.stress_at(axis, p0, phase, Some(time)).principal();
                     let diurnal_share = if t1 > 0.0 {
                         (d1 / t1).clamp(0.0, 1.0)
                     } else {
@@ -593,6 +694,7 @@ impl Cracks {
                         wobble: (LINEA_WOBBLE_RAD, LINEA_WOBBLE_LENGTH),
                         bias: (0.0, 1.0),
                         held_open: false,
+                        time: Some(time),
                     };
                     let points = match kind {
                         LineaKind::Cycloid => {
@@ -709,6 +811,7 @@ impl Cracks {
                 wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
                 bias: (0.0, 1.0),
                 held_open: true,
+                time: None,
             };
             self.ridge_trace(axis, p0, phase, spacing, l_max, id_of(0), &rules)
         };
@@ -785,6 +888,7 @@ impl Cracks {
                             VENT_FORK_BIAS_LENGTH,
                         ),
                         held_open: true,
+                        time: None,
                     };
                     self.ridge_trace(axis, tip, phase, spacing, length, id_of(kf), &rules)
                 };
@@ -832,6 +936,7 @@ impl Cracks {
                         wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
                         bias: (0.0, 1.0),
                         held_open: true,
+                        time: None,
                     };
                     self.ridge_trace(axis, p, phase, spacing, l_max, id_of(k), &rules)
                 };
@@ -893,6 +998,26 @@ impl Cracks {
         self.ridge_trace(axis, p0, phase, spacing, length, id, &TraceRules::free())
     }
 
+    /// A narrow crack of the ridged plains' fabric (F81), traced as a ridge is but
+    /// answering no other crack, in the stresses of the time it opened (F82).
+    #[allow(clippy::too_many_arguments)]
+    pub fn trace_at(
+        &self,
+        axis: [f64; 3],
+        p0: [f64; 3],
+        phase: f64,
+        spacing: f64,
+        length: f64,
+        id: u64,
+        time: f64,
+    ) -> Vec<[f64; 3]> {
+        let rules = TraceRules {
+            time: Some(time),
+            ..TraceRules::free()
+        };
+        self.ridge_trace(axis, p0, phase, spacing, length, id, &rules)
+    }
+
     /// A crack along the slowly turning field: from the start in both directions,
     /// perpendicular to the most tensile stress at the phase it opened, while the
     /// tension holds, with a little wander. A crack of the thinned polar zone refracts
@@ -925,8 +1050,13 @@ impl Cracks {
             let mut p = p0;
             let mut along: Option<[f64; 3]> = rules.one_way;
             let mut kink_sense = 0.0;
+            let mut felt = None;
             for i in 0..half {
-                let stress = self.shell.total(axis, p, phase);
+                let (field, local) = self.stress_parts(axis, p, phase, rules.time);
+                // Both tips grow together: the crack is twice as long as either side.
+                let tip = Self::felt(felt, local, spacing, 2.0 * i as f64 * spacing);
+                felt = Some(tip);
+                let stress = field + tip;
                 let (s1, s2, _) = stress.principal();
                 let mut d = crack_direction(p, &stress, along);
                 // The crack runs on while the stress across its own plane opens it.
@@ -1030,8 +1160,12 @@ impl Cracks {
         let mut idle = 0usize;
         let mut kink_sense = 0.0;
         let max_steps = CYCLOID_MAX_ORBITS * CYCLOID_PHASE_STEPS;
+        let mut felt = None;
         for _ in 0..max_steps {
-            let stress = self.shell.total(axis, p, phase);
+            let (field, local) = self.stress_parts(axis, p, phase, rules.time);
+            let tip = Self::felt(felt, local, advance, run);
+            felt = Some(tip);
+            let stress = field + tip;
             let (s1, s2, _) = stress.principal();
             let toward = crack_direction(p, &stress, along);
             // The crack runs while the stress across its own plane opens it (Hoppa et
@@ -1483,6 +1617,53 @@ mod tests {
         );
     }
 
+    /// The shell's heterogeneity (F82) bends Europa's cracks: traced from the same starts
+    /// in the stresses of their time, they turn more along their length than in the
+    /// tide's alone, and none turns back on itself.
+    #[test]
+    fn the_shell_s_heterogeneity_bends_the_cracks() {
+        let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
+        let cracks = Cracks::new(&g).unwrap();
+        let present = g.f64("body.age");
+        let r = cracks.body_radius;
+        let rng = Rng::new(17);
+        // Turning per 100 km, in degrees, of a trace.
+        let turning = |pts: &[[f64; 3]]| {
+            let (mut turn, mut length) = (0.0, 0.0);
+            for w in pts.windows(3) {
+                let a = normalize([w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]]);
+                let b = normalize([w[2][0] - w[1][0], w[2][1] - w[1][1], w[2][2] - w[1][2]]);
+                turn += dot(a, b).clamp(-1.0, 1.0).acos().to_degrees();
+                length += angle_between(w[0], w[1]) * r;
+            }
+            100e3 * turn / length.max(1.0)
+        };
+        let (mut tide, mut both, mut n) = (0.0, 0.0, 0);
+        for j in 0..200u64 {
+            let time = present - 0.1 * rng.uniform(j, 0);
+            let axis = mean_axis_at(time, present, cracks.nsr_period_gyr);
+            let p0 = rng.unit_direction(j, 1);
+            let (peak, phase) = cracks.shell.peak_tension(axis, p0);
+            if peak <= ICE_CRACK_STRESS {
+                continue;
+            }
+            let plain = cracks.trace(axis, p0, phase, 5e3, 800e3, j);
+            let bent = cracks.trace_at(axis, p0, phase, 5e3, 800e3, j, time);
+            if plain.len() < 20 || bent.len() < 20 {
+                continue;
+            }
+            tide += turning(&plain);
+            both += turning(&bent);
+            n += 1;
+        }
+        let (tide, both) = (tide / n as f64, both / n as f64);
+        eprintln!(
+            "{n} cracks turn {tide:.1} degrees per 100 km in the tide, {both:.1} with the shell's heterogeneity"
+        );
+        assert!(n > 50, "{n}");
+        assert!(both > 1.5 * tide, "{both:.1} against {tide:.1}");
+    }
+
     /// A crack runs on straight where the tension is near equal in all directions, so it
     /// does not turn at right angles where the field's principal directions swap: traced
     /// from the equator, where the field's symmetry sets them east and north, no step of
@@ -1501,6 +1682,7 @@ mod tests {
             wobble: (0.0, 1.0),
             bias: (0.0, 1.0),
             held_open: false,
+            time: None,
         };
         let mut sharpest = 0.0f64;
         let mut sharpest_cycloid = 0.0f64;
@@ -1617,11 +1799,27 @@ mod tests {
                 .sum::<f64>()
                 * r
         };
-        let whole = stripes
+        let whole: Vec<&&Linea> = stripes
             .iter()
             .filter(|l| l.length > 150e3 && traced(l) > 0.9 * l.length)
-            .count();
-        assert!(whole >= 5, "{whole} stripes run their length");
+            .collect();
+        assert!(whole.len() >= 5, "{} stripes run their length", whole.len());
+        // And they keep parallel along their length, steered by their neighbours'
+        // bending: each within 50 degrees of the first at each tenth of its length (the
+        // shell's heterogeneity, had it bent them, let two converge at 63).
+        let tangent = |l: &Linea, k: usize| {
+            let i = (l.points.len() * k / 10).clamp(1, l.points.len() - 2);
+            let (a, b) = (l.points[i - 1], l.points[i + 1]);
+            normalize([b[0] - a[0], b[1] - a[1], b[2] - a[2]])
+        };
+        let worst = whole
+            .iter()
+            .flat_map(|l| (1..10).map(move |k| dot(tangent(l, k), tangent(first, k)).abs()))
+            .fold(1.0f64, f64::min);
+        assert!(
+            worst > 0.65,
+            "stripes as far apart in heading as {worst:.2}"
+        );
     }
 
     /// A ridge is a chain of segments (F62): its relief is greatest in the middle of a

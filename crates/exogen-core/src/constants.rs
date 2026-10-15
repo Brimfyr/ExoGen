@@ -1510,6 +1510,15 @@ pub const POLAR_MARGIN_RAMP: f64 = 15e3;
 /// distance, m, and only beyond it the field's direction.
 pub const CONVECTION_STRUCTURE: f64 = 0.3;
 pub const CONVECTION_CELL_SHELLS: f64 = 2.0;
+/// A shell's stresses in its plane besides the tide (F82): the freezing stress answers
+/// the thickening of this long, Gyr (a stated choice: the cracks relieve it within it);
+/// the shell's heterogeneity departs from the field by this share of its magnitude (a
+/// stated choice: the shell's thickness varies by a fifth or so), in a pattern twice the
+/// elastic lid's flexural parameter across that renews every this long, Gyr (a stated
+/// choice: the shell's thickness changes over millions of years).
+pub const FREEZE_RESPONSE_GYR: f64 = 0.001;
+pub const HETEROGENEITY_SHARE: f64 = 0.2;
+pub const HETEROGENEITY_RENEWAL_GYR: f64 = 0.005;
 pub const POLAR_FABRIC_RANGE: f64 = 40e3;
 /// The margin belt: the spreading is taken up in folds parallel to the renewed terrain's
 /// edge, decaying inward over this distance, m, at this spacing, m, this high, m, broken

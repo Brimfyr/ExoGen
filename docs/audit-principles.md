@@ -88,9 +88,9 @@ Measured (2026-10-15, the twenty-second milestone): the rule renews no surface. 
 
 Since F81 (2026-10-15, the twenty-third milestone) the plains' ages come from what renews them: the fabric of narrow ridges renews what the drawn lineae and the chaos matrix leave of one surface's worth in each retention age, so Europa's surface has a mean age of 97 Myr against its retention of 100 Myr. Still open: the retention age itself is RETENTION_ICE_OCEAN_GYR for a thin shell over the flux threshold and the body's age otherwise, a step, and the fabric's rate closes the renewal to it rather than following from the cracks' own rate of formation.
 
-Direction: the retention age from the rate at which cracks, lanes and chaos form, so that it follows the same quantities they do.
+Direction: the retention age from the rate at which cracks, lanes and chaos form, so that it follows the same quantities they do. The freezing stresses (F82) now bend and cross the cracks but do not yet set how many form: a thickening shell's strain, accommodated by the cracks' opening, is the measure of that rate they offer.
 
-When: with the freezing stresses, which set a part of that rate.
+When: the earlier-phases revisit, with the crack population's rate.
 
 ### S7. Materials by name
 
@@ -250,7 +250,9 @@ Enceladus's cratered plains are cut by fractures. The class rule's Love number g
 
 Direction: the stresses that crack a shell beyond the diurnal tide: the tension of a thickening shell as its ocean freezes and pressurizes (Manga and Wang 2007; Rudolph et al. 2022), which each episode's end and each fall of the heat flux bring; true polar wander as the body reorients to each new episode's pole (Matsuyama and Nimmo 2008); and non-synchronous rotation. Kihoulou et al. (2025) find extension in the upper shell as Europa's shell thickens after a pulse of eccentricity, and compression as it thins.
 
-When: the Europa milestone, which needs the same stresses for its bands and ridges.
+Since F82 (2026-10-15, the twenty-fourth milestone) a shell that thickens stands at the cracking stress in tension. Enceladus's mean shell, held by its porous core's steady heat (F68), thickens by only 0.6 km over its life, some 650 Pa of tension, so its plains still do not crack; the thickening that would crack them is local, the zone refreezing at each focusing episode's end, which F82's global history of the shell does not see.
+
+When: with a local history of the shell under the focusing episodes.
 
 ## Validation (principle 15)
 

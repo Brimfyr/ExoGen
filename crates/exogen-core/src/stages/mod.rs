@@ -359,7 +359,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 71;
+pub const FINISH_VERSION: u64 = 72;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -658,7 +658,7 @@ pub fn finish(
     }
     let shell_map = ice::ShellMap::new(graph);
     let shell_history = ice_shell_history(graph, &loop_output.thermal);
-    let cracks = lineae::Cracks::new(graph);
+    let cracks = lineae::Cracks::new(graph).map(|c| c.with_freezing(&loop_output.thermal));
     let lineae: Vec<lineae::Linea> = cracks
         .as_ref()
         .map(|c| c.generate(present, &grid, inputs.seed))

@@ -74,6 +74,117 @@ impl Stress {
     }
 }
 
+/// The stress a thickening or thinning shell bears in its plane (F82). Water that
+/// freezes onto the shell's base takes more room as ice, and the ocean it leaves pushes
+/// the shell outward by the excess: a membrane over an incompressible ocean is stretched
+/// by (rho_water / rho_ice - 1) times the thickening over the radius, which an elastic
+/// shell bears as E / (1 - nu) times that strain, some 750 kPa per km of thickening on
+/// Europa (Nimmo 2004: a thickening shell's extension passes 10 MPa). The cracks it
+/// opens relieve it as soon as it passes the cracking stress, so a thickening shell
+/// stands at the cracking stress in tension; a thinning one, which the ocean draws in,
+/// stands at it in compression (a stated choice: creep and faulting hold it there). It
+/// responds to the thickening of the last FREEZE_RESPONSE_GYR.
+#[derive(Clone, Debug)]
+pub struct Freezing {
+    /// The shell's thickness, m, at evenly spaced times, Gyr, from formation.
+    thickness: Vec<f64>,
+    span: f64,
+    /// The membrane stress of a metre of thickening, Pa.
+    per_metre: f64,
+}
+
+impl Freezing {
+    pub fn new(thermal: &crate::thermal::ThermalHistory, body_radius: f64) -> Option<Self> {
+        let samples = &thermal.samples;
+        if samples.len() < 2 {
+            return None;
+        }
+        let span = samples[samples.len() - 1].time_gyr;
+        let n = samples.len();
+        let thickness = (0..n)
+            .map(|i| thermal.at(span * i as f64 / (n - 1) as f64).lithosphere)
+            .collect();
+        Some(Self {
+            thickness,
+            span,
+            per_metre: ICE_YOUNG_MODULUS / (1.0 - ICE_POISSON)
+                * (DENSITY_OCEAN / DENSITY_CRUST_ICE - 1.0)
+                / body_radius.max(1.0),
+        })
+    }
+
+    fn thickness_at(&self, t: f64) -> f64 {
+        let last = self.thickness.len() - 1;
+        let x = (t / self.span.max(1e-12) * last as f64).clamp(0.0, last as f64);
+        let i = (x.floor() as usize).min(last.saturating_sub(1));
+        let f = x - i as f64;
+        self.thickness[i] * (1.0 - f) + self.thickness[(i + 1).min(last)] * f
+    }
+
+    /// The isotropic stress in the shell's plane at a time, Pa, tension positive.
+    pub fn at(&self, t: f64) -> f64 {
+        let change = self.thickness_at(t) - self.thickness_at(t - FREEZE_RESPONSE_GYR);
+        ICE_CRACK_STRESS * (self.per_metre * change / ICE_CRACK_STRESS).tanh()
+    }
+}
+
+/// The spread of one sample of gradient noise, measured, by which a sample is a share.
+const NOISE_SPREAD: f64 = 0.267;
+
+/// The shell's stress heterogeneity (F82): its thickness varies, and a lid of varying
+/// stiffness carries the field unevenly, so the stress departs from the tidal field's by
+/// HETEROGENEITY_SHARE of the field's magnitude, in a deviatoric pattern whose cells are
+/// twice the elastic lid's flexural parameter, the length over which the lid spreads a
+/// load and with it the stress about a stiffer or a softer patch, renewed every
+/// HETEROGENEITY_RENEWAL_GYR as the shell's thickness changes. Where the tide pulls nearly
+/// equally every way the pattern steers the cracks; where it is strongly anisotropic it
+/// bends them a little.
+#[derive(Clone, Debug)]
+pub struct Heterogeneity {
+    noise: crate::noise::GradientNoise,
+    frequency: f64,
+}
+
+impl Heterogeneity {
+    /// The heterogeneity of a lid whose flexural parameter is `flexural`, m.
+    pub fn new(seed: u64, body_radius: f64, flexural: f64) -> Self {
+        Self {
+            noise: crate::noise::GradientNoise::new(seed ^ 0x4E7E_0000),
+            frequency: body_radius / (2.0 * flexural).max(1.0),
+        }
+    }
+
+    /// The deviatoric stress the heterogeneity adds at a point and time to a field of a
+    /// magnitude, Pa: two components of a traceless tensor in the local frame, each a
+    /// pattern blended from one overturn to the next.
+    pub fn at(&self, p: [f64; 3], time: f64, magnitude: f64) -> Stress {
+        let x = time / HETEROGENEITY_RENEWAL_GYR;
+        let k = x.floor();
+        let f = x - k;
+        let pattern = |k: f64, c: f64| {
+            let o = [
+                (k * 137.1 + c * 61.7) % 9_973.0,
+                (k * 71.3 + c * 19.9) % 9_967.0,
+                (k * 29.7 + c * 43.1) % 9_949.0,
+            ];
+            self.noise.sample([
+                p[0] * self.frequency + o[0],
+                p[1] * self.frequency + o[1],
+                p[2] * self.frequency + o[2],
+            ])
+        };
+        let norm = ((1.0 - f) * (1.0 - f) + f * f).sqrt();
+        let blend = |c: f64| ((1.0 - f) * pattern(k, c) + f * pattern(k + 1.0, c)) / norm;
+        let scale = HETEROGENEITY_SHARE * magnitude / NOISE_SPREAD;
+        let a = scale * blend(0.0);
+        Stress {
+            ee: a,
+            nn: -a,
+            en: scale * blend(1.0),
+        }
+    }
+}
+
 /// The shell and orbit that set the field.
 #[derive(Clone, Debug)]
 pub struct TidalShell {
@@ -596,6 +707,45 @@ impl ShellTides {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A thickening shell stands at the cracking stress in tension, a thinning one in
+    /// compression, and one that holds its thickness bears none (F82); the membrane
+    /// stress of a kilometre of thickening on Europa is some 750 kPa.
+    #[test]
+    fn a_freezing_shell_stands_in_tension_and_a_thawing_one_in_compression() {
+        use crate::thermal::{ThermalHistory, ThermalState};
+        // Thickening from 20 to 40 km over 50 Myr, holding, then thinning back.
+        let thickness = |t: f64| {
+            if t < 0.05 {
+                20e3 + 20e3 * t / 0.05
+            } else if t < 0.1 {
+                40e3
+            } else {
+                (40e3 - 20e3 * (t - 0.1) / 0.05).max(20e3)
+            }
+        };
+        let history = ThermalHistory {
+            samples: (0..=300)
+                .map(|i| {
+                    let t = i as f64 * 0.0005;
+                    ThermalState {
+                        time_gyr: t,
+                        lithosphere: thickness(t),
+                        ..ThermalState::default()
+                    }
+                })
+                .collect(),
+        };
+        let f = Freezing::new(&history, 1.5608e6).unwrap();
+        assert!(
+            (f.per_metre * 1e3 - 7.5e5).abs() < 0.3e5,
+            "{}",
+            f.per_metre * 1e3
+        );
+        assert!(f.at(0.03) > 0.95 * ICE_CRACK_STRESS, "{}", f.at(0.03));
+        assert!(f.at(0.08).abs() < 1.0, "{}", f.at(0.08));
+        assert!(f.at(0.13) < -0.95 * ICE_CRACK_STRESS, "{}", f.at(0.13));
+    }
 
     fn europa() -> TidalShell {
         TidalShell {

@@ -394,3 +394,40 @@ What they still do not show:
 - **Stated choices:** how far back the fabric is drawn (to 5% unrenewed), the stain's width scaling, and the narrow lines' spreading (two cells for the strip, 1.2 for the stain).
 
 Tests 148. Two are new, and the tiger-stripe test is stricter: a fabric ridge renews its share of the cells it crosses and adds its cross-section, wherever its axis falls; and the fabric closes the renewal budget, its slices covering their share with widths from the narrow tail. Europa's full run now also checks that its plains are as young as its surface. The stain test now expects a narrow ridge to renew its share. Clippy is clean and validate passes its 117 checks.
+
+## The twenty-fourth milestone: a freezing shell, and a heterogeneous one
+
+The user on the twenty-third: "Progress looks good. I'll let you continue with the next milestone before I make a judgement on the global look, because I was going to point out the linear directionality of the ridges and cracks until you made note of it. Real Europa shows the cracks undulating and crossing each other, while ours follow fairly straight curves in the same 'lanes'."
+
+Under the tide alone every crack follows the field's headings, and the field is smooth over thousands of kilometres, so cracks of a time run side by side in lanes. Two stresses besides the tide now act on every crack, drawn or narrow (F82).
+
+**The freezing shell.** Water that freezes onto the shell's base takes more room as ice, and the ocean pushes the shell outward by the excess: some 750 kPa per km of thickening on Europa, and more than 10 MPa in a shell that keeps thickening (Nimmo 2004). Two physical points set how much of that the cracks see:
+
+- the cracks a thickening shell opens relieve its tension as soon as it passes the cracking stress, so the shell stands at that stress;
+- under a static stress of several MPa the tide could not steer a crack and no cycloid would form, and Europa has many.
+
+So a thickening shell stands at the cracking stress in tension, and a thinning one at it in compression (a stated choice). Europa's shell, breathing with the resonance's cycle, alternates between the two; its thinning phases open fewer cracks.
+
+**The heterogeneous shell.** The shell's thickness varies, so the lid carries the field unevenly, and the stress departs from the field by a fifth of its magnitude (a stated choice) in a pattern the shell's changes renew every few million years. Where the tide pulls nearly equally every way, about the points its pattern turns on, that pattern steers the cracks; where the tide is strongly anisotropic, it bends them.
+
+It took three renders, judged on the maps:
+
+- **Cells of two shell thicknesses**, the convection's scale: the cracks squiggled near the equator, at 42 degrees of turning per 100 km against 5 in the tide alone, and a few curled into loops.
+- **Cells of twice the elastic lid's flexural parameter**, the length over which the lid spreads a load and with it the stress about a stiffer or softer patch (100 km on Europa): gentler, but the cracks still meandered like rivers where the tide is weak, with loops up to 150 km across.
+- **The heterogeneity felt along the crack.** Each step had obeyed the stress at the tip alone. But a crack's tip feels the stress along the whole crack, weighted by the inverse square root of the distance back from the tip, whose mean is a third of the crack's length. Felt over a third of the length grown so far, the heterogeneity steers a young crack and only bends a long one. Europa's cracks now turn 11 degrees per 100 km against 5 in the tide alone, the meanders and loops are gone, and the plains cross in every direction.
+
+The heterogeneity first bent Enceladus's tiger stripes too, and two of them converged. A plume's fissures are steered by the bending of their neighbours' flanking ridges, which runs along the neighbour and is far stronger near them than the heterogeneity (some 135 kPa on Enceladus against 16), so they keep to the tide and their neighbours. The tiger-stripe test now also checks that every whole stripe keeps within 50 degrees of the first's heading along its length; the bent stripes had diverged by 63.
+
+What the maps show:
+
+- **Europa:** near the equator, where the tide is weakest, the lineae and the fabric form a network of long, gently undulating lines crossing at every angle, as the reference shows there. Elsewhere the tide's great arcs remain, bent gently. 2,527 lineae, against 2,684 under the tide alone.
+- **Enceladus:** its tiger stripes keep parallel, all eight present ones running their 242 km, and its lesser cracks bend with the heterogeneity. Its shell thickens by only 0.6 km over its life, some 650 Pa of tension, so its old plains still do not crack (M4): the thickening that would crack them is the zone's local refreezing at each episode's end, which the global history of the shell does not see.
+
+What they still do not show:
+
+- **Bands** as spreading lanes; the next milestone.
+- **How many cracks form:** the freezing stresses bend and cross the cracks but do not yet set how many form (S6).
+- **Lanes** (F61) still trace the tide alone.
+- **Stated choices:** the freezing's hold at the cracking stress and its response time, and the heterogeneity's share and renewal.
+
+Tests 150. Two are new, and the tiger-stripe test is stricter again: a thickening shell stands at the cracking stress in tension, a thinning one in compression, and a steady one bears none; and the shell's heterogeneity bends Europa's cracks, traced from the same starts, more than the tide alone does. Clippy is clean and validate passes its 117 checks.
