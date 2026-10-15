@@ -96,11 +96,13 @@ Direction: materials from processes: anorthosite from flotation in a magma ocean
 
 When: the earlier-phases revisit, with Phase 5's materials work.
 
-### S8. The lanes' share along a sweep in radius
+### S8. The lanes' share along a sweep in radius (closed)
 
 Measured (same test as S4): the share renewed as lanes is 0.073 for Enceladus, 0.058 at 1.2 times the radius, 0.310 at 1.5 times and 0 at twice (S4). The dip between the first two needs a physical reason or a fix. The share is the renewal of the peak tidal flux times the part the polar focusing does not take, and both change with the shell's ratio to the radius.
 
 When: the ring-systems milestone, since it needs only a reading of `tectonics_ice_resurfaced_fraction`.
+
+Closed in the eighteenth milestone. The share is the renewal of the peak flux, saturated on Enceladus, times one minus the polar thinning over its maximum, and the thinning is the product of two factors that move apart along the sweep: the flux against POLAR_FOCUS_FLUX, capped at one, and the focus of a shell that is thick against the body, 1 - exp(-ratio / POLAR_FOCUS_SHELL_RATIO). Enceladus stood at 19 mW/m², just under the cap, so the first step of the sweep raised the flux term faster than the thinner shell lowered the focus, and the share dipped before it rose. Since F68 Enceladus stands at 37 mW/m², past the cap, and the share follows the shell's ratio alone: 0.002 at 0.8 of its radius, 0.053 at 1, 0.116 at 1.1, 0.194 at 1.2, 0.277 at 1.3, 0.358 at 1.4 and 0.433 at 1.5, rising with every step until the thin-shell rule's step at 1.7 (S4). A body whose flux is under the cap still has the dip: more heat focuses more until the focusing is full, and a thinner shell focuses less; both are the model's stated dependencies, not a fault in it.
 
 ## Widths and scales in grid cells (principle 13)
 
@@ -177,6 +179,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |
 | CENTRAL_PEAK_HEIGHT | Copernicus | check how it scales with gravity |
 | POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core: 15 GW | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
+| RING_STRAIN | the strain of Tyre's and Callanish's inner graben (Singer et al. 2023) | check against the graben depths of Valhalla and Ganymede's furrows once measured |
 
 Constants marked provisional for Phases 5 and 7 (atmosphere, albedo, imagery) are left to those phases.
 
@@ -193,6 +196,12 @@ Direction: the heat budget, never a pinned shell. Tidal heating in a porous, unc
 When: with the ring systems of large impacts, whose palimpsests and relaxed rings depend on the same heat flow history.
 
 Closed by F68, the seventeenth milestone: tides dissipated in a porous rocky interior, its porosity from the pressure in it, bring Enceladus's tides to 30 GW and its shell to 22 km, and validate checks the shell against 15 to 30 km. Its craters relax more beside its terrains and across its plains; the rims of the largest stand on its 12 km lid, which holds wavelengths of a few kilometres up.
+
+### M2. Palimpsests are dark
+
+A palimpsest is a basin whose relief has relaxed away and whose centre stays bright: Valhalla's is 650 km across, Ganymede's Memphis Facula is a bright disk (Jones et al. 2003). The model relaxes the old basins flat (F39, F70) and breaks their lithosphere into rings (F69), but their melt sheets and deep ejecta darken back to the lag with the rest of the surface, so a palimpsest four billion years old is as dark as the ground about it. The physics: a basin's melt sheet is clean ice laid from below, hundreds of metres to kilometres thick, far thicker than the layer gardening mixes, so it stays clean as the lanes do and darkens only by its own impurities' lag; an ordinary crater's melt and ejecta are thin and gardened into the regolith.
+
+When: Phase 5, with the lag of icy surfaces and Callisto's bright craters.
 
 ## Validation (principle 15)
 

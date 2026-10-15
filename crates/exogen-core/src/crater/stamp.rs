@@ -211,6 +211,10 @@ pub struct StampParams {
     pub ellipticity: f64,
     /// Multiply the profile height before applying (1 for a full stamp).
     pub amplitude: f64,
+    /// Multiply the wall's terraces, the ridge rings and the central peak, the crater's
+    /// short wavelengths, which an ice shell relaxes less than its bowl (F70); equal to
+    /// `amplitude` where the profile's table carries no relaxation.
+    pub feature_amplitude: f64,
     /// When false the floor does not replace the old topography; the profile is purely
     /// additive (used to add resolved detail on top of a coarse stamp).
     pub replace_floor: bool,
@@ -360,14 +364,14 @@ pub fn stamp_compute(
             v = t.height(rw, phi, v);
         }
         if let Some(t) = &terraces {
-            v += t.relief(re, phi, dim) * p.amplitude;
+            v += t.relief(re, phi, dim) * p.feature_amplitude;
         }
         if let Some(rg) = &rings {
             // Rings follow the rim's scalloped shape with a small wobble of their own.
-            v += rg.relief(re, phi, profile.sigma) * p.amplitude;
+            v += rg.relief(re, phi, profile.sigma) * p.feature_amplitude;
         }
         if let Some(pk) = &peak {
-            v += pk.relief(re0 / dim.radius, phi, profile.sigma / dim.radius) * p.amplitude;
+            v += pk.relief(re0 / dim.radius, phi, profile.sigma / dim.radius) * p.feature_amplitude;
         }
         let mut old = bedrock[idx] as f64;
         if p.bury && re > dim.radius && v > 0.0 {
@@ -1170,7 +1174,9 @@ pub struct RestoreParams {
     pub azimuth: f64,
     pub angle: f64,
     pub ellipticity: f64,
-    /// Weight of the resolved detail: the fraction of the crater that survived the loop.
+    /// The share of the wall's terraces, the ridge rings and the peak an ice shell has
+    /// left, the crater's short wavelengths (F70); the resolved profile's detail comes
+    /// relaxed by band in its table.
     pub detail_weight: f64,
     /// Seed of the crater's rim scalloping and texture; zero for a smooth stamp.
     pub seed: u64,
@@ -1326,9 +1332,7 @@ pub fn restore_compute(
         let rw = terraces
             .as_ref()
             .map_or(re, |t| t.radius(re, phi, dim, p.fine_blur));
-        let mut d = detail.height(re)
-            * p.detail_weight
-            * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
+        let mut d = detail.height(re) * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
         if let Some(t) = &texture {
             d = t.height(rw, phi, d);
         }
@@ -1341,12 +1345,14 @@ pub fn restore_compute(
         }
         if let Some(rg) = &rings {
             // The ring detail the coarse grid could not carry.
-            d += rg.relief(re, phi, p.fine_blur) - rg.relief(re, phi, p.coarse_blur);
+            d += (rg.relief(re, phi, p.fine_blur) - rg.relief(re, phi, p.coarse_blur))
+                * p.detail_weight;
         }
         if let Some(pk) = &peak {
             let x = re0 / dim.radius;
-            d += pk.relief(x, phi, p.fine_blur / dim.radius)
-                - pk.relief(x, phi, p.coarse_blur / dim.radius);
+            d += (pk.relief(x, phi, p.fine_blur / dim.radius)
+                - pk.relief(x, phi, p.coarse_blur / dim.radius))
+                * p.detail_weight;
         }
         let mut write = CellWrite {
             idx: idx as u32,
@@ -1433,6 +1439,7 @@ mod tests {
             angle: std::f64::consts::FRAC_PI_2,
             ellipticity: 1.0,
             amplitude: 1.0,
+            feature_amplitude: 1.0,
             replace_floor: true,
             set_age: true,
             bury: true,
@@ -1524,6 +1531,7 @@ mod tests {
                 angle: std::f64::consts::FRAC_PI_2,
                 ellipticity: 1.0,
                 amplitude: 1.0,
+                feature_amplitude: 1.0,
                 replace_floor: true,
                 set_age: true,
                 bury,
@@ -1607,6 +1615,7 @@ mod tests {
                 angle,
                 ellipticity: 1.0,
                 amplitude: 1.0,
+                feature_amplitude: 1.0,
                 replace_floor: true,
                 set_age: true,
                 bury: true,
@@ -1716,6 +1725,7 @@ mod tests {
             angle: std::f64::consts::FRAC_PI_2,
             ellipticity: 1.0,
             amplitude: 1.0,
+            feature_amplitude: 1.0,
             replace_floor: true,
             set_age: true,
             bury: true,

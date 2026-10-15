@@ -286,6 +286,7 @@ impl ImpactProcess {
                 angle: rec.angle,
                 ellipticity: rec.ellipticity,
                 amplitude: 1.0,
+                feature_amplitude: 1.0,
                 replace_floor: true,
                 set_age: true,
                 bury: true,

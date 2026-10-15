@@ -68,6 +68,9 @@ pub struct Trough {
     pub length: f64,
     pub width: f64,
     pub depth: f64,
+    /// The share of the depth the flanks stand raised by, the faults' footwalls rebounding
+    /// (F69's ring graben); none for the rifts and canyons.
+    pub flank: f64,
     /// Formation, or for the canyon the start and end of its growth.
     pub start_gyr: f64,
     pub end_gyr: f64,
@@ -176,6 +179,16 @@ pub fn trough_profile(across: f64, width: f64, depth: f64, wall: f64, blur: f64)
     let edge = 0.5 * width;
     let inside = 0.5 * (1.0 - ((across.abs() - edge) / w).tanh());
     depth * inside
+}
+
+/// The raised flanks of a trough whose faults' footwalls rebound: 1 at the walls,
+/// falling away over a share of the trough's width outside them, nothing inside.
+pub fn flank_profile(across: f64, width: f64, wall: f64, blur: f64) -> f64 {
+    let w = wall.hypot(blur);
+    let edge = 0.5 * width;
+    let outside = 0.5 * (1.0 + ((across.abs() - edge) / w).tanh());
+    let beyond = (across.abs() - edge).max(0.0);
+    outside * (-beyond / (TROUGH_FLANK_DECAY * width).max(1.0)).exp()
 }
 
 /// The dome, canyon and shields through the coarse loop.
@@ -412,6 +425,7 @@ impl PlumeProcess {
                     length,
                     width,
                     depth,
+                    flank: 0.0,
                     start_gyr,
                     end_gyr,
                     id: 1_000 + ri as u64 * 1_000_000 + k,
@@ -621,6 +635,7 @@ pub(crate) fn radial_trace(
 pub struct TroughFrames {
     frames: Vec<Frame>,
     width: f64,
+    flank: f64,
     noise: GradientNoise,
 }
 
@@ -696,6 +711,7 @@ impl TroughFrames {
         Self {
             frames,
             width: trough.width,
+            flank: trough.flank,
             noise,
         }
     }
@@ -722,7 +738,10 @@ impl TroughFrames {
             width,
             depth,
             wall,
-            search: 0.5 * width + 3.0 * wall + 2.0 * cell,
+            search: 0.5 * width
+                + 3.0 * wall
+                + 2.0 * cell
+                + if trough.flank != 0.0 { width } else { 0.0 },
             half_band: 0.5 * trough.spacing + cell,
         }
     }
@@ -758,7 +777,11 @@ impl TroughFrames {
                     0.5,
                 );
         let width = size.width * f.pulse * scallop * f.narrow;
-        let u = f.taper * trough_profile(across, width, size.depth, size.wall, blur);
+        let mut u = trough_profile(across, width, size.depth, size.wall, blur);
+        if self.flank != 0.0 {
+            u -= self.flank * size.depth * flank_profile(across, width, size.wall, blur);
+        }
+        let u = f.taper * u;
         Some((along.abs(), u))
     }
 }

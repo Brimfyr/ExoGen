@@ -24,6 +24,7 @@ pub mod plume;
 pub mod primordial_crust;
 pub mod relaxation;
 pub mod ridges;
+pub mod rings;
 pub mod roughness;
 pub mod tectonics;
 pub mod tidal;
@@ -357,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 62;
+pub const FINISH_VERSION: u64 = 63;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -629,6 +630,7 @@ pub fn finish(
     let inputs = impacts::CraterInputs::from_graph(graph);
     let body_radius = inputs.body_radius;
     let cell = 2.0 * std::f64::consts::PI * body_radius / (4.0 * face as f64);
+    let finish_clock = Instant::now();
 
     sink.report(Progress {
         stage: "finishing",
@@ -915,6 +917,13 @@ pub fn finish(
         fraction: 0.15,
         message: "sampling the crater population".to_string(),
     });
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "finish phases: resampling and terrains {:.1} s",
+            finish_clock.elapsed().as_secs_f64()
+        );
+    }
+    let phase_clock = Instant::now();
     let population = sample_population(&grid, &layers.surface_age, present, &cfg);
     let secondaries = if std::env::var_os("EXOGEN_SKIP_SECONDARIES").is_some() {
         Vec::new()
@@ -926,42 +935,125 @@ pub fn finish(
         .map(|c| (c, false))
         .chain(secondaries.into_iter().map(|c| (c, true)))
         .collect();
-    // On an ice shell a replayed crater has relaxed over its own life by the shell's
-    // viscosity at its wavelength, and under each past episode's thinned shell while
-    // that lasted (F66); what survives scales its whole relief.
-    let relaxed: Vec<f32> = match &shell_history {
+    // On an ice shell a crater relaxes over its own life by wavelength (F70): each
+    // wavelength keeps the share the shell's viscosity lets it keep, and the share each
+    // past episode's thinned shell let it keep while that lasted (F66).
+    let episode_shells: Vec<relaxation::Shell> = match &shell_history {
+        Some(shell_at) => episodes
+            .iter()
+            .map(|e| shell_at(0.5 * (e.start + e.end)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let crater_kept = |wavelength: f64, time: f64, center: [f64; 3]| -> f64 {
+        let Some(shell_at) = &shell_history else {
+            return 1.0;
+        };
+        let mut kept = relaxation::survival_since(
+            wavelength,
+            time,
+            present,
+            &**shell_at,
+            shell_map.factor(center),
+        );
+        for ((e, map), shell) in episodes.iter().zip(&episode_maps).zip(&episode_shells) {
+            if e.end > time {
+                kept *= relaxation::thinned_survival(
+                    wavelength,
+                    e.end - e.start.max(time),
+                    shell,
+                    map.factor(center),
+                );
+            }
+        }
+        kept
+    };
+    // A crater relaxes by wavelength when the longest band its table carries loses any
+    // of its relief.
+    let band_relaxation = std::env::var_os("EXOGEN_SKIP_BAND_RELAX").is_none();
+    let relaxes = |radius: f64, time: f64, center: [f64; 3]| -> bool {
+        band_relaxation
+            && shell_history.is_some()
+            && crater_kept(
+                RELAX_BAND_WAVELENGTH * RELAX_LONGEST_BLUR * radius,
+                time,
+                center,
+            ) < 0.999
+    };
+    // What a replayed crater keeps at its diameter: its whole relief's share where it
+    // does not relax by band, and the debug summary's measure.
+    let relaxed: Vec<f32> = replay
+        .par_iter()
+        .map(|(c, _)| crater_kept(c.diameter, c.time_gyr, c.center) as f32)
+        .collect();
+    // The ring faults of the basins whose collapse drew the substrate in and broke the
+    // lithosphere (F69): every crater, of the loop or replayed, with the lid and the
+    // substrate as they were at its time and place.
+    let ring_systems: Vec<rings::RingSystem> = match &shell_history {
+        Some(_) if std::env::var_os("EXOGEN_SKIP_RINGS").is_some() => Vec::new(),
         Some(shell_at) => {
-            let episode_shells: Vec<relaxation::Shell> = episodes
+            let mut basins: Vec<([f64; 3], f64, f64, u64)> = loop_craters
                 .iter()
-                .map(|e| shell_at(0.5 * (e.start + e.end)))
+                .map(|c| (c.center, c.diameter, c.time_gyr, c.id))
                 .collect();
-            replay
+            basins.extend(
+                replay
+                    .iter()
+                    .filter(|(_, secondary)| !*secondary)
+                    .map(|(c, _)| (c.center, c.diameter, c.time_gyr, c.key)),
+            );
+            basins
                 .par_iter()
-                .map(|(c, _)| {
-                    let mut kept = relaxation::survival_since(
-                        c.diameter,
-                        c.time_gyr,
-                        present,
-                        &**shell_at,
-                        shell_map.factor(c.center),
-                    );
-                    for ((e, map), shell) in episodes.iter().zip(&episode_maps).zip(&episode_shells)
-                    {
-                        if e.end > c.time_gyr {
-                            kept *= relaxation::thinned_survival(
-                                c.diameter,
-                                e.end - e.start.max(c.time_gyr),
-                                shell,
-                                map.factor(c.center),
-                            );
-                        }
+                .filter_map(|&(center, diameter, time, seed)| {
+                    let factor = shell_map.factor(center);
+                    let shell = shell_at(time);
+                    let local = relaxation::Shell {
+                        thickness: shell.thickness * factor,
+                        elastic: shell.elastic * factor,
+                        ..shell
+                    };
+                    let transient =
+                        crate::crater::morphology::transient_diameter(diameter, &inputs.scaling);
+                    let lithosphere = rings::collapse_lithosphere(&local);
+                    if rings::melosh_gamma(transient, lithosphere) < RING_FAILURE {
+                        return None;
                     }
-                    kept as f32
+                    let inflow = 1.0 - relaxation::survival(diameter, RING_INFLOW_GYR, &local);
+                    let kept = |l: f64| crater_kept(l, time, center);
+                    rings::ring_system(
+                        &rings::Basin {
+                            center,
+                            diameter,
+                            time_gyr: time,
+                            seed,
+                            lithosphere,
+                            inflow,
+                            kept: &kept,
+                        },
+                        &inputs.scaling,
+                        body_radius,
+                        cell,
+                    )
                 })
                 .collect()
         }
-        None => vec![1.0; replay.len()],
+        None => Vec::new(),
     };
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        for r in &ring_systems {
+            eprintln!(
+                "ring system at {:.2} Gyr: transient {:.0} km on a {:.1} km lithosphere, gamma {:.1}, graben from {:.0} to {:.0} km, {} rings in {} arcs",
+                r.time_gyr,
+                r.transient / 1e3,
+                r.lithosphere / 1e3,
+                r.gamma,
+                r.inner / 1e3,
+                r.reach / 1e3,
+                r.rings,
+                r.faults.len()
+            );
+        }
+    }
     if std::env::var_os("EXOGEN_DEBUG").is_some() && shell_history.is_some() {
         let median = |lo: f64, hi: f64| -> (f32, usize) {
             let mut v: Vec<f32> = replay
@@ -991,6 +1083,7 @@ pub fn finish(
         Shield(usize),
         Canyon(usize),
         Graben(usize),
+        Ring(usize),
         Resurfacing,
         Corona(usize),
         Dome(usize),
@@ -1014,6 +1107,7 @@ pub fn finish(
             + shields.len()
             + canyons.len()
             + graben.len()
+            + ring_systems.len()
             + lineae.len()
             + lanes.len()
             + 1
@@ -1034,6 +1128,11 @@ pub fn finish(
     }
     for (k, g) in graben.iter().enumerate() {
         events.push((g.start_gyr, 0, g.id ^ 0x6A8B_0000_0000, Event::Graben(k)));
+    }
+    // A basin's ring faults break as it collapses, after its cavity and before anything
+    // younger; its arcs are drawn together, in parallel.
+    for (k, r) in ring_systems.iter().enumerate() {
+        events.push((r.time_gyr, 2, r.id ^ 0x2196_0000_0000, Event::Ring(k)));
     }
     if let Some(r) = &resurfacing {
         events.push((r.time_gyr, 0, 0xE915_0000_0000, Event::Resurfacing));
@@ -1100,6 +1199,13 @@ pub fn finish(
         fraction: 0.3,
         message: format!("stamping {} craters", events.len()),
     });
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "finish phases: population, relaxation and rings {:.1} s",
+            phase_clock.elapsed().as_secs_f64()
+        );
+    }
+    let stamp_clock = Instant::now();
     if sink.cancelled() {
         return Err(RunError::Cancelled);
     }
@@ -1152,6 +1258,10 @@ pub fn finish(
                 Event::Graben(k) => {
                     let g = &graben[*k];
                     (g.midpoint(), g.cap_radius(body_radius) + 2.0 * grid.delta())
+                }
+                Event::Ring(k) => {
+                    let (c, r) = ring_systems[*k].cap(body_radius);
+                    (c, r + 2.0 * grid.delta())
                 }
                 Event::Resurfacing => ([0.0, 0.0, 1.0], std::f64::consts::PI),
                 Event::Corona(k) => {
@@ -1238,8 +1348,27 @@ pub fn finish(
                         let smooth =
                             ProfileTable::new(dim, kappa_t + 0.5 * smooth_sigma * smooth_sigma);
                         let mut detail = degraded;
-                        for (v, s) in detail.values.iter_mut().zip(&smooth.values) {
-                            *v -= s;
+                        // On an ice shell the detail relaxes by wavelength over the
+                        // crater's life (F70), and its terraces, rings and peak keep the
+                        // share of a short wavelength; the loop relaxed the rest.
+                        let mut feature_weight = 1.0;
+                        if relaxes(dim.radius, c.time_gyr, c.center) {
+                            let kept = |l: f64| crater_kept(l, c.time_gyr, c.center);
+                            let full = ProfileTable::relaxed(dim, kappa_t, &kept);
+                            let coarse = ProfileTable::relaxed(
+                                dim,
+                                kappa_t + 0.5 * smooth_sigma * smooth_sigma,
+                                &kept,
+                            );
+                            detail.values = full.values;
+                            for (v, s) in detail.values.iter_mut().zip(&coarse.values) {
+                                *v -= s;
+                            }
+                            feature_weight = kept(RELAX_FEATURE_WAVELENGTH * c.diameter);
+                        } else {
+                            for (v, s) in detail.values.iter_mut().zip(&smooth.values) {
+                                *v -= s;
+                            }
                         }
                         let deep =
                             impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
@@ -1250,7 +1379,7 @@ pub fn finish(
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,
-                            detail_weight: 1.0,
+                            detail_weight: feature_weight,
                             seed: c.id,
                             deep,
                             fine_blur: detail.sigma,
@@ -1477,6 +1606,20 @@ pub fn finish(
                         );
                         Some((out, None, None))
                     }
+                    Event::Ring(k) => {
+                        let r = &ring_systems[*k];
+                        let kappa_t = inputs.diffusivity_m2_per_myr
+                            * inputs.flux.equivalent_gyr(r.time_gyr, present)
+                            * 1e3;
+                        let out = rings::system_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            r,
+                            (4.0 * kappa_t).sqrt(),
+                        );
+                        Some((out, None, None))
+                    }
                     Event::Graben(k) => {
                         let g = &graben[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
@@ -1552,6 +1695,25 @@ pub fn finish(
                         if table.is_erased() {
                             return None;
                         }
+                        // On an ice shell the crater relaxes by wavelength (F70): its table
+                        // carries the bowl's relaxation, and its terraces, rings and peak
+                        // keep the share of a short wavelength.
+                        let (table, kept, features) = if relaxes(dim.radius, c.time_gyr, c.center) {
+                            let kept = |l: f64| crater_kept(l, c.time_gyr, c.center);
+                            (
+                                ProfileTable::relaxed(dim, kappa_t, &kept),
+                                1.0,
+                                kept(RELAX_FEATURE_WAVELENGTH * c.diameter),
+                            )
+                        } else {
+                            let whole = relaxed[*j] as f64;
+                            (table, whole, whole)
+                        };
+                        let depth_factor = if *secondary {
+                            SECONDARY_DEPTH_FACTOR
+                        } else {
+                            1.0
+                        };
                         let deep = !*secondary
                             && impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
                         let on_lava = impacts::target_is_lava(&layers, &grid, c.center);
@@ -1566,12 +1728,8 @@ pub fn finish(
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,
-                            amplitude: relaxed[*j] as f64
-                                * if *secondary {
-                                    SECONDARY_DEPTH_FACTOR
-                                } else {
-                                    1.0
-                                },
+                            amplitude: kept * depth_factor,
+                            feature_amplitude: features * depth_factor,
                             replace_floor: true,
                             set_age: true,
                             bury: true,
@@ -1679,6 +1837,12 @@ pub fn finish(
         fraction: 0.8,
         message: "weathering and rays".to_string(),
     });
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "finish phases: the event sequence {:.1} s",
+            stamp_clock.elapsed().as_secs_f64()
+        );
+    }
     // Maturity: space weathering on rock; on ice, the sublimation lag the latitude's
     // temperature and the surface's age have left.
     let tau_sw = graph.f64("surface.space_weathering_timescale");

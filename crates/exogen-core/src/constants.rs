@@ -1081,6 +1081,92 @@ pub const RELAXATION_DEPTH_FRACTION: f64 = 0.16;
 /// without flow; longer ones ride on the ductile ice below (the flexural wavelength of a
 /// thin plate is a few times its thickness).
 pub const ELASTIC_SUPPORT_FACTOR: f64 = 4.0;
+/// Relaxation by wavelength (F70). A crater's profile is a sum of wavelengths and an ice
+/// shell relaxes each on its own timescale: the bowl, its longest, goes first and the
+/// floor domes up, while the rim and the wall's terraces, short loads the elastic lid
+/// holds, stand (Parmentier and Head 1981; Dombard and McKinnon 2006; Bland et al. 2012 on
+/// Enceladus's relaxed craters). The profile is split into bands between Gaussian blurs a
+/// factor of two apart; a band carries the wavelength at which the difference of the two
+/// blurs peaks, this many times the finer blur (2 pi / (ln 4 / 1.5)^0.5). The finest blur
+/// is the table's step, the longest band's this share of the crater's radius, beyond
+/// which the smooth remainder relaxes as one; the terraces, ridge rings and central peak
+/// relax as a wavelength of this share of the diameter.
+pub const RELAX_BAND_WAVELENGTH: f64 = 6.54;
+pub const RELAX_LONGEST_BLUR: f64 = 0.5;
+pub const RELAX_FEATURE_WAVELENGTH: f64 = 0.25;
+/// Ring faults of a collapsing basin (F69). Melosh's (1982) measure of the inflow's drag
+/// against a thin plastic lithosphere's strength, as Singer et al. (2023) evaluate it for
+/// Europa's ring graben: the basal drag this share of rho g H, H the transient cavity's
+/// depth, this share of its diameter, against the frictional strength of ice of this
+/// friction (Beeman et al. 1988). The lithosphere fails above this gamma and breaks into
+/// an annulus of graben above this one (Melosh 1982, in Singer et al. 2023).
+pub const RING_DRAG: f64 = 0.1;
+pub const RING_CAVITY_DEPTH: f64 = 0.5;
+pub const RING_FRICTION: f64 = 0.69;
+pub const RING_FAILURE: f64 = 2.0;
+/// The lithosphere through a basin's collapse is the ice colder than this share of its
+/// melting point, which keeps its strength while the warmer ice under it flows in: 240 K
+/// on water ice (McKinnon and Melosh 1980, a lithosphere 15 to 20 km thick when Valhalla
+/// formed; Johnson et al. 2013).
+pub const RING_WEAK_HOMOLOGOUS: f64 = 240.0 / 273.15;
+pub const RING_GRABEN: f64 = 5.0;
+/// The annulus of graben runs from this many transient radii out to this many, as far as
+/// the inflow drags the lithosphere: Tyre's graben from 3.6 to 7.7 (Singer et al. 2023),
+/// Callanish's from 2.8 to 6.9, Valhalla's graben zone from 4.2 to 8.4 and its last ring
+/// at 10.2 (Schenk 1995; DeFour-Remy et al. 2022), Asgard's from 2.5 to 5.9 (Greeley et
+/// al. 2000), Ganymede's furrows from 1.8 to about 10.4 (Hirata et al. 2020; Burkhard and
+/// Thomas 2024), each over the transient radius of McKinnon and Schenk's (1995) scaling.
+pub const RING_INNER: f64 = 3.0;
+pub const RING_REACH: f64 = 8.0;
+/// A graben is two normal faults meeting at the base of the lithosphere, so it is twice
+/// the lithosphere over the tangent of the faults' dip wide (the keystone model: Golombek
+/// 1979); the next forms beyond the stress the last relieved, this many widths on at the
+/// annulus's inner edge (Tyre 5.6, Callanish 5.1, Valhalla's troughs 5.1: Singer et al.
+/// 2023; DeFour-Remy et al. 2022). As the driving stress declines outward the spacing grows
+/// as the distance to this power and the width narrows as it to minus this one (stated
+/// choices: Valhalla's troughs widen apart from 75 to 100 km between 950 and 2,300 km,
+/// Tyre's faster).
+pub const RING_SPACING: f64 = 5.0;
+pub const RING_SPACING_GROWTH: f64 = 0.5;
+pub const RING_WIDTH_DECAY: f64 = 0.5;
+/// Inside the graben, where the strain is greatest and the faults form last and dip
+/// toward the basin (Johnson et al. 2013), the lithosphere breaks into blocks whose raised
+/// edges stand as ridges, from this many transient radii (Valhalla's ridge zone begins at
+/// 1.6, at the edge of its bright centre), this share of the graben's spacing apart and
+/// no farther apart outward (Valhalla's ridges 55 km apart against its troughs' 90:
+/// DeFour-Remy et al. 2022), this share of a graben's width wide.
+pub const RING_RIDGE_INNER: f64 = 1.5;
+pub const RING_RIDGE_SPACING: f64 = 0.6;
+pub const RING_RIDGE_WIDTH: f64 = 0.5;
+/// A graben's depth takes up the radial strain the inflow imposes, its two walls shifting
+/// the ground by about its depth at a 62 degree dip: this strain at the annulus's inner
+/// edge (Tyre's and Callanish's inner graben carry 1 to 1.5 percent cumulated, Singer et
+/// al. 2023), falling outward as the distance to minus this power (a stated choice between
+/// a channelled inflow's slow decay and an unchannelled one's fourth power).
+pub const RING_STRAIN: f64 = 0.02;
+pub const RING_STRAIN_DECAY: f64 = 2.0;
+/// A graben's flanks stand raised by this share of its depth, its faults' footwalls
+/// rebounding, falling away over this share of its width (stated choices: Ganymede's
+/// furrows are troughs with raised, bright rims about a dark floor, Pappalardo et al.
+/// 2004).
+pub const RING_FLANK: f64 = 0.25;
+pub const TROUGH_FLANK_DECAY: f64 = 0.3;
+/// Each ring breaks into arcs of these many spacings, this share of its length left in
+/// gaps; an arc wanders off its ring by this share of a spacing at the scale of two
+/// spacings, neighbouring rings alike, and stands off it by up to this share (en echelon).
+pub const RING_ARC: (f64, f64) = (2.0, 8.0);
+pub const RING_GAP: f64 = 0.25;
+pub const RING_WANDER: f64 = 0.15;
+pub const RING_OFFSET: f64 = 0.25;
+/// The substrate drags the lithosphere as far as it relaxes the basin's own wavelength by
+/// flowing in within this time, Gyr: warm ice relaxes a basin in days to years, and a
+/// rocky mantle, which this model does not relax, not at all. At most this many arcs to a
+/// basin.
+pub const RING_INFLOW_GYR: f64 = 1e-3;
+pub const RING_MAX_FAULTS: usize = 40_000;
+/// The transient cavity of a complex crater: D = this x D_tr^this / D_sc^(this - 1), in
+/// kilometres (McKinnon and Schenk 1995, after Croft 1985 and Holsapple 1993).
+pub const TRANSIENT_COMPLEX: (f64, f64) = (1.17, 1.13);
 /// Rock in the ice stiffens it: the viscosity rises by this many decades per unit of the
 /// crust's non-ice share, so a crust a third rock and salts is some four thousand times
 /// stiffer than clean ice (Ceres's needs 1e25 Pa s near the surface against clean ice's

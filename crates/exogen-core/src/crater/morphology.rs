@@ -164,6 +164,21 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
     }
 }
 
+/// The transient cavity's diameter for a final crater: a complex crater's from McKinnon
+/// and Schenk's (1995) scaling; below the transition the rim's collapse widens the cavity
+/// by the share the scaling gives at the transition, so the two meet.
+pub fn transient_diameter(diameter: f64, s: &Scaling) -> f64 {
+    let (k, p) = TRANSIENT_COMPLEX;
+    let d_sc = s.simple_complex.max(1.0) / 1e3;
+    let d = diameter.max(0.0) / 1e3;
+    let tr = if d >= d_sc {
+        (d * d_sc.powf(p - 1.0) / k).powf(1.0 / p)
+    } else {
+        d * k.powf(-1.0 / p)
+    };
+    tr * 1e3
+}
+
 /// Impact angle from horizontal for a uniform draw `u`: isotropic impactors strike a
 /// sphere with probability density sin 2θ (Gilbert 1893; Shoemaker 1962), whose
 /// cumulative distribution is sin²θ. The most probable angle is 45°.
@@ -304,11 +319,88 @@ impl ProfileTable {
             .fold(f64::NEG_INFINITY, f64::max);
         hi - lo
     }
+
+    /// The degraded profile relaxed by wavelength (F70): each band between Gaussian blurs
+    /// a factor of two apart, from the table's step up to RELAX_LONGEST_BLUR of the radius,
+    /// keeps the share `kept` gives its wavelength, and the smooth remainder the share of
+    /// the longest band. What is finer than the step stands.
+    pub fn relaxed(dim: Dimensions, kappa_t: f64, kept: &dyn Fn(f64) -> f64) -> Self {
+        let base = Self::new(dim, kappa_t);
+        let mut values = base.values.clone();
+        let longest = RELAX_LONGEST_BLUR * dim.radius;
+        let mut blur = base.step;
+        let mut finer = Self::new(dim, kappa_t + 0.25 * blur * blur);
+        loop {
+            let lost = 1.0 - kept(RELAX_BAND_WAVELENGTH * blur).clamp(0.0, 1.0);
+            let next = 2.0 * blur;
+            if next > longest {
+                for (v, f) in values.iter_mut().zip(&finer.values) {
+                    *v -= lost * f;
+                }
+                break;
+            }
+            let coarser = Self::new(dim, kappa_t + 0.25 * next * next);
+            for ((v, f), c) in values.iter_mut().zip(&finer.values).zip(&coarser.values) {
+                *v -= lost * (f - c);
+            }
+            finer = coarser;
+            blur = next;
+        }
+        Self { values, ..base }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transient_cavities_follow_mckinnon_and_schenk() {
+        // Tyre, 38 km across on Europa (transition 3 km): Singer et al. 2023 give 23 km.
+        let europa = Scaling {
+            simple_complex: 3_050.0,
+            peak_ring: 25_922.0,
+            multi_ring: 60_993.0,
+            gravity: 1.315,
+        };
+        let tyre = transient_diameter(38e3, &europa);
+        assert!((21e3..26e3).contains(&tyre), "{tyre}");
+        // The simple and complex branches meet at the transition.
+        let below = transient_diameter(3_049.0, &europa);
+        let above = transient_diameter(3_051.0, &europa);
+        assert!((below - above).abs() < 5.0, "{below} {above}");
+    }
+
+    #[test]
+    fn a_relaxed_crater_loses_its_bowl_before_its_rim() {
+        // F70: the long wavelengths go first, so the floor rises toward the surface while
+        // the rim, a short wavelength, stands; a shell that keeps every wavelength leaves
+        // the profile as it was.
+        let dim = dimensions(40_000.0, &lunar());
+        let fresh = ProfileTable::new(dim, 0.0);
+        let relaxed =
+            ProfileTable::relaxed(dim, 0.0, &|l| if l > 2.0 * dim.radius { 0.1 } else { 1.0 });
+        let rim = |t: &ProfileTable| t.values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            relaxed.height(0.0) > 0.5 * fresh.height(0.0),
+            "floor {} against {}",
+            relaxed.height(0.0),
+            fresh.height(0.0)
+        );
+        assert!(
+            rim(&relaxed) > 0.8 * rim(&fresh),
+            "rim {} against {}",
+            rim(&relaxed),
+            rim(&fresh)
+        );
+        let kept = ProfileTable::relaxed(dim, 0.0, &|_| 1.0);
+        assert!(
+            kept.values
+                .iter()
+                .zip(&fresh.values)
+                .all(|(a, b)| (a - b).abs() < 1e-9)
+        );
+    }
 
     fn lunar() -> Scaling {
         Scaling {
