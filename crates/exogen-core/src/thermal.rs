@@ -31,6 +31,11 @@ pub struct ThermalInputs {
     pub tidal_flux_now: f64,
     pub eccentricity_now: f64,
     pub eccentricity_history: Curve,
+    /// An icy moon's shell, which dissipates the tides of each time at the thickness of
+    /// that time (F75), and the present tides of its porous interior, W/m² (F68); the
+    /// shell's share of the present tidal flux is then recomputed, not scaled.
+    pub shell: Option<crate::stages::tidal::ShellTides>,
+    pub core_tidal_flux_now: f64,
     pub icy: bool,
     pub surface_temperature: f64,
     pub melting_point: f64,
@@ -98,6 +103,9 @@ impl ThermalInputs {
                 .curve("orbit.eccentricity_history")
                 .cloned()
                 .unwrap_or_else(|| Curve::constant(graph.f64("orbit.eccentricity"))),
+            shell: crate::stages::tidal::ShellTides::from_graph(graph),
+            core_tidal_flux_now: graph.f64("interior.core_tidal_power")
+                / (4.0 * std::f64::consts::PI * graph.f64("body.radius").powi(2)),
             icy,
             surface_temperature: graph.f64("atmosphere.surface_temperature_mean"),
             melting_point,
@@ -113,7 +121,20 @@ impl ThermalHistory {
     }
 
     pub fn new(inp: &ThermalInputs) -> Self {
-        let n = THERMAL_SAMPLES;
+        // As finely as the eccentricity history changes, so that a resonance's cycle
+        // (F77) is resolved, and no less finely than the base sampling.
+        let finest = inp
+            .eccentricity_history
+            .points
+            .windows(2)
+            .map(|w| w[1].0 - w[0].0)
+            .filter(|dt| *dt > 1e-9)
+            .fold(f64::INFINITY, f64::min);
+        let n = if finest.is_finite() {
+            ((inp.age_gyr / finest).ceil() as usize).clamp(THERMAL_SAMPLES, THERMAL_SAMPLES_MAX)
+        } else {
+            THERMAL_SAMPLES
+        };
         let mut samples: Vec<ThermalState> = (0..=n)
             .map(|k| {
                 let t = inp.age_gyr * k as f64 / n as f64;
@@ -165,12 +186,20 @@ impl ThermalHistory {
 pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
     let area = 4.0 * std::f64::consts::PI * inp.radius * inp.radius;
     let radiogenic = radiogenic_per_kg(t) * inp.rock_mass / area * (1.0 + inp.secular_fraction);
-    // Tidal power scales with the square of the eccentricity (F13).
+    // Tidal power scales with the square of the eccentricity (F13), at a fixed interior;
+    // an icy shell's own share is that of the shell the heat of the time leaves (F75).
     let e = inp.eccentricity_history.eval(t).max(0.0);
-    let tidal = if inp.eccentricity_now > 0.0 {
-        inp.tidal_flux_now * (e / inp.eccentricity_now).powi(2)
+    let scale = if inp.eccentricity_now > 0.0 {
+        (e / inp.eccentricity_now).powi(2)
     } else {
-        inp.tidal_flux_now
+        1.0
+    };
+    let tidal = match &inp.shell {
+        Some(shell) => {
+            let core = inp.core_tidal_flux_now * scale;
+            core + shell.equilibrium(radiogenic + core, e).heating
+        }
+        None => inp.tidal_flux_now * scale,
     };
     let heat_flux = radiogenic + tidal;
     let mantle_temperature = if inp.icy {
@@ -294,6 +323,34 @@ mod tests {
         assert!((early.tidal_flux / now.tidal_flux - 4.0).abs() < 0.1);
     }
 
+    /// The Laplace resonance's cycle (F77) swings Europa's eccentricity by a quarter about
+    /// its mean every 0.12 Gyr since 1.6 Gyr ago, the present just past a peak and
+    /// falling, and its shell thins and thickens with it (F75).
+    #[test]
+    fn europa_s_shell_breathes_with_the_laplace_cycle() {
+        let (g, _) = preset("Europa").unwrap().to_graph();
+        let age = g.f64("body.age");
+        let e = g.curve("orbit.eccentricity_history").unwrap();
+        assert!((e.eval(age) - 0.0094).abs() < 1e-6);
+        let mean = e.eval(1.0);
+        let expected = 0.0094 / (1.0 + 0.25 * (std::f64::consts::TAU * 0.2).cos());
+        assert!((mean - expected).abs() < 1e-5, "{mean}");
+        let (lo, hi) = (0..=240)
+            .map(|i| e.eval(age - 0.24 * i as f64 / 240.0))
+            .fold((1.0f64, 0.0f64), |(a, b), x| (a.min(x), b.max(x)));
+        assert!(
+            (hi / mean - 1.25).abs() < 0.02 && (lo / mean - 0.75).abs() < 0.02,
+            "{lo} {hi}"
+        );
+        assert!(e.eval(age - 0.005) > e.eval(age));
+        let h = ThermalHistory::from_graph(&g);
+        let (thin, thick) = (0..=96)
+            .map(|i| h.at(age - 0.24 * i as f64 / 96.0).lithosphere)
+            .fold((f64::INFINITY, 0.0f64), |(a, b), x| (a.min(x), b.max(x)));
+        eprintln!("Europa's shell through the cycle: {thin:.0} to {thick:.0} m");
+        assert!(thin < 27e3 && thick > 36e3, "{thin} {thick}");
+    }
+
     /// Ganymede's resonance episode (F50) pulses its eccentricity and its tidal flux two
     /// gigayears ago, and the lanes take their amount and their time from the pulse.
     #[test]
@@ -303,10 +360,10 @@ mod tests {
         let e = g.curve("orbit.eccentricity_history").unwrap();
         assert!((e.eval(0.0) - 0.0013).abs() < 1e-6);
         assert!((e.eval(age) - 0.0013).abs() < 1e-6);
-        assert!((e.eval(age - 2.0) - 0.008).abs() < 1e-6);
+        assert!((e.eval(age - 2.0) - 0.0185).abs() < 1e-6);
         // The plateau holds the forced value over the middle three fifths.
-        assert!((e.eval(age - 2.25) - 0.008).abs() < 1e-6);
-        assert!(e.eval(age - 2.45) < 0.005 && e.eval(age - 2.45) > 0.0013);
+        assert!((e.eval(age - 2.25) - 0.0185).abs() < 1e-6);
+        assert!(e.eval(age - 2.45) < 0.012 && e.eval(age - 2.45) > 0.0013);
         let h = ThermalHistory::from_graph(&g);
         let peak = h.samples.iter().map(|s| s.tidal_flux).fold(0.0, f64::max);
         assert!(peak > 0.007 && peak < 0.009, "peak tidal flux {peak}");

@@ -147,12 +147,15 @@ pub const Q_ICE: f64 = 20.0;
 /// below this share the rock is consolidated and dissipates as a solid does. The pores
 /// above that share dissipate tides by the friction of grains and the flow of water
 /// through them: an imaginary Love number this many times the excess porosity, set so that
-/// Enceladus's core dissipates 15 GW, within the 10 to 30 GW Choblet et al. (2017) model
-/// for a core of 20 to 30 percent porosity.
+/// Enceladus's core dissipates 28.5 GW, within the 10 to 30 GW Choblet et al. (2017) model
+/// for a core of 20 to 30 percent porosity, which with the 0.6 GW its hard shell dissipates
+/// itself (F75; Souček et al. 2019 find a conductive shell's dissipation a minor share)
+/// holds its shell at the measured 22 km (refitted from 0.84, which gave 15 GW beside the
+/// 15 GW the provisional k₂/Q put in the shell).
 pub const POROSITY_GRANULAR: f64 = 0.4;
 pub const POROSITY_PRESSURE: f64 = 60e6;
 pub const POROSITY_CONSOLIDATED: f64 = 0.05;
-pub const POROUS_DISSIPATION: f64 = 0.84;
+pub const POROUS_DISSIPATION: f64 = 1.6;
 
 /// Mantle temperature model: T_m = a + b (q / q_earth)^0.5 K. Earth 1600 K. Provisional, Phase 3.
 pub const MANTLE_T_BASE: f64 = 1_400.0;
@@ -1080,7 +1083,7 @@ pub const RETENTION_EPISODIC_GYR: f64 = 0.5;
 pub const RETENTION_THIN_ATMOSPHERE_GYR: f64 = 3.5;
 pub const RETENTION_ICE_OCEAN_GYR: f64 = 0.1;
 /// Tidal flux above which an ice shell over an ocean is treated as actively resurfacing
-/// (Europa 0.075 W/m², Enceladus 0.02) rather than ancient (Callisto, Ganymede).
+/// (Europa 0.014 W/m², Enceladus 0.037) rather than ancient (Callisto, Ganymede 0.0001).
 pub const ICE_RESURFACING_TIDAL_FLUX: f64 = 0.01;
 /// Burial depth that erases the replayed craters, metres, against the volcanic
 /// resurfacing rate, applied only above the Io-regime tidal flux where volcanism
@@ -1211,24 +1214,25 @@ pub const TRANSIENT_COMPLEX: (f64, f64) = (1.17, 1.13);
 /// 3e21 at the same temperature: Fu et al. 2017).
 pub const ICE_ROCK_VISCOSITY_DECADES: f64 = 12.0;
 /// The tidal stress field (F41): the elastic moduli of ice (Young's 9 GPa, Poisson 0.33;
-/// Gammon et al. 1983); the shell's reduction of the Love number h₂ per unit of its
-/// thickness over the radius (a 10 km shell on Europa takes h₂ from 1.25 to 1.1, a 40 km
-/// shell on Enceladus to a quarter); l₂ over h₂ for a shell over an ocean (Wahr et al.
-/// 2006: Europa 0.3 and 1.2); phases sampled through an orbit; the tension at which the
-/// shell cracks (Hoppa et al. 1999 fit cycloids with 40 kPa) and the tensile strength of
-/// ice; the crack density per unit of tension over strength per metre of shell; the lag
-/// of a non-synchronously rotating shell behind the tidal axis before it relaxes, degrees,
-/// and its period as a multiple of the surface's retention age (the lineae's
-/// orientations turn by half a turn over the oldest ones Europa shows, so the zones of tension sweep
-/// every longitude).
+/// Gammon et al. 1983); l₂ over h₂ for a shell over an ocean (Wahr et al. 2006: Europa 0.3
+/// and 1.2; a membrane's (1 + ν) / (5 + ν), Beuthe 2018); phases sampled through an
+/// orbit; the tension at which the shell cracks (Hoppa et al. 1999 fit cycloids with 40
+/// kPa) and the tensile strength of ice; the crack density per unit of tension over
+/// strength per metre of shell (a fit: Europa one crack per 32 km of transect, refitted
+/// from 3 when its shell came to its measured 30 km, F75); the lag of a non-synchronously
+/// rotating shell behind the tidal axis before it relaxes, degrees, and its period as a
+/// multiple of the surface's retention age (the lineae's orientations turn by half a
+/// turn over the oldest ones Europa shows, so the zones of tension sweep every longitude).
 pub const ICE_YOUNG_MODULUS: f64 = 9.0e9;
 pub const ICE_POISSON: f64 = 0.33;
-pub const SHELL_RIGIDITY_FACTOR: f64 = 20.0;
 pub const L2_OVER_H2: f64 = 0.25;
 pub const TIDAL_PHASE_SAMPLES: usize = 32;
 pub const ICE_CRACK_STRESS: f64 = 4.0e4;
 pub const ICE_TENSILE_STRENGTH: f64 = 1.0e6;
-pub const CRACK_DENSITY_FACTOR: f64 = 3.0;
+pub const CRACK_DENSITY_FACTOR: f64 = 12.0;
+/// The water under a floating ice shell, kg/m³: the buoyancy that holds the shell's tide
+/// against its stiffness (F75).
+pub const DENSITY_OCEAN: f64 = 1_000.0;
 pub const NSR_SHIFT_DEG: f64 = 1.0;
 pub const NSR_PERIOD_RETENTION_FACTOR: f64 = 2.0;
 /// Cracks answer the cracks already open (Pollard and Aydin 1988): within this many
@@ -1483,8 +1487,10 @@ pub const FOSSIL_VENT_LAG_GYR: f64 = 1e-5;
 pub const POLAR_BELT_OFFSET: f64 = 2.5;
 /// A shell renews its whole surface within the retention age only when it is thin
 /// against the body, under this share of the radius; a thick shell keeps its old craters
-/// and renews only where it is thin.
-pub const WHOLESALE_SHELL_RATIO: f64 = 0.02;
+/// and renews only where it is thin. A fit between Europa's 0.019 (its measured 30 km
+/// shell, F75) and Ganymede's 0.031, refitted from 0.02 when Europa's shell came to 30
+/// km; a switch the audit records (S4).
+pub const WHOLESALE_SHELL_RATIO: f64 = 0.025;
 /// Grooved terrain (F44): lanes of new ice drawn as great-circle swaths, their lengths
 /// log-uniform between these angles, rad, their widths between these shares of the
 /// radius (Ganymede 30 to 250 km, Enceladus 3 to 24 km, its ridged belts), wobbling along
@@ -1713,14 +1719,20 @@ pub const ICE_RESURFACING_FLUX: f64 = 0.0045;
 /// half of the episode, holds at the forced value, and falls over the same share after
 /// the escape; a trapezoid with a plateau of three fifths.
 pub const RESONANCE_RAMP_SHARE: f64 = 0.4;
+/// A resonance's thermal-orbital cycle (F77): the eccentricity history lays this many
+/// points in each period, and the thermal history samples at least as finely, up to this
+/// many samples over a body's life.
+pub const CYCLE_SAMPLES_PER_PERIOD: usize = 16;
+pub const THERMAL_SAMPLES_MAX: usize = 2048;
 /// Chaos (F45): on a shell over an ocean thin against the body, the share of the surface
 /// disrupted into chaos, up to this much, in proportion to the tidal flux over this flux,
-/// W/m²; the patches' diameters, m, log-uniform, placed in a heat field of this many
+/// W/m² (a fit that gives Europa's 14 mW/m², F75, the whole share, refitted from 0.05
+/// when its flux came down from 76 mW/m²); the patches' diameters, m, log-uniform, placed in a heat field of this many
 /// cycles round the body whose troughs take this share fewer than its crests; the drop of the matrix, m, its hummocks, m, at this spacing, m;
 /// the share of a patch left standing as rafts of the old surface and their scale, m;
 /// and the wobble of a patch's outline.
 pub const CHAOS_FRACTION_MAX: f64 = 0.3;
-pub const CHAOS_FLUX: f64 = 0.05;
+pub const CHAOS_FLUX: f64 = 0.012;
 pub const CHAOS_DIAMETER: (f64, f64) = (5e3, 300e3);
 pub const CHAOS_HEAT_FREQUENCY: f64 = 2.0;
 pub const CHAOS_HEAT_CONTRAST: f64 = 0.5;

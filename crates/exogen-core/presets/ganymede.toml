@@ -18,11 +18,12 @@ description = "Reference body. Largest moon; dark cratered terrain over clean ic
 # Two thirds of Ganymede is bright grooved terrain from the heating pulse of its passage
 # into the Laplace resonance (Showman and Malhotra 1997: the eccentricity pumped to a few
 # hundredths for up to a gigayear), about two gigayears ago by the bright terrain's crater
-# density (Zahnle et al. 2003). An eccentricity of 0.008, the low end of their range,
-# heats the shell to 8 mW/m², which renews two thirds of the surface (F44, F50) and
-# leaves the shell near 40 km, thick enough to keep the dark terrain's 70 km craters
-# while the 150 km ones relax to palimpsests; nothing is pinned.
+# density (Zahnle et al. 2003). An eccentricity of 0.0185, in the low half of their range
+# of 0.01 to 0.07, heats the shell to 8 mW/m² in its own tides (F75), which renews two
+# thirds of the surface (F44, F50) and leaves the shell near 40 km, thick enough to keep
+# the dark terrain's 70 km craters while the 150 km ones relax to palimpsests; nothing
+# is pinned.
 "orbit.resonance_age" = 2.0
-"orbit.resonance_eccentricity" = 0.008
+"orbit.resonance_eccentricity" = 0.0185
 "orbit.resonance_duration" = 1.0
 "seed.master" = 22.0

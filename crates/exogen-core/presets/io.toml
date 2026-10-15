@@ -15,4 +15,14 @@ description = "Reference body. Innermost Galilean moon; eccentricity pumped by t
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = { SO2 = 1.0 }
 "volatiles.inventory" = { SO2 = 1.0 }
+# The Laplace resonance cycles (F77): Io's heat softens its upper mantle, its dissipation
+# damps its eccentricity, it cools and the resonance raises the eccentricity again, every
+# 95 to 150 Myr since 0.8 to 2.0 Gyr ago; the moons stand just past a peak, their
+# eccentricity falling and Io migrating inward (Bagheri et al. 2026, a model the moons'
+# measured migration rates, heat flows and tidal response select; the swing is read from
+# its representative history, Fig. 1: Io's eccentricity 0.0035 to 0.005).
+"orbit.cycle_period" = 0.12
+"orbit.cycle_onset" = 1.6
+"orbit.cycle_amplitude" = 0.18
+"orbit.cycle_phase" = 0.2
 "seed.master" = 16.0

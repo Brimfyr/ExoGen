@@ -62,9 +62,9 @@ When: the Io milestone.
 
 ### S4. The thin-shell rule
 
-WHOLESALE_SHELL_RATIO (a shell under 0.02 of the radius) is read in `tectonics_ice_resurfaced_fraction` (no lanes under it), `tectonics_chaos_fraction` (no chaos over it), `cratering_retention_age` (wholesale renewal under it, with S6) and the impacts stage.
+WHOLESALE_SHELL_RATIO (a shell under 0.025 of the radius; 0.02 until Europa's shell came to its measured 30 km, F75, which put it at 0.019) is read in `tectonics_ice_resurfaced_fraction` (no lanes under it), `tectonics_chaos_fraction` (no chaos over it), `cratering_retention_age` (wholesale renewal under it, with S6) and the impacts stage.
 
-Measured (2026-10-14, `lanes_come_in_by_degrees_as_the_lid_thins_against_the_body`): an Enceladus half again as large has a shell 0.035 of its radius and makes 81 lanes; one twice as large has 0.010 and makes none, and chaos takes over in the same step. Europa itself has both bands, which are lanes that spread, and chaos, so the reference body contradicts the switch.
+Measured (2026-10-14, `lanes_come_in_by_degrees_as_the_lid_thins_against_the_body`): an Enceladus half again as large had a shell 0.035 of its radius and made 81 lanes; one twice as large had 0.010 and made none, and chaos took over in the same step. Since F75 (2026-10-15) a larger Enceladus's core is less porous and its shell heats in its own tides, so the shell stays thick against the body (0.094 of the radius at twice the size, 0.8 of the eccentricity) and the step is not reached in that sweep; it remains for a body whose shell is thin against it. Europa itself has both bands, which are lanes that spread, and chaos, so the reference body contradicts the switch.
 
 Direction: the share of the renewal that goes to chaos from the processes that make chaos (melt-through and brine lenses in a thin or warm shell, Schmidt et al. 2011; diapirs in a convecting shell, Pappalardo et al. 1998), and the share that goes to lanes from the lid's extension. Both rise and fall with the shell's state, so a body between Ganymede and Europa has some of each.
 
@@ -72,7 +72,7 @@ When: the Europa milestone.
 
 ### S5. Active thinning
 
-POLAR_ACTIVE_THINNING (0.3 of the shell) is read in `tectonics_focusing_period`, `volcanism_plume_fallout_rate` and the ice stage's activity test. Under it a body has no focusing episodes, no plumes and no fallout; over it, all three. Enceladus (0.74) is the only reference body over it; Europa is at 0.12.
+POLAR_ACTIVE_THINNING (0.3 of the shell) is read in `tectonics_focusing_period`, `volcanism_plume_fallout_rate` and the ice stage's activity test. Under it a body has no focusing episodes, no plumes and no fallout; over it, all three. Enceladus (0.76) is the only reference body over it; Europa is at 0.27 (0.12 until F75 brought its tidal flux to 14 mW/m² and its shell to 30 km, which focus more).
 
 The threshold is a share of the shell, not a physical event.
 
@@ -103,6 +103,14 @@ Measured (same test as S4): the share renewed as lanes is 0.073 for Enceladus, 0
 When: the ring-systems milestone, since it needs only a reading of `tectonics_ice_resurfaced_fraction`.
 
 Closed in the eighteenth milestone. The share is the renewal of the peak flux, saturated on Enceladus, times one minus the polar thinning over its maximum, and the thinning is the product of two factors that move apart along the sweep: the flux against POLAR_FOCUS_FLUX, capped at one, and the focus of a shell that is thick against the body, 1 - exp(-ratio / POLAR_FOCUS_SHELL_RATIO). Enceladus stood at 19 mW/m², just under the cap, so the first step of the sweep raised the flux term faster than the thinner shell lowered the focus, and the share dipped before it rose. Since F68 Enceladus stands at 37 mW/m², past the cap, and the share follows the shell's ratio alone: 0.002 at 0.8 of its radius, 0.053 at 1, 0.116 at 1.1, 0.194 at 1.2, 0.277 at 1.3, 0.358 at 1.4 and 0.433 at 1.5, rising with every step until the thin-shell rule's step at 1.7 (S4). A body whose flux is under the cap still has the dip: more heat focuses more until the focusing is full, and a thinner shell focuses less; both are the model's stated dependencies, not a fault in it.
+
+### S10. Tides by composition class
+
+F75 gives an icy moon's shell the tides its rheology dissipates, and F68 a porous interior its own; a rocky body's tides still come from `interior.love_number_k2` and `interior.dissipation_q` by composition class (F13): Io's k₂/Q is 0.012 against the measured 0.015 (Lainey et al. 2009), but a rocky body's dissipation does not change with its temperature, so Io's heat cannot run away or limit itself, and the Laplace resonance's cycles (Bagheri et al. 2026: driven by Io's melt-dependent dissipation) cannot arise from it. The same k₂ and Q set every body's locking timescale. An icy moon's rocky interior below its ocean dissipates nothing unless it is porous.
+
+Direction: a rocky interior's imaginary Love number from its Maxwell or Andrade rheology at its temperature and melt fraction, as F75 does for a shell (Bagheri et al. 2026; Renaud and Henning 2018), so that its tides rise and fall with its heat.
+
+When: the Io milestone.
 
 ### S9. Central pits by the target's material
 
@@ -182,11 +190,12 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | FOCUSING_PERIOD_FACTOR | Enceladus: episodes 0.52 Gyr apart (refitted from 10 to 40 when F68 thinned its shell to 22 km) | O'Neill and Nimmo 2010 give 0.1 to 1 Gyr from the shell's convection; the direction is a recurrence from the heating cycle of the Dione resonance, not a factor on the conductive time |
 | POLAR_FOCUS_FLUX, POLAR_THINNING_MAX | Enceladus | how strongly tidal heating focuses at a pole |
 | PLUME_FALLOUT_RATE | Enceladus: about 0.1 mm/yr near the stripes | scale by the plume's mass flux, which the vent sets |
-| CHAOS_FRACTION_MAX, CHAOS_FLUX | Europa's share of chaos | replaced under S4 |
+| CHAOS_FRACTION_MAX, CHAOS_FLUX | Europa's share of chaos (CHAOS_FLUX refitted from 0.05 to 0.012 W/m² when F75 brought Europa's tidal flux from 76 to 14 mW/m²) | replaced under S4 |
+| CRACK_DENSITY_FACTOR | Europa: one crack per 31 km of transect (refitted from 3 to 12 when F75 brought its shell from 7.7 to 30 km) | crack spacing from the brittle layer's mechanics, the spacing at which a crack's stress shadow lets the next open |
 | IO_PATERAE_PER_TW | Io's count over its tidal power | per heat-pipe power once S3 is done |
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |
 | CENTRAL_PEAK_HEIGHT | Copernicus | check how it scales with gravity |
-| POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core: 15 GW | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
+| POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core, 10 to 30 GW: 28.5 GW, which with its shell's own 0.6 GW (F75) holds its shell at 22.7 km (refitted from 15 GW when the shell's share went from the class k₂/Q's 15 GW to F75's) | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
 | RING_STRAIN | the strain of Tyre's and Callanish's inner graben (Singer et al. 2023) | check against the graben depths of Valhalla and Ganymede's furrows once measured |
 | PIT_DIAMETER_SHARE, PIT_GROWTH, PIT_DEPTH_SHARE, DOME_PIT_SHARE, DOME_RISE | Ganymede's pits and domes (Alzate and Barlow 2011; Bray et al. 2012; Schenk 1993) | check against Callisto's dome craters and Ceres's pits (Occator, Dantu) |
 | MANTLE_SPREAD | a stated choice: the length over which a mantle evens the ground, twice its thickness | check against the rim profiles of Enceladus's muted craters (Kirchoff and Schenk 2009) |
@@ -217,9 +226,17 @@ When: Phase 5, with the lag of icy surfaces and Callisto's bright craters.
 
 Enceladus's cratered plains hold craters relaxed by 40 to 90 percent, which needs a heat flux of 150 mW/m² or more where and when they relaxed (Bland et al. 2012), and muted by its plumes' fallout (Kirchoff and Schenk 2009). The model's heat flux is near 38 mW/m² over its whole history, and its elastic lid of 12 km holds every load shorter than about 45 km, so its craters relax only beside its terrains while each episode's thinned shell lasts (F66). Its fresh complex craters are deep, as low gravity makes them (F71, Herschel on Mimas), and the largest of them keep their terraced walls, softened only by the fallout (F74), which is thin away from the plumes' poles.
 
-Direction: the heat history that relaxed the real craters: an eccentricity history excited in resonance with Dione (Meyer and Wisdom 2007), or episodes of focused heating whose thinning reaches the cratered plains between the terrains.
+Direction: the heat history that relaxed the real craters. An eccentricity cycle in the resonance with Dione is not it: Enceladus does not oscillate about its tidal equilibrium in the model of Ojakangas and Stevenson (Meyer and Wisdom 2008), and its shell's own tides are a small share of its heat (F75). Episodes of focused heating whose thinning reaches the cratered plains between the terrains, or a past resonance that raised its eccentricity for a time (Meyer and Wisdom 2008 find a temporary capture into the 4:2 resonance with Dione), remain.
 
 When: with the earlier-phases revisit's thermal histories, or sooner if the Europa milestone revisits the orbital histories.
+
+### M4. Enceladus's old fractures
+
+Enceladus's cratered plains are cut by fractures. The class rule's Love number gave its shell an h₂ ten times Beuthe's (2018) and a diurnal stress of 194 kPa, which cracked the whole shell; with the shell's own Love number (F75) its uniform shell is stressed by 20 kPa (Beuthe: about 15 kPa in a uniform 23 km shell), under the 40 kPa at which ice cracks, and only its thinned south polar shell and the zones its past episodes thinned are stressed past it (F76). Its old plains therefore lose the cracks the diurnal tide had drawn there.
+
+Direction: the stresses that crack a shell beyond the diurnal tide: the tension of a thickening shell as its ocean freezes and pressurizes (Manga and Wang 2007; Rudolph et al. 2022), which each episode's end and each fall of the heat flux bring; true polar wander as the body reorients to each new episode's pole (Matsuyama and Nimmo 2008); and non-synchronous rotation. Kihoulou et al. (2025) find extension in the upper shell as Europa's shell thickens after a pulse of eccentricity, and compression as it thins.
+
+When: the Europa milestone, which needs the same stresses for its bands and ridges.
 
 ## Validation (principle 15)
 

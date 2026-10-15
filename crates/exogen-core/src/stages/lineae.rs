@@ -282,11 +282,23 @@ impl Cracks {
         if nsr_period_gyr > 0.0 {
             shell.nsr_shift = NSR_SHIFT_DEG.to_radians();
         }
+        let shell_map = crate::stages::ice::ShellMap::new(graph);
+        // A floating shell is stressed as its local thickness has it (F76).
+        if graph.bool("interior.has_subsurface_ocean") {
+            shell.local = Some(crate::stages::tidal::LocalShell {
+                map: shell_map.clone(),
+                love: crate::stages::tidal::ShellLove::new(
+                    graph.f64("body.radius"),
+                    graph.f64("body.gravity"),
+                    graph.f64("body.density"),
+                ),
+                mean: graph.f64("interior.ice_shell_thickness"),
+            });
+        }
         let amplitude = shell.amplitude();
         if amplitude <= ICE_CRACK_STRESS {
             return None;
         }
-        let shell_map = crate::stages::ice::ShellMap::new(graph);
         let episodes = crate::stages::ice::focusing_episodes(graph, &shell_map);
         Some(Self {
             shell,

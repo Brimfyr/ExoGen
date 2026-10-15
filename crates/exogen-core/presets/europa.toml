@@ -14,4 +14,14 @@ description = "Reference body. Thin ice shell over a water ocean, cracked along 
 "body.density" = 3013.0
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
+# The Laplace resonance cycles (F77): Io's heat softens its upper mantle, its dissipation
+# damps its eccentricity, it cools and the resonance raises the eccentricity again, every
+# 95 to 150 Myr since 0.8 to 2.0 Gyr ago; the moons stand just past a peak, their
+# eccentricity falling and Io migrating inward (Bagheri et al. 2026, a model the moons'
+# measured migration rates, heat flows and tidal response select; the swing is read from
+# its representative history, Fig. 1: Europa's eccentricity 0.007 to 0.0115).
+"orbit.cycle_period" = 0.12
+"orbit.cycle_onset" = 1.6
+"orbit.cycle_amplitude" = 0.25
+"orbit.cycle_phase" = 0.2
 "seed.master" = 17.0

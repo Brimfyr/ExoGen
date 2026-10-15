@@ -3990,14 +3990,15 @@ mod tests {
     /// lid lets every lane form lie bodies that get some of each (principle 15): as a less
     /// heated Enceladus (its eccentricity 0.8 of the real one's) is made larger its lid
     /// takes up less of it, and lanes open on the lid of the time, outside any focusing
-    /// episode, a few and then many, beside those its episodes still make.
+    /// episode, a few and then many; a fully heated one half again as large makes most of
+    /// its lanes on the lid of the time and some in its episodes.
     #[test]
     fn lanes_come_in_by_degrees_as_the_lid_thins_against_the_body() {
         let mut outside_counts = Vec::new();
         let mut inside_counts = Vec::new();
-        for scale in [1.0, 1.2, 1.5, 2.0] {
+        for (scale, heat) in [(1.0, 0.8), (1.2, 0.8), (1.5, 0.8), (1.5, 1.0)] {
             let (mut g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
-            let e = g.f64("orbit.eccentricity") * 0.8;
+            let e = g.f64("orbit.eccentricity") * heat;
             g.set("orbit.eccentricity", e).unwrap();
             let r = g.f64("body.radius") * scale;
             g.set("body.radius", r).unwrap();
@@ -4021,9 +4022,7 @@ mod tests {
                 p.lanes.len(),
                 outside,
             );
-            // A body with no share for lanes has none: at twice the size the shell is
-            // thinner than F44's thin-shell rule allows lanes on, a step that is not
-            // this rule's and is on the list for the audit against principle 15.
+            // A body with no share for lanes has none.
             assert_eq!(
                 p.lanes.is_empty(),
                 g.f64("tectonics.ice_resurfaced_fraction") <= 0.0
@@ -4033,9 +4032,12 @@ mod tests {
         }
         assert_eq!(outside_counts[0], 0);
         assert!(inside_counts[0] > 0);
-        assert!(outside_counts[1] > 0 && outside_counts[2] > 4 * outside_counts[1]);
-        // The largest of them is a world in between: lanes of both kinds.
-        assert!(inside_counts[2] > 0, "{inside_counts:?}");
+        assert!(outside_counts[1] > 0 && outside_counts[2] > 3 * outside_counts[1]);
+        // The fully heated one is a world in between: lanes of both kinds.
+        assert!(
+            inside_counts[3] > 0 && outside_counts[3] > inside_counts[3],
+            "{inside_counts:?}"
+        );
     }
 
     /// A groove's depth has a heavy tail (F63): the middling one at one, half of them a

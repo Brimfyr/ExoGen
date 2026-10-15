@@ -758,14 +758,66 @@ pub fn interior_love_number_k2(c: &Ctx) -> Value {
     .into()
 }
 
+/// F75: an ice shell's h₂ from its stiffness against the ocean's buoyancy (Beuthe 2018),
+/// or the homogeneous elastic sphere's for ice frozen to the rock; 1 + k₂ for a
+/// fluid-like rocky interior.
 pub fn interior_love_number_h2(c: &Ctx) -> Value {
-    crate::stages::tidal::love_number_h2(
-        c.f64("interior.love_number_k2"),
-        c.f64("interior.ice_shell_thickness"),
+    if !is_icy(c.str("body.composition_class")) {
+        return (1.0 + c.f64("interior.love_number_k2")).into();
+    }
+    let love = crate::stages::tidal::ShellLove::new(
         c.f64("body.radius"),
-        is_icy(c.str("body.composition_class")),
-    )
+        c.f64("body.gravity"),
+        c.f64("body.density"),
+    );
+    if c.bool("interior.has_subsurface_ocean") {
+        love.h2(c.f64("interior.ice_shell_thickness"))
+    } else {
+        love.grounded
+    }
     .into()
+}
+
+/// The tides an icy moon's shell dissipates (F75), from its orbit and its interior, for a
+/// locked moon of a planet; none otherwise.
+pub fn shell_tides(c: &Ctx) -> Option<crate::stages::tidal::ShellTides> {
+    if !is_icy(c.str("body.composition_class"))
+        || c.str("orbit.primary") != "planet"
+        || c.str("rotation.mode") != "locked"
+    {
+        return None;
+    }
+    let radius = c.f64("body.radius");
+    Some(crate::stages::tidal::ShellTides::new(
+        crate::stages::tidal::ShellLove::new(radius, c.f64("body.gravity"), c.f64("body.density")),
+        c.f64("orbit.primary_mass"),
+        c.f64("body.mass"),
+        radius,
+        c.f64("orbit.semi_major_axis"),
+        c.f64("orbit.mean_motion"),
+        c.f64("atmosphere.surface_temperature_mean"),
+        ice_melting_point(c),
+        c.f64("body.ice_layer_thickness"),
+    ))
+}
+
+/// The heat that reaches an icy shell from below, W/m²: the rock's radiogenic heat and
+/// secular cooling, and the tides of a porous interior (F68).
+fn basal_flux(c: &Ctx) -> f64 {
+    let r = c.f64("body.radius");
+    c.f64("interior.radiogenic_flux") * (1.0 + c.f64("interior.secular_cooling_fraction"))
+        + c.f64("interior.core_tidal_power") / (4.0 * PI * r * r)
+}
+
+/// F75: the tides an icy moon's shell dissipates in itself at the thickness where its
+/// conduction carries them and the heat from below, W/m².
+pub fn interior_shell_tidal_flux(c: &Ctx) -> Value {
+    shell_tides(c)
+        .map_or(0.0, |t| {
+            t.equilibrium(basal_flux(c), c.f64("orbit.eccentricity"))
+                .heating
+        })
+        .into()
 }
 
 pub fn tectonics_tidal_stress(c: &Ctx) -> Value {
@@ -777,7 +829,19 @@ pub fn tectonics_tidal_stress(c: &Ctx) -> Value {
 
 pub fn tectonics_ice_crack_density(c: &Ctx) -> Value {
     let stress = c.f64("tectonics.tidal_stress");
-    if c.str("interior.tectonic_regime") != "ice_shell_ocean" || stress <= ICE_CRACK_STRESS {
+    if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
+        return 0.0.into();
+    }
+    // The shell cracks where it is stressed past the cracking stress: a hard shell most
+    // where the focusing thins it (F76).
+    let love = crate::stages::tidal::ShellLove::new(
+        c.f64("body.radius"),
+        c.f64("body.gravity"),
+        c.f64("body.density"),
+    );
+    let thinnest = 1.0 - c.f64("tectonics.polar_thinning");
+    let peak = stress * love.local_amplification(c.f64("interior.ice_shell_thickness"), thinnest);
+    if peak <= ICE_CRACK_STRESS {
         return 0.0.into();
     }
     (CRACK_DENSITY_FACTOR * (stress / ICE_TENSILE_STRENGTH)
@@ -826,20 +890,14 @@ pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
     }
     // What the focusing takes to the pole does not spread as lanes.
     let diffuse = (1.0 - c.f64("tectonics.polar_thinning") / POLAR_THINNING_MAX).max(0.0);
-    // The peak tidal flux of the body's history, F13 over the eccentricity history: the
-    // pulse of a resonance episode (F50), or the steady flux.
-    let e_now = c.f64("orbit.eccentricity");
-    let e_max = c
-        .curve("orbit.eccentricity_history")
+    // The peak tidal flux of the body's history: the pulse of a resonance episode (F50),
+    // or the steady flux.
+    let peak = c
+        .curve("interior.tidal_flux_history")
         .points
         .iter()
         .map(|p| p.1)
-        .fold(e_now, f64::max);
-    let peak = if e_now > 0.0 {
-        c.f64("interior.tidal_flux") * (e_max / e_now).powi(2)
-    } else {
-        c.f64("interior.tidal_flux")
-    };
+        .fold(c.f64("interior.tidal_flux"), f64::max);
     // A shell renews itself at most once over: the renewal share saturates at one, and
     // the focusing's share is taken from that.
     let renewal = ((peak - ICE_RESURFACING_FLUX_FLOOR) / ICE_RESURFACING_FLUX).clamp(0.0, 1.0);
@@ -985,17 +1043,24 @@ pub fn interior_radiogenic_flux(c: &Ctx) -> Value {
     (c.f64("interior.radiogenic_power") / (4.0 * PI * r * r)).into()
 }
 
+/// F13 for a rocky body; for an icy one the tides its shell dissipates (F75), and for
+/// either those of a porous interior (F68).
 pub fn interior_tidal_power(c: &Ctx) -> Value {
-    (tidal_power(
-        c.f64("interior.love_number_k2"),
-        c.f64("interior.dissipation_q"),
-        c.f64("orbit.primary_mass"),
-        c.f64("body.radius"),
-        c.f64("orbit.mean_motion"),
-        c.f64("orbit.eccentricity"),
-        c.f64("orbit.semi_major_axis"),
-    ) + c.f64("interior.core_tidal_power"))
-    .into()
+    let r = c.f64("body.radius");
+    let own = if is_icy(c.str("body.composition_class")) {
+        c.f64("interior.shell_tidal_flux") * 4.0 * PI * r * r
+    } else {
+        tidal_power(
+            c.f64("interior.love_number_k2"),
+            c.f64("interior.dissipation_q"),
+            c.f64("orbit.primary_mass"),
+            r,
+            c.f64("orbit.mean_motion"),
+            c.f64("orbit.eccentricity"),
+            c.f64("orbit.semi_major_axis"),
+        )
+    };
+    (own + c.f64("interior.core_tidal_power")).into()
 }
 
 pub fn interior_core_porosity(c: &Ctx) -> Value {
@@ -1057,6 +1122,9 @@ fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
         tidal_flux_now: c.f64("interior.tidal_flux"),
         eccentricity_now: c.f64("orbit.eccentricity"),
         eccentricity_history: c.curve("orbit.eccentricity_history").clone(),
+        shell: shell_tides(c),
+        core_tidal_flux_now: c.f64("interior.core_tidal_power")
+            / (4.0 * PI * c.f64("body.radius").powi(2)),
         icy: is_icy(c.str("body.composition_class")),
         surface_temperature: c.f64("atmosphere.surface_temperature_mean"),
         melting_point: ice_melting_point(c),
@@ -1070,38 +1138,87 @@ fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
     }
 }
 
-/// F50: the present eccentricity, with the pulse of a resonance episode centred
-/// `orbit.resonance_age` before the present and `orbit.resonance_duration` wide at its
-/// base, rising over the first fifth, holding at the forced value, falling over the
-/// last fifth; constant when there is none.
+/// F77: a resonance's thermal-orbital cycle, as the factor it puts on the eccentricity at
+/// a time since formation: one before its onset, then swinging by its amplitude about one,
+/// peaking a whole number of periods from its last peak and growing to its full swing over
+/// its first period.
+struct ResonanceCycle {
+    period: f64,
+    onset: f64,
+    amplitude: f64,
+    last_peak: f64,
+}
+
+impl ResonanceCycle {
+    fn from_ctx(c: &Ctx, age: f64) -> Option<Self> {
+        let period = c.f64("orbit.cycle_period");
+        let amplitude = c.f64("orbit.cycle_amplitude").clamp(0.0, 0.9);
+        let before = c.f64("orbit.cycle_onset").min(age);
+        if period <= 0.0 || amplitude <= 0.0 || before <= 0.0 {
+            return None;
+        }
+        Some(Self {
+            period,
+            onset: age - before,
+            amplitude,
+            last_peak: age - c.f64("orbit.cycle_phase").clamp(0.0, 1.0) * period,
+        })
+    }
+
+    fn factor(&self, t: f64) -> f64 {
+        if t < self.onset {
+            return 1.0;
+        }
+        let grown = ((t - self.onset) / self.period).min(1.0);
+        let angle = std::f64::consts::TAU * (t - self.last_peak) / self.period;
+        1.0 + self.amplitude * grown * angle.cos()
+    }
+}
+
+/// F50 and F77: the eccentricity about the mean the present value stands at, with the
+/// pulse of a resonance episode centred `orbit.resonance_age` before the present and
+/// `orbit.resonance_duration` wide at its base, rising over the first fifth, holding at
+/// the forced value, falling over the last fifth, and a resonance's cycle from its onset;
+/// constant when there is neither.
 pub fn orbit_eccentricity_history(c: &Ctx) -> Value {
-    let e = c.f64("orbit.eccentricity");
+    let e_now = c.f64("orbit.eccentricity");
     let age = c.f64("body.age");
+    let cycle = ResonanceCycle::from_ctx(c, age);
+    // The mean that the cycle swings about, so that the present takes its own value.
+    let e = cycle
+        .as_ref()
+        .map_or(e_now, |k| e_now / k.factor(age).max(1e-6));
     let peak = c.f64("orbit.resonance_eccentricity");
     let before = c.f64("orbit.resonance_age");
     let width = c.f64("orbit.resonance_duration");
-    if peak <= e || width <= 0.0 || before <= 0.0 || before > age {
-        return Curve::constant(e).into();
+    let pulsed = peak > e && width > 0.0 && before > 0.0 && before <= age;
+    if !pulsed && cycle.is_none() {
+        return Curve::constant(e_now).into();
     }
     let t_peak = age - before;
     let half = 0.5 * width;
     let pulse = |t: f64| {
+        if !pulsed {
+            return e;
+        }
         let x = (t - t_peak).abs() / half;
         e + (peak - e) * ((1.0 - x) / RESONANCE_RAMP_SHARE).clamp(0.0, 1.0)
     };
-    let hold = half * (1.0 - RESONANCE_RAMP_SHARE);
-    let mut times = vec![
-        0.0,
-        t_peak - half,
-        t_peak - hold,
-        t_peak + hold,
-        t_peak + half,
-        age,
-    ];
+    let mut times = vec![0.0, age];
+    if pulsed {
+        let hold = half * (1.0 - RESONANCE_RAMP_SHARE);
+        times.extend([t_peak - half, t_peak - hold, t_peak + hold, t_peak + half]);
+    }
+    if let Some(k) = &cycle {
+        let step = k.period / CYCLE_SAMPLES_PER_PERIOD as f64;
+        let count = ((age - k.onset) / step).ceil() as usize;
+        times.extend((0..=count).map(|i| k.onset + i as f64 * step));
+    }
     times.retain(|t| (0.0..=age).contains(t));
     times.sort_by(|a, b| a.total_cmp(b));
-    times.dedup();
-    Curve::new(times.into_iter().map(|t| (t, pulse(t))).collect()).into()
+    times.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    let at = |t: f64| pulse(t) * cycle.as_ref().map_or(1.0, |k| k.factor(t));
+    Curve::new(times.into_iter().map(|t| (t, at(t))).collect()).into()
 }
 
 pub fn interior_tidal_flux_history(c: &Ctx) -> Value {
