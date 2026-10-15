@@ -359,7 +359,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 72;
+pub const FINISH_VERSION: u64 = 73;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1312,7 +1312,10 @@ pub fn finish(
                 }
                 Event::Linea(k) => {
                     let l = &lineae[*k];
-                    (l.midpoint(), l.cap_radius(body_radius) + 2.0 * grid.delta())
+                    (
+                        l.midpoint(),
+                        l.cap_radius(body_radius, cell) + 2.0 * grid.delta(),
+                    )
                 }
                 Event::Groove(k) => {
                     let l = &lanes[*k];

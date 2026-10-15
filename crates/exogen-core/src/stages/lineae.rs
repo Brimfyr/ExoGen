@@ -67,16 +67,75 @@ impl Linea {
         self.points[self.points.len() / 2]
     }
 
-    pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        // The trace may wander: take the farthest point from the midpoint.
+    /// The cap a stamp of the crack touches on a grid of `cell`, radians about its
+    /// midpoint: its farthest point, the trace wandering, and the stamp's reach beyond
+    /// the trace, so that stamps whose caps are apart never touch the same cell.
+    pub fn cap_radius(&self, body_radius: f64, cell: f64) -> f64 {
         let mid = self.midpoint();
         let far = self
             .points
             .iter()
             .map(|p| crate::geom::angle_between(mid, *p))
             .fold(0.0f64, f64::max);
-        far + self.width / body_radius
+        far + self.reach(cell) / body_radius
     }
+
+    /// How far the crack's stamp reaches from its trace on a grid of `cell`, m: a band
+    /// its floor and walls, a vent its trough and flanks, a ridge or a cycloid its
+    /// margins, offset by its segments.
+    pub fn reach(&self, cell: f64) -> f64 {
+        let width = self.width.max(2.0 * cell);
+        match self.kind {
+            LineaKind::Band => 0.5 * width + 0.3 * width + 2.0 * cell,
+            LineaKind::Vent => width + 2.0 * cell,
+            _ => {
+                let (_, asides) = chain(self, width);
+                let aside = asides.iter().fold(0.0f64, |m, a| m.max(a.abs()));
+                let margin = (LINEA_MARGIN_SHARE * self.width)
+                    .hypot(0.5 * cell)
+                    .max(LINEA_STAIN_MIN_CELLS * cell);
+                (width + 2.0 * cell + aside).max(2.5 * margin + aside)
+            }
+        }
+    }
+}
+
+/// A ridge or a cycloid is a chain of segments (F62): where each ends along the crack, as
+/// a share of its length, and how far each stands aside from the trace, to the one side
+/// from each to the next, for a crack drawn `width` wide. A band and a vent are one
+/// opening.
+fn chain(rec: &Linea, width: f64) -> (Vec<f64>, Vec<f64>) {
+    let rng = Rng::new(rec.id ^ 0x11CE_5E61);
+    let chained = !matches!(rec.kind, LineaKind::Band | LineaKind::Vent);
+    let segments = if chained {
+        (rec.length / (CRACK_SEGMENT_WIDTHS * width))
+            .round()
+            .max(1.0) as usize
+    } else {
+        1
+    };
+    let bounds: Vec<f64> = (0..=segments)
+        .map(|i| {
+            if i == 0 {
+                0.0
+            } else if i == segments {
+                1.0
+            } else {
+                (i as f64 + 0.6 * (rng.uniform(i as u64, 1) - 0.5)) / segments as f64
+            }
+        })
+        .collect();
+    let sense = if rng.uniform(0, 0) < 0.5 { -1.0 } else { 1.0 };
+    let asides: Vec<f64> = (0..segments)
+        .map(|i| {
+            sense
+                * CRACK_STEP_SHARE
+                * width
+                * (i as f64 - 0.5 * (segments - 1) as f64)
+                * (0.5 + rng.uniform(i as u64, 2))
+        })
+        .collect();
+    (bounds, asides)
 }
 
 /// The unit tangent of a trace at its midpoint, from the chord of its neighbours.
@@ -825,7 +884,10 @@ impl Cracks {
                     out: &mut Vec<Linea>,
                     index: &mut CrackIndex| {
             let time_gyr = match carry {
-                None => (present - POLAR_RENEWAL_GYR * rng.uniform(bin, 10 + 2 * k)).max(0.0),
+                // A fissure of the present episode vents to the present: its trough is
+                // renewed by its own eruptions until now, the last surface of its zone,
+                // which no lesser crack of the zone crosses.
+                None => present,
                 // A past episode's fissures vented to its end and stand on the last
                 // surface its terrain renewed.
                 Some(e) => e.end + FOSSIL_VENT_LAG_GYR * (1.0 + rng.uniform(bin, 10 + 2 * k)),
@@ -1292,44 +1354,13 @@ pub fn linea_compute(
             * (LINEA_STAIN_RESIDUAL + (1.0 - LINEA_STAIN_RESIDUAL) * (-age / SALT_FADE_GYR).exp())
     };
     let margin = (LINEA_MARGIN_SHARE * rec.width).hypot(0.5 * cell);
-    // A ridge or a cycloid is a chain of segments (F62): where each ends along the
-    // crack, as a share of its length, and how far each stands aside from the trace, to
-    // the one side from each to the next. A band and a vent are one opening.
+    // A ridge or a cycloid is a chain of segments (F62); the stamp reaches as its cap
+    // says.
     let rng = Rng::new(rec.id ^ 0x11CE_5E61);
     let chained = !matches!(rec.kind, LineaKind::Band | LineaKind::Vent);
-    let segments = if chained {
-        (rec.length / (CRACK_SEGMENT_WIDTHS * width))
-            .round()
-            .max(1.0) as usize
-    } else {
-        1
-    };
-    let bounds: Vec<f64> = (0..=segments)
-        .map(|i| {
-            if i == 0 {
-                0.0
-            } else if i == segments {
-                1.0
-            } else {
-                (i as f64 + 0.6 * (rng.uniform(i as u64, 1) - 0.5)) / segments as f64
-            }
-        })
-        .collect();
-    let sense = if rng.uniform(0, 0) < 0.5 { -1.0 } else { 1.0 };
-    let asides: Vec<f64> = (0..segments)
-        .map(|i| {
-            sense
-                * CRACK_STEP_SHARE
-                * width
-                * (i as f64 - 0.5 * (segments - 1) as f64)
-                * (0.5 + rng.uniform(i as u64, 2))
-        })
-        .collect();
-    let aside_reach = asides.iter().fold(0.0f64, |m, a| m.max(a.abs()));
-    let reach = match rec.kind {
-        LineaKind::Band => 0.5 * width + 0.3 * width + 2.0 * cell,
-        _ => (width + 2.0 * cell + aside_reach).max(2.5 * margin + aside_reach),
-    };
+    let (bounds, asides) = chain(rec, width);
+    let segments = asides.len();
+    let reach = rec.reach(cell);
     let half_band = 0.5 * rec.spacing + cell;
     let n = rec.points.len();
     // Per cell: the nearest point along the crack, the signed distance across it, and
@@ -1415,7 +1446,15 @@ pub fn linea_compute(
                 LineaKind::Vent => width * (VENT_TIP_WIDTH + (1.0 - VENT_TIP_WIDTH) * lens),
                 _ => width,
             };
-            let width_here = width_here * vary;
+            // A crack closes toward its tips: an elastic crack under a uniform load opens
+            // as an ellipse, so a ridge's or a cycloid's width, its stain and the surface
+            // it renews follow the crack's opening, (4 s (1 - s))^(1/2) along it.
+            let tip = if chained {
+                (4.0 * s * (1.0 - s)).max(0.0).sqrt()
+            } else {
+                1.0
+            };
+            let width_here = width_here * vary * tip;
             let relief_here = vary
                 * area_share
                 * match rec.kind {
@@ -1487,7 +1526,7 @@ pub fn linea_compute(
             // A ridge narrower than the grid renews the share of the cell its width covers
             // (F81): the cell's surface takes the crack's time by that share.
             let renewed = if ridged && !drawn {
-                crate::stages::fabric::strip_share(across, rec.width * vary * open, cell)
+                crate::stages::fabric::strip_share(across, rec.width * vary * open * tip, cell)
                     * (1.0 - buried)
             } else {
                 0.0
@@ -1540,8 +1579,9 @@ pub fn linea_compute(
                         * (-(from_trace / margin).powi(2)).exp()
                         * (1.0 - LINEA_STRIPE_DIM * (-(from_trace / (0.6 * core)).powi(2)).exp())
                 }
-            } * (1.0 - buried);
-            (write, [laid as f32, cut as f32])
+            } * (1.0 - buried)
+                * tip;
+            (write, [laid as f32, (cut * tip) as f32])
         })
         .collect();
     cells.sort_by_key(|c| c.0.idx);

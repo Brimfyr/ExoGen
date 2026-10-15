@@ -65,6 +65,11 @@ fn cross_section_share() -> f64 {
     (2.0 - LINEA_TROUGH_FRACTION) * std::f64::consts::PI.sqrt() / 6.0
 }
 
+/// The mean over a crack's length of its opening, which closes toward the tips as an
+/// elastic crack's does, (4 s (1 - s))^(1/2): pi / 4, the share of its width along its
+/// length a ridge renews.
+pub const OPENING_MEAN: f64 = std::f64::consts::FRAC_PI_4;
+
 /// The length of a trace, m.
 fn trace_length(points: &[[f64; 3]], body_radius: f64) -> f64 {
     points
@@ -83,7 +88,8 @@ pub fn drawn_coverage(lineae: &[Linea], body_radius: f64) -> f64 {
         .map(|l| {
             let width = match l.kind {
                 LineaKind::Band => 2.0 / 3.0 * l.width,
-                _ => l.width,
+                LineaKind::Vent => l.width,
+                _ => OPENING_MEAN * l.width,
             };
             width * trace_length(&l.points, body_radius)
         })
@@ -204,7 +210,7 @@ impl FabricSlice {
                 if covered >= self.budget {
                     break;
                 }
-                covered += r.width * trace_length(&r.points, radius);
+                covered += OPENING_MEAN * r.width * trace_length(&r.points, radius);
                 out.push(r);
             }
         }
@@ -292,9 +298,13 @@ fn ridge_marks(
         stamper
             .footprint
             .iter()
-            .filter_map(|&(idx, x, _)| {
-                let share = strip_share(x, w, cell);
-                let laid = stain * narrow_margin(x, w, cell);
+            .filter_map(|&(idx, x, along)| {
+                // A crack closes toward its tips as an elastic crack opens, an ellipse
+                // along it: its width, its relief and its stain with it.
+                let s = along / (ridge.points.len() - 1).max(1) as f64;
+                let tip = (4.0 * s * (1.0 - s)).max(0.0).sqrt();
+                let share = strip_share(x, w * tip, cell);
+                let laid = stain * tip * narrow_margin(x, w, cell);
                 (share > 0.0 || laid > 1e-4).then_some((
                     idx as u32,
                     share as f32,
@@ -451,7 +461,8 @@ mod tests {
         let area = |idx: u32| grid.cell_area(grid.cell(idx as usize)) * radius * radius;
         let renewed: f64 = marks.iter().map(|m| m.1 as f64 * area(m.0)).sum();
         let raised: f64 = marks.iter().map(|m| m.2 as f64 * area(m.0)).sum();
-        let expected = ridge.width * length;
+        // The ridge closes toward its tips, renewing OPENING_MEAN of its width along it.
+        let expected = OPENING_MEAN * ridge.width * length;
         assert!(
             (renewed / expected - 1.0).abs() < 0.1,
             "renewed {renewed:.3e} m² of {expected:.3e}"
@@ -496,7 +507,7 @@ mod tests {
         let ridges = last.ridges(&cracks, present, cell, 5);
         let covered: f64 = ridges
             .iter()
-            .map(|r| r.width * trace_length(&r.points, radius))
+            .map(|r| OPENING_MEAN * r.width * trace_length(&r.points, radius))
             .sum();
         assert!(
             covered >= last.budget && covered < 1.01 * last.budget,
