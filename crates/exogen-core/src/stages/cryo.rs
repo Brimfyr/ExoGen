@@ -456,6 +456,22 @@ impl ChaosGeneration {
         }
     }
 
+    /// The share of the body's surface whose rafts the generation foundered into its
+    /// matrix, measured on points spread evenly over it (its leads aside).
+    pub fn matrix_share(&self) -> f64 {
+        let n = 1 << 14;
+        (0..n)
+            .into_par_iter()
+            .filter(|&i| {
+                let (sites, ia) = self.rafts.around(even_point(i, n));
+                let a = sites[ia];
+                self.disruption(normalize(a.0))
+                    .is_some_and(|e| self.raft_state(a, e).standing == Standing::Foundered)
+            })
+            .count() as f64
+            / n as f64
+    }
+
     /// Whether the generation disrupted the shell at a point: whether the raft it lies on
     /// stands over warmth above the threshold.
     pub fn disrupts(&self, d: [f64; 3]) -> bool {

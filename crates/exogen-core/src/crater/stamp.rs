@@ -33,7 +33,7 @@ use crate::constants::{
     TERRACE_SCARP, TERRACE_SCARP_SPREAD, TERRACE_TOE, TERRACE_WALL_SHARE, TERRACE_WOBBLE,
 };
 use crate::fields::LayerSet;
-use crate::geom::{angle_between, azimuth_from, local_basis};
+use crate::geom::{angle_between, azimuth_from, cross, dot, local_basis, normalize};
 use crate::grid::CubeSphere;
 use crate::rng::Rng;
 use rayon::prelude::*;
@@ -43,6 +43,8 @@ pub struct Stamper {
     visited: Vec<u32>,
     generation: u32,
     queue: Vec<usize>,
+    /// For a corridor, the segment each queued cell came from.
+    segments: Vec<u32>,
     /// (cell index, distance in metres, azimuth)
     pub footprint: Vec<(usize, f64, f64)>,
 }
@@ -53,6 +55,7 @@ impl Stamper {
             visited: vec![0; grid.cell_count()],
             generation: 0,
             queue: Vec::new(),
+            segments: Vec::new(),
             footprint: Vec::new(),
         }
     }
@@ -94,6 +97,104 @@ impl Stamper {
             }
         }
     }
+
+    /// Collect the cells within `radius_m` of a polyline of unit directions: the walk
+    /// starts from the cells along each segment and spreads across it, each cell taking
+    /// its distance from the nearest of the segments about the one it came from. The
+    /// footprint holds the distance in metres and the position along the line, as the
+    /// segment's index plus the share of it.
+    pub fn gather_corridor(
+        &mut self,
+        grid: &CubeSphere,
+        body_radius: f64,
+        points: &[[f64; 3]],
+        radius_m: f64,
+    ) {
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            self.visited.iter_mut().for_each(|v| *v = 0);
+            self.generation = 1;
+        }
+        self.footprint.clear();
+        self.queue.clear();
+        self.segments.clear();
+        let n = points.len();
+        if n < 2 {
+            return;
+        }
+        let reach = radius_m / body_radius + 0.5 * grid.delta();
+        for k in 0..n - 1 {
+            let (a, b) = (points[k], points[k + 1]);
+            let steps = (angle_between(a, b) / (0.5 * grid.delta())).ceil().max(1.0) as usize;
+            for i in 0..=steps {
+                let t = i as f64 / steps as f64;
+                let p = normalize([
+                    a[0] + (b[0] - a[0]) * t,
+                    a[1] + (b[1] - a[1]) * t,
+                    a[2] + (b[2] - a[2]) * t,
+                ]);
+                let idx = grid.index(grid.locate(p).0);
+                if self.visited[idx] != self.generation {
+                    self.visited[idx] = self.generation;
+                    self.queue.push(idx);
+                    self.segments.push(k as u32);
+                }
+            }
+        }
+        let mut head = 0;
+        while head < self.queue.len() {
+            let idx = self.queue[head];
+            let from = self.segments[head] as usize;
+            head += 1;
+            let cell = grid.cell(idx);
+            let d = grid.center(cell);
+            let mut best = (f64::INFINITY, 0.0, from);
+            for k in from.saturating_sub(1)..(from + 2).min(n - 1) {
+                let (dist, share) = segment_distance(points[k], points[k + 1], d);
+                if dist < best.0 {
+                    best = (dist, k as f64 + share, k);
+                }
+            }
+            if best.0 > reach {
+                continue;
+            }
+            self.footprint.push((idx, best.0 * body_radius, best.1));
+            for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let m = grid.index(grid.neighbor(cell, di, dj));
+                if self.visited[m] != self.generation {
+                    self.visited[m] = self.generation;
+                    self.queue.push(m);
+                    self.segments.push(best.2 as u32);
+                }
+            }
+        }
+    }
+}
+
+/// The angular distance from a direction to a short great-circle arc between two others,
+/// and the share of the arc at which its nearest point lies: across the arc the sine of
+/// the distance to its great circle, beyond its ends the chord to the nearer, both the
+/// angle itself to the accuracy a corridor of a few cells needs.
+fn segment_distance(a: [f64; 3], b: [f64; 3], d: [f64; 3]) -> (f64, f64) {
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ad = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+    let len2 = dot(ab, ab);
+    let chord = |p: [f64; 3]| {
+        let r = [d[0] - p[0], d[1] - p[1], d[2] - p[2]];
+        dot(r, r).sqrt()
+    };
+    if len2 < 1e-30 {
+        return (chord(a), 0.0);
+    }
+    let t = dot(ad, ab) / len2;
+    if t <= 0.0 {
+        return (chord(a), 0.0);
+    }
+    if t >= 1.0 {
+        return (chord(b), 1.0);
+    }
+    let n = cross(a, b);
+    (dot(d, n).abs() / dot(n, n).sqrt(), t)
 }
 
 /// One cell's new values from a stamp. Stamps are computed first and applied afterwards,

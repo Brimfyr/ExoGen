@@ -1272,6 +1272,9 @@ pub const LINEA_WIDTH_RANGE: (f64, f64) = (2e3, 7e3);
 pub const LINEA_WIDTH_EXPONENT: f64 = 2.0;
 pub const LINEA_RELIEF_SHARE: f64 = 0.05;
 pub const LINEA_RESOLVED_CELLS: f64 = 2.0;
+/// A ridge's margins and medial stripe narrower than this many cells are spread over
+/// them by their share (F81), so that its stain does not bead along it on the grid.
+pub const LINEA_STAIN_MIN_CELLS: f64 = 1.2;
 /// A crack's margins (F78): Geissler et al. (1998) find Europa's lineae age through four
 /// stages, colourless incipient cracks, ridges, triple bands (a dim medial stripe with
 /// broad diffuse margins, 8 to 12 km wide on 3 to 6 km ridges, tinted by a red-brown
@@ -1314,6 +1317,18 @@ pub const BAND_TAPER_POWER: f64 = 0.35;
 pub const BAND_LINEATION_SPACING: f64 = 1.5e3;
 pub const BAND_LINEATION: f64 = 40.0;
 pub const SALT_FADE_GYR: f64 = 0.03;
+/// The ridged plains' fabric (F81): the cracks narrower than a map draws, the tail of the
+/// lineae's population (F78) down to this width, m (Leonard et al. 2018: double ridges
+/// 500 to 1,200 m wide in Galileo's highest-resolution mosaic; Galileo's captions put the
+/// most prominent ridges at about a kilometre). A surface renewed throughout is drawn
+/// back until this share of it is left unrenewed (a stated choice: the renewal keeps no
+/// memory, so what it has not reached takes the age it gives on average, and the drawn
+/// history only adds the structure of the oldest ridges), in slices this many to the
+/// retention age, and its ridges are traced in steps of this many cells.
+pub const FABRIC_WIDTH_MIN: f64 = 500.0;
+pub const FABRIC_UNRENEWED: f64 = 0.05;
+pub const FABRIC_WINDOW_SLICES: usize = 8;
+pub const FABRIC_STEP_CELLS: f64 = 4.0;
 /// Focused heating (F43): a shell over an ocean thins under one pole where the tidal
 /// dissipation concentrates, by up to this share of its thickness, in proportion to the
 /// tidal flux over this flux, W/m², rising with the shell's thickness over the radius

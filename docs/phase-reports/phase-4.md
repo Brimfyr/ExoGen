@@ -356,3 +356,41 @@ What they still do not show:
   - the leads' width, the disruption's scale and the matrix level's smoothing length.
 
 Tests 146. Three are new, and one is gone: Europa's chaos covers its share at every longitude; it favours low latitudes; and a generation breaks the lid into rafts in a lower matrix, with untouched ground outside. The old test that chaos patches reach every longitude went with the patches. Clippy is clean and validate passes its 117 checks.
+
+## The twenty-third milestone: the ridged plains renew Europa's surface
+
+The user on the twenty-second: "Good work. The chaos terrain looks natural and real. Continue with the next milestone when you're ready."
+
+The twenty-second milestone's survey had found that Europa's plains carried the body's age. 84% of the moon's surface stood at 4.5 Gyr and its mean age was 3.4 Gyr: the wholesale renewal of a thin shell (S6) set the crater record's retention age but renewed no surface. The sub-grid crater roughness read that age and roughened the plains as a saturated ancient surface.
+
+What renews the plains is what makes them: the ridged plains, Europa's oldest unit, crosscut by ridges at every scale (Doggett et al. 2009). The fabric (F81) is the narrow tail of the crack population the lineae come from. Its cracks are 0.5 to 2 km wide, as narrow as the double ridges Leonard et al. (2018) measure in Galileo's best images. They have the same heavy tail of widths and the same lengths, are placed by the same tension, and are traced along the same field. None is resolved at 2.4 km. Each one:
+
+- renews the share of the cells it crosses that its width covers;
+- adds its cross-section to their relief;
+- stains them by its margins.
+
+The drawn ridges narrower than two cells now renew their share in the same way.
+
+How much the fabric renews follows from the retention age. A surface renewed throughout renews one surface's worth in each retention age, its mean age. Within that age the drawn lineae renew 17% of Europa and the chaos matrix 15%. The fabric renews the rest, and all of it before that age, where what the lineae and chaos made has been overprinted into the plains. Its history is laid in slices, each one event over the body, back three retention ages. What it has not reached takes the age the renewal gives on average, since renewal keeps no memory. Europa gets some 170,000 narrow ridges, which add 7 s to its finish.
+
+It took three renders, judged on the maps:
+
+- **The first** made the plains young, but the fabric's lines beaded like rope. A strip narrower than a cell falls on one cell where its axis meets a cell's centre and on two halves between. Every ridge narrower than the grid is now drawn two cells wide by its share, as its relief already was, and its margins over at least 1.2 cells. Each young ridge had also shown as a double line, because its medial stripe was dimmed at full strength far below the grid; it now dims by its share.
+- **The second** removed the beads, but the young ridges' margins, as dark as a triple band's, combed the plains into flow lines along the tidal field.
+- **The third** makes a ridge's stain go as its width, full from 2 km. This is a stated choice: the dark material a ridge brings up goes as its cross-section, spread over margins as wide as itself. The plains now read as a fine bright texture, and the drawn lineae stand out on them again.
+
+**A regression found on the way.** Rendering Enceladus to check the narrow drawn ridges showed half its tiger stripes cut short. The twenty-first milestone's revision (F79) made a crack run only while the tide across its own plane opens it. But a plume's fissures are placed by the bending of their neighbours' flanking ridges (F57), which opens them across their own plane by construction, and their venting holds them open. Under the tide alone, only three of the present episode's eight stripes ran their length, a fourth stopped at half, and the forks at their tips stopped as stubs. The cascade's fissures are now held open while their zone lets them run. The tiger-stripe test had measured the lengths the stripes were given, on a coarse grid with a seed of its own; it now measures their traced lengths at the standard grid with the preset's own seed, and fails on the twenty-first's code.
+
+What the maps show:
+
+- **Europa:** the surface's mean age is 97 Myr against its retention age of 100 Myr (it was 3.4 Gyr), and none of it is older than three retention ages (84% stood at 4.5 Gyr). The plains are smooth where they were rough with saturated craters, finely streaked by the ridges' renewal and faintly lined by the young ridges' margins. The drawn lineae and the chaos stand on them as before.
+- **Enceladus:** its eight present tiger stripes run their whole 242 km again, forked at their tips (the regression above). Its narrow drawn ridges renew their share of the cells they cross, which does not show under its frost.
+
+What they still do not show:
+
+- **The plains are combed along the tidal field.** The young ridges share its headings over the time their margins stay dark: the shell turns 54 degrees under them in 30 Myr. The stresses of a freezing shell, the next milestone, would cross them.
+- **The retention age** is still the regime's constant (S6); the fabric's rate closes the renewal to it rather than setting it.
+- **Bands and the thickening shell:** bands as spreading lanes, and the stresses of a thickening shell; next.
+- **Stated choices:** how far back the fabric is drawn (to 5% unrenewed), the stain's width scaling, and the narrow lines' spreading (two cells for the strip, 1.2 for the stain).
+
+Tests 148. Two are new, and the tiger-stripe test is stricter: a fabric ridge renews its share of the cells it crosses and adds its cross-section, wherever its axis falls; and the fabric closes the renewal budget, its slices covering their share with widths from the narrow tail. Europa's full run now also checks that its plains are as young as its surface. The stain test now expects a narrow ridge to renew its share. Clippy is clean and validate passes its 117 checks.

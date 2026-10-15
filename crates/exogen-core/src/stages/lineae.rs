@@ -293,6 +293,10 @@ struct TraceRules<'a> {
     /// A branch's bias: the turn it leaves its parent with, radians, fading over a
     /// length, m, as it bends back to the field.
     bias: (f64, f64),
+    /// The fissure is held open by more than the tide: a plume's fissure by the bending
+    /// of its neighbours' flanking ridges, which place it (F57), and by its own venting.
+    /// It runs while its zone lets it, whatever the tide across its own plane.
+    held_open: bool,
 }
 
 impl TraceRules<'_> {
@@ -306,6 +310,7 @@ impl TraceRules<'_> {
             junction: 0.0,
             wobble: (LINEA_WOBBLE_RAD, LINEA_WOBBLE_LENGTH),
             bias: (0.0, 1.0),
+            held_open: false,
         }
     }
 }
@@ -587,6 +592,7 @@ impl Cracks {
                         junction: (0.5 * width).max(cell),
                         wobble: (LINEA_WOBBLE_RAD, LINEA_WOBBLE_LENGTH),
                         bias: (0.0, 1.0),
+                        held_open: false,
                     };
                     let points = match kind {
                         LineaKind::Cycloid => {
@@ -702,6 +708,7 @@ impl Cracks {
                 junction,
                 wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
                 bias: (0.0, 1.0),
+                held_open: true,
             };
             self.ridge_trace(axis, p0, phase, spacing, l_max, id_of(0), &rules)
         };
@@ -777,6 +784,7 @@ impl Cracks {
                             sign * VENT_FORK_ANGLE_DEG.to_radians(),
                             VENT_FORK_BIAS_LENGTH,
                         ),
+                        held_open: true,
                     };
                     self.ridge_trace(axis, tip, phase, spacing, length, id_of(kf), &rules)
                 };
@@ -823,6 +831,7 @@ impl Cracks {
                         junction,
                         wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
                         bias: (0.0, 1.0),
+                        held_open: true,
                     };
                     self.ridge_trace(axis, p, phase, spacing, l_max, id_of(k), &rules)
                 };
@@ -922,7 +931,7 @@ impl Cracks {
                 let mut d = crack_direction(p, &stress, along);
                 // The crack runs on while the stress across its own plane opens it.
                 let opening = along.map_or(s1, |prev| plane_loading(prev, d, p, s1, s2).0);
-                if opening < ICE_CRACK_STRESS && i > 2 {
+                if !rules.held_open && opening < ICE_CRACK_STRESS && i > 2 {
                     break;
                 }
                 if along.is_none() {
@@ -1114,6 +1123,10 @@ pub fn linea_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let deeps = layers.deep.as_slice();
+    let melts = layers.melt.as_slice();
+    let covers = layers.cover.as_slice();
     let cell = grid.delta() * body_radius;
     let width = rec.width.max(2.0 * cell);
     // A ridge narrower than the grid draws is drawn at the grid's width by the area of
@@ -1328,6 +1341,23 @@ pub fn linea_compute(
                 melt: 0.0,
                 cover: 0.0,
             };
+            // A ridge narrower than the grid renews the share of the cell its width covers
+            // (F81): the cell's surface takes the crack's time by that share.
+            let renewed = if ridged && !drawn {
+                crate::stages::fabric::strip_share(across, rec.width * vary * open, cell)
+                    * (1.0 - buried)
+            } else {
+                0.0
+            };
+            if renewed > 0.0 && ages[idx] < time {
+                let r = renewed as f32;
+                write.surface = true;
+                write.age = (1.0 - r) * ages[idx] + r * time;
+                write.unit = units[idx];
+                write.deep = deeps[idx] * (1.0 - r);
+                write.melt = melts[idx] * (1.0 - r);
+                write.cover = covers[idx] * (1.0 - r);
+            }
             if inside && ages[idx] <= time + 1e-6 {
                 write.surface = true;
                 write.age = time;
@@ -1350,10 +1380,18 @@ pub fn linea_compute(
             // band's floor, stained across it. A crack buried under loose cover laid it
             // under the snow.
             let core = (0.5 * width_here).hypot(0.5 * cell);
-            let cut = (1.0 - (from_trace / core).powi(2)).clamp(0.0, 1.0);
+            let cut = if ridged && !drawn {
+                renewed
+            } else {
+                (1.0 - (from_trace / core).powi(2)).clamp(0.0, 1.0)
+            };
             let laid = match rec.kind {
                 LineaKind::Vent => 0.0,
                 LineaKind::Band => stain_now * cut,
+                // A ridge narrower than the grid lays its stain by its share (F81).
+                _ if ridged && !drawn => {
+                    stain_now * crate::stages::fabric::narrow_margin(from_trace, rec.width, cell)
+                }
                 _ => {
                     stain_now
                         * (-(from_trace / margin).powi(2)).exp()
@@ -1462,6 +1500,7 @@ mod tests {
             junction: 1e3,
             wobble: (0.0, 1.0),
             bias: (0.0, 1.0),
+            held_open: false,
         };
         let mut sharpest = 0.0f64;
         let mut sharpest_cycloid = 0.0f64;
@@ -1523,13 +1562,16 @@ mod tests {
     }
 
     /// Under a plume the vents of the thinned zone come in a cascade (F57): a parallel
-    /// set a quarter flexural parameter apart, each long enough to cross the core.
+    /// set a quarter flexural parameter apart, each long enough to cross the core, and
+    /// each running its whole length.
     #[test]
     fn the_tiger_stripes_form_a_parallel_cascade() {
         let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
         let cracks = Cracks::new(&g).unwrap();
         let present = g.f64("body.age");
-        let all = cracks.generate(present, &CubeSphere::new(128), 7);
+        // As the preset renders: its own seed, at the standard finish's grid.
+        let seed = g.f64("seed.cratering") as u64;
+        let all = cracks.generate(present, &CubeSphere::new(FINISHING_FACE_SIZE[1]), seed);
         let stripes: Vec<&Linea> = all
             .iter()
             .filter(|l| l.kind == LineaKind::Vent && l.time_gyr > present - 0.01)
@@ -1566,6 +1608,20 @@ mod tests {
             nearest / 1e3
         );
         assert!(parallel > 0.6, "parallel {parallel:.2}");
+        // Held open by their neighbours' bending, the stripes run their whole length: a
+        // stop by the tide across their own plane cut half of them short.
+        let traced = |l: &Linea| {
+            l.points
+                .windows(2)
+                .map(|w| angle_between(w[0], w[1]))
+                .sum::<f64>()
+                * r
+        };
+        let whole = stripes
+            .iter()
+            .filter(|l| l.length > 150e3 && traced(l) > 0.9 * l.length)
+            .count();
+        assert!(whole >= 5, "{whole} stripes run their length");
     }
 
     /// A ridge is a chain of segments (F62): its relief is greatest in the middle of a
@@ -1620,7 +1676,7 @@ mod tests {
     /// A ridge's margins (F78): a red-brown stain about twice its width across, dimmer
     /// over its medial stripe, absent while the crack is fresh and faded to the ancient
     /// band's when it is old; on a grid coarser than the ridge, its relief keeps the area
-    /// of its cross-section and it makes no surface of its own.
+    /// of its cross-section and it renews its share of the cells it crosses.
     #[test]
     fn a_ridge_stains_its_margins_as_it_ages() {
         // A grid of 2 km cells and a ridge 3 km wide along the equator.
@@ -1681,9 +1737,18 @@ mod tests {
         // The ancient band: faded to a sixth or so of the triple band's.
         let ratio = old[1] / young[1];
         assert!((0.1..0.3).contains(&ratio), "{ratio}");
-        // A 3 km ridge on 2 km cells: drawn by its area, no surface of its own.
+        // A 3 km ridge on 2 km cells: drawn by its area, it renews the share of each
+        // cell its width covers, the cell taking its time by that share, and makes no
+        // unit of its own (F81).
         let out = stamp(1.003);
-        assert!(out.cells.iter().all(|c| !c.surface));
+        assert!(out.cells.iter().all(|c| c.unit == UNIT_NONE));
+        let most = out
+            .cells
+            .iter()
+            .filter(|c| c.surface)
+            .map(|c| c.age)
+            .fold(0.0f32, f32::max);
+        assert!(most > 0.5 && most < 1.0, "{most}");
         let top = out.cells.iter().map(|c| c.bedrock).fold(0.0f32, f32::max);
         assert!(top > 50.0 && top < 160.0, "{top}");
     }

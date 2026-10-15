@@ -86,9 +86,11 @@ When: the Europa milestone, whose plumes are the test.
 
 Measured (2026-10-15, the twenty-second milestone): the rule renews no surface. It sets the retention age of the crater record, but the plains between Europa's drawn lineae and chaos keep the coarse loop's first crust, so more than half of the moon's surface carries a surface age of 4.5 Gyr. The sub-grid crater roughness (F54) reads that age and roughens the plains as a saturated ancient surface: the grain the shaded maps show on Europa's plains, against which its young chaos matrix looks smooth.
 
-Direction: the retention age from the area that lanes and chaos renew per unit time, so that it follows the same quantities they do; and the plains' ages from what renews them, the narrow ridges of the ridged plains (Doggett et al. 2009).
+Since F81 (2026-10-15, the twenty-third milestone) the plains' ages come from what renews them: the fabric of narrow ridges renews what the drawn lineae and the chaos matrix leave of one surface's worth in each retention age, so Europa's surface has a mean age of 97 Myr against its retention of 100 Myr. Still open: the retention age itself is RETENTION_ICE_OCEAN_GYR for a thin shell over the flux threshold and the body's age otherwise, a step, and the fabric's rate closes the renewal to it rather than following from the cracks' own rate of formation.
 
-When: the next Europa milestone, with the ridged plains' fabric.
+Direction: the retention age from the rate at which cracks, lanes and chaos form, so that it follows the same quantities they do.
+
+When: with the freezing stresses, which set a part of that rate.
 
 ### S7. Materials by name
 

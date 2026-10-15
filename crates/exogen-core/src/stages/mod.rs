@@ -14,6 +14,7 @@
 pub mod cryo;
 pub mod deform;
 pub mod episodic;
+pub mod fabric;
 pub mod ice;
 pub mod ice_shell;
 pub mod impacts;
@@ -358,7 +359,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 70;
+pub const FINISH_VERSION: u64 = 71;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -657,12 +658,25 @@ pub fn finish(
     }
     let shell_map = ice::ShellMap::new(graph);
     let shell_history = ice_shell_history(graph, &loop_output.thermal);
-    let lineae: Vec<lineae::Linea> = lineae::Cracks::new(graph)
+    let cracks = lineae::Cracks::new(graph);
+    let lineae: Vec<lineae::Linea> = cracks
+        .as_ref()
         .map(|c| c.generate(present, &grid, inputs.seed))
         .unwrap_or_default();
     // Chaos where a thin shell melts through, and the domes a shell over rock extrudes,
     // each at the height its relaxation has left it.
     let chaos = cryo::chaos_population(graph, present, inputs.seed);
+    // The ridged plains' fabric renews what the drawn lineae and the chaos matrix do not
+    // (F81).
+    let fabric: Vec<fabric::FabricSlice> = match &cracks {
+        Some(_) => fabric::fabric_slices(
+            graph,
+            present,
+            fabric::drawn_coverage(&lineae, body_radius),
+            chaos.iter().map(|c| c.matrix_share()).sum(),
+        ),
+        None => Vec::new(),
+    };
     let cryodomes = cryo::cryodome_population(graph, present, inputs.seed);
     let dome_heights: Vec<f64> = cryodomes
         .iter()
@@ -1096,6 +1110,7 @@ pub fn finish(
         PolarTerrain,
         FossilTerrain(usize),
         Chaos(usize),
+        Fabric(usize),
         Cryodome(usize),
         Replay(usize),
     }
@@ -1112,6 +1127,7 @@ pub fn finish(
             + lanes.len()
             + 1
             + chaos.len()
+            + fabric.len()
             + cryodomes.len()
             + replay.len(),
     );
@@ -1174,6 +1190,9 @@ pub fn finish(
     }
     for (k, c) in chaos.iter().enumerate() {
         events.push((c.time_gyr, 0, c.id ^ 0xC4A0_0000_0000, Event::Chaos(k)));
+    }
+    for (k, f) in fabric.iter().enumerate() {
+        events.push((f.time_gyr(), 0, f.id, Event::Fabric(k)));
     }
     for (k, d) in cryodomes.iter().enumerate() {
         events.push((d.time_gyr, 0, d.id ^ 0xD0CE_0000_0000, Event::Cryodome(k)));
@@ -1310,8 +1329,11 @@ pub fn finish(
                     episodes[*k].center,
                     shell_map.radius_rad + 2.0 * grid.delta(),
                 ),
-                // A generation of chaos reads the whole shell's warmth.
-                Event::Chaos(_) => ([0.0, 0.0, 1.0], std::f64::consts::PI + 2.0 * grid.delta()),
+                // A generation of chaos reads the whole shell's warmth, and a slice of
+                // the fabric crosses the whole body.
+                Event::Chaos(_) | Event::Fabric(_) => {
+                    ([0.0, 0.0, 1.0], std::f64::consts::PI + 2.0 * grid.delta())
+                }
                 Event::Cryodome(k) => {
                     let d = &cryodomes[*k];
                     (d.center, d.cap_radius(body_radius) + 2.0 * grid.delta())
@@ -1573,6 +1595,18 @@ pub fn finish(
                     }
                     Event::Chaos(k) => {
                         let out = cryo::chaos_compute(&layers, &grid, cell, present, &chaos[*k]);
+                        Some((out, None, None))
+                    }
+                    Event::Fabric(k) => {
+                        let out = fabric::fabric_compute(
+                            &layers,
+                            &grid,
+                            cell,
+                            present,
+                            &fabric[*k],
+                            cracks.as_ref()?,
+                            inputs.seed,
+                        );
                         Some((out, None, None))
                     }
                     Event::Cryodome(k) => {
@@ -2765,9 +2799,12 @@ mod tests {
         assert!(share > 0.005, "crack share {share}");
     }
 
-    /// Europa's thin shell breaks into chaos where its heat melts it through.
+    /// Europa's thin shell breaks into chaos where its heat melts it through, and its
+    /// plains are as young as its surface: the fabric of narrow ridges renews them (F81),
+    /// so the surface's mean age is its retention age and little of it is older than
+    /// three of them.
     #[test]
-    fn europa_breaks_into_chaos() {
+    fn europa_breaks_into_chaos_and_renews_its_plains() {
         let mut r = Runner::new();
         let g = preset_graph("Europa", "preview");
         let out = r.run(&g, &NoProgress).unwrap();
@@ -2780,6 +2817,29 @@ mod tests {
         assert!(
             (0.08..=0.4).contains(&share),
             "chaos matrix share {share:.3}"
+        );
+        let layers = &out.finish.layers;
+        let grid = layers.grid;
+        let present = g.f64("body.age");
+        let tau = g.f64("cratering.retention_age");
+        let (mut total, mut mean, mut old) = (0.0, 0.0, 0.0);
+        for (k, &age) in layers.surface_age.as_slice().iter().enumerate() {
+            let a = grid.cell_area(grid.cell(k));
+            let before = present - age as f64;
+            total += a;
+            mean += a * before;
+            if before > 3.0 * tau {
+                old += a;
+            }
+        }
+        let (mean, old) = (mean / total, old / total);
+        assert!(
+            (0.5 * tau..=1.5 * tau).contains(&mean),
+            "mean surface age {mean:.4} Gyr against a retention of {tau}"
+        );
+        assert!(
+            old < 0.1,
+            "{old:.3} of the surface older than three retention ages"
         );
     }
 
