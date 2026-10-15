@@ -1243,6 +1243,9 @@ pub const NSR_PERIOD_RETENTION_FACTOR: f64 = 2.0;
 /// where its stress concentrates, and run on from it at the field's heading of their
 /// own time, so that sets branch and splay.
 pub const CRACK_SHADOW_SHELLS: f64 = 0.5;
+/// A running crack misaligned with the field by more than this many degrees cannot tell
+/// which of the field's two headings is nearer, and keeps kinking the way it last kinked.
+pub const KINK_AMBIGUOUS_DEG: f64 = 80.0;
 pub const CRACK_DEFLECTION: f64 = 0.6;
 pub const CRACK_BRANCH_SHARE: f64 = 0.35;
 /// Lineae (F42): lengths as a share of the radius, log-uniform (Europa 100 to 1,500 km; a

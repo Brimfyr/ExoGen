@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
-use crate::geom::{angle_between, cross, dot, local_basis, normalize};
+use crate::geom::{angle_between, cross, dot, local_basis, normalize, rotate};
 use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
@@ -126,6 +126,72 @@ pub fn crack_direction(
         d = [-d[0], -d[1], -d[2]];
     }
     d
+}
+
+/// The heading a running crack takes at a point where the field would have it run
+/// `toward`, coming in along `prev`, under principal stresses `s1` and `s2`, most tensile
+/// first. It kinks by the maximum tangential stress criterion (Erdogan and Sih 1963):
+/// misaligned by an angle, it bears a normal stress and a shear on its own plane, and turns
+/// by 2 atan((K_I - (K_I² + 8 K_II²)^1/2) / (4 K_II)), the two loadings standing for K_I
+/// and K_II, never past the field's heading. Under near-equal tension in all directions the
+/// shear vanishes and it runs on straight; misaligned in a strongly anisotropic field it
+/// kinks sharply, as at a cycloid's cusp; a crack held closed, in pure shear, kinks by
+/// the criterion's 70.5 degrees, or to the field if it is nearer. Near a right angle the
+/// nearer of the field's two headings is ambiguous, and the crack keeps kinking the way it
+/// last kinked (`sense`, updated), as a crack that has begun to turn does.
+pub fn kinked(
+    prev: [f64; 3],
+    toward: [f64; 3],
+    p: [f64; 3],
+    s1: f64,
+    s2: f64,
+    sense: &mut f64,
+) -> [f64; 3] {
+    // The heading the crack came in on, laid in the tangent plane here: a step on the
+    // sphere tilts it out of the plane it was tangent to.
+    let prev = in_plane(prev, p);
+    let misalign = dot(prev, toward).clamp(-1.0, 1.0).acos();
+    if misalign < 1e-9 {
+        return toward;
+    }
+    let (normal, shear) = plane_loading(prev, toward, p, s1, s2);
+    let turn = if normal <= 0.0 {
+        misalign.min((1.0f64 / 3.0).acos())
+    } else if shear <= 0.0 {
+        0.0
+    } else {
+        let k = (normal - (normal * normal + 8.0 * shear * shear).sqrt()) / (4.0 * shear);
+        (2.0 * k.atan()).abs().min(misalign)
+    };
+    let mut way = dot(cross(prev, toward), p).signum();
+    if misalign > KINK_AMBIGUOUS_DEG.to_radians() && *sense != 0.0 {
+        way = *sense;
+    }
+    if turn > 0.0 {
+        *sense = way;
+    }
+    normalize(rotate(prev, p, way * turn))
+}
+
+/// The normal stress across a crack running along `prev` and the shear along it, where
+/// the field would have a crack run `toward`, under principal stresses `s1` and `s2`: the
+/// crack opens, and runs on, while the normal stress exceeds the cracking stress.
+pub fn plane_loading(
+    prev: [f64; 3],
+    toward: [f64; 3],
+    p: [f64; 3],
+    s1: f64,
+    s2: f64,
+) -> (f64, f64) {
+    let misalign = dot(in_plane(prev, p), toward).clamp(-1.0, 1.0).acos();
+    let (sn, cs) = misalign.sin_cos();
+    (s1 * cs * cs + s2 * sn * sn, (s1 - s2) * sn * cs)
+}
+
+/// A direction laid in the tangent plane at a point.
+fn in_plane(v: [f64; 3], p: [f64; 3]) -> [f64; 3] {
+    let r = dot(v, p);
+    normalize([v[0] - r * p[0], v[1] - r * p[1], v[2] - r * p[2]])
 }
 
 /// Step a point along a tangent direction by a distance on the sphere.
@@ -849,18 +915,23 @@ impl Cracks {
             }
             let mut p = p0;
             let mut along: Option<[f64; 3]> = rules.one_way;
+            let mut kink_sense = 0.0;
             for i in 0..half {
                 let stress = self.shell.total(axis, p, phase);
-                let (s1, _, _) = stress.principal();
-                if s1 < ICE_CRACK_STRESS && i > 2 {
+                let (s1, s2, _) = stress.principal();
+                let mut d = crack_direction(p, &stress, along);
+                // The crack runs on while the stress across its own plane opens it.
+                let opening = along.map_or(s1, |prev| plane_loading(prev, d, p, s1, s2).0);
+                if opening < ICE_CRACK_STRESS && i > 2 {
                     break;
                 }
-                let mut d = crack_direction(p, &stress, along);
                 if along.is_none() {
                     d = [sign * d[0], sign * d[1], sign * d[2]];
                 }
                 // Wander: a slow turn by noise along the trace; and for a branch the
                 // bias it leaves its parent with, fading as it bends back to the field.
+                // Both turn the heading the crack seeks, not the one it has, so they do
+                // not add up step by step.
                 let (wobble, wobble_length) = rules.wobble;
                 let turn = wobble
                     * noise.fbm(
@@ -873,11 +944,18 @@ impl Cracks {
                     / 0.6
                     + rules.bias.0 * (-(i as f64 * spacing) / rules.bias.1.max(1.0)).exp();
                 let side_dir = normalize(cross(p, d));
-                let mut d = normalize([
+                let sought = normalize([
                     d[0] * turn.cos() + side_dir[0] * turn.sin(),
                     d[1] * turn.cos() + side_dir[1] * turn.sin(),
                     d[2] * turn.cos() + side_dir[2] * turn.sin(),
                 ]);
+                // A running crack turns toward the heading it seeks only as the field
+                // shears it (`kinked`), so it does not turn at right angles where the
+                // field's principal directions swap.
+                let mut d = match along {
+                    Some(prev) => kinked(prev, sought, p, s1, s2, &mut kink_sense),
+                    None => sought,
+                };
                 if polar {
                     // Leaving the thinned core, the crack meets a thicker, stiffer shell
                     // and refracts along the contrast: it turns to run round the margin,
@@ -941,13 +1019,23 @@ impl Cracks {
         let mut run = 0.0;
         let mut since_point = 0.0;
         let mut idle = 0usize;
+        let mut kink_sense = 0.0;
         let max_steps = CYCLOID_MAX_ORBITS * CYCLOID_PHASE_STEPS;
         for _ in 0..max_steps {
             let stress = self.shell.total(axis, p, phase);
-            let (s1, _, _) = stress.principal();
-            if s1 >= ICE_CRACK_STRESS {
+            let (s1, s2, _) = stress.principal();
+            let toward = crack_direction(p, &stress, along);
+            // The crack runs while the stress across its own plane opens it (Hoppa et
+            // al.'s timing, judged on the crack's plane): where the field's principal
+            // directions swap through the orbit, as they do on the equator, it waits for
+            // the next orbit instead of turning.
+            let opening = along.map_or(s1, |prev| plane_loading(prev, toward, p, s1, s2).0);
+            if opening >= ICE_CRACK_STRESS {
                 idle = 0;
-                let d = crack_direction(p, &stress, along);
+                let d = match along {
+                    Some(prev) => kinked(prev, toward, p, s1, s2, &mut kink_sense),
+                    None => toward,
+                };
                 let Some(d) = self.steer(p, d, rules) else {
                     break;
                 };
@@ -1262,7 +1350,7 @@ pub fn linea_compute(
             // band's floor, stained across it. A crack buried under loose cover laid it
             // under the snow.
             let core = (0.5 * width_here).hypot(0.5 * cell);
-            let cut = (1.0 - (across / core).powi(2)).clamp(0.0, 1.0);
+            let cut = (1.0 - (from_trace / core).powi(2)).clamp(0.0, 1.0);
             let laid = match rec.kind {
                 LineaKind::Vent => 0.0,
                 LineaKind::Band => stain_now * cut,
@@ -1309,6 +1397,107 @@ mod tests {
         let floor = linea_profile(LineaKind::Band, 0.0, 20e3, 100.0, 0.0);
         let outside = linea_profile(LineaKind::Band, 15e3, 20e3, 100.0, 0.0);
         assert!(floor < -90.0 && outside > -5.0, "{floor} {outside}");
+    }
+
+    /// A crack's heading is carried from step to step in the plane tangent where it is:
+    /// Europa's ridges and cycloids almost never turn back and forth step after step (a
+    /// heading left tilted out of the plane zigzagged at every step). A cycloid's cusp
+    /// reverses its curvature once; a zigzag reverses it at every step.
+    #[test]
+    fn europa_s_cracks_do_not_zigzag() {
+        let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
+        let cracks = Cracks::new(&g).unwrap();
+        let present = g.f64("body.age");
+        let all = cracks.generate(present, &CubeSphere::new(256), 3);
+        // Per kind, ridges then cycloids: runs of three turns, those alternating in sense
+        // by over half a degree each, and the worst of them.
+        let mut tally = [(0usize, 0usize, 0.0f64); 2];
+        for l in all.iter().filter(|l| l.kind != LineaKind::Band) {
+            let (steps, reversals, worst) = &mut tally[usize::from(l.kind == LineaKind::Cycloid)];
+            let turns: Vec<f64> = l
+                .points
+                .windows(3)
+                .map(|w| {
+                    let a = normalize([w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]]);
+                    let b = normalize([w[2][0] - w[1][0], w[2][1] - w[1][1], w[2][2] - w[1][2]]);
+                    dot(cross(a, b), w[1]).signum() * dot(a, b).clamp(-1.0, 1.0).acos().to_degrees()
+                })
+                .collect();
+            for t in turns.windows(3) {
+                *steps += 1;
+                if t[0] * t[1] < 0.0 && t[1] * t[2] < 0.0 && t.iter().all(|x| x.abs() > 0.5) {
+                    *reversals += 1;
+                    *worst = worst.max(t.iter().fold(f64::INFINITY, |m, x| m.min(x.abs())));
+                }
+            }
+        }
+        let [(rs, rr, rw), (cs, cr, cw)] = tally;
+        eprintln!("ridges {rr} of {rs}, worst {rw:.1}; cycloids {cr} of {cs}, worst {cw:.1}");
+        assert!(
+            (rr as f64) < 0.005 * rs as f64 && rw < 5.0,
+            "ridges {rr} of {rs}, {rw:.1}"
+        );
+        // A cycloid's arcs curve steadily and its cusps turn sharply one way; the few
+        // alternations sit at the cusps, small.
+        assert!(
+            (cr as f64) < 0.06 * cs as f64 && cw < 8.0,
+            "cycloids {cr} of {cs}, {cw:.1}"
+        );
+    }
+
+    /// A crack runs on straight where the tension is near equal in all directions, so it
+    /// does not turn at right angles where the field's principal directions swap: traced
+    /// from the equator, where the field's symmetry sets them east and north, no step of
+    /// Europa's cracks turns by as much as 45 degrees.
+    #[test]
+    fn a_crack_does_not_stair_step_where_the_field_swaps() {
+        let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
+        let cracks = Cracks::new(&g).unwrap();
+        let present = g.f64("body.age");
+        let rules = TraceRules {
+            polar: false,
+            index: None,
+            exclude: None,
+            one_way: None,
+            junction: 1e3,
+            wobble: (0.0, 1.0),
+            bias: (0.0, 1.0),
+        };
+        let mut sharpest = 0.0f64;
+        let mut sharpest_cycloid = 0.0f64;
+        let turn = |pts: &[[f64; 3]]| {
+            let mut most = 0.0f64;
+            for w in pts.windows(3) {
+                let a = normalize([w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]]);
+                let b = normalize([w[2][0] - w[1][0], w[2][1] - w[1][1], w[2][2] - w[1][2]]);
+                most = most.max(dot(a, b).clamp(-1.0, 1.0).acos().to_degrees());
+            }
+            most
+        };
+        for k in 0..72 {
+            let lon = (k as f64 * 5.0).to_radians();
+            for lat in [-0.03f64, 0.0, 0.04] {
+                let p0 = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+                for time in [present - 0.02, present - 0.06] {
+                    let axis = mean_axis_at(time, present, cracks.nsr_period_gyr);
+                    let (peak, phase) = cracks.shell.peak_tension(axis, p0);
+                    if peak <= ICE_CRACK_STRESS {
+                        continue;
+                    }
+                    let pts = cracks.ridge_trace(axis, p0, phase, 1.2e3, 600e3, k, &rules);
+                    sharpest = sharpest.max(turn(&pts));
+                    // A cycloid kinks at its cusps, by no more than the criterion's
+                    // 70.5 degrees: never the right angles of a stair.
+                    let pts = cracks.cycloid(axis, p0, phase, 1.2e3, 600e3, &rules);
+                    sharpest_cycloid = sharpest_cycloid.max(turn(&pts));
+                }
+            }
+        }
+        assert!(sharpest < 45.0, "sharpest step {sharpest:.1} degrees");
+        assert!(
+            sharpest_cycloid < 75.0,
+            "sharpest cycloid step {sharpest_cycloid:.1} degrees"
+        );
     }
 
     /// Europa's cracks nucleate over every longitude: no sector of the body is short of
