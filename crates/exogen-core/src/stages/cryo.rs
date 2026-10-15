@@ -522,7 +522,7 @@ fn write(idx: usize, bedrock: f64) -> CellWrite {
 /// The stain of a chaos matrix as it stands at an age, Gyr: the ocean's material stains
 /// it as it stains a crack's margins (F78), from the start, and fades with the salts to
 /// the ancient band's share.
-fn matrix_stain(age: f64) -> f64 {
+pub fn matrix_stain(age: f64) -> f64 {
     LINEA_STAIN
         * (LINEA_STAIN_RESIDUAL + (1.0 - LINEA_STAIN_RESIDUAL) * (-age / SALT_FADE_GYR).exp())
 }

@@ -26,6 +26,7 @@ use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, cross, dot, local_basis, normalize, rotate};
 use crate::grid::CubeSphere;
+use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
@@ -86,7 +87,8 @@ impl Linea {
     pub fn reach(&self, cell: f64) -> f64 {
         let width = self.width.max(2.0 * cell);
         match self.kind {
-            LineaKind::Band => 0.5 * width + 0.3 * width + 2.0 * cell,
+            // A band pushes the plates it opens between over half its length (F83).
+            LineaKind::Band => (0.5 * self.length).max(width + 2.0 * cell),
             LineaKind::Vent => width + 2.0 * cell,
             _ => {
                 let (_, asides) = chain(self, width);
@@ -721,7 +723,7 @@ impl Cracks {
                             );
                             (
                                 w_lo * (w_hi / w_lo).powf(rng.uniform(bin, draw + 52)),
-                                BAND_DEPTH * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
+                                BAND_HEIGHT * (0.6 + 0.8 * rng.uniform(bin, draw + 53)),
                             )
                         }
                         LineaKind::Vent => (
@@ -1310,6 +1312,138 @@ pub fn linea_profile(kind: LineaKind, d: f64, width: f64, relief: f64, blur: f64
     }
 }
 
+/// The relief of a band across it, m, at `x` from its axis, `half` its half-width, standing
+/// `height` high (F83): a plateau of buoyant ice with a V-shaped trough along the spreading
+/// axis down to the old surface's level, a ridge along each margin, and soft walls; its
+/// lineations parallel to the axis where the grid resolves them; `blur` the spreading its
+/// relaxation since has brought.
+fn band_profile(x: f64, half: f64, height: f64, blur: f64, lineation: f64) -> f64 {
+    let a = x.abs();
+    let wall = (0.1 * half).hypot(blur).max(1.0);
+    let plateau = 0.5 * (1.0 - ((a - half) / wall).tanh());
+    let trough_half = (BAND_TROUGH_SHARE * half).hypot(blur).max(1.0);
+    let trough = (1.0 - a / trough_half).max(0.0);
+    let margin = (-((a - 0.9 * half) / (0.06 * half).hypot(blur).max(1.0)).powi(2)).exp();
+    let lines = if a < half {
+        BAND_LINEATION
+            * (1.0 - (a / half).powi(2))
+            * (2.0 * std::f64::consts::PI * a / lineation).sin()
+    } else {
+        0.0
+    };
+    height * (plateau * (1.0 - trough) + BAND_MARGIN_RIDGE * margin) + lines
+}
+
+/// A band on the resolved grid (F83). The crack pulled apart, and buoyant ice spread from
+/// its axis between the halves: inside, the band's own surface, the axis youngest, standing
+/// above the old surface's level at the crack; outside, the plates it opened between,
+/// pushed apart by its half-width at each margin, the push falling off to nothing at half
+/// the band's length, so that what crossed the crack before it opened is parted by it.
+fn band_compute(
+    layers: &LayerSet,
+    grid: &CubeSphere,
+    body_radius: f64,
+    rec: &Linea,
+    blur: f64,
+    present: f64,
+    stamper: &mut Stamper,
+) -> StampOutput {
+    let cell = grid.delta() * body_radius;
+    let corridor = rec.reach(cell);
+    let n = rec.points.len();
+    if n < 2 {
+        return StampOutput::default();
+    }
+    stamper.gather_corridor(grid, body_radius, &rec.points, corridor);
+    let footprint = std::mem::take(&mut stamper.footprint);
+    let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let deeps = layers.deep.as_slice();
+    let melts = layers.melt.as_slice();
+    let covers = layers.cover.as_slice();
+    let bedrock = PaddedField::new(grid, layers.bedrock.as_slice());
+    let stain = PaddedField::new(grid, layers.stain.as_slice());
+    let lineation = BAND_LINEATION_SPACING.max(3.0 * cell);
+    let mut cells: Vec<(CellWrite, [f32; 2])> = footprint
+        .iter()
+        .filter_map(|&(idx, _, along)| {
+            let d = grid.center(grid.cell(idx));
+            let k = (along.floor().max(0.0) as usize).min(n - 2);
+            let s = (along / (n - 1) as f64).clamp(0.0, 1.0);
+            let (a, b) = (rec.points[k], rec.points[k + 1]);
+            let normal = normalize(cross(a, b));
+            // The signed distance across the crack, m, and the band's half-width here: a
+            // lens, widest in the middle and closing to its tips.
+            let x = dot(d, normal) * body_radius;
+            let half = 0.5 * rec.width * (4.0 * s * (1.0 - s)).max(0.0).powf(BAND_TAPER_POWER);
+            let side = x.signum();
+            // The share of the cell the band covers, across its edge.
+            let covered = if half > 0.5 * cell {
+                (0.5 + (half - x.abs()) / cell).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let push = half
+                * (1.0 - (x.abs() - half).max(0.0) / (corridor - half).max(1.0)).clamp(0.0, 1.0);
+            if covered <= 0.0 && push < 0.05 * cell {
+                return None;
+            }
+            // The plate, pushed away from the axis: the old surface from nearer the crack.
+            let source = normalize([
+                d[0] - normal[0] * side * push / body_radius,
+                d[1] - normal[1] * side * push / body_radius,
+                d[2] - normal[2] * side * push / body_radius,
+            ]);
+            let from = grid.index(grid.locate(source).0);
+            let plate_bedrock = sample_bilinear(grid, &bedrock, source) as f64;
+            let plate_stain = sample_bilinear(grid, &stain, source) as f64;
+            let mut write = CellWrite {
+                idx: idx as u32,
+                bedrock: plate_bedrock as f32,
+                surface: true,
+                age: ages[from],
+                unit: units[from],
+                deep: deeps[from],
+                melt: melts[from],
+                cover: covers[from],
+            };
+            if covered <= 0.0 {
+                return Some((write, [plate_stain as f32, 1.0]));
+            }
+            // The band's own ice, at the old surface's level where the crack was, its age
+            // spreading from the axis.
+            let foot = normalize([
+                d[0] - normal[0] * x / body_radius,
+                d[1] - normal[1] * x / body_radius,
+                d[2] - normal[2] * x / body_radius,
+            ]);
+            let base = sample_bilinear(grid, &bedrock, foot) as f64;
+            let time = rec.time_gyr - BAND_SPREAD_GYR * (x.abs() / half.max(1.0)).min(1.0);
+            let band_bedrock = base + band_profile(x, half, rec.relief, blur, lineation);
+            let band_stain =
+                BAND_STAIN_SHARE * crate::stages::cryo::matrix_stain((present - time).max(0.0));
+            write.bedrock = (covered * band_bedrock + (1.0 - covered) * plate_bedrock) as f32;
+            if covered >= 0.5 {
+                write.age = time as f32;
+                write.unit = UNIT_BAND;
+                write.deep = 0.0;
+                write.melt = 0.0;
+                write.cover = 0.0;
+            }
+            let laid = covered * band_stain + (1.0 - covered) * plate_stain;
+            Some((write, [laid as f32, 1.0]))
+        })
+        .collect();
+    stamper.footprint = footprint;
+    cells.sort_by_key(|c| c.0.idx);
+    let (cells, stain): (Vec<CellWrite>, Vec<[f32; 2]>) = cells.into_iter().unzip();
+    StampOutput {
+        cells,
+        composition: None,
+        stain: Some(stain),
+    }
+}
+
 /// Stamp a crack on the resolved grid: its relief across the trace, and its unit, age
 /// and salts along it. A ridge or a cycloid that opened under loose cover deeper than
 /// its own relief built no ridges at the surface: the cover drained into it, and it
@@ -1326,6 +1460,9 @@ pub fn linea_compute(
     present: f64,
     stamper: &mut Stamper,
 ) -> StampOutput {
+    if rec.kind == LineaKind::Band {
+        return band_compute(layers, grid, body_radius, rec, blur, present, stamper);
+    }
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
@@ -1614,10 +1751,73 @@ mod tests {
         let crest = linea_profile(LineaKind::Ridge, 500.0, 2e3, 150.0, 0.0);
         let edge = linea_profile(LineaKind::Ridge, 1.5e3, 2e3, 150.0, 0.0);
         assert!(crest > centre && crest > edge, "{centre} {crest} {edge}");
-        // A band: a flat floor below the ground with soft walls.
-        let floor = linea_profile(LineaKind::Band, 0.0, 20e3, 100.0, 0.0);
-        let outside = linea_profile(LineaKind::Band, 15e3, 20e3, 100.0, 0.0);
-        assert!(floor < -90.0 && outside > -5.0, "{floor} {outside}");
+        // A band (F83): it stands high, a trough along its axis down to the old level and
+        // a ridge along each margin, and nothing beyond it.
+        let at = |x: f64| band_profile(x, 10e3, 150.0, 0.0, 1e9);
+        assert!(at(0.0).abs() < 1.0, "{}", at(0.0));
+        assert!(at(5e3) > 140.0, "{}", at(5e3));
+        assert!(at(9e3) > at(6e3) + 20.0, "{} {}", at(9e3), at(6e3));
+        assert!(at(15e3).abs() < 5.0, "{}", at(15e3));
+    }
+
+    /// A band pulls the plates it opens between apart (F83): a bump beside it is pushed
+    /// outward by about its half-width, less as the push spreads into the plate, and the
+    /// band's ice spreads from its axis, the axis youngest.
+    #[test]
+    fn a_band_pulls_the_plates_apart() {
+        let r = 300e3;
+        let grid = CubeSphere::new(256);
+        let spacing = 1e3;
+        let n = (300e3 / spacing) as usize;
+        let points: Vec<[f64; 3]> = (0..=n)
+            .map(|i| {
+                let a = (i as f64 * spacing - 150e3) / r;
+                [a.cos(), a.sin(), 0.0]
+            })
+            .collect();
+        let rec = Linea {
+            points,
+            spacing,
+            length: 300e3,
+            width: 20e3,
+            relief: 150.0,
+            kind: LineaKind::Band,
+            phase: 0.0,
+            time_gyr: 1.0,
+            id: 5,
+        };
+        let mut layers = LayerSet::new(grid);
+        let bump = crate::grid::direction_from_lon_lat(0.0, 15e3 / r);
+        for k in 0..grid.cell_count() {
+            let d = grid.center(grid.cell(k));
+            let dist = angle_between(d, bump) * r;
+            layers.bedrock.as_mut_slice()[k] = (500.0 * (-(dist / 3e3).powi(2)).exp()) as f32;
+        }
+        let out = crate::crater::with_stamper(&grid, |stamper| {
+            linea_compute(&layers, &grid, r, &rec, 0.0, None, 1.0, stamper)
+        });
+        // Where the bump stands now: the highest cell north of the band near its meridian.
+        let (mut peak, mut lat) = (f32::MIN, 0.0);
+        let (mut axis, mut margin) = (0.0f32, 1.0f32);
+        for w in &out.cells {
+            let d = grid.center(grid.cell(w.idx as usize));
+            let (lon, la) = crate::grid::lon_lat_from_direction(d);
+            let north = la * r;
+            if lon.abs() * r < 3e3 && north > 12e3 && w.bedrock > peak {
+                peak = w.bedrock;
+                lat = north;
+            }
+            if w.unit == UNIT_BAND && lon.abs() * r < 20e3 {
+                if north.abs() < 2e3 {
+                    axis = axis.max(w.age);
+                } else if north.abs() > 7e3 {
+                    margin = margin.min(w.age);
+                }
+            }
+        }
+        assert!((22e3..26e3).contains(&lat), "bump at {:.1} km", lat / 1e3);
+        assert!(peak > 400.0, "{peak}");
+        assert!(axis > margin && axis <= 1.0, "axis {axis}, margin {margin}");
     }
 
     /// A crack's heading is carried from step to step in the plane tangent where it is:

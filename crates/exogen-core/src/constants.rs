@@ -1309,7 +1309,23 @@ pub const CYCLOID_MAX_ORBITS: usize = 12;
 pub const CYCLOID_PHASE_STEPS: usize = 64;
 pub const BAND_FRACTION: f64 = 0.15;
 pub const BAND_WIDTH_RAD: (f64, f64) = (0.0064, 0.019);
-pub const BAND_DEPTH: f64 = 100.0;
+/// A band spreads (F83): it stands this high, m, on the buoyant ice that fills it (Prockter
+/// et al. 2002: bands stand high, of thermally or compositionally buoyant ice; a moderate
+/// relief of a few hundred metres; a stated choice within it), with a V-shaped trough
+/// along its spreading axis down to the old surface's level over this share of its
+/// half-width and a ridge along its margins this share of its height (stated choices:
+/// Prockter et al.'s central trough and marginal ridge); its ice spreads from the axis
+/// over this long, Gyr (a stated choice), the axis youngest; and the plates it opens
+/// between are pushed apart by its width, the push spreading into them over half its
+/// length, as a crack's opening does over its length.
+pub const BAND_HEIGHT: f64 = 150.0;
+pub const BAND_TROUGH_SHARE: f64 = 0.2;
+pub const BAND_MARGIN_RIDGE: f64 = 0.3;
+pub const BAND_SPREAD_GYR: f64 = 0.002;
+/// A band's new ice is grey when young, darker than the plains by less than a triple
+/// band's margins (a stated choice: Galileo's dark bands are grey wedges): it lays this
+/// share of a margin's stain.
+pub const BAND_STAIN_SHARE: f64 = 0.5;
 /// A band is a lens: its width scaled by (4 s (1 - s)) to this power along its length, s
 /// the share of the length; and it is lineated inside, parallel to its axis, at this
 /// spacing, m (or three cells), by this much, m.

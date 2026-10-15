@@ -442,3 +442,34 @@ The two artefacts had two causes, found by tracing every write to the cells invo
 - **Stamps computed together that touched the same cells.** Stamps whose caps are apart are computed in parallel against the state before their wave, and then applied. A linea's cap counted only its width, but its stamp reaches out to 2.5 times its margins, offset by its segments: 5 to 16 km beyond its trace. Two stamps in one wave could then write the same cell, the later one from the state before the earlier was applied. The cap now bounds the stamp's reach, computed as the stamp computes it; a vent, which lays no stain, reaches only its width and two cells.
 
 The square ends: a crack closes toward its tips, and an elastic crack under a uniform load opens as an ellipse along its length. A ridge's width, its stain and the surface it renews now follow that ellipse, (4 s (1 - s))^(1/2), so a crack fades to its tips; the first try, with the gentler (4 s (1 - s))^(1/4) the relief uses, faded only in the last kilometre and still looked square on the map. A ridge then renews pi/4 of its width along its length, which the fabric's renewal budget counts. Tests 150, clippy clean, validate 117.
+
+## The twenty-fifth milestone: a band spreads
+
+The user on the twenty-fourth, revised: "Once you have addressed these, move on to the next milestone."
+
+Europa's bands were drawn as lens-shaped floors 100 m below the plains, stained like a crack's margins: thick brown lines on the map. The published bands are the opposite in height and different in kind:
+
+- **High-standing.** They spread from a V-shaped trough along their axis, roughly symmetric, as mid-ocean ridges do, of buoyant ice, with a ridge along their sharp margins (Prockter et al. 2002) and a relief of a few hundred metres.
+- **Dilational.** The surface on either side matches across when a band is closed up (Tufts et al. 2000).
+
+A band now (F83):
+
+- stands 150 m above the old surface's level where its crack was, with a V trough along its axis down to that level and a ridge along each margin, lineated along its axis where the grid resolves it;
+- has ice that spreads from the axis over 2 Myr, the axis youngest;
+- is grey when young, laying half a margin's stain, and fades with the salts;
+- pushes the plates it opens between apart by its half-width at each margin, the push spreading into them over half its length, as a crack's opening does: what crossed the crack is parted by the band's width, and what ran beside it bows away.
+
+It took two renders. The first drew solid, saturated brown lenses with pixel-jagged edges: each cell was band or plate, and the band's new ice took the full stain the chaos matrix does. A cell across a band's edge now takes the band by the share of it the band covers, and the band lays half a margin's stain, so young bands read as grey wedges as the reference shows them.
+
+What the maps show:
+
+- **Europa:** its 168 bands are grey, raised lenses with soft edges, lineated along their axes in the shaded relief; older features beside them bow away, and those that crossed their cracks are parted.
+
+What they still do not show:
+
+- **Wedge shapes:** a band opens as a symmetric lens, where many of Europa's open as wedges, the plates rotating about a pole.
+- **Bright old bands:** old bands brighter than the plains, as the reference shows in the south.
+- **Lanes:** bands do not yet share the lane mechanism (F61) that Ganymede's grooved terrain uses.
+- **Stated choices:** the band's height, trough, marginal ridge, spreading time and stain share.
+
+Tests 151. One is new: a band pulls the plates apart, a bump beside it moving outward by the predicted push, and its ice spreads from its axis. The profile test now checks the raised band. Clippy is clean and validate passes its 117 checks.
