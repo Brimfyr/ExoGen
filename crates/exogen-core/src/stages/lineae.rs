@@ -1158,6 +1158,7 @@ impl Cracks {
         let mut run = 0.0;
         let mut since_point = 0.0;
         let mut idle = 0usize;
+        let mut active = 0usize;
         let mut kink_sense = 0.0;
         let max_steps = CYCLOID_MAX_ORBITS * CYCLOID_PHASE_STEPS;
         let mut felt = None;
@@ -1175,6 +1176,13 @@ impl Cracks {
             let opening = along.map_or(s1, |prev| plane_loading(prev, toward, p, s1, s2).0);
             if opening >= ICE_CRACK_STRESS {
                 idle = 0;
+                // A crack the tension holds open through half an orbit no longer stops and
+                // starts again with the orbit, as a cycloid's does (F82: a shell's freezing
+                // can hold it so): it would follow the field's turn into a loop, and ends.
+                active += 1;
+                if active > CYCLOID_PHASE_STEPS / 2 {
+                    break;
+                }
                 let d = match along {
                     Some(prev) => kinked(prev, toward, p, s1, s2, &mut kink_sense),
                     None => toward,
@@ -1196,6 +1204,7 @@ impl Cracks {
             } else {
                 // The crack waits for the tension to return; it gives up after an orbit
                 // without it.
+                active = 0;
                 idle += 1;
                 if idle > CYCLOID_PHASE_STEPS {
                     break;

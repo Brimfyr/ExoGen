@@ -418,6 +418,8 @@ It took three renders, judged on the maps:
 
 The heterogeneity first bent Enceladus's tiger stripes too, and two of them converged. A plume's fissures are steered by the bending of their neighbours' flanking ridges, which runs along the neighbour and is far stronger near them than the heterogeneity (some 135 kPa on Enceladus against 16), so they keep to the tide and their neighbours. The tiger-stripe test now also checks that every whole stripe keeps within 50 degrees of the first's heading along its length; the bent stripes had diverged by 63.
 
+The last look found one more thing: a few cracks curled into loops some 150 km across. They were cycloids. A cycloid forms because its crack stops and starts again with each orbit, following the turning diurnal field while it runs. Where the freezing holds the crack open through a whole orbit, it follows the field's turn into a loop, its 250 km of growth per orbit curving through half a turn. A crack held open through half an orbit no longer behaves as a cycloid's does, and now ends there.
+
 What the maps show:
 
 - **Europa:** near the equator, where the tide is weakest, the lineae and the fabric form a network of long, gently undulating lines crossing at every angle, as the reference shows there. Elsewhere the tide's great arcs remain, bent gently. 2,527 lineae, against 2,684 under the tide alone.
