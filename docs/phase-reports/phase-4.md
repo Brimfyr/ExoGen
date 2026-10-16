@@ -700,3 +700,31 @@ What they still do not show:
 - **Rays bright by composition**, a crater throwing one unit's material over another, which would break contacts up crater by crater rather than as a smooth zone.
 
 Tests 171 (three ignored). Three are new: a pyramid level spreads as its kernels add up; gardening blurs an old contact and keeps a young one sharp; a flood fills a crater it comes into and not one whose rim holds it out. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-third milestone: Callisto's jets, broken rings and bright walls
+
+The user on Callisto after the thirty-first: "The dark lag for Callisto is causing the two crater ejecta patterns (the immediate 'star shape' and the long rays) to 'unlink' ... and so the fade-to-background in the star shape overlays the rays causing a solid gray circle around them." "The ringed craters' rings are far smoother and more uniform than real Callisto. They also cover the entire surface, whereas that doesn't appear to be the case for real Callisto. We are still missing the 'starry' look on its surface. Our small Moon craters have white rim colours which is what Callisto needs to achieve that look." During the work: "I wonder if the ice-capped knobs contribute to Callisto's speckled appearance? But aren't they too small to be a global feature? jpegPIA01297 shows that crater walls are indeed bright, and jpegPIA01649 shows the same bright walls on the ring structures."
+
+- **F96, jets.** Beyond the continuous blanket the deposit follows the ejecta curtain's jets, so a young crater's spikes run on into its rays and the ground between them stays old: no grey disc.
+- **F97, broken rings.** A ring system's graben survive the later cratering by the equilibrium the craters themselves reach: Callisto's oldest systems are gone or scattered troughs, its youngest keep their rings in stretches.
+- **F98, bright walls.** Each crater writes the share of its walls steep enough to shed, from its own profile at a finer scale than the grid, and an icy lag sheds from gentler slopes than a silicate regolith: Callisto's crater rims and trough walls stand bright.
+
+How it went:
+
+- **The grey circle** was the ejecta's cover past the blanket's edge, the same at every azimuth, which both the stamp's reset age and the ray field's blanket follow. The blanket's lobes came from the curtain's finest harmonics only, which is why the star's points and the rays did not line up.
+- **The rings** come from Melosh's gamma on the 18 km lithosphere Callisto had in its first half billion years: 77 systems, all kept, while the craters that formed with them have gone by the population's equilibrium. Pieces of two graben widths left lenses and little diamonds once their walls were bright; three widths leave fewer.
+- **The white rims.** The resolved slopes showed why the Moon's rims are white and Callisto's are not: three hundredths of a per cent of Callisto's surface against 6.4 per cent of the Moon's steeper than 20 degrees at the same pixel count. The walls written from each crater's profile helped Callisto's small young craters only: its craters are nearly three times shallower than the Moon's (Schenk 2002), their walls under 20 degrees. The user's Galileo images show its walls bright at those angles, the lag gone from them, so the lag's own angle of shedding came down.
+
+What the maps show:
+
+- **Callisto:** young craters bright with spiky ejecta running on into rays; a speckle of bright crater rims over the whole surface; one or two basins with rings in bright broken troughs, scattered troughs elsewhere.
+- **Ganymede:** bright crater rims and bright-rimmed furrows in the dark terrain.
+- **The Moon:** white rims on its small craters at any resolution, and slightly sharper spokes in its young craters' ejecta.
+
+What they still do not show:
+
+- **Callisto's disintegrating rims:** its craters are clean bright circles, where the real ones break into knobs (Moore et al. 1999). The sublimation that carves them is not modelled.
+- **Ring troughs' shapes:** the shortest surviving pieces are spindles, both walls bright to their tips.
+- **Callisto's high-latitude rays,** long and bright over a dark background where real Callisto's high latitudes carry frost.
+
+Tests 175 (four ignored). Four are new: the later cratering strikes out a share of the graben; the ejecta beyond the blanket run out along the jets; a wall sheds where its own profile is steep; and a diagnostic, ignored, writes the walls' slopes. Clippy is clean and validate passes its 117 checks.

@@ -410,6 +410,46 @@ impl ProfileTable {
 mod tests {
     use super::*;
 
+    /// Diagnostic: the steepest wall of each profile and the share of the radius steeper
+    /// than 10 degrees, on Callisto and the Moon, fresh and degraded, for the slopes from
+    /// which the ground sheds (F98).
+    #[test]
+    #[ignore]
+    fn write_wall_slopes() {
+        let callisto = Scaling {
+            simple_complex: 3_244.0,
+            peak_ring: 27_577.0,
+            multi_ring: 64_887.0,
+            gravity: 1.235,
+            icy: true,
+        };
+        for (name, s, kappa) in [("callisto", callisto, 4.8), ("moon", lunar(), 5.5)] {
+            for d in [5e3, 10e3, 20e3, 40e3, 80e3] {
+                let dim = dimensions(d, &s);
+                for eq_gyr in [0.0, 1.0, 5.7, 30.0, 300.0] {
+                    let t = ProfileTable::new(dim, kappa * eq_gyr * 1e3);
+                    let mut max = 0.0f64;
+                    let mut wide = 0.0;
+                    for k in 1..t.values.len() {
+                        let a = ((t.values[k] - t.values[k - 1]).abs() / t.step)
+                            .atan()
+                            .to_degrees();
+                        max = max.max(a);
+                        if a > 10.0 {
+                            wide += t.step;
+                        }
+                    }
+                    eprintln!(
+                        "{name} D {:>3.0} km E {eq_gyr:>5}: depth {:>5.0} m, steepest {max:>4.1} deg, steeper than 10 deg over {:.2} R",
+                        d / 1e3,
+                        t.measured_depth(),
+                        wide / dim.radius
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn transient_cavities_follow_mckinnon_and_schenk() {
         // Tyre, 38 km across on Europa (transition 3 km): Singer et al. 2023 give 23 km.

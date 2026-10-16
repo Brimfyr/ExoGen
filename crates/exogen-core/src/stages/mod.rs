@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 83;
+pub const FINISH_VERSION: u64 = 84;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1065,6 +1065,18 @@ pub fn finish(
                     }
                     let inflow = 1.0 - relaxation::survival(diameter, RING_INFLOW_GYR, &local);
                     let kept = |l: f64| crater_kept(l, time, center);
+                    // The share of a graben no later crater as wide has struck out: the
+                    // equilibrium the craters themselves come to, at the graben's width
+                    // (F97).
+                    let survives = |w: f64| {
+                        let d_km = w / 1e3;
+                        let later = inputs.flux_scale
+                            * inputs.pf.cumulative_1gyr(d_km)
+                            * inputs.flux.equivalent_gyr(time, present);
+                        let equilibrium = inputs.saturation_fraction
+                            * crate::crater::production::geometric_saturation(d_km);
+                        (-later / equilibrium.max(1e-30)).exp()
+                    };
                     rings::ring_system(
                         &rings::Basin {
                             center,
@@ -1074,6 +1086,7 @@ pub fn finish(
                             lithosphere,
                             inflow,
                             kept: &kept,
+                            survives: &survives,
                         },
                         &inputs.scaling,
                         body_radius,
@@ -1391,6 +1404,8 @@ pub fn finish(
                         let degraded = ProfileTable::new(dim, kappa_t);
                         let smooth =
                             ProfileTable::new(dim, kappa_t + 0.5 * smooth_sigma * smooth_sigma);
+                        // The crater as it stands, whose walls shed where steep (F98).
+                        let mut walls = degraded.clone();
                         let mut detail = degraded;
                         // On an ice shell the detail relaxes by wavelength over the
                         // crater's life (F70), and its terraces, rings and peak keep the
@@ -1399,6 +1414,7 @@ pub fn finish(
                         if relaxes(dim.radius, c.time_gyr, c.center) {
                             let kept = |l: f64| crater_kept(l, c.time_gyr, c.center);
                             let full = ProfileTable::relaxed(dim, kappa_t, &kept);
+                            walls.values = full.values.clone();
                             let coarse = ProfileTable::relaxed(
                                 dim,
                                 kappa_t + 0.5 * smooth_sigma * smooth_sigma,
@@ -1429,6 +1445,7 @@ pub fn finish(
                             fine_blur: detail.sigma,
                             coarse_blur: smooth.sigma,
                             maturity_timescale: inputs.maturity_timescale,
+                            shed: inputs.shed,
                         };
                         let out = restore_compute(
                             &layers,
@@ -1439,6 +1456,7 @@ pub fn finish(
                             &base_deep,
                             &fresh,
                             &detail,
+                            &walls,
                             &params,
                             stamper,
                         );
@@ -1789,6 +1807,7 @@ pub fn finish(
                             maturity_timescale: inputs.maturity_timescale,
                             renewal_guard: false,
                             terraced: true,
+                            shed: inputs.shed,
                         };
                         let out = stamp_compute(
                             &layers,
@@ -1970,20 +1989,30 @@ pub fn finish(
         (maturity, None)
     };
     // Steep ground sheds its regolith and stays fresher than flat ground (F55): the
-    // bright walls and scarps of every airless body, from the ground's own slopes.
+    // bright walls and scarps of every airless body, from the ground's own slopes and,
+    // finer than the grid, the craters' walls at the scale they are steep (F98). An icy
+    // surface's lag sheds from gentler slopes, the ice subliming from under it, and a
+    // slope that has shed it is as clean as the ice; a silicate regolith matures in place
+    // and stays only a share fresher.
     let maturity = {
         let steep = ice::slope_magnitude(&height, body_radius);
-        let (start, repose) = (
-            SLOPE_SHED_START_DEG.to_radians(),
-            REPOSE_SLOPE_DEG.to_radians(),
-        );
+        let walls = layers.steep.as_slice();
+        let (start, repose) = inputs.shed;
+        let freshness = if ice::is_ice_surface(graph) {
+            SLOPE_FRESHNESS_ICE
+        } else {
+            SLOPE_FRESHNESS
+        };
         let mut m = maturity;
         m.as_mut_slice()
             .par_iter_mut()
             .zip(steep.as_slice())
-            .for_each(|(v, &s)| {
-                let shed = ((s as f64 - start) / (repose - start)).clamp(0.0, 1.0);
-                *v *= 1.0 - (SLOPE_FRESHNESS * shed) as f32;
+            .zip(walls)
+            .for_each(|((v, &s), &w)| {
+                let shed = ((s as f64 - start) / (repose - start))
+                    .clamp(0.0, 1.0)
+                    .max(w as f64);
+                *v *= 1.0 - (freshness * shed) as f32;
             });
         m
     };
@@ -2350,7 +2379,7 @@ impl RaySystem {
         let edge = self.ejecta_edge * self.edge.factor_at(phi, r / self.radius);
         // The blanket is bright where its deposit covers the ground (F51), fading with the
         // cover past its lobed edge rather than ending there, mottled.
-        let blanket = (ejecta_coverage(r, self.radius, edge, self.halo)
+        let blanket = (ejecta_coverage(r, self.radius, edge, self.halo, self.edge.jet(phi))
             * ejecta_modulation(phi, self.azimuth, self.angle).min(1.0)
             * self.texture.as_ref().map_or(1.0, |t| {
                 1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / self.radius)

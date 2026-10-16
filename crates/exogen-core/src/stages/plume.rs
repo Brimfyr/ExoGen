@@ -913,6 +913,7 @@ pub fn trough_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 
@@ -967,6 +968,7 @@ pub fn shield_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 

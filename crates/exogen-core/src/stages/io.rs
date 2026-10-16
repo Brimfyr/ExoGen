@@ -2595,6 +2595,7 @@ pub fn patera_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 
@@ -2643,6 +2644,7 @@ pub fn mountain_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 
@@ -2752,6 +2754,7 @@ pub fn flow_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 

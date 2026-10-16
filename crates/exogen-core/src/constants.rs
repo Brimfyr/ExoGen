@@ -1033,6 +1033,18 @@ pub const LAVA_BATCH_SHARE: f64 = 0.2;
 pub const LAVA_SOURCE_ORDER: f64 = 3.0;
 pub const SLOPE_SHED_START_DEG: f64 = 20.0;
 pub const SLOPE_FRESHNESS: f64 = 0.3;
+/// An icy surface's lag is loose dust the ice left as it sublimed, which cannot rest on a
+/// slope past its angle of repose: such a slope stays as clean as the ice, by this share
+/// at the angle of repose (F98; Moore et al. 1999 on Callisto's bright crests with the dark
+/// material gathered downslope).
+pub const SLOPE_FRESHNESS_ICE: f64 = 1.0;
+/// An icy surface's lag sheds from gentler slopes than a silicate regolith: the ice under
+/// it sublimes and undermines it, and it moves off slopes from this many degrees and is
+/// gone by this many (F98; calibrated on Callisto, whose crater walls of 10 to 20 degrees
+/// stand bright and whose plains lie dark: Galileo PIA01297 and PIA01649; Moore et al.
+/// 1999 on the dark material gathered downslope).
+pub const ICE_LAG_SHED_START_DEG: f64 = 5.0;
+pub const ICE_LAG_SHED_FULL_DEG: f64 = 15.0;
 pub const REPOSE_SLOPE_DEG: f64 = 30.0;
 pub const GROOVE_CLEAN_RANGE: (f64, f64) = (0.8, 1.0);
 /// Pike 1977 lunar morphometry, (coefficient, exponent) in km: d = a D^b.
@@ -1247,6 +1259,11 @@ pub const EJECTA_COVERAGE_TAPER: f64 = 0.25;
 /// through a deposit that thick being below what the maturity can tell: the cover is
 /// scaled by it, so the blanket renews the ground wholly out to 1.3 radii.
 pub const EJECTA_FULL_COVER: f64 = 0.92;
+/// Beyond the continuous blanket's edge the deposit's thickness follows the ejecta
+/// curtain's jets, in full from this share of the edge's distance past it (F96): the
+/// continuous blanket is complete, the discontinuous ejecta beyond it are the jets', as
+/// the rays are (a stated choice of where the one gives way to the other).
+pub const EJECTA_JET_ONSET: f64 = 0.5;
 /// A loop crater counts as recognisable while its rim-to-floor relief on the coarse surface
 /// is above this fraction of the fresh relief.
 pub const VISIBLE_RELIEF_FRACTION: f64 = 0.15;
@@ -1467,6 +1484,12 @@ pub const RING_OFFSET: f64 = 0.25;
 /// basin.
 pub const RING_INFLOW_GYR: f64 = 1e-3;
 pub const RING_MAX_FAULTS: usize = 40_000;
+/// The later cratering strikes a ring's graben out in pieces of this many graben widths,
+/// about what a crater as wide as the graben or a little wider takes out of it with the
+/// graben's own width (F97; a stated choice): each piece stands by the share of the
+/// ground no later crater as wide as the graben has reset, the equilibrium the craters
+/// themselves reach (EMPIRICAL_SATURATION_FRACTION of geometric saturation).
+pub const RING_SURVIVAL_PIECE: f64 = 3.0;
 /// The transient cavity of a complex crater: D = this x D_tr^this / D_sc^(this - 1), in
 /// kilometres (McKinnon and Schenk 1995, after Croft 1985 and Holsapple 1993).
 pub const TRANSIENT_COMPLEX: (f64, f64) = (1.17, 1.13);

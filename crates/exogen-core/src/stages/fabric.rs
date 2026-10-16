@@ -422,6 +422,7 @@ pub fn fabric_compute(
         cells,
         composition: None,
         stain: Some(stain),
+        steep: None,
     }
 }
 

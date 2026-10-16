@@ -256,6 +256,11 @@ pub struct LayerSet {
     /// contacts it makes with its neighbours, which gardening has mixed since, kept under
     /// the craters and deposits later laid on it; 0 where no eruption set it.
     pub lava_age: Field<f32>,
+    /// The share of the ground on slopes steep enough to shed its regolith, by how far past
+    /// the start they are, at the scale the slopes are steep (F98): the walls of the
+    /// craters from their own profiles, finer than the grid; a renewed surface carries
+    /// none of the old.
+    pub steep: Field<f32>,
     /// The share of the surface stained by the red-brown non-ice material of a crack's
     /// margins (F78; the triple bands of Geissler et al. 1998), 0 to 1, as it stands at
     /// the present: laid by each crack as it forms and faded since; a renewed surface
@@ -282,6 +287,7 @@ impl LayerSet {
             clean: Field::new(grid),
             composition: Field::new(grid),
             lava_age: Field::new(grid),
+            steep: Field::new(grid),
             stain: Field::new(grid),
         }
     }
@@ -322,6 +328,7 @@ impl LayerSet {
             clean: self.clean.resample(target),
             composition: self.composition.resample_nearest(target),
             lava_age: self.lava_age.resample_nearest(target),
+            steep: self.steep.resample(target),
             stain: self.stain.resample(target),
         }
     }
@@ -343,6 +350,7 @@ impl LayerSet {
             self.clean.hash(),
             self.composition.hash(),
             self.lava_age.hash(),
+            self.steep.hash(),
             self.stain.hash(),
         ];
         crate::rng::hash_words(&parts)

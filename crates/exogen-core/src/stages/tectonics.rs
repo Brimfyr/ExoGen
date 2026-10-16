@@ -208,6 +208,7 @@ pub fn scarp_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 

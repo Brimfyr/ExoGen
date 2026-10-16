@@ -3381,6 +3381,7 @@ pub fn groove_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 
@@ -3643,6 +3644,7 @@ pub fn polar_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 

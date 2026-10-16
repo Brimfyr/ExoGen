@@ -494,6 +494,7 @@ pub fn resurfacing_compute(
             cells,
             composition: None,
             stain: None,
+            steep: None,
         },
         taken,
     )
@@ -544,6 +545,7 @@ pub fn corona_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 
@@ -595,6 +597,7 @@ pub fn dome_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 

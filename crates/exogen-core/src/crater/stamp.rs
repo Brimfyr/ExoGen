@@ -20,7 +20,7 @@ use crate::constants::{
 };
 use crate::constants::{
     EJECTA_COVERAGE_TAPER, EJECTA_EDGE_RAGGEDNESS, EJECTA_EXPONENT, EJECTA_FULL_COVER,
-    EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_POND_CELLS, MELT_POND_THRESHOLD,
+    EJECTA_JET_ONSET, EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_POND_CELLS, MELT_POND_THRESHOLD,
     OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
 };
 use crate::constants::{
@@ -226,6 +226,9 @@ pub struct StampOutput {
     /// away; none for a stamp that lays none, whose renewed cells lose the stain under
     /// them.
     pub stain: Option<Vec<[f32; 2]>>,
+    /// Per cell, the share of the ground on walls steep enough to shed (F98); none for a
+    /// stamp that draws no walls, whose renewed cells lose the old.
+    pub steep: Option<Vec<f32>>,
 }
 
 impl StampOutput {
@@ -239,6 +242,7 @@ impl StampOutput {
         let cover = layers.cover.as_mut_slice();
         let composition = layers.composition.as_mut_slice();
         let lava_age = layers.lava_age.as_mut_slice();
+        let steep = layers.steep.as_mut_slice();
         let stain = layers.stain.as_mut_slice();
         for (j, c) in self.cells.iter().enumerate() {
             let i = c.idx as usize;
@@ -262,6 +266,11 @@ impl StampOutput {
             if let Some(s) = &self.stain {
                 let [laid, cut] = s[j];
                 stain[i] = (stain[i] * (1.0 - cut)).max(laid);
+            }
+            match &self.steep {
+                Some(s) => steep[i] = s[j],
+                None if c.surface => steep[i] = 0.0,
+                None => {}
             }
         }
     }
@@ -305,6 +314,49 @@ where
         footprint.par_iter().map(f).collect()
     } else {
         footprint.iter().map(f).collect()
+    }
+}
+
+/// Where a crater's walls are steep enough to shed their regolith, by radius (F98): from
+/// its own profile, tabulated finer than the grid, so that the walls shed at the scale
+/// they are steep whatever the cell, by how far past the start of shedding toward where
+/// it is complete they stand, as the resolved slopes do.
+pub struct WallShed {
+    /// The shed integrated over radius from the centre, m, at each of the profile's
+    /// samples.
+    cumulative: Vec<f64>,
+    step: f64,
+}
+
+impl WallShed {
+    pub fn new(profile: &ProfileTable, amplitude: f64, shed: (f64, f64)) -> Self {
+        let (start, repose) = shed;
+        let mut cumulative = vec![0.0; profile.values.len()];
+        for k in 1..profile.values.len() {
+            let rise = (profile.values[k] - profile.values[k - 1]).abs() * amplitude.abs();
+            let slope = (rise / profile.step).atan();
+            let shed = ((slope - start) / (repose - start)).clamp(0.0, 1.0);
+            cumulative[k] = cumulative[k - 1] + shed * profile.step;
+        }
+        Self {
+            cumulative,
+            step: profile.step,
+        }
+    }
+
+    /// The share of the ground between the radii `a` and `b`, m, that sheds.
+    pub fn share(&self, a: f64, b: f64) -> f64 {
+        let n = self.cumulative.len();
+        let at = |r: f64| {
+            let x = (r / self.step).clamp(0.0, (n - 1) as f64);
+            let k = (x.floor() as usize).min(n - 2);
+            let f = x - k as f64;
+            self.cumulative[k] * (1.0 - f) + self.cumulative[k + 1] * f
+        };
+        if b <= a {
+            return 0.0;
+        }
+        ((at(b) - at(a)) / (b - a)).clamp(0.0, 1.0)
     }
 }
 
@@ -357,6 +409,9 @@ pub struct StampParams {
     /// the grid resolves it. The coarse loop keeps the plain wall, and the finish restores
     /// its terraces with the rest of its detail.
     pub terraced: bool,
+    /// The slopes, radians, from which the ground sheds what lies loose on it and at which
+    /// it sheds it all (F98): a silicate regolith's, or an icy surface's lag.
+    pub shed: (f64, f64),
 }
 
 /// Stamp one crater. Returns the number of cells touched.
@@ -456,6 +511,25 @@ pub fn stamp_compute(
     let melts = layers.melt.as_slice();
     let covers = layers.cover.as_slice();
     let cleans = layers.clean.as_slice();
+    let walls = WallShed::new(profile, p.amplitude, p.shed);
+    let half_cell = 0.5 * grid.delta() * body_radius;
+    let steeps = layers.steep.as_slice();
+    // The walls' steep share where the crater drew them (F98); its ejecta bury the old
+    // walls' by their cover.
+    let steep_of = |&(idx, r, phi): &(usize, f64, f64)| -> f32 {
+        if p.renewal_guard && cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6 {
+            return steeps[idx];
+        }
+        let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+        let own = walls.share(re - half_cell, re + half_cell);
+        if re <= dim.radius {
+            return own as f32;
+        }
+        let cont = continuous * edge.factor_at(phi, re / dim.radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
+        own.max(steeps[idx] as f64 * (1.0 - cover.clamp(0.0, 1.0))) as f32
+    };
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         // A cell whose substrate was renewed from below after this crater, the clean ice
         // of a lane or a polar terrain, holds nothing of its deposit; nor of its relief,
@@ -530,7 +604,7 @@ pub fn stamp_compute(
             cover: 0.0,
         };
         let cont = continuous * edge.factor_at(phi, re / dim.radius);
-        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
         if p.set_age && cover > 0.0 && !renewed_later {
             // The deposit covers the ground by its cover (F51); the cell keeps the one
             // age whose exposure gives the mixture's maturity. Where the cover is under
@@ -567,10 +641,16 @@ pub fn stamp_compute(
         }
         write
     };
+    let steep = if stamper.footprint.len() >= PARALLEL_FOOTPRINT {
+        stamper.footprint.par_iter().map(steep_of).collect()
+    } else {
+        stamper.footprint.iter().map(steep_of).collect()
+    };
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
         stain: None,
+        steep: Some(steep),
     }
 }
 
@@ -1051,6 +1131,8 @@ pub fn lobes(seed: u64, phi: f64, max_order: f64) -> f64 {
 /// crater's ejecta curtain, which start its rays (F91).
 pub struct EdgeShape {
     table: [f64; 64],
+    /// The curtain's mass by azimuth at the jets the grid resolves, mean 1 (F96).
+    jets: [f64; 64],
 }
 
 impl EdgeShape {
@@ -1058,6 +1140,7 @@ impl EdgeShape {
     /// m: lobes narrower than a few cells along the edge are left out.
     pub fn new(seed: u64, ejecta_radius: f64, cell: f64) -> Self {
         let mut table = [1.0; 64];
+        let mut jets = [1.0; 64];
         if seed != 0 {
             let max_order = 2.0 * std::f64::consts::PI * ejecta_radius
                 / (EJECTA_LOBE_MIN_CELLS * cell.max(1.0));
@@ -1065,8 +1148,20 @@ impl EdgeShape {
             for (t, l) in table.iter_mut().zip(lobes) {
                 *t = 1.0 + EJECTA_EDGE_RAGGEDNESS * l;
             }
+            let mass = crate::crater::curtain::jet_mass(seed, max_order, 64);
+            jets.copy_from_slice(&mass);
         }
-        Self { table }
+        Self { table, jets }
+    }
+
+    /// The curtain's mass thrown toward azimuth `phi`, mean 1, at the jets the grid
+    /// resolves (F96).
+    #[inline]
+    pub fn jet(&self, phi: f64) -> f64 {
+        let x = phi.rem_euclid(2.0 * std::f64::consts::PI) / (2.0 * std::f64::consts::PI) * 64.0;
+        let i = (x.floor() as usize) % 64;
+        let f = x - x.floor();
+        self.jets[i] * (1.0 - f) + self.jets[(i + 1) % 64] * f
     }
 
     #[inline]
@@ -1495,18 +1590,27 @@ pub struct RestoreParams {
     pub coarse_blur: f64,
     /// The exposure on which the surface's maturity saturates, Gyr (F51).
     pub maturity_timescale: f64,
+    /// The slopes, radians, from which the ground sheds what lies loose on it and at which
+    /// it sheds it all (F98).
+    pub shed: (f64, f64),
 }
 
 /// The share of the ground an ejecta blanket covers at the elliptical radius `re` of a
 /// crater of radius `radius` with its continuous edge at `cont` (F51): the deposit thins
 /// as r^EJECTA_EXPONENT and the cover falls as 1 - 2^-(cont / r)^3, complete out to 1.3
 /// radii, half at the edge, tapering to nothing over the outer part of the footprint
-/// `r_max`, where the deposit is too thin to leave a record.
-pub fn ejecta_coverage(re: f64, radius: f64, cont: f64, r_max: f64) -> f64 {
+/// `r_max`, where the deposit is too thin to leave a record. Beyond the edge the deposit
+/// is what the curtain's jets threw (F96): its thickness goes as the jet's mass `jet`
+/// toward the azimuth, in full from EJECTA_JET_ONSET of the edge's distance past it, so
+/// the discontinuous ejecta run out along the jets that go on as rays and leave the
+/// ground between them, as round fresh craters.
+pub fn ejecta_coverage(re: f64, radius: f64, cont: f64, r_max: f64, jet: f64) -> f64 {
     if re <= radius {
         return 1.0;
     }
-    let raw = 1.0 - (-std::f64::consts::LN_2 * (cont / re).powf(-EJECTA_EXPONENT)).exp();
+    let jets = ((re / cont - 1.0) / EJECTA_JET_ONSET).clamp(0.0, 1.0);
+    let thickness = (cont / re).powf(-EJECTA_EXPONENT) * jet.max(1e-6).powf(jets);
+    let raw = 1.0 - (-std::f64::consts::LN_2 * thickness).exp();
     let cover = (raw / EJECTA_FULL_COVER).min(1.0);
     let taper = ((r_max - re) / (EJECTA_COVERAGE_TAPER * r_max)).clamp(0.0, 1.0);
     cover * taper
@@ -1563,6 +1667,7 @@ pub fn restore(
     base_deep: &[f32],
     fresh: &ProfileTable,
     detail: &ProfileTable,
+    walls: &ProfileTable,
     p: &RestoreParams,
     stamper: &mut Stamper,
 ) -> usize {
@@ -1575,6 +1680,7 @@ pub fn restore(
         base_deep,
         fresh,
         detail,
+        walls,
         p,
         stamper,
     );
@@ -1593,6 +1699,7 @@ pub fn restore_compute(
     base_deep: &[f32],
     fresh: &ProfileTable,
     detail: &ProfileTable,
+    walls: &ProfileTable,
     p: &RestoreParams,
     stamper: &mut Stamper,
 ) -> StampOutput {
@@ -1623,6 +1730,25 @@ pub fn restore_compute(
     let units = layers.unit_id.as_slice();
     let melts = layers.melt.as_slice();
     let covers = layers.cover.as_slice();
+    let shed = WallShed::new(walls, 1.0, p.shed);
+    let half_cell = 0.5 * grid.delta() * body_radius;
+    let steeps = layers.steep.as_slice();
+    // The walls' steep share at this resolution (F98), where nothing younger has
+    // resurfaced the cell; the ejecta bury the old walls' by their cover.
+    let steep_of = |&(idx, r, phi): &(usize, f64, f64)| -> f32 {
+        if ages[idx] > p.time_gyr + 1e-6 {
+            return steeps[idx];
+        }
+        let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+        let own = shed.share(re - half_cell, re + half_cell);
+        if re <= dim.radius {
+            return own as f32;
+        }
+        let cont = continuous * edge.factor_at(phi, re / dim.radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
+        own.max(steeps[idx] as f64 * (1.0 - cover.clamp(0.0, 1.0))) as f32
+    };
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
         let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
@@ -1686,7 +1812,7 @@ pub fn restore_compute(
             cover: 0.0,
         };
         let cont = continuous * edge.factor_at(phi, re / dim.radius);
-        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
         // The surface is the crater's only where nothing younger, lava or a later
         // crater, has resurfaced the cell since; its relief is restored regardless.
         if cover > 0.0 && ages[idx] <= p.time_gyr + 1e-6 {
@@ -1723,18 +1849,68 @@ pub fn restore_compute(
         }
         write
     };
+    let steep = if stamper.footprint.len() >= PARALLEL_FOOTPRINT {
+        stamper.footprint.par_iter().map(steep_of).collect()
+    } else {
+        stamper.footprint.iter().map(steep_of).collect()
+    };
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
         stain: None,
+        steep: Some(steep),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{
+        ICE_LAG_SHED_FULL_DEG, ICE_LAG_SHED_START_DEG, REPOSE_SLOPE_DEG, SLOPE_SHED_START_DEG,
+    };
     use crate::crater::morphology::{Scaling, dimensions};
     use crate::fields::Field;
+
+    #[test]
+    fn the_ejecta_beyond_the_blanket_run_out_along_the_jets() {
+        // F96: inside the continuous edge the jets change nothing; past it the deposit
+        // runs on along a jet and leaves the ground between jets.
+        let (radius, cont, far) = (10e3, 20e3, 30e3);
+        let inside = |jet| ejecta_coverage(15e3, radius, cont, far, jet);
+        assert!((inside(5.0) - inside(0.2)).abs() < 1e-12);
+        let beyond = |jet| ejecta_coverage(27e3, radius, cont, far, jet);
+        assert!(beyond(5.0) > 2.0 * beyond(1.0) && beyond(1.0) > 2.0 * beyond(0.2));
+    }
+
+    #[test]
+    fn a_wall_sheds_where_its_own_profile_is_steep() {
+        // F98: a fresh lunar crater of 10 km sheds over much of its wall at the lunar
+        // regolith's angles; a Callisto crater of 40 km, its wall near 11 degrees, sheds
+        // nothing at them and a good share at an icy lag's.
+        let regolith = (
+            SLOPE_SHED_START_DEG.to_radians(),
+            REPOSE_SLOPE_DEG.to_radians(),
+        );
+        let lag = (
+            ICE_LAG_SHED_START_DEG.to_radians(),
+            ICE_LAG_SHED_FULL_DEG.to_radians(),
+        );
+        let moon = ProfileTable::new(dimensions(10e3, &lunar()), 0.0);
+        let wall = WallShed::new(&moon, 1.0, regolith).share(0.2 * 5e3, 1.0 * 5e3);
+        assert!(wall > 0.5, "the Moon's wall sheds {wall:.2}");
+        let callisto = Scaling {
+            simple_complex: 3_244.0,
+            peak_ring: 27_577.0,
+            multi_ring: 64_887.0,
+            gravity: 1.235,
+            icy: true,
+        };
+        let crater = ProfileTable::new(dimensions(40e3, &callisto), 0.0);
+        let r = 20e3;
+        let dry = WallShed::new(&crater, 1.0, regolith).share(0.3 * r, 1.0 * r);
+        let wet = WallShed::new(&crater, 1.0, lag).share(0.3 * r, 1.0 * r);
+        assert!(dry < 0.01 && wet > 0.1, "regolith {dry:.3}, lag {wet:.3}");
+    }
 
     #[test]
     fn a_stamped_fresh_crater_has_the_right_depth_and_resets_ages_under_its_ejecta() {
@@ -1771,6 +1947,10 @@ mod tests {
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
+            shed: (
+                SLOPE_SHED_START_DEG.to_radians(),
+                REPOSE_SLOPE_DEG.to_radians(),
+            ),
         };
         let touched = stamp(
             &mut layers,
@@ -1864,6 +2044,10 @@ mod tests {
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
+                shed: (
+                    SLOPE_SHED_START_DEG.to_radians(),
+                    REPOSE_SLOPE_DEG.to_radians(),
+                ),
             };
             stamp(
                 &mut layers,
@@ -1949,6 +2133,10 @@ mod tests {
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
+                shed: (
+                    SLOPE_SHED_START_DEG.to_radians(),
+                    REPOSE_SLOPE_DEG.to_radians(),
+                ),
             };
             stamp(
                 &mut layers,
@@ -2061,6 +2249,10 @@ mod tests {
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
+            shed: (
+                SLOPE_SHED_START_DEG.to_radians(),
+                REPOSE_SLOPE_DEG.to_radians(),
+            ),
         };
         stamp(
             &mut layers,

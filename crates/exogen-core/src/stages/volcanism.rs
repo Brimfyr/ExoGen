@@ -1156,6 +1156,7 @@ pub fn flood_compute(
             cells,
             composition: Some(rec.composition),
             stain: None,
+            steep: None,
         },
         taken,
         stats,

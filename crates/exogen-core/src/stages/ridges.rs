@@ -338,6 +338,7 @@ pub fn ridge_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 

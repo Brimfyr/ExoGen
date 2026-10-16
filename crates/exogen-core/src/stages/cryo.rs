@@ -667,6 +667,7 @@ pub fn chaos_compute(
         cells,
         composition: None,
         stain: Some(stain),
+        steep: None,
     }
 }
 
@@ -784,6 +785,7 @@ pub fn cryodome_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 

@@ -106,6 +106,24 @@ pub fn edge_lobes(seed: u64, max_order: f64, bins: usize) -> Vec<f64> {
         .collect()
 }
 
+/// The curtain's mass by azimuth, mean 1, from its harmonics up to `max_order`: the jets
+/// a grid resolves, the finer ones averaged out (F96). The spread is the whole curtain's,
+/// so a resolved jet carries the share of the mass it carries in the rays.
+pub fn jet_mass(seed: u64, max_order: f64, bins: usize) -> Vec<f64> {
+    let all = harmonics(seed);
+    let power: f64 = all.iter().map(|h| 0.5 * h.amplitude * h.amplitude).sum();
+    let hs: Vec<Harmonic> = all.into_iter().filter(|h| h.order <= max_order).collect();
+    if hs.is_empty() {
+        return vec![1.0; bins];
+    }
+    let mass: Vec<f64> = tabulate(&hs, bins)
+        .into_iter()
+        .map(|v| (CURTAIN_SPREAD * v / power.sqrt()).exp())
+        .collect();
+    let mean = mass.iter().sum::<f64>() / bins as f64;
+    mass.into_iter().map(|m| m / mean).collect()
+}
+
 /// The ejecta curtain of one crater.
 pub struct Curtain {
     /// The mass thrown per unit azimuth, mean 1 before the oblique modulation.

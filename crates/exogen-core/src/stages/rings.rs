@@ -94,6 +94,9 @@ pub struct Basin<'a> {
     /// The share of a wavelength's relief, m, that survives from the impact to the
     /// present, for the graben's own relaxation.
     pub kept: &'a (dyn Fn(f64) -> f64 + Sync),
+    /// The share of a graben of a width, m, that no later crater as wide has struck out
+    /// (F97).
+    pub survives: &'a (dyn Fn(f64) -> f64 + Sync),
 }
 
 /// The ring faults of a basin, or none when its lithosphere held (F69). The lithosphere
@@ -145,42 +148,77 @@ pub fn ring_system(
             let mut along = circumference * rng.uniform(ring, 0);
             let end = along + circumference;
             let mut arc = 0u64;
+            // The later cratering struck the ring out where a crater as wide as its
+            // graben landed (F97): of the arc's pieces, each RING_SURVIVAL_PIECE graben
+            // widths long, each stands by the share that survives, and what stands runs
+            // on as one stretch.
+            let survival = (basin.survives)(width);
             while along < end - spacing && faults.len() < RING_MAX_FAULTS {
                 let id = ring * 4096 + arc;
                 let length = spacing * rng.range(id, 1, RING_ARC.0, RING_ARC.1);
                 let length = length.min(end - along);
                 let shift = RING_OFFSET * spacing * (2.0 * rng.uniform(id, 2) - 1.0);
-                // A frame every half width: the arcs bend over hundreds of kilometres.
-                let step = (0.5 * width).max(cell);
-                let n = ((length / step).ceil() as usize).max(2);
-                let points: Vec<[f64; 3]> = (0..=n)
-                    .map(|i| {
-                        let s = along + length * i as f64 / n as f64;
-                        let phi = s / circumference * tau;
-                        let nominal = offset(basin.center, east, north, theta, phi);
-                        let swing = RING_WANDER
-                            * spacing
-                            * wander.fbm(nominal, body_radius / (2.0 * spacing), 2, 2.0, 0.5);
-                        offset(
-                            basin.center,
-                            east,
-                            north,
-                            (r + shift + swing) / body_radius,
-                            phi,
-                        )
-                    })
-                    .collect();
-                faults.push(Trough {
-                    points,
-                    spacing: length / n as f64,
-                    length,
-                    width: width * rng.range(id, 3, 0.8, 1.2),
-                    depth: depth * rng.range(id, 4, 0.6, 1.4),
-                    flank: if depth > 0.0 { RING_FLANK } else { 0.0 },
-                    start_gyr: basin.time_gyr,
-                    end_gyr: basin.time_gyr,
-                    id: basin.seed ^ (0x2196_0000_0000_0000 | (ring << 20) | arc),
-                });
+                let arc_width = width * rng.range(id, 3, 0.8, 1.2);
+                let arc_depth = depth * rng.range(id, 4, 0.6, 1.4);
+                let pieces = ((length / (RING_SURVIVAL_PIECE * width)).ceil() as usize).max(1);
+                let mut first: Option<usize> = None;
+                for k in 0..=pieces {
+                    let stands = k < pieces
+                        && (survival >= 1.0 || rng.uniform(id, 16 + k as u64) < survival);
+                    match (stands, first) {
+                        (true, None) => first = Some(k),
+                        (false, Some(f)) => {
+                            first = None;
+                            let (a, b) = (
+                                along + length * f as f64 / pieces as f64,
+                                along + length * k as f64 / pieces as f64,
+                            );
+                            // A frame every half width: the arcs bend over hundreds of
+                            // kilometres.
+                            let step = (0.5 * width).max(cell);
+                            let n = (((b - a) / step).ceil() as usize).max(2);
+                            let points: Vec<[f64; 3]> = (0..=n)
+                                .map(|i| {
+                                    let s = a + (b - a) * i as f64 / n as f64;
+                                    let phi = s / circumference * tau;
+                                    let nominal = offset(basin.center, east, north, theta, phi);
+                                    let swing = RING_WANDER
+                                        * spacing
+                                        * wander.fbm(
+                                            nominal,
+                                            body_radius / (2.0 * spacing),
+                                            2,
+                                            2.0,
+                                            0.5,
+                                        );
+                                    offset(
+                                        basin.center,
+                                        east,
+                                        north,
+                                        (r + shift + swing) / body_radius,
+                                        phi,
+                                    )
+                                })
+                                .collect();
+                            faults.push(Trough {
+                                points,
+                                spacing: (b - a) / n as f64,
+                                length: b - a,
+                                width: arc_width,
+                                depth: arc_depth,
+                                flank: if depth > 0.0 { RING_FLANK } else { 0.0 },
+                                start_gyr: basin.time_gyr,
+                                end_gyr: basin.time_gyr,
+                                id: basin.seed
+                                    ^ (0x2196_0000_0000_0000
+                                        | (ring << 32)
+                                        | (arc << 12)
+                                        | f as u64),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
                 let gap = length * RING_GAP / (1.0 - RING_GAP) * rng.range(id, 5, 0.5, 1.5);
                 along += length + gap;
                 arc += 1;
@@ -303,6 +341,7 @@ pub fn system_compute(
         cells,
         composition: None,
         stain: None,
+        steep: None,
     }
 }
 
@@ -334,7 +373,33 @@ mod tests {
             lithosphere,
             inflow: 1.0,
             kept,
+            survives: &|_| 1.0,
         }
+    }
+
+    #[test]
+    fn the_later_cratering_strikes_out_a_share_of_the_graben() {
+        // F97: a ring system whose graben a fifth survive keeps about a fifth of their
+        // length, in stretches, and one untouched keeps all of it.
+        let scaling = callisto();
+        let kept = |_: f64| 1.0;
+        let length = |survival: f64| -> f64 {
+            let survives = move |_: f64| survival;
+            let b = Basin {
+                survives: &survives,
+                ..basin(800e3, 15e3, &kept)
+            };
+            ring_system(&b, &scaling, 2_410e3, 2e3)
+                .map_or(0.0, |s| s.faults.iter().map(|f| f.length).sum())
+        };
+        let whole = length(1.0);
+        let fifth = length(0.2);
+        assert!(whole > 0.0);
+        let share = fifth / whole;
+        assert!(
+            (0.12..0.3).contains(&share),
+            "a fifth survived as {share:.3}"
+        );
     }
 
     #[test]

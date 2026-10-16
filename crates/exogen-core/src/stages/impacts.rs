@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 21;
+pub const VERSION: u64 = 22;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -50,6 +50,10 @@ pub struct CraterInputs {
     /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
     /// ejecta with the ground it covers (F51).
     pub maturity_timescale: f64,
+    /// The slopes, radians, from which the ground sheds what lies loose on it and at which
+    /// it sheds it all (F98): an icy surface's lag from gentler slopes than a silicate
+    /// regolith.
+    pub shed: (f64, f64),
     pub seed: u64,
 }
 
@@ -123,6 +127,17 @@ impl CraterInputs {
             ray_lifetime: graph.f64("cratering.ray_fading_timescale"),
             deep_bedrock_depth: graph.f64("materials.deep_bedrock_depth"),
             maturity_timescale: crate::stages::ice::maturity_timescale(graph),
+            shed: if crate::stages::ice::is_ice_surface(graph) {
+                (
+                    ICE_LAG_SHED_START_DEG.to_radians(),
+                    ICE_LAG_SHED_FULL_DEG.to_radians(),
+                )
+            } else {
+                (
+                    SLOPE_SHED_START_DEG.to_radians(),
+                    REPOSE_SLOPE_DEG.to_radians(),
+                )
+            },
             seed: graph.f64("seed.cratering") as u64,
         }
     }
@@ -296,6 +311,7 @@ impl ImpactProcess {
                 maturity_timescale: inp.maturity_timescale,
                 renewal_guard: true,
                 terraced: false,
+                shed: inp.shed,
             };
             stamp(
                 layers,

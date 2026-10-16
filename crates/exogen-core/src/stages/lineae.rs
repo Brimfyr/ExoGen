@@ -1441,6 +1441,7 @@ fn band_compute(
         cells,
         composition: None,
         stain: Some(stain),
+        steep: None,
     }
 }
 
@@ -1727,6 +1728,7 @@ pub fn linea_compute(
         cells: cells.into_iter().map(|c| c.0).collect(),
         composition: None,
         stain,
+        steep: None,
     }
 }
 
