@@ -39,14 +39,14 @@ use crate::units::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-pub const VERSION: u64 = 12;
+pub const VERSION: u64 = 13;
 
-/// A patera: a volcano-tectonic depression with a flat floor and a fault-bounded,
-/// irregular outline.
+/// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
+/// that made it and the faults that cut it (F88).
 #[derive(Clone, Debug)]
 pub struct Patera {
     pub center: [f64; 3],
-    /// Mean radius and the depth of the floor below the rim, m.
+    /// Its first collapse's radius, the depth of its floor below the rim, m.
     pub radius: f64,
     pub depth: f64,
     /// A lava lake on the floor at present.
@@ -56,26 +56,38 @@ pub struct Patera {
     pub floor_age_yr: f64,
     /// Gas-rich, Pele-class, whose plumes are hot and red; the rest are Prometheus-class.
     pub pele: bool,
-    /// The outline: a polygon with this many sides at this rotation, under noise.
-    pub sides: u32,
-    pub rotation: f64,
+    /// The azimuth of its long axis, rad from east towards north at its centre, along
+    /// the crust's fabric there.
+    pub axis: f64,
+    /// Its collapses, each a disc about a point offset from its centre (east and north,
+    /// m) with its radius, m; and the faults that cut straight sides into it, each the
+    /// azimuth of its normal and its distance from the centre, m.
+    pub collapses: Vec<[f64; 3]>,
+    pub faults: Vec<[f64; 2]>,
     pub birth_gyr: f64,
     pub death_gyr: f64,
     pub id: u64,
 }
 
-/// A mountain: a tilted crustal block.
+/// A mountain (F87): a crustal block thrust up along a fault across the crust's
+/// compression.
 #[derive(Clone, Debug)]
 pub struct Mountain {
     pub center: [f64; 3],
-    pub radius: f64,
+    /// The fault's strike, rad from east towards north at the centre; the block's length
+    /// along it and its width across it, and its height, m.
+    pub strike: f64,
+    pub length: f64,
+    pub width: f64,
     pub height: f64,
-    /// Direction the block tilts down towards, radians in the local frame, and how much
-    /// of the height the tilt moves across the block.
-    pub tilt_azimuth: f64,
+    /// The side of the fault the block stands on, +1 or -1, and the share of its height
+    /// its back slope loses across it.
+    pub vergence: f64,
     pub tilt: f64,
-    /// Elongation along the tilt azimuth, and the seed of the outline noise.
-    pub aspect: f64,
+    /// Its form: how level its top is (a mesa's or a plateau's against a massif's or a
+    /// ridge's), and how ridged along its strike (a lineated mountain's).
+    pub level: f64,
+    pub ridging: f64,
     pub birth_gyr: f64,
     pub death_gyr: f64,
     pub id: u64,
@@ -137,16 +149,36 @@ pub struct PlumeEpisode {
 }
 
 impl Patera {
-    pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.5 * self.radius / body_radius
+    /// The farthest its outline reaches from its centre, m.
+    pub fn extent(&self) -> f64 {
+        self.collapses
+            .iter()
+            .map(|c| c[0].hypot(c[1]) + c[2])
+            .fold(self.radius, f64::max)
     }
     pub fn alive(&self, t: f64) -> bool {
         self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
     }
 }
 impl Mountain {
-    pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.2 * self.radius * self.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE) / body_radius
+    /// The farthest the block and its slopes reach from its centre, m.
+    pub fn extent(&self) -> f64 {
+        let scarp = mountain_scarp(self.height, f64::MIN_POSITIVE);
+        (MOUNTAIN_FAULT_SHARE * self.length).hypot(MOUNTAIN_BACK_REACH * self.width)
+            + scarp * (1.0 + 3.0 * IO_MOUNTAIN_APRON_REACH)
+            + mountain_heave(self.height)
+    }
+    /// How far a drawing of the block on a grid of `cell` reaches, its scarp's debris
+    /// with it, m.
+    pub fn reach(&self, cell: f64) -> f64 {
+        self.extent() + 3.0 * IO_MOUNTAIN_APRON_REACH * mountain_scarp(self.height, cell)
+    }
+    /// A point's place in the block's frame: along its fault from its middle, and across
+    /// it towards the block, m.
+    pub fn frame(&self, r: f64, phi: f64) -> (f64, f64) {
+        let (x, y) = (r * phi.cos(), r * phi.sin());
+        let (c, s) = (self.strike.cos(), self.strike.sin());
+        (x * c + y * s, self.vergence * (y * c - x * s))
     }
     pub fn alive(&self, t: f64) -> bool {
         self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
@@ -239,15 +271,25 @@ impl Plume {
     }
 }
 
-/// Radius of a patera's outline at an azimuth: a polygon's edge, as the faults that
-/// bound a collapse leave it, under noise.
-pub fn patera_radius(phi: f64, p: &Patera, noise: &GradientNoise) -> f64 {
-    let sector = 2.0 * std::f64::consts::PI / p.sides as f64;
-    let a = (phi - p.rotation).rem_euclid(sector) - 0.5 * sector;
-    let polygon = (0.5 * sector).cos() / a.cos();
-    let wobble = 1.0
-        + IO_PATERA_OUTLINE * noise.fbm([phi.cos() * 1.3, phi.sin() * 1.3, 0.37], 2.0, 2, 2.0, 0.5);
-    p.radius * (IO_PATERA_POLYGON * polygon + (1.0 - IO_PATERA_POLYGON)) * wobble
+/// Radius of a patera's outline at an azimuth (F88): where a ray from its centre leaves
+/// the last of its collapses, nested discs each containing the centre, unless a fault
+/// that cut a straight side into it comes first. The union of the discs is scalloped
+/// where they meet, as nested calderas are; the faults' sides end at sharp corners.
+pub fn patera_radius(phi: f64, p: &Patera) -> f64 {
+    let (dx, dy) = (phi.cos(), phi.sin());
+    let mut edge: f64 = 0.0;
+    for c in &p.collapses {
+        let b = c[0] * dx + c[1] * dy;
+        let q = c[0] * c[0] + c[1] * c[1] - c[2] * c[2];
+        edge = edge.max(b + (b * b - q).max(0.0).sqrt());
+    }
+    for f in &p.faults {
+        let n = dx * f[0].cos() + dy * f[0].sin();
+        if n > 1e-9 {
+            edge = edge.min(f[1] / n);
+        }
+    }
+    edge
 }
 
 /// Depth of a flat-floored pit at a distance from its centre, with walls of a width.
@@ -255,31 +297,225 @@ pub fn pit_profile(r: f64, radius: f64, depth: f64, wall: f64) -> f64 {
     depth * 0.5 * (1.0 - ((r - radius) / wall).tanh())
 }
 
-/// The block's radius at an azimuth: an ellipse along the tilt azimuth with a noisy
-/// outline.
-pub fn block_radius(phi: f64, m: &Mountain, noise: &GradientNoise) -> f64 {
-    let t = phi - m.tilt_azimuth;
-    let ellipse = 1.0 / (t.cos().powi(2) + (m.aspect * t.sin()).powi(2)).sqrt() * m.aspect.sqrt();
-    let wobble = 1.0
-        + IO_MOUNTAIN_OUTLINE
-            * noise.fbm([phi.cos() * 1.5, phi.sin() * 1.5, 0.3], 2.0, 2, 2.0, 0.5);
-    m.radius * ellipse * wobble
+/// The half width of a patera's wall for its depth on a grid of `cell`, m (F88): steep
+/// as Chaac Patera's, 2.7 km high at 70 degrees (Radebaugh et al. 2001), at least a cell.
+pub fn patera_wall(depth: f64, cell: f64) -> f64 {
+    (0.5 * depth / IO_PATERA_WALL_SLOPE_DEG.to_radians().tan()).max(cell)
 }
 
-/// Height of a tilted block at a point: a plateau sloping down towards the tilt azimuth,
-/// dropping to nothing at its noisy edge.
-pub fn block_profile(r: f64, phi: f64, m: &Mountain, noise: &GradientNoise) -> f64 {
-    let edge = block_radius(phi, m, noise);
-    if r >= edge {
+/// The share of a block's height above which its ground is the block's own, not its
+/// debris or the plains' embayments.
+const MOUNTAIN_UNIT_SHARE: f64 = 0.15;
+
+/// The fault's half length as a share of the block's exposed length: the throw falls as
+/// a cosine squared to the tips, and the block is exposed where it stands above the
+/// plains' burial.
+const MOUNTAIN_FAULT_SHARE: f64 = 0.7;
+
+/// How far across a block, as a share of its width from its scarp, it and its relief
+/// reach.
+const MOUNTAIN_BACK_REACH: f64 = 1.6;
+
+/// The width of a block's scarp, worn back by landslides to its slope, for a height, m,
+/// at least two cells, the narrowest the grid draws without stepping.
+fn mountain_scarp(height: f64, cell: f64) -> f64 {
+    (height / IO_MOUNTAIN_SCARP_SLOPE_DEG.to_radians().tan()).max(2.0 * cell)
+}
+
+/// How far a block's thrust has carried it out over the plains where its throw is
+/// greatest, m: the heave of a throw of its height on its fault.
+fn mountain_heave(height: f64) -> f64 {
+    height / IO_MOUNTAIN_FAULT_DIP_DEG.to_radians().tan()
+}
+
+fn smoothstep(x: f64) -> f64 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// The spread of one octave of the gradient noise over a plane through it, and how far
+/// apart its zero crossings lie along a line, in its lattice's cells (measured).
+const NOISE_SPREAD: f64 = 0.275;
+const NOISE_CROSSING_SPACING: f64 = 1.26;
+
+/// How many times longer along its strike a lineated block's ridges run than they lie
+/// apart, before they bend, branch or end (a stated choice).
+const RIDGE_STRETCH: f64 = 8.0;
+
+/// The noise a block's unresolved relief is drawn from, offset for each block.
+fn relief_noise() -> &'static GradientNoise {
+    static NOISE: std::sync::OnceLock<GradientNoise> = std::sync::OnceLock::new();
+    NOISE.get_or_init(|| GradientNoise::new(0x10_B10C_0087))
+}
+
+/// A point of a plane through the noise, `a` and `b` along it and `depth` across it, the
+/// plane slanted to the noise's lattice so that the lattice's axes leave no grain.
+fn slanted(a: f64, b: f64, depth: f64) -> [f64; 3] {
+    [
+        0.866 * a - 0.5 * b,
+        0.383 * a + 0.663 * b - 0.643 * depth,
+        0.321 * a + 0.557 * b + 0.766 * depth,
+    ]
+}
+
+/// The height of a mountain at a point of its frame (F87), `u` along its fault from its
+/// middle and `v` across it towards the block, m, on a grid of `cell`. The block is the
+/// crust thrust up along its fault: its uplift is the fault's throw, falling to its tips
+/// as a fault's slip does, times its fall across the block to its down-dip edge, a
+/// plateau's that holds level, a tilted block's that falls steadily, or a massif's that
+/// rounds; the thrust has carried it out over the plains by the throw's heave, so that
+/// it bows out towards them. Its surface carries its own relief, unresolved, the more on
+/// its dissected margins, and the plains bury it to a share of its height, so its back
+/// and its tips are where its surface dips under them. Its front is the fault's scarp,
+/// cut back in arcs by landslides and worn to its slope, their debris spread below. A
+/// lineated block is ridged along its strike where the grid resolves it.
+pub fn mountain_height(m: &Mountain, u: f64, v: f64, cell: f64) -> f64 {
+    // The fault runs past the block's exposed length, its throw dying out under the
+    // plains at its tips.
+    let a = MOUNTAIN_FAULT_SHARE * m.length;
+    let s = u / a;
+    if s.abs() >= 1.0 {
         return 0.0;
     }
-    let x = r / edge;
-    let tilt = 1.0 - m.tilt * 0.5 * (1.0 + x * (phi - m.tilt_azimuth).cos());
-    // The upthrown side ends in a fault scarp; the downthrown slopes under the plains.
-    let up = 0.5 * (1.0 - (phi - m.tilt_azimuth).cos());
-    let power = IO_MOUNTAIN_APRON_POWER + (IO_MOUNTAIN_SCARP_POWER - IO_MOUNTAIN_APRON_POWER) * up;
-    let rim = (1.0 - x.powf(power)).max(0.0);
-    m.height * tilt * rim
+    let throw = (0.5 * std::f64::consts::PI * s).cos().powi(2);
+    // The block as it stood before the thrust carried it out by its heave, the farthest
+    // where its throw is greatest: its trace bows out towards the plains, as a thrust's
+    // does where its displacement is greatest (the bow-and-arrow rule).
+    let v = v + mountain_heave(m.height) * throw;
+    let scarp = mountain_scarp(m.height, cell);
+    let rng = Rng::new(m.id ^ 0x5CA1_10B5);
+    // The scarp's line: arcs where landslides have cut back into the block, meeting in
+    // rounded cusps, shallower towards the tips with the throw.
+    let count = ((m.length / IO_MOUNTAIN_SCALLOP_LENGTH).round() as u64).max(1);
+    let soft = 0.3 * scarp;
+    let mut cut = 0.0;
+    for k in 0..count {
+        let centre = -a + 2.0 * a * (k as f64 + 0.25 + 0.5 * rng.uniform(k, 1)) / count as f64;
+        let half = a / count as f64 * (0.7 + 0.8 * rng.uniform(k, 2));
+        let depth = IO_MOUNTAIN_SCALLOP_DEPTH * m.width * rng.uniform(k, 3);
+        let x = (u - centre) / half;
+        cut += (depth * (1.0 - x * x).max(0.0) / soft).exp() - 1.0;
+    }
+    let front = soft * cut.ln_1p() * throw;
+    // The surface across the block, from its fault's line; the landslides took away what
+    // stood in front of the scarp.
+    let noise = relief_noise();
+    let o = (m.id % 4096) as f64 * 3.7;
+    // The block's own relief, of unit spread: octaves from half its width down to what
+    // the grid resolves, each IO_MOUNTAIN_RELIEF_GAIN of the one before.
+    let mut octaves = 2;
+    while octaves < 5 && 0.5 * m.width / 2f64.powi(octaves) >= 4.0 * cell {
+        octaves += 1;
+    }
+    let spread = NOISE_SPREAD
+        * (0..octaves)
+            .map(|k| IO_MOUNTAIN_RELIEF_GAIN.powi(2 * k))
+            .sum::<f64>()
+            .sqrt();
+    let relief_at = |u: f64, v: f64| {
+        let (mut sum, mut amplitude, mut f) = (0.0, 1.0, 2.0 / m.width);
+        for k in 0..octaves {
+            let shift = o + 17.0 * k as f64;
+            sum += amplitude
+                * noise.sample(slanted(
+                    u * f + shift,
+                    v * f + 0.5 * shift,
+                    0.37 + 1.3 * k as f64,
+                ));
+            amplitude *= IO_MOUNTAIN_RELIEF_GAIN;
+            f *= 2.0;
+        }
+        sum / spread
+    };
+    // A plateau's back, an erosional scarp that wanders along the strike.
+    let f = 1.0 / m.width;
+    let wander = (noise.sample(slanted(u * f + o, 0.0, 7.7))
+        + 0.5 * noise.sample(slanted(2.0 * u * f, o, 9.0)))
+        / (NOISE_SPREAD * 1.25f64.sqrt());
+    let back = 1.0 + 0.13 * wander;
+    // A lineated block's ridges along its strike, where the grid resolves them: the folds
+    // and slices of the thrust sheet, crests that wander, branch and end, the noise's zero
+    // crossings drawn out along the strike, in patches over the block; its surface's own
+    // relief, buried with it.
+    let ridged = m.ridging > 0.0 && IO_MOUNTAIN_RIDGE_SPACING >= 3.0 * cell;
+    let ridge = |v: f64| {
+        if !ridged {
+            return 0.0;
+        }
+        let across = NOISE_CROSSING_SPACING / IO_MOUNTAIN_RIDGE_SPACING;
+        let n = noise.sample(slanted(u * across / RIDGE_STRETCH + o, v * across, 5.3));
+        let crest = (1.0 - (n / NOISE_SPREAD).powi(2)).max(0.0).powi(2);
+        let patches =
+            smoothstep(0.5 + 0.5 * noise.sample(slanted(u * f, v * f + o, 9.1)) / NOISE_SPREAD);
+        m.ridging * IO_MOUNTAIN_RIDGE_RELIEF * patches * crest
+    };
+    let surface = |v: f64| {
+        let x = v / m.width;
+        let plateau = smoothstep((back - x) / 0.35);
+        let tilted = (1.0 - x).max(0.0);
+        let round = (1.0 - x * x).max(0.0);
+        let tilt = (m.tilt / IO_MOUNTAIN_TILT).clamp(0.0, 1.0);
+        let fall = m.level * plateau + (1.0 - m.level) * (tilt * tilted + (1.0 - tilt) * round);
+        let lift = throw * fall;
+        // The relief is the raised crust's, dissected the more where it stands low, and
+        // none where the crust was not raised.
+        let amplitude = (IO_MOUNTAIN_RELIEF * (1.0 - lift) + IO_MOUNTAIN_TOP_RELIEF * lift)
+            * smoothstep(lift / IO_MOUNTAIN_BURIAL);
+        let rough = amplitude * relief_at(u, v) + throw * ridge(v);
+        ((lift + rough - IO_MOUNTAIN_BURIAL) / (1.0 - IO_MOUNTAIN_BURIAL)).max(0.0)
+    };
+    if v < front {
+        // The scarp, down to the top of its debris at its foot, and the debris below,
+        // thinning out to nothing within its reach.
+        let crest = m.height * surface(front);
+        let toe = IO_MOUNTAIN_APRON * crest;
+        let foot = front - scarp;
+        return if v > foot {
+            toe + (crest - toe) * smoothstep((v - foot) / scarp)
+        } else {
+            let reach = IO_MOUNTAIN_APRON_REACH * scarp;
+            let d = (foot - v) / reach;
+            toe * (-d).exp() * smoothstep((3.0 - d) / 1.0)
+        };
+    }
+    let x = v / m.width;
+    if x >= MOUNTAIN_BACK_REACH {
+        return 0.0;
+    }
+    // Everything the block holds fades out before the end of its reach.
+    let fade = smoothstep((MOUNTAIN_BACK_REACH - x) / 0.4);
+    m.height * surface(v) * fade
+}
+
+/// The crust's fabric at a point (F87): the strike a thrust takes there, about 30 or 60
+/// degrees from the tide's most compressive direction at its most compressive phase
+/// (Seeger and de Kleer 2025: Io's mountains form most often so offset from it), which
+/// of the four the draw picks; without a tide, any.
+fn fabric_strike(
+    tide: Option<&crate::stages::tidal::TidalShell>,
+    p: [f64; 3],
+    pick: f64,
+    free: f64,
+) -> f64 {
+    let Some(shell) = tide else {
+        return std::f64::consts::TAU * free;
+    };
+    let axis = [1.0, 0.0, 0.0];
+    let mut best = (f64::INFINITY, 0.0);
+    for k in 0..TIDAL_PHASE_SAMPLES {
+        let phase = std::f64::consts::TAU * k as f64 / TIDAL_PHASE_SAMPLES as f64;
+        let (_, s2, psi) = shell.diurnal(axis, p, phase).principal();
+        if s2 < best.0 {
+            best = (s2, psi + std::f64::consts::FRAC_PI_2);
+        }
+    }
+    let offsets = [
+        std::f64::consts::FRAC_PI_6,
+        -std::f64::consts::FRAC_PI_6,
+        std::f64::consts::FRAC_PI_3,
+        -std::f64::consts::FRAC_PI_3,
+    ];
+    best.1 + offsets[((pick * 4.0) as usize).min(3)]
 }
 
 /// A fall too thin to show over its whole eruption, optical depths.
@@ -416,7 +652,7 @@ pub fn plume_history(paterae: &[Patera], gravity: f64, seed: u64) -> Vec<PlumeEp
                 aspect: 1.0 + elongation * rng.uniform(idx, base + 5),
                 // The deposit reaches farthest across the vent, which runs along the
                 // patera's long side.
-                axis: p.rotation + 0.5 * std::f64::consts::PI,
+                axis: p.axis + 0.5 * std::f64::consts::PI,
                 dark,
                 frost: if p.pele {
                     IO_PELE_FROST
@@ -1020,8 +1256,11 @@ pub struct IoProcess {
     n_mountains: usize,
     /// How deep the plains are buried since their surface formed, m (F86).
     burial_depth: f64,
-    /// The terrain before the regime's features, which every step starts from.
-    base: Option<LayerSet>,
+    /// The tide that orients the crust's faults (F87).
+    tide: Option<crate::stages::tidal::TidalShell>,
+    /// The terrain before the regime's features, which every step starts from, and the
+    /// finish too.
+    pub base: Option<LayerSet>,
     pub paterae: Vec<Patera>,
     pub mountains: Vec<Mountain>,
     stamper: Stamper,
@@ -1042,6 +1281,7 @@ impl IoProcess {
             n_paterae: graph.f64("volcanism.paterae_count").round().max(0.0) as usize,
             n_mountains: graph.f64("tectonics.mountain_count").round().max(0.0) as usize,
             burial_depth: graph.f64("volcanism.resurfacing_rate") * IO_SURFACE_AGE_GYR * 1e3,
+            tide: crate::stages::tidal::TidalShell::new(graph),
             base: None,
             paterae: Vec::new(),
             mountains: Vec::new(),
@@ -1073,9 +1313,16 @@ impl IoProcess {
         }
     }
 
-    /// The mountains through the body's life: each of the standing count is a chain of
-    /// blocks, one raised as the last is buried, drawn from the seed alone.
+    /// The mountains through the body's life (F87): each of the standing count is a chain
+    /// of blocks, one raised as the last is buried, drawn from the seed alone; each a
+    /// block thrust up along a fault striking with the crust's fabric, its length, width
+    /// and height log-normal (Schenk et al. 2001: Io's mountains 157 km long on average,
+    /// the longest 570 km, 6.3 km high on average, the highest 17.5 km), its form a
+    /// lineated block's, a layered plateau's or mesa's, or a massif's.
     fn raise_mountains(&mut self) {
+        let log_normal = |median: f64, sigma: f64, k: u64, draw: u64, max: f64| {
+            (median * (sigma * self.rng.normal(k, draw)).exp()).min(max)
+        };
         for slot in 0..self.n_mountains as u64 {
             let mut generation = 0u64;
             let first = 5_000 + slot * 1_000;
@@ -1083,17 +1330,42 @@ impl IoProcess {
                 -self.log_uniform(first, 7, IO_MOUNTAIN_LIFETIME_GYR) * self.rng.uniform(first, 8);
             while birth < self.age && generation < 900 {
                 let k = first + generation;
-                let (lo, hi) = IO_MOUNTAIN_DIAMETER;
-                let diameter = lo * (hi / lo).powf(self.rng.uniform(k, 1));
-                let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
+                let center = self.rng.unit_direction(k, 9);
+                let (l_med, l_sigma) = IO_MOUNTAIN_LENGTH;
+                let length = log_normal(l_med, l_sigma, k, 20, IO_MOUNTAIN_LENGTH_MAX);
+                let (a_med, a_sigma) = IO_MOUNTAIN_ASPECT;
+                let width = length / log_normal(a_med, a_sigma, k, 22, 8.0).max(1.0);
+                let (h_med, h_sigma) = IO_MOUNTAIN_HEIGHT;
+                let height = log_normal(h_med, h_sigma, k, 24, IO_MOUNTAIN_HEIGHT_MAX);
                 let life = self.log_uniform(k, 7, IO_MOUNTAIN_LIFETIME_GYR);
+                // Its form, by the shares of Io's mountain units.
+                let form = self.rng.uniform(k, 26);
+                let (level, ridging, tilt) = if form < IO_MOUNTAIN_FORMS.0 {
+                    (0.3, 1.0, IO_MOUNTAIN_TILT)
+                } else if form < IO_MOUNTAIN_FORMS.0 + IO_MOUNTAIN_FORMS.1 {
+                    (0.9, 0.0, 0.3 * IO_MOUNTAIN_TILT)
+                } else {
+                    (0.0, 0.0, 0.5 * IO_MOUNTAIN_TILT)
+                };
                 self.mountains.push(Mountain {
-                    center: self.rng.unit_direction(k, 9),
-                    radius: 0.5 * diameter,
-                    height: h_lo * (h_hi / h_lo).powf(self.rng.uniform(k, 3)),
-                    tilt_azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(k, 4),
-                    tilt: IO_MOUNTAIN_TILT * self.rng.uniform(k, 5),
-                    aspect: 1.0 + (IO_MOUNTAIN_ASPECT - 1.0) * self.rng.uniform(k, 6),
+                    center,
+                    strike: fabric_strike(
+                        self.tide.as_ref(),
+                        center,
+                        self.rng.uniform(k, 27),
+                        self.rng.uniform(k, 28),
+                    ),
+                    length,
+                    width,
+                    height,
+                    vergence: if self.rng.uniform(k, 29) < 0.5 {
+                        -1.0
+                    } else {
+                        1.0
+                    },
+                    tilt: tilt * self.rng.uniform(k, 5),
+                    level,
+                    ridging,
                     birth_gyr: birth,
                     death_gyr: birth + life,
                     id: k,
@@ -1130,8 +1402,11 @@ impl IoProcess {
                     .rng
                     .unit_direction(idx ^ crate::rng::ACCEPT_STREAM, 100 + 2 * attempt);
             }
-            let (lo, hi) = IO_PATERA_DIAMETER;
-            let diameter = lo * (hi / lo).powf(self.rng.uniform(idx, 40).powf(IO_PATERA_SIZE_SKEW));
+            // Its size, log-normal (Radebaugh et al. 2001: 417 paterae, mean 41.0 km
+            // across, median 34.5, from 2.5 to 203 km).
+            let (d_med, d_sigma) = IO_PATERA_DIAMETER;
+            let (d_lo, d_hi) = IO_PATERA_DIAMETER_RANGE;
+            let diameter = (d_med * (d_sigma * self.rng.normal(idx, 60)).exp()).clamp(d_lo, d_hi);
             let radius = 0.5 * diameter;
             let pele = self.rng.uniform(idx, 43) < IO_PELE_CLASS_FRACTION;
             let active = self.rng.uniform(idx, 42) < IO_PATERA_ACTIVE_FRACTION;
@@ -1140,7 +1415,103 @@ impl IoProcess {
             } else {
                 self.log_uniform(idx, 44, IO_FLOOR_AGE_YR)
             };
-            let (s_lo, s_hi) = IO_PATERA_SIDES;
+            // A share sink at the foot of a mountain's scarp, along its fault, where magma
+            // rises along the fault (Radebaugh et al. 2001: 13 percent beside mountains);
+            // the rest lie along the crust's fabric where they are.
+            let near = if self.rng.uniform(idx, 62) < IO_PATERA_MOUNTAIN_SHARE {
+                let standing: Vec<&Mountain> =
+                    self.mountains.iter().filter(|m| m.alive(t1)).collect();
+                let total: f64 = standing.iter().map(|m| m.length).sum();
+                let mut pick = self.rng.uniform(idx, 63) * total;
+                let mut chosen = None;
+                for m in &standing {
+                    if pick < m.length {
+                        chosen = Some(*m);
+                        break;
+                    }
+                    pick -= m.length;
+                }
+                chosen
+            } else {
+                None
+            };
+            let (center, axis, fault) = match near {
+                Some(m) => {
+                    let u = m.length * 0.3 * (2.0 * self.rng.uniform(idx, 64) - 1.0);
+                    let scarp = mountain_scarp(m.height, 0.0);
+                    let throw = (0.5 * std::f64::consts::PI * u
+                        / (MOUNTAIN_FAULT_SHARE * m.length))
+                        .cos()
+                        .powi(2);
+                    let v = -(scarp + mountain_heave(m.height) * throw + 0.8 * radius);
+                    let (c, s) = (m.strike.cos(), m.strike.sin());
+                    let (x, y) = (u * c - m.vergence * v * s, u * s + m.vergence * v * c);
+                    let (e, n) = local_basis(m.center);
+                    let azimuth = y.atan2(x);
+                    let at =
+                        crate::geom::offset(m.center, e, n, x.hypot(y) / self.body_radius, azimuth);
+                    // The fault faces the patera: its normal points towards the block.
+                    let normal_world = [
+                        -m.vergence * s * e[0] + m.vergence * c * n[0],
+                        -m.vergence * s * e[1] + m.vergence * c * n[1],
+                        -m.vergence * s * e[2] + m.vergence * c * n[2],
+                    ];
+                    let (pe, pn) = local_basis(at);
+                    let normal = dot(normal_world, pn).atan2(dot(normal_world, pe));
+                    (
+                        at,
+                        normal + std::f64::consts::FRAC_PI_2,
+                        Some((normal, 0.8 * radius)),
+                    )
+                }
+                None => (
+                    center,
+                    fabric_strike(
+                        self.tide.as_ref(),
+                        center,
+                        self.rng.uniform(idx, 65),
+                        self.rng.uniform(idx, 66),
+                    ),
+                    None,
+                ),
+            };
+            // Its collapses: nested discs along its axis, each containing its centre.
+            let count = 1 + (3.0 * self.rng.uniform(idx, 67).powi(2)) as u64;
+            let mut collapses = vec![[0.0, 0.0, radius]];
+            for c in 1..count {
+                let r = radius * (0.4 + 0.5 * self.rng.uniform(idx, 70 + 4 * c));
+                let along = (if self.rng.uniform(idx, 71 + 4 * c) < 0.5 {
+                    -1.0
+                } else {
+                    1.0
+                }) * r
+                    * (0.2 + 0.6 * self.rng.uniform(idx, 72 + 4 * c));
+                let aside = 0.25 * r * (2.0 * self.rng.uniform(idx, 73 + 4 * c) - 1.0);
+                let (ca, sa) = (axis.cos(), axis.sin());
+                collapses.push([along * ca - aside * sa, along * sa + aside * ca, r]);
+            }
+            // Straight sides where faults of the fabric cut it (Radebaugh et al. 2001: 42
+            // percent with straight or irregular margins ending at sharp corners).
+            let mut faults = Vec::new();
+            if let Some(f) = fault {
+                faults.push([f.0, f.1]);
+            } else if self.rng.uniform(idx, 90) < IO_PATERA_FAULTED_SHARE {
+                let sides = 1 + self.rng.bits(idx, 91) % 3;
+                for f in 0..sides {
+                    // Each a fault along one of the fabric's strikes, on either side.
+                    let strike = fabric_strike(
+                        self.tide.as_ref(),
+                        center,
+                        self.rng.uniform(idx, 92 + 4 * f),
+                        self.rng.uniform(idx, 93 + 4 * f),
+                    );
+                    let side = std::f64::consts::PI * (self.rng.bits(idx, 94 + 4 * f) % 2) as f64;
+                    faults.push([
+                        strike + std::f64::consts::FRAC_PI_2 + side,
+                        radius * (0.55 + 0.35 * self.rng.uniform(idx, 95 + 4 * f)),
+                    ]);
+                }
+            }
             self.paterae.push(Patera {
                 center,
                 radius,
@@ -1148,8 +1519,9 @@ impl IoProcess {
                 active,
                 floor_age_yr,
                 pele,
-                sides: s_lo + (self.rng.bits(idx, 45) % (s_hi - s_lo + 1) as u64) as u32,
-                rotation: 2.0 * std::f64::consts::PI * self.rng.uniform(idx, 46),
+                axis,
+                collapses,
+                faults,
                 birth_gyr: t1,
                 death_gyr: death,
                 id: idx,
@@ -1190,41 +1562,36 @@ impl IoProcess {
         let cell = grid.delta() * body_radius;
         Self::clear_surface(layers, t1);
         for m in self.mountains.iter().filter(|m| m.alive(t1)) {
-            let noise = GradientNoise::new(m.id ^ 0x0B10_C000);
-            self.stamper.gather(
-                &grid,
-                body_radius,
-                m.center,
-                m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE),
-            );
+            self.stamper
+                .gather(&grid, body_radius, m.center, m.reach(2.0 * cell));
             let bedrock = layers.bedrock.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
             for &(idx, r, phi) in &self.stamper.footprint {
-                let h = block_profile(r, phi, m, &noise);
+                // The loop's block is smooth, its scarp at least four of its cells wide;
+                // the finish draws the block afresh at its own resolution.
+                let (u, v) = m.frame(r, phi);
+                let h = mountain_height(m, u, v, 2.0 * cell);
                 if h > 0.0 {
                     bedrock[idx] += h as f32;
-                    units[idx] = UNIT_MOUNTAIN;
-                    cover[idx] = 0.0;
+                    if h > MOUNTAIN_UNIT_SHARE * m.height {
+                        units[idx] = UNIT_MOUNTAIN;
+                        cover[idx] = 0.0;
+                    }
                 }
             }
         }
         for p in self.paterae.iter().filter(|p| p.alive(t1)) {
-            let noise = GradientNoise::new(p.id ^ 0x9A7E_2A00);
-            let wall = (IO_PATERA_WALL_FRACTION * p.radius).max(cell);
-            self.stamper.gather(
-                &grid,
-                body_radius,
-                p.center,
-                p.radius * (1.0 + IO_PATERA_OUTLINE) + 3.0 * wall,
-            );
+            let wall = patera_wall(p.depth, cell);
+            self.stamper
+                .gather(&grid, body_radius, p.center, p.extent() + 3.0 * wall);
             let bedrock = layers.bedrock.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
             let deep = layers.deep.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
             for &(idx, r, phi) in &self.stamper.footprint {
-                let edge = patera_radius(phi, p, &noise);
+                let edge = patera_radius(phi, p);
                 bedrock[idx] -= pit_profile(r, edge, p.depth, wall) as f32;
                 if r < edge {
                     units[idx] = UNIT_PATERA_FLOOR;
@@ -1355,11 +1722,12 @@ impl FlowGrowth {
                 p[2] * theta.cos() + d[2] * theta.sin(),
             ]);
             // A mountain in the way stops the flow.
-            let blocked = standing.iter().any(|(m, mn)| {
+            let blocked = standing.iter().any(|(m, _)| {
                 let dist = angle_between(m.center, q) * r;
-                dist < m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE) && {
+                dist < m.extent() && {
                     let (me, mnn) = local_basis(m.center);
-                    dist < block_radius(azimuth_from(m.center, me, mnn, q), m, mn)
+                    let (u, v) = m.frame(dist, azimuth_from(m.center, me, mnn, q));
+                    mountain_height(m, u, v, 0.0) > IO_FLOW_FILL_DEPTH
                 }
             });
             if blocked {
@@ -1447,10 +1815,7 @@ impl FlowGrowth {
         let near: Vec<&(Mountain, GradientNoise)> = standing
             .iter()
             .filter(|(m, _)| {
-                angle_between(m.center, center) * r
-                    < 1.5 * reach
-                        + radius
-                        + m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE)
+                angle_between(m.center, center) * r < 1.5 * reach + radius + m.extent()
             })
             .collect();
         // The trunk leaves the rim where the ground falls away.
@@ -1473,8 +1838,7 @@ impl FlowGrowth {
             tau * rng.uniform(field, 3)
         };
         let azimuth = downhill + IO_FLOW_SOURCE_SPREAD * rng.normal(field, 4);
-        let rim = radius * (1.0 + IO_PATERA_OUTLINE);
-        let start = crate::geom::offset(center, east, north, rim / r, azimuth);
+        let start = crate::geom::offset(center, east, north, radius / r, azimuth);
         let outward = {
             let c = dot(center, start);
             normalize([
@@ -1642,12 +2006,12 @@ pub fn flow_fields(
                 }
                 let reach = growth
                     .log_uniform(idx, 49 + 90 * g as u64, IO_FLOW_REACH)
-                    .max(2.0 * p.radius);
+                    .max(2.0 * p.extent());
                 let field = idx ^ ((g as u64 + 1) << 48);
                 let lobes = growth.grow_field(
                     field,
                     p.center,
-                    p.radius,
+                    p.extent(),
                     reach,
                     p.active && current,
                     current,
@@ -1737,39 +2101,29 @@ pub fn is_io_regime(graph: &ParamGraph) -> bool {
         && graph.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX
 }
 
-/// Finishing pass of a patera: the pit's fine profile minus the version the loop
-/// carried, and the floor's unit, its lava's coverage and the years since it was laid.
+/// Finishing pass of a patera: the pit at this resolution, cut into the buried plains the
+/// finish starts from, and the floor's unit, its lava's coverage and the years since it
+/// was laid.
 pub fn patera_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
-    coarse_cell: f64,
     body_radius: f64,
     p: &Patera,
     stamper: &mut Stamper,
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let cell = grid.delta() * body_radius;
-    let noise = GradientNoise::new(p.id ^ 0x9A7E_2A00);
-    let wall_fine = (IO_PATERA_WALL_FRACTION * p.radius).max(cell);
-    let wall_coarse = (IO_PATERA_WALL_FRACTION * p.radius).max(coarse_cell);
-    let smear = (0.5 * coarse_cell).hypot(wall_coarse);
-    stamper.gather(
-        grid,
-        body_radius,
-        p.center,
-        p.radius * (1.0 + IO_PATERA_OUTLINE) + 3.0 * smear,
-    );
+    let wall = patera_wall(p.depth, cell);
+    stamper.gather(grid, body_radius, p.center, p.extent() + 3.0 * wall);
     let time = layers.surface_age.as_slice();
     let cells = stamper
         .footprint
         .iter()
         .map(|&(idx, r, phi)| {
-            let edge = patera_radius(phi, p, &noise);
-            let fine = pit_profile(r, edge, p.depth, wall_fine);
-            let coarse = pit_profile(r, edge, p.depth, smear);
+            let edge = patera_radius(phi, p);
             let mut write = CellWrite {
                 idx: idx as u32,
-                bedrock: (bedrock[idx] as f64 - (fine - coarse)) as f32,
+                bedrock: (bedrock[idx] as f64 - pit_profile(r, edge, p.depth, wall)) as f32,
                 surface: false,
                 age: 0.0,
                 unit: 0,
@@ -1795,7 +2149,8 @@ pub fn patera_compute(
     }
 }
 
-/// Finishing pass of a mountain: ridged texture over the block.
+/// Finishing pass of a mountain (F87): the block at this resolution, its scarp and ridges
+/// with it, raised on the buried plains the finish starts from.
 pub fn mountain_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -1807,27 +2162,17 @@ pub fn mountain_compute(
     let ages = layers.surface_age.as_slice();
     let melt = layers.melt.as_slice();
     let cover = layers.cover.as_slice();
-    stamper.gather(
-        grid,
-        body_radius,
-        m.center,
-        m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE),
-    );
-    let outline = GradientNoise::new(m.id ^ 0x0B10_C000);
-    let noise = GradientNoise::new(m.id ^ 0x3B10_C400);
-    let f = body_radius / IO_MOUNTAIN_TEXTURE_LENGTH;
+    let cell = grid.delta() * body_radius;
+    stamper.gather(grid, body_radius, m.center, m.reach(cell));
     let cells = stamper
         .footprint
         .iter()
         .map(|&(idx, r, phi)| {
-            let d = grid.center(grid.cell(idx));
-            let x = r / block_radius(phi, m, &outline);
-            let block = block_profile(r, phi, m, &outline);
-            let ridges = noise.ridged([d[0] * f, d[1] * f, d[2] * f], 1.0, 3, 2.0, 0.5) - 0.5;
-            let texture = IO_MOUNTAIN_TEXTURE * m.height * ridges * (1.0 - x.powi(4)).max(0.0);
+            let (u, v) = m.frame(r, phi);
+            let fine = mountain_height(m, u, v, cell);
             let mut write = CellWrite {
                 idx: idx as u32,
-                bedrock: (bedrock[idx] as f64 + texture) as f32,
+                bedrock: (bedrock[idx] as f64 + fine) as f32,
                 surface: false,
                 age: 0.0,
                 unit: 0,
@@ -1835,7 +2180,7 @@ pub fn mountain_compute(
                 melt: 0.0,
                 cover: 0.0,
             };
-            if block > 0.0 {
+            if fine > MOUNTAIN_UNIT_SHARE * m.height {
                 write.surface = true;
                 write.age = ages[idx];
                 write.unit = UNIT_MOUNTAIN;
@@ -1922,7 +2267,9 @@ pub fn flow_compute(
                 strongest
             };
             // Over lava already laid, the younger wins the age and the stronger the
-            // coverage.
+            // coverage; lava that runs into a patera ponds on its floor and is the floor's
+            // (Williams et al. 2011 map a patera's floor as one unit, its lavas with it).
+            let floor = units[idx] == UNIT_PATERA_FLOOR;
             let (cover, age_yr) = if matches!(units[idx], UNIT_IO_FLOW | UNIT_PATERA_FLOOR) {
                 (
                     (cover as f32).max(covered[idx]),
@@ -1940,8 +2287,12 @@ pub fn flow_compute(
                 bedrock: bedrock[idx] + (IO_FLOW_THICKNESS as f32) * cover,
                 surface: true,
                 age: ages[idx],
-                unit: UNIT_IO_FLOW,
-                deep: cover,
+                unit: if floor {
+                    UNIT_PATERA_FLOOR
+                } else {
+                    UNIT_IO_FLOW
+                },
+                deep: if floor { 1.0 } else { cover },
                 melt: age_yr,
                 cover,
             })
@@ -1964,25 +2315,36 @@ mod tests {
         let d = pit_profile(0.0, 20e3, 1e3, 1e3);
         assert!((d - 1e3).abs() < 1.0);
         assert!(pit_profile(30e3, 20e3, 1e3, 1e3) < 1.0);
+        // A thrust block (F87): highest near its scarp, lower towards its back, falling to
+        // nothing past its tips and well beyond its scarp's foot, its debris below.
         let m = Mountain {
             center: [1.0, 0.0, 0.0],
-            radius: 60e3,
-            height: 10e3,
-            tilt_azimuth: 0.0,
+            strike: 0.0,
+            length: 150e3,
+            width: 60e3,
+            height: 6e3,
+            vergence: 1.0,
             tilt: 0.4,
-            aspect: 1.0,
+            level: 0.9,
+            ridging: 0.0,
             birth_gyr: 0.0,
             death_gyr: 1.0,
             id: 1,
         };
-        let noise = GradientNoise::new(1);
-        let top = block_profile(0.0, 0.0, &m, &noise);
-        assert!((top - 8e3).abs() < 1.0, "{top}");
-        // Tilted down towards azimuth 0: lower there than opposite.
-        let near = block_profile(0.5 * m.radius, 0.0, &m, &noise);
-        let far = block_profile(0.5 * m.radius, std::f64::consts::PI, &m, &noise);
-        assert!(near < far, "{near} vs {far}");
-        assert!(block_profile(2.0 * m.radius, 0.3, &m, &noise) == 0.0);
+        let cell = 1e3;
+        let near = mountain_height(&m, 0.0, 15e3, cell);
+        let far = mountain_height(&m, 0.0, 55e3, cell);
+        assert!(near > far && near > 3e3, "{near} vs {far}");
+        assert!(mountain_height(&m, 0.0, -40e3, cell) < 0.1 * near);
+        assert!(mountain_height(&m, 140e3, 20e3, cell) == 0.0);
+        assert!(mountain_height(&m, 76e3, 20e3, cell) < 0.3 * near);
+        assert!(mountain_height(&m, 70e3, 20e3, cell) < mountain_height(&m, 0.0, 20e3, cell));
+        let scarp = mountain_scarp(6e3, cell);
+        let apron = mountain_height(&m, 0.0, -mountain_heave(6e3) - scarp - 1e3, cell);
+        assert!(apron > 0.0 && apron < 0.5 * near, "{apron}");
+        // The frame: along the strike and across towards the block.
+        let (u, v) = m.frame(10e3, std::f64::consts::FRAC_PI_2);
+        assert!(u.abs() < 1e-6 && (v - 10e3).abs() < 1e-6, "{u} {v}");
         // The ring peaks at the range and ends more steeply outside than it rises
         // inside; the pyroclasts fall within.
         let total = |x: f64| {
@@ -1996,8 +2358,56 @@ mod tests {
         assert!(moment > 0.2 && moment < 0.6, "{moment}");
     }
 
+    /// Writes three blocks' heights, a lineated, a plateau and a massif, to the file
+    /// EXOGEN_BLOCK_OUT names, for a look at their forms: each 400 by 260 cells of 1 km,
+    /// little-endian f32 rows after the counts.
     #[test]
-    fn a_patera_outline_is_a_noisy_polygon() {
+    #[ignore]
+    fn write_blocks() {
+        let Some(path) = std::env::var_os("EXOGEN_BLOCK_OUT") else {
+            return;
+        };
+        let forms = [
+            (0.5, 0.3, 1.0, 5_123),
+            (0.0, 0.9, 0.0, 7_001),
+            (0.0, 0.0, 0.0, 9_377),
+        ];
+        let (nx, ny, cell) = (400usize, 260usize, 1e3);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(forms.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(nx as u32).to_le_bytes());
+        bytes.extend_from_slice(&(ny as u32).to_le_bytes());
+        for &(tilt, level, ridging, id) in &forms {
+            let m = Mountain {
+                center: [1.0, 0.0, 0.0],
+                strike: 0.0,
+                length: 260e3,
+                width: 90e3,
+                height: 5e3,
+                vergence: 1.0,
+                tilt,
+                level,
+                ridging,
+                birth_gyr: 0.0,
+                death_gyr: 1.0,
+                id,
+            };
+            for row in 0..ny {
+                let v = (0.65 * ny as f64 - row as f64) * cell;
+                for col in 0..nx {
+                    let u = (col as f64 - nx as f64 / 2.0) * cell;
+                    let h = mountain_height(&m, u, v, 2.8e3) as f32;
+                    bytes.extend_from_slice(&h.to_le_bytes());
+                }
+            }
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    /// A patera's outline (F88): the union of its nested collapses, cut straight by its
+    /// faults.
+    #[test]
+    fn a_patera_outline_is_its_collapses_and_faults() {
         let p = Patera {
             center: [1.0, 0.0, 0.0],
             radius: 30e3,
@@ -2005,22 +2415,23 @@ mod tests {
             active: false,
             floor_age_yr: 100.0,
             pele: false,
-            sides: 6,
-            rotation: 0.0,
+            axis: 0.0,
+            collapses: vec![[0.0, 0.0, 30e3], [15e3, 0.0, 20e3]],
+            faults: vec![[std::f64::consts::FRAC_PI_2, 20e3]],
             birth_gyr: 0.0,
             death_gyr: 1.0,
             id: 3,
         };
-        let noise = GradientNoise::new(3);
-        let mut lo = f64::INFINITY;
-        let mut hi = 0.0f64;
-        for k in 0..360 {
-            let r = patera_radius((k as f64).to_radians(), &p, &noise);
-            lo = lo.min(r);
-            hi = hi.max(r);
-        }
-        assert!(lo > 0.6 * p.radius && hi < 1.4 * p.radius, "{lo} {hi}");
-        assert!(hi - lo > 0.05 * p.radius);
+        // Along the axis the second collapse reaches farther; the fault cuts the north.
+        assert!(
+            (patera_radius(0.0, &p) - 35e3).abs() < 1.0,
+            "{}",
+            patera_radius(0.0, &p)
+        );
+        assert!((patera_radius(std::f64::consts::PI, &p) - 30e3).abs() < 1.0);
+        assert!((patera_radius(std::f64::consts::FRAC_PI_2, &p) - 20e3).abs() < 1.0);
+        assert!(patera_radius(-std::f64::consts::FRAC_PI_2, &p) > 29e3);
+        assert!(p.extent() >= 35e3);
     }
 
     /// The top layer (F84): a red deposit stays red while it falls and reverts within a
@@ -2208,8 +2619,9 @@ mod tests {
                 active: k % 5 == 0,
                 floor_age_yr: 10.0,
                 pele: k % 20 == 0,
-                sides: 6,
-                rotation: 0.0,
+                axis: 0.0,
+                collapses: vec![[0.0, 0.0, 20e3]],
+                faults: Vec::new(),
                 birth_gyr: 0.0,
                 death_gyr: 1.0,
                 id: 7_000 + k,

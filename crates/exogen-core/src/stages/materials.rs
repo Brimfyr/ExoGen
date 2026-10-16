@@ -450,11 +450,7 @@ pub fn albedo(
                         let (lo, hi) = IO_MOUNTAIN_BARE_SLOPE_DEG;
                         let bare =
                             ((slope.atan().to_degrees() - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
-                        lerp3(
-                            lerp3(ground, IO_FROST, frost),
-                            IO_MOUNTAIN_ROCK,
-                            0.25 + 0.75 * bare,
-                        )
+                        lerp3(lerp3(ground, IO_FROST, frost), IO_MOUNTAIN_ROCK, bare)
                     }
                     _ => lerp3(ground, IO_FROST, frost),
                 };

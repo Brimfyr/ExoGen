@@ -136,6 +136,9 @@ pub struct LoopOutput {
     /// birth and death; the finish takes those alive at the epoch.
     pub paterae: Vec<io::Patera>,
     pub mountains: Vec<io::Mountain>,
+    /// The Io regime's buried plains, the bedrock every step lays its features on, on
+    /// the coarse grid.
+    pub io_base: Option<Field<f32>>,
     /// An ice shell's lanes of grooved terrain and when they formed.
     pub lanes: Vec<ice_shell::Lane>,
     /// The share of the surface the lanes cover once all have formed.
@@ -357,7 +360,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 77;
+pub const FINISH_VERSION: u64 = 78;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -526,9 +529,9 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
-    let (paterae, mountains) = match io {
-        Some(i) => (i.paterae, i.mountains),
-        None => (Vec::new(), Vec::new()),
+    let (paterae, mountains, io_base) = match io {
+        Some(i) => (i.paterae, i.mountains, i.base.map(|b| b.bedrock)),
+        None => (Vec::new(), Vec::new(), None),
     };
     let (resurfacing, coronae, domes, novae) = match episodic {
         Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
@@ -595,6 +598,7 @@ pub fn run_coarse_loop(
         domes,
         paterae,
         mountains,
+        io_base,
         lanes,
         lane_coverage,
         lane_core,
@@ -863,6 +867,14 @@ pub fn finish(
     } else {
         Vec::new()
     };
+    // The Io regime's mountains and paterae are drawn whole at this resolution on the
+    // buried plains the loop laid its coarse versions on (F87, F88), smoothed over the
+    // loop's cell as the rest of the bedrock is, so nothing of the coarse ones is left.
+    if let Some(io_base) = &loop_output.io_base {
+        let coarse_cell_m = loop_output.grid.delta() * body_radius;
+        let smoothed = relaxation::low_pass(&io_base.resample(grid), cell, coarse_cell_m);
+        layers.bedrock.as_mut_slice().copy_from_slice(&smoothed);
+    }
     // The plumes the paterae alive at the epoch have thrown over the history the surface
     // remembers (F84).
     let plume_episodes = if io::is_io_regime(graph) {
@@ -1291,14 +1303,12 @@ pub fn finish(
                 }
                 Event::Patera(k) => {
                     let p = &paterae[*k];
-                    (
-                        p.center,
-                        p.cap_radius(body_radius) + 3.0 * loop_output.grid.delta(),
-                    )
+                    let reach = p.extent() + 3.0 * io::patera_wall(p.depth, cell);
+                    (p.center, reach / body_radius + 2.0 * grid.delta())
                 }
                 Event::Mountain(k) => {
                     let m = &mountains[*k];
-                    (m.center, m.cap_radius(body_radius) + 2.0 * grid.delta())
+                    (m.center, m.reach(cell) / body_radius + 2.0 * grid.delta())
                 }
                 Event::IoFlow(k) => {
                     let f = &io_flows[*k];
@@ -1499,14 +1509,8 @@ pub fn finish(
                         Some((out, None, None))
                     }
                     Event::Patera(k) => {
-                        let out = io::patera_compute(
-                            &layers,
-                            &grid,
-                            coarse_cell,
-                            body_radius,
-                            &paterae[*k],
-                            stamper,
-                        );
+                        let out =
+                            io::patera_compute(&layers, &grid, body_radius, &paterae[*k], stamper);
                         Some((out, None, None))
                     }
                     Event::Mountain(k) => {

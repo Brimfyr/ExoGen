@@ -544,3 +544,37 @@ What they still do not show:
 - **White plains** (M7).
 
 Tests 155 (one ignored). Two are new: a compound field fans out from its trunk, its breakouts spread over a good share of its reach, each laid within the field's span; and the burial fills small relief and keeps the broad. Clippy is clean and validate passes its 117 checks.
+
+## The twenty-eighth milestone: Io's mountains and paterae
+
+The user on the twenty-seventh: "Ok, go ahead with the mountains and paterae."
+
+Io's mountains were noisy ovals with a scarp on one side, grey blotches over 9 percent of the surface against Io's 3, and its paterae polygons. Io's mountains are blocks of crust thrust up along faults as the crust subsides under its burial, tilted, layered or massive, with scarps cut back by landslides (Schenk and Bulmer 1998; Schenk et al. 2001), striking 30 or 60 degrees from the tide's compression (Seeger and de Kleer 2025). Its paterae are collapse depressions, many with straight sides and sharp corners, some at the feet of mountains (Radebaugh et al. 2001).
+
+- **F87, the thrust blocks.** A block's uplift is its fault's throw, tapering as a cosine squared to the fault's tips, times its fall across the block, held level by a plateau, falling steadily on a tilted block and rounding on a massif; the plains bury it to a fifth of its height, so its back and its tips are where it dips under them, irregular with its own relief. The thrust's heave carries it out over the plains the farthest where the throw is greatest, so its trace bows, as the bow-and-arrow rule has a thrust's. Its scarp is worn to 30 degrees and cut back in landslide arcs, their debris below. A lineated block is ridged along its strike in patches, crests that wander, branch and end.
+- **F88, the collapses.** A patera is the union of nested collapses along the crust's fabric, its sizes Radebaugh et al.'s, its walls at 70 degrees; 42 percent are cut straight by faults and 13 percent sink at the foot of a mountain's scarp. Lava that runs into a patera is its floor's, so the floors cover 1.9 percent where they covered 0.5.
+
+It took eleven renders:
+
+- **D-shapes and rectangles.** The first blocks came out D-shaped with hairlines at their tips, then as rectangles with straight ends: the uplift fell too steeply for the relief to wander the outline. The block became a buried uplifted surface, with stronger relief, a plateau's back that wanders and a throw tapering over a fault longer than the block.
+- **Sawtooth crests.** Scarps narrower than two cells stepped along the grid; a scarp is now at least two cells wide.
+- **Rails.** Every block was shadowed by two straight lines along its scarp, a strip between them. Two guesses (a mismatch between the loop's copy of a block and the one the finish took away; hard cuts at the edges of a block's domain) changed nothing. A height profile across one block found a step of 400 m some 36 km in front of its scarp: the debris began at 0.15 of the crest at the scarp's foot while the scarp began at nought, and the finish, taking away its own copy of the loop's wider block, left that block's step behind as well. The scarp now comes down to its debris, and the finish draws mountains and paterae whole on the buried plains the loop laid them on, which the loop now hands over, so there is no copy to take away.
+- **Corduroy.** A lineated block's ridges were one sine across it, a regular corduroy; they are the noise's zero crossings drawn out along the strike now, in patches.
+- **Missing scallops.** The scarp's landslide arcs barely showed: their smooth maximum took the scarp's width times the logarithm of their number, 17 km, off every cut. Each arc now counts only where it cuts.
+- **Half the relief.** The factor meant to give the blocks' relief a unit spread gave 0.5; the relief is normalised from the noise's measured spread now, with octaves down to what the grid resolves, and its amplitudes halved to keep the look.
+- **Grain.** Vertical bands crossed the blocks: the arcs' cusps shifted the whole surface behind them, and the noise was read on planes along its lattice. The surface is measured from the fault's line, the landslides taking away only what stood in front of the scarp, and the noise is read on a slanted plane.
+- **Lost floors.** Inside the larger paterae 84 percent of the floor was mapped as flow: lava ran into the pits and took them. Lava that ponds in a patera keeps the floor's unit and gives it its age.
+- **Square paterae.** A faulted patera's faults were set at right angles to its axis, so some came out square; each fault now follows one of the fabric's strikes, 30 or 60 degrees either side of the tide's compression, so the sides meet at the angles between those strikes.
+
+What the maps show:
+
+- **Io:** mountains as blocks with scalloped scarps on one side and embayed backs, lineated blocks ridged in patches, plateaus with wandering backs and lumpy massifs; paterae as pits with steep walls, scalloped where their collapses meet, some cut straight, some against a mountain's scarp, dark when their lava is young and coated when old. Plains 79 percent of the surface, flows 16, patera floors 1.9, mountains 3.4 (Williams et al. 2011: 66, 28, 2.5 and 3). The render takes 96 seconds. The sidecar lists each mountain's length and width in place of its diameter, and a patera's diameter is its outline's widest extent.
+
+What they still do not show:
+
+- **Mountains in the albedo:** a block takes the plains' coat and shows its rock only on its scarps and ridges; frost on high ground is not modelled.
+- **Mountains' and paterae's sizes** from the compression and the magma beneath (T1): the sizes and shares are the counts'.
+- **Flow coverage** (M8): 16 percent against 28.
+- **Mottled plains** and **white plains** (M7).
+
+Tests 157 (two ignored). One is new: a patera's outline is its collapses and faults. An ignored test writes three blocks' heights for a look at their forms. Clippy is clean and validate passes its 117 checks.

@@ -187,9 +187,9 @@ These features take a fixed profile, with noise for variety, rather than a form 
 | Rises | `dome` (stages/plume.rs) | a plume's buoyancy under the lid's flexure |
 | Shields | `shield_height` (stages/plume.rs) | built from flows, each laid down where the last left the slope |
 | Canyons | `trough_depth_at` (stages/plume.rs) | strike from the stress field, depth and width from the extension and the lid |
-| Io's mountains | `block_radius`, `block_profile` (stages/io.rs) | thrust blocks on faults across a compressive field, their outline noise now |
+| Io's mountains | `mountain_height`, `raise_mountains` (stages/io.rs) | partly by F87, the twenty-eighth milestone: each a block thrust up along a fault striking with the tide's compression, its uplift the throw tapering to the fault's tips times its fall across the block, buried by the plains so that its back and tips are where it dips under them, its trace bowed by the heave and its scarp cut back by landslides. Its sizes, its form's shares and its relief and ridges are still drawn, where the compression of the burial against the lithosphere's strength would set them (Schenk and Bulmer 1998; McKinnon et al. 2001) |
 | Io's plume deposits | `deposit_profile`, `plume_history` (stages/io.rs) | partly by F84, the twenty-sixth milestone: each eruption's range from its speed (v²/g), its oval from its vent's elongation, its range scattered with azimuth, its gas condensing in a ring and its pyroclasts falling within; the ring's radial profile is still a fixed Gaussian each side and the fall within a fixed ramp, where the canopy shock and the particles' sizes would set them (Zhang et al. 2003's DSMC plumes) |
-| Paterae | `patera_compute` (stages/io.rs) | outline from the faults of the block it sank into, a polygon share with noise now |
+| Paterae | `patera_radius`, `populate` (stages/io.rs) | partly by F88: the outline is the union of nested collapses along the crust's fabric, cut straight by its faults or by a mountain's. The sizes and the shares are Radebaugh et al.'s counts, not yet read from the magma reservoirs beneath |
 | Crater walls and rims | `fresh_height` (crater/morphology.rs), `RimShape` (crater/stamp.rs) | closed by F67, the sixteenth milestone: the wall is made by its collapse, terraces of slump blocks on arcuate faults whose widths follow Pearce and Melosh (1986) and the strength length, a scalloped rim and the floor's edge at the blocks' toes |
 
 Impact craters are events and stay objects. Their sizes follow scaling laws, and since F67 their walls follow their collapse (the last row).
@@ -302,7 +302,7 @@ When: with Phase 5's materials, or sooner with the flows.
 
 ### M8. Io's flow coverage
 
-Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al. 2011). F85's fields cover 20 percent and the plains 70: the fields' areas are stated shares of their reach, and the number of fields three generations a patera.
+Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al. 2011). F85's fields cover 20 percent and the plains 70: the fields' areas are stated shares of their reach, and the number of fields three generations a patera. Since F87 and F88, with the lava that ponds in a patera counted as its floor, the fields cover 16 percent and the plains 79.
 
 Direction: the fields' areas from the lava erupted over their lives, the eruptive share of the magma rate (Spencer et al. 2020: most of Io's magma intrudes) over a field's thickness, so that the coverage follows from the heat the lava carries out.
 

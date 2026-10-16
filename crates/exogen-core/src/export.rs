@@ -152,7 +152,8 @@ pub struct LineaInfo {
 pub struct MountainInfo {
     pub lat_deg: f64,
     pub lon_deg: f64,
-    pub diameter_km: f64,
+    pub length_km: f64,
+    pub width_km: f64,
     pub height_m: f64,
 }
 
@@ -811,7 +812,7 @@ pub fn export(
                 PateraInfo {
                     lat_deg: lat.to_degrees(),
                     lon_deg: lon.to_degrees(),
-                    diameter_km: 2.0 * p.radius / 1e3,
+                    diameter_km: 2.0 * p.extent() / 1e3,
                     depth_m: p.depth,
                     active: p.active,
                 }
@@ -825,7 +826,8 @@ pub fn export(
                 MountainInfo {
                     lat_deg: lat.to_degrees(),
                     lon_deg: lon.to_degrees(),
-                    diameter_km: 2.0 * m.radius / 1e3,
+                    length_km: m.length / 1e3,
+                    width_km: m.width / 1e3,
                     height_m: m.height,
                 }
             })

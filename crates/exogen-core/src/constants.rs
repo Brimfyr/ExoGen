@@ -441,40 +441,70 @@ pub const DOME_HEIGHT: f64 = 800.0;
 pub const DOME_TOP_ROUGHNESS: f64 = 0.08;
 /// The Io regime: paterae per terawatt of tidal power (Io: some 400), the latitude weight
 /// of the paterae (1 at the equator, this at the poles, as the tidal heat comes out at low
-/// latitudes), their diameters, m, log-uniform and skewed small, their depth, m, the
-/// wall width as a fraction of the radius, the polygon share of a fault-bounded outline
-/// and its noise, the sides of that polygon, and the share of paterae active at a time.
+/// latitudes); their diameters, m, log-normal about this median with this spread within
+/// this range (Radebaugh et al. 2001: 417 paterae from 2.5 to 203 km across, mean 41.0
+/// km, median 34.5, an exponential tail); their depth, m, and the slope of their walls,
+/// degrees (Chaac Patera's wall 2.7 km high at 70 degrees, Radebaugh et al. 2001); the
+/// share of paterae with straight sides cut by faults, and the share that sink at the
+/// foot of a mountain (42 and 13 percent, Radebaugh et al. 2001); and the share of
+/// paterae active at a time (F88).
 pub const IO_PATERAE_PER_TW: f64 = 5.4;
 pub const IO_PATERA_POLAR_WEIGHT: f64 = 0.3;
-pub const IO_PATERA_DIAMETER: (f64, f64) = (10e3, 200e3);
-pub const IO_PATERA_SIZE_SKEW: f64 = 2.0;
+pub const IO_PATERA_DIAMETER: (f64, f64) = (34.5e3, 0.59);
+pub const IO_PATERA_DIAMETER_RANGE: (f64, f64) = (2.5e3, 210e3);
 pub const IO_PATERA_DEPTH: f64 = 1_200.0;
-pub const IO_PATERA_WALL_FRACTION: f64 = 0.08;
-pub const IO_PATERA_POLYGON: f64 = 0.6;
-pub const IO_PATERA_OUTLINE: f64 = 0.12;
-pub const IO_PATERA_SIDES: (u32, u32) = (5, 8);
+pub const IO_PATERA_WALL_SLOPE_DEG: f64 = 70.0;
+pub const IO_PATERA_FAULTED_SHARE: f64 = 0.42;
+pub const IO_PATERA_MOUNTAIN_SHARE: f64 = 0.13;
 pub const IO_PATERA_ACTIVE_FRACTION: f64 = 0.2;
 /// Years since a quiet patera's floor last held a lake, log-uniform: the floor is coated
 /// by what has fallen on it since (F84).
 pub const IO_FLOOR_AGE_YR: (f64, f64) = (1.0, 1e6);
-/// Mountains: tilted crustal blocks raised by the subsidence of the crust under the
-/// burial, two per terawatt (Io: some 150), their diameters and heights, m, the tilt of a
-/// block as a fraction of its height, elongation up to this aspect ratio, the noise on
-/// the outline as a fraction of the radius, the ridged texture's relative amplitude and
-/// length, and their lifetimes, Gyr: raised and buried in a few hundred million years.
+/// Mountains (F87): crustal blocks thrust up along faults by the compression the
+/// subsidence of the crust under the burial builds, two per terawatt (Io: some 150;
+/// Schenk et al. 2001 counted 115 over the 80 percent imaged), raised and buried in a
+/// few hundred million years. Their length, m, log-normal about this median with this
+/// spread, at most this (Schenk et al. 2001: 157 km on average, the longest 570 km);
+/// their length over their width, log-normal (a stated choice, which with the lengths
+/// covers about 3 percent of the surface, as Io's mountains do); their height, m,
+/// log-normal, at most this (6.3 km on average, the highest 17.5 km); the share of their
+/// height a block's surface loses across it at most; the shares of lineated blocks and
+/// of layered plateaus and mesas, the rest massifs (Williams et al. 2011's mountain units:
+/// lineated 27 percent, layered 22, mottled 3, the rest undivided); a scarp's slope after
+/// its landslides, degrees, the landslides' scallops this long along the scarp and
+/// cutting back into the block at most this share of its width (Schenk and Bulmer 1998:
+/// Euboea Montes' landslide; the amounts stated choices); the debris below a scarp this
+/// share of its height at its foot, falling off over this many scarp widths; the block's
+/// own relief, unresolved, from half its width down to the grid, its spread this share
+/// of its height on its dissected margins and this on its top, each octave this share of
+/// the one before (a Hurst exponent of 0.86), and the plains burying it to this share of
+/// its height, so that they embay it where its uplift is low (stated choices); a lineated
+/// block's ridges this far apart, m, this share of its height (stated choices); and the
+/// dip of the thrust, degrees, whose heave carries the block out over the plains, the
+/// most where its throw is greatest, so that its trace bows out (Anderson's thrust at 30
+/// degrees for a friction of 0.6; the bow-and-arrow rule, Burg 2017's notes on thrust
+/// systems, ETH Zurich: the arrow about a tenth of the trace's length on Earth's thrusts).
 pub const IO_MOUNTAINS_PER_TW: f64 = 2.0;
-pub const IO_MOUNTAIN_DIAMETER: (f64, f64) = (80e3, 300e3);
-pub const IO_MOUNTAIN_HEIGHT: (f64, f64) = (3e3, 15e3);
-pub const IO_MOUNTAIN_TILT: f64 = 0.5;
-pub const IO_MOUNTAIN_ASPECT: f64 = 2.5;
-pub const IO_MOUNTAIN_OUTLINE: f64 = 0.3;
-pub const IO_MOUNTAIN_TEXTURE: f64 = 0.08;
-pub const IO_MOUNTAIN_TEXTURE_LENGTH: f64 = 12e3;
 pub const IO_MOUNTAIN_LIFETIME_GYR: (f64, f64) = (0.1, 0.5);
-/// A block ends in a fault scarp on its upthrown side, the rim falling as 1 - x to this
-/// power, and slopes under the plains on the downthrown side, to this power.
-pub const IO_MOUNTAIN_SCARP_POWER: f64 = 12.0;
-pub const IO_MOUNTAIN_APRON_POWER: f64 = 2.0;
+pub const IO_MOUNTAIN_LENGTH: (f64, f64) = (130e3, 0.6);
+pub const IO_MOUNTAIN_LENGTH_MAX: f64 = 600e3;
+pub const IO_MOUNTAIN_ASPECT: (f64, f64) = (2.5, 0.4);
+pub const IO_MOUNTAIN_HEIGHT: (f64, f64) = (5.5e3, 0.5);
+pub const IO_MOUNTAIN_HEIGHT_MAX: f64 = 18e3;
+pub const IO_MOUNTAIN_TILT: f64 = 0.5;
+pub const IO_MOUNTAIN_FORMS: (f64, f64) = (0.45, 0.4);
+pub const IO_MOUNTAIN_SCARP_SLOPE_DEG: f64 = 30.0;
+pub const IO_MOUNTAIN_SCALLOP_LENGTH: f64 = 40e3;
+pub const IO_MOUNTAIN_SCALLOP_DEPTH: f64 = 0.15;
+pub const IO_MOUNTAIN_APRON: f64 = 0.15;
+pub const IO_MOUNTAIN_APRON_REACH: f64 = 1.0;
+pub const IO_MOUNTAIN_RELIEF: f64 = 0.15;
+pub const IO_MOUNTAIN_TOP_RELIEF: f64 = 0.025;
+pub const IO_MOUNTAIN_RELIEF_GAIN: f64 = 0.55;
+pub const IO_MOUNTAIN_BURIAL: f64 = 0.2;
+pub const IO_MOUNTAIN_RIDGE_SPACING: f64 = 10e3;
+pub const IO_MOUNTAIN_RIDGE_RELIEF: f64 = 0.06;
+pub const IO_MOUNTAIN_FAULT_DIP_DEG: f64 = 30.0;
 /// Flow fields: from every active patera and this share of the quiet ones; their reach,
 /// m, log-uniform (the longest more than 300 km, Amirani and Masubi, NASA PIA02567;
 /// Lei-Kung Fluctus is said to cover more than 125,000 km²); the lobing of the margins at the width's scale, the softness of the
@@ -670,7 +700,8 @@ pub const IO_HALO_RANGE: f64 = 8e3;
 pub const IO_ALIVE_TOLERANCE_GYR: f64 = 1e-6;
 /// Colours, linear reflectance: sulfur, sulfur altered by the plasma, SO2 frost, dark
 /// silicate (fresh lava and its pyroclasts), a plume's red sulfur and bare mountain
-/// rock; and the slopes between which a mountain sheds its coat, degrees.
+/// rock; and the slopes between which a mountain sheds its coat, degrees, its gentler
+/// ground coated as the plains are (F87).
 pub const IO_SULFUR: [f32; 3] = [0.65, 0.55, 0.25];
 pub const IO_POLAR: [f32; 3] = [0.38, 0.24, 0.13];
 pub const IO_FROST: [f32; 3] = [0.86, 0.86, 0.88];
