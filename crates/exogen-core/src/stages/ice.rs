@@ -10,6 +10,8 @@
 //! clean ice up from under the lag is bright until its own lag forms. The poles, which the
 //! mean insolation hardly warms, keep their frost.
 
+use rayon::prelude::*;
+
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
 use crate::geom::{angle_between, cross, normalize, rotate};
@@ -71,13 +73,19 @@ pub fn regolith_impurity(graph: &ParamGraph) -> f64 {
 /// ever more slowly, so the lag grows as the square root of time), opaque past the
 /// reference mass; and the gardening that mixes clean ice back into the regolith.
 pub fn lag_maturity_at(temperature: f64, impurity: f64, exposure_gyr: f64) -> f64 {
+    lag_at(temperature, impurity, exposure_gyr).1
+}
+
+/// The lag's thickness, in units of its opaque mass, and the maturity of a cell of icy
+/// surface at an exposure (`lag_maturity_at`).
+fn lag_at(temperature: f64, impurity: f64, exposure_gyr: f64) -> (f64, f64) {
     let exposure = exposure_gyr.max(0.0);
     let supply = ice_sublimation_flux(temperature) * exposure * SECONDS_PER_GYR * impurity
         / LAG_OPAQUE_KG_M2;
     let thickness = (1.0 + 2.0 * supply).sqrt() - 1.0;
     let lag = 1.0 - (-thickness).exp();
     let gardened = 1.0 - (-exposure / ICE_EJECTA_FADE_GYR).exp();
-    1.0 - (1.0 - lag) * (1.0 - gardened)
+    (thickness, 1.0 - (1.0 - lag) * (1.0 - gardened))
 }
 
 /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin deposits
@@ -212,6 +220,16 @@ pub fn lag_maturity(
     present: f64,
     slope: Option<&Field<f32>>,
 ) -> Field<f32> {
+    lag_fields(graph, layers, present, slope).0
+}
+
+/// The maturity of an icy surface and the thickness of its lag, m, cell by cell.
+pub fn lag_fields(
+    graph: &ParamGraph,
+    layers: &LayerSet,
+    present: f64,
+    slope: Option<&Field<f32>>,
+) -> (Field<f32>, Field<f32>) {
     let grid = layers.grid;
     let insolation = graph.f64("orbit.insolation");
     let body_albedo = graph.f64("atmosphere.bond_albedo");
@@ -221,33 +239,48 @@ pub fn lag_maturity(
     let clean_f = layers.clean.as_slice();
     // A plume's fallout buries the lag as fast as it falls.
     let fallout = crate::stages::cryo::Fallout::new(graph);
-    Field::from_fn(grid, |c, d| {
-        let tilt = slope.map_or(0.0, |s| s.get(c) as f64);
-        let cos_lat = effective_cos_lat(d, tilt);
-        let exposure = present - layers.surface_age.get(c) as f64;
-        let exposure = match &fallout {
-            Some(f) => exposure.min(f.burial_gyr(d)),
-            None => exposure,
-        };
-        let share = clean_f[grid.index(c)].clamp(0.0, 1.0) as f64;
-        let impurity = impurity + (clean - impurity) * share;
-        // The surface sits at its own temperature, not the body's mean: a fresh bright
-        // surface is cold and its lag grows slowly, a dark lag is warm and grows faster,
-        // which is the thermal segregation that keeps Callisto's young craters bright for
-        // an age. The body's Bond albedo scales with the cell's reflectance against the
-        // mature surface's; the fresh state is the starting point and the iteration
-        // settles on the state a fresh surface reaches.
-        let a_fresh = albedos.fresh + (albedos.clean_fresh - albedos.fresh) * share;
-        let a_mature = albedos.mature + (albedos.clean_mature - albedos.mature) * share;
-        let mut m = 0.0;
-        for _ in 0..6 {
-            let a_local = a_fresh + (a_mature - a_fresh) * m;
-            let bond = (body_albedo * a_local / a_mature.max(1e-3)).clamp(0.0, 0.95);
-            let t = mean_surface_temperature(insolation, bond, cos_lat);
-            m = lag_maturity_at(t, impurity, exposure);
-        }
-        m as f32
-    })
+    let state: Vec<(f32, f32)> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|k| {
+            let c = grid.cell(k);
+            let d = grid.center(c);
+            let tilt = slope.map_or(0.0, |s| s.get(c) as f64);
+            let cos_lat = effective_cos_lat(d, tilt);
+            let exposure = present - layers.surface_age.get(c) as f64;
+            let exposure = match &fallout {
+                Some(f) => exposure.min(f.burial_gyr(d)),
+                None => exposure,
+            };
+            let share = clean_f[grid.index(c)].clamp(0.0, 1.0) as f64;
+            let impurity = impurity + (clean - impurity) * share;
+            // The surface sits at its own temperature, not the body's mean: a fresh bright
+            // surface is cold and its lag grows slowly, a dark lag is warm and grows faster,
+            // which is the thermal segregation that keeps Callisto's young craters bright for
+            // an age. The body's Bond albedo scales with the cell's reflectance against the
+            // mature surface's; the fresh state is the starting point and the iteration
+            // settles on the state a fresh surface reaches.
+            let a_fresh = albedos.fresh + (albedos.clean_fresh - albedos.fresh) * share;
+            let a_mature = albedos.mature + (albedos.clean_mature - albedos.mature) * share;
+            let (mut m, mut thickness) = (0.0, 0.0);
+            for _ in 0..6 {
+                let a_local = a_fresh + (a_mature - a_fresh) * m;
+                let bond = (body_albedo * a_local / a_mature.max(1e-3)).clamp(0.0, 0.95);
+                let t = mean_surface_temperature(insolation, bond, cos_lat);
+                (thickness, m) = lag_at(t, impurity, exposure);
+            }
+            (
+                m as f32,
+                (thickness * LAG_OPAQUE_KG_M2 / LAG_BULK_DENSITY) as f32,
+            )
+        })
+        .collect();
+    let mut maturity = Field::new(grid);
+    let mut lag = Field::new(grid);
+    for (k, &(m, t)) in state.iter().enumerate() {
+        maturity.as_mut_slice()[k] = m;
+        lag.as_mut_slice()[k] = t;
+    }
+    (maturity, lag)
 }
 
 /// An episode of focused heating (F53): the thinned zone sat at the pole from `start`

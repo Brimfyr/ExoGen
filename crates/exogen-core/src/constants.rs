@@ -1127,13 +1127,24 @@ pub const RIM_SHARE_BAND: f64 = 0.3;
 pub const TERRACE_INWARD: f64 = 0.75;
 pub const TERRACE_LEAST: f64 = 0.35;
 pub const TERRACE_WALL_SHARE: f64 = 0.85;
+/// The share inward varies by up to this fraction from terrace to terrace, so no two
+/// craters' terraces stand at the same spacing (T2; a stated choice).
+pub const TERRACE_INWARD_SPREAD: f64 = 0.2;
+/// The collapse at which a crater's wall is terraced in full (T2): the fall of its
+/// depth-to-diameter ratio from the transition's, 1 - (D / D_t)^-0.70 under Pike's
+/// complex law, which reaches it near 3.7 transitions (60 km on the Moon). Below it the
+/// terraces come in from the rim, the outermost first (a stated choice; Pike 1980 places
+/// the onset of wall terraces just past the transition).
+pub const TERRACE_FULL_COLLAPSE: f64 = 0.6;
 /// A terrace is a ring of slump blocks, each this many of the terrace's widths long on
 /// average, longer or shorter by up to a factor of two; a block's scarp stands off its
 /// neighbours' by up to this share of the terrace's width, the throw of the faults
-/// varying around a crater, and bows out toward the rim by this share in its middle, as a
-/// slump's headscarp does; this share of the blocks slumped no terrace at all.
+/// varying around a crater, far enough to meet the terrace inside or outside it so that
+/// terraces merge and split around the wall (T2), and bows out toward the rim by this
+/// share in its middle, as a slump's headscarp does; this share of the blocks slumped no
+/// terrace at all.
 pub const TERRACE_BLOCK_LENGTH: f64 = 5.0;
-pub const TERRACE_OFFSET: f64 = 0.35;
+pub const TERRACE_OFFSET: f64 = 0.6;
 pub const TERRACE_BOW: f64 = 0.25;
 pub const TERRACE_ABSENT: f64 = 0.2;
 /// A terrace's bench keeps this share of the wall's slope; its scarp is this share of its
@@ -1175,9 +1186,9 @@ pub const DEEP_BEDROCK_DEPTH_ROCK: f64 = 25_000.0;
 pub const DEEP_BEDROCK_DEPTH_IRON_RICH: f64 = 10_000.0;
 pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
 /// Brightness mottling of fresh ejecta in the ray field, and the lobing of the continuous
-/// ejecta edge as a fraction of its radius: the edge wanders by 15% in eleven to
-/// sixty-one lobes round the crater, as the ragged margins of real blankets do; a few
-/// low harmonics read as petals at map scale.
+/// ejecta edge as a fraction of its radius: the edge wanders by 15% in the ejecta
+/// curtain's harmonics from CURTAIN_EDGE_ORDER up (F91), as the ragged margins of real
+/// blankets do; a few low harmonics read as petals at map scale.
 pub const EJECTA_BRIGHTNESS_TEXTURE: f64 = 0.25;
 pub const EJECTA_EDGE_RAGGEDNESS: f64 = 0.15;
 /// A lobe of the edge narrower than this many cells along it is not drawn: at the grid's
@@ -1208,16 +1219,53 @@ pub const MELT_EDGE_WIDTH: f64 = 0.3;
 /// 1975): the deposit is all primary ejecta out to this many radii and all local material
 /// at the continuous ejecta edge.
 pub const EJECTA_PURE_RADII: f64 = 1.1;
-/// Rays: length range in radii, count range, and the smallest crater (in finishing cells)
-/// that gets rays.
-pub const RAY_LENGTH_MULTIPLE: (f64, f64) = (6.0, 15.0);
-pub const RAYS_PER_CRATER: (u32, u32) = (8, 24);
+/// The smallest crater, in finishing cells of diameter, that gets rays.
 pub const RAY_MIN_CELLS: f64 = 6.0;
-/// Rays of craters larger than this reference (Tycho, 85 km) are shortened in radii by the
-/// square root of the diameter ratio, since ejecta speed grows slowly with crater size.
-pub const RAY_REFERENCE_DIAMETER: f64 = 85_000.0;
-/// Linear ray width range as a fraction of the crater radius.
-pub const RAY_WIDTH_FRACTION: (f64, f64) = (0.10, 0.30);
+/// The ejecta curtain (F91): its mass by azimuth is the exponential of CURTAIN_SPREAD
+/// times a unit spread of harmonics of order CURTAIN_ORDERS.0 to CURTAIN_ORDERS.1, whose
+/// amplitudes fall as the order to the CURTAIN_SLOPE. Stated choices: they gather the
+/// curtain in some thirteen jets with nine tenths of its mass in a fifth of the azimuths,
+/// near the rays a crater Elliott et al. (2018) counted on the Moon (10.7 on average, 22
+/// degrees wide at two radii), with finer jets within them and dark gaps between them
+/// from a few radii out, from the unresolved relief of
+/// the target at the rim, which makes rays where a granular surface undulates (Sabuwala
+/// et al. 2018). The continuous blanket's edge is lobed by the orders from
+/// CURTAIN_EDGE_ORDER up.
+pub const CURTAIN_SPREAD: f64 = 2.5;
+pub const CURTAIN_SLOPE: f64 = 0.75;
+pub const CURTAIN_ORDERS: (u32, u32) = (6, 64);
+pub const CURTAIN_EDGE_ORDER: f64 = 11.0;
+/// Rays (F91): the share of the ground the curtain's fragments excavate from under the
+/// weathered skin, 1 - exp(-A), with A falling as the distance to the RAY_DENSITY_SLOPE,
+/// a - beta b / (1 - beta) of Elliott et al. (2018)'s secondary-crater model with their
+/// fragment density slope a = -4.5, fragment size slope b = -5 and strength exponent
+/// beta = 0.17 (Schmidt and Housen 1987). The scale puts a median jet's half-excavated
+/// end at their median lunar ray length, RAY_LENGTH_COEFF_KM times the crater radius in
+/// km to the RAY_LENGTH_EXPONENT (Eq. 2, 27 craters from 10 m to 85 km): a lunar
+/// calibration, which a body's skin depth and fragment population would change.
+pub const RAY_LENGTH_COEFF_KM: f64 = 6.59;
+pub const RAY_LENGTH_EXPONENT: f64 = 1.27;
+pub const RAY_DENSITY_SLOPE: f64 = 3.48;
+/// Downrange ejecta leave 20 to 40% faster than uprange ejecta in oblique impacts
+/// (Anderson et al. 2003): the speed factor 1 + RAY_DOWNRANGE_SPEED cos(angle) cos(azimuth
+/// from downrange), whose square stretches the jets' reach.
+pub const RAY_DOWNRANGE_SPEED: f64 = 0.2;
+/// The bend of a jet's path per e-fold of distance past the continuous blanket, radians at
+/// the lowest of its orders, and the spread of the log of the bursts along it: noise for
+/// the azimuthal momentum and the clumping the curtain's heterogeneity gives its
+/// fragments (stated choices, PLAN principle 12).
+pub const RAY_WARP: f64 = 0.03;
+pub const RAY_CLUMPING: f64 = 0.7;
+/// The excavated share below which a ray is not drawn: 5% of its contrast, unseen.
+pub const RAY_VISIBLE: f64 = 0.05;
+/// The skin the secondaries must dig through to bring up fresh ground (F91): Elliott et
+/// al. (2018) take the Moon's space-weathered skin as 10 cm (estimates run from a few
+/// centimetres to a metre or two), and in their model the excavated share goes as the
+/// skin's depth to the -RAY_SKIN_SLOPE, -(2 + b / (1 - beta)) with b = -5 and beta =
+/// 0.17. An icy surface's skin is its lag where that is thicker (Moore et al. 1999:
+/// metres of dark lag on Callisto), so its rays are shorter where its lag is thick.
+pub const RAY_SKIN_DEPTH_M: f64 = 0.1;
+pub const RAY_SKIN_SLOPE: f64 = 4.02;
 /// Secondaries: count per 100 km of primary diameter at a secondary fraction of 0.2, size
 /// range as a fraction of the primary, distance range in primary radii, and the depth
 /// factor relative to a primary of the same size.
@@ -1264,6 +1312,9 @@ pub const REGOLITH_MIXING_MAX_PASSES: usize = 24;
 /// The poles hold no less than this temperature. The non-ice share of each ice
 /// end-member is in the materials.
 pub const LAG_OPAQUE_KG_M2: f64 = 2_000.0;
+/// The bulk density of the lag, kg/m³, which makes its opaque mass the couple of metres of
+/// dust above (a stated choice).
+pub const LAG_BULK_DENSITY: f64 = 1_000.0;
 pub const ICE_POLAR_TEMPERATURE_FLOOR_K: f64 = 40.0;
 /// Clean ice that an impact brings up is mixed back into the regolith by gardening over
 /// this time, Gyr, whatever the temperature: Callisto's bright craters are its young ones.

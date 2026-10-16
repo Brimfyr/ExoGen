@@ -28,6 +28,9 @@ use crate::constants::{
     PIT_WANDER, PLANAR_TEXTURE_RADII, RIM_HEIGHT_VARIATION, RIM_SHARE_BAND,
 };
 use crate::constants::{
+    PIKE_COMPLEX_DEPTH, TERRACE_FULL_COLLAPSE, TERRACE_INWARD_SPREAD, TERRACE_REFERENCE_TRANSITION,
+};
+use crate::constants::{
     TERRACE_ABSENT, TERRACE_BENCH_SLOPE, TERRACE_BLOCK_LENGTH, TERRACE_BOW, TERRACE_HUMMOCK_SCALE,
     TERRACE_HUMMOCKS, TERRACE_INWARD, TERRACE_LEAST, TERRACE_OFFSET, TERRACE_RIM_SCALLOP,
     TERRACE_SCARP, TERRACE_SCARP_SPREAD, TERRACE_TOE, TERRACE_WALL_SHARE, TERRACE_WOBBLE,
@@ -1042,7 +1045,8 @@ pub fn lobes(seed: u64, phi: f64, max_order: f64) -> f64 {
 
 /// The lobate outline of a crater's continuous ejecta, tabulated around the azimuth as a
 /// radius factor. The stamp's age reset and the ray field share it, so the maturity disc
-/// and the bright ejecta end on the same line.
+/// and the bright ejecta end on the same line; its lobes are the finest jets of the
+/// crater's ejecta curtain, which start its rays (F91).
 pub struct EdgeShape {
     table: [f64; 64],
 }
@@ -1055,9 +1059,9 @@ impl EdgeShape {
         if seed != 0 {
             let max_order = 2.0 * std::f64::consts::PI * ejecta_radius
                 / (EJECTA_LOBE_MIN_CELLS * cell.max(1.0));
-            for (b, t) in table.iter_mut().enumerate() {
-                let phi = b as f64 / 64.0 * 2.0 * std::f64::consts::PI;
-                *t = 1.0 + EJECTA_EDGE_RAGGEDNESS * lobes(seed, phi, max_order);
+            let lobes = crate::crater::curtain::edge_lobes(seed, max_order, 64);
+            for (t, l) in table.iter_mut().zip(lobes) {
+                *t = 1.0 + EJECTA_EDGE_RAGGEDNESS * l;
             }
         }
         Self { table }
@@ -1160,7 +1164,10 @@ const TERRACE_BINS: usize = 256;
 /// is broken into blocks of their own length, throw and bow, some of which slumped no
 /// terrace at all, so that the terraces come and go around the crater and the wall's width
 /// changes from block to block; the outermost blocks scallop the rim crest and the
-/// innermost blocks' toes the floor's edge.
+/// innermost blocks' toes the floor's edge. How much of the wall slumped follows how far
+/// the crater collapsed (T2): a crater just past the transition slumps a few blocks of
+/// its outermost terrace, a deeper collapse brings the inner terraces in, and blocks that
+/// stand off their neighbours far enough merge with the terrace inside or outside them.
 struct Terraces {
     /// Per terrace, from the rim inward, by azimuth: its inner scarp's radius, whether the
     /// terrace stands there and its scarp's width, in crater radii.
@@ -1191,49 +1198,63 @@ impl Terraces {
         }
         let r = dim.radius;
         let wall = (r - dim.floor_radius).max(0.0);
-        // The terraces' widths from the rim inward.
+        let tau = 2.0 * std::f64::consts::PI;
+        let rng = Rng::new(seed ^ 0x7E44_ACE5);
+        // The terraces' widths from the rim inward, each a share of the one outside it
+        // that varies from crater to crater.
         let mut widths = Vec::new();
         let (mut w, mut sum) = (dim.terrace_width, 0.0);
         while w >= TERRACE_LEAST * dim.terrace_width && sum + w <= TERRACE_WALL_SHARE * wall {
             widths.push(w);
             sum += w;
-            w *= TERRACE_INWARD;
+            let spread = 2.0 * rng.uniform(0x7E44_0000 + widths.len() as u64, 0) - 1.0;
+            w *= TERRACE_INWARD * (1.0 + TERRACE_INWARD_SPREAD * spread);
         }
         if widths.is_empty() {
             return None;
         }
-        let tau = 2.0 * std::f64::consts::PI;
-        let rng = Rng::new(seed ^ 0x7E44_ACE5);
-        // A ring of blocks round a circumference of `length` m, each about `block` m long:
-        // by bin, the position within the block (0 to 1), the block's offset draw (-1 to
-        // 1), whether it stands and its scarp's width draw (-1 to 1).
-        let ring = |level: u64, length: f64, block: f64| -> Vec<(f64, f64, bool, f64)> {
-            let n = ((length / block).round() as usize).max(3);
-            let key = |i: usize| level * 4096 + i as u64;
-            let lengths: Vec<f64> = (0..n)
-                .map(|i| 2f64.powf(2.0 * rng.uniform(key(i), 0) - 1.0))
-                .collect();
-            let total: f64 = lengths.iter().sum();
-            let mut cuts = Vec::with_capacity(n);
-            let mut acc = 0.0;
-            for l in &lengths {
-                cuts.push(acc);
-                acc += l / total;
-            }
-            let start = rng.uniform(key(4095), 1);
-            (0..TERRACE_BINS)
-                .map(|b| {
-                    let turn = (b as f64 / TERRACE_BINS as f64 - start).rem_euclid(1.0);
-                    let i = cuts.partition_point(|&c| c <= turn).max(1) - 1;
-                    let end = if i + 1 < n { cuts[i + 1] } else { 1.0 };
-                    let u = ((turn - cuts[i]) / (end - cuts[i]).max(1e-12)).clamp(0.0, 1.0);
-                    let offset = 2.0 * rng.uniform(key(i), 2) - 1.0;
-                    let stands = rng.uniform(key(i), 3) >= TERRACE_ABSENT;
-                    let width = 2.0 * rng.uniform(key(i), 4) - 1.0;
-                    (u, offset, stands, width)
-                })
-                .collect()
-        };
+        // How far the crater collapsed: the fall of its depth-to-diameter ratio from the
+        // transition's under Pike's complex law, 1 - (D / D_t)^-0.70, none at the
+        // transition and seven tenths at Copernicus; the wall is terraced in full from
+        // TERRACE_FULL_COLLAPSE, and below it the outer terraces come first, each over the
+        // share of its circuit the collapse has reached.
+        let at_transition = PIKE_COMPLEX_DEPTH.0
+            * (TERRACE_REFERENCE_TRANSITION / 1e3).powf(PIKE_COMPLEX_DEPTH.1 - 1.0);
+        let collapse = (1.0 - dim.depth / (2.0 * r) / at_transition).clamp(0.0, 1.0);
+        let reached = (collapse / TERRACE_FULL_COLLAPSE).min(1.0) * widths.len() as f64;
+        // A ring of blocks round a circumference of `length` m, each about `block` m long,
+        // the share `present` of them slumped: by bin, the position within the block (0 to
+        // 1), the block's offset draw (-1 to 1), whether it stands and its scarp's width
+        // draw (-1 to 1).
+        let ring =
+            |level: u64, length: f64, block: f64, present: f64| -> Vec<(f64, f64, bool, f64)> {
+                let n = ((length / block).round() as usize).max(3);
+                let key = |i: usize| level * 4096 + i as u64;
+                let lengths: Vec<f64> = (0..n)
+                    .map(|i| 2f64.powf(2.0 * rng.uniform(key(i), 0) - 1.0))
+                    .collect();
+                let total: f64 = lengths.iter().sum();
+                let mut cuts = Vec::with_capacity(n);
+                let mut acc = 0.0;
+                for l in &lengths {
+                    cuts.push(acc);
+                    acc += l / total;
+                }
+                let start = rng.uniform(key(4095), 1);
+                (0..TERRACE_BINS)
+                    .map(|b| {
+                        let turn = (b as f64 / TERRACE_BINS as f64 - start).rem_euclid(1.0);
+                        let i = cuts.partition_point(|&c| c <= turn).max(1) - 1;
+                        let end = if i + 1 < n { cuts[i + 1] } else { 1.0 };
+                        let u = ((turn - cuts[i]) / (end - cuts[i]).max(1e-12)).clamp(0.0, 1.0);
+                        let offset = 2.0 * rng.uniform(key(i), 2) - 1.0;
+                        let stands =
+                            rng.uniform(key(i), 3) >= 1.0 - present * (1.0 - TERRACE_ABSENT);
+                        let width = 2.0 * rng.uniform(key(i), 4) - 1.0;
+                        (u, offset, stands, width)
+                    })
+                    .collect()
+            };
         let bow = |u: f64| (std::f64::consts::PI * u).sin() - 2.0 / std::f64::consts::PI;
         let mut levels = Vec::with_capacity(widths.len());
         let mut outer = r;
@@ -1241,7 +1262,13 @@ impl Terraces {
         let mut last = Vec::new();
         for (k, &w) in widths.iter().enumerate() {
             let inner = outer - w;
-            let blocks = ring(k as u64, tau * (inner + 0.5 * w), TERRACE_BLOCK_LENGTH * w);
+            let present = (reached - k as f64).clamp(0.0, 1.0);
+            let blocks = ring(
+                k as u64,
+                tau * (inner + 0.5 * w),
+                TERRACE_BLOCK_LENGTH * w,
+                present,
+            );
             // The scarp's trace wanders at the scale of a few terrace widths.
             let wander_seed = seed ^ (0x7E44_0000 + k as u64);
             let orders = tau * (inner + 0.5 * w) / (2.0 * w);
@@ -1275,12 +1302,14 @@ impl Terraces {
             outer = inner;
         }
         // The rim crest, scalloped by the outermost slumps: out in each one's middle, in
-        // at the cusps between them.
+        // at the cusps between them; where no block slumped the crest keeps its line.
         let w1 = widths[0];
         let mut rim = [1.0; 64];
         for (b, t) in rim.iter_mut().enumerate() {
-            let (u, _, _, _) = first[b * TERRACE_BINS / 64];
-            *t = 1.0 / (1.0 + TERRACE_RIM_SCALLOP * w1 / r * bow(u));
+            let (u, _, stands, _) = first[b * TERRACE_BINS / 64];
+            if stands {
+                *t = 1.0 / (1.0 + TERRACE_RIM_SCALLOP * w1 / r * bow(u));
+            }
         }
         // The floor's edge at the innermost blocks' toes, bulging in at each one's middle.
         let wk = widths[widths.len() - 1];
@@ -2158,5 +2187,79 @@ mod tests {
                 (lo.min(v), hi.max(v))
             });
         assert!(hi - lo > 0.02, "{lo} {hi}");
+    }
+
+    /// The lunar scaling of the terrace tests.
+    fn lunar() -> Scaling {
+        Scaling {
+            simple_complex: 16_457.0,
+            peak_ring: 140_000.0,
+            multi_ring: 330_000.0,
+            gravity: 1.62,
+            icy: false,
+        }
+    }
+
+    #[test]
+    fn terraces_come_in_as_the_crater_collapses() {
+        // T2: the mean count of terraces standing at an azimuth, over twenty craters.
+        let standing = |d: f64| -> f64 {
+            let dim = dimensions(d, &lunar());
+            let mut sum = 0.0;
+            for seed in 1..=20u64 {
+                if let Some(t) = Terraces::new(seed, &dim) {
+                    for (_, stands, _) in &t.levels {
+                        sum += stands.iter().map(|&v| v as f64).sum::<f64>() / TERRACE_BINS as f64;
+                    }
+                }
+            }
+            sum / 20.0
+        };
+        let counts: Vec<f64> = [20e3, 30e3, 45e3, 93e3]
+            .iter()
+            .map(|&d| standing(d))
+            .collect();
+        eprintln!("terraces standing at 20, 30, 45 and 93 km: {counts:?}");
+        assert!(counts.windows(2).all(|w| w[1] > w[0]), "{counts:?}");
+        assert!(counts[0] < 1.0, "{counts:?}");
+        assert!(counts[3] > 2.0, "{counts:?}");
+    }
+
+    /// Terraced walls for a look (T2): heights of six lunar craters on a local plane,
+    /// written to the file EXOGEN_TERRACE_OUT names (u32 count, u32 side, then per crater
+    /// its radius as f32 and side x side f32 heights).
+    #[test]
+    #[ignore]
+    fn write_terraces() {
+        let Some(path) = std::env::var_os("EXOGEN_TERRACE_OUT") else {
+            return;
+        };
+        let diameters = [22e3, 30e3, 45e3, 60e3, 93e3, 130e3];
+        let n = 400usize;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(diameters.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(n as u32).to_le_bytes());
+        for (k, &d) in diameters.iter().enumerate() {
+            let dim = dimensions(d, &lunar());
+            let table = ProfileTable::new(dim, 0.0);
+            let t = Terraces::new(11 + k as u64, &dim);
+            let r = dim.radius;
+            bytes.extend_from_slice(&(r as f32).to_le_bytes());
+            for j in 0..n {
+                for i in 0..n {
+                    let x = (i as f64 / (n - 1) as f64 * 2.0 - 1.0) * 1.3 * r;
+                    let y = (1.0 - j as f64 / (n - 1) as f64 * 2.0) * 1.3 * r;
+                    let (re, phi) = (x.hypot(y), x.atan2(y));
+                    let h = match &t {
+                        Some(t) => {
+                            table.height(t.radius(re, phi, &dim, 0.0)) + t.relief(re, phi, &dim)
+                        }
+                        None => table.height(re),
+                    };
+                    bytes.extend_from_slice(&(h as f32).to_le_bytes());
+                }
+            }
+        }
+        std::fs::write(path, bytes).unwrap();
     }
 }

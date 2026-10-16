@@ -3,10 +3,12 @@
 
 //! Impact cratering: production and chronology, morphology, and stamping (PLAN.md 4.5).
 
+pub mod curtain;
 pub mod morphology;
 pub mod production;
 pub mod stamp;
 
+pub use curtain::{Curtain, Rays};
 pub use morphology::{
     CraterClass, Dimensions, ProfileTable, Scaling, dimensions, ellipticity_for, impact_angle,
 };

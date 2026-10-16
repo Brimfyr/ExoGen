@@ -196,13 +196,15 @@ Impact craters are events and stay objects. Their sizes follow scaling laws, and
 
 When: Io's features with Io; the rest in the earlier-phases revisit.
 
-### T2. Terraces as rings
+### T2. Terraces as rings (closed by F92)
 
 Each terrace level of F67 is a ring of slump blocks aligned round the crater, so a deep crater shows four or five evenly spaced scarps on its wall, like the rungs of a ladder. Real terraced walls are fewer, wider slump blocks that merge and split, with scarps of varying height, and near the simple-to-complex transition they are a few slumps rather than terraces. The user saw it on Enceladus (2026-10-15), whose largest craters are laddered; but every crater it shows there is larger than any on the real Enceladus, whose plains' craters are under about 40 km, relaxed by its past heat and muted by fallout (Bland et al. 2012; Kirchoff and Schenk 2009), which M3 and the crater population's high end own.
 
 Direction: terrace levels whose blocks are not aligned round the crater, merging and splitting, with the count rising with the diameter over the transition.
 
 When: the earlier-phases revisit, with the crater population.
+
+Closed in the thirtieth milestone (F92). How much of the wall slumps follows how far the crater collapsed, the fall of its depth-to-diameter ratio from the transition's under Pike's complex law, so a crater just past the transition slumps a few blocks of its outermost terrace and the inner terraces come in as the collapse deepens: a lunar crater of 20 km stands 0.7 terraces at an azimuth, one of 93 km 3.4, where every size had about four. The terraces' spacing varies from crater to crater, and blocks stand off far enough to merge with the terrace inside or outside them. Still drawn: the collapse at which the wall is terraced in full (TERRACE_FULL_COLLAPSE, stated), and each level is still a ring of blocks, if a broken one.
 
 
 ### T3. Bands as lenses, apart from the lanes
@@ -213,13 +215,15 @@ Direction: a band's opening from the rotation of the plates it parts, about the 
 
 When: the earlier-phases revisit, with the lanes.
 
-### T4. Rays as spokes
+### T4. Rays as spokes (closed by F91)
 
 A fresh crater's rays are drawn as straight, blurred spokes about a glow, a lens flare, on every airless body; the survey of 2026-10-16 saw them on the Moon and Mercury, and the fourteenth milestone's note saw Callisto's as a starfield. Real rays are discontinuous filaments of secondary craters and the bright ejecta they throw, in chains and herringbone patterns that narrow, branch and loop outward from a continuous ejecta near the rim (Shoemaker 1962; Melosh 1989).
 
 Direction: rays from the ejecta curtain: clumps of ejecta thrown along paths whose ranges and azimuths scatter, each landing as a chain of secondaries with its own bright streaks, the whole fading with maturity.
 
 When: the earlier-phases revisit.
+
+Closed in the thirtieth milestone (F91). A crater's ejecta curtain gathers its mass into some thirteen jets; beyond the blanket a ray is the share of the ground the jets' secondaries excavate from under the weathered skin, falling with distance by Elliott et al. (2018)'s secondary-crater model and scaled to their lunar ray lengths, so it narrows to its jet's midline, breaks into segments and fades. Noise bends the jets' paths and bunches their fragments. The blanket's lobes and the loop craters' secondaries follow the same jets. An icy surface's lag sets the skin the secondaries dig through where it is thicker than the Moon's, so Callisto's rays are short or absent under its thick low-latitude lag. Still open: rays bright by composition, where a crater throws one unit's material over another (Lichtenberg's highland rays over mare, Hawke et al. 2004), which needs the primary ejecta's share along the ray; the secondaries' herringbone chevrons, below the grid at the map scales; the skin depth of rock bodies other than the Moon and every body's fragment population, which set their rays' reach (the lunar ray lengths are the calibration, below); the rays' fading, still the provisional ray lifetime rather than the maturing of the ground the secondaries dug, which waits on Mercury's weathering timescales; and the deep material a crater digs up, which lies in a soft ramp to the blanket's edge (Mercury's dark halos).
 
 ### T5. The dichotomy as a hyperbolic tangent
 
@@ -249,6 +253,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | IO_SHIELD_COLUMNS | Io's red-brown plains beginning near 30 degrees (Geissler et al. 1999; Williams et al. 2011) | the column that stops the plasma, from its ions' energies and the gas's stopping power |
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |
 | CENTRAL_PEAK_HEIGHT | Copernicus | check how it scales with gravity |
+| RAY_LENGTH_COEFF_KM, RAY_LENGTH_EXPONENT, RAY_SKIN_DEPTH_M | Elliott et al. (2018)'s median lunar ray lengths, 6.59 R^1.27 km, for their 10 cm skin (F91) | the skin and fragment population per body: the length goes as the skin depth to about -1.16, which an icy surface's lag already sets |
+| CURTAIN_SPREAD, CURTAIN_SLOPE, CURTAIN_ORDERS | the Moon's rays: 10.7 a crater, 22 degrees wide at two radii (Elliott et al. 2018) | the target's relief at the rim, which makes the rays (Sabuwala et al. 2018: the count goes as the crater over the relief's wavelength) |
+| TERRACE_FULL_COLLAPSE | a stated choice: a lunar crater's wall terraced in full from about 60 km (F92) | check the share of the wall terraced along a sweep of lunar and Mercurian craters |
 | POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core, 10 to 30 GW: 28.5 GW, which with its shell's own 0.6 GW (F75) holds its shell at 22.7 km (refitted from 15 GW when the shell's share went from the class k₂/Q's 15 GW to F75's) | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
 | RING_STRAIN | the strain of Tyre's and Callanish's inner graben (Singer et al. 2023) | check against the graben depths of Valhalla and Ganymede's furrows once measured |
 | PIT_DIAMETER_SHARE, PIT_GROWTH, PIT_DEPTH_SHARE, DOME_PIT_SHARE, DOME_RISE | Ganymede's pits and domes (Alzate and Barlow 2011; Bray et al. 2012; Schenk 1993) | check against Callisto's dome craters and Ceres's pits (Occator, Dantu) |
@@ -353,6 +360,14 @@ Mars's albedo is one grey, Venus's another, and Mercury's flooded floors are fla
 Direction: the weathering and transport processes of Phase 5 (oxidation, dust, maturity), with the composition of each unit.
 
 When: Phase 5, or a colour pass the user asks for.
+
+### M12. Rayed craters on the icy moons
+
+With F91's rays, Ganymede has 111 craters young enough to keep rays (under the 1.5 Gyr ray lifetime), twelve of them over 86 km, and its rays brighten 28 percent of its surface by more than a tenth of the fresh contrast, densest at middle and high latitudes where its lag is thin. Callisto's thick low-latitude lag hides its rays there, but poleward of about 55 degrees its lag thins and rays from craters far away appear across the cold ground, which reads oddly.
+
+Direction: check the counts of rayed craters on Ganymede and Callisto, and their rays' reach, against the Voyager and Galileo maps; the ray lifetime from the maturing of the dug-up ice (gardening, lag, sputtering) rather than RAY_FADING_MAX_GYR; and the skin at high latitudes, where frost and the gardened regolith, not a lag, mature the surface.
+
+When: with the icy moons' crater population, or a colour pass.
 
 ## Validation (principle 15)
 

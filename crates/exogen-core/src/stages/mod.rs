@@ -40,16 +40,16 @@ use rayon::prelude::*;
 use crate::constants::*;
 use crate::crater::production::poisson;
 use crate::crater::{
-    CraterRecord, CraterTexture, EdgeShape, PopulationConfig, ProfileTable, RestoreParams,
-    StampOutput, StampParams, Stamper, dimensions, ejecta_coverage, ejecta_modulation,
-    restore_compute, sample_population, stamp_compute, with_stamper,
+    CraterRecord, CraterTexture, Curtain, EdgeShape, PopulationConfig, ProfileTable, Rays,
+    RestoreParams, StampOutput, StampParams, Stamper, dimensions, ejecta_coverage,
+    ejecta_modulation, restore_compute, sample_population, stamp_compute, with_stamper,
 };
 use crate::fields::{Field, LayerSet};
-use crate::geom::{dot, local_basis, offset};
+use crate::geom::{angle_between, azimuth_from, dot, local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
-use crate::rng::{Rng, hash_words};
+use crate::rng::{ACCEPT_STREAM, Rng, hash_words};
 use crate::thermal::ThermalHistory;
 use crate::units::UNIT_SECONDARY_FIELD;
 
@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 79;
+pub const FINISH_VERSION: u64 = 80;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1933,14 +1933,24 @@ pub fn finish(
     // Maturity: space weathering on rock; on ice, the sublimation lag the latitude's
     // temperature and the surface's age have left.
     let tau_sw = graph.f64("surface.space_weathering_timescale");
-    let maturity = if ice::is_ice_surface(graph) {
-        ice::lag_maturity(graph, &layers, present, slope.as_ref())
+    let (maturity, lag) = if ice::is_ice_surface(graph) {
+        let (maturity, lag) = ice::lag_fields(graph, &layers, present, slope.as_ref());
+        (maturity, Some(lag))
     } else {
-        Field::from_fn(grid, |c, _| {
+        let maturity = Field::from_fn(grid, |c, _| {
             let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
             (1.0 - (-exposure / tau_sw).exp()) as f32
-        })
+        });
+        (maturity, None)
     };
+    // The skin a ray's secondaries dig through (F91): the Moon's, or an icy surface's lag
+    // where it is thicker, which leaves them less of the area they would excavate.
+    let skin = lag.map(|lag| {
+        Field::from_fn(grid, |c, _| {
+            let depth = (lag.get(c) as f64).max(RAY_SKIN_DEPTH_M);
+            (depth / RAY_SKIN_DEPTH_M).powf(-RAY_SKIN_SLOPE) as f32
+        })
+    });
     // Steep ground sheds its regolith and stays fresher than flat ground (F55): the
     // bright walls and scarps of every airless body, from the ground's own slopes.
     let maturity = {
@@ -1959,7 +1969,15 @@ pub fn finish(
             });
         m
     };
-    let rays = ray_field(&grid, body_radius, &records, &inputs, present, cell);
+    let rays = ray_field(
+        &grid,
+        body_radius,
+        &records,
+        &inputs,
+        present,
+        cell,
+        skin.as_ref(),
+    );
 
     sink.report(Progress {
         stage: "finishing",
@@ -2054,8 +2072,25 @@ fn ice_shell_history(
     }))
 }
 
-/// Secondary craters of the loop craters: clusters at a few primary radii, formed at the
-/// primary's time, sized as a small fraction of the primary.
+/// A launch azimuth drawn in proportion to an ejecta curtain's mass: candidates on one
+/// stream, each accepted on another by its mass against the largest.
+fn jet_azimuth(curtain: &Curtain, rng: &Rng, index: u64, slot: u64) -> f64 {
+    let top = curtain.max_mass().max(1e-12);
+    let mut phi = 0.0;
+    for attempt in 0..64u64 {
+        let draw = slot * 64 + attempt;
+        phi = 2.0 * std::f64::consts::PI * rng.uniform(index ^ 0x7E75_0000_0000_0000, draw);
+        if rng.uniform(index.wrapping_add(ACCEPT_STREAM), draw) * top <= curtain.mass(phi) {
+            break;
+        }
+    }
+    phi
+}
+
+/// Secondary craters of the loop craters: groups at a few primary radii, formed at the
+/// primary's time, sized as a small fraction of the primary. Each group lands along a jet
+/// of the primary's ejecta curtain, drawn by the jets' mass, on the jet's bent path
+/// (F91), so the secondaries lie in the rays.
 fn sample_secondaries(
     primaries: &[CraterRecord],
     inputs: &impacts::CraterInputs,
@@ -2079,13 +2114,18 @@ fn sample_secondaries(
         }
         let (east, north) = local_basis(p.center);
         let radius = 0.5 * p.diameter;
+        let curtain = Curtain::new(p.id, p.azimuth, p.angle);
         let groups = (count / SECONDARY_GROUP_SIZE).max(1);
+        let launches: Vec<f64> = (0..groups as u64)
+            .map(|g| jet_azimuth(&curtain, &rng, p.id, g))
+            .collect();
         for j in 0..count as u64 {
             let group = j % groups as u64;
             let rank = (j / groups as u64) as f64;
             let base = 8 + group * 4;
             let dist0 = radius * (r_lo + (r_hi - r_lo) * rng.uniform(p.id, base));
-            let phi0 = 2.0 * std::f64::consts::PI * rng.uniform(p.id, base + 1);
+            let launch = launches[group as usize];
+            let path = |d: f64| curtain.path_azimuth(launch, (d / radius).max(1.0).ln());
             let chain = rng.uniform(p.id, base + 2) < SECONDARY_CHAIN_FRACTION;
             let draw = 1_000 + j * 4;
             // A chain runs outward along the radial from the primary; a cluster scatters
@@ -2095,12 +2135,13 @@ fn sample_secondaries(
                     radius * SECONDARY_CHAIN_SPACING * (0.7 + 0.6 * rng.uniform(p.id, draw));
                 let lateral = 0.03 * radius * (rng.uniform(p.id, draw + 1) - 0.5);
                 let d = dist0 + rank * spacing;
-                (d, phi0 + lateral / d.max(1.0))
+                (d, path(d) + lateral / d.max(1.0))
             } else {
                 let jitter_r = 0.3 * radius * (rng.uniform(p.id, draw) - 0.5);
                 let jitter_phi =
                     0.5 * (rng.uniform(p.id, draw + 1) - 0.5) * radius / dist0.max(1.0);
-                (dist0 + jitter_r, phi0 + jitter_phi)
+                let d = dist0 + jitter_r;
+                (d, path(d) + jitter_phi)
             };
             let center = offset(p.center, east, north, dist / inputs.body_radius, phi);
             let u = rng.uniform(p.id, draw + 2);
@@ -2129,6 +2170,9 @@ const WAVE_MAX_STAMPS: usize = 2048;
 const WAVE_MAX_AREA: f64 = 0.25;
 /// Rayed craters computed per parallel batch.
 const RAY_BATCH: usize = 64;
+/// A crater whose rays could reach more cells than this is drawn over the whole grid in
+/// parallel instead of being gathered: its footprint would hold too much.
+const RAY_GATHER_MAX_CELLS: f64 = 5.0e5;
 
 /// Group consecutive stamps into waves of non-overlapping footprints. Stamps in one wave
 /// touch disjoint cells, so they can be computed in parallel and applied in any order,
@@ -2166,115 +2210,156 @@ fn ray_field(
     inputs: &impacts::CraterInputs,
     present: f64,
     cell: f64,
+    skin: Option<&Field<f32>>,
 ) -> Field<f32> {
+    let skin = skin.map(|s| s.as_slice());
     let mut rays = Field::new(*grid);
     let out = rays.as_mut_slice();
-    // Each crater's ray cells are computed in parallel and merged by maximum, which is
-    // order-independent, so the result does not depend on the thread count.
-    for batch in craters.chunks(RAY_BATCH) {
+    let lifetime = inputs.ray_lifetime.max(1e-6);
+    let systems: Vec<RaySystem> = craters
+        .iter()
+        .filter(|c| {
+            let age = present - c.time_gyr;
+            age >= 0.0 && age < lifetime && c.diameter >= RAY_MIN_CELLS * cell
+        })
+        .collect::<Vec<_>>()
+        .par_iter()
+        .map(|c| RaySystem::new(c, inputs, present, cell))
+        .collect();
+    // A system whose rays could cover many cells is drawn over the whole grid in
+    // parallel; the rest are gathered, a batch of systems at a time.
+    let cap_cells = |reach: f64| {
+        let theta = (reach / body_radius).min(std::f64::consts::PI);
+        2.0 * std::f64::consts::PI * body_radius * body_radius * (1.0 - theta.cos()) / (cell * cell)
+    };
+    let (large, small): (Vec<&RaySystem>, Vec<&RaySystem>) = systems
+        .iter()
+        .partition(|s| cap_cells(s.reach) > RAY_GATHER_MAX_CELLS);
+    let clock = std::time::Instant::now();
+    // Each system's share joins those under it as independent shares do, 1 - (1 - a)(1 -
+    // b), whatever their order.
+    for batch in small.chunks(RAY_BATCH) {
         let parts: Vec<Vec<(u32, f32)>> = batch
             .par_iter()
-            .map(|c| {
-                with_stamper(grid, |stamper| {
-                    ray_cells(grid, body_radius, c, inputs, present, cell, stamper)
-                })
-            })
+            .map(|s| with_stamper(grid, |stamper| s.gathered(grid, body_radius, skin, stamper)))
             .collect();
         for part in parts {
             for (idx, v) in part {
                 let o = &mut out[idx as usize];
-                if v > *o {
-                    *o = v;
-                }
+                *o = 1.0 - (1.0 - *o) * (1.0 - v);
             }
         }
+    }
+    for s in &large {
+        let (east, north) = local_basis(s.center);
+        let theta_max = (s.reach / body_radius).min(std::f64::consts::PI) + grid.delta();
+        out.par_iter_mut().enumerate().for_each(|(k, o)| {
+            let d = grid.center(grid.cell(k));
+            let theta = angle_between(s.center, d);
+            if theta > theta_max {
+                return;
+            }
+            let v = s.value(
+                theta * body_radius,
+                azimuth_from(s.center, east, north, d),
+                skin.map_or(1.0, |s| s[k] as f64),
+            );
+            if v > 0.0 {
+                *o = 1.0 - (1.0 - *o) * (1.0 - v);
+            }
+        });
+    }
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "rays: {} systems, {} over the whole grid, {:.1} s",
+            systems.len(),
+            large.len(),
+            clock.elapsed().as_secs_f64()
+        );
     }
     rays
 }
 
-/// The ray brightening one crater adds: full inside the rim, falling with the blanket's
-/// cover to half at its lobed edge and on past it, mottled, with rays of constant linear
-/// width running out from the rim whose strength follows the oblique ejecta asymmetry,
-/// all scaled by freshness.
-fn ray_cells(
-    grid: &CubeSphere,
-    body_radius: f64,
-    c: &CraterRecord,
-    inputs: &impacts::CraterInputs,
-    present: f64,
-    cell: f64,
-    stamper: &mut Stamper,
-) -> Vec<(u32, f32)> {
-    let lifetime = inputs.ray_lifetime.max(1e-6);
-    let age = present - c.time_gyr;
-    if age < 0.0 || age >= lifetime || c.diameter < RAY_MIN_CELLS * cell {
-        return Vec::new();
-    }
-    let tau = 2.0 * std::f64::consts::PI;
-    let rng = Rng::new(inputs.seed ^ 0x9A7F_3C11);
-    let (n_lo, n_hi) = RAYS_PER_CRATER;
-    let (l_lo, l_hi) = RAY_LENGTH_MULTIPLE;
-    let (w_lo, w_hi) = RAY_WIDTH_FRACTION;
-    let freshness = (1.0 - age / lifetime).powi(2);
-    let radius = 0.5 * c.diameter;
-    let edge_shape = EdgeShape::new(
-        c.id,
-        dimensions(c.diameter, &inputs.scaling).ejecta_radius,
-        cell,
-    );
-    let texture = (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
-        .then(|| CraterTexture::new(c.id, &dimensions(c.diameter, &inputs.scaling)));
-    let n = n_lo + ((n_hi - n_lo) as f64 * rng.uniform(c.id, 0)) as u32;
-    // Rays keep a roughly constant linear width, so their angular width shrinks with
-    // distance, and large craters' rays are shorter in radii than small craters' rays.
-    let length_scale = (RAY_REFERENCE_DIAMETER / c.diameter).sqrt().min(1.0);
-    let ray_params: Vec<(f64, f64, f64, f64)> = (0..n)
-        .map(|i| {
-            let d = 4 + 3 * i as u64;
-            let phi = tau * rng.uniform(c.id, d);
-            let width = radius * (w_lo + (w_hi - w_lo) * rng.uniform(c.id, d + 1));
-            let length = radius * (l_lo + (l_hi - l_lo) * rng.uniform(c.id, d + 2)) * length_scale;
-            let strength = ejecta_modulation(phi, c.azimuth, c.angle);
-            (phi, width, length, strength)
-        })
-        .collect();
-    let halo = EJECTA_RADIUS_MULTIPLE * radius;
-    let max_len = ray_params.iter().map(|p| p.2).fold(0.0, f64::max).max(halo);
-    stamper.gather(grid, body_radius, c.center, max_len);
-    let ejecta_edge = CONTINUOUS_EJECTA_MULTIPLE * radius;
-    let mut cells = Vec::with_capacity(stamper.footprint.len());
-    for &(idx, r, phi) in &stamper.footprint {
-        let edge = ejecta_edge * edge_shape.factor_at(phi, r / radius);
-        // The blanket is bright where its deposit covers the ground (F51), fading with
-        // the cover past its lobed edge rather than ending there, mottled.
-        let mut v: f64 = if r <= radius {
-            1.0
-        } else {
-            ejecta_coverage(r, radius, edge, halo)
-                * ejecta_modulation(phi, c.azimuth, c.angle).min(1.0)
-                * texture.as_ref().map_or(1.0, |t| {
-                    1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / radius)
-                })
-        };
-        // The rays run out from the rim, through the blanket where it is thin.
-        if r > radius {
-            let falloff = (edge / r).min(1.0).powf(1.2);
-            for &(p, w, l, s) in &ray_params {
-                if r > l {
-                    continue;
-                }
-                let dphi = (phi - p + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
-                let taper = ((l - r) / (0.3 * l)).clamp(0.0, 1.0);
-                let across = dphi * r / w;
-                v = v.max((-(across * across)).exp() * taper * falloff * s);
-            }
-        }
-        let value = (v.min(1.0) * freshness) as f32;
-        if value > 0.0 {
-            cells.push((idx as u32, value));
+/// One young crater's brightening (F91): full inside the rim; its continuous blanket,
+/// falling with the deposit's cover to half at its lobed edge and on past it, mottled;
+/// and beyond, its rays, the share of the ground its ejecta curtain's fragments
+/// excavated from under the weathered skin. All of it fades with the crater's age.
+struct RaySystem {
+    center: [f64; 3],
+    radius: f64,
+    azimuth: f64,
+    angle: f64,
+    freshness: f64,
+    edge: EdgeShape,
+    ejecta_edge: f64,
+    halo: f64,
+    texture: Option<CraterTexture>,
+    rays: Rays,
+    reach: f64,
+}
+
+impl RaySystem {
+    fn new(c: &CraterRecord, inputs: &impacts::CraterInputs, present: f64, cell: f64) -> Self {
+        let lifetime = inputs.ray_lifetime.max(1e-6);
+        let age = present - c.time_gyr;
+        let radius = 0.5 * c.diameter;
+        let dim = dimensions(c.diameter, &inputs.scaling);
+        let rays = Rays::new(Curtain::new(c.id, c.azimuth, c.angle), radius);
+        let halo = EJECTA_RADIUS_MULTIPLE * radius;
+        let reach = rays.reach().max(halo);
+        Self {
+            center: c.center,
+            radius,
+            azimuth: c.azimuth,
+            angle: c.angle,
+            freshness: (1.0 - age / lifetime).powi(2),
+            edge: EdgeShape::new(c.id, dim.ejecta_radius, cell),
+            ejecta_edge: CONTINUOUS_EJECTA_MULTIPLE * radius,
+            halo,
+            texture: (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
+                .then(|| CraterTexture::new(c.id, &dim)),
+            rays,
+            reach,
         }
     }
-    cells
+
+    /// The brightening at distance `r`, m, and azimuth `phi` from the centre, where the
+    /// skin leaves the share `skin` of the area the rays' secondaries would excavate.
+    fn value(&self, r: f64, phi: f64, skin: f64) -> f32 {
+        if r <= self.radius {
+            return self.freshness as f32;
+        }
+        let edge = self.ejecta_edge * self.edge.factor_at(phi, r / self.radius);
+        // The blanket is bright where its deposit covers the ground (F51), fading with the
+        // cover past its lobed edge rather than ending there, mottled.
+        let blanket = (ejecta_coverage(r, self.radius, edge, self.halo)
+            * ejecta_modulation(phi, self.azimuth, self.angle).min(1.0)
+            * self.texture.as_ref().map_or(1.0, |t| {
+                1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / self.radius)
+            }))
+        .clamp(0.0, 1.0);
+        let ray = self.rays.excavated(r, phi, skin);
+        ((1.0 - (1.0 - blanket) * (1.0 - ray)) * self.freshness) as f32
+    }
+
+    /// The cells the system brightens, gathered within its reach.
+    fn gathered(
+        &self,
+        grid: &CubeSphere,
+        body_radius: f64,
+        skin: Option<&[f32]>,
+        stamper: &mut Stamper,
+    ) -> Vec<(u32, f32)> {
+        stamper.gather(grid, body_radius, self.center, self.reach);
+        stamper
+            .footprint
+            .iter()
+            .filter_map(|&(idx, r, phi)| {
+                let v = self.value(r, phi, skin.map_or(1.0, |s| s[idx] as f64));
+                (v > 0.0).then_some((idx as u32, v))
+            })
+            .collect()
+    }
 }
 
 /// Fill the working liquid to its inventory volume (docs/parameters.md F26). Returns the

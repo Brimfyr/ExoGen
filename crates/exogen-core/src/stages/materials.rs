@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 21;
+pub const VERSION: u64 = 22;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -500,9 +500,14 @@ pub fn albedo(
                 } else {
                     (fresh, mature)
                 };
-                let fresh = lerp3(fresh, melt_pair.fresh, melt_f[k]);
+                // A ray freshens the ground its secondaries dug up, not the melt of an
+                // older crater it crosses, which keeps the maturity of its own age (F91).
                 let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
-                let colour = lerp3(fresh, mature, effective);
+                let colour = lerp3(
+                    lerp3(fresh, mature, effective),
+                    lerp3(melt_pair.fresh, mature, m[k]),
+                    melt_f[k],
+                );
                 // A crack's margins, stained red-brown by the non-ice material it brought
                 // up, under whatever frost lies on them (F78).
                 let colour = if stain_f[k] > 0.0 {

@@ -608,3 +608,38 @@ What they still do not show:
 - **The deposits' mottling** (F84) is about 5 percent where its constant says 0.35 (recorded under M7).
 
 Tests 159 (two ignored). Two are new: a patera beside a mountain ends at its foot; and the small eruptions follow their rate with sizes the same east and west, while the background is heaviest among the volcanic centres with its mean the background's. Clippy is clean and validate passes its 117 checks.
+
+## The thirtieth milestone: rays from the ejecta curtain, and terraces as the crater collapsed
+
+The earlier phases' survey (2026-10-16) rendered Mars, Venus, Mercury and the Moon and listed what falls short of the fidelity milestones' standard: analytic profiles on placed objects, lens-flare rays, flat lava plains, a rise at Mars's south pole. Its findings went into docs/audit-principles.md (T4, T5, M9 to M11). The user agreed the order of the revisit and asked one question first: "Is Mars' dichotomy a guaranteed outcome of Mars' parameters? If not, is it still a worthwhile assumption to make since having it increases the diversity of non-real worlds generated with the program? Once you have addressed this, go ahead with the first audit milestone."
+
+It is not guaranteed. Both leading explanations are contingent: a giant impact (the Borealis basin, Andrews-Hanna et al. 2008; an impactor of 1,600 to 2,700 km, Marinova et al. 2008), which late accretion makes a matter of chance (in Bottke et al. 2010's Monte Carlo the median largest impactor on Mars was 1,500 to 1,800 km); or degree-one convection, which needs a particular viscosity structure in the mantle (Zhong and Zuber 2001; Roberts and Zhong 2006). The dichotomy is a rule today, a 20 km contrast in crust thickness for every stagnant-lid rock body by the regime's name, and a rule every body shares gives no diversity. As an outcome, from the giant-impact tail of the late-accretion population, some bodies would have a hemispheric basin, some none and some an off-centre, elliptical or partial one. T5 records the direction and the Mars milestone builds it.
+
+The first milestone of the revisit takes the craters' rays and walls:
+
+- **F91, rays from the ejecta curtain.** A crater throws its ejecta as a curtain gathered into jets by the target's relief at the rim (Sabuwala et al. 2018), some thirteen of them, nine tenths of the mass in a fifth of the azimuths. Beyond the continuous blanket a ray is the share of the ground the jets' secondaries excavate from under the weathered skin (Shoemaker 1965; Elliott et al. 2018), falling with distance by Elliott et al.'s secondary-crater model and scaled to their lunar ray lengths, so it narrows to its jet's midline, breaks into segments and fades rather than ending. Noise bends the jets' paths and bunches their fragments. The blanket's lobes and the loop craters' secondaries follow the same jets. An icy surface's lag is the skin where it is thicker than the Moon's 10 cm, so Callisto's rays are short or absent under its thick lag.
+- **F92, terraces as the crater collapsed.** How much of a crater's wall slumps follows how far it collapsed, from none at the simple-to-complex transition to the whole wall from about 3.7 transitions; the outer terraces come first, their spacing varies, and blocks stand off far enough to merge with the terrace inside or outside them.
+
+How it went:
+
+- **A prototype first.** The rays were tried on a local map round one crater before any engine code: jets of a log-normal curtain, the excavated share 1 - exp(-A) with Elliott et al.'s slope, bends and bursts. At the first spread the gaps between the jets filled out to five radii; at 2.5, with the curtain's harmonics from order 6, the rays stood apart from two or three radii out, as Tycho's do.
+- **Brush strokes.** The first render still had the first spread: rays brightened 40 percent of the Moon, in broad saturated strokes. The second spread brought it to 22.
+- **Dark specks.** Every old crater's melt pond a ray crossed came out as a spot of fresh dark glass: the albedo freshened the melt with the ground. A ray freshens the ground its secondaries dug now, and an older crater's melt keeps its own age's maturity; without rays the albedo is unchanged, which the algebra shows.
+- **A web on Callisto.** With the Moon's skin everywhere, Callisto's rays covered 31 percent of it in a web. The ice lag the maturity already models is the skin there now, and Callisto's low latitudes are bright young craters with short rays or none; 6 percent of it is rayed.
+- **The cost.** Each crater's rays could reach far, so 61 of the Moon's 72 rayed craters are drawn over the whole grid: 10 seconds of the Moon's 64-second finish at 8192 by 4096. Skipping the bursts where no burst could show a ray took 2.6 seconds off.
+
+What the maps show:
+
+- **The Moon:** rays as filaments of varied width and length, a few long ones crossing the maria and many short ones, dark gaps between them from a few radii out, webs where systems overlap; a bright halo of two to four radii round each young crater. 21 percent of the surface is brightened by more than a tenth of the fresh contrast, 4 percent by more than a half.
+- **Mercury:** the same rays, few and faint, since its rays fade in 0.15 Gyr (its weathering timescales are a standing deferral).
+- **Callisto:** bright young craters, rayless under the low-latitude lag; Ganymede a web of rays at middle and high latitudes (M12); Europa a few rayed craters; Enceladus none showing under its fallout.
+- **Terraces:** a lunar crater of 20 km stands 0.7 terraces at an azimuth, one of 93 km 3.4, where every size had about four; on the synthetic walls the ladder of rings is gone. At the Moon's 2.7 km cells the difference barely shows in its maps.
+
+What they still do not show:
+
+- **Rays bright by composition**, a crater's material thrown over another unit (Lichtenberg's highland rays over mare).
+- **The rays' fading from the ground's own maturing**, which waits on Mercury's weathering timescales; and the skin of rock bodies other than the Moon.
+- **Mercury's dark halos** of deep material, still a soft ramp to the blanket's edge.
+- **Callisto's high latitudes**, where rays from far craters appear on the cold ground (M12).
+
+Tests 166 (three ignored). Seven are new: the curtain gathers its mass in jets; its rays' lengths follow the lunar fit; an oblique impact throws them farther downrange; a bent path inverts; the reach bounds them; terraces come in as the crater collapses; and an ignored one writes terraced walls for a look. Clippy is clean and validate passes its 117 checks.
