@@ -363,7 +363,7 @@ When: Phase 5, or a colour pass the user asks for.
 
 ### M12. Rayed craters on the icy moons
 
-With F91's rays, Ganymede has 111 craters young enough to keep rays (under the 1.5 Gyr ray lifetime), twelve of them over 86 km, and its rays brighten 28 percent of its surface by more than a tenth of the fresh contrast, densest at middle and high latitudes where its lag is thin. Callisto's thick low-latitude lag hides its rays there, but poleward of about 55 degrees its lag thins and rays from craters far away appear across the cold ground, which reads oddly.
+With F91's rays, Ganymede has 111 craters young enough to keep rays (under the 1.5 Gyr ray lifetime), twelve of them over 86 km, and its rays brighten 28 percent of its surface by more than a tenth of the fresh contrast, densest at middle and high latitudes where its lag is thin. Callisto's thick low-latitude lag hides its rays there, but poleward of about 55 degrees its lag thinned and rays from craters far away appeared across the cold ground, switching on across a line. Since F93 the lag is summed over unresolved facets whose spread follows the surface's roughness, and the rays come in over 30 to 50 degrees, patchy at first.
 
 Direction: check the counts of rayed craters on Ganymede and Callisto, and their rays' reach, against the Voyager and Galileo maps; the ray lifetime from the maturing of the dug-up ice (gardening, lag, sputtering) rather than RAY_FADING_MAX_GYR; and the skin at high latitudes, where frost and the gardened regolith, not a lag, mature the surface.
 

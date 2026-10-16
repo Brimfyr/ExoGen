@@ -25,7 +25,8 @@ use crate::stages::impacts::CraterInputs;
 /// taking it (F60), across a renewed terrain's edge and halo: the unresolved craters
 /// were taken there in the same measure as the resolved ones. `buried`, where a mantle
 /// lies (F74), is the time before which each cell's unresolved craters lie buried under
-/// it: only those dug since roughen its surface.
+/// it: only those dug since roughen its surface. Returns each cell's share of saturation
+/// at the anchor scale, how rough its unresolved relief is against a saturated surface's.
 #[allow(clippy::too_many_arguments)]
 pub fn apply(
     layers: &mut LayerSet,
@@ -36,11 +37,11 @@ pub fn apply(
     present: f64,
     keep: Option<&[f32]>,
     buried: Option<&[f32]>,
-) {
+) -> Vec<f32> {
     let grid = layers.grid;
     let depth = dimensions(d_min, &inputs.scaling).depth;
     if depth <= 0.0 || present <= 0.0 {
-        return;
+        return vec![0.0; grid.cell_count()];
     }
     let d_km = d_min / 1e3;
     let n_eq = EMPIRICAL_SATURATION_FRACTION * geometric_saturation(d_km);
@@ -92,6 +93,7 @@ pub fn apply(
         .for_each(|(k, h)| {
             *h += amplitude as f32 * shares[k] * raw[k];
         });
+    shares
 }
 
 #[cfg(test)]

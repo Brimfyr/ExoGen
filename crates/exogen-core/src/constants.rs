@@ -1266,6 +1266,12 @@ pub const RAY_VISIBLE: f64 = 0.05;
 /// metres of dark lag on Callisto), so its rays are shorter where its lag is thick.
 pub const RAY_SKIN_DEPTH_M: f64 = 0.1;
 pub const RAY_SKIN_SLOPE: f64 = 4.02;
+/// The spread of an icy surface's unresolved facets toward and away from the pole on a
+/// surface saturated with craters, degrees (F93): Callisto's Hapke mean slope, 35.1
+/// degrees, the roughest of the Galilean satellites, whose roughness grows with their
+/// cratering and age (Domingue and Verbiscer 1997: Ganymede 27, Europa near none). A
+/// younger surface's facets spread less, by its share of saturation (F54).
+pub const ICE_FACET_SLOPE_DEG: f64 = 35.0;
 /// Secondaries: count per 100 km of primary diameter at a secondary fraction of 0.2, size
 /// range as a fraction of the primary, distance range in primary radii, and the depth
 /// factor relative to a primary of the same size.

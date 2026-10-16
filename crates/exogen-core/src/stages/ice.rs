@@ -220,15 +220,36 @@ pub fn lag_maturity(
     present: f64,
     slope: Option<&Field<f32>>,
 ) -> Field<f32> {
-    lag_fields(graph, layers, present, slope).0
+    lag_fields(graph, layers, present, slope, None).0
 }
 
-/// The maturity of an icy surface and the thickness of its lag, m, cell by cell.
+/// The midpoints of 24 equal-probability bands of a standard normal: the facets a cell's
+/// unresolved slopes are summed over.
+const FACETS: [f64; 24] = [
+    -2.036834, -1.534121, -1.258162, -1.054472, -0.887147, -0.741594, -0.610295, -0.488776,
+    -0.374095, -0.264147, -0.157311, -0.052245, 0.052245, 0.157311, 0.264147, 0.374095, 0.488776,
+    0.610295, 0.741594, 0.887147, 1.054472, 1.258162, 1.534121, 2.036834,
+];
+
+/// The share of the area a ray's secondaries would excavate under the Moon's skin that
+/// they excavate through a lag of this thickness, in units of its opaque mass (F91).
+fn skin_share(thickness: f64) -> f64 {
+    let depth = (thickness * LAG_OPAQUE_KG_M2 / LAG_BULK_DENSITY).max(RAY_SKIN_DEPTH_M);
+    (depth / RAY_SKIN_DEPTH_M).powf(-RAY_SKIN_SLOPE)
+}
+
+/// The maturity of an icy surface and its rays' skin share (`skin_share`), cell by cell.
+/// Where `facets` gives a cell's share of saturation by the unresolved craters (F54), the
+/// cell is summed over unresolved facets tilted toward and away from the pole, spread by
+/// ICE_FACET_SLOPE_DEG times that share (F93): its warm facets grow their lag and its cold
+/// ones keep their ice, the thermal segregation of Spencer (1987) at every latitude, so the
+/// lag and the rays it hides grade over latitude instead of switching across it.
 pub fn lag_fields(
     graph: &ParamGraph,
     layers: &LayerSet,
     present: f64,
     slope: Option<&Field<f32>>,
+    facets: Option<&[f32]>,
 ) -> (Field<f32>, Field<f32>) {
     let grid = layers.grid;
     let insolation = graph.f64("orbit.insolation");
@@ -254,33 +275,44 @@ pub fn lag_fields(
             let share = clean_f[grid.index(c)].clamp(0.0, 1.0) as f64;
             let impurity = impurity + (clean - impurity) * share;
             // The surface sits at its own temperature, not the body's mean: a fresh bright
-            // surface is cold and its lag grows slowly, a dark lag is warm and grows faster,
-            // which is the thermal segregation that keeps Callisto's young craters bright for
-            // an age. The body's Bond albedo scales with the cell's reflectance against the
-            // mature surface's; the fresh state is the starting point and the iteration
-            // settles on the state a fresh surface reaches.
+            // surface is cold and its lag grows slowly, a dark lag is warm and grows
+            // faster, which is the thermal segregation that keeps Callisto's young craters
+            // bright for an age. The body's Bond albedo scales with the cell's reflectance
+            // against the mature surface's; the fresh state is the starting point and the
+            // iteration settles on the state a fresh surface reaches.
             let a_fresh = albedos.fresh + (albedos.clean_fresh - albedos.fresh) * share;
             let a_mature = albedos.mature + (albedos.clean_mature - albedos.mature) * share;
-            let (mut m, mut thickness) = (0.0, 0.0);
+            let (mut m, mut thickness, mut bond) = (0.0, 0.0, body_albedo);
             for _ in 0..6 {
                 let a_local = a_fresh + (a_mature - a_fresh) * m;
-                let bond = (body_albedo * a_local / a_mature.max(1e-3)).clamp(0.0, 0.95);
+                bond = (body_albedo * a_local / a_mature.max(1e-3)).clamp(0.0, 0.95);
                 let t = mean_surface_temperature(insolation, bond, cos_lat);
                 (thickness, m) = lag_at(t, impurity, exposure);
             }
-            (
-                m as f32,
-                (thickness * LAG_OPAQUE_KG_M2 / LAG_BULK_DENSITY) as f32,
-            )
+            let spread = facets.map_or(0.0, |f| f[k] as f64) * ICE_FACET_SLOPE_DEG.to_radians();
+            if spread < 1e-3 {
+                return (m as f32, skin_share(thickness) as f32);
+            }
+            // The facets at the cell's settled albedo.
+            let (mut maturity, mut skin) = (0.0, 0.0);
+            for z in FACETS {
+                let cos_lat = effective_cos_lat(d, tilt + spread * z);
+                let t = mean_surface_temperature(insolation, bond, cos_lat);
+                let (thickness, m) = lag_at(t, impurity, exposure);
+                maturity += m;
+                skin += skin_share(thickness);
+            }
+            let n = FACETS.len() as f64;
+            ((maturity / n) as f32, (skin / n) as f32)
         })
         .collect();
     let mut maturity = Field::new(grid);
-    let mut lag = Field::new(grid);
-    for (k, &(m, t)) in state.iter().enumerate() {
+    let mut skin = Field::new(grid);
+    for (k, &(m, s)) in state.iter().enumerate() {
         maturity.as_mut_slice()[k] = m;
-        lag.as_mut_slice()[k] = t;
+        skin.as_mut_slice()[k] = s;
     }
-    (maturity, lag)
+    (maturity, skin)
 }
 
 /// An episode of focused heating (F53): the thinned zone sat at the pole from `start`

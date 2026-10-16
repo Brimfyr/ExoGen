@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 80;
+pub const FINISH_VERSION: u64 = 81;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1871,7 +1871,7 @@ pub fn finish(
     };
     // The craters the finish does not resolve, as the relief their population leaves on
     // each surface by its age (F54): rough where old, smooth where renewed.
-    roughness::apply(
+    let roughness_share = roughness::apply(
         &mut layers,
         body_radius,
         cell,
@@ -1933,9 +1933,15 @@ pub fn finish(
     // Maturity: space weathering on rock; on ice, the sublimation lag the latitude's
     // temperature and the surface's age have left.
     let tau_sw = graph.f64("surface.space_weathering_timescale");
-    let (maturity, lag) = if ice::is_ice_surface(graph) {
-        let (maturity, lag) = ice::lag_fields(graph, &layers, present, slope.as_ref());
-        (maturity, Some(lag))
+    let (maturity, skin) = if ice::is_ice_surface(graph) {
+        let (maturity, skin) = ice::lag_fields(
+            graph,
+            &layers,
+            present,
+            slope.as_ref(),
+            Some(&roughness_share),
+        );
+        (maturity, Some(skin))
     } else {
         let maturity = Field::from_fn(grid, |c, _| {
             let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
@@ -1943,14 +1949,6 @@ pub fn finish(
         });
         (maturity, None)
     };
-    // The skin a ray's secondaries dig through (F91): the Moon's, or an icy surface's lag
-    // where it is thicker, which leaves them less of the area they would excavate.
-    let skin = lag.map(|lag| {
-        Field::from_fn(grid, |c, _| {
-            let depth = (lag.get(c) as f64).max(RAY_SKIN_DEPTH_M);
-            (depth / RAY_SKIN_DEPTH_M).powf(-RAY_SKIN_SLOPE) as f32
-        })
-    });
     // Steep ground sheds its regolith and stays fresher than flat ground (F55): the
     // bright walls and scarps of every airless body, from the ground's own slopes.
     let maturity = {
