@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 22;
+pub const VERSION: u64 = 23;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -234,38 +234,96 @@ struct Pair {
     mature: [f32; 3],
 }
 
-/// Lava coverage mixed sideways by impact gardening: the coverage blurred over the
-/// mixing zone of the oldest surfaces, blended in by how far each cell's own age has
-/// let the zone grow, so fresh flow margins stay sharp and old mare margins soften.
-fn mixed_cover(
+/// What gardening mixes sideways (F95): the lava's coverage, and its coverage times its
+/// tint, over the mixing zone of the contacts each cell lies by. Small impacts move the
+/// regolith about as a diffusion does, so a contact's zone grows as the square root of
+/// the gardening since it formed, the body's diffusivity times the impacts' equivalent
+/// time (the law that degrades its craters), from the zone Li and Mustard measure across
+/// the lunar maria's contacts. A contact is as old as its younger side, so a cell of
+/// lava mixes over no more than its own lava's zone, and any cell over no more than the
+/// youngest lava within reach allows, a power mean weighted to the least gardened: a
+/// young flow on old mare keeps a sharp contact on both sides, and old highlands mix
+/// with the mare beside them only for as long as the mare has lain there. `dose` is each
+/// lava cell's gardening relative to the reference's, its zone the reference's times its
+/// square root. The zones are the levels of a Gaussian pyramid: a cell takes the widest
+/// its contacts allow, between two levels by its share of the step.
+fn garden_mix(
     grid: CubeSphere,
-    body_radius: f64,
+    cell: f64,
     cover: &[f32],
-    ages: &[f32],
-    present: f64,
-) -> Vec<f32> {
-    let cell = grid.delta() * body_radius;
-    let sigma_full =
-        REGOLITH_MIXING_LENGTH * (present / REGOLITH_MIXING_REFERENCE_GYR).sqrt().max(1e-3);
-    // Each pass of the 1/8, 1/2, 1/8 kernel adds a quarter of a cell of variance.
-    let passes = (4.0 * (sigma_full / cell).powi(2)).round() as usize;
-    if passes == 0 {
-        return cover.to_vec();
+    tinted: &[f32],
+    dose: &[Option<f32>],
+) -> (Vec<f32>, Vec<f32>) {
+    use crate::stages::relaxation::{pyramid_coarse, pyramid_expand, pyramid_spread};
+    let zone = |d: f64| REGOLITH_MIXING_LENGTH * d.max(0.0).sqrt();
+    let spread = |l: usize| cell * pyramid_spread(l);
+    let widest = zone(dose.iter().flatten().fold(0.0f32, |a, &d| a.max(d)) as f64);
+    if widest < 0.1 * spread(0) {
+        return (cover.to_vec(), tinted.to_vec());
     }
-    let passes = passes.min(REGOLITH_MIXING_MAX_PASSES);
-    let sigma_blur = 0.5 * (passes as f64).sqrt() * cell;
-    let blurred = crate::stages::episodic::smooth(&grid, cover, passes);
-    cover
+    let wanted = (0..24).find(|&l| spread(l) >= widest).unwrap_or(23) + 1;
+    let p = REGOLITH_MIXING_YOUNGEST_POWER;
+    let own: Vec<f64> = dose
         .iter()
-        .zip(blurred.iter())
-        .zip(ages.iter())
-        .map(|((&c, &b), &a)| {
-            let exposure = (present - a as f64).max(0.0);
-            let sigma = REGOLITH_MIXING_LENGTH * (exposure / REGOLITH_MIXING_REFERENCE_GYR).sqrt();
-            let f = (sigma / sigma_blur).clamp(0.0, 1.0) as f32;
-            c + f * (b - c)
-        })
-        .collect()
+        .map(|d| d.map_or(f64::INFINITY, |d| zone(d as f64)))
+        .collect();
+    // Each lava cell's weight toward the youngest, by its coverage.
+    let youth: Vec<f32> = cover
+        .iter()
+        .zip(dose)
+        .map(|(&c, d)| d.map_or(0.0, |d| c * ((d as f64).max(1e-6).powf(-p)) as f32))
+        .collect();
+    let field = |v: &[f32]| {
+        let mut f = Field::<f32>::new(grid);
+        f.as_mut_slice().copy_from_slice(v);
+        f
+    };
+    let pyramids: Vec<_> = [cover, tinted, youth.as_slice()]
+        .iter()
+        .map(|v| pyramid_coarse(&field(v), wanted))
+        .collect();
+    // Per cell: the channels at the widest zone allowed so far, and whether a wider one
+    // may still be.
+    let mut state: Vec<(f32, f32, bool)> = cover
+        .iter()
+        .zip(tinted)
+        .map(|(&c, &t)| (c, t, true))
+        .collect();
+    let mut below = 0.0;
+    for l in 0..pyramids[0].1.len() {
+        let here = spread(l);
+        let level: Vec<Field<f32>> = pyramids
+            .iter()
+            .map(|(grids, coarse)| pyramid_expand(grids, &coarse[l], l))
+            .collect();
+        let (c_l, t_l, y_l) = (
+            level[0].as_slice(),
+            level[1].as_slice(),
+            level[2].as_slice(),
+        );
+        state.par_iter_mut().enumerate().for_each(|(k, s)| {
+            if !s.2 {
+                return;
+            }
+            let reach = if c_l[k] > 1e-6 && y_l[k] > 0.0 {
+                zone(((y_l[k] / c_l[k]) as f64).powf(-1.0 / p))
+            } else {
+                f64::INFINITY
+            };
+            let allowed = reach.min(own[k]);
+            if allowed >= here {
+                s.0 = c_l[k];
+                s.1 = t_l[k];
+            } else {
+                let f = ((allowed - below) / (here - below)).clamp(0.0, 1.0) as f32;
+                s.0 += f * (c_l[k] - s.0);
+                s.1 += f * (t_l[k] - s.1);
+                s.2 = false;
+            }
+        });
+        below = here;
+    }
+    state.into_iter().map(|(c, t, _)| (c, t)).unzip()
 }
 
 /// The luminance of a regolith mixture when fresh and when mature, for the body's own
@@ -408,16 +466,71 @@ pub fn albedo(
     let ages_f = layers.surface_age.as_slice();
     let comp_f = layers.composition.as_slice();
     let stain_f = layers.stain.as_slice();
-    let mixed = if gardened {
-        mixed_cover(
+    let salted = |u: u16| matches!(u, UNIT_LINEA | UNIT_BAND | UNIT_CHAOS | UNIT_CRYODOME);
+    // A flow unit's reflectance departs from the mean by its eruption's composition (F55),
+    // which the unit's own ejecta keeps.
+    let tint = |k: usize| {
+        if salted(units[k]) || units[k] == UNIT_CONTINENTAL || units[k] == UNIT_OCEANIC {
+            1.0
+        } else {
+            (1.0 + LAVA_COMPOSITION_RANGE as f32 * comp_f[k]).max(0.1)
+        }
+    };
+    let tinted: Vec<f32> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|k| cover_f[k] * tint(k))
+        .collect();
+    let (mixed, mixed_tinted) = if gardened {
+        // Each lava cell's gardening since its lava erupted, relative to the lunar maria's
+        // at the reference age (F95).
+        let flux = crate::crater::FluxHistory {
+            steady: crate::crater::ProductionFunction::by_name(
+                graph.str("cratering.production_function"),
+            )
+            .chronology
+            .2,
+            early_ratio: graph.f64("cratering.early_flux_ratio"),
+            early_decay: graph.f64("cratering.early_flux_decay"),
+            record_start: graph.f64("surface.solidification_time"),
+        };
+        let lunar = crate::crater::FluxHistory::from_chronology(
+            crate::crater::ProductionFunction::lunar().chronology,
+            0.0,
+        );
+        let reference = DIFFUSIVITY_LUNAR
+            * lunar.equivalent_gyr(
+                NEUKUM_REFERENCE_AGE_GYR - REGOLITH_MIXING_REFERENCE_GYR,
+                NEUKUM_REFERENCE_AGE_GYR,
+            );
+        let kappa = graph.f64("cratering.diffusivity");
+        let lava_age = layers.lava_age.as_slice();
+        let dose: Vec<Option<f32>> = (0..grid.cell_count())
+            .into_par_iter()
+            .map(|k| {
+                (cover_f[k] > 0.0).then(|| {
+                    let erupted = if lava_age[k] > 0.0 {
+                        lava_age[k]
+                    } else {
+                        ages_f[k]
+                    };
+                    (kappa * flux.equivalent_gyr(erupted as f64, present) / reference) as f32
+                })
+            })
+            .collect();
+        let clock = std::time::Instant::now();
+        let mixed = garden_mix(
             grid,
-            graph.f64("body.radius"),
+            grid.delta() * graph.f64("body.radius"),
             cover_f,
-            layers.surface_age.as_slice(),
-            present,
-        )
+            &tinted,
+            &dose,
+        );
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            eprintln!("regolith mixing: {:.1} s", clock.elapsed().as_secs_f64());
+        }
+        mixed
     } else {
-        cover_f.to_vec()
+        (cover_f.to_vec(), tinted.clone())
     };
     let r = rays.as_slice();
     let bedrock_f = layers.bedrock.as_slice();
@@ -480,18 +593,17 @@ pub fn albedo(
                 let fresh = lerp3(pair.fresh, deep_pair.fresh, deep_f[k]);
                 let mature = lerp3(pair.mature, deep_pair.mature, deep_f[k]);
                 let c = mixed[k].clamp(0.0, 1.0);
-                let salted = matches!(
-                    units[k],
-                    UNIT_LINEA | UNIT_BAND | UNIT_CHAOS | UNIT_CRYODOME
-                );
                 let (fresh, mature) = if c > 0.0
-                    && !salted
+                    && !salted(units[k])
                     && units[k] != UNIT_CONTINENTAL
                     && units[k] != UNIT_OCEANIC
                 {
-                    // The flow unit's reflectance departs from the mean by its eruption's
-                    // composition (F55), which the unit's own ejecta keeps.
-                    let t = (1.0 + LAVA_COMPOSITION_RANGE as f32 * comp_f[k]).max(0.1);
+                    // The lava's tint, mixed sideways with its coverage (F95).
+                    let t = if mixed[k] > 1e-4 {
+                        mixed_tinted[k] / mixed[k]
+                    } else {
+                        tint(k)
+                    };
                     let tinted = |v: [f32; 3]| [v[0] * t, v[1] * t, v[2] * t];
                     (
                         lerp3(fresh, tinted(lava.fresh), c),
@@ -592,4 +704,47 @@ pub fn albedo(
     let mut f = Field::new(grid);
     f.as_mut_slice().copy_from_slice(&data);
     f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::Cell;
+
+    #[test]
+    fn gardening_blurs_an_old_contact_and_keeps_a_young_one_sharp() {
+        // F95: two lava units of different tints meet along a line. At the reference
+        // gardening the contact blurs over REGOLITH_MIXING_LENGTH; where one unit has had
+        // a hundredth of it, the contact stays sharp on both sides, the old unit mixing
+        // with the young only as long as the young has lain there.
+        let grid = CubeSphere::new(128);
+        let body_radius = 100e3;
+        let cell = grid.delta() * body_radius;
+        let n = grid.cell_count();
+        let side = |k: usize| {
+            let c = grid.cell(k);
+            c.face == 0 && c.i >= 64
+        };
+        let cover = vec![1.0f32; n];
+        let tinted: Vec<f32> = (0..n).map(|k| if side(k) { 0.8 } else { 1.2 }).collect();
+        let at = |v: &[f32], i: u32| v[grid.index(Cell { face: 0, i, j: 64 })];
+        let old = vec![Some(1.0f32); n];
+        let (_, mixed) = garden_mix(grid, cell, &cover, &tinted, &old);
+        assert!(
+            at(&mixed, 61) < 1.15 && at(&mixed, 66) > 0.85,
+            "an old contact blurs: {} and {}",
+            at(&mixed, 61),
+            at(&mixed, 66)
+        );
+        let young: Vec<Option<f32>> = (0..n)
+            .map(|k| Some(if side(k) { 0.01 } else { 1.0 }))
+            .collect();
+        let (_, mixed) = garden_mix(grid, cell, &cover, &tinted, &young);
+        assert!(
+            at(&mixed, 61) > 1.19 && at(&mixed, 65) < 0.85,
+            "a young contact stays sharp: {} and {}",
+            at(&mixed, 61),
+            at(&mixed, 65)
+        );
+    }
 }

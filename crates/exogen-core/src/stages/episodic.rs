@@ -11,6 +11,7 @@
 //! un-degraded crater population, with flow fields, coronae (annular ridges round a
 //! central dome or sag) and steep-sided pancake domes on the plains.
 
+use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -125,14 +126,14 @@ pub fn smooth(grid: &CubeSphere, values: &[f32], passes: usize) -> Vec<f32> {
     let mut a = values.to_vec();
     let mut b = vec![0.0f32; a.len()];
     for _ in 0..passes {
-        for (idx, out) in b.iter_mut().enumerate() {
+        b.par_iter_mut().enumerate().for_each(|(idx, out)| {
             let cell = grid.cell(idx);
             let mut s = a[idx] * 4.0;
             for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 s += a[grid.index(grid.neighbor(cell, di, dj))];
             }
             *out = s / 8.0;
-        }
+        });
         std::mem::swap(&mut a, &mut b);
     }
     a

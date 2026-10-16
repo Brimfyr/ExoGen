@@ -1029,7 +1029,7 @@ pub const LAVA_COMPOSITION_PERIOD_GYR: f64 = 1.0;
 /// many cycles about the body (stated choices).
 pub const LAVA_DRIFT_SHARE: f64 = 0.7;
 pub const LAVA_SOURCE_SHARE: f64 = 0.7;
-pub const LAVA_BATCH_SHARE: f64 = 0.5;
+pub const LAVA_BATCH_SHARE: f64 = 0.2;
 pub const LAVA_SOURCE_ORDER: f64 = 3.0;
 pub const SLOPE_SHED_START_DEG: f64 = 20.0;
 pub const SLOPE_FRESHNESS: f64 = 0.3;
@@ -1346,12 +1346,16 @@ pub const ICE_RESURFACING_TIDAL_FLUX: f64 = 0.01;
 pub const RETENTION_BURIAL_DEPTH_M: f64 = 10.0;
 pub const IO_REGIME_TIDAL_FLUX: f64 = 0.5;
 /// Lateral mixing of the regolith by small impacts: a contact between two materials
-/// blurs in colour over a zone this wide, m, after the reference age, Gyr. Li and
-/// Mustard 2000 measure 4 to 5 km across lunar mare-highland contacts of 3.5 Gyr; the
-/// zone widens as the square root of the age, as a diffusive process does.
+/// blurs in colour over a zone of this spread, m, after the reference age, Gyr, on the
+/// Moon. Li and Mustard 2000 measure 4 to 5 km across lunar mare-highland contacts of
+/// 3.5 Gyr. The zone's square grows with the gardening since the contact formed, the
+/// body's diffusivity times the impacts' equivalent time, as a diffusion's does (F95);
+/// where several contacts lie within reach, a cell's zone is the youngest's, from a power
+/// mean of their gardening weighted by this power toward the least gardened (a stated
+/// choice).
 pub const REGOLITH_MIXING_LENGTH: f64 = 4.5e3;
 pub const REGOLITH_MIXING_REFERENCE_GYR: f64 = 3.5;
-pub const REGOLITH_MIXING_MAX_PASSES: usize = 24;
+pub const REGOLITH_MIXING_YOUNGEST_POWER: f64 = 2.0;
 /// Sublimation lag, the maturity of an icy surface: ice sublimes at the latitude's mean
 /// temperature (Murphy and Koop 2005 for the vapour pressure, the Hertz-Knudsen rate) and
 /// leaves its non-ice share behind; the lag is opaque past this mass per area, a couple

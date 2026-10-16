@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 82;
+pub const FINISH_VERSION: u64 = 83;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1453,6 +1453,7 @@ pub fn finish(
                                     ground,
                                     body_radius,
                                     seed: flood_seed,
+                                    hollow_reach: 0.5 * graph.f64("cratering.loop_threshold"),
                                 });
                         let (out, taken, stats) = volcanism::flood_compute(
                             &layers,

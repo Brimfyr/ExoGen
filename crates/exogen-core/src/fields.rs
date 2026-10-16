@@ -252,6 +252,10 @@ pub struct LayerSet {
     /// material's mean, -1 to 1 (F55): a flow unit's tone, which the ejecta of the same
     /// basalt keeps; 0 where no eruption set it.
     pub composition: Field<f32>,
+    /// When the lava at the surface erupted, Gyr since formation (F95): the age of the
+    /// contacts it makes with its neighbours, which gardening has mixed since, kept under
+    /// the craters and deposits later laid on it; 0 where no eruption set it.
+    pub lava_age: Field<f32>,
     /// The share of the surface stained by the red-brown non-ice material of a crack's
     /// margins (F78; the triple bands of Geissler et al. 1998), 0 to 1, as it stands at
     /// the present: laid by each crack as it forms and faded since; a renewed surface
@@ -277,6 +281,7 @@ impl LayerSet {
             cover: Field::new(grid),
             clean: Field::new(grid),
             composition: Field::new(grid),
+            lava_age: Field::new(grid),
             stain: Field::new(grid),
         }
     }
@@ -316,6 +321,7 @@ impl LayerSet {
             cover: self.cover.resample(target),
             clean: self.clean.resample(target),
             composition: self.composition.resample_nearest(target),
+            lava_age: self.lava_age.resample_nearest(target),
             stain: self.stain.resample(target),
         }
     }
@@ -336,6 +342,7 @@ impl LayerSet {
             self.cover.hash(),
             self.clean.hash(),
             self.composition.hash(),
+            self.lava_age.hash(),
             self.stain.hash(),
         ];
         crate::rng::hash_words(&parts)

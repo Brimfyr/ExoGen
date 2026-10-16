@@ -674,3 +674,29 @@ What they still do not show:
 - **A few small angular patches** where a deep coarse pond meets the lobes.
 
 Tests 168 (three ignored). Two are new: a flood shows through its last few successors only; a flood's lobes cover its low and stay inside its pass. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-second milestone: the lava's units blended by gardening, and the craters the lava fills
+
+The user on the thirty-first: "The different colours are good, but the edges are too sharp. There should be better, more natural-looking transitions between colours." They pointed to large pixel artefacts round craters in a mare (the Moon, seed 762, at -88.1, -15.4) and craters partly filled inside a mare with a sharp edge round the filled part (-111.3, -16.3), and added: "Our flows have the right detail and intricacy for Io, they're just more blended on the Moon and have less contrast, and even more for Mercury."
+
+- **F95, gardening.** The lava's coverage and its tint are mixed sideways over each contact's own zone, which grows with the gardening since the younger side erupted, the same law that degrades the craters, from Li and Mustard's lunar zones. The zones are levels of a Gaussian pyramid, so no cap holds them back (audit W4). Each flood's own draw of composition is smaller, so neighbouring flows differ by a few per cent while the major units keep their range (Iqbal et al. 2019; Denevi et al. 2009).
+- **F95, young craters on lava.** Each flood older than a crater writes its lava under the crater where its lobes reach, in their order, so the tone under a young crater's ejecta matches the flows round it.
+- **F95, hollows.** A crater finer than the loop's cells fills to the flood's level when the lava comes in over its rim, and keeps its bowl when its rim stands above the lava.
+
+How it went:
+
+- **The checkerboard.** A trace of the cells round the crater showed the first flood to write a cell under a younger crater keeping it: the oldest flood, drawn with its coarse outline.
+- **The partly filled crater** was a crater the finish replayed, too small for the loop, three kilometres deeper than the ground the loop flooded: the lava filled only the cells its lobes covered. Filling the finer hollows to the level fixed it, then left a straight edge where a hollow crossed the ring of cells a flood's pass visits; the fill now follows a hollow past them. It also filled craters whose rims stood above the lava, seeded by lobes beyond the low and then by slivers of lobes inside a rim, both drawn over the smoothed ground the lobes are traced on; the fill now comes only from the body of the lava, over its edge.
+- **The mixing's age.** A contact is as old as its younger side. Mixing by each cell's own surface age would have let the old highlands beside a mare pull in its lava for 4.4 Gyr, and every young crater on a contact sharpen it, since a crater resets the surface's age; the zone comes from the eruption's time, kept under later craters, and the youngest lava within reach.
+
+What the maps show:
+
+- **The Moon:** maria of soft-edged flow units, their tones a few per cent apart, their outlines still lobate; the mare edge blends into the highlands over a few kilometres; the craters in maria filled or dry as their rims allow.
+- **Mercury:** inside thick lava, the albedo's pixel-to-pixel steps fall by half (0.0089 to 0.0047 in luminance at the 99th percentile) and its spread falls from 0.13 of its mean to 0.10, against the Moon's 0.18.
+
+What they still do not show:
+
+- **Mercury's faster gardening** in full: the diffusivity scales with gravity alone, 1.5 times the Moon's, where Fassett et al. (2017) measure about twice.
+- **Rays bright by composition**, a crater throwing one unit's material over another, which would break contacts up crater by crater rather than as a smooth zone.
+
+Tests 171 (three ignored). Three are new: a pyramid level spreads as its kernels add up; gardening blurs an old contact and keeps a young one sharp; a flood fills a crater it comes into and not one whose rim holds it out. Clippy is clean and validate passes its 117 checks.

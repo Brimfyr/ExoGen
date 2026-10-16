@@ -156,13 +156,15 @@ Direction: smooth over a physical length, such as the lithosphere's flexural wav
 
 When: the earlier-phases revisit.
 
-### W4. The cap on regolith mixing
+### W4. The cap on regolith mixing (closed by F95)
 
 REGOLITH_MIXING_MAX_PASSES (24) caps the blur that carries the mixing zone's physical width. The mixing runs on the finish grid, and at high quality the cap holds the Moon's zone to about 3.3 km of the 5.1 km its age gives. Minor; the cap exists to bound the cost.
 
 Direction: a blur whose cost does not grow with the pass count (a multigrid or recursive Gaussian), so that no cap is needed.
 
 When: the earlier-phases revisit.
+
+Closed in the thirty-second milestone (F95): the zones are the levels of a Gaussian pyramid, each cell taking its share between the two levels its own zone lies between, so the zone is its physical width at any quality. Each contact's zone now follows its own age, the younger side's, and the body's gardening (its diffusivity times the impacts' equivalent time), and the lava's tint is mixed with its coverage. Still open: the diffusivity itself scales with gravity alone (5.5 m²/Myr times the square root of g over the Moon's), which gives Mercury 1.5 times the Moon's where Fassett et al. (2017) measure about twice from its simple craters; the impact velocity's part waits on the diffusivity's own revisit.
 
 Floors that are not entries: GROOVE_EDGE_CELLS, GROOVE_MIN_CELLS, PIT_MIN_CELLS, EJECTA_LOBE_MIN_CELLS, FINISHING_MIN_CELLS, LOOP_THRESHOLD_CELLS, SCARP_LOOP_MIN_CELLS and RIFT_LOOP_WIDTH_CELLS decide where a feature is drawn (in the loop or the finish) or keep it from aliasing. None of them decides whether the feature forms or how wide it is. MELT_POND_CELLS counts cells of a lattice per crater radius, not grid cells.
 
@@ -251,6 +253,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | LINEA_WIDTH_EXPONENT, LINEA_MARGIN_ONSET_GYR, LINEA_STAIN, LINEA_STRIPE_DIM, LINEA_STAIN_RESIDUAL | stated choices for Europa's lineae (F78): the heavy tail of widths, the time margins take to show, the stain's strength, the medial stripe's dimming and the ancient band's residue | the time scales of the margins' deposit and fading (Fagents et al. 2000's cryoclastic margins; sputtering and frost) |
 | CRACK_DENSITY_FACTOR | Europa: one crack per 31 km of transect (refitted from 3 to 12 when F75 brought its shell from 7.7 to 30 km) | crack spacing from the brittle layer's mechanics, the spacing at which a crack's stress shadow lets the next open |
 | IO_PATERAE_PER_TW | Io's count over its tidal power | per heat-pipe power once S3 is done |
+| LAVA_BATCH_SHARE | the Moon: neighbouring mare units hard to tell apart by albedo alone (Iqbal et al. 2019) inside the factor of 1.4 its major units span (Denevi et al. 2009) | each eruption's departure from its source, from the magma's own fractionation |
 | IO_PELE_CLASS_FRACTION | about six large plumes at a time on Io (Geissler et al. 2004) | the share of centres whose magma comes up gas-rich, from the depth and temperature of their sources |
 | IO_SHIELD_COLUMNS | Io's red-brown plains beginning near 30 degrees (Geissler et al. 1999; Williams et al. 2011) | the column that stops the plasma, from its ions' energies and the gas's stopping power |
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |

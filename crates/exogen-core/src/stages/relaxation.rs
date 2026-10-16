@@ -179,6 +179,21 @@ const PYRAMID_BLUR_PASSES: usize = 2;
 /// no block or tent of a coarse grid shows in the result (a box pyramid left the blocks
 /// of the loop's cells in every renewed floor).
 fn pyramid(field: &Field<f32>, levels: usize) -> Vec<Field<f32>> {
+    let (grids, coarse_levels) = pyramid_coarse(field, levels);
+    coarse_levels
+        .iter()
+        .enumerate()
+        .map(|(l, c)| pyramid_expand(&grids, c, l))
+        .collect()
+}
+
+/// The coarse levels of a Gaussian pyramid, each blurred and halved from the last, with
+/// the grids from the field's own down: for expanding one level at a time where every
+/// level at full resolution at once would not fit.
+pub(crate) fn pyramid_coarse(
+    field: &Field<f32>,
+    levels: usize,
+) -> (Vec<CubeSphere>, Vec<Field<f32>>) {
     let mut grids = vec![field.grid()];
     let mut coarse_levels: Vec<Field<f32>> = Vec::with_capacity(levels);
     let mut current = field.clone();
@@ -190,17 +205,25 @@ fn pyramid(field: &Field<f32>, levels: usize) -> Vec<Field<f32>> {
         coarse_levels.push(coarse.clone());
         current = coarse;
     }
-    coarse_levels
-        .iter()
-        .enumerate()
-        .map(|(l, c)| {
-            let mut f = c.clone();
-            for g in grids[..=l].iter().rev() {
-                f = blurred(&f.resample(*g), PYRAMID_BLUR_PASSES);
-            }
-            f
-        })
-        .collect()
+    (grids, coarse_levels)
+}
+
+/// Level `l` of a pyramid expanded back to the field's grid, blurred after each step.
+pub(crate) fn pyramid_expand(grids: &[CubeSphere], level: &Field<f32>, l: usize) -> Field<f32> {
+    let mut f = level.clone();
+    for g in grids[..=l].iter().rev() {
+        f = blurred(&f.resample(*g), PYRAMID_BLUR_PASSES);
+    }
+    f
+}
+
+/// The Gaussian spread of a pyramid's level `l`, in cells of the field's grid: each pass
+/// of the kernel adds a quarter of a cell's variance at its level, each halving a two-cell
+/// box's quarter, and each expansion the bilinear tent's, a sixth of the coarser spacing
+/// squared.
+pub(crate) fn pyramid_spread(l: usize) -> f64 {
+    let per_level = 0.5 * PYRAMID_BLUR_PASSES as f64 + 0.25 + 4.0 / 6.0;
+    (per_level * (4f64.powi(l as i32 + 1) - 1.0) / 3.0).sqrt()
 }
 
 /// The field smoothed by passes of the 1/8, 1/2, 1/8 kernel on its own grid.
@@ -400,6 +423,38 @@ fn relax_deviation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pyramid_level_spreads_as_its_kernels_add_up() {
+        // A point spread through each level of the pyramid has the spread pyramid_spread
+        // gives it, which the gardening's mixing reads to pick its levels (F95).
+        let grid = CubeSphere::new(128);
+        for l in 0..4 {
+            let mut worst: f64 = 0.0;
+            for (i0, j0) in [(64, 64), (65, 64), (65, 65)] {
+                let mut field = Field::<f32>::new(grid);
+                field.as_mut_slice()[grid.index(Cell {
+                    face: 0,
+                    i: i0,
+                    j: j0,
+                })] = 1.0;
+                let (grids, coarse) = pyramid_coarse(&field, l + 1);
+                let f = pyramid_expand(&grids, &coarse[l], l);
+                let (mut w, mut m1, mut m2) = (0.0, 0.0, 0.0);
+                for i in 0..128 {
+                    for j in 0..128 {
+                        let v = f.as_slice()[grid.index(Cell { face: 0, i, j })] as f64;
+                        w += v;
+                        m1 += v * i as f64;
+                        m2 += v * (i * i) as f64;
+                    }
+                }
+                let spread = (m2 / w - (m1 / w).powi(2)).sqrt();
+                worst = worst.max((spread / pyramid_spread(l) - 1.0).abs());
+            }
+            assert!(worst < 0.1, "level {l}: off by {worst:.3}");
+        }
+    }
 
     #[test]
     fn a_thinned_shell_relaxes_the_long_wavelengths_beside_a_terrain_first() {

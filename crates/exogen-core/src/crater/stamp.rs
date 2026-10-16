@@ -238,6 +238,7 @@ impl StampOutput {
         let melt = layers.melt.as_mut_slice();
         let cover = layers.cover.as_mut_slice();
         let composition = layers.composition.as_mut_slice();
+        let lava_age = layers.lava_age.as_mut_slice();
         let stain = layers.stain.as_mut_slice();
         for (j, c) in self.cells.iter().enumerate() {
             let i = c.idx as usize;
@@ -252,6 +253,7 @@ impl StampOutput {
                     && c.unit == crate::units::UNIT_LAVA
                 {
                     composition[i] = x;
+                    lava_age[i] = c.age;
                 }
                 if self.stain.is_none() {
                     stain[i] = 0.0;
