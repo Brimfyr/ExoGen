@@ -256,6 +256,7 @@ pub struct Sidecar {
     pub flow_field_count: usize,
     pub plume_count: usize,
     pub plume_episode_count: usize,
+    pub small_eruption_count: usize,
     /// An ice shell's cracks present at the epoch: how many, and the longest.
     pub linea_count: usize,
     pub lineae: Vec<LineaInfo>,
@@ -839,6 +840,7 @@ pub fn export(
             .filter(|e| e.end_yr == 0.0)
             .count(),
         plume_episode_count: out.plume_episodes.len(),
+        small_eruption_count: out.small_eruption_count,
         linea_count: out.lineae.len(),
         lane_count: out.lanes.len(),
         chaos_count: out.chaos.len(),

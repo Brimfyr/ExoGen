@@ -578,3 +578,33 @@ What they still do not show:
 - **Mottled plains** and **white plains** (M7).
 
 Tests 157 (two ignored). One is new: a patera's outline is its collapses and faults. An ignored test writes three blocks' heights for a look at their forms. Clippy is clean and validate passes its 117 checks.
+
+## The twenty-ninth milestone: the plains' mottling, and paterae against mountains
+
+The user on the twenty-eighth: "Good progress. Continue with the plains mottling when you are ready." And, during it: "some of the patera are perfectly circular after the last milestone. I see on the real Io map that there are circular patera so there's nothing major to flag there unless that's unintended. But the "patera against a scarp" example you showed shows the circular patera with a sharp, straight edge cut off, just at the foot of the mountain. There are more like this too, seemingly without any reason. Will this be fixed with plains mottling or is it something to address on its own?"
+
+It was something to address on its own. Radebaugh et al. (2001) found paterae that abut mountains oddly shaped, with arcuate or scalloped margins, some wrapping round the mountain (Gish Bar, Monan), not cut straight; and 70 percent of all paterae longer than wide by more than 1.25, where more than half of F88's were circles. On the plains, Williams et al. (2011) read the outliers of white, bright and red-brown plains as the long accumulation of white, yellow and red diffuse deposits.
+
+- **F89, the plains' fallout.** The background fallout, the far fallout of the plumes, spreads about each volcanic centre alive at the epoch over two of its class's ranges, weighted by its plumes' output, its mean over the surface unchanged, and clumped at 15 to 120 km. Where the plasma alters the plains the balance of burial and alteration follows it, so the red-brown plains reach equatorward in quiet regions and give way to yellow among the active centres, and they mottle. Small eruptions, vents too small to be paterae and stealth plumes, add occasional fresh patches, ten a year.
+- **F90, paterae against mountains.** A patera beside a mountain sinks against the block's foot and takes it as its margin, bowed and scalloped as the foot is, the block's debris inside it gone with the floor. Every patera is elongated as Radebaugh et al. measured, the longer ones chains of coalesced collapses.
+
+It took nine renders:
+
+- **Foam.** The first tries laid the whole background as a population of small eruptions, 240,000 over the history, each with a Prometheus-class plume's ring: the plains filled with hollow rings. A plume too low for a canopy lays no ring, so a small eruption's fall became a disc about its vent.
+- **A meridian of large deposits.** The largest small eruptions lined up just west of longitude 0: the draw that set an eruption's size was the one that set its longitude. Each has its own draw now, and a test checks their sizes east and west.
+- **Dots, then bokeh.** Opaque discs read as dots, every cell covered by about three in the history and the plasma browning each within twenty years; thinner, more numerous discs, 790,000 of them, read as glitter; softer, larger ones as bokeh, each a circle with a dark silicate centre. And at that rate Galileo would have seen several hundred new deposits wider than 20 km a year, where it saw some 80 changes in five years (Geissler et al. 2004). The background became the plumes' far fallout about the volcanic centres, which F84 had named it and laid evenly, and the small eruptions a sparse population at about Galileo's rate.
+- **Too smooth.** The far fallout's clumping, written as the deposits' mottling is, moved the fall by 3 percent; the noise's spread is 0.18, not 1. It is drawn at a unit spread now, a log-normal factor spreading by 0.5.
+- **Circles and cuts.** Paterae beside mountains ended in straight chords at the scarp's foot, which the foot's bow and arcs no longer followed; they end at the foot itself now, found along rays from the patera's centre. Elongated paterae came out as smooth cigars at first, until the elongation was split between the collapses' own and their spread along a chain.
+
+What the maps show:
+
+- **Io:** paterae of varied elongation along the crust's fabric, bean and worm shapes among them, those beside mountains wrapping the block's foot; the red-brown plains' edge near 30 degrees ragged with the volcanic centres, the brown reaching equatorward in quiet regions and the yellow poleward among active ones; the plains mottled at 15 to 120 km where the plasma alters them. Plains 77 percent of the surface, flows 17, patera floors 2.1, mountains 3.4 (Williams et al. 2011: 66, 28, 2.5 and 3). The render takes 100 seconds; the deposit history 12.
+
+What they still do not show:
+
+- **Mottling at low latitudes:** the plains there are one sulfur under a fall of sulfur, unaltered, and stay nearly smooth; their white, yellow and grey mottling waits on the frost cycle (M7).
+- **The faults that cut a patera** show nowhere outside it (T1).
+- **Flow coverage** (M8): 17 percent against 28.
+- **The deposits' mottling** (F84) is about 5 percent where its constant says 0.35 (recorded under M7).
+
+Tests 159 (two ignored). Two are new: a patera beside a mountain ends at its foot; and the small eruptions follow their rate with sizes the same east and west, while the background is heaviest among the volcanic centres with its mean the background's. Clippy is clean and validate passes its 117 checks.

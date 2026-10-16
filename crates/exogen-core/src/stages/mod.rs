@@ -213,6 +213,8 @@ pub struct FinishOutput {
     pub mountains: Vec<io::Mountain>,
     pub io_flows: Vec<io::FlowField>,
     pub plume_episodes: Vec<io::PlumeEpisode>,
+    /// The small eruptions laid one by one over that history (F89).
+    pub small_eruption_count: usize,
     /// An ice shell's cracks present at the epoch, its chaos, and the domes a shell over
     /// rock has built, with the share of the surface that is chaos matrix.
     pub lineae: Vec<lineae::Linea>,
@@ -360,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 78;
+pub const FINISH_VERSION: u64 = 79;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -875,6 +877,13 @@ pub fn finish(
         let smoothed = relaxation::low_pass(&io_base.resample(grid), cell, coarse_cell_m);
         layers.bedrock.as_mut_slice().copy_from_slice(&smoothed);
     }
+    // The small eruptions between the paterae over the same history, laid one by one where
+    // the grid resolves them (F89).
+    let small_eruptions = if io::is_io_regime(graph) {
+        io::small_eruptions(graph.f64("seed.volcanism") as u64, cell)
+    } else {
+        Vec::new()
+    };
     // The plumes the paterae alive at the epoch have thrown over the history the surface
     // remembers (F84).
     let plume_episodes = if io::is_io_regime(graph) {
@@ -1881,18 +1890,30 @@ pub fn finish(
     // (F84).
     if io::is_io_regime(graph) {
         let clock = std::time::Instant::now();
+        let background = io::background_fall(
+            grid,
+            body_radius,
+            graph.f64("body.gravity"),
+            &paterae,
+            graph.f64("seed.volcanism") as u64,
+        );
         io::deposit_history(
             &mut layers,
             body_radius,
             graph.f64("orbit.insolation"),
             &plume_episodes,
+            &small_eruptions,
+            &background,
             slope.as_ref(),
         );
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             eprintln!(
-                "io deposit history: {} eruptions, {} erupting now, {:.1} s",
+                "io deposit history: {} eruptions, {} erupting now, {} small ones, background {:.4} to {:.4} optical depths a year, {:.1} s",
                 plume_episodes.len(),
                 plume_episodes.iter().filter(|e| e.end_yr == 0.0).count(),
+                small_eruptions.len(),
+                background.iter().cloned().fold(f32::MAX, f32::min),
+                background.iter().cloned().fold(f32::MIN, f32::max),
                 clock.elapsed().as_secs_f64()
             );
         }
@@ -1991,6 +2012,7 @@ pub fn finish(
         mountains,
         io_flows,
         plume_episodes,
+        small_eruption_count: small_eruptions.len(),
         lineae,
         chaos,
         cryodomes,

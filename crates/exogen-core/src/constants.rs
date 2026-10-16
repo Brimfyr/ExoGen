@@ -455,6 +455,10 @@ pub const IO_PATERA_DIAMETER_RANGE: (f64, f64) = (2.5e3, 210e3);
 pub const IO_PATERA_DEPTH: f64 = 1_200.0;
 pub const IO_PATERA_WALL_SLOPE_DEG: f64 = 70.0;
 pub const IO_PATERA_FAULTED_SHARE: f64 = 0.42;
+/// The ratio of a patera's long axis to its short (F90): its logarithm half-normal with
+/// this spread, at most this (Radebaugh et al. 2001: from 1 to 5.73, 70 percent of
+/// paterae above 1.25).
+pub const IO_PATERA_ELLIPTICITY: (f64, f64) = (0.58, 5.73);
 pub const IO_PATERA_MOUNTAIN_SHARE: f64 = 0.13;
 pub const IO_PATERA_ACTIVE_FRACTION: f64 = 0.2;
 /// Years since a quiet patera's floor last held a lake, log-uniform: the floor is coated
@@ -659,9 +663,10 @@ pub const IO_DARK_REACH: f64 = 0.35;
 /// form, Geissler et al. 2004); rough lava hides only under this many times as much,
 /// the fallout filling its hollows first (a stated choice: about a centimetre of fines
 /// over a rough flow), so that old flows stay grey long after they cool; and the far
-/// fallout of every
-/// plume and of plumes too small to follow falls everywhere at this many optical depths a
-/// year (a stated choice: a third of a micron a year).
+/// fallout of the plumes falls on average at this many optical depths a year (a stated
+/// choice: a third of a micron a year), spread about each volcanic centre over this many
+/// of its class's ranges (a stated choice), its mass clumped, unresolved, by a factor
+/// whose logarithm spreads by this from this length, m, down (stated choices; F89).
 pub const IO_DEPOSIT_OPTICAL_MASS: f64 = 0.03;
 pub const IO_LAVA_COAT_DEPTHS: f64 = 300.0;
 /// Frost does not settle on lava that is still warm: a flow's surface stays too warm
@@ -669,6 +674,25 @@ pub const IO_LAVA_COAT_DEPTHS: f64 = 300.0;
 /// in the infrared for years to decades).
 pub const IO_LAVA_COOL_YR: f64 = 20.0;
 pub const IO_BACKGROUND_FALLOUT: f64 = 0.01;
+pub const IO_FAR_FALLOUT_REACH: f64 = 2.0;
+pub const IO_FAR_FALLOUT_SPREAD: f64 = 0.5;
+pub const IO_FAR_FALLOUT_MOTTLE: f64 = 120e3;
+/// Io's small eruptions (F89), the vents too small to be paterae and the stealth plumes:
+/// their ballistic ranges, m (a stated choice: from
+/// eruptions at 130 m/s, slower ones throwing nothing past their own spatter, to 420,
+/// against the Prometheus class's 500); the power of the
+/// range in their cumulative number (a stated choice: as many per factor of range as
+/// cover equal areas, so that every scale of deposit renews the same share of the
+/// surface); the optical depth one lays at its centre, log-normal about this median with
+/// this spread (a stated choice: thick enough to show); how long one erupts, years,
+/// log-uniform (a stated choice: days to months); and how many a year (a stated choice
+/// of the order of the surface changes Galileo saw, more than 80 in five years, Geissler
+/// et al. 2004).
+pub const IO_SMALL_ERUPTION_RANGE: (f64, f64) = (10e3, 100e3);
+pub const IO_SMALL_ERUPTION_SLOPE: f64 = 2.0;
+pub const IO_SMALL_ERUPTION_DEPTH: (f64, f64) = (2.0, 0.8);
+pub const IO_SMALL_ERUPTION_DURATION_YR: (f64, f64) = (0.03, 1.0);
+pub const IO_SMALL_ERUPTIONS_PER_YR: f64 = 10.0;
 /// Frost sublimes at the equator at this rate, kg/m² a year (Ingersoll 1985: the
 /// diurnally averaged sublimation at the equator is comparable to 0.1 cm/yr, here of
 /// solid SO2 at 1.9 g/cm³), elsewhere by the vapour pressure at its own temperature

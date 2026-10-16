@@ -39,7 +39,7 @@ use crate::units::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-pub const VERSION: u64 = 13;
+pub const VERSION: u64 = 14;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -57,13 +57,17 @@ pub struct Patera {
     /// Gas-rich, Pele-class, whose plumes are hot and red; the rest are Prometheus-class.
     pub pele: bool,
     /// The azimuth of its long axis, rad from east towards north at its centre, along
-    /// the crust's fabric there.
+    /// the crust's fabric there, and its collapses' long axes over their short (F90).
     pub axis: f64,
-    /// Its collapses, each a disc about a point offset from its centre (east and north,
-    /// m) with its radius, m; and the faults that cut straight sides into it, each the
-    /// azimuth of its normal and its distance from the centre, m.
+    pub ellipticity: f64,
+    /// Its collapses, each an ellipse about a point offset from its centre (east and
+    /// north, m) with the radius of the circle of its area, m; and the faults that cut
+    /// straight sides into it, each the azimuth of its normal and its distance from the
+    /// centre, m.
     pub collapses: Vec<[f64; 3]>,
     pub faults: Vec<[f64; 2]>,
+    /// The mountain it sank beside, whose foot is its margin there (F90).
+    pub abuts: Option<Mountain>,
     pub birth_gyr: f64,
     pub death_gyr: f64,
     pub id: u64,
@@ -145,16 +149,19 @@ pub struct PlumeEpisode {
     range: [[f64; 2]; RANGE_ORDERS.1 - RANGE_ORDERS.0 + 1],
     /// Where its mottling lies in the noise.
     mottle: [f64; 3],
+    /// One of the small eruptions that lay the background fallout (F89).
+    pub small: bool,
     pub id: u64,
 }
 
 impl Patera {
     /// The farthest its outline reaches from its centre, m.
     pub fn extent(&self) -> f64 {
+        let long = self.ellipticity.sqrt();
         self.collapses
             .iter()
-            .map(|c| c[0].hypot(c[1]) + c[2])
-            .fold(self.radius, f64::max)
+            .map(|c| c[0].hypot(c[1]) + c[2] * long)
+            .fold(self.radius * long, f64::max)
     }
     pub fn alive(&self, t: f64) -> bool {
         self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
@@ -179,6 +186,14 @@ impl Mountain {
         let (x, y) = (r * phi.cos(), r * phi.sin());
         let (c, s) = (self.strike.cos(), self.strike.sin());
         (x * c + y * s, self.vergence * (y * c - x * s))
+    }
+    /// The block's height in a direction on the sphere, m, as a grid of `cell` draws it.
+    pub fn height_at(&self, d: [f64; 3], body_radius: f64, cell: f64) -> f64 {
+        let (east, north) = local_basis(self.center);
+        let r = angle_between(self.center, d) * body_radius;
+        let phi = crate::geom::azimuth_from(self.center, east, north, d);
+        let (u, v) = self.frame(r, phi);
+        mountain_height(self, u, v, cell)
     }
     pub fn alive(&self, t: f64) -> bool {
         self.birth_gyr - IO_ALIVE_TOLERANCE_GYR <= t && t < self.death_gyr - IO_ALIVE_TOLERANCE_GYR
@@ -229,9 +244,14 @@ impl Plume {
         };
         let (start, end) = (-e.start_yr.min(window), -e.end_yr);
         // The deposit reaches as far as its ring's tail lays a fall that could show over
-        // the eruption, as a share of its range, at most one and a half ranges.
+        // the eruption, as a share of its range, at most one and a half ranges; a small
+        // eruption's, a disc with no ring, to its range (F89).
         let total = e.crest * (end - start).max(0.0) / NEGLIGIBLE_FALL;
-        let reach = (1.0 + IO_RING_OUTER_WIDTH * total.max(1.0).ln().sqrt()).min(1.5);
+        let reach = if e.small {
+            1.0
+        } else {
+            (1.0 + IO_RING_OUTER_WIDTH * total.max(1.0).ln().sqrt()).min(1.5)
+        };
         let wobble: f64 = e.range.iter().map(|h| h[0].hypot(h[1])).sum();
         let cap = reach * e.radius * e.aspect.sqrt() * (1.0 + wobble) / body_radius;
         Self {
@@ -271,18 +291,35 @@ impl Plume {
     }
 }
 
+/// Where a ray at an azimuth from a patera's centre leaves the last of its collapses
+/// (F88, F90): ellipses along its axis, overlapping, so that their union is scalloped
+/// where they meet, as nested and coalesced calderas are.
+fn outline_radius(phi: f64, axis: f64, ellipticity: f64, collapses: &[[f64; 3]]) -> f64 {
+    let (ca, sa) = (axis.cos(), axis.sin());
+    // The ray along the axis and across it.
+    let (du, dv) = ((phi - axis).cos(), (phi - axis).sin());
+    let long = ellipticity.sqrt();
+    let mut edge: f64 = 0.0;
+    for c in collapses {
+        let (cu, cv) = (c[0] * ca + c[1] * sa, c[1] * ca - c[0] * sa);
+        let (a, b) = (c[2] * long, c[2] / long);
+        let qa = (du / a).powi(2) + (dv / b).powi(2);
+        let qb = du * cu / (a * a) + dv * cv / (b * b);
+        let qc = (cu / a).powi(2) + (cv / b).powi(2) - 1.0;
+        let disc = qb * qb - qa * qc;
+        if disc >= 0.0 {
+            edge = edge.max((qb + disc.sqrt()) / qa);
+        }
+    }
+    edge
+}
+
 /// Radius of a patera's outline at an azimuth (F88): where a ray from its centre leaves
-/// the last of its collapses, nested discs each containing the centre, unless a fault
-/// that cut a straight side into it comes first. The union of the discs is scalloped
-/// where they meet, as nested calderas are; the faults' sides end at sharp corners.
+/// the last of its collapses, unless a fault that cut a straight side into it comes
+/// first; the faults' sides end at sharp corners.
 pub fn patera_radius(phi: f64, p: &Patera) -> f64 {
     let (dx, dy) = (phi.cos(), phi.sin());
-    let mut edge: f64 = 0.0;
-    for c in &p.collapses {
-        let b = c[0] * dx + c[1] * dy;
-        let q = c[0] * c[0] + c[1] * c[1] - c[2] * c[2];
-        edge = edge.max(b + (b * b - q).max(0.0).sqrt());
-    }
+    let mut edge = outline_radius(phi, p.axis, p.ellipticity, &p.collapses);
     for f in &p.faults {
         let n = dx * f[0].cos() + dy * f[0].sin();
         if n > 1e-9 {
@@ -295,6 +332,111 @@ pub fn patera_radius(phi: f64, p: &Patera) -> f64 {
 /// Depth of a flat-floored pit at a distance from its centre, with walls of a width.
 pub fn pit_profile(r: f64, radius: f64, depth: f64, wall: f64) -> f64 {
     depth * 0.5 * (1.0 - ((r - radius) / wall).tanh())
+}
+
+/// Azimuths at which a patera beside a mountain finds the mountain's foot (F90).
+const FOOT_AZIMUTHS: usize = 360;
+
+/// Where a patera that sank beside a mountain meets it (F90): along each of
+/// FOOT_AZIMUTHS rays from its centre, the distance to where the block, as a grid of
+/// `cell` draws it, first stands above its share of its height, found in steps of `step`
+/// and refined between them; infinite where the ray leaves the outline first. Paterae
+/// that abut mountains have arcuate or scalloped margins, and some wrap round them
+/// (Radebaugh et al. 2001: Gish Bar, Monan): the margin is the block's foot, bowed and
+/// cut back as the foot is.
+fn foot_edges(p: &Patera, m: &Mountain, body_radius: f64, cell: f64, step: f64) -> Vec<f64> {
+    let (east, north) = local_basis(p.center);
+    let top = MOUNTAIN_UNIT_SHARE * m.height;
+    let rises = |t: f64, phi: f64| {
+        let d = crate::geom::offset(p.center, east, north, t / body_radius, phi);
+        m.height_at(d, body_radius, cell) > top
+    };
+    (0..FOOT_AZIMUTHS)
+        .map(|k| {
+            let phi = std::f64::consts::TAU * k as f64 / FOOT_AZIMUTHS as f64;
+            let reach = patera_radius(phi, p);
+            let mut t = 0.0;
+            while t <= reach {
+                if rises(t, phi) {
+                    let (mut lo, mut hi) = ((t - step).max(0.0), t);
+                    for _ in 0..4 {
+                        let mid = 0.5 * (lo + hi);
+                        if rises(mid, phi) {
+                            hi = mid;
+                        } else {
+                            lo = mid;
+                        }
+                    }
+                    return hi;
+                }
+                t += step;
+            }
+            f64::INFINITY
+        })
+        .collect()
+}
+
+/// The margin a mountain gives a patera at an azimuth, between the rays of its table.
+fn foot_edge(edges: &[f64], phi: f64) -> f64 {
+    let n = edges.len();
+    let x = phi.rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU * n as f64;
+    let i = (x.floor() as usize) % n;
+    let j = (i + 1) % n;
+    let f = x - x.floor();
+    match (edges[i].is_finite(), edges[j].is_finite()) {
+        (true, true) => edges[i] + (edges[j] - edges[i]) * f,
+        (true, false) if f < 0.5 => edges[i],
+        (false, true) if f >= 0.5 => edges[j],
+        _ => f64::INFINITY,
+    }
+}
+
+/// A patera as a grid draws it (F88, F90): its wall's half width, and where the
+/// mountain it sank beside, drawn as a grid of `mountain_cell` draws it, gives it its
+/// margin.
+struct PateraDrawing<'a> {
+    patera: &'a Patera,
+    wall: f64,
+    mountain_cell: f64,
+    foot: Option<Vec<f64>>,
+}
+
+impl<'a> PateraDrawing<'a> {
+    fn new(patera: &'a Patera, body_radius: f64, cell: f64, mountain_cell: f64) -> Self {
+        Self {
+            patera,
+            wall: patera_wall(patera.depth, cell),
+            mountain_cell,
+            foot: patera
+                .abuts
+                .as_ref()
+                .map(|m| foot_edges(patera, m, body_radius, mountain_cell, 0.5 * cell)),
+        }
+    }
+
+    /// The depth the patera takes from a cell at a distance and azimuth from its centre,
+    /// in direction `d`, m, and whether the cell is its floor. The mountain's debris
+    /// below its scarp sank with the floor, or lies under its lava, so the floor is level.
+    fn cut(&self, r: f64, phi: f64, d: [f64; 3], body_radius: f64) -> (f64, bool) {
+        let p = self.patera;
+        let mut edge = patera_radius(phi, p);
+        if let Some(foot) = &self.foot {
+            edge = edge.min(foot_edge(foot, phi));
+        }
+        let pit = pit_profile(r, edge, p.depth, self.wall);
+        let debris = match &p.abuts {
+            Some(m) if pit > 0.01 * p.depth => {
+                let h = m.height_at(d, body_radius, self.mountain_cell);
+                h.min(MOUNTAIN_UNIT_SHARE * m.height) * pit / p.depth
+            }
+            _ => 0.0,
+        };
+        (pit + debris, r < edge)
+    }
+
+    fn needs_direction(&self) -> bool {
+        self.foot.is_some()
+    }
 }
 
 /// The half width of a patera's wall for its depth on a grid of `cell`, m (F88): steep
@@ -546,6 +688,12 @@ pub fn deposit_profile(x: f64) -> (f64, f64) {
     (ring, fill)
 }
 
+/// A small eruption's fall at a fraction `x` of its range (F89), as its centre's share:
+/// thinning smoothly to nothing at the range.
+pub fn small_profile(x: f64) -> f64 {
+    (1.0 - x * x).max(0.0).powi(2)
+}
+
 /// The area under a deposit's profile, as the integral of the profile times x over x: a
 /// deposit of range R spreads its mass over 2π R² times this.
 pub fn profile_moment(inner: f64) -> f64 {
@@ -666,11 +814,177 @@ pub fn plume_history(paterae: &[Patera], gravity: f64, seed: u64) -> Vec<PlumeEp
                     1e3 * rng.uniform(idx, base + 41),
                     1e3 * rng.uniform(idx, base + 42),
                 ],
+                small: false,
                 id: idx ^ (base << 32),
             });
         }
     }
     out
+}
+
+/// The weight of a latitude in the regime's heat flow, against the mean over the
+/// sphere: the paterae's, and the small eruptions'.
+fn heat_weight(sin_lat: f64) -> f64 {
+    let w = IO_PATERA_POLAR_WEIGHT + (1.0 - IO_PATERA_POLAR_WEIGHT) * (1.0 - sin_lat * sin_lat);
+    w / (IO_PATERA_POLAR_WEIGHT + (1.0 - IO_PATERA_POLAR_WEIGHT) * 2.0 / 3.0)
+}
+
+/// Io's small eruptions over the history the surface remembers (F89): the vents too
+/// small to be paterae and the stealth plumes, which carry much of Io's heat unseen
+/// (Veeder et al. 2012: the known volcanoes 60 percent; de Pater et al. 2020: SO
+/// emission spread widely, mostly away from known volcanoes). Their ranges follow a power
+/// law, as many per factor of range as cover equal areas, each rising too low for a
+/// canopy, so that its frost and sulfur, some with silicate, fall in a smooth bump about
+/// the vent, at a place the heat flow favours and a time within the history, at a rate
+/// of the order of the surface changes Galileo saw; those under two cells of `cell`
+/// across are left out, their fall a small share of the background's.
+pub fn small_eruptions(seed: u64, cell: f64) -> Vec<PlumeEpisode> {
+    let (r_min, r_max) = IO_SMALL_ERUPTION_RANGE;
+    let b = IO_SMALL_ERUPTION_SLOPE;
+    let r_lo = (2.0 * cell).clamp(r_min, r_max);
+    let window = history_years();
+    let count = (IO_SMALL_ERUPTIONS_PER_YR * window * (r_min / r_lo).powf(b)).round() as u64;
+    let mut out = Vec::new();
+    if r_lo >= r_max {
+        return out;
+    }
+    let tau = 2.0 * std::f64::consts::PI;
+    let rng = Rng::new(seed ^ 0x5_3A11_E2B7_0089);
+    let (d_lo, d_hi) = IO_SMALL_ERUPTION_DURATION_YR;
+    let (depth_med, depth_spread) = IO_SMALL_ERUPTION_DEPTH;
+    let (frost_lo, frost_hi) = IO_PROMETHEUS_FROST;
+    let (lo_b, hi_b) = (r_lo.powf(-b), r_max.powf(-b));
+    for idx in 0..count {
+        // Where the heat flow favours: draw until the latitude weight accepts.
+        let mut center = rng.unit_direction(idx, 0);
+        for attempt in 0..12u64 {
+            let w = heat_weight(center[2]) / heat_weight(0.0);
+            if rng.uniform(idx ^ crate::rng::ACCEPT_STREAM, attempt) < w {
+                break;
+            }
+            center = rng.unit_direction(idx ^ crate::rng::ACCEPT_STREAM, 100 + 2 * attempt);
+        }
+        // Draws 0 and 1 place it.
+        let radius = (lo_b - rng.uniform(idx, 30) * (lo_b - hi_b)).powf(-1.0 / b);
+        let duration = d_lo * (d_hi / d_lo).powf(rng.uniform(idx, 2));
+        let depth = depth_med * (depth_spread * rng.normal(idx, 3)).exp();
+        let frost = frost_lo + (frost_hi - frost_lo) * rng.uniform(idx, 5);
+        // Within the history, some still erupting.
+        let t = (window + duration) * rng.uniform(idx, 6) - duration;
+        let (start, end) = ((t + duration).min(window), t.max(0.0));
+        let crest = depth / duration;
+        if start <= end {
+            continue;
+        }
+        out.push(PlumeEpisode {
+            center,
+            radius,
+            pele: false,
+            start_yr: start,
+            end_yr: end,
+            crest,
+            aspect: 1.0 + IO_VENT_ELONGATION.1 * rng.uniform(idx, 7),
+            axis: tau * rng.uniform(idx, 8),
+            dark: if rng.uniform(idx, 9) < IO_DARK_CONTAMINATED {
+                IO_DARK_PROMETHEUS
+            } else {
+                0.0
+            },
+            frost,
+            range: [[0.0; 2]; RANGE_ORDERS.1 - RANGE_ORDERS.0 + 1],
+            mottle: [
+                1e3 * rng.uniform(idx, 20),
+                1e3 * rng.uniform(idx, 21),
+                1e3 * rng.uniform(idx, 22),
+            ],
+            small: true,
+            id: 0x5_0000_0000_0000 + idx,
+        });
+    }
+    out
+}
+
+/// Io's background fallout at every cell (F89), optical depths a year: the far fallout
+/// of the plumes, spread about each volcanic centre alive at the epoch over
+/// IO_FAR_FALLOUT_REACH of its class's range and weighted by its plumes' output, the
+/// share of the time it throws one times their mass, so that the plains are buried
+/// fastest among the active centres and slowest far from them; scaled to the background's
+/// mean over the surface, its mass clumped by a factor whose logarithm spreads by
+/// IO_FAR_FALLOUT_SPREAD from IO_FAR_FALLOUT_MOTTLE down, unresolved.
+pub fn background_fall(
+    grid: CubeSphere,
+    body_radius: f64,
+    gravity: f64,
+    paterae: &[Patera],
+    seed: u64,
+) -> Vec<f32> {
+    let uniform = vec![IO_BACKGROUND_FALLOUT as f32; grid.cell_count()];
+    if paterae.is_empty() {
+        return uniform;
+    }
+    // The far fallout varies over hundreds of kilometres: drawn on a coarse grid.
+    let coarse = CubeSphere::new(grid.face_size().min(64));
+    let g = gravity.max(0.01);
+    let sources: Vec<([f64; 3], f64, f64)> = paterae
+        .iter()
+        .map(|p| {
+            let (share, mass, speed) = if p.pele {
+                (
+                    IO_PLUME_FRACTION_PELE,
+                    IO_PLUME_MASS_PELE,
+                    IO_PLUME_SPEED_PELE,
+                )
+            } else {
+                (
+                    IO_PLUME_FRACTION_PROMETHEUS,
+                    IO_PLUME_MASS_PROMETHEUS,
+                    IO_PLUME_SPEED_PROMETHEUS,
+                )
+            };
+            let reach = IO_FAR_FALLOUT_REACH * speed * speed / g;
+            (p.center, IO_PATERA_ACTIVE_FRACTION * share * mass, reach)
+        })
+        .collect();
+    let far = Field::from_fn(coarse, |_, d| {
+        sources
+            .iter()
+            .map(|&(c, w, reach)| {
+                let r = angle_between(c, d) * body_radius;
+                w * (-r / reach).exp() / (reach * reach)
+            })
+            .sum::<f64>() as f32
+    });
+    let mean = far.area_mean();
+    if mean <= 0.0 {
+        return uniform;
+    }
+    let far = far.resample(grid);
+    // Its clumpiness, unresolved: a log-normal factor of the noise at unit spread, from
+    // the mottling's length down by three octaves.
+    let noise = GradientNoise::new(seed ^ 0xFA2_FA11_0089);
+    let frequency = body_radius / IO_FAR_FALLOUT_MOTTLE;
+    let clumps = Field::from_fn(grid, |_, d| noise.fbm(d, frequency, 4, 2.0, 0.6) as f32);
+    let values = clumps.as_slice();
+    let n = values.len() as f64;
+    let mean = values.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let spread = (values
+        .iter()
+        .map(|&v| (v as f64 - mean).powi(2))
+        .sum::<f64>()
+        / n)
+        .sqrt()
+        .max(1e-9);
+    let mottled = Field::from_fn(grid, |c, _| {
+        let k = grid.index(c);
+        let unit = (values[k] as f64 - mean) / spread;
+        far.as_slice()[k] * (IO_FAR_FALLOUT_SPREAD * unit).exp() as f32
+    });
+    let scale = IO_BACKGROUND_FALLOUT / mottled.area_mean();
+    mottled
+        .as_slice()
+        .iter()
+        .map(|&v| (v as f64 * scale) as f32)
+        .collect()
 }
 
 /// How the top layer of a cell ages, per year (F84): red sulfur's reversion to yellow,
@@ -883,28 +1197,35 @@ fn search_bin(d: [f64; 3]) -> usize {
 /// diffuse deposits, often round lava flow margins, from SO2 driven off by warm flows and
 /// condensed again; Prometheus's plume rises where its flows advance over SO2-rich
 /// plains, Kieffer et al. 2000): each flow's release spread over the halo's reach,
-/// landing round the young lava rather than on it.
+/// landing round the young lava rather than on it. The small eruptions fall with the
+/// plumes, and all of it under the plumes' far fallout about the volcanic centres,
+/// `background` at each cell (F89).
+#[allow(clippy::too_many_arguments)]
 pub fn deposit_history(
     layers: &mut LayerSet,
     body_radius: f64,
     insolation: f64,
     episodes: &[PlumeEpisode],
+    small: &[PlumeEpisode],
+    background: &[f32],
     slope: Option<&Field<f32>>,
 ) {
     let grid = layers.grid;
     let window = history_years();
-    let plumes: Vec<Plume> = episodes
+    let all: Vec<&PlumeEpisode> = episodes.iter().chain(small.iter()).collect();
+    let plumes: Vec<Plume> = all
         .iter()
         .map(|e| Plume::new(e, body_radius, window))
         .collect();
+    let smalls: Vec<bool> = all.iter().map(|e| e.small).collect();
     // The vents, each patera's episodes being consecutive.
     let mut vents: Vec<Vent> = Vec::new();
     let mut i = 0;
-    while i < episodes.len() {
-        let center = episodes[i].center;
+    while i < all.len() {
+        let center = all[i].center;
         let mut j = i;
         let mut cos_cap: f64 = 1.0;
-        while j < episodes.len() && episodes[j].center == center {
+        while j < all.len() && all[j].center == center {
             cos_cap = cos_cap.min(plumes[j].cos_cap);
             j += 1;
         }
@@ -954,10 +1275,6 @@ pub fn deposit_history(
         .max(1.0)
         .powf(0.25);
     let sublime_equator = IO_FROST_SUBLIMATION / IO_DEPOSIT_OPTICAL_MASS;
-    let background = Fall {
-        solid: IO_BACKGROUND_FALLOUT,
-        ..Fall::default()
-    };
     let units = layers.unit_id.as_slice();
     let tilts = slope.map(|s| smoothed_over(s, FROST_SLOPE_LENGTH, body_radius));
     let coverage = layers.cover.as_slice();
@@ -1024,13 +1341,19 @@ pub fn deposit_history(
         .map_init(
             || {
                 (
-                    Vec::<(f64, f64, Fall)>::new(),
+                    Vec::<(f64, f64, Fall, bool)>::new(),
                     Vec::<(f64, u8, usize)>::new(),
                     Vec::<usize>::new(),
                 )
             },
             |(falls, marks, active), k| {
                 let d = grid.center(grid.cell(k));
+                // The far fallout of the plumes about the volcanic centres (F89).
+                let background = Fall {
+                    solid: background[k] as f64,
+                    ..Fall::default()
+                };
+                let expected = background;
                 // The frost's temperature by day against the equator's sets its vapour
                 // pressure: the frost sublimes at its own slope's, and the atmosphere the
                 // sublimation supports shields the ground by the latitude's, being
@@ -1075,7 +1398,10 @@ pub fn deposit_history(
                         cos_k[n] = cos_k[n - 1] * c1 - sin_k[n - 1] * s1;
                         sin_k[n] = sin_k[n - 1] * c1 + cos_k[n - 1] * s1;
                     }
-                    for e in &plumes[vent.episodes.clone()] {
+                    for (e, &is_small) in plumes[vent.episodes.clone()]
+                        .iter()
+                        .zip(&smalls[vent.episodes.clone()])
+                    {
                         if c < e.cos_cap || e.end <= e.start {
                             continue;
                         }
@@ -1084,7 +1410,13 @@ pub fn deposit_history(
                             continue;
                         }
                         let (ring, fill) = deposit_profile(x);
-                        let fill = e.inner * fill;
+                        // A small eruption rises too low for a canopy: its fall is a smooth
+                        // bump about the vent, frost and sulfur together (F89).
+                        let (ring, fill) = if is_small {
+                            (0.0, small_profile(x))
+                        } else {
+                            (ring, e.inner * fill)
+                        };
                         if e.crest * (ring + fill) * (e.end - e.start) < NEGLIGIBLE_FALL {
                             continue;
                         }
@@ -1096,18 +1428,25 @@ pub fn deposit_history(
                         // sulfur; the pyroclasts within, sulfur and silicate.
                         let ring = mass * ring;
                         let fill = mass * fill;
-                        let condensed = ring * (1.0 - e.frost);
                         let dark = e.dark * (-(x / IO_DARK_REACH).powi(2)).exp();
-                        falls.push((
-                            e.start,
-                            e.end,
+                        let fall = if is_small {
+                            let solid = fill * (1.0 - e.frost);
+                            Fall {
+                                solid,
+                                red: solid * e.red,
+                                dark: solid * dark,
+                                frost: fill * e.frost,
+                            }
+                        } else {
+                            let condensed = ring * (1.0 - e.frost);
                             Fall {
                                 solid: condensed + fill,
                                 red: condensed * e.red,
                                 dark: fill * dark,
                                 frost: ring * e.frost,
-                            },
-                        ));
+                            }
+                        };
+                        falls.push((e.start, e.end, fall, is_small));
                     }
                 }
                 // The halos of the young flows about the cell.
@@ -1129,14 +1468,15 @@ pub fn deposit_history(
                                 frost: rate,
                                 ..Fall::default()
                             },
+                            false,
                         ));
                     }
                 }
                 // Where the cell stood when the history began: what fell before has aged,
                 // its red reverted and its frost gone or covered, and it was buried at the
-                // history's mean rate.
-                let mut mean = background;
-                for (start, end, fall) in falls.iter() {
+                // history's mean rate, the small eruptions' left to the background.
+                let mut mean = expected;
+                for (start, end, fall, _) in falls.iter().filter(|f| !f.3) {
                     let w = (end - start) / window;
                     mean.add(
                         &Fall {
@@ -1167,7 +1507,7 @@ pub fn deposit_history(
                 }
                 // The eruptions' starts and ends, and the lava, in order.
                 marks.clear();
-                for (n, (start, end, _)) in falls.iter().enumerate() {
+                for (n, (start, end, _, _)) in falls.iter().enumerate() {
                     marks.push((*start, 0, n));
                     marks.push((*end, 1, n));
                 }
@@ -1201,8 +1541,10 @@ pub fn deposit_history(
                         "io trace: cell {k} unit {} coverage {:.3} laid {:.1} yr, {kinetics:?}",
                         units[k], coverage[k], laid_yr[k]
                     );
-                    for (start, end, fall) in falls.iter() {
-                        eprintln!("io trace:   fall {start:.1} to {end:.1} yr: {fall:?}");
+                    for (start, end, fall, small) in falls.iter() {
+                        eprintln!(
+                            "io trace:   fall {start:.1} to {end:.1} yr (small {small}): {fall:?}"
+                        );
                     }
                     for (b, (spread, spread_age, lava)) in halos.iter().enumerate() {
                         eprintln!(
@@ -1435,7 +1777,13 @@ impl IoProcess {
             } else {
                 None
             };
-            let (center, axis, fault) = match near {
+            // Its elongation along its axis (Radebaugh et al. 2001: ellipticities from 1
+            // to 5.73, 70 percent above 1.25), half its collapses' own and half their
+            // spread along it.
+            let (e_spread, e_max) = IO_PATERA_ELLIPTICITY;
+            let elongation = (e_spread * self.rng.normal(idx, 68)).abs().exp().min(e_max);
+            let ellipticity = elongation.sqrt();
+            let (center, axis, abuts) = match near {
                 Some(m) => {
                     let u = m.length * 0.3 * (2.0 * self.rng.uniform(idx, 64) - 1.0);
                     let scarp = mountain_scarp(m.height, 0.0);
@@ -1443,14 +1791,18 @@ impl IoProcess {
                         / (MOUNTAIN_FAULT_SHARE * m.length))
                         .cos()
                         .powi(2);
-                    let v = -(scarp + mountain_heave(m.height) * throw + 0.8 * radius);
+                    // Its centre half its width out from the scarp's foot, so that it
+                    // sinks against the block, whose foot is its margin there.
+                    let v = -(scarp
+                        + mountain_heave(m.height) * throw
+                        + 0.5 * radius / elongation.sqrt());
                     let (c, s) = (m.strike.cos(), m.strike.sin());
                     let (x, y) = (u * c - m.vergence * v * s, u * s + m.vergence * v * c);
                     let (e, n) = local_basis(m.center);
                     let azimuth = y.atan2(x);
                     let at =
                         crate::geom::offset(m.center, e, n, x.hypot(y) / self.body_radius, azimuth);
-                    // The fault faces the patera: its normal points towards the block.
+                    // Its long axis along the block's foot.
                     let normal_world = [
                         -m.vergence * s * e[0] + m.vergence * c * n[0],
                         -m.vergence * s * e[1] + m.vergence * c * n[1],
@@ -1458,11 +1810,7 @@ impl IoProcess {
                     ];
                     let (pe, pn) = local_basis(at);
                     let normal = dot(normal_world, pn).atan2(dot(normal_world, pe));
-                    (
-                        at,
-                        normal + std::f64::consts::FRAC_PI_2,
-                        Some((normal, 0.8 * radius)),
-                    )
+                    (at, normal + std::f64::consts::FRAC_PI_2, Some(m.clone()))
                 }
                 None => (
                     center,
@@ -1475,27 +1823,49 @@ impl IoProcess {
                     None,
                 ),
             };
-            // Its collapses: nested discs along its axis, each containing its centre.
+            // Its collapses: a chain along its axis, as calderas coalesce along a fault
+            // (Radebaugh et al. 2001: Monan's worm shape), each an ellipse of the square
+            // root of its elongation as long as its radius, their centres spread as far
+            // as the elongation has it reach; and up to two more nested about its centre.
+            let (ca, sa) = (axis.cos(), axis.sin());
+            let at = |along: f64, aside: f64, r: f64| {
+                [along * ca - aside * sa, along * sa + aside * ca, r]
+            };
+            let link = radius / ellipticity.sqrt();
+            let reach = radius * (ellipticity - 1.0);
+            let links = 1 + (2.0 * reach / (1.2 * radius)).ceil() as u64;
+            let mut collapses = Vec::new();
+            for c in 0..links {
+                let along = if links > 1 {
+                    -reach + 2.0 * reach * c as f64 / (links - 1) as f64
+                } else {
+                    0.0
+                };
+                // Each link of its own size, wandering across the axis by a third of
+                // its width.
+                let jitter = 0.15 * radius * (2.0 * self.rng.uniform(idx, 104 + 2 * c) - 1.0);
+                let size = link * (0.85 + 0.3 * self.rng.uniform(idx, 112 + c));
+                let aside = 0.35 * size / ellipticity.sqrt()
+                    * (2.0 * self.rng.uniform(idx, 105 + 2 * c) - 1.0);
+                collapses.push(at(along + jitter, aside, size));
+            }
             let count = 1 + (3.0 * self.rng.uniform(idx, 67).powi(2)) as u64;
-            let mut collapses = vec![[0.0, 0.0, radius]];
             for c in 1..count {
-                let r = radius * (0.4 + 0.5 * self.rng.uniform(idx, 70 + 4 * c));
+                let r = link * (0.4 + 0.5 * self.rng.uniform(idx, 70 + 4 * c));
                 let along = (if self.rng.uniform(idx, 71 + 4 * c) < 0.5 {
                     -1.0
                 } else {
                     1.0
                 }) * r
                     * (0.2 + 0.6 * self.rng.uniform(idx, 72 + 4 * c));
-                let aside = 0.25 * r * (2.0 * self.rng.uniform(idx, 73 + 4 * c) - 1.0);
-                let (ca, sa) = (axis.cos(), axis.sin());
-                collapses.push([along * ca - aside * sa, along * sa + aside * ca, r]);
+                let aside =
+                    0.25 * r / ellipticity * (2.0 * self.rng.uniform(idx, 73 + 4 * c) - 1.0);
+                collapses.push(at(along, aside, r));
             }
             // Straight sides where faults of the fabric cut it (Radebaugh et al. 2001: 42
             // percent with straight or irregular margins ending at sharp corners).
             let mut faults = Vec::new();
-            if let Some(f) = fault {
-                faults.push([f.0, f.1]);
-            } else if self.rng.uniform(idx, 90) < IO_PATERA_FAULTED_SHARE {
+            if abuts.is_none() && self.rng.uniform(idx, 90) < IO_PATERA_FAULTED_SHARE {
                 let sides = 1 + self.rng.bits(idx, 91) % 3;
                 for f in 0..sides {
                     // Each a fault along one of the fabric's strikes, on either side.
@@ -1506,9 +1876,12 @@ impl IoProcess {
                         self.rng.uniform(idx, 93 + 4 * f),
                     );
                     let side = std::f64::consts::PI * (self.rng.bits(idx, 94 + 4 * f) % 2) as f64;
+                    let normal = strike + std::f64::consts::FRAC_PI_2 + side;
+                    // Cutting across the outline as far out as it reaches that way.
+                    let out = outline_radius(normal, axis, ellipticity, &collapses);
                     faults.push([
-                        strike + std::f64::consts::FRAC_PI_2 + side,
-                        radius * (0.55 + 0.35 * self.rng.uniform(idx, 95 + 4 * f)),
+                        normal,
+                        out * (0.55 + 0.35 * self.rng.uniform(idx, 95 + 4 * f)),
                     ]);
                 }
             }
@@ -1520,8 +1893,10 @@ impl IoProcess {
                 floor_age_yr,
                 pele,
                 axis,
+                ellipticity,
                 collapses,
                 faults,
+                abuts,
                 birth_gyr: t1,
                 death_gyr: death,
                 id: idx,
@@ -1582,18 +1957,28 @@ impl IoProcess {
             }
         }
         for p in self.paterae.iter().filter(|p| p.alive(t1)) {
-            let wall = patera_wall(p.depth, cell);
-            self.stamper
-                .gather(&grid, body_radius, p.center, p.extent() + 3.0 * wall);
+            // The loop's mountains are smooth (F87).
+            let drawing = PateraDrawing::new(p, body_radius, cell, 2.0 * cell);
+            self.stamper.gather(
+                &grid,
+                body_radius,
+                p.center,
+                p.extent() + 3.0 * drawing.wall,
+            );
             let bedrock = layers.bedrock.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
             let deep = layers.deep.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
             for &(idx, r, phi) in &self.stamper.footprint {
-                let edge = patera_radius(phi, p);
-                bedrock[idx] -= pit_profile(r, edge, p.depth, wall) as f32;
-                if r < edge {
+                let d = if drawing.needs_direction() {
+                    grid.center(grid.cell(idx))
+                } else {
+                    p.center
+                };
+                let (cut, floor) = drawing.cut(r, phi, d, body_radius);
+                bedrock[idx] -= cut as f32;
+                if floor {
                     units[idx] = UNIT_PATERA_FLOOR;
                     deep[idx] = 1.0;
                     melt[idx] = p.floor_age_yr as f32;
@@ -2102,8 +2487,8 @@ pub fn is_io_regime(graph: &ParamGraph) -> bool {
 }
 
 /// Finishing pass of a patera: the pit at this resolution, cut into the buried plains the
-/// finish starts from, and the floor's unit, its lava's coverage and the years since it
-/// was laid.
+/// finish starts from, against the foot of the mountain it sank beside, and the floor's
+/// unit, its lava's coverage and the years since it was laid.
 pub fn patera_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -2113,17 +2498,22 @@ pub fn patera_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let cell = grid.delta() * body_radius;
-    let wall = patera_wall(p.depth, cell);
-    stamper.gather(grid, body_radius, p.center, p.extent() + 3.0 * wall);
+    let drawing = PateraDrawing::new(p, body_radius, cell, cell);
+    stamper.gather(grid, body_radius, p.center, p.extent() + 3.0 * drawing.wall);
     let time = layers.surface_age.as_slice();
     let cells = stamper
         .footprint
         .iter()
         .map(|&(idx, r, phi)| {
-            let edge = patera_radius(phi, p);
+            let d = if drawing.needs_direction() {
+                grid.center(grid.cell(idx))
+            } else {
+                p.center
+            };
+            let (cut, floor) = drawing.cut(r, phi, d, body_radius);
             let mut write = CellWrite {
                 idx: idx as u32,
-                bedrock: (bedrock[idx] as f64 - pit_profile(r, edge, p.depth, wall)) as f32,
+                bedrock: (bedrock[idx] as f64 - cut) as f32,
                 surface: false,
                 age: 0.0,
                 unit: 0,
@@ -2131,7 +2521,7 @@ pub fn patera_compute(
                 melt: 0.0,
                 cover: 0.0,
             };
-            if r < edge {
+            if floor {
                 write.surface = true;
                 write.age = time[idx];
                 write.unit = UNIT_PATERA_FLOOR;
@@ -2416,8 +2806,10 @@ mod tests {
             floor_age_yr: 100.0,
             pele: false,
             axis: 0.0,
+            ellipticity: 1.0,
             collapses: vec![[0.0, 0.0, 30e3], [15e3, 0.0, 20e3]],
             faults: vec![[std::f64::consts::FRAC_PI_2, 20e3]],
+            abuts: None,
             birth_gyr: 0.0,
             death_gyr: 1.0,
             id: 3,
@@ -2432,6 +2824,139 @@ mod tests {
         assert!((patera_radius(std::f64::consts::FRAC_PI_2, &p) - 20e3).abs() < 1.0);
         assert!(patera_radius(-std::f64::consts::FRAC_PI_2, &p) > 29e3);
         assert!(p.extent() >= 35e3);
+        // An elongated collapse keeps its area: twice as long along its axis as the
+        // circle of its area, half as wide across it (F90).
+        let oval = Patera {
+            ellipticity: 4.0,
+            collapses: vec![[0.0, 0.0, 30e3]],
+            faults: Vec::new(),
+            axis: std::f64::consts::FRAC_PI_4,
+            ..p.clone()
+        };
+        let along = patera_radius(std::f64::consts::FRAC_PI_4, &oval);
+        let across = patera_radius(3.0 * std::f64::consts::FRAC_PI_4, &oval);
+        assert!(
+            (along - 60e3).abs() < 1.0 && (across - 15e3).abs() < 1.0,
+            "{along} {across}"
+        );
+        assert!((oval.extent() - 60e3).abs() < 1.0);
+    }
+
+    /// Io's small eruptions (F89): as many as their rate gives above the grid, their sizes
+    /// the same east and west; and the background is the plumes' far fallout, heaviest
+    /// among the volcanic centres, its mean the background's.
+    #[test]
+    fn small_eruptions_and_the_background() {
+        let cell = 20e3;
+        let small = small_eruptions(7, cell);
+        let (r_min, r_max) = IO_SMALL_ERUPTION_RANGE;
+        let want = IO_SMALL_ERUPTIONS_PER_YR * history_years() * (r_min / (2.0 * cell)).powi(2);
+        assert!(
+            (small.len() as f64 / want - 1.0).abs() < 0.05,
+            "{} vs {want}",
+            small.len()
+        );
+        let side = |east: bool| {
+            let sizes: Vec<f64> = small
+                .iter()
+                .filter(|e| (e.center[1] >= 0.0) == east)
+                .map(|e| e.radius)
+                .collect();
+            sizes.iter().sum::<f64>() / sizes.len() as f64
+        };
+        let (east, west) = (side(true), side(false));
+        assert!((east / west - 1.0).abs() < 0.08, "{east} vs {west}");
+        assert!(
+            small
+                .iter()
+                .all(|e| e.radius >= 2.0 * cell && e.radius <= r_max)
+        );
+        // The background about one centre.
+        let grid = CubeSphere::new(32);
+        let patera = Patera {
+            center: [1.0, 0.0, 0.0],
+            radius: 20e3,
+            depth: 1e3,
+            active: true,
+            floor_age_yr: 0.0,
+            pele: false,
+            axis: 0.0,
+            ellipticity: 1.0,
+            collapses: vec![[0.0, 0.0, 20e3]],
+            faults: Vec::new(),
+            abuts: None,
+            birth_gyr: 0.0,
+            death_gyr: 1.0,
+            id: 1,
+        };
+        let fall = background_fall(grid, 1_821.6e3, 1.796, &[patera], 3);
+        let field = Field::from_fn(grid, |c, _| fall[grid.index(c)]);
+        assert!((field.area_mean() / IO_BACKGROUND_FALLOUT - 1.0).abs() < 0.01);
+        let at = |d: [f64; 3]| fall[grid.index(grid.locate(d).0)];
+        assert!(at([1.0, 0.0, 0.0]) > 3.0 * at([-1.0, 0.0, 0.0]));
+    }
+
+    /// A patera that sank beside a mountain (F90): its margin towards the block is the
+    /// block's foot, and away from it its own outline.
+    #[test]
+    fn a_patera_beside_a_mountain_ends_at_its_foot() {
+        let r = 1_821e3;
+        let m = Mountain {
+            center: [1.0, 0.0, 0.0],
+            strike: 0.0,
+            length: 150e3,
+            width: 60e3,
+            height: 5e3,
+            vergence: 1.0,
+            tilt: 0.0,
+            level: 0.9,
+            ridging: 0.0,
+            birth_gyr: 0.0,
+            death_gyr: 1.0,
+            id: 11,
+        };
+        // South of the block's front, which faces south.
+        let (east, north) = local_basis(m.center);
+        let at = crate::geom::offset(
+            m.center,
+            east,
+            north,
+            25e3 / r,
+            -std::f64::consts::FRAC_PI_2,
+        );
+        let p = Patera {
+            center: at,
+            radius: 20e3,
+            depth: 1e3,
+            active: false,
+            floor_age_yr: 100.0,
+            pele: false,
+            axis: 0.0,
+            ellipticity: 1.0,
+            collapses: vec![[0.0, 0.0, 20e3]],
+            faults: Vec::new(),
+            abuts: Some(m.clone()),
+            birth_gyr: 0.0,
+            death_gyr: 1.0,
+            id: 12,
+        };
+        let edges = foot_edges(&p, &m, r, 1e3, 500.0);
+        let towards = foot_edge(&edges, std::f64::consts::FRAC_PI_2);
+        let away = foot_edge(&edges, -std::f64::consts::FRAC_PI_2);
+        assert!(towards < 20e3 && towards > 2e3, "{towards}");
+        assert!(away.is_infinite(), "{away}");
+        // The block stands above its share there, and not short of it.
+        let d = |t: f64| {
+            crate::geom::offset(
+                at,
+                local_basis(at).0,
+                local_basis(at).1,
+                t / r,
+                std::f64::consts::FRAC_PI_2,
+            )
+        };
+        assert!(m.height_at(d(towards + 300.0), r, 1e3) > MOUNTAIN_UNIT_SHARE * m.height);
+        assert!(m.height_at(d(towards - 600.0), r, 1e3) <= MOUNTAIN_UNIT_SHARE * m.height);
     }
 
     /// The top layer (F84): a red deposit stays red while it falls and reverts within a
@@ -2620,8 +3145,10 @@ mod tests {
                 floor_age_yr: 10.0,
                 pele: k % 20 == 0,
                 axis: 0.0,
+                ellipticity: 1.0,
                 collapses: vec![[0.0, 0.0, 20e3]],
                 faults: Vec::new(),
+                abuts: None,
                 birth_gyr: 0.0,
                 death_gyr: 1.0,
                 id: 7_000 + k,
