@@ -213,6 +213,22 @@ Direction: a band's opening from the rotation of the plates it parts, about the 
 
 When: the earlier-phases revisit, with the lanes.
 
+### T4. Rays as spokes
+
+A fresh crater's rays are drawn as straight, blurred spokes about a glow, a lens flare, on every airless body; the survey of 2026-10-16 saw them on the Moon and Mercury, and the fourteenth milestone's note saw Callisto's as a starfield. Real rays are discontinuous filaments of secondary craters and the bright ejecta they throw, in chains and herringbone patterns that narrow, branch and loop outward from a continuous ejecta near the rim (Shoemaker 1962; Melosh 1989).
+
+Direction: rays from the ejecta curtain: clumps of ejecta thrown along paths whose ranges and azimuths scatter, each landing as a chain of secondaries with its own bright streaks, the whole fading with maturity.
+
+When: the earlier-phases revisit.
+
+### T5. The dichotomy as a hyperbolic tangent
+
+The primordial crust's hemispheric dichotomy is half its amplitude times tanh(3 cos θ) about an axis: a smooth slope over thousands of kilometres. On Mars (20 km of crust, some 2.4 km of relief) it does not show under the basins, with no boundary scarp, no fretted terrain and no lowland plains younger than the highlands.
+
+Direction: the dichotomy from a process (a giant impact, Andrews-Hanna et al. 2008, or degree-one convection), its boundary scarp worn by the processes that wear a scarp, and the lowlands resurfaced by the lavas and sediments that bury their craters to ghosts.
+
+When: the earlier-phases revisit, with Mars.
+
 ## Calibrations on one body (principle 15)
 
 Each constant here was fitted so that one body comes out right. Each should become, or be shown to be, a constant of its process, with a check on what it gives a body between the references.
@@ -311,6 +327,30 @@ Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al.
 Direction: the fields' areas from the lava erupted over their lives, the eruptive share of the magma rate (Spencer et al. 2020: most of Io's magma intrudes) over a field's thickness, so that the coverage follows from the heat the lava carries out.
 
 When: with S3, the regime's switch.
+
+### M9. A rise stays where its plume rose
+
+Mars's rise came out at 83 degrees south, its shields round the pole. A load the size of Tharsis turns the body until it lies on the equator, which is why Tharsis does (true polar wander: Bouley et al. 2016). ExoGen turns a body for a light terrain, Enceladus's thinned pole going to the pole (F53), but not for a heavy one.
+
+Direction: the body's reorientation from its loads, positive and negative, the rise carried to the equator as it grows, and everything older turned with it.
+
+When: the earlier-phases revisit, with Mars's rise.
+
+### M10. Venus's deformation belts and rifts
+
+Venus's plains are cut by belts of ridges and fractures and by rift zones (chasmata) that join its highlands and coronae into a network, the bright web of the radar maps; coronae string along the rifts. ExoGen's Venus has none: 506 coronae stand alone as thin rings, the tesserae are plateaus of noise, and the plains between are smooth under their wrinkle ridges.
+
+Direction: the lid's stress from the mantle's convection, rifting where it pulls apart and folding where it pushes, coronae where plume heads meet it, as annuli of fractures and ridges round a dome or sag, and tesserae as the oldest crust deformed in the belts.
+
+When: the earlier-phases revisit, with Venus.
+
+### M11. The rocky bodies' colours
+
+Mars's albedo is one grey, Venus's another, and Mercury's flooded floors are flat tan patches in dark halos, where its fresh craters' ejecta should be bright. Mars's red is the oxidation of its dust and Mercury's tones its materials' and their maturing; the user left Mercury's colour for a later pass (Phase 3).
+
+Direction: the weathering and transport processes of Phase 5 (oxidation, dust, maturity), with the composition of each unit.
+
+When: Phase 5, or a colour pass the user asks for.
 
 ## Validation (principle 15)
 
