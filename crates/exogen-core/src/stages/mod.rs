@@ -132,13 +132,11 @@ pub struct LoopOutput {
     pub resurfacing: Option<episodic::Resurfacing>,
     pub coronae: Vec<episodic::Corona>,
     pub domes: Vec<episodic::Dome>,
-    /// The Io regime's paterae, mountains, flow fields and plume rings through the
-    /// body's life, each with its birth and death; the finish takes those alive at the
-    /// epoch.
+    /// The Io regime's paterae, mountains and flow fields through the body's life, each
+    /// with its birth and death; the finish takes those alive at the epoch.
     pub paterae: Vec<io::Patera>,
     pub mountains: Vec<io::Mountain>,
     pub io_flows: Vec<io::FlowField>,
-    pub plume_rings: Vec<io::PlumeRing>,
     /// An ice shell's lanes of grooved terrain and when they formed.
     pub lanes: Vec<ice_shell::Lane>,
     /// The share of the surface the lanes cover once all have formed.
@@ -207,11 +205,12 @@ pub struct FinishOutput {
     pub resurfacing: Option<episodic::Resurfacing>,
     pub coronae: Vec<episodic::Corona>,
     pub domes: Vec<episodic::Dome>,
-    /// The Io regime's features, all of the present surface.
+    /// The Io regime's features, all of the present surface, and the plumes of its
+    /// paterae over the history the surface remembers (F84).
     pub paterae: Vec<io::Patera>,
     pub mountains: Vec<io::Mountain>,
     pub io_flows: Vec<io::FlowField>,
-    pub plume_rings: Vec<io::PlumeRing>,
+    pub plume_episodes: Vec<io::PlumeEpisode>,
     /// An ice shell's cracks present at the epoch, its chaos, and the domes a shell over
     /// rock has built, with the share of the surface that is chaos matrix.
     pub lineae: Vec<lineae::Linea>,
@@ -359,7 +358,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 74;
+pub const FINISH_VERSION: u64 = 75;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -528,9 +527,9 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
-    let (paterae, mountains, io_flows, plume_rings) = match io {
-        Some(i) => (i.paterae, i.mountains, i.flows, i.rings),
-        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+    let (paterae, mountains, io_flows) = match io {
+        Some(i) => (i.paterae, i.mountains, i.flows),
+        None => (Vec::new(), Vec::new(), Vec::new()),
     };
     let (resurfacing, coronae, domes, novae) = match episodic {
         Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
@@ -598,7 +597,6 @@ pub fn run_coarse_loop(
         paterae,
         mountains,
         io_flows,
-        plume_rings,
         lanes,
         lane_coverage,
         lane_core,
@@ -866,12 +864,17 @@ pub fn finish(
         .filter(|f| f.alive(present))
         .cloned()
         .collect();
-    let plume_rings: Vec<io::PlumeRing> = loop_output
-        .plume_rings
-        .iter()
-        .filter(|r| r.alive(present))
-        .cloned()
-        .collect();
+    // The plumes the paterae alive at the epoch have thrown over the history the surface
+    // remembers (F84).
+    let plume_episodes = if io::is_io_regime(graph) {
+        io::plume_history(
+            &paterae,
+            graph.f64("body.gravity"),
+            graph.f64("seed.volcanism") as u64,
+        )
+    } else {
+        Vec::new()
+    };
     // An ice shell's cracks within the surface's retention age, drawn per time bin.
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
@@ -1104,7 +1107,6 @@ pub fn finish(
         Patera(usize),
         Mountain(usize),
         IoFlow(usize),
-        PlumeRing(usize),
         Linea(usize),
         Groove(usize),
         PolarTerrain,
@@ -1167,9 +1169,6 @@ pub fn finish(
     }
     for (k, f) in io_flows.iter().enumerate() {
         events.push((present, 0, f.id, Event::IoFlow(k)));
-    }
-    for (k, r) in plume_rings.iter().enumerate() {
-        events.push((present, 0, r.id, Event::PlumeRing(k)));
     }
     for (k, l) in lineae.iter().enumerate() {
         events.push((l.time_gyr, 0, l.id ^ 0x11CE_0000_0000, Event::Linea(k)));
@@ -1305,10 +1304,6 @@ pub fn finish(
                 Event::IoFlow(k) => {
                     let f = &io_flows[*k];
                     (f.center, f.cap_radius(body_radius) + 2.0 * grid.delta())
-                }
-                Event::PlumeRing(k) => {
-                    let r = &plume_rings[*k];
-                    (r.center, r.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
                 Event::Linea(k) => {
                     let l = &lineae[*k];
@@ -1528,16 +1523,6 @@ pub fn finish(
                     Event::IoFlow(k) => {
                         let out =
                             io::flow_compute(&layers, &grid, body_radius, &io_flows[*k], stamper);
-                        Some((out, None, None))
-                    }
-                    Event::PlumeRing(k) => {
-                        let out = io::ring_compute(
-                            &layers,
-                            &grid,
-                            body_radius,
-                            &plume_rings[*k],
-                            stamper,
-                        );
                         Some((out, None, None))
                     }
                     Event::Groove(k) => {
@@ -1889,6 +1874,26 @@ pub fn finish(
     // On ice, each slope sits at its own mean temperature: frost and lag follow it.
     let slope = (ice::is_ice_surface(graph) || io::is_io_regime(graph))
         .then(|| ice::poleward_slope(&height, body_radius));
+    // Io's surface is what its plumes have left on it, each slope at its own temperature
+    // (F84).
+    if io::is_io_regime(graph) {
+        let clock = std::time::Instant::now();
+        io::deposit_history(
+            &mut layers,
+            body_radius,
+            graph.f64("orbit.insolation"),
+            &plume_episodes,
+            slope.as_ref(),
+        );
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            eprintln!(
+                "io deposit history: {} eruptions, {} erupting now, {:.1} s",
+                plume_episodes.len(),
+                plume_episodes.iter().filter(|e| e.end_yr == 0.0).count(),
+                clock.elapsed().as_secs_f64()
+            );
+        }
+    }
 
     sink.report(Progress {
         stage: "finishing",
@@ -1982,7 +1987,7 @@ pub fn finish(
         paterae,
         mountains,
         io_flows,
-        plume_rings,
+        plume_episodes,
         lineae,
         chaos,
         cryodomes,
@@ -3024,7 +3029,7 @@ mod tests {
         let lo = &out.loop_output;
         assert!(lo.paterae.len() > 100, "{} paterae", lo.paterae.len());
         assert!(lo.mountains.len() > 20, "{} mountains", lo.mountains.len());
-        assert!(!lo.io_flows.is_empty() && !lo.plume_rings.is_empty());
+        assert!(!lo.io_flows.is_empty() && !out.finish.plume_episodes.is_empty());
         assert!(
             out.finish.craters.is_empty(),
             "{} craters",

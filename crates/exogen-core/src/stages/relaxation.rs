@@ -204,7 +204,7 @@ fn pyramid(field: &Field<f32>, levels: usize) -> Vec<Field<f32>> {
 }
 
 /// The field smoothed by passes of the 1/8, 1/2, 1/8 kernel on its own grid.
-fn blurred(field: &Field<f32>, passes: usize) -> Field<f32> {
+pub(crate) fn blurred(field: &Field<f32>, passes: usize) -> Field<f32> {
     let grid = field.grid();
     let v = smooth(&grid, field.as_slice(), passes);
     let mut out = Field::new(grid);
@@ -215,7 +215,7 @@ fn blurred(field: &Field<f32>, passes: usize) -> Field<f32> {
 /// The field averaged onto the grid with half the cells per face edge, each coarse cell
 /// the mean of its four fine cells: an area average, so that no single cell stands for a
 /// patch. None once a face is odd or down to four cells.
-fn halve(field: &Field<f32>) -> Option<Field<f32>> {
+pub(crate) fn halve(field: &Field<f32>) -> Option<Field<f32>> {
     let grid = field.grid();
     let f = grid.face_size();
     if !f.is_multiple_of(2) || f < 8 {

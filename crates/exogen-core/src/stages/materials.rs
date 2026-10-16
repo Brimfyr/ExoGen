@@ -22,7 +22,7 @@ use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::units::{
     UNIT_BAND, UNIT_CHAOS, UNIT_CONTINENTAL, UNIT_CRATER_FLOOR, UNIT_CRYODOME, UNIT_DEEP_FLOOR,
-    UNIT_IO_FLOW, UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC, UNIT_PATERA_FLOOR,
+    UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
 pub const VERSION: u64 = 21;
@@ -420,41 +420,24 @@ pub fn albedo(
         cover_f.to_vec()
     };
     let r = rays.as_slice();
-    // The Io regime colours itself from what the eruptions left and the temperature the
-    // latitude's insolation gives: the day's peak temperature decides where the global
-    // frost fall survives and where radiation keeps sulfur red.
-    let io_subsolar_k = {
-        let absorbed = graph.f64("orbit.insolation") * (1.0 - graph.f64("atmosphere.bond_albedo"));
-        (absorbed.max(0.0) / SIGMA_SB).powf(0.25)
-    };
     let bedrock_f = layers.bedrock.as_slice();
     let io_cell = grid.delta() * graph.f64("body.radius");
     let data: Vec<[f32; 3]> = (0..grid.cell_count())
         .into_par_iter()
         .map(|k| {
             if io {
-                let d = grid.center(grid.cell(k));
-                // Each slope sits at its own peak temperature: frost keeps to the
-                // pole-facing ones and the red to the cold.
-                let tilt = slope.map_or(0.0, |s| s.as_slice()[k] as f64);
-                let cos_lat = crate::stages::ice::effective_cos_lat(d, tilt);
-                let t_peak = io_subsolar_k * cos_lat.max(0.02).powf(0.25);
-                let logistic = |x: f64| 1.0 / (1.0 + (-x).exp());
-                let persist = logistic((IO_FROST_HALF_K - t_peak) / IO_FROST_WIDTH_K) as f32;
-                let red = logistic((IO_RED_HALF_K - t_peak) / IO_RED_WIDTH_K) as f32;
-                let plains = lerp3(IO_SULFUR, IO_FROST, IO_FROST_BACKGROUND as f32 * persist);
-                let plains = lerp3(plains, IO_POLAR, red);
-                // What lies on the cell: frost, or on lava the lava's own coverage; the
-                // fresh silicate exposure; the red fallout over all but hot lava.
-                let coat = cover_f[k].clamp(0.0, 1.0);
-                let fresh = deep_f[k].clamp(0.0, 1.0);
-                let c = match units[k] {
-                    UNIT_IO_FLOW => lerp3(lerp3(plains, IO_FLOW_OLD, coat), IO_FLOW_DARK, fresh),
-                    UNIT_PATERA_FLOOR => lerp3(
-                        lerp3(plains, IO_PATERA_FLOOR, 0.8 * coat),
-                        IO_FLOW_DARK,
-                        fresh,
-                    ),
+                // What the plumes have left on the cell (F84): sulfur, altered by the
+                // plasma where the atmosphere does not shield it and red where a plume's
+                // sulfur is fresh; dark silicate, bare lava or pyroclasts; and frost
+                // over all.
+                let sulfur = lerp3(
+                    lerp3(IO_SULFUR, IO_POLAR, stain_f[k].clamp(0.0, 1.0)),
+                    IO_PLUME_RED,
+                    melt_f[k].clamp(0.0, 1.0),
+                );
+                let ground = lerp3(sulfur, IO_FLOW_DARK, deep_f[k].clamp(0.0, 1.0));
+                let frost = cover_f[k].clamp(0.0, 1.0);
+                return match units[k] {
                     UNIT_MOUNTAIN => {
                         // Steep flanks shed their coat and show the rock.
                         let cell = grid.cell(k);
@@ -468,14 +451,13 @@ pub fn albedo(
                         let bare =
                             ((slope.atan().to_degrees() - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
                         lerp3(
-                            lerp3(plains, IO_FROST, coat),
+                            lerp3(ground, IO_FROST, frost),
                             IO_MOUNTAIN_ROCK,
                             0.25 + 0.75 * bare,
                         )
                     }
-                    _ => lerp3(plains, IO_FROST, coat),
+                    _ => lerp3(ground, IO_FROST, frost),
                 };
-                return lerp3(c, IO_PLUME_RED, melt_f[k].clamp(0.0, 1.0) * (1.0 - fresh));
             }
             if liquid[k] > 0.0 {
                 let t = (-liquid[k] / 60.0).exp();

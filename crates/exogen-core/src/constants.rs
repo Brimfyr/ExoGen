@@ -454,10 +454,9 @@ pub const IO_PATERA_POLYGON: f64 = 0.6;
 pub const IO_PATERA_OUTLINE: f64 = 0.12;
 pub const IO_PATERA_SIDES: (u32, u32) = (5, 8);
 pub const IO_PATERA_ACTIVE_FRACTION: f64 = 0.2;
-/// Years since a quiet patera's floor last held a lake, log-uniform, and the time over
-/// which a floor goes from black silicate to a sulfur coat.
+/// Years since a quiet patera's floor last held a lake, log-uniform: the floor is coated
+/// by what has fallen on it since (F84).
 pub const IO_FLOOR_AGE_YR: (f64, f64) = (1.0, 1e6);
-pub const IO_FLOOR_COAT_YR: f64 = 2_000.0;
 /// Mountains: tilted crustal blocks raised by the subsidence of the crust under the
 /// burial, two per terawatt (Io: some 150), their diameters and heights, m, the tilt of a
 /// block as a fraction of its height, elongation up to this aspect ratio, the noise on
@@ -479,8 +478,7 @@ pub const IO_MOUNTAIN_APRON_POWER: f64 = 2.0;
 /// Flow fields: from every active patera and this share of the quiet ones; their reach,
 /// m, log-uniform; lobes per field; the lobing of the margins at the width's scale, the
 /// softness of the edge as a share of the width (or a cell and a half), the thickness,
-/// m; lobe ages, years, log-uniform, and the time over which a flow goes from black to
-/// brown under the sulfur rain.
+/// m; lobe ages, years, log-uniform, an earlier generation's lobes at least this old.
 pub const IO_QUIET_FLOW_FRACTION: f64 = 0.15;
 pub const IO_FLOW_REACH: (f64, f64) = (40e3, 300e3);
 pub const IO_FLOW_LOBES: (u32, u32) = (6, 14);
@@ -511,68 +509,130 @@ pub const IO_FLOW_TOE: f64 = 0.6;
 pub const IO_FLOW_WIDTH_WOBBLE: f64 = 0.25;
 pub const IO_FLOW_POINT_SPACING: f64 = 2e3;
 pub const IO_FLOW_AGE_YR: (f64, f64) = (1.0, 3e5);
-pub const IO_FLOW_DARK_YR: f64 = 150.0;
-/// Io's deposits accumulate (F56): a flow's colour is coated over by the fallout of the
-/// plains in this many years (Geissler et al. 2004 on the resurfacing at a centimetre a
-/// year), so old flows fade into the plains; every patera carries this many generations
-/// of flow fields and of plumes, the older ones faded by their age; and a flow's surface
-/// varies by this share over this length, m, the overlapping flow units within a lobe.
-pub const IO_FLOW_COAT_YR: f64 = 2.0e4;
+pub const IO_FLOW_EARLIER_YR: f64 = 150.0;
+/// Io's flows accumulate (F56): every patera carries this many generations of flow
+/// fields, each lobe coated by what has fallen on it since it was laid (F84); and a
+/// flow's coverage varies by this share over this length, m, the overlapping flow units
+/// within a lobe.
 pub const IO_FLOW_GENERATIONS: u32 = 3;
-pub const IO_PLUME_GENERATIONS: u32 = 3;
 pub const IO_FLOW_TEXTURE: f64 = 0.4;
 pub const IO_FLOW_TEXTURE_LENGTH: f64 = 15e3;
-/// Plumes: the share of centres that are gas-rich, Pele-class, and the share of active
-/// paterae of each class with a plume at a time; the eruption speeds of each class, m/s,
-/// whose ballistic range v²/g is the ring radius (Pele's ring 1,200 to 1,400 km across
-/// from about a kilometre a second in Io's gravity; Prometheus-class rings a few hundred
-/// kilometres from half that), with log-normal scatter; the ring's width and the inner
+/// Plumes, whose gas condenses in a ring at the canopy where the plume falls back and
+/// whose pyroclasts, sulfur and silicate, fall within it: the share of centres that are
+/// gas-rich, Pele-class (a calibration: with the
+/// active share and half of the active ones erupting, about six large plumes at a time,
+/// Geissler et al. 2004 seeing about half a dozen oval sulfur-rich rings), and the share
+/// of active paterae of each class with a plume at a time, which with the active share is
+/// the share of its time a centre erupts; the eruption speeds of each class, m/s, whose
+/// ballistic range v²/g is the ring radius (Pele's ring 1,200 to 1,400 km across from
+/// about a kilometre a second in Io's gravity; Prometheus-class rings a few hundred
+/// kilometres from half that; Geissler et al. 2004: small plumes' rings 150 to 200 km in
+/// radius, large plumes' oval rings 500 to 550 km north to south), with log-normal
+/// scatter (0.3 in the range, which keeps each class's rings within about half and
+/// twice its typical size); the ring's width inside and outside its crest and the inner
 /// fall as fractions of the radius, a Pele-class plume leaving mostly the ring and a
-/// Prometheus-class one filling its disc; the frost share of a Pele-class deposit and
-/// the red share of a Prometheus-class one; the wobble of the ring and the mottling of
-/// the fallout; years since a quiet centre's last plume, log-uniform; the burial time of
-/// frost fallout, longer by this factor where the cold keeps the frost; and the fading
-/// time of red sulfur, which Surt's and Tvashtar's rings lost within a couple of years.
-pub const IO_PELE_CLASS_FRACTION: f64 = 0.05;
+/// Prometheus-class one more of its fallout within, the ring ending more steeply beyond
+/// the range of the fastest ejecta than it rises within (stated choices); the frost
+/// share of a Pele-class ring, the rest red sulfur from its S2, and the red share of the
+/// sulfur in a Prometheus-class ring; the scatter of the range with azimuth and the mottling of the fallout; and the
+/// fading time of red sulfur, which Surt's and Tvashtar's rings lost within a couple of
+/// years.
+pub const IO_PELE_CLASS_FRACTION: f64 = 0.15;
 pub const IO_PLUME_FRACTION_PELE: f64 = 0.5;
 pub const IO_PLUME_FRACTION_PROMETHEUS: f64 = 0.1;
 pub const IO_PLUME_SPEED_PELE: f64 = 1_000.0;
 pub const IO_PLUME_SPEED_PROMETHEUS: f64 = 500.0;
-pub const IO_PLUME_SPEED_SCATTER: f64 = 0.25;
+pub const IO_PLUME_SPEED_SCATTER: f64 = 0.15;
 pub const IO_RING_WIDTH: f64 = 0.25;
-pub const IO_RING_INNER_PELE: f64 = 0.3;
-pub const IO_RING_INNER_PROMETHEUS: f64 = 0.8;
+pub const IO_RING_OUTER_WIDTH: f64 = 0.1;
+pub const IO_RING_INNER_PELE: f64 = 0.15;
+pub const IO_RING_INNER_PROMETHEUS: f64 = 0.4;
 pub const IO_PELE_FROST: f64 = 0.25;
 pub const IO_PROMETHEUS_RED: f64 = 0.15;
 pub const IO_RING_EDGE_WOBBLE: f64 = 0.08;
 pub const IO_DEPOSIT_MOTTLING: f64 = 0.35;
-pub const IO_PLUME_AGE_YR: (f64, f64) = (10.0, 1e6);
-pub const IO_FALLOUT_FADE_YR: f64 = 100.0;
-pub const IO_FROST_COLD_FACTOR: f64 = 3.0;
 pub const IO_RED_FADE_YR: f64 = 2.0;
 pub const IO_SURFACE_AGE_GYR: f64 = 1e-4;
+/// Io's surface is what its plumes have left on it (F84). Every patera's eruptions are
+/// followed back over this many burial times of the background fallout below, past
+/// which nothing they laid can still show (a stated choice), each lasting from a few
+/// months to decades, log-uniform (Surt's eruption of 2001 a few months; Tvashtar's
+/// plumes 1999 to 2007; Pele and Prometheus active since Voyager), at most this many per
+/// patera.
+pub const IO_HISTORY_BURIALS: f64 = 5.0;
+pub const IO_PLUME_DURATION_YR: (f64, f64) = (0.3, 30.0);
+pub const IO_PLUME_EPISODES_MAX: usize = 400;
+/// The mass a plume's deposit condenses, kg/s, log-normal with this scatter: a
+/// Pele-class plume's sulfur from its S2 (S2/SO2 0.08 to 0.3 in Pele's plume, Spencer et
+/// al. 2000, of some 10^4 kg/s of SO2, which Zhang et al. 2003 need at 1.1 x 10^4 kg/s
+/// to match Pele's column), and a Prometheus-class plume's SO2 frost (Jessup et al. 2004
+/// model Prometheus's volcanic SO2 output at 10^5 kg/s, here condensing near the vent);
+/// the share of a Prometheus-class plume's ring that is frost, the rest sulfur, drawn for
+/// each eruption between these (Geissler et al. 2004: small plumes' rings white or
+/// yellow; the range a stated choice); the elongation of a Pele-class and of a
+/// Prometheus-class deposit across its vent at most (Geissler et al. 2004: large plumes'
+/// rings oval, small ones' near-circular; the amounts stated choices); and the silicate
+/// share of the inner fall of a Pele-class plume and of a contaminated Prometheus-class
+/// one, the share of Prometheus-class eruptions contaminated, and the reach of that fall
+/// as a share of the range (Geissler et al. 2004: rings white or yellow unless
+/// contaminated with silicates; the shares stated choices).
+pub const IO_PLUME_MASS_PELE: f64 = 3.0e3;
+pub const IO_PLUME_MASS_PROMETHEUS: f64 = 1.0e5;
+pub const IO_PLUME_MASS_SCATTER: f64 = 0.5;
+pub const IO_PROMETHEUS_FROST: (f64, f64) = (0.4, 0.95);
+pub const IO_VENT_ELONGATION: (f64, f64) = (0.3, 0.1);
+pub const IO_DARK_PELE: f64 = 0.5;
+pub const IO_DARK_PROMETHEUS: f64 = 0.3;
+pub const IO_DARK_CONTAMINATED: f64 = 0.25;
+pub const IO_DARK_REACH: f64 = 0.35;
+/// The fallout hides what lies beneath once this much of it lies on each square metre,
+/// kg/m² (a few tens of microns of fine-grained sulfur or frost, a stated choice; with
+/// the masses above a Pele-class ring shows within a few months, as Galileo saw rings
+/// form, Geissler et al. 2004); rough lava hides only under this many times as much,
+/// the fallout filling its hollows first (a stated choice); and the far fallout of every
+/// plume and of plumes too small to follow falls everywhere at this many optical depths a
+/// year (a stated choice: a third of a micron a year).
+pub const IO_DEPOSIT_OPTICAL_MASS: f64 = 0.03;
+pub const IO_LAVA_COAT_DEPTHS: f64 = 30.0;
+pub const IO_BACKGROUND_FALLOUT: f64 = 0.01;
+/// Frost sublimes at the equator at this rate, kg/m² a year (Ingersoll 1985: the
+/// diurnally averaged sublimation at the equator is comparable to 0.1 cm/yr, here of
+/// solid SO2 at 1.9 g/cm³), elsewhere by the vapour pressure at its own temperature
+/// against the equator's, SO2's latent heat over the gas constant being this, K (the
+/// vapour pressure 1.52 x 10^13 exp(-4510 / T) Pa, Wagman 1979 as Ingersoll uses it),
+/// the frost's temperature by day that of a surface of this albedo under the sun at its
+/// latitude (a stated choice; 122 K at Io's subsolar point).
+pub const IO_FROST_SUBLIMATION: f64 = 1.9;
+pub const SO2_SUBLIMATION_K: f64 = 4_510.0;
+pub const IO_FROST_ALBEDO: f64 = 0.75;
+/// The plasma alters what lies on top to red-brown in this many years where nothing
+/// shields it (a stated choice), and the sublimation atmosphere shields the ground by
+/// its column, which the frost's vapour pressure sets: the column at the equator is this
+/// many times the one that stops the plasma (a calibration: alteration takes over beyond
+/// about 30 degrees of latitude, where Io's red-brown plains begin, Geissler et al. 1999
+/// and Williams et al. 2011; the column falls tenfold from the equator to the poles,
+/// Dott et al. 2025).
+pub const IO_ALTERATION_YR: f64 = 10.0;
+pub const IO_SHIELD_COLUMNS: f64 = 10.0;
+/// A flow spreading over the plains drives off this much SO2 from the ground beneath,
+/// kg per square metre of lava (a stated choice: some 5 cm of SO2 ice), over this many
+/// years as it spreads and cools (a stated choice), which condenses again round it over
+/// this reach, m, hugging its margins (a stated choice: Williams et al. 2011's white
+/// diffuse deposits often surround the flows' boundaries).
+pub const IO_HALO_RELEASE: f64 = 100.0;
+pub const IO_HALO_DURATION_YR: f64 = 3.0;
+pub const IO_HALO_RANGE: f64 = 8e3;
 /// Slack on a feature's birth and death against the step times' rounding, Gyr.
 pub const IO_ALIVE_TOLERANCE_GYR: f64 = 1e-6;
-/// Colours, linear reflectance: sulfur plains, sulfur reddened by radiation in the
-/// cold, SO2 frost, fresh silicate, an old flow under its sulfur coat, a quiet patera
-/// floor, a plume's red sulfur and bare mountain rock. The global frost fall covers this
-/// share where it survives the day; the day's peak temperature at which half of it
-/// survives and the width of that transition, K (SO2 sublimes fast above about 120 K);
-/// the temperature below which radiation keeps sulfur red and its width, K; and the
-/// slopes between which a mountain sheds its coat, degrees.
+/// Colours, linear reflectance: sulfur, sulfur altered by the plasma, SO2 frost, dark
+/// silicate (fresh lava and its pyroclasts), a plume's red sulfur and bare mountain
+/// rock; and the slopes between which a mountain sheds its coat, degrees.
 pub const IO_SULFUR: [f32; 3] = [0.65, 0.55, 0.25];
 pub const IO_POLAR: [f32; 3] = [0.38, 0.24, 0.13];
 pub const IO_FROST: [f32; 3] = [0.86, 0.86, 0.88];
 pub const IO_FLOW_DARK: [f32; 3] = [0.05, 0.05, 0.05];
-pub const IO_FLOW_OLD: [f32; 3] = [0.20, 0.15, 0.09];
-pub const IO_PATERA_FLOOR: [f32; 3] = [0.14, 0.09, 0.05];
 pub const IO_PLUME_RED: [f32; 3] = [0.55, 0.20, 0.08];
 pub const IO_MOUNTAIN_ROCK: [f32; 3] = [0.32, 0.28, 0.22];
-pub const IO_FROST_BACKGROUND: f64 = 0.2;
-pub const IO_FROST_HALF_K: f64 = 120.0;
-pub const IO_FROST_WIDTH_K: f64 = 5.0;
-pub const IO_RED_HALF_K: f64 = 118.0;
-pub const IO_RED_WIDTH_K: f64 = 6.0;
 pub const IO_MOUNTAIN_BARE_SLOPE_DEG: (f64, f64) = (5.0, 15.0);
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
 /// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.

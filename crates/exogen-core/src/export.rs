@@ -248,11 +248,13 @@ pub struct Sidecar {
     pub tessera_fraction: f64,
     pub coronae: Vec<CoronaInfo>,
     pub domes: Vec<DomeInfo>,
-    /// The Io regime: paterae, mountains, and how many flow fields and plume rings.
+    /// The Io regime: paterae, mountains, how many flow fields, how many plumes erupt at
+    /// the epoch and how many eruptions the surface remembers (F84).
     pub paterae: Vec<PateraInfo>,
     pub mountains: Vec<MountainInfo>,
     pub flow_field_count: usize,
-    pub plume_ring_count: usize,
+    pub plume_count: usize,
+    pub plume_episode_count: usize,
     /// An ice shell's cracks present at the epoch: how many, and the longest.
     pub linea_count: usize,
     pub lineae: Vec<LineaInfo>,
@@ -829,7 +831,12 @@ pub fn export(
             })
             .collect(),
         flow_field_count: out.io_flows.len(),
-        plume_ring_count: out.plume_rings.len(),
+        plume_count: out
+            .plume_episodes
+            .iter()
+            .filter(|e| e.end_yr == 0.0)
+            .count(),
+        plume_episode_count: out.plume_episodes.len(),
         linea_count: out.lineae.len(),
         lane_count: out.lanes.len(),
         chaos_count: out.chaos.len(),

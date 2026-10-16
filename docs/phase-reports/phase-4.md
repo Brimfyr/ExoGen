@@ -473,3 +473,43 @@ What they still do not show:
 - **Stated choices:** the band's height, trough, marginal ridge, spreading time and stain share.
 
 Tests 151. One is new: a band pulls the plates apart, a bump beside it moving outward by the predicted push, and its ice spreads from its axis. The profile test now checks the raised band. Clippy is clean and validate passes its 117 checks.
+
+## The twenty-sixth milestone: Io's surface from its deposit history
+
+The user on the twenty-fifth: "The shaded relief close-up looks very good. As long as the open items are marked for later, move on to Io." The open items went into the audit first (W5, T3, M5 and M6; 2ddfe8c).
+
+A survey render set beside the reference showed Io as stamps on a flat field. The plains were one yellow, banded by latitude; a white halo was stamped round each live plume; the flows were worms of one tone; the paterae black polygons; the mountains grey blotches. What the published maps give instead:
+
+- **Units** (Williams et al. 2011): plains 66 percent of the surface, flows 28, mountains 3, patera floors 2.5; diffuse deposits over 18 percent, red, white, yellow and black. The red-brown plains lie beyond about 30 degrees, from radiation; outliers of white, bright and red-brown plains come from the long accumulation of white, yellow and red deposits.
+- **Colours** (Geissler et al. 1999): red and orange over a third of the surface, mostly beyond 30 degrees; yellow over 40 percent at low latitudes; white and grey, moderate to coarse SO2, over 27 percent.
+- **Change** (Geissler et al. 2004): at least 83 percent of the surface unchanged over five years; deposits fade in months to years by burial and alteration; small plumes leave near-circular rings 150 to 200 km in radius, white or yellow, and about half a dozen large ones oval, sulfur-rich rings 500 to 550 km from the vent.
+
+So the plains are what the plumes have left, buried and aged (F84):
+
+- **The eruptions.** Every patera erupts in episodes, followed back five burial times of the background fallout, 500 years, past which nothing laid can still show. A patera is erupting now if it is active and its class throws a plume; before that, quiet spells and eruptions of a few months to decades alternate at its class's duty. Each eruption has its own speed and so its range, its own mass, its vent's elongation and its range's scatter with azimuth.
+- **The deposit.** The gas condenses in a ring at the canopy where the plume falls back; the pyroclasts, sulfur and silicate, fall within. A Pele-class ring is red sulfur from its S2, 3,000 kg/s (Spencer et al. 2000; Zhang et al. 2003); a Prometheus-class ring is SO2 frost from 10^5 kg/s (Jessup et al. 2004), white or yellow by its frost share.
+- **The top layer.** Each cell runs through the eruptions that reached it in order, in closed form between their starts and ends. Each fall buries what lay on top; red sulfur reverts to yellow in two years; frost sublimes at Ingersoll's 0.1 cm/yr at the equator and by the SO2 vapour pressure at its own temperature elsewhere; and the plasma alters what lies on top to red-brown where the sublimation atmosphere, which the same vapour pressure sets, is too thin to shield the ground.
+- **Lava.** A flow or a patera floor is black when laid and is coated by what falls on it after, rough lava more slowly than a plain.
+- **Halos.** A young flow drives SO2 off the ground it covers, which condenses round its margins (Williams et al. 2011; Kieffer et al. 2000).
+
+It took ten renders after the survey:
+
+- **The first** had red-brown polar plains, but the low latitudes stayed flat yellow, no Pele-class plume was erupting (the class share gave two at a time; Io has about six), regular low-order jets drew sunbursts, and starting the history from mean rates would have left a permanent halo round every active centre. The class share is now calibrated to six large plumes, the jets are gone, the history starts from an aged surface, and the shielding reads the latitude, since the atmosphere spans far more than a slope.
+- **White** covered 5 percent against Geissler's 27: the Prometheus-class mass had been a tenth of Jessup et al.'s output. With their 10^5 kg/s a thick deposit lasts a century at the equator.
+- **The halos** first came out as opaque white cocoons round each young lobe; they now hug the margins over 8 km.
+- **The deposits** read as opaque discs. Gas and pyroclasts now fall in different places, so a Pele-class deposit is a red ring round an olive interior and a Prometheus-class one a white to cream ring round a yellow one.
+- **Speed.** A 2,000-year history took 24 to 41 seconds; tied to the background burial, with the halos on a coarser grid, it takes 11.
+- **Artefacts.** Some deposits were cut short at a fixed reach: each eruption now reaches as far as its tail could show. Frost lines were jagged: the frost now reads its slopes over 30 km one by one and shorter ones as a spread of a third to three times its sublimation, which blends a frost line over the width its ground gives it. A speckle of isolated white cells was a rounding fault: a finished eruption left a fall of 10^-17, and the closed form divided by it. A probe printing one cell's whole history found it (EXOGEN_IO_TRACE=lon,lat); the fall is now summed afresh from the eruptions active at each moment, and every relaxation is exact as its rate vanishes.
+
+What the maps show:
+
+- **Io:** three Pele-class plumes erupting, red rings round olive interiors, their pyroclasts darkening the ground near the vent; Prometheus-class rings white, cream or yellow, the older faded under the sulfur that has fallen since; red-brown plains beyond about 30 degrees, with outliers left by recent deposits; young flows black with white margins, old ones coated. Shares of the surface: altered red-brown 30 percent, red 5, frost 5 above a fifth of the ground, yellow 61. The deposit history takes 11 seconds of a 206-second render.
+
+What they still do not show:
+
+- **White plains** (M7): frost comes only from rings and halos and sublimes at Ingersoll's rate wherever it lies, so it covers 5 percent against 27; it needs the frost cycle of the sublimation atmosphere and its albedo feedback.
+- **Flows:** worms of one width, where Io's flow fields are broad, branching and of many units, a quarter of the surface (W1); next.
+- **Mountains and paterae** (T1): grey blotches and polygons. A patera floor laid since a deposit fell shows as a straight-edged hole in it.
+- **Stated choices:** the eruptions' durations and scatter, the deposit's opacity and profile, the background fallout, the lava's roughness, the alteration's time and the halos'.
+
+Tests 153 (one ignored). Two are new: the top layer ages and is buried (red sulfur stays red while it falls and reverts within a few years; thick frost outlasts thin and the cold keeps it longer; lava hides under its coat; a rate of mere rounding leaves the cover as it was; the closed form agrees with small steps); and plumes erupt at their class's duty. Clippy is clean and validate passes its 117 checks.

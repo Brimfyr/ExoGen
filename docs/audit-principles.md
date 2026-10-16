@@ -58,6 +58,8 @@ When: the earlier-phases revisit.
 
 Direction: paterae from the heat-pipe share of the heat flux, the part carried up by eruptions rather than conducted (Moore and Webb 2013), which grows with the flux; mountains from the compressive stress that burial and subsidence put on the lithosphere against its strength (Schenk and Bulmer 1998; McKinnon et al. 2001); the sulfur coating from the plume deposition rate against the weathering time. The burial term already scales with the magma rate and needs no threshold.
 
+F84 made the coating emergent: the surface is each eruption's fall against the reversion, sublimation and alteration that age it, so a body with fewer plumes is altered further from its poles. The paterae, the plumes and the mountains still switch on at the threshold.
+
 When: the Io milestone.
 
 ### S4. The thin-shell rule
@@ -184,7 +186,7 @@ These features take a fixed profile, with noise for variety, rather than a form 
 | Shields | `shield_height` (stages/plume.rs) | built from flows, each laid down where the last left the slope |
 | Canyons | `trough_depth_at` (stages/plume.rs) | strike from the stress field, depth and width from the extension and the lid |
 | Io's mountains | `block_radius`, `block_profile` (stages/io.rs) | thrust blocks on faults across a compressive field, their outline noise now |
-| Io's plume rings | `ring_profile` (stages/io.rs) | ballistic deposit from the vent speed, which sets the ring's radius |
+| Io's plume deposits | `deposit_profile`, `plume_history` (stages/io.rs) | partly by F84, the twenty-sixth milestone: each eruption's range from its speed (v²/g), its oval from its vent's elongation, its range scattered with azimuth, its gas condensing in a ring and its pyroclasts falling within; the ring's radial profile is still a fixed Gaussian each side and the fall within a fixed ramp, where the canopy shock and the particles' sizes would set them (Zhang et al. 2003's DSMC plumes) |
 | Paterae | `patera_compute` (stages/io.rs) | outline from the faults of the block it sank into, a polygon share with noise now |
 | Crater walls and rims | `fresh_height` (crater/morphology.rs), `RimShape` (crater/stamp.rs) | closed by F67, the sixteenth milestone: the wall is made by its collapse, terraces of slump blocks on arcuate faults whose widths follow Pearce and Melosh (1986) and the strength length, a scalloped rim and the floor's edge at the blocks' toes |
 
@@ -223,6 +225,8 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | LINEA_WIDTH_EXPONENT, LINEA_MARGIN_ONSET_GYR, LINEA_STAIN, LINEA_STRIPE_DIM, LINEA_STAIN_RESIDUAL | stated choices for Europa's lineae (F78): the heavy tail of widths, the time margins take to show, the stain's strength, the medial stripe's dimming and the ancient band's residue | the time scales of the margins' deposit and fading (Fagents et al. 2000's cryoclastic margins; sputtering and frost) |
 | CRACK_DENSITY_FACTOR | Europa: one crack per 31 km of transect (refitted from 3 to 12 when F75 brought its shell from 7.7 to 30 km) | crack spacing from the brittle layer's mechanics, the spacing at which a crack's stress shadow lets the next open |
 | IO_PATERAE_PER_TW | Io's count over its tidal power | per heat-pipe power once S3 is done |
+| IO_PELE_CLASS_FRACTION | about six large plumes at a time on Io (Geissler et al. 2004) | the share of centres whose magma comes up gas-rich, from the depth and temperature of their sources |
+| IO_SHIELD_COLUMNS | Io's red-brown plains beginning near 30 degrees (Geissler et al. 1999; Williams et al. 2011) | the column that stops the plasma, from its ions' energies and the gas's stopping power |
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |
 | CENTRAL_PEAK_HEIGHT | Copernicus | check how it scales with gravity |
 | POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core, 10 to 30 GW: 28.5 GW, which with its shell's own 0.6 GW (F75) holds its shell at 22.7 km (refitted from 15 GW when the shell's share went from the class k₂/Q's 15 GW to F75's) | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
@@ -285,6 +289,14 @@ Europa's cracks, under the tide, the shell's freezing and its heterogeneity (F82
 Direction: the stresses that free cracks from the tide's pattern beyond those modelled: the interaction of cracks with the open cracks about them for the narrow fabric (F81), whose tracing answers no other crack; non-synchronous rotation's rate against the margins' life; true polar wander.
 
 When: the earlier-phases revisit, or sooner if the user asks.
+
+### M7. Io's white plains
+
+Io's white and grey materials, moderate-to-coarse-grained SO2, cover about 27 percent of the surface, mostly at low latitudes (Geissler et al. 1999), and its white diffuse deposits often surround the margins of lava flows (Williams et al. 2011). F84's frost comes only from plumes' rings and young flows' halos and sublimes at Ingersoll's rate wherever it lies, so frost shows over about 5 percent of the surface; its white is also brighter and more opaque than the reference's.
+
+Direction: the frost cycle of the sublimation atmosphere, which takes SO2 from warm ground and lays it on cold, and the albedo feedback that keeps a bright frost cold, so that frost seeded by deposits persists in fields; coarse-grained, translucent frost apart from a fresh deposit's fine white.
+
+When: with Phase 5's materials, or sooner with the flows.
 
 ## Validation (principle 15)
 
