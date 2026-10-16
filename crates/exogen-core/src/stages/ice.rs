@@ -267,7 +267,7 @@ pub fn lag_fields(
             let d = grid.center(c);
             let tilt = slope.map_or(0.0, |s| s.get(c) as f64);
             let cos_lat = effective_cos_lat(d, tilt);
-            let exposure = present - layers.surface_age.get(c) as f64;
+            let exposure = present - layers.exposure_age(grid.index(c)) as f64;
             let exposure = match &fallout {
                 Some(f) => exposure.min(f.burial_gyr(d)),
                 None => exposure,

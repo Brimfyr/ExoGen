@@ -229,6 +229,9 @@ pub struct StampOutput {
     /// Per cell, the share of the ground on walls steep enough to shed (F98); none for a
     /// stamp that draws no walls, whose renewed cells lose the old.
     pub steep: Option<Vec<f32>>,
+    /// Per cell, the maturity age of a crater's thin ejecta (F100); none for any other
+    /// stamp.
+    pub ejecta_age: Option<Vec<f32>>,
 }
 
 impl StampOutput {
@@ -243,6 +246,7 @@ impl StampOutput {
         let composition = layers.composition.as_mut_slice();
         let lava_age = layers.lava_age.as_mut_slice();
         let steep = layers.steep.as_mut_slice();
+        let ejecta_age = layers.ejecta_age.as_mut_slice();
         let stain = layers.stain.as_mut_slice();
         for (j, c) in self.cells.iter().enumerate() {
             let i = c.idx as usize;
@@ -271,6 +275,9 @@ impl StampOutput {
                 Some(s) => steep[i] = s[j],
                 None if c.surface => steep[i] = 0.0,
                 None => {}
+            }
+            if let Some(e) = &self.ejecta_age {
+                ejecta_age[i] = e[j];
             }
         }
     }
@@ -514,8 +521,26 @@ pub fn stamp_compute(
     let walls = WallShed::new(profile, p.amplitude, p.shed);
     let half_cell = 0.5 * grid.delta() * body_radius;
     let steeps = layers.steep.as_slice();
+    let ejecta_ages = layers.ejecta_age.as_slice();
+    // The maturity age the deposit leaves beyond the rim (F100): mixed by its cover into
+    // the ground's (F51), the craters under it surviving.
+    let ejecta_of = |&(idx, r, phi): &(usize, f64, f64)| -> f32 {
+        let old = ejecta_ages[idx];
+        if !p.set_age || (cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6) {
+            return old;
+        }
+        let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+        let cont = continuous * edge.factor_at(phi, re / dim.radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
+        if cover <= 0.0 {
+            return old;
+        }
+        let exposed = ages[idx].max(old);
+        old.max(mixed_age(p.time_gyr, exposed, cover, p.maturity_timescale))
+    };
     // The walls' steep share where the crater drew them (F98); its ejecta bury the old
-    // walls' by their cover.
+    // walls' as they bury the old relief.
     let steep_of = |&(idx, r, phi): &(usize, f64, f64)| -> f32 {
         if p.renewal_guard && cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6 {
             return steeps[idx];
@@ -526,9 +551,23 @@ pub fn stamp_compute(
         if re <= dim.radius {
             return own as f32;
         }
-        let cont = continuous * edge.factor_at(phi, re / dim.radius);
-        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
-        own.max(steeps[idx] as f64 * (1.0 - cover.clamp(0.0, 1.0))) as f32
+        // The ejecta bury an older wall as they bury the older relief, by their thickness
+        // against its height: a thin distal deposit leaves a wall as it stood.
+        let thickness = profile.height(re)
+            * p.amplitude
+            * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
+        let kept = if p.bury && thickness > 0.0 {
+            let b = bin_of(re);
+            let mean = if ring_area[b] > 0.0 {
+                ring_sum[b] / ring_area[b]
+            } else {
+                h_ref
+            };
+            burial_factor(bedrock[idx] as f64 - mean, thickness)
+        } else {
+            1.0
+        };
+        own.max(steeps[idx] as f64 * kept) as f32
     };
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         // A cell whose substrate was renewed from below after this crater, the clean ice
@@ -609,7 +648,13 @@ pub fn stamp_compute(
             // The deposit covers the ground by its cover (F51); the cell keeps the one
             // age whose exposure gives the mixture's maturity. Where the cover is under
             // a half the ground keeps its unit, its melt and its salts or lava.
-            let age = mixed_age(p.time_gyr, ages[idx], cover, p.maturity_timescale);
+            // The cavity renews the ground; beyond the rim the craters under the deposit
+            // survive, the deposit's own maturity age kept apart (F100).
+            let age = if re <= dim.radius {
+                p.time_gyr
+            } else {
+                ages[idx]
+            };
             let thick = re <= dim.radius || cover >= 0.5;
             // Deep material by ballistic mixing: all ejecta near the rim, all local at the
             // continuous edge. Fresh ejecta covers older melt.
@@ -646,11 +691,17 @@ pub fn stamp_compute(
     } else {
         stamper.footprint.iter().map(steep_of).collect()
     };
+    let ejecta_age = if stamper.footprint.len() >= PARALLEL_FOOTPRINT {
+        stamper.footprint.par_iter().map(ejecta_of).collect()
+    } else {
+        stamper.footprint.iter().map(ejecta_of).collect()
+    };
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
         stain: None,
         steep: Some(steep),
+        ejecta_age: Some(ejecta_age),
     }
 }
 
@@ -1157,6 +1208,11 @@ impl EdgeShape {
     /// The curtain's mass thrown toward azimuth `phi`, mean 1, at the jets the grid
     /// resolves (F96).
     #[inline]
+    /// The largest of the curtain's jets, by its mass at the mean of one.
+    pub fn strongest_jet(&self) -> f64 {
+        self.jets.iter().cloned().fold(1.0, f64::max)
+    }
+
     pub fn jet(&self, phi: f64) -> f64 {
         let x = phi.rem_euclid(2.0 * std::f64::consts::PI) / (2.0 * std::f64::consts::PI) * 64.0;
         let i = (x.floor() as usize) % 64;
@@ -1733,8 +1789,26 @@ pub fn restore_compute(
     let shed = WallShed::new(walls, 1.0, p.shed);
     let half_cell = 0.5 * grid.delta() * body_radius;
     let steeps = layers.steep.as_slice();
+    let ejecta_ages = layers.ejecta_age.as_slice();
+    // The deposit's maturity age beyond the rim (F100), redrawn at this resolution no
+    // younger than the loop's cover leaves it, where nothing younger has resurfaced.
+    let ejecta_of = |&(idx, r, phi): &(usize, f64, f64)| -> f32 {
+        let old = ejecta_ages[idx];
+        if ages[idx] > p.time_gyr + 1e-6 {
+            return old;
+        }
+        let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+        let cont = continuous * edge.factor_at(phi, re / dim.radius);
+        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
+        if cover <= 0.0 {
+            return old;
+        }
+        let floor_age = p.time_gyr as f64 + p.maturity_timescale.max(1e-6) * cover.min(1.0).ln();
+        old.max(floor_age as f32)
+    };
     // The walls' steep share at this resolution (F98), where nothing younger has
-    // resurfaced the cell; the ejecta bury the old walls' by their cover.
+    // resurfaced the cell; the ejecta bury the old walls' as they bury the old relief.
     let steep_of = |&(idx, r, phi): &(usize, f64, f64)| -> f32 {
         if ages[idx] > p.time_gyr + 1e-6 {
             return steeps[idx];
@@ -1745,9 +1819,12 @@ pub fn restore_compute(
         if re <= dim.radius {
             return own as f32;
         }
-        let cont = continuous * edge.factor_at(phi, re / dim.radius);
-        let cover = ejecta_coverage(re, dim.radius, cont, dim.ejecta_radius, edge.jet(phi));
-        own.max(steeps[idx] as f64 * (1.0 - cover.clamp(0.0, 1.0))) as f32
+        // The ejecta bury an older wall as they bury the older fine relief, by their
+        // thickness against its height.
+        let thickness =
+            (fresh.height(re) * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle)).max(0.0);
+        let fine = bedrock[idx] as f64 - base[idx] as f64;
+        own.max(steeps[idx] as f64 * burial_factor(fine, thickness)) as f32
     };
     let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
         let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
@@ -1823,7 +1900,13 @@ pub fn restore_compute(
                 p.time_gyr as f64 + p.maturity_timescale.max(1e-6) * cover.min(1.0).ln();
             let thick = re <= dim.radius || cover >= 0.5;
             write.surface = true;
-            write.age = ages[idx].max(floor_age as f32);
+            // The cavity renews the ground; beyond the rim the deposit's maturity age
+            // is kept apart and the craters under it survive (F100).
+            write.age = if re <= dim.radius {
+                ages[idx].max(floor_age as f32)
+            } else {
+                ages[idx]
+            };
             write.unit = if re <= dim.radius {
                 p.unit_floor
             } else if thick {
@@ -1854,11 +1937,17 @@ pub fn restore_compute(
     } else {
         stamper.footprint.iter().map(steep_of).collect()
     };
+    let ejecta_age = if stamper.footprint.len() >= PARALLEL_FOOTPRINT {
+        stamper.footprint.par_iter().map(ejecta_of).collect()
+    } else {
+        stamper.footprint.iter().map(ejecta_of).collect()
+    };
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
         stain: None,
         steep: Some(steep),
+        ejecta_age: Some(ejecta_age),
     }
 }
 
@@ -1974,23 +2063,33 @@ mod tests {
             (lo as f64 - (100.0 - dim.depth)).abs() < 0.05 * dim.depth,
             "floor {lo}"
         );
-        // Ages reset under the continuous ejecta but not far away.
+        // The cavity renews the surface; the ejecta set the maturity under the continuous
+        // blanket (F100) and the craters under them survive; far away nothing changes.
         let centre_cell = grid.locate(center).0;
         assert_eq!(layers.surface_age.get(centre_cell), 3.0);
         assert_eq!(layers.unit_id.get(centre_cell), 3);
         let far = grid.locate(crate::geom::normalize([-0.9, 0.1, -0.3])).0;
         assert_eq!(layers.surface_age.get(far), 0.0);
+        assert_eq!(layers.exposure_age(grid.index(far)), 0.0);
         // Cells covered by at least half (F51): a disc of 2 R, the continuous edge, by
         // the age that cover leaves on ground of age 0 with the test's timescale.
         let threshold = mixed_age(3.0, 0.0, 0.5 / EJECTA_FULL_COVER, 0.5);
         let reset: f64 = grid
             .cells()
-            .filter(|c| layers.surface_age.get(*c) >= threshold - 1e-4)
+            .filter(|c| layers.exposure_age(grid.index(*c)) >= threshold - 1e-4)
             .map(|c| grid.cell_area(c))
             .sum();
         let half = 2.0 * dim.radius / body_radius;
         let cap = 2.0 * std::f64::consts::PI * (1.0 - half.cos());
         assert!((reset - cap).abs() < 0.08 * cap, "reset {reset} cap {cap}");
+        let renewed: f64 = grid
+            .cells()
+            .filter(|c| layers.surface_age.get(*c) > 0.0)
+            .map(|c| grid.cell_area(c))
+            .sum();
+        let rim = 1.1 * dim.radius / body_radius;
+        let cavity = 2.0 * std::f64::consts::PI * (1.0 - rim.cos());
+        assert!(renewed < cavity, "renewed {renewed} cavity {cavity}");
     }
 
     /// Ejecta buries older relief: a small crater under a larger crater's ejecta loses a

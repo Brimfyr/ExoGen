@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 84;
+pub const FINISH_VERSION: u64 = 85;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1983,7 +1983,7 @@ pub fn finish(
         (maturity, Some(skin))
     } else {
         let maturity = Field::from_fn(grid, |c, _| {
-            let exposure = (present - layers.surface_age.get(c) as f64).max(0.0);
+            let exposure = (present - layers.exposure_age(grid.index(c)) as f64).max(0.0);
             (1.0 - (-exposure / tau_sw).exp()) as f32
         });
         (maturity, None)
@@ -2352,7 +2352,13 @@ impl RaySystem {
         let radius = 0.5 * c.diameter;
         let dim = dimensions(c.diameter, &inputs.scaling);
         let rays = Rays::new(Curtain::new(c.id, c.azimuth, c.angle), radius);
-        let halo = EJECTA_RADIUS_MULTIPLE * radius;
+        // The blanket's deposit runs out along each jet until it is too thin to show, the
+        // strongest jets furthest, rather than ending on the footprint's circle (F96): where
+        // a lag hides the rays beyond, as on Callisto, a common edge would draw a circle.
+        let edge = EdgeShape::new(c.id, dim.ejecta_radius, cell);
+        let thinnest = -(1.0 - RAY_VISIBLE).log2();
+        let halo = (EJECTA_RADIUS_MULTIPLE * radius)
+            .max(CONTINUOUS_EJECTA_MULTIPLE * radius * (edge.strongest_jet() / thinnest).cbrt());
         let reach = rays.reach().max(halo);
         Self {
             center: c.center,
@@ -2360,7 +2366,7 @@ impl RaySystem {
             azimuth: c.azimuth,
             angle: c.angle,
             freshness: (1.0 - age / lifetime).powi(2),
-            edge: EdgeShape::new(c.id, dim.ejecta_radius, cell),
+            edge,
             ejecta_edge: CONTINUOUS_EJECTA_MULTIPLE * radius,
             halo,
             texture: (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)

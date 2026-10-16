@@ -261,6 +261,11 @@ pub struct LayerSet {
     /// craters from their own profiles, finer than the grid; a renewed surface carries
     /// none of the old.
     pub steep: Field<f32>,
+    /// The age whose exposure gives the maturity of the fresh ejecta that craters have laid
+    /// thin over older ground beyond their rims, Gyr since formation (F100): the craters
+    /// under such a deposit survive, so the surface age, which the crater population
+    /// reads, keeps the ground's own, and the maturity reads the younger of the two.
+    pub ejecta_age: Field<f32>,
     /// The share of the surface stained by the red-brown non-ice material of a crack's
     /// margins (F78; the triple bands of Geissler et al. 1998), 0 to 1, as it stands at
     /// the present: laid by each crack as it forms and faded since; a renewed surface
@@ -288,6 +293,7 @@ impl LayerSet {
             composition: Field::new(grid),
             lava_age: Field::new(grid),
             steep: Field::new(grid),
+            ejecta_age: Field::new(grid),
             stain: Field::new(grid),
         }
     }
@@ -329,8 +335,15 @@ impl LayerSet {
             composition: self.composition.resample_nearest(target),
             lava_age: self.lava_age.resample_nearest(target),
             steep: self.steep.resample(target),
+            ejecta_age: self.ejecta_age.resample_nearest(target),
             stain: self.stain.resample(target),
         }
+    }
+
+    /// The age whose exposure sets each cell's maturity (F100): its surface's, or the thin
+    /// ejecta's laid over it since, whichever is younger.
+    pub fn exposure_age(&self, k: usize) -> f32 {
+        self.surface_age.as_slice()[k].max(self.ejecta_age.as_slice()[k])
     }
 
     pub fn hash(&self) -> u64 {
@@ -351,6 +364,7 @@ impl LayerSet {
             self.composition.hash(),
             self.lava_age.hash(),
             self.steep.hash(),
+            self.ejecta_age.hash(),
             self.stain.hash(),
         ];
         crate::rng::hash_words(&parts)

@@ -1157,6 +1157,7 @@ pub fn flood_compute(
             composition: Some(rec.composition),
             stain: None,
             steep: None,
+            ejecta_age: None,
         },
         taken,
         stats,

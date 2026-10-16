@@ -914,6 +914,7 @@ pub fn trough_compute(
         composition: None,
         stain: None,
         steep: None,
+        ejecta_age: None,
     }
 }
 
@@ -969,6 +970,7 @@ pub fn shield_compute(
         composition: None,
         stain: None,
         steep: None,
+        ejecta_age: None,
     }
 }
 

@@ -728,3 +728,28 @@ What they still do not show:
 - **Callisto's high-latitude rays,** long and bright over a dark background where real Callisto's high latitudes carry frost.
 
 Tests 175 (four ignored). Four are new: the later cratering strikes out a share of the graben; the ejecta beyond the blanket run out along the jets; a wall sheds where its own profile is steep; and a diagnostic, ignored, writes the walls' slopes. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-fourth milestone: the grey circle's second cause
+
+The user after the thirty-third: "The speckle is a huge improvement to the icy moons, and the lava looks very good now across all worlds." Then: "the gray circles on rayed craters is still there on Callisto e.g. 178.0 29.4 on Callisto preset seed 4673", and, of the circle: "It's allowing only the base surface colour while cutting off the wide ejecta from converging on the crater and blocking smaller craters." And: "Didn't we already add crater rim crumble, or am I misremembering? I mean the troughs, the shapes are very simple whereas real Callisto shows them very degraded. But I suppose rim crumble would go into the large basin rings too?"
+
+- **F99, the blanket's jets.** In the ray field each jet runs out until it is too thin to show, rather than ending with the rest on the footprint's circle.
+- **F100, the crater record under thin ejecta.** A crater renews the surface age only in its cavity; its thin ejecta's maturity age is kept apart, so the older craters under them are replayed, subdued by the deposit, and the maturity is as before.
+
+How it went:
+
+- **Two circles.** The crater at 178.0, 29.4 is a 130 km crater of 0.49 Gyr. Sampling the ray field along its radii showed every jet's deposit ending at three radii, the footprint's edge (F99). The circle stayed: the share of bright rim pixels jumped at three radii, from 0.11 to 0.22 and more, with the albedo's median level across it, and the crater list held no crater at all within three radii. The replay samples the craters from the surface ages, and the ejecta had reset those over the whole footprint by their cover, an age meant for the maturity.
+- **Burying walls by cover** first looked like the cause: the walls' shares of shedding were buried by the ejecta's cover. Burying them by thickness changed nothing measurable, which pointed at the crater record itself.
+
+The crumbling the user asked about does not exist yet: rims carry the scalloped outlines and varying heights of F73 and the slump scallops of F67 and F92, and their degradation is diffusion, which smooths. A pass breaking icy crests into knobs by the ice their walls have sublimed against their height (Moore et al. 1999; Howard and Moore 2008) was tried and set aside: at the lag model's mean-temperature rate it barely acts outside Callisto's equatorial band, and at the daytime peak's, which governs sublimation, it would strip Ceres, whose near-surface ice the model does not yet place at depth. It waits on the ice table.
+
+What the maps show:
+
+- **Callisto:** young craters' spikes and rays run on without a circle; older craters, subdued, show under their ejecta beyond the rim.
+- **The Moon:** craters under young craters' distal ejecta, where none stood before.
+
+Still to do:
+
+- **Degraded troughs and rims** on Callisto, with the ice table and the daytime sublimation rate.
+
+Tests 175 (four ignored); the stamp's age test now holds the surface age to the cavity and the maturity's age to the continuous blanket. Clippy is clean and validate passes its 117 checks.

@@ -423,6 +423,7 @@ pub fn fabric_compute(
         composition: None,
         stain: Some(stain),
         steep: None,
+        ejecta_age: None,
     }
 }
 

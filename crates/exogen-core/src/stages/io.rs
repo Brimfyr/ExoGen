@@ -2596,6 +2596,7 @@ pub fn patera_compute(
         composition: None,
         stain: None,
         steep: None,
+        ejecta_age: None,
     }
 }
 
@@ -2645,6 +2646,7 @@ pub fn mountain_compute(
         composition: None,
         stain: None,
         steep: None,
+        ejecta_age: None,
     }
 }
 
@@ -2755,6 +2757,7 @@ pub fn flow_compute(
         composition: None,
         stain: None,
         steep: None,
+        ejecta_age: None,
     }
 }
 

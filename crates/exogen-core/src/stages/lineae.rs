@@ -1442,6 +1442,7 @@ fn band_compute(
         composition: None,
         stain: Some(stain),
         steep: None,
+        ejecta_age: None,
     }
 }
 
@@ -1729,6 +1730,7 @@ pub fn linea_compute(
         composition: None,
         stain,
         steep: None,
+        ejecta_age: None,
     }
 }
 

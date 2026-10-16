@@ -668,6 +668,7 @@ pub fn chaos_compute(
         composition: None,
         stain: Some(stain),
         steep: None,
+        ejecta_age: None,
     }
 }
 
@@ -786,6 +787,7 @@ pub fn cryodome_compute(
         composition: None,
         stain: None,
         steep: None,
+        ejecta_age: None,
     }
 }
 
