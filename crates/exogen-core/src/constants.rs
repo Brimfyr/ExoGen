@@ -257,6 +257,37 @@ pub const VOLCANISM_EVENT_VOLUME: (f64, f64) = (1e11, 1e13);
 /// its level (flood basalt flows are tens of metres thick).
 pub const FLOOD_MAX_CELLS: usize = 40_000;
 pub const FLOOD_SHEET_THICKNESS: f64 = 50.0;
+/// Lava plains as compound flow fields (F94). A flood's flows spread from the cell of its
+/// low nearest its vent, where its lava comes in: a trunk across the low toward its
+/// middle, this share of the low's reach long, up to so many branches, and breakouts on
+/// the lobes already laid, at their fronts and along them, each this share of the reach
+/// long (log-uniform) and half as wide as this share of its own length, until the lobes
+/// cover the low this many times over, at most so many lobes. A lobe wanders by this
+/// angle over so many of its half widths, the fall line steers it over this length, and
+/// it ponds where it would climb more than a sheet. Schaber (1973) traced Imbrium's
+/// flows 400 to 1,200 km over slopes of 1:1000, their lobes 10 to over 35 m high; LOLA
+/// shows the Phase III lobes near Euler 10 to 12 km wide and 20 to 30 m thick; mare flow
+/// units average 30 to 60 m (Hiesinger et al. 2002). The shares are stated choices.
+pub const FLOOD_TRUNK_SHARE: (f64, f64) = (0.6, 1.0);
+pub const FLOOD_BRANCHES: (u32, u32) = (0, 3);
+pub const FLOOD_LOBE_LENGTH: (f64, f64) = (0.15, 0.5);
+pub const FLOOD_LOBE_WIDTH: (f64, f64) = (0.08, 0.2);
+pub const FLOOD_LOBE_COVER: f64 = 1.5;
+pub const FLOOD_LOBES_MAX: usize = 60;
+pub const FLOOD_WANDER_RAD: f64 = 0.5;
+pub const FLOOD_WANDER_WIDTHS: f64 = 6.0;
+pub const FLOOD_STEER_LENGTH: f64 = 50e3;
+/// The ground a flood's flows are traced over is the base smoothed over this length, m:
+/// a front rides over what is shorter than its width.
+pub const FLOOD_GROUND_SMOOTH: f64 = 20e3;
+/// Where the loop filled a flood deeper than this many sheets the lava ponds in the low
+/// whatever its lobes do; thinner, the flood is a sheet its lobes lay, and outside the
+/// low its lobes lay a sheet on the ground they cross.
+pub const FLOOD_PONDED_SHEETS: f64 = 1.5;
+/// A flood is drawn as its flows where it is among the last this many floods over a
+/// coarse cell: lobes cover about seven tenths of their low, so a flood deeper than that
+/// shows through less than one cell in a hundred; deeper ones keep the coarse outline.
+pub const FLOOD_VISIBLE_DEPTH: usize = 4;
 /// Crust lost under a crater as a fraction of its excavation depth, after the mantle's
 /// rise and the melt sheet, and the floor the crust cannot thin below, m. The lunar
 /// basins thinned the crust to under 10 km (Wieczorek et al. 2013), which is where the
@@ -989,6 +1020,17 @@ pub const ROUGHNESS_BLEND_PASSES: usize = 12;
 /// range.
 pub const LAVA_COMPOSITION_RANGE: f64 = 0.18;
 pub const LAVA_COMPOSITION_PERIOD_GYR: f64 = 1.0;
+/// A flood's composition is its time's drift, its source's and its own batch's, these
+/// shares of each (F94): the mantle under a body's vents is uneven, so floods from
+/// different regions differ as well as floods of different ages (the lunar mare basalts'
+/// titanium varies from place to place as with age; Giguere et al. 2000, Hiesinger et al.
+/// 2000), and each eruption's magma differs from its neighbours' (several basalt types
+/// lie side by side at the Apollo 12 and 15 sites), the source a smooth field of this
+/// many cycles about the body (stated choices).
+pub const LAVA_DRIFT_SHARE: f64 = 0.7;
+pub const LAVA_SOURCE_SHARE: f64 = 0.7;
+pub const LAVA_BATCH_SHARE: f64 = 0.5;
+pub const LAVA_SOURCE_ORDER: f64 = 3.0;
 pub const SLOPE_SHED_START_DEG: f64 = 20.0;
 pub const SLOPE_FRESHNESS: f64 = 0.3;
 pub const REPOSE_SLOPE_DEG: f64 = 30.0;

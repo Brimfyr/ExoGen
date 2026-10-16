@@ -643,3 +643,34 @@ What they still do not show:
 - **Callisto's high latitudes**, where rays from far craters appear on the cold ground (M12).
 
 Tests 166 (three ignored). Seven are new: the curtain gathers its mass in jets; its rays' lengths follow the lunar fit; an oblique impact throws them farther downrange; a bent path inverts; the reach bounds them; terraces come in as the crater collapses; and an ignored one writes terraced walls for a look. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-first milestone: facets on Callisto, and lava plains as compound flow fields
+
+The user on the thirtieth: "The new rays look much better. Callisto's high latitude switch to rayed craters looks sharp and unnatural, like you said. Do you have any ideas for that? Continue with the lava plains."
+
+The switch came from the lag's exponential dependence on temperature: one temperature per cell, its latitude's and its resolved slope's, made the lag's thickness fall by orders of magnitude across a few degrees, and the rays' skin share went with it to the fourth power. Real icy surfaces segregate at every latitude, the warm slopes growing lag and the cold ones keeping their ice (Spencer 1987).
+
+- **F93, facets.** A cell of icy surface is summed over unresolved facets tilted toward and away from the pole, spread by Callisto's Hapke mean slope (35 degrees; Domingue and Verbiscer 1997) times its share of saturation by the unresolved craters, so a young surface is smoother. Callisto's rays come in over 30 to 50 degrees, patchy at first, instead of switching on across a line (committed on its own, 2c450b4).
+- **F94, lava plains as flows.** A flood that can show at the end is drawn as a compound flow field, a trunk, branches and breakouts traced over the ground from where its lava came into its low, Io's paths (F59) with the flood's own sizes; its sheet lies under its lobes, its pond fills where the loop filled it deep, and outside its low its lobes lay a sheet on the ground. Each flood's composition carries its source's and its own batch's variation as well as its time's. Io's path tracer became a shared function, and Io's maps are byte-identical.
+
+How it went:
+
+- **Invisible at first.** The first render changed the maps' unit layers, blobs to lobes, and not their albedo: floods close in time and place had nearly the same composition, a few per cent of the reflectance. The source and batch terms brought the mosaic out.
+- **Blocks.** Units with stepped edges a coarse cell high came from three places in turn. Floods ruled buried and drawn with the old outline showed through their successors' gaps, so a flood among the last four over a cell is drawn as flows. Lobes reaching past the low and its ring were cut along coarse cells, so every cell a lobe covers is visited and a lobe stops before its pass's edge. And the test for where a flood ponds compared the ground pieced together from the coarse smears with the level, a ground good only to a coarse cell's ramps: ponding is judged by the flood's own coarse thickness, sampled smoothly. A finer test, ponding outward from the lobes into hollows, brought the blocks back and was dropped.
+- **A crater on Mars filled 2.5 km deep.** A trace of one cell through the flood passes showed lobes that ran past their low into a crater filling it to the low's level, 2,400 m above the crater's floor. Outside its low a lobe lays a sheet.
+- **Not the same on four threads.** The determinism test failed: a flood's centre and area were summed over its cells in a hash map's order, which differs from thread to thread, and its trunk now heads for that centre and its breakouts stop at that area. Both are summed in the cells' order now.
+
+What the maps show:
+
+- **The Moon:** a mare as a mosaic of flow units of different tones with lobate boundaries, some tens to a hundred kilometres across, their fronts faint in the relief beside the wrinkle ridges; small ponded patches keep rounded edges.
+- **Mars:** the youngest plains, round its second province, as lobate, branching flow units in different tones.
+- **Mercury:** flow units in its larger plains; its crater-floor ponds keep the contour of the floors they fill.
+- **Venus:** its flood patches mottled with lobate units.
+
+What they still do not show:
+
+- **Long flows.** A flood's extent is still the coarse low the loop filled, compact on flat ground; Imbrium's 1,200 km flows need the loop's spreading to follow the flows.
+- **Lobe sizes from the lava**, its yield strength and effusion rate (Hulme 1974), rather than shares of the low's reach.
+- **A few small angular patches** where a deep coarse pond meets the lobes.
+
+Tests 168 (three ignored). Two are new: a flood shows through its last few successors only; a flood's lobes cover its low and stay inside its pass. Clippy is clean and validate passes its 117 checks.

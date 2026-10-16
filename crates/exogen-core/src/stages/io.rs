@@ -1991,6 +1991,192 @@ impl IoProcess {
 
 /// Grows Io's flow fields over the ground (F85): the paterae's own random draws, the
 /// ground they run over and the mountains that stop them.
+/// How a flow's path is traced and its lobe's width drawn (F59): the shortest spacing of
+/// its points, how strongly the fall line steers it, over what slope and what length of
+/// path, how far it wanders over what length, how far above the lowest ground it has
+/// reached it may climb before it ponds, and how much its width wobbles.
+#[derive(Clone, Copy, Debug)]
+pub struct PathRules {
+    pub min_spacing: f64,
+    pub slope_follow: f64,
+    pub slope_scale: f64,
+    pub steer_length: f64,
+    pub wander_rad: f64,
+    pub wander_length: f64,
+    pub fill_depth: f64,
+    pub width_wobble: f64,
+}
+
+/// Io's paths (F59, F85).
+pub const IO_PATHS: PathRules = PathRules {
+    min_spacing: IO_FLOW_POINT_SPACING,
+    slope_follow: IO_FLOW_SLOPE_FOLLOW,
+    slope_scale: IO_FLOW_SLOPE_SCALE,
+    steer_length: IO_FLOW_STEER_LENGTH,
+    wander_rad: IO_FLOW_WANDER_RAD,
+    wander_length: IO_FLOW_WANDER_LENGTH,
+    fill_depth: IO_FLOW_FILL_DEPTH,
+    width_wobble: IO_FLOW_WIDTH_WOBBLE,
+};
+
+/// A flow's path (F59): from a point along a heading, downslope over the ground with
+/// the inertia of a flow and a wander, deflecting along a contour but never turning
+/// back, stopping where `blocked` says something stands, where it would have to climb out of the
+/// ground it has ponded in, or at its length; a lobe about it this half wide,
+/// widening by `toe` from its source to its end. Returns the lobe and how it ended: 0
+/// at its length, 1 at a mountain, 2 ponded.
+#[allow(clippy::too_many_arguments)]
+pub fn trace_flow(
+    grid: &CubeSphere,
+    body_radius: f64,
+    rules: &PathRules,
+    idx: u64,
+    draw: u64,
+    start: [f64; 3],
+    heading: [f64; 3],
+    length: f64,
+    half_width: f64,
+    toe: f64,
+    ground: &PaddedField,
+    blocked: &dyn Fn([f64; 3]) -> bool,
+    age_yr: f64,
+) -> (Lobe, usize) {
+    let r = body_radius;
+    let mut p = start;
+    let radial = dot(heading, p);
+    let mut h = normalize([
+        heading[0] - radial * p[0],
+        heading[1] - radial * p[1],
+        heading[2] - radial * p[2],
+    ]);
+    let spacing = (length / 64.0).max(rules.min_spacing);
+    let steps = (length / spacing).ceil() as usize;
+    let noise = GradientNoise::new(crate::rng::hash_words(&[idx, draw, 0x0F10_7ACE]));
+    let delta = (0.5 * spacing / r).max(1e-7);
+    let mut points = vec![p];
+    let mut lowest = sample_bilinear(grid, ground, p) as f64;
+    let mut end = 0usize;
+    for i in 0..steps {
+        // The ground's fall line at the point.
+        let (e, n) = local_basis(p);
+        let at = |u: f64, v: f64| {
+            normalize([
+                p[0] + delta * (u * e[0] + v * n[0]),
+                p[1] + delta * (u * e[1] + v * n[1]),
+                p[2] + delta * (u * e[2] + v * n[2]),
+            ])
+        };
+        let hx = (sample_bilinear(grid, ground, at(1.0, 0.0))
+            - sample_bilinear(grid, ground, at(-1.0, 0.0))) as f64
+            / (2.0 * delta * r);
+        let hy = (sample_bilinear(grid, ground, at(0.0, 1.0))
+            - sample_bilinear(grid, ground, at(0.0, -1.0))) as f64
+            / (2.0 * delta * r);
+        let grad = hx.hypot(hy);
+        let down = if grad > 1e-12 {
+            normalize([
+                -(hx * e[0] + hy * n[0]),
+                -(hx * e[1] + hy * n[1]),
+                -(hx * e[2] + hy * n[2]),
+            ])
+        } else {
+            h
+        };
+        // The fall line turns the front at a rate per distance, over the steering
+        // length at full slope.
+        let follow = rules.slope_follow
+            * (grad / rules.slope_scale).tanh()
+            * (spacing / rules.steer_length).min(1.0);
+        // The fall line steers the flow sideways and speeds it on, but never turns it
+        // back: a front deflects along a contour and ponds rather than reverse.
+        let along = dot(down, h).max(0.0);
+        let lateral = {
+            let a = dot(down, h);
+            [down[0] - a * h[0], down[1] - a * h[1], down[2] - a * h[2]]
+        };
+        // The wander: a turn per step that sums to the wander over its length.
+        let turn = rules.wander_rad
+            * (spacing / rules.wander_length)
+            * noise.fbm(
+                [i as f64 * spacing / rules.wander_length, 0.3, 0.7],
+                1.0,
+                2,
+                2.0,
+                0.5,
+            )
+            / 0.6;
+        let side = normalize(cross(p, h));
+        let ahead = 1.0 + follow * along;
+        let mut d = [
+            ahead * (h[0] * turn.cos() + side[0] * turn.sin()) + follow * lateral[0],
+            ahead * (h[1] * turn.cos() + side[1] * turn.sin()) + follow * lateral[1],
+            ahead * (h[2] * turn.cos() + side[2] * turn.sin()) + follow * lateral[2],
+        ];
+        let radial = dot(d, p);
+        d = normalize([
+            d[0] - radial * p[0],
+            d[1] - radial * p[1],
+            d[2] - radial * p[2],
+        ]);
+        let theta = spacing / r;
+        let q = normalize([
+            p[0] * theta.cos() + d[0] * theta.sin(),
+            p[1] * theta.cos() + d[1] * theta.sin(),
+            p[2] * theta.cos() + d[2] * theta.sin(),
+        ]);
+        // Something in the way stops the flow.
+        let blocked = blocked(q);
+        if blocked {
+            end = 1;
+            break;
+        }
+        // Lava ponds: it crosses a bump no higher than its own pile above the lowest
+        // ground it has reached, and stops where it would have to climb more.
+        let height = sample_bilinear(grid, ground, q) as f64;
+        if height > lowest + rules.fill_depth {
+            end = 2;
+            break;
+        }
+        lowest = lowest.min(height);
+        let radial = dot(d, q);
+        h = normalize([
+            d[0] - radial * q[0],
+            d[1] - radial * q[1],
+            d[2] - radial * q[2],
+        ]);
+        p = q;
+        points.push(p);
+    }
+    // The width along the lobe: a channel at the vent widening to the toe, wandering.
+    let count = points.len();
+    let widths = (0..count)
+        .map(|i| {
+            let s = i as f64 / (count.max(2) - 1) as f64;
+            let wander = 1.0
+                + rules.width_wobble
+                    * noise.fbm(
+                        [i as f64 * spacing / (3.0 * half_width), 1.3, 2.1],
+                        1.0,
+                        2,
+                        2.0,
+                        0.5,
+                    )
+                    / 0.6;
+            (wander.max(0.4) * (1.0 - toe + toe * s)) as f32
+        })
+        .collect();
+    (
+        Lobe {
+            points,
+            spacing,
+            half_width,
+            widths,
+            age_yr,
+        },
+        end,
+    )
+}
+
 pub struct FlowGrowth {
     grid: CubeSphere,
     body_radius: f64,
@@ -2023,146 +2209,19 @@ impl FlowGrowth {
         age_yr: f64,
     ) -> (Lobe, usize) {
         let r = self.body_radius;
-        let grid = &self.grid;
-        let mut p = start;
-        let radial = dot(heading, p);
-        let mut h = normalize([
-            heading[0] - radial * p[0],
-            heading[1] - radial * p[1],
-            heading[2] - radial * p[2],
-        ]);
-        let spacing = (length / 64.0).max(IO_FLOW_POINT_SPACING);
-        let steps = (length / spacing).ceil() as usize;
-        let noise = GradientNoise::new(crate::rng::hash_words(&[idx, draw, 0x0F10_7ACE]));
-        let delta = (0.5 * spacing / r).max(1e-7);
-        let mut points = vec![p];
-        let mut lowest = sample_bilinear(grid, ground, p) as f64;
-        let mut end = 0usize;
-        for i in 0..steps {
-            // The ground's fall line at the point.
-            let (e, n) = local_basis(p);
-            let at = |u: f64, v: f64| {
-                normalize([
-                    p[0] + delta * (u * e[0] + v * n[0]),
-                    p[1] + delta * (u * e[1] + v * n[1]),
-                    p[2] + delta * (u * e[2] + v * n[2]),
-                ])
-            };
-            let hx = (sample_bilinear(grid, ground, at(1.0, 0.0))
-                - sample_bilinear(grid, ground, at(-1.0, 0.0))) as f64
-                / (2.0 * delta * r);
-            let hy = (sample_bilinear(grid, ground, at(0.0, 1.0))
-                - sample_bilinear(grid, ground, at(0.0, -1.0))) as f64
-                / (2.0 * delta * r);
-            let grad = hx.hypot(hy);
-            let down = if grad > 1e-12 {
-                normalize([
-                    -(hx * e[0] + hy * n[0]),
-                    -(hx * e[1] + hy * n[1]),
-                    -(hx * e[2] + hy * n[2]),
-                ])
-            } else {
-                h
-            };
-            // The fall line turns the front at a rate per distance, over the steering
-            // length at full slope.
-            let follow = IO_FLOW_SLOPE_FOLLOW
-                * (grad / IO_FLOW_SLOPE_SCALE).tanh()
-                * (spacing / IO_FLOW_STEER_LENGTH).min(1.0);
-            // The fall line steers the flow sideways and speeds it on, but never turns it
-            // back: a front deflects along a contour and ponds rather than reverse.
-            let along = dot(down, h).max(0.0);
-            let lateral = {
-                let a = dot(down, h);
-                [down[0] - a * h[0], down[1] - a * h[1], down[2] - a * h[2]]
-            };
-            // The wander: a turn per step that sums to the wander over its length.
-            let turn = IO_FLOW_WANDER_RAD
-                * (spacing / IO_FLOW_WANDER_LENGTH)
-                * noise.fbm(
-                    [i as f64 * spacing / IO_FLOW_WANDER_LENGTH, 0.3, 0.7],
-                    1.0,
-                    2,
-                    2.0,
-                    0.5,
-                )
-                / 0.6;
-            let side = normalize(cross(p, h));
-            let ahead = 1.0 + follow * along;
-            let mut d = [
-                ahead * (h[0] * turn.cos() + side[0] * turn.sin()) + follow * lateral[0],
-                ahead * (h[1] * turn.cos() + side[1] * turn.sin()) + follow * lateral[1],
-                ahead * (h[2] * turn.cos() + side[2] * turn.sin()) + follow * lateral[2],
-            ];
-            let radial = dot(d, p);
-            d = normalize([
-                d[0] - radial * p[0],
-                d[1] - radial * p[1],
-                d[2] - radial * p[2],
-            ]);
-            let theta = spacing / r;
-            let q = normalize([
-                p[0] * theta.cos() + d[0] * theta.sin(),
-                p[1] * theta.cos() + d[1] * theta.sin(),
-                p[2] * theta.cos() + d[2] * theta.sin(),
-            ]);
-            // A mountain in the way stops the flow.
-            let blocked = standing.iter().any(|(m, _)| {
+        let blocked = |q: [f64; 3]| {
+            standing.iter().any(|(m, _)| {
                 let dist = angle_between(m.center, q) * r;
                 dist < m.extent() && {
                     let (me, mnn) = local_basis(m.center);
                     let (u, v) = m.frame(dist, azimuth_from(m.center, me, mnn, q));
                     mountain_height(m, u, v, 0.0) > IO_FLOW_FILL_DEPTH
                 }
-            });
-            if blocked {
-                end = 1;
-                break;
-            }
-            // Lava ponds: it crosses a bump no higher than its own pile above the lowest
-            // ground it has reached, and stops where it would have to climb more.
-            let height = sample_bilinear(grid, ground, q) as f64;
-            if height > lowest + IO_FLOW_FILL_DEPTH {
-                end = 2;
-                break;
-            }
-            lowest = lowest.min(height);
-            let radial = dot(d, q);
-            h = normalize([
-                d[0] - radial * q[0],
-                d[1] - radial * q[1],
-                d[2] - radial * q[2],
-            ]);
-            p = q;
-            points.push(p);
-        }
-        // The width along the lobe: a channel at the vent widening to the toe, wandering.
-        let count = points.len();
-        let widths = (0..count)
-            .map(|i| {
-                let s = i as f64 / (count.max(2) - 1) as f64;
-                let wander = 1.0
-                    + IO_FLOW_WIDTH_WOBBLE
-                        * noise.fbm(
-                            [i as f64 * spacing / (3.0 * half_width), 1.3, 2.1],
-                            1.0,
-                            2,
-                            2.0,
-                            0.5,
-                        )
-                        / 0.6;
-                (wander.max(0.4) * (1.0 - toe + toe * s)) as f32
             })
-            .collect();
-        (
-            Lobe {
-                points,
-                spacing,
-                half_width,
-                widths,
-                age_yr,
-            },
-            end,
+        };
+        trace_flow(
+            &self.grid, r, &IO_PATHS, idx, draw, start, heading, length, half_width, toe, ground,
+            &blocked, age_yr,
         )
     }
 
@@ -2424,7 +2483,7 @@ pub fn flow_fields(
 }
 
 /// A point of a path and its heading there.
-fn path_point(points: &[[f64; 3]], k: usize) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn path_point(points: &[[f64; 3]], k: usize) -> ([f64; 3], [f64; 3]) {
     let k = k.min(points.len() - 1);
     let (a, b) = if k + 1 < points.len() {
         (points[k], points[k + 1])
@@ -2445,7 +2504,7 @@ fn path_point(points: &[[f64; 3]], k: usize) -> ([f64; 3], [f64; 3]) {
 }
 
 /// A heading at a point turned by an angle about the vertical there.
-fn rotate_about(p: [f64; 3], heading: [f64; 3], angle: f64) -> [f64; 3] {
+pub(crate) fn rotate_about(p: [f64; 3], heading: [f64; 3], angle: f64) -> [f64; 3] {
     let side = normalize(cross(p, heading));
     let (s, c) = angle.sin_cos();
     normalize([

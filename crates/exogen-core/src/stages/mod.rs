@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 81;
+pub const FINISH_VERSION: u64 = 82;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -898,6 +898,14 @@ pub fn finish(
     // An ice shell's cracks within the surface's retention age, drawn per time bin.
     let base: Vec<f32> = layers.bedrock.as_slice().to_vec();
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
+    // The floods that show at the end are drawn as their flows (F94), traced over the base
+    // smoothed over a front's width.
+    let flood_visible = volcanism::visible_floods(&floods);
+    let flood_ground = (!floods.is_empty()).then(|| {
+        let smoothed = relaxation::low_pass(&layers.bedrock, cell, FLOOD_GROUND_SMOOTH);
+        crate::grid::projection::PaddedField::new(&grid, &smoothed)
+    });
+    let flood_seed = graph.f64("seed.volcanism") as u64;
     let mut smear = volcanism::LavaSmear::new(
         loop_output.grid,
         grid,
@@ -1437,6 +1445,15 @@ pub fn finish(
                         Some((out, None, None))
                     }
                     Event::Flood(k) => {
+                        let flows =
+                            flood_ground
+                                .as_ref()
+                                .filter(|_| flood_visible[*k])
+                                .map(|ground| volcanism::FloodFlows {
+                                    ground,
+                                    body_radius,
+                                    seed: flood_seed,
+                                });
                         let (out, taken, stats) = volcanism::flood_compute(
                             &layers,
                             &grid,
@@ -1444,6 +1461,8 @@ pub fn finish(
                             &floods[*k],
                             &smear,
                             &deform,
+                            flows,
+                            stamper,
                         );
                         Some((out, None, Some((taken, stats))))
                     }

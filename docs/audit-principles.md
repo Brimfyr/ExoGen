@@ -128,7 +128,7 @@ When: the earlier-phases revisit, with S7.
 
 ## Widths and scales in grid cells (principle 13)
 
-### W1. Flood margins
+### W1. Flood margins (closed by F94)
 
 FLOOD_MARGIN_LOBE_CELLS sets the lobes on a flood's outline as noise two loop cells long, so the lobes change with the quality and are noise where they should be flow.
 
@@ -137,6 +137,8 @@ Direction: lobes from the flow, a lobe's width from the lava's yield strength an
 When: the Io milestone for Io; the earlier-phases revisit for lava plains elsewhere.
 
 On Io, F85 makes a field's margins its breakouts' lobes, each traced over the ground and laid at its own time, so the outline is the flow's. The lobes' sizes are stated shares of the field's reach, not yet the lava's yield strength and supply. Flood margins on other bodies are as before.
+
+Closed in the thirty-first milestone (F94) for the floods that can show at the end: each is drawn as its flows, a trunk, branches and breakouts traced over the ground from where its lava came into its low, so its margin and the gaps it leaves are its lobes', at the finish's resolution, and a mare is a mosaic of flow units. A flood buried under four or more successors at every coarse cell of its low keeps the coarse outline, hidden. Still open: the lobes' sizes are stated shares of the low's reach, not the lava's yield strength and effusion rate (Hulme 1974), and a flood's extent is still the coarse low the loop filled, compact on flat ground, so Imbrium's 1,200 km flows cannot form; the loop's own spreading would have to follow the flows for that.
 
 ### W2. The roughness blend
 

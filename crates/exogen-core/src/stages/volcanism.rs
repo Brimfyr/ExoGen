@@ -18,19 +18,20 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::constants::*;
-use crate::crater::{CellWrite, StampOutput};
+use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::{Field, LayerSet};
-use crate::geom::{angle_between, normalize};
+use crate::geom::{angle_between, dot, normalize};
 use crate::grid::CubeSphere;
-use crate::grid::projection::{SparseField, sample_bilinear_sparse};
+use crate::grid::projection::{PaddedField, SparseField, sample_bilinear_sparse};
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::deform::Deformation;
+use crate::stages::io::{Lobe, PathRules, path_point, rotate_about, trace_flow};
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 12;
+pub const VERSION: u64 = 13;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -40,6 +41,23 @@ pub fn composition_drift(time_gyr: f64) -> f32 {
     let noise = GradientNoise::new(0x1A7A_71A7);
     let t = time_gyr / LAVA_COMPOSITION_PERIOD_GYR;
     (noise.fbm([t, 0.3, 0.7], 1.0, 1, 2.0, 0.5) / 0.6).clamp(-1.0, 1.0) as f32
+}
+
+/// The composition of the mantle source under a vent, -1 to 1 (F94): a smooth field of
+/// LAVA_SOURCE_ORDER cycles about the body, for the unevenness of the mantle that its
+/// magma ocean's cumulates left.
+pub fn source_composition(vent: [f64; 3]) -> f64 {
+    let noise = GradientNoise::new(0x5A0C_E5ED);
+    (noise.fbm(vent, LAVA_SOURCE_ORDER, 2, 2.0, 0.5) / 0.6).clamp(-1.0, 1.0)
+}
+
+/// The composition of a flood's lava, -1 to 1 (F55, F94): its eruptive time's drift, its
+/// source's and its own batch's, `batch` a unit normal draw, a share of each.
+pub fn flood_composition(time_gyr: f64, vent: [f64; 3], batch: f64) -> f32 {
+    (LAVA_DRIFT_SHARE * composition_drift(time_gyr) as f64
+        + LAVA_SOURCE_SHARE * source_composition(vent)
+        + LAVA_BATCH_SHARE * batch)
+        .clamp(-1.0, 1.0) as f32
 }
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
@@ -87,6 +105,8 @@ pub struct FloodRecord {
     /// Area covered, m².
     pub area: f64,
     pub ponds: Vec<Pond>,
+    /// The lava's composition, -1 to 1 (F55, F94).
+    pub composition: f32,
     pub id: u64,
 }
 
@@ -117,8 +137,11 @@ impl FloodRecord {
         if cells.is_empty() {
             return (self.vent, 0.0);
         }
+        // Summed in the cells' order, so that the centre does not depend on the map's.
+        let mut keys: Vec<u32> = cells.keys().copied().collect();
+        keys.sort_unstable();
         let mut sum = [0.0; 3];
-        for &idx in cells.keys() {
+        for &idx in &keys {
             let d = grid.center(grid.cell(idx as usize));
             sum[0] += d[0];
             sum[1] += d[1];
@@ -129,8 +152,8 @@ impl FloodRecord {
         } else {
             normalize(sum)
         };
-        let radius = cells
-            .keys()
+        let radius = keys
+            .iter()
             .map(|&idx| crate::geom::angle_between(center, grid.center(grid.cell(idx as usize))))
             .fold(0.0, f64::max);
         (center, radius)
@@ -526,7 +549,7 @@ impl FloodProcess {
             let melt = layers.melt.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
             let composition = layers.composition.as_mut_slice();
-            let drift = composition_drift(time_gyr);
+            let drift = flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C));
             for &(idx, h) in &popped {
                 let t = level - h as f64;
                 if t <= FLOOD_MIN_THICKNESS {
@@ -566,9 +589,13 @@ impl FloodProcess {
             time_gyr,
             area: 0.0,
             ponds,
+            composition: flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C)),
             id,
         };
-        rec.area = rec.cells().keys().map(|&i| self.areas[i as usize]).sum();
+        // Summed in the cells' order, so that the area does not depend on the map's.
+        let mut keys: Vec<u32> = rec.cells().keys().copied().collect();
+        keys.sort_unstable();
+        rec.area = keys.iter().map(|&i| self.areas[i as usize]).sum();
         rec
     }
 }
@@ -576,6 +603,10 @@ impl FloodProcess {
 /// A coarse cell the fine fill may reach: the level, and the previous surface when the
 /// cell is inside the coarse footprint.
 type Reach = (f32, Option<(u16, f32)>);
+
+/// A fine cell a flood's pass visits: its index, the level the lava could reach there and,
+/// inside the coarse footprint, the surface the flood found.
+type Visit = (usize, f32, Option<(u16, f32)>);
 
 /// The finishing pass's lava bookkeeping. The base carries every flood's coarse fill,
 /// smeared over a coarse cell at its margin. Each flood's pass takes its own smear out
@@ -650,6 +681,7 @@ impl LavaSmear {
 /// lava does not reach gets the surface it had before the flood; what later craters
 /// resurfaced is left alone. Returns the writes and the smear taken out per cell, for
 /// the bookkeeping.
+#[allow(clippy::too_many_arguments)]
 pub fn flood_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
@@ -657,6 +689,8 @@ pub fn flood_compute(
     rec: &FloodRecord,
     smear: &LavaSmear,
     deform: &Deformation,
+    flows: Option<FloodFlows>,
+    stamper: &mut Stamper,
 ) -> (StampOutput, Vec<(u32, f32)>, [usize; 4]) {
     let ratio = grid.face_size() / coarse.face_size();
     if ratio == 0 || !grid.face_size().is_multiple_of(coarse.face_size()) {
@@ -703,6 +737,19 @@ pub fn flood_compute(
     };
     let lobes = GradientNoise::new(rec.id ^ 0x0F10_0D00);
     let lobe_frequency = 1.0 / (FLOOD_MARGIN_LOBE_CELLS * coarse.delta());
+    // A flood that shows at the end is drawn as its flows (F94): its lobes, traced over
+    // the ground from where its lava came in, lay its sheet, and where they do not reach
+    // the ground keeps the surface it had, unless it lies so far below the level that the
+    // lava ponds there. A buried flood keeps the coarse outline its successors hide.
+    let lobed: Option<HashMap<usize, f32>> = flows.map(|f| {
+        let lobes = flood_lobes(rec, coarse, grid, f.body_radius, f.ground, f.seed);
+        lobe_cover(&lobes, grid, f.body_radius, rec.id, stamper)
+    });
+    // Where the loop filled the flood deeper than its sheets, the lava pond fills the low
+    // whatever its lobes do: judged by the flood's own coarse thickness, sampled smoothly,
+    // since the ground pieced together from the coarse smears is not good to a sheet.
+    let ponded_thickness =
+        ((1.0 - LAVA_SUBSIDENCE) * FLOOD_PONDED_SHEETS * FLOOD_SHEET_THICKNESS) as f32;
     // Coarse cells to visit: the footprint and its ring, with the level the lava could
     // reach there and, inside the footprint, the surface the flood found.
     let mut levels: HashMap<usize, Reach> = HashMap::new();
@@ -730,6 +777,9 @@ pub fn flood_compute(
     let mut taken = Vec::with_capacity(levels.len() * (ratio * ratio) as usize);
     let mut coarse_cells: Vec<(&usize, &Reach)> = levels.iter().collect();
     coarse_cells.sort_by_key(|(k, _)| **k);
+    // The fine cells to visit: those of the coarse footprint and its ring, and those the
+    // flood's lobes reach beyond them (F94), at the flood's highest level.
+    let mut visits: Vec<Visit> = Vec::with_capacity(levels.len() * (ratio * ratio) as usize);
     for (&cidx, &(level, previous)) in coarse_cells {
         let c = coarse.cell(cidx);
         for a in 0..ratio {
@@ -739,116 +789,482 @@ pub fn flood_compute(
                     i: c.i * ratio + a,
                     j: c.j * ratio + b,
                 };
-                let idx = grid.index(fine);
-                let d = grid.center(fine);
-                let own = sample_bilinear_sparse(coarse, &padded, d);
-                taken.push((idx as u32, own));
-                // A younger crater sits here: it was stamped on top of this lava in
-                // the loop, so the ground is right as it is. The surface inside the
-                // flood's own footprint is still this lava's, under whatever the
-                // crater's own pass lays over it where its ejecta reaches, so that no
-                // cell keeps the loop's coarse patchwork of ages and compositions.
-                if smear.crater_time[idx] > time + 1e-6 {
-                    stats[3] += 1;
-                    if previous.is_some() && !smear.touched[idx] {
-                        cells.push(CellWrite {
-                            idx: idx as u32,
-                            bedrock: bedrock[idx],
-                            surface: true,
-                            age: time,
-                            unit: UNIT_LAVA,
-                            deep: deep[idx],
-                            melt: 0.0,
-                            cover: 1.0,
-                        });
-                    }
-                    continue;
-                }
-                // The ground as the flood found it: the base less the smears not yet
-                // taken out and less what the slow processes, the domes, shields,
-                // canyon and coronae, have added since; both ride on top of whatever
-                // is written.
-                let remaining = smear.total[idx] - smear.done[idx];
-                let later = deform.since_flood(d, rec.time_gyr) as f32;
-                let ground = bedrock[idx] - remaining - later;
-                // Inside the flood's own footprint, where the base still says this lava
-                // and no finer pass has written, the loop's surface was the flood's own
-                // sheet at its level: what stands above the level there is the
-                // resampling's ramp toward a higher neighbour, not ground the flood
-                // found, and the sheet lies level over it, at least its own thickness
-                // deep. Elsewhere what stands above the level is a rim or an older
-                // floor, and the flood ends against it. The lobed outline bounds the
-                // fill either way; what it leaves inside the coarse footprint keeps the
-                // loop's surface, the older lava's own.
-                let own_floor =
-                    previous.is_some() && units[idx] == UNIT_LAVA && !smear.touched[idx];
-                let ground = if own_floor {
-                    ground.min(level - FLOOD_SHEET_THICKNESS as f32)
-                } else {
-                    ground
-                };
-                let carry = remaining - own + later;
-                let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
-                if outline > 0.0 && outline < 1.0 {
-                    outline += FLOOD_MARGIN_WOBBLE * lobes.fbm(d, lobe_frequency, 3, 2.0, 0.5);
-                }
-                // A flow drapes what stands less than its own thickness above its level.
-                let drape = FLOOD_SHEET_THICKNESS as f32;
-                if ground < level + drape && outline >= FLOOD_MARGIN_THRESHOLD {
-                    stats[0] += 1;
-                    let fill = (level - ground).max(0.0);
-                    // A high the flow drapes carries a veneer, the sheet's thickness less
-                    // what the high stands above the level: thin lava over it, but lava,
-                    // not the ground it hides (the ghost craters of the maria show in
-                    // relief, not in albedo).
-                    let sheet = fill.max(drape - (ground - level).max(0.0));
-                    let surface = ground + (1.0 - LAVA_SUBSIDENCE as f32) * fill;
+                visits.push((grid.index(fine), level, previous));
+            }
+        }
+    }
+    if let Some(lobed) = &lobed {
+        let seen: HashSet<usize> = visits.iter().map(|v| v.0).collect();
+        let top = rec
+            .ponds
+            .iter()
+            .map(|p| p.level)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let mut beyond: Vec<usize> = lobed
+            .iter()
+            .filter(|(i, c)| **c > 0.0 && !seen.contains(*i))
+            .map(|(i, _)| *i)
+            .collect();
+        beyond.sort_unstable();
+        visits.extend(beyond.into_iter().map(|i| (i, top, None)));
+    }
+    // A cell to follow through the flood passes, for debugging: EXOGEN_DEBUG_CELL=lon,lat.
+    let watched: Option<usize> = std::env::var("EXOGEN_DEBUG_CELL").ok().and_then(|v| {
+        let mut it = v.split(',').map(|x| x.trim().parse::<f64>().ok());
+        let (lon, lat) = (it.next()??, it.next()??);
+        let dir = crate::grid::direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+        Some(grid.index(grid.locate(dir).0))
+    });
+    for (idx, level, previous) in visits {
+        let d = grid.center(grid.cell(idx));
+        let own = sample_bilinear_sparse(coarse, &padded, d);
+        taken.push((idx as u32, own));
+        if smear.crater_time[idx] > time + 1e-6 {
+            stats[3] += 1;
+            if let Some((prev_unit, prev_age)) = previous
+                && !smear.touched[idx]
+            {
+                // The lava is the flood's where its flows reached (F94); where they
+                // did not, the surface it found, as beside the crater.
+                let flowed = lobed
+                    .as_ref()
+                    .is_none_or(|l| l.get(&idx).copied().unwrap_or(0.0) >= 0.5);
+                if flowed {
                     cells.push(CellWrite {
                         idx: idx as u32,
-                        bedrock: surface + carry,
+                        bedrock: bedrock[idx],
                         surface: true,
                         age: time,
                         unit: UNIT_LAVA,
                         deep: deep[idx],
                         melt: 0.0,
-                        cover: (sheet / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0),
+                        cover: 1.0,
                     });
-                } else {
-                    if ground >= level + drape {
-                        stats[1] += 1;
-                    } else {
-                        stats[2] += 1;
-                    }
-                    // Not reached: take the smear off. Inside the coarse footprint the
-                    // base says lava where no pass has written yet; give it back the
-                    // surface the flood found.
-                    let (unit, age) = match previous {
-                        Some((u, a)) if !smear.touched[idx] && units[idx] == UNIT_LAVA => (u, a),
-                        _ => (units[idx], ages[idx]),
-                    };
+                } else if units[idx] == UNIT_LAVA {
                     cells.push(CellWrite {
                         idx: idx as u32,
-                        bedrock: ground + carry,
-                        surface: unit != units[idx] || age != ages[idx],
-                        age,
-                        unit,
+                        bedrock: bedrock[idx],
+                        surface: true,
+                        age: prev_age,
+                        unit: prev_unit,
                         deep: deep[idx],
                         melt: melt[idx],
                         cover: cover[idx],
                     });
                 }
             }
+            continue;
+        }
+        // The ground as the flood found it: the base less the smears not yet
+        // taken out and less what the slow processes, the domes, shields,
+        // canyon and coronae, have added since; both ride on top of whatever
+        // is written.
+        let remaining = smear.total[idx] - smear.done[idx];
+        let later = deform.since_flood(d, rec.time_gyr) as f32;
+        let ground = bedrock[idx] - remaining - later;
+        // Inside the flood's own footprint, where the base still says this lava
+        // and no finer pass has written, the loop's surface was the flood's own
+        // sheet at its level: what stands above the level there is the
+        // resampling's ramp toward a higher neighbour, not ground the flood
+        // found, and the sheet lies level over it, at least its own thickness
+        // deep. Elsewhere what stands above the level is a rim or an older
+        // floor, and the flood ends against it. The lobed outline bounds the
+        // fill either way; what it leaves inside the coarse footprint keeps the
+        // loop's surface, the older lava's own.
+        let own_floor = previous.is_some() && units[idx] == UNIT_LAVA && !smear.touched[idx];
+        let ground = if own_floor {
+            ground.min(level - FLOOD_SHEET_THICKNESS as f32)
+        } else {
+            ground
+        };
+        let carry = remaining - own + later;
+        // Outside the low the loop filled, a lobe of a flood drawn as its flows lays a
+        // sheet on the ground it crosses rather than filling to the low's level.
+        let level = if lobed.is_some() && previous.is_none() {
+            level.min(ground + FLOOD_SHEET_THICKNESS as f32)
+        } else {
+            level
+        };
+        let reached = match &lobed {
+            Some(lobed) => own > ponded_thickness || lobed.get(&idx).copied().unwrap_or(0.0) >= 0.5,
+            None => {
+                let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
+                if outline > 0.0 && outline < 1.0 {
+                    outline += FLOOD_MARGIN_WOBBLE * lobes.fbm(d, lobe_frequency, 3, 2.0, 0.5);
+                }
+                outline >= FLOOD_MARGIN_THRESHOLD
+            }
+        };
+        if watched == Some(idx) {
+            eprintln!(
+                "watch flood {} t {:.4}: level {:.1} own {:.1} ground {:.1} younger {} previous {:?} touched {} unit {} lobe {:?} reached {:?}",
+                rec.id,
+                rec.time_gyr,
+                level,
+                own,
+                ground,
+                smear.crater_time[idx] > time + 1e-6,
+                previous,
+                smear.touched[idx],
+                units[idx],
+                lobed.as_ref().map(|l| l.get(&idx).copied().unwrap_or(0.0)),
+                reached,
+            );
+        }
+        // A flow drapes what stands less than its own thickness above its level.
+        let drape = FLOOD_SHEET_THICKNESS as f32;
+        if ground < level + drape && reached {
+            stats[0] += 1;
+            let fill = (level - ground).max(0.0);
+            // A high the flow drapes carries a veneer, the sheet's thickness less
+            // what the high stands above the level: thin lava over it, but lava,
+            // not the ground it hides (the ghost craters of the maria show in
+            // relief, not in albedo).
+            let sheet = fill.max(drape - (ground - level).max(0.0));
+            let surface = ground + (1.0 - LAVA_SUBSIDENCE as f32) * fill;
+            cells.push(CellWrite {
+                idx: idx as u32,
+                bedrock: surface + carry,
+                surface: true,
+                age: time,
+                unit: UNIT_LAVA,
+                deep: deep[idx],
+                melt: 0.0,
+                cover: (sheet / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0),
+            });
+        } else {
+            if ground >= level + drape {
+                stats[1] += 1;
+            } else {
+                stats[2] += 1;
+            }
+            // Not reached: take the smear off. Inside the coarse footprint the
+            // base says lava where no pass has written yet; give it back the
+            // surface the flood found.
+            let (unit, age) = match previous {
+                Some((u, a)) if !smear.touched[idx] && units[idx] == UNIT_LAVA => (u, a),
+                _ => (units[idx], ages[idx]),
+            };
+            cells.push(CellWrite {
+                idx: idx as u32,
+                bedrock: ground + carry,
+                surface: unit != units[idx] || age != ages[idx],
+                age,
+                unit,
+                deep: deep[idx],
+                melt: melt[idx],
+                cover: cover[idx],
+            });
         }
     }
     (
         StampOutput {
             cells,
-            composition: Some(composition_drift(rec.time_gyr)),
+            composition: Some(rec.composition),
             stain: None,
         },
         taken,
         stats,
     )
+}
+
+/// What a flood's pass needs to draw it as its flows (F94): the ground its lobes are
+/// traced over, the body's radius and the seed of its lobes.
+#[derive(Clone, Copy)]
+pub struct FloodFlows<'a> {
+    pub ground: &'a PaddedField,
+    pub body_radius: f64,
+    pub seed: u64,
+}
+
+/// Which floods can show at the end (F94): those among the last FLOOD_VISIBLE_DEPTH floods
+/// to cover at least one coarse cell of their footprint. A successor's lobes leave gaps,
+/// so a flood can show through the last few; the rest lie hidden.
+pub fn visible_floods(floods: &[FloodRecord]) -> Vec<bool> {
+    let mut order: Vec<usize> = (0..floods.len()).collect();
+    order.sort_by(|&a, &b| {
+        floods[a]
+            .time_gyr
+            .total_cmp(&floods[b].time_gyr)
+            .then(a.cmp(&b))
+    });
+    let mut last: HashMap<u32, Vec<usize>> = HashMap::new();
+    for &k in &order {
+        for pond in &floods[k].ponds {
+            for c in &pond.cells {
+                let stack = last.entry(c.idx).or_default();
+                stack.push(k);
+                if stack.len() > FLOOD_VISIBLE_DEPTH {
+                    stack.remove(0);
+                }
+            }
+        }
+    }
+    let mut visible = vec![false; floods.len()];
+    for stack in last.values() {
+        for &k in stack {
+            visible[k] = true;
+        }
+    }
+    visible
+}
+
+/// A lobe's area, m²: its length times its mean width.
+fn lobe_area(lobe: &Lobe) -> f64 {
+    (lobe.points.len().max(1) - 1) as f64 * lobe.spacing * 2.0 * lobe.half_width
+}
+
+/// The flows of one flood at the finishing resolution (F94): from the coarse cell of its
+/// low nearest its vent, where its lava came in, a trunk across the low toward its middle,
+/// up to FLOOD_BRANCHES.1 branches, and breakouts on the lobes already laid, at their
+/// fronts and along them, until the lobes cover the low FLOOD_LOBE_COVER times over. Each
+/// lobe is a path over the ground (F59), a share of the low's reach long and a share of
+/// its own length wide, wandering at its width's scale and ponding where it would climb
+/// more than a sheet.
+pub fn flood_lobes(
+    rec: &FloodRecord,
+    coarse: &CubeSphere,
+    grid: &CubeSphere,
+    body_radius: f64,
+    ground: &PaddedField,
+    seed: u64,
+) -> Vec<Lobe> {
+    let covered = rec.cells();
+    let Some(entry_idx) = covered.keys().copied().min_by(|&a, &b| {
+        let da = angle_between(rec.vent, coarse.center(coarse.cell(a as usize)));
+        let db = angle_between(rec.vent, coarse.center(coarse.cell(b as usize)));
+        da.total_cmp(&db).then(a.cmp(&b))
+    }) else {
+        return Vec::new();
+    };
+    let r = body_radius;
+    let cell = grid.delta() * r;
+    let entry = coarse.center(coarse.cell(entry_idx as usize));
+    let (middle, cap) = rec.cap(coarse);
+    // The lobes stay inside the flood's pass, whose cap reaches 2.5 coarse cells past its
+    // footprint: a path stops where its lobe's margin would cross 2 of them.
+    let limit = cap + 2.0 * coarse.delta();
+    let outside = |q: [f64; 3], hw: f64| {
+        angle_between(middle, q)
+            > limit - (hw * (1.0 + IO_FLOW_LOBING) + (IO_FLOW_EDGE * hw).max(1.5 * cell)) / r
+    };
+    let reach = covered
+        .keys()
+        .map(|&i| angle_between(entry, coarse.center(coarse.cell(i as usize))))
+        .fold(0.0, f64::max)
+        * r
+        + coarse.delta() * r;
+    let rng = Rng::new(seed ^ rec.id ^ 0xF100_D10B);
+    let rules = |half_width: f64| PathRules {
+        min_spacing: 0.5 * cell,
+        slope_follow: IO_FLOW_SLOPE_FOLLOW,
+        slope_scale: IO_FLOW_SLOPE_SCALE,
+        steer_length: FLOOD_STEER_LENGTH,
+        wander_rad: FLOOD_WANDER_RAD,
+        wander_length: FLOOD_WANDER_WIDTHS * half_width,
+        fill_depth: FLOOD_SHEET_THICKNESS,
+        width_wobble: IO_FLOW_WIDTH_WOBBLE,
+    };
+    let (w_lo, w_hi) = FLOOD_LOBE_WIDTH;
+    let width = |index: u64, length: f64| {
+        (length * (w_lo + (w_hi - w_lo) * rng.uniform(index, 0))).max(1.5 * cell)
+    };
+    // The trunk heads across the low toward its middle.
+    let toward = {
+        let v = [
+            middle[0] - entry[0],
+            middle[1] - entry[1],
+            middle[2] - entry[2],
+        ];
+        let radial = dot(v, entry);
+        let t = [
+            v[0] - radial * entry[0],
+            v[1] - radial * entry[1],
+            v[2] - radial * entry[2],
+        ];
+        if t[0] * t[0] + t[1] * t[1] + t[2] * t[2] > 1e-18 {
+            normalize(t)
+        } else {
+            // Entered at the middle: any heading.
+            let a = if entry[2].abs() < 0.9 {
+                [0.0, 0.0, 1.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            rotate_about(
+                entry,
+                normalize(crate::geom::cross(entry, a)),
+                std::f64::consts::TAU * rng.uniform(2, 0),
+            )
+        }
+    };
+    let (t_lo, t_hi) = FLOOD_TRUNK_SHARE;
+    let trunk_length = reach * (t_lo + (t_hi - t_lo) * rng.uniform(3, 0));
+    let hw = width(4, trunk_length);
+    let mut lobes = vec![
+        trace_flow(
+            grid,
+            r,
+            &rules(hw),
+            rec.id,
+            5,
+            entry,
+            toward,
+            trunk_length,
+            hw,
+            0.0,
+            ground,
+            &|q| outside(q, hw),
+            0.0,
+        )
+        .0,
+    ];
+    let mut area = lobe_area(&lobes[0]);
+    // Branches from the trunk.
+    let (b_lo, b_hi) = FLOOD_BRANCHES;
+    let branches = b_lo + (rng.bits(6, 0) % (b_hi - b_lo + 1) as u64) as u32;
+    for b in 0..branches as u64 {
+        let trunk = &lobes[0];
+        if trunk.points.len() < 4 {
+            break;
+        }
+        let s = 0.25 + 0.55 * rng.uniform(10 + b, 0);
+        let k = ((trunk.points.len() - 1) as f64 * s) as usize;
+        let (p, tangent) = path_point(&trunk.points, k);
+        let side = if rng.uniform(10 + b, 1) < 0.5 {
+            -1.0
+        } else {
+            1.0
+        };
+        let turn = side * (20f64 + 30.0 * rng.uniform(10 + b, 2)).to_radians();
+        let remaining = (trunk.points.len() - 1 - k) as f64 * trunk.spacing;
+        let length = remaining * (0.4 + 0.5 * rng.uniform(10 + b, 3));
+        if length < 4.0 * cell {
+            continue;
+        }
+        let hw = width(20 + b, length);
+        let heading = rotate_about(p, tangent, turn);
+        let lobe = trace_flow(
+            grid,
+            r,
+            &rules(hw),
+            rec.id,
+            30 + b,
+            p,
+            heading,
+            length,
+            hw,
+            0.0,
+            ground,
+            &|q| outside(q, hw),
+            0.0,
+        )
+        .0;
+        area += lobe_area(&lobe);
+        lobes.push(lobe);
+    }
+    // Breakouts on the lobes already laid, until they cover the low.
+    let target = FLOOD_LOBE_COVER * rec.area;
+    let (l_lo, l_hi) = FLOOD_LOBE_LENGTH;
+    let mut j = 0u64;
+    while area < target && lobes.len() < FLOOD_LOBES_MAX && j < 4 * FLOOD_LOBES_MAX as u64 {
+        let base = 1_000 + 16 * j;
+        j += 1;
+        let lengths: Vec<f64> = lobes
+            .iter()
+            .map(|l| (l.points.len().max(1) - 1) as f64 * l.spacing)
+            .collect();
+        let total: f64 = lengths.iter().sum();
+        if total <= 0.0 {
+            break;
+        }
+        let mut pick = rng.uniform(base, 0) * total;
+        let mut which = 0;
+        for (n, len) in lengths.iter().enumerate() {
+            which = n;
+            if pick < *len {
+                break;
+            }
+            pick -= len;
+        }
+        let path = &lobes[which];
+        if path.points.len() < 2 {
+            continue;
+        }
+        let s = if rng.uniform(base, 1) < IO_FLOW_FRONT_SHARE {
+            1.0
+        } else {
+            rng.uniform(base, 2).sqrt()
+        };
+        let k = ((path.points.len() - 1) as f64 * s).round() as usize;
+        let (p, tangent) = path_point(&path.points, k);
+        let heading = rotate_about(p, tangent, IO_FLOW_BREAKOUT_SPREAD * rng.normal(base, 3));
+        let length = reach * l_lo * (l_hi / l_lo).powf(rng.uniform(base, 4));
+        let hw = width(base + 5, length);
+        let lobe = trace_flow(
+            grid,
+            r,
+            &rules(hw),
+            rec.id,
+            base + 6,
+            p,
+            heading,
+            length,
+            hw,
+            IO_FLOW_TOE,
+            ground,
+            &|q| outside(q, hw),
+            0.0,
+        )
+        .0;
+        area += lobe_area(&lobe);
+        lobes.push(lobe);
+    }
+    lobes
+}
+
+/// The share of each cell a flood's lobes cover (F94), the strongest where they cross: a
+/// tube about each lobe's path, as Io's flows are drawn (F59), its margin lobate at its
+/// width's scale and soft over a share of its width or a cell and a half.
+fn lobe_cover(
+    lobes: &[Lobe],
+    grid: &CubeSphere,
+    body_radius: f64,
+    id: u64,
+    stamper: &mut Stamper,
+) -> HashMap<usize, f32> {
+    let cell = grid.delta() * body_radius;
+    let noise = GradientNoise::new(id ^ 0xF10D_0000);
+    let mut cover: HashMap<usize, f32> = HashMap::new();
+    for lobe in lobes {
+        if lobe.points.len() < 2 {
+            continue;
+        }
+        let widest = lobe.widths.iter().cloned().fold(0.0f32, f32::max) as f64;
+        let reach = lobe.half_width * widest * (1.0 + IO_FLOW_LOBING)
+            + (IO_FLOW_EDGE * lobe.half_width * widest).max(1.5 * cell);
+        stamper.gather_corridor(grid, body_radius, &lobe.points, reach);
+        let last = (lobe.widths.len() - 1) as f64;
+        for &(idx, r, at) in &stamper.footprint {
+            let at = at.clamp(0.0, last);
+            let i = at.floor() as usize;
+            let f = at - i as f64;
+            let w = lobe.widths[i] as f64 * (1.0 - f)
+                + lobe.widths[(i + 1).min(lobe.widths.len() - 1)] as f64 * f;
+            let hw = lobe.half_width * w;
+            let edge = (IO_FLOW_EDGE * hw).max(1.5 * cell);
+            let d = grid.center(grid.cell(idx));
+            let lobing = 1.0 + IO_FLOW_LOBING * noise.fbm(d, body_radius / (1.5 * hw), 2, 2.0, 0.5);
+            let c = ((hw * lobing - r) / edge).clamp(0.0, 1.0) as f32;
+            if c > 0.0 {
+                let e = cover.entry(idx).or_insert(0.0);
+                if c > *e {
+                    *e = c;
+                }
+            }
+        }
+    }
+    cover
 }
 
 /// Area fraction of the surface carrying a lava unit.
@@ -1030,5 +1446,88 @@ mod tests {
             "{} vs {volume}",
             rec.volume
         );
+    }
+
+    /// A flood over flat ground: a disc of coarse cells about a vent.
+    fn disc_flood(
+        coarse: &CubeSphere,
+        center: [f64; 3],
+        radius: f64,
+        time: f64,
+        id: u64,
+    ) -> FloodRecord {
+        let cells: Vec<FloodCell> = (0..coarse.cell_count())
+            .filter(|&k| angle_between(center, coarse.center(coarse.cell(k))) < radius)
+            .map(|k| FloodCell {
+                idx: k as u32,
+                thickness: 50.0,
+                prev_unit: UNIT_PRIMORDIAL,
+                prev_age: 0.0,
+            })
+            .collect();
+        let area = cells
+            .iter()
+            .map(|c| coarse.cell_area(coarse.cell(c.idx as usize)) * 1e12)
+            .sum();
+        FloodRecord {
+            vent: center,
+            volume: 50.0 * area,
+            time_gyr: time,
+            area,
+            ponds: vec![Pond { level: 50.0, cells }],
+            composition: 0.0,
+            id,
+        }
+    }
+
+    #[test]
+    fn a_flood_shows_through_its_last_few_successors() {
+        // F94: six floods over the same ground; only the last FLOOD_VISIBLE_DEPTH can show.
+        let coarse = CubeSphere::new(16);
+        let center = normalize([1.0, 0.2, 0.1]);
+        let floods: Vec<FloodRecord> = (0..6)
+            .map(|k| disc_flood(&coarse, center, 0.2, k as f64 * 0.1, k as u64 + 1))
+            .collect();
+        let visible = visible_floods(&floods);
+        let shown = visible.iter().filter(|&&v| v).count();
+        assert_eq!(shown, FLOOD_VISIBLE_DEPTH, "{visible:?}");
+        assert!(visible[5] && !visible[0], "{visible:?}");
+    }
+
+    #[test]
+    fn a_flood_spreads_as_lobes_that_cover_its_low_and_stay_in_its_pass() {
+        // F94: on flat ground the lobes fan out from the vent until they cover the low
+        // FLOOD_LOBE_COVER times over, inside the cap the pass may write.
+        let coarse = CubeSphere::new(32);
+        let grid = CubeSphere::new(128);
+        let body_radius = 1_000e3;
+        let flat = vec![0.0f32; grid.cell_count()];
+        let ground = PaddedField::new(&grid, &flat);
+        let center = normalize([0.3, 1.0, 0.2]);
+        let mut flood = disc_flood(&coarse, center, 0.12, 1.0, 7);
+        flood.area = flood
+            .cells()
+            .keys()
+            .map(|&i| coarse.cell_area(coarse.cell(i as usize)) * body_radius * body_radius)
+            .sum();
+        let lobes = flood_lobes(&flood, &coarse, &grid, body_radius, &ground, 3);
+        assert!(lobes.len() > 3, "{} lobes", lobes.len());
+        let area: f64 = lobes.iter().map(lobe_area).sum();
+        assert!(
+            area >= FLOOD_LOBE_COVER * flood.area || lobes.len() == FLOOD_LOBES_MAX,
+            "lobes cover {:.3e} m² of a {:.3e} m² low",
+            area,
+            flood.area
+        );
+        let (middle, cap) = flood.cap(&coarse);
+        let limit = cap + 2.0 * coarse.delta();
+        for l in &lobes {
+            for p in &l.points {
+                assert!(
+                    angle_between(middle, *p) <= limit + 1e-9,
+                    "a lobe leaves the pass"
+                );
+            }
+        }
     }
 }
