@@ -136,6 +136,8 @@ Direction: lobes from the flow, a lobe's width from the lava's yield strength an
 
 When: the Io milestone for Io; the earlier-phases revisit for lava plains elsewhere.
 
+On Io, F85 makes a field's margins its breakouts' lobes, each traced over the ground and laid at its own time, so the outline is the flow's. The lobes' sizes are stated shares of the field's reach, not yet the lava's yield strength and supply. Flood margins on other bodies are as before.
+
 ### W2. The roughness blend
 
 ROUGHNESS_BLEND_PASSES (12 passes of the one-cell kernel, about two cells) makes the edge of a young deposit on old ground a ramp of roughness two cells wide whatever the cell.
@@ -297,6 +299,14 @@ Io's white and grey materials, moderate-to-coarse-grained SO2, cover about 27 pe
 Direction: the frost cycle of the sublimation atmosphere, which takes SO2 from warm ground and lays it on cold, and the albedo feedback that keeps a bright frost cold, so that frost seeded by deposits persists in fields; coarse-grained, translucent frost apart from a fresh deposit's fine white.
 
 When: with Phase 5's materials, or sooner with the flows.
+
+### M8. Io's flow coverage
+
+Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al. 2011). F85's fields cover 20 percent and the plains 70: the fields' areas are stated shares of their reach, and the number of fields three generations a patera.
+
+Direction: the fields' areas from the lava erupted over their lives, the eruptive share of the magma rate (Spencer et al. 2020: most of Io's magma intrudes) over a field's thickness, so that the coverage follows from the heat the lava carries out.
+
+When: with S3, the regime's switch.
 
 ## Validation (principle 15)
 

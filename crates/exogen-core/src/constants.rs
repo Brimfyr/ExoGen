@@ -476,25 +476,28 @@ pub const IO_MOUNTAIN_LIFETIME_GYR: (f64, f64) = (0.1, 0.5);
 pub const IO_MOUNTAIN_SCARP_POWER: f64 = 12.0;
 pub const IO_MOUNTAIN_APRON_POWER: f64 = 2.0;
 /// Flow fields: from every active patera and this share of the quiet ones; their reach,
-/// m, log-uniform; lobes per field; the lobing of the margins at the width's scale, the
-/// softness of the edge as a share of the width (or a cell and a half), the thickness,
-/// m; lobe ages, years, log-uniform, an earlier generation's lobes at least this old.
+/// m, log-uniform (the longest more than 300 km, Amirani and Masubi, NASA PIA02567;
+/// Lei-Kung Fluctus is said to cover more than 125,000 km²); the lobing of the margins at the width's scale, the softness of the
+/// edge as a share of the width (or a cell and a half), the thickness, m; when a field
+/// last grew, years, log-uniform, an active patera's within the first range, an earlier
+/// generation's at least this old.
 pub const IO_QUIET_FLOW_FRACTION: f64 = 0.15;
-pub const IO_FLOW_REACH: (f64, f64) = (40e3, 300e3);
-pub const IO_FLOW_LOBES: (u32, u32) = (6, 14);
+pub const IO_FLOW_REACH: (f64, f64) = (40e3, 500e3);
 pub const IO_FLOW_LOBING: f64 = 0.3;
 pub const IO_FLOW_EDGE: f64 = 0.15;
 pub const IO_FLOW_THICKNESS: f64 = 20.0;
 /// Flows follow the ground (F59): a lobe is traced from the patera's rim downslope, its
-/// heading turning toward the fall line by this much times tanh(slope / this slope) per
-/// step, with a wander of this many radians over this length of path, m, stopping where
+/// heading turning toward the fall line by this much times tanh(slope / this slope) for
+/// each this many metres of path (a stated choice: a front swings to the fall line over
+/// a couple of tens of kilometres), with a wander of this many radians over this length of path, m, stopping where
 /// a mountain stands or where going on would climb more than this depth, m, above the
 /// lowest ground it has reached (a flow ponds in a basin and crosses a bump no higher
-/// than its own pile); its half width this share of the reach, at least this, m, this
-/// share narrower at the vent than at the toe, wandering by this rms share; its points
-/// this far apart at most, m.
+/// than its own pile); a field's lobes at least this half width where the field needs
+/// one, m, this share narrower at the source than at the toe, wandering by this rms
+/// share; its points this far apart at most, m.
 pub const IO_FLOW_SLOPE_FOLLOW: f64 = 2.0;
 pub const IO_FLOW_SLOPE_SCALE: f64 = 0.005;
+pub const IO_FLOW_STEER_LENGTH: f64 = 20e3;
 pub const IO_FLOW_WANDER_RAD: f64 = 1.0;
 pub const IO_FLOW_WANDER_LENGTH: f64 = 40e3;
 pub const IO_FLOW_FILL_DEPTH: f64 = 150.0;
@@ -503,19 +506,48 @@ pub const IO_FLOW_FILL_DEPTH: f64 = 150.0;
 /// own pile, and a flow deflects sideways along a contour but never turns back on
 /// itself.
 pub const IO_FLOW_GROUND_SMOOTH: f64 = 40e3;
-pub const IO_FLOW_WIDTH_SHARE: (f64, f64) = (0.05, 0.15);
 pub const IO_FLOW_MIN_HALF_WIDTH: f64 = 3e3;
 pub const IO_FLOW_TOE: f64 = 0.6;
 pub const IO_FLOW_WIDTH_WOBBLE: f64 = 0.25;
 pub const IO_FLOW_POINT_SPACING: f64 = 2e3;
+pub const IO_FLOW_ACTIVE_YR: (f64, f64) = (0.1, 10.0);
 pub const IO_FLOW_AGE_YR: (f64, f64) = (1.0, 3e5);
 pub const IO_FLOW_EARLIER_YR: f64 = 150.0;
+/// A flow field is compound (F85): Io's long-lived eruptions build their fields over
+/// years to decades from small breakouts on top of older flows, fed through insulated
+/// paths that carry the lava tens to hundreds of kilometres from the vent (Keszthelyi et
+/// al. 2001: Prometheus and Amirani; Amirani with more breakouts along its length). A
+/// field grows over this span, years, log-uniform (a stated choice within "years to
+/// decades"); its trunk leaves the patera's rim on the downslope side within this
+/// deviation, rad (a stated choice), and runs this share of the field's reach, its
+/// surface this wide, m (a stated choice: the trunk's crust and levees); this many
+/// branches leave it at these angles, rad; its breakouts are this long as a share of the
+/// reach, log-uniform, this wide as a share of their length, and leave the paths within
+/// this deviation of their headings, rad (stated choices: fat lobes spreading forward
+/// and sideways), this share of them from the fronts of the paths and of earlier
+/// breakouts and the rest along them, more towards their ends; and they cover this share
+/// of the reach squared this many times over, at most this many to a field (stated
+/// choices: fields about half as wide as they are long, overlapping as a compound
+/// field's units do).
+pub const IO_FLOW_SPAN_YR: (f64, f64) = (3.0, 100.0);
+pub const IO_FLOW_SOURCE_SPREAD: f64 = 0.6;
+pub const IO_FLOW_TRUNK_SHARE: (f64, f64) = (0.6, 1.0);
+pub const IO_FLOW_TRUNK_WIDTH: f64 = 6e3;
+pub const IO_FLOW_BRANCHES: (u32, u32) = (0, 3);
+pub const IO_FLOW_BRANCH_ANGLE: (f64, f64) = (0.35, 0.9);
+pub const IO_FLOW_BREAKOUT_LENGTH: (f64, f64) = (0.05, 0.25);
+pub const IO_FLOW_BREAKOUT_ASPECT: (f64, f64) = (0.5, 1.0);
+pub const IO_FLOW_BREAKOUT_SPREAD: f64 = 0.8;
+pub const IO_FLOW_FRONT_SHARE: f64 = 0.3;
+pub const IO_FLOW_FIELD_AREA: f64 = 0.5;
+pub const IO_FLOW_OVERLAP: f64 = 2.0;
+pub const IO_FLOW_BREAKOUTS_MAX: usize = 250;
 /// Io's flows accumulate (F56): every patera carries this many generations of flow
 /// fields, each lobe coated by what has fallen on it since it was laid (F84); and a
-/// flow's coverage varies by this share over this length, m, the overlapping flow units
-/// within a lobe.
+/// flow's coverage varies by this share over this length, m, the small units within a
+/// lobe (the breakouts' own ages carry a compound field's variety, F85).
 pub const IO_FLOW_GENERATIONS: u32 = 3;
-pub const IO_FLOW_TEXTURE: f64 = 0.4;
+pub const IO_FLOW_TEXTURE: f64 = 0.1;
 pub const IO_FLOW_TEXTURE_LENGTH: f64 = 15e3;
 /// Plumes, whose gas condenses in a ring at the canopy where the plume falls back and
 /// whose pyroclasts, sulfur and silicate, fall within it: the share of centres that are
@@ -530,9 +562,11 @@ pub const IO_FLOW_TEXTURE_LENGTH: f64 = 15e3;
 /// radius, large plumes' oval rings 500 to 550 km north to south), with log-normal
 /// scatter (0.3 in the range, which keeps each class's rings within about half and
 /// twice its typical size); the ring's width inside and outside its crest and the inner
-/// fall as fractions of the radius, a Pele-class plume leaving mostly the ring and a
-/// Prometheus-class one more of its fallout within, the ring ending more steeply beyond
-/// the range of the fastest ejecta than it rises within (stated choices); the frost
+/// fall as fractions of the radius, the pyroclasts' mass some fraction of the
+/// condensate's, more for a gas-rich Pele-class plume, whose dark interior Galileo saw,
+/// than for a Prometheus-class one, whose ring is mostly frost from its gas, the ring
+/// ending more steeply beyond the range of the fastest ejecta than it rises within
+/// (stated choices); the frost
 /// share of a Pele-class ring, the rest red sulfur from its S2, and the red share of the
 /// sulfur in a Prometheus-class ring; the scatter of the range with azimuth and the mottling of the fallout; and the
 /// fading time of red sulfur, which Surt's and Tvashtar's rings lost within a couple of
@@ -546,12 +580,16 @@ pub const IO_PLUME_SPEED_SCATTER: f64 = 0.15;
 pub const IO_RING_WIDTH: f64 = 0.25;
 pub const IO_RING_OUTER_WIDTH: f64 = 0.1;
 pub const IO_RING_INNER_PELE: f64 = 0.15;
-pub const IO_RING_INNER_PROMETHEUS: f64 = 0.4;
+pub const IO_RING_INNER_PROMETHEUS: f64 = 0.03;
 pub const IO_PELE_FROST: f64 = 0.25;
 pub const IO_PROMETHEUS_RED: f64 = 0.15;
 pub const IO_RING_EDGE_WOBBLE: f64 = 0.08;
 pub const IO_DEPOSIT_MOTTLING: f64 = 0.35;
 pub const IO_RED_FADE_YR: f64 = 2.0;
+/// The plains' age, Gyr; and the plains are buried as fast as the regime renews them
+/// (F86): the base terrain's relief is filled at every scale by as much as the burial
+/// over that age at the resurfacing rate, so only what stands higher, the body's
+/// broadest undulations, shows through.
 pub const IO_SURFACE_AGE_GYR: f64 = 1e-4;
 /// Io's surface is what its plumes have left on it (F84). Every patera's eruptions are
 /// followed back over this many burial times of the background fallout below, past
@@ -589,11 +627,17 @@ pub const IO_DARK_REACH: f64 = 0.35;
 /// kg/m² (a few tens of microns of fine-grained sulfur or frost, a stated choice; with
 /// the masses above a Pele-class ring shows within a few months, as Galileo saw rings
 /// form, Geissler et al. 2004); rough lava hides only under this many times as much,
-/// the fallout filling its hollows first (a stated choice); and the far fallout of every
+/// the fallout filling its hollows first (a stated choice: about a centimetre of fines
+/// over a rough flow), so that old flows stay grey long after they cool; and the far
+/// fallout of every
 /// plume and of plumes too small to follow falls everywhere at this many optical depths a
 /// year (a stated choice: a third of a micron a year).
 pub const IO_DEPOSIT_OPTICAL_MASS: f64 = 0.03;
-pub const IO_LAVA_COAT_DEPTHS: f64 = 30.0;
+pub const IO_LAVA_COAT_DEPTHS: f64 = 300.0;
+/// Frost does not settle on lava that is still warm: a flow's surface stays too warm
+/// for it for about this many years after it is laid (a stated choice: Io's flows glow
+/// in the infrared for years to decades).
+pub const IO_LAVA_COOL_YR: f64 = 20.0;
 pub const IO_BACKGROUND_FALLOUT: f64 = 0.01;
 /// Frost sublimes at the equator at this rate, kg/m² a year (Ingersoll 1985: the
 /// diurnally averaged sublimation at the equator is comparable to 0.1 cm/yr, here of

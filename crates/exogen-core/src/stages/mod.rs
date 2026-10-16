@@ -132,11 +132,10 @@ pub struct LoopOutput {
     pub resurfacing: Option<episodic::Resurfacing>,
     pub coronae: Vec<episodic::Corona>,
     pub domes: Vec<episodic::Dome>,
-    /// The Io regime's paterae, mountains and flow fields through the body's life, each
-    /// with its birth and death; the finish takes those alive at the epoch.
+    /// The Io regime's paterae and mountains through the body's life, each with its
+    /// birth and death; the finish takes those alive at the epoch.
     pub paterae: Vec<io::Patera>,
     pub mountains: Vec<io::Mountain>,
-    pub io_flows: Vec<io::FlowField>,
     /// An ice shell's lanes of grooved terrain and when they formed.
     pub lanes: Vec<ice_shell::Lane>,
     /// The share of the surface the lanes cover once all have formed.
@@ -358,7 +357,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 75;
+pub const FINISH_VERSION: u64 = 77;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -527,9 +526,9 @@ pub fn run_coarse_loop(
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
     let scarps = contraction.map(|c| c.records).unwrap_or_default();
-    let (paterae, mountains, io_flows) = match io {
-        Some(i) => (i.paterae, i.mountains, i.flows),
-        None => (Vec::new(), Vec::new(), Vec::new()),
+    let (paterae, mountains) = match io {
+        Some(i) => (i.paterae, i.mountains),
+        None => (Vec::new(), Vec::new()),
     };
     let (resurfacing, coronae, domes, novae) = match episodic {
         Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
@@ -596,7 +595,6 @@ pub fn run_coarse_loop(
         domes,
         paterae,
         mountains,
-        io_flows,
         lanes,
         lane_coverage,
         lane_core,
@@ -858,12 +856,13 @@ pub fn finish(
         .filter(|m| m.alive(present))
         .cloned()
         .collect();
-    let io_flows: Vec<io::FlowField> = loop_output
-        .io_flows
-        .iter()
-        .filter(|f| f.alive(present))
-        .cloned()
-        .collect();
+    // The flow fields of the paterae alive at the epoch, traced over the finish's ground
+    // (F85).
+    let io_flows = if io::is_io_regime(graph) {
+        io::flow_fields(graph, &paterae, &mountains, &layers.bedrock)
+    } else {
+        Vec::new()
+    };
     // The plumes the paterae alive at the epoch have thrown over the history the surface
     // remembers (F84).
     let plume_episodes = if io::is_io_regime(graph) {
@@ -3029,7 +3028,7 @@ mod tests {
         let lo = &out.loop_output;
         assert!(lo.paterae.len() > 100, "{} paterae", lo.paterae.len());
         assert!(lo.mountains.len() > 20, "{} mountains", lo.mountains.len());
-        assert!(!lo.io_flows.is_empty() && !out.finish.plume_episodes.is_empty());
+        assert!(!out.finish.io_flows.is_empty() && !out.finish.plume_episodes.is_empty());
         assert!(
             out.finish.craters.is_empty(),
             "{} craters",

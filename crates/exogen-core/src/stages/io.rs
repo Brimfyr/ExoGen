@@ -39,7 +39,7 @@ use crate::units::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-pub const VERSION: u64 = 10;
+pub const VERSION: u64 = 12;
 
 /// A patera: a volcano-tectonic depression with a flat floor and a fault-bounded,
 /// irregular outline.
@@ -875,9 +875,11 @@ pub fn deposit_history(
                     }
                 }
                 // The halos of the young flows about the cell.
-                for (spread, spread_age, lava) in &halos {
+                // Frost does not lie on the young lava itself.
+                let young: f64 = halos.iter().map(|(_, _, l)| l[k] as f64).sum();
+                for (spread, spread_age, _) in &halos {
                     let s = spread[k] as f64;
-                    let rate = halo_rate * s * (1.0 - lava[k] as f64);
+                    let rate = halo_rate * s * (1.0 - young).max(0.0);
                     if rate * IO_HALO_DURATION_YR < NEGLIGIBLE_FALL {
                         continue;
                     }
@@ -992,10 +994,17 @@ pub fn deposit_history(
     let cover = layers.cover.as_mut_slice();
     let stain = layers.stain.as_mut_slice();
     for (k, top) in tops.iter().enumerate() {
+        // Frost does not settle on lava still warm from its eruption: the share of the
+        // cell that is warm lava shows none.
+        let warm = if matches!(units[k], UNIT_IO_FLOW | UNIT_PATERA_FLOOR) {
+            top.lava * (-(melt[k] as f64).max(0.0) / IO_LAVA_COOL_YR).exp()
+        } else {
+            0.0
+        };
         deep[k] = (top.lava + (1.0 - top.lava) * top.dark) as f32;
         melt[k] = top.red as f32;
         stain[k] = top.altered as f32;
-        cover[k] = top.visible_frost() as f32;
+        cover[k] = (top.visible_frost() * (1.0 - warm)) as f32;
     }
 }
 
@@ -1009,11 +1018,12 @@ pub struct IoProcess {
     rng: Rng,
     n_paterae: usize,
     n_mountains: usize,
+    /// How deep the plains are buried since their surface formed, m (F86).
+    burial_depth: f64,
     /// The terrain before the regime's features, which every step starts from.
     base: Option<LayerSet>,
     pub paterae: Vec<Patera>,
     pub mountains: Vec<Mountain>,
-    pub flows: Vec<FlowField>,
     stamper: Stamper,
 }
 
@@ -1031,10 +1041,10 @@ impl IoProcess {
             rng: Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x10_5EED_0001),
             n_paterae: graph.f64("volcanism.paterae_count").round().max(0.0) as usize,
             n_mountains: graph.f64("tectonics.mountain_count").round().max(0.0) as usize,
+            burial_depth: graph.f64("volcanism.resurfacing_rate") * IO_SURFACE_AGE_GYR * 1e3,
             base: None,
             paterae: Vec::new(),
             mountains: Vec::new(),
-            flows: Vec::new(),
             stamper: Stamper::new(&grid),
         })
     }
@@ -1043,44 +1053,235 @@ impl IoProcess {
         range.0 * (range.1 / range.0).powf(self.rng.uniform(index, draw))
     }
 
-    /// A lobe's centre line (F59): from the patera's rim at an azimuth, downslope over
-    /// the ground with the inertia of a flow and a wander, deflecting along a contour
-    /// but never turning back, stopping where a mountain stands, where it would have to
-    /// climb out of the ground it has ponded in, or at its length. Returns the lobe and
-    /// how it ended: 0 at its length, 1 at a mountain, 2 ponded.
+    /// The regime's surface afresh, as every step lays it: the plains' age and unit,
+    /// nothing on them.
+    pub fn clear_surface(layers: &mut LayerSet, t: f64) {
+        let now = (t - IO_SURFACE_AGE_GYR) as f32;
+        let ages = layers.surface_age.as_mut_slice();
+        let units = layers.unit_id.as_mut_slice();
+        let deep = layers.deep.as_mut_slice();
+        let melt = layers.melt.as_mut_slice();
+        let cover = layers.cover.as_mut_slice();
+        let stain = layers.stain.as_mut_slice();
+        for k in 0..ages.len() {
+            ages[k] = now;
+            units[k] = UNIT_PRIMORDIAL;
+            deep[k] = 0.0;
+            melt[k] = 0.0;
+            cover[k] = 0.0;
+            stain[k] = 0.0;
+        }
+    }
+
+    /// The mountains through the body's life: each of the standing count is a chain of
+    /// blocks, one raised as the last is buried, drawn from the seed alone.
+    fn raise_mountains(&mut self) {
+        for slot in 0..self.n_mountains as u64 {
+            let mut generation = 0u64;
+            let first = 5_000 + slot * 1_000;
+            let mut birth =
+                -self.log_uniform(first, 7, IO_MOUNTAIN_LIFETIME_GYR) * self.rng.uniform(first, 8);
+            while birth < self.age && generation < 900 {
+                let k = first + generation;
+                let (lo, hi) = IO_MOUNTAIN_DIAMETER;
+                let diameter = lo * (hi / lo).powf(self.rng.uniform(k, 1));
+                let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
+                let life = self.log_uniform(k, 7, IO_MOUNTAIN_LIFETIME_GYR);
+                self.mountains.push(Mountain {
+                    center: self.rng.unit_direction(k, 9),
+                    radius: 0.5 * diameter,
+                    height: h_lo * (h_hi / h_lo).powf(self.rng.uniform(k, 3)),
+                    tilt_azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(k, 4),
+                    tilt: IO_MOUNTAIN_TILT * self.rng.uniform(k, 5),
+                    aspect: 1.0 + (IO_MOUNTAIN_ASPECT - 1.0) * self.rng.uniform(k, 6),
+                    birth_gyr: birth,
+                    death_gyr: birth + life,
+                    id: k,
+                });
+                birth += life;
+                generation += 1;
+            }
+        }
+    }
+
+    /// The features alive through a step: paterae and flows are renewed at every kept
+    /// step, since the surface is younger than the step.
+    fn populate(&mut self, t1: f64, lay: bool) {
+        // The time bin the step ends in is the random index, so the same surface comes
+        // out at every quality.
+        let step = (t1 / self.age * crate::stages::LOOP_TIME_BINS as f64).round() as u64;
+        let death = t1 + self.dt.max(1e-6);
+        // Paterae for the steps whose surface is kept; their flows are the finish's
+        // (F85).
+        if !lay {
+            return;
+        }
+        for k in 0..self.n_paterae as u64 {
+            let idx = 1_000_000 + step * 100_003 + k;
+            // Low latitudes favoured: draw until the latitude weight accepts.
+            let mut center = self.rng.unit_direction(idx, 1);
+            for attempt in 0..12u64 {
+                let lat = center[2].asin();
+                let w = IO_PATERA_POLAR_WEIGHT + (1.0 - IO_PATERA_POLAR_WEIGHT) * lat.cos().powi(2);
+                if self.rng.uniform(idx ^ crate::rng::ACCEPT_STREAM, attempt) < w {
+                    break;
+                }
+                center = self
+                    .rng
+                    .unit_direction(idx ^ crate::rng::ACCEPT_STREAM, 100 + 2 * attempt);
+            }
+            let (lo, hi) = IO_PATERA_DIAMETER;
+            let diameter = lo * (hi / lo).powf(self.rng.uniform(idx, 40).powf(IO_PATERA_SIZE_SKEW));
+            let radius = 0.5 * diameter;
+            let pele = self.rng.uniform(idx, 43) < IO_PELE_CLASS_FRACTION;
+            let active = self.rng.uniform(idx, 42) < IO_PATERA_ACTIVE_FRACTION;
+            let floor_age_yr = if active {
+                0.0
+            } else {
+                self.log_uniform(idx, 44, IO_FLOOR_AGE_YR)
+            };
+            let (s_lo, s_hi) = IO_PATERA_SIDES;
+            self.paterae.push(Patera {
+                center,
+                radius,
+                depth: IO_PATERA_DEPTH * (0.5 + self.rng.uniform(idx, 41)),
+                active,
+                floor_age_yr,
+                pele,
+                sides: s_lo + (self.rng.bits(idx, 45) % (s_hi - s_lo + 1) as u64) as u32,
+                rotation: 2.0 * std::f64::consts::PI * self.rng.uniform(idx, 46),
+                birth_gyr: t1,
+                death_gyr: death,
+                id: idx,
+            });
+        }
+    }
+
+    /// The surface at the end of a step: the base terrain, the mountains standing and
+    /// the paterae, on the coarse grid. Only the steps whose surface the
+    /// loop keeps as a keyframe are laid; the rest keep the timeline going. The flows
+    /// and the plumes' fallout are the finish's (F84, F85): they bear no relief the loop
+    /// needs, and the finish lays them at its own resolution.
+    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, lay: bool) {
+        match &self.base {
+            None => {
+                self.dt = t1 - t0;
+                // The regime buries its plains as fast as it renews them (F86).
+                let cell = self.grid.delta() * self.body_radius;
+                let buried = bury(&layers.bedrock, cell, self.body_radius, self.burial_depth);
+                layers.bedrock.as_mut_slice().copy_from_slice(&buried);
+                self.base = Some(layers.clone());
+            }
+            Some(base) => {
+                if lay {
+                    *layers = base.clone();
+                }
+            }
+        }
+        if self.mountains.is_empty() {
+            self.raise_mountains();
+        }
+        self.populate(t1, lay);
+        if !lay {
+            return;
+        }
+        let grid = self.grid;
+        let body_radius = self.body_radius;
+        let cell = grid.delta() * body_radius;
+        Self::clear_surface(layers, t1);
+        for m in self.mountains.iter().filter(|m| m.alive(t1)) {
+            let noise = GradientNoise::new(m.id ^ 0x0B10_C000);
+            self.stamper.gather(
+                &grid,
+                body_radius,
+                m.center,
+                m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE),
+            );
+            let bedrock = layers.bedrock.as_mut_slice();
+            let units = layers.unit_id.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
+            for &(idx, r, phi) in &self.stamper.footprint {
+                let h = block_profile(r, phi, m, &noise);
+                if h > 0.0 {
+                    bedrock[idx] += h as f32;
+                    units[idx] = UNIT_MOUNTAIN;
+                    cover[idx] = 0.0;
+                }
+            }
+        }
+        for p in self.paterae.iter().filter(|p| p.alive(t1)) {
+            let noise = GradientNoise::new(p.id ^ 0x9A7E_2A00);
+            let wall = (IO_PATERA_WALL_FRACTION * p.radius).max(cell);
+            self.stamper.gather(
+                &grid,
+                body_radius,
+                p.center,
+                p.radius * (1.0 + IO_PATERA_OUTLINE) + 3.0 * wall,
+            );
+            let bedrock = layers.bedrock.as_mut_slice();
+            let units = layers.unit_id.as_mut_slice();
+            let deep = layers.deep.as_mut_slice();
+            let melt = layers.melt.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
+            for &(idx, r, phi) in &self.stamper.footprint {
+                let edge = patera_radius(phi, p, &noise);
+                bedrock[idx] -= pit_profile(r, edge, p.depth, wall) as f32;
+                if r < edge {
+                    units[idx] = UNIT_PATERA_FLOOR;
+                    deep[idx] = 1.0;
+                    melt[idx] = p.floor_age_yr as f32;
+                    cover[idx] = 1.0;
+                }
+            }
+        }
+    }
+}
+
+/// Grows Io's flow fields over the ground (F85): the paterae's own random draws, the
+/// ground they run over and the mountains that stop them.
+pub struct FlowGrowth {
+    grid: CubeSphere,
+    body_radius: f64,
+    rng: Rng,
+}
+
+impl FlowGrowth {
+    fn log_uniform(&self, index: u64, draw: u64, range: (f64, f64)) -> f64 {
+        range.0 * (range.1 / range.0).powf(self.rng.uniform(index, draw))
+    }
+
+    /// A flow's path (F59): from a point along a heading, downslope over the ground with
+    /// the inertia of a flow and a wander, deflecting along a contour but never turning
+    /// back, stopping where a mountain stands, where it would have to climb out of the
+    /// ground it has ponded in, or at its length; a lobe about it this half wide,
+    /// widening by `toe` from its source to its end. Returns the lobe and how it ended: 0
+    /// at its length, 1 at a mountain, 2 ponded.
     #[allow(clippy::too_many_arguments)]
-    fn trace_lobe(
+    fn trace_path(
         &self,
         idx: u64,
         draw: u64,
-        center: [f64; 3],
-        rim: f64,
-        reach: f64,
+        start: [f64; 3],
+        heading: [f64; 3],
+        length: f64,
+        half_width: f64,
+        toe: f64,
         ground: &PaddedField,
-        standing: &[(Mountain, GradientNoise)],
+        standing: &[&(Mountain, GradientNoise)],
         age_yr: f64,
     ) -> (Lobe, usize) {
         let r = self.body_radius;
         let grid = &self.grid;
-        let (east, north) = local_basis(center);
-        let a0 = 2.0 * std::f64::consts::PI * self.rng.uniform(idx, draw);
-        let mut p = crate::geom::offset(center, east, north, rim / r, a0);
-        let outward = |p: [f64; 3]| {
-            let c = dot(center, p);
-            normalize([
-                c * p[0] - center[0],
-                c * p[1] - center[1],
-                c * p[2] - center[2],
-            ])
-        };
-        let mut h = outward(p);
-        let length = reach * (0.3 + 0.7 * self.rng.uniform(idx, draw + 2));
+        let mut p = start;
+        let radial = dot(heading, p);
+        let mut h = normalize([
+            heading[0] - radial * p[0],
+            heading[1] - radial * p[1],
+            heading[2] - radial * p[2],
+        ]);
         let spacing = (length / 64.0).max(IO_FLOW_POINT_SPACING);
         let steps = (length / spacing).ceil() as usize;
-        let (w_lo, w_hi) = IO_FLOW_WIDTH_SHARE;
-        let half_width = (reach * (w_lo + (w_hi - w_lo) * self.rng.uniform(idx, draw + 1)))
-            .max(IO_FLOW_MIN_HALF_WIDTH);
-        let noise = GradientNoise::new(idx ^ (draw << 40) ^ 0x0F10_7ACE);
+        let noise = GradientNoise::new(crate::rng::hash_words(&[idx, draw, 0x0F10_7ACE]));
         let delta = (0.5 * spacing / r).max(1e-7);
         let mut points = vec![p];
         let mut lowest = sample_bilinear(grid, ground, p) as f64;
@@ -1111,7 +1312,11 @@ impl IoProcess {
             } else {
                 h
             };
-            let follow = IO_FLOW_SLOPE_FOLLOW * (grad / IO_FLOW_SLOPE_SCALE).tanh();
+            // The fall line turns the front at a rate per distance, over the steering
+            // length at full slope.
+            let follow = IO_FLOW_SLOPE_FOLLOW
+                * (grad / IO_FLOW_SLOPE_SCALE).tanh()
+                * (spacing / IO_FLOW_STEER_LENGTH).min(1.0);
             // The fall line steers the flow sideways and speeds it on, but never turns it
             // back: a front deflects along a contour and ponds rather than reverse.
             let along = dot(down, h).max(0.0);
@@ -1193,7 +1398,7 @@ impl IoProcess {
                             0.5,
                         )
                         / 0.6;
-                (wander.max(0.4) * (1.0 - IO_FLOW_TOE + IO_FLOW_TOE * s)) as f32
+                (wander.max(0.4) * (1.0 - toe + toe * s)) as f32
             })
             .collect();
         (
@@ -1208,253 +1413,322 @@ impl IoProcess {
         )
     }
 
-    /// The regime's surface afresh, as every step lays it: the plains' age and unit,
-    /// nothing on them.
-    pub fn clear_surface(layers: &mut LayerSet, t: f64) {
-        let now = (t - IO_SURFACE_AGE_GYR) as f32;
-        let ages = layers.surface_age.as_mut_slice();
-        let units = layers.unit_id.as_mut_slice();
-        let deep = layers.deep.as_mut_slice();
-        let melt = layers.melt.as_mut_slice();
-        let cover = layers.cover.as_mut_slice();
-        let stain = layers.stain.as_mut_slice();
-        for k in 0..ages.len() {
-            ages[k] = now;
-            units[k] = UNIT_PRIMORDIAL;
-            deep[k] = 0.0;
-            melt[k] = 0.0;
-            cover[k] = 0.0;
-            stain[k] = 0.0;
-        }
-    }
-
-    /// The mountains through the body's life: each of the standing count is a chain of
-    /// blocks, one raised as the last is buried, drawn from the seed alone.
-    fn raise_mountains(&mut self) {
-        for slot in 0..self.n_mountains as u64 {
-            let mut generation = 0u64;
-            let first = 5_000 + slot * 1_000;
-            let mut birth =
-                -self.log_uniform(first, 7, IO_MOUNTAIN_LIFETIME_GYR) * self.rng.uniform(first, 8);
-            while birth < self.age && generation < 900 {
-                let k = first + generation;
-                let (lo, hi) = IO_MOUNTAIN_DIAMETER;
-                let diameter = lo * (hi / lo).powf(self.rng.uniform(k, 1));
-                let (h_lo, h_hi) = IO_MOUNTAIN_HEIGHT;
-                let life = self.log_uniform(k, 7, IO_MOUNTAIN_LIFETIME_GYR);
-                self.mountains.push(Mountain {
-                    center: self.rng.unit_direction(k, 9),
-                    radius: 0.5 * diameter,
-                    height: h_lo * (h_hi / h_lo).powf(self.rng.uniform(k, 3)),
-                    tilt_azimuth: 2.0 * std::f64::consts::PI * self.rng.uniform(k, 4),
-                    tilt: IO_MOUNTAIN_TILT * self.rng.uniform(k, 5),
-                    aspect: 1.0 + (IO_MOUNTAIN_ASPECT - 1.0) * self.rng.uniform(k, 6),
-                    birth_gyr: birth,
-                    death_gyr: birth + life,
-                    id: k,
-                });
-                birth += life;
-                generation += 1;
-            }
-        }
-    }
-
-    /// The features alive through a step: paterae and flows are renewed at every kept
-    /// step, since the surface is younger than the step.
-    fn populate(&mut self, t1: f64, lay: bool, bedrock: &Field<f32>) {
-        // The time bin the step ends in is the random index, so the same surface comes
-        // out at every quality.
-        let step = (t1 / self.age * crate::stages::LOOP_TIME_BINS as f64).round() as u64;
-        let death = t1 + self.dt.max(1e-6);
-        // Paterae, with their flows, for the steps whose surface is kept.
-        if !lay {
-            return;
-        }
-        // The ground the flows run over, the regional slope of the base, and the
-        // mountains that stop them.
-        let cell = self.grid.delta() * self.body_radius;
-        let smoothed = crate::stages::relaxation::low_pass(bedrock, cell, IO_FLOW_GROUND_SMOOTH);
-        let ground = PaddedField::new(&self.grid, &smoothed);
-        let mut ends = [0usize; 3];
-        let mut lobe_lengths = (0usize, 0.0f64);
-        let standing: Vec<(Mountain, GradientNoise)> = self
-            .mountains
+    /// A compound flow field (F85): a trunk of insulated paths from the patera's rim on
+    /// its downslope side, with branches, and breakouts on top of the older flows along
+    /// them, more towards their ends and at their fronts, spreading forward and sideways
+    /// and downslope, until they cover the field's share of its reach squared the
+    /// overlap's times over. The field grows over its span: each lobe is laid at its own
+    /// time within it, the paths first.
+    #[allow(clippy::too_many_arguments)]
+    fn grow_field(
+        &self,
+        field: u64,
+        center: [f64; 3],
+        radius: f64,
+        reach: f64,
+        erupting: bool,
+        current: bool,
+        ground: &PaddedField,
+        standing: &[(Mountain, GradientNoise)],
+    ) -> Vec<(Lobe, usize)> {
+        let r = self.body_radius;
+        let rng = &self.rng;
+        let tau = std::f64::consts::TAU;
+        // When the field last grew, and over how long.
+        let young = if erupting {
+            self.log_uniform(field, 1, IO_FLOW_ACTIVE_YR)
+        } else if current {
+            self.log_uniform(field, 1, IO_FLOW_AGE_YR)
+        } else {
+            self.log_uniform(field, 1, (IO_FLOW_EARLIER_YR, IO_FLOW_AGE_YR.1))
+        };
+        let span = self.log_uniform(field, 2, IO_FLOW_SPAN_YR);
+        // The mountains within its reach.
+        let near: Vec<&(Mountain, GradientNoise)> = standing
             .iter()
-            .filter(|m| m.alive(t1))
-            .map(|m| (m.clone(), GradientNoise::new(m.id ^ 0x0B10_C000)))
+            .filter(|(m, _)| {
+                angle_between(m.center, center) * r
+                    < 1.5 * reach
+                        + radius
+                        + m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE)
+            })
             .collect();
-        for k in 0..self.n_paterae as u64 {
-            let idx = 1_000_000 + step * 100_003 + k;
-            // Low latitudes favoured: draw until the latitude weight accepts.
-            let mut center = self.rng.unit_direction(idx, 1);
-            for attempt in 0..12u64 {
-                let lat = center[2].asin();
-                let w = IO_PATERA_POLAR_WEIGHT + (1.0 - IO_PATERA_POLAR_WEIGHT) * lat.cos().powi(2);
-                if self.rng.uniform(idx ^ crate::rng::ACCEPT_STREAM, attempt) < w {
+        // The trunk leaves the rim where the ground falls away.
+        let (east, north) = local_basis(center);
+        let delta = 0.5 * radius / r;
+        let at = |u: f64, v: f64| {
+            normalize([
+                center[0] + delta * (u * east[0] + v * north[0]),
+                center[1] + delta * (u * east[1] + v * north[1]),
+                center[2] + delta * (u * east[2] + v * north[2]),
+            ])
+        };
+        let gx = (sample_bilinear(&self.grid, ground, at(1.0, 0.0))
+            - sample_bilinear(&self.grid, ground, at(-1.0, 0.0))) as f64;
+        let gy = (sample_bilinear(&self.grid, ground, at(0.0, 1.0))
+            - sample_bilinear(&self.grid, ground, at(0.0, -1.0))) as f64;
+        let downhill = if gx.hypot(gy) > 1e-9 {
+            (-gy).atan2(-gx)
+        } else {
+            tau * rng.uniform(field, 3)
+        };
+        let azimuth = downhill + IO_FLOW_SOURCE_SPREAD * rng.normal(field, 4);
+        let rim = radius * (1.0 + IO_PATERA_OUTLINE);
+        let start = crate::geom::offset(center, east, north, rim / r, azimuth);
+        let outward = {
+            let c = dot(center, start);
+            normalize([
+                c * start[0] - center[0],
+                c * start[1] - center[1],
+                c * start[2] - center[2],
+            ])
+        };
+        let trunk_hw = 0.5 * IO_FLOW_TRUNK_WIDTH;
+        let (t_lo, t_hi) = IO_FLOW_TRUNK_SHARE;
+        let trunk_length = reach * (t_lo + (t_hi - t_lo) * rng.uniform(field, 6));
+        let oldest = young + span;
+        let mut lobes = vec![self.trace_path(
+            field,
+            7,
+            start,
+            outward,
+            trunk_length,
+            trunk_hw,
+            0.0,
+            ground,
+            &near,
+            oldest,
+        )];
+        // Branches from the trunk.
+        let (b_lo, b_hi) = IO_FLOW_BRANCHES;
+        let branches = b_lo + (rng.bits(field, 8) % (b_hi - b_lo + 1) as u64) as u32;
+        for b in 0..branches as u64 {
+            let trunk = &lobes[0].0;
+            if trunk.points.len() < 4 {
+                break;
+            }
+            let s = 0.25 + 0.55 * rng.uniform(field, 20 + 8 * b);
+            let k = ((trunk.points.len() - 1) as f64 * s) as usize;
+            let (p, tangent) = path_point(&trunk.points, k);
+            let (a_lo, a_hi) = IO_FLOW_BRANCH_ANGLE;
+            let side = if rng.uniform(field, 21 + 8 * b) < 0.5 {
+                -1.0
+            } else {
+                1.0
+            };
+            let turn = side * (a_lo + (a_hi - a_lo) * rng.uniform(field, 22 + 8 * b));
+            let heading = rotate_about(p, tangent, turn);
+            let remaining = (trunk.points.len() - 1 - k) as f64 * trunk.spacing;
+            let length = remaining * (0.4 + 0.5 * rng.uniform(field, 23 + 8 * b));
+            if length < 2.0 * IO_FLOW_POINT_SPACING {
+                continue;
+            }
+            let age = oldest - span * 0.2 * rng.uniform(field, 24 + 8 * b);
+            lobes.push(self.trace_path(
+                field,
+                25 + 8 * b,
+                p,
+                heading,
+                length,
+                trunk_hw,
+                0.0,
+                ground,
+                &near,
+                age,
+            ));
+        }
+        // Breakouts on the lobes already laid until they cover the field.
+        let area = IO_FLOW_FIELD_AREA * reach * reach * IO_FLOW_OVERLAP;
+        let mut covered = 0.0;
+        let mut j = 0u64;
+        while covered < area && (j as usize) < IO_FLOW_BREAKOUTS_MAX {
+            let base = 1_000 + 16 * j;
+            j += 1;
+            // A lobe already laid, the paths or an earlier breakout, by its length, and a
+            // place on it: its front, or along it, more towards its end.
+            let lengths: Vec<f64> = lobes
+                .iter()
+                .map(|(l, _)| (l.points.len().max(1) - 1) as f64 * l.spacing)
+                .collect();
+            let total: f64 = lengths.iter().sum();
+            if total <= 0.0 {
+                break;
+            }
+            let mut pick = rng.uniform(field, base) * total;
+            let mut which = 0;
+            for (n, len) in lengths.iter().enumerate() {
+                which = n;
+                if pick < *len {
                     break;
                 }
-                center = self
-                    .rng
-                    .unit_direction(idx ^ crate::rng::ACCEPT_STREAM, 100 + 2 * attempt);
+                pick -= len;
             }
-            let (lo, hi) = IO_PATERA_DIAMETER;
-            let diameter = lo * (hi / lo).powf(self.rng.uniform(idx, 40).powf(IO_PATERA_SIZE_SKEW));
-            let radius = 0.5 * diameter;
-            let pele = self.rng.uniform(idx, 43) < IO_PELE_CLASS_FRACTION;
-            let active = self.rng.uniform(idx, 42) < IO_PATERA_ACTIVE_FRACTION;
-            let floor_age_yr = if active {
-                0.0
+            let path = &lobes[which].0;
+            if path.points.len() < 2 {
+                continue;
+            }
+            let s = if rng.uniform(field, base + 1) < IO_FLOW_FRONT_SHARE {
+                1.0
             } else {
-                self.log_uniform(idx, 44, IO_FLOOR_AGE_YR)
+                rng.uniform(field, base + 2).sqrt()
             };
-            let (s_lo, s_hi) = IO_PATERA_SIDES;
-            self.paterae.push(Patera {
-                center,
-                radius,
-                depth: IO_PATERA_DEPTH * (0.5 + self.rng.uniform(idx, 41)),
-                active,
-                floor_age_yr,
-                pele,
-                sides: s_lo + (self.rng.bits(idx, 45) % (s_hi - s_lo + 1) as u64) as u32,
-                rotation: 2.0 * std::f64::consts::PI * self.rng.uniform(idx, 46),
-                birth_gyr: t1,
-                death_gyr: death,
-                id: idx,
-            });
-            // Flow fields: the active paterae's and a few quiet ones' now, and every
-            // patera's older generations, lobes of all ages coated by what has fallen on
-            // them since (F56, F84).
+            let k = ((path.points.len() - 1) as f64 * s).round() as usize;
+            let (p, tangent) = path_point(&path.points, k);
+            let heading = rotate_about(
+                p,
+                tangent,
+                IO_FLOW_BREAKOUT_SPREAD * rng.normal(field, base + 3),
+            );
+            let length = reach * self.log_uniform(field, base + 5, IO_FLOW_BREAKOUT_LENGTH);
+            let (w_lo, w_hi) = IO_FLOW_BREAKOUT_ASPECT;
+            let half_width = 0.5 * length * (w_lo + (w_hi - w_lo) * rng.uniform(field, base + 6));
+            let age = young + span * rng.uniform(field, base + 7);
+            let (lobe, end) = self.trace_path(
+                field,
+                base + 8,
+                p,
+                heading,
+                length,
+                half_width,
+                IO_FLOW_TOE,
+                ground,
+                &near,
+                age,
+            );
+            covered += (lobe.points.len().max(1) - 1) as f64
+                * lobe.spacing
+                * 2.0
+                * half_width
+                * (1.0 - 0.5 * IO_FLOW_TOE);
+            lobes.push((lobe, end));
+        }
+        lobes
+    }
+}
+
+/// The flow fields of the paterae alive at an epoch (F85), traced at the finish's
+/// resolution over its ground, the base smoothed over the regional slope's length: the
+/// active paterae's and a few quiet ones' now, and every patera's older generations,
+/// each a compound field of breakouts coated by what has fallen on it since (F56, F84).
+pub fn flow_fields(
+    graph: &ParamGraph,
+    paterae: &[Patera],
+    mountains: &[Mountain],
+    bedrock: &Field<f32>,
+) -> Vec<FlowField> {
+    let grid = bedrock.grid();
+    let body_radius = graph.f64("body.radius");
+    let growth = FlowGrowth {
+        grid,
+        body_radius,
+        rng: Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x10_5EED_0001),
+    };
+    let cell = grid.delta() * body_radius;
+    let smoothed = crate::stages::relaxation::low_pass(bedrock, cell, IO_FLOW_GROUND_SMOOTH);
+    let ground = PaddedField::new(&grid, &smoothed);
+    let standing: Vec<(Mountain, GradientNoise)> = mountains
+        .iter()
+        .map(|m| (m.clone(), GradientNoise::new(m.id ^ 0x0B10_C000)))
+        .collect();
+    let fields: Vec<Vec<FlowField>> = paterae
+        .par_iter()
+        .map(|p| {
+            let idx = p.id;
+            let mut out = Vec::new();
             for g in 0..IO_FLOW_GENERATIONS {
                 let current = g == 0;
-                if current && !(active || self.rng.uniform(idx, 47) < IO_QUIET_FLOW_FRACTION) {
+                if current && !(p.active || growth.rng.uniform(idx, 47) < IO_QUIET_FLOW_FRACTION) {
                     continue;
                 }
-                let base = 60 + 40 * g as u64;
-                let (n_lo, n_hi) = IO_FLOW_LOBES;
-                let n =
-                    n_lo + (self.rng.bits(idx, 48 + g as u64) % (n_hi - n_lo + 1) as u64) as u32;
-                let (a_lo, a_hi) = IO_FLOW_AGE_YR;
-                let age_range = if current {
-                    (a_lo, a_hi)
-                } else {
-                    (IO_FLOW_EARLIER_YR, a_hi)
-                };
-                let reach = self
+                let reach = growth
                     .log_uniform(idx, 49 + 90 * g as u64, IO_FLOW_REACH)
-                    .max(2.0 * radius);
-                let rim = radius * (1.0 + IO_PATERA_OUTLINE);
-                let lobes = (0..n)
-                    .map(|j| {
-                        let d = base + 4 * j as u64;
-                        let age_yr = self.log_uniform(idx, d + 3, age_range);
-                        let (lobe, end) =
-                            self.trace_lobe(idx, d, center, rim, reach, &ground, &standing, age_yr);
-                        ends[end] += 1;
-                        lobe_lengths.0 += 1;
-                        lobe_lengths.1 += (lobe.points.len() - 1) as f64 * lobe.spacing;
-                        lobe
-                    })
-                    .collect();
-                self.flows.push(FlowField {
-                    center,
+                    .max(2.0 * p.radius);
+                let field = idx ^ ((g as u64 + 1) << 48);
+                let lobes = growth.grow_field(
+                    field,
+                    p.center,
+                    p.radius,
                     reach,
-                    lobes,
-                    birth_gyr: t1,
-                    death_gyr: death,
+                    p.active && current,
+                    current,
+                    &ground,
+                    &standing,
+                );
+                out.push(FlowField {
+                    center: p.center,
+                    reach,
+                    lobes: lobes.into_iter().map(|(l, _)| l).collect(),
+                    birth_gyr: p.birth_gyr,
+                    death_gyr: p.death_gyr,
                     id: idx + 10_000_000 + 30_000_000 * g as u64,
                 });
             }
-        }
-        if std::env::var_os("EXOGEN_DEBUG").is_some() && lobe_lengths.0 > 0 {
-            eprintln!(
-                "io flows at {t1:.3} Gyr: {} lobes, mean length {:.0} km; ended at their length {}, at a mountain {}, ponded {}",
-                lobe_lengths.0,
-                lobe_lengths.1 / lobe_lengths.0 as f64 / 1e3,
-                ends[0],
-                ends[1],
-                ends[2]
-            );
-        }
+            out
+        })
+        .collect();
+    let fields: Vec<FlowField> = fields.into_iter().flatten().collect();
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let lobes: usize = fields.iter().map(|f| f.lobes.len()).sum();
+        eprintln!("io flows: {} fields, {lobes} lobes", fields.len());
     }
+    fields
+}
 
-    /// The surface at the end of a step: the base terrain, the mountains standing, the
-    /// paterae and the flows, all on the coarse grid. Only the steps whose surface the
-    /// loop keeps as a keyframe are laid; the rest keep the timeline going. The plumes'
-    /// fallout is the finish's (F84), since the loop's surfaces are not lit.
-    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, lay: bool) {
-        match &self.base {
-            None => {
-                self.dt = t1 - t0;
-                self.base = Some(layers.clone());
-            }
-            Some(base) => {
-                if lay {
-                    *layers = base.clone();
-                }
-            }
+/// A point of a path and its heading there.
+fn path_point(points: &[[f64; 3]], k: usize) -> ([f64; 3], [f64; 3]) {
+    let k = k.min(points.len() - 1);
+    let (a, b) = if k + 1 < points.len() {
+        (points[k], points[k + 1])
+    } else {
+        (points[k.saturating_sub(1)], points[k])
+    };
+    let p = points[k];
+    let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let radial = dot(d, p);
+    (
+        p,
+        normalize([
+            d[0] - radial * p[0],
+            d[1] - radial * p[1],
+            d[2] - radial * p[2],
+        ]),
+    )
+}
+
+/// A heading at a point turned by an angle about the vertical there.
+fn rotate_about(p: [f64; 3], heading: [f64; 3], angle: f64) -> [f64; 3] {
+    let side = normalize(cross(p, heading));
+    let (s, c) = angle.sin_cos();
+    normalize([
+        heading[0] * c + side[0] * s,
+        heading[1] * c + side[1] * s,
+        heading[2] * c + side[2] * s,
+    ])
+}
+
+/// The plains buried (F86): the relief of the base at every scale of its Gaussian
+/// pyramid, each band shrunk by the burial depth, m, so that only what stands higher
+/// than the burial shows; the broadest level whole.
+pub fn bury(bedrock: &Field<f32>, cell: f64, body_radius: f64, depth: f64) -> Vec<f32> {
+    let levels = crate::stages::relaxation::low_passes(
+        bedrock,
+        cell,
+        0.5 * std::f64::consts::PI * body_radius,
+    );
+    let mut finer: Vec<f32> = bedrock.as_slice().to_vec();
+    let mut out = vec![0.0f32; finer.len()];
+    let depth = depth as f32;
+    for (_, low) in &levels {
+        for k in 0..out.len() {
+            let band = finer[k] - low[k];
+            out[k] += band.signum() * (band.abs() - depth).max(0.0);
         }
-        if self.mountains.is_empty() {
-            self.raise_mountains();
-        }
-        self.populate(t1, lay, &layers.bedrock);
-        if !lay {
-            return;
-        }
-        let grid = self.grid;
-        let body_radius = self.body_radius;
-        let cell = grid.delta() * body_radius;
-        Self::clear_surface(layers, t1);
-        for m in self.mountains.iter().filter(|m| m.alive(t1)) {
-            let noise = GradientNoise::new(m.id ^ 0x0B10_C000);
-            self.stamper.gather(
-                &grid,
-                body_radius,
-                m.center,
-                m.radius * m.aspect.sqrt() * (1.0 + IO_MOUNTAIN_OUTLINE),
-            );
-            let bedrock = layers.bedrock.as_mut_slice();
-            let units = layers.unit_id.as_mut_slice();
-            let cover = layers.cover.as_mut_slice();
-            for &(idx, r, phi) in &self.stamper.footprint {
-                let h = block_profile(r, phi, m, &noise);
-                if h > 0.0 {
-                    bedrock[idx] += h as f32;
-                    units[idx] = UNIT_MOUNTAIN;
-                    cover[idx] = 0.0;
-                }
-            }
-        }
-        for p in self.paterae.iter().filter(|p| p.alive(t1)) {
-            let noise = GradientNoise::new(p.id ^ 0x9A7E_2A00);
-            let wall = (IO_PATERA_WALL_FRACTION * p.radius).max(cell);
-            self.stamper.gather(
-                &grid,
-                body_radius,
-                p.center,
-                p.radius * (1.0 + IO_PATERA_OUTLINE) + 3.0 * wall,
-            );
-            let bedrock = layers.bedrock.as_mut_slice();
-            let units = layers.unit_id.as_mut_slice();
-            let deep = layers.deep.as_mut_slice();
-            let melt = layers.melt.as_mut_slice();
-            let cover = layers.cover.as_mut_slice();
-            for &(idx, r, phi) in &self.stamper.footprint {
-                let edge = patera_radius(phi, p, &noise);
-                bedrock[idx] -= pit_profile(r, edge, p.depth, wall) as f32;
-                if r < edge {
-                    units[idx] = UNIT_PATERA_FLOOR;
-                    deep[idx] = 1.0;
-                    melt[idx] = p.floor_age_yr as f32;
-                    cover[idx] = 1.0;
-                }
-            }
-        }
-        let flows: Vec<FlowField> = self.flows.iter().filter(|f| f.alive(t1)).cloned().collect();
-        for f in &flows {
-            let out = flow_compute(layers, &grid, body_radius, f, &mut self.stamper);
-            out.apply(layers);
-        }
+        finer.copy_from_slice(low);
     }
+    for k in 0..out.len() {
+        out[k] += finer[k];
+    }
+    out
 }
 
 /// Whether the body is in the Io regime: rock, heated past the threshold.
@@ -1800,7 +2074,7 @@ mod tests {
         };
         lava.age(1.0, red_fall, warm);
         assert!(lava.lava > 0.8, "{}", lava.lava);
-        lava.age(50.0, red_fall, warm);
+        lava.age(500.0, red_fall, warm);
         assert!(lava.lava < 0.01, "{}", lava.lava);
         // A fall of nothing but rounding leaves the cover over the frost as it was.
         let mut covered = Top {
@@ -1845,6 +2119,80 @@ mod tests {
         assert!(close(one.red, many.red) && close(one.altered, many.altered));
         assert!(close(one.frost[1], many.frost[1]) && close(one.lag, many.lag));
         assert!(close(one.lava, many.lava) && close(one.dark, many.dark));
+    }
+
+    /// A compound flow field (F85) fans out from its trunk: its breakouts spread sideways
+    /// over a good share of its reach, and every lobe is laid within the field's span.
+    #[test]
+    fn a_compound_field_fans_out() {
+        let grid = CubeSphere::new(128);
+        let r = 1.8216e6;
+        let process = FlowGrowth {
+            grid,
+            body_radius: r,
+            rng: Rng::new(11),
+        };
+        let flat = vec![0.0f32; grid.cell_count()];
+        let ground = PaddedField::new(&grid, &flat);
+        let center = normalize([1.0, 0.2, 0.1]);
+        let reach = 150e3;
+        let lobes = process.grow_field(77, center, 10e3, reach, true, true, &ground, &[]);
+        assert!(lobes.len() > 20, "{} lobes", lobes.len());
+        // Across the trunk's great circle, from the vent to its end.
+        let end = *lobes[0].0.points.last().unwrap();
+        let pole = normalize(cross(center, end));
+        let mut across: Vec<f64> = lobes
+            .iter()
+            .flat_map(|(l, _)| l.points.iter().map(|p| dot(*p, pole).abs().asin() * r))
+            .collect();
+        across.sort_by(f64::total_cmp);
+        let spread = across[(across.len() as f64 * 0.9) as usize];
+        assert!(spread > 0.15 * reach, "spread {spread}");
+        let span = IO_FLOW_ACTIVE_YR.1 + IO_FLOW_SPAN_YR.1;
+        for (l, _) in &lobes {
+            assert!(
+                l.age_yr >= IO_FLOW_ACTIVE_YR.0 && l.age_yr <= span,
+                "{}",
+                l.age_yr
+            );
+        }
+    }
+
+    /// The plains buried (F86): relief lower than the burial depth goes at every scale,
+    /// while the body's broadest undulation stands.
+    #[test]
+    fn burial_fills_the_small_relief_and_keeps_the_broad() {
+        let grid = CubeSphere::new(64);
+        let r = 1.8216e6;
+        let noise = GradientNoise::new(5);
+        let relief = Field::from_fn(grid, |_, d| {
+            (3000.0 * d[2] + 150.0 * noise.sample([d[0] * 30.0, d[1] * 30.0, d[2] * 30.0])) as f32
+        });
+        let buried = bury(&relief, grid.delta() * r, r, 1000.0);
+        let roughness = |h: &[f32]| {
+            let mut sum = 0.0;
+            for k in 0..h.len() {
+                let n = grid.index(grid.neighbor(grid.cell(k), 1, 0));
+                sum += (h[k] - h[n]).abs() as f64;
+            }
+            sum / h.len() as f64
+        };
+        let before = roughness(relief.as_slice());
+        let after = roughness(&buried);
+        assert!(after < 0.3 * before, "{after} vs {before}");
+        let (mut north, mut south, mut n_count, mut s_count) = (0.0, 0.0, 0.0, 0.0);
+        for (k, h) in buried.iter().enumerate() {
+            let z = grid.center(grid.cell(k))[2];
+            if z > 0.7 {
+                north += *h as f64;
+                n_count += 1.0;
+            } else if z < -0.7 {
+                south += *h as f64;
+                s_count += 1.0;
+            }
+        }
+        let broad = north / n_count - south / s_count;
+        assert!(broad > 2000.0, "{broad}");
     }
 
     /// The history of a patera's plumes (F84): an active Pele-class patera with a plume

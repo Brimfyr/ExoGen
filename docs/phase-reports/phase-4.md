@@ -513,3 +513,34 @@ What they still do not show:
 - **Stated choices:** the eruptions' durations and scatter, the deposit's opacity and profile, the background fallout, the lava's roughness, the alteration's time and the halos'.
 
 Tests 153 (one ignored). Two are new: the top layer ages and is buried (red sulfur stays red while it falls and reverts within a few years; thick frost outlasts thin and the cold keeps it longer; lava hides under its coat; a rate of mere rounding leaves the cover as it was; the closed form agrees with small steps); and plumes erupt at their class's duty. Clippy is clean and validate passes its 117 checks.
+
+## The twenty-seventh milestone: Io's flow fields and smooth plains
+
+The user on the twenty-sixth: "Good work. I imagine the flow fields will drastically upgrade Io's appearance. ... Looking at Io's real map, the plains seem exceptionally smooth, with mottled colour variation at a small scale and a global, rather noisy noise field. Will this detail also come with future processes? If you are happy, move on to the flows work."
+
+Io's fields were six to fourteen lobes radiating from a patera at random azimuths: worms of one width. Io's own are compound. Its long-lived eruptions build their fields over years to decades from small breakouts on top of older flows, fed through insulated paths tens to hundreds of kilometres long (Keszthelyi et al. 2001). Fields are dark when fresh, grey when old, often bordered by white frost (Williams et al. 2011), and the largest are over 300 km long.
+
+- **F85, the compound field.** A trunk leaves the patera on its downslope side; branches leave the trunk; breakouts leave the trunk, the branches and each other, more towards their ends and at their fronts, each laid at its own time within the field's span of 3 to 100 years, until they cover half the field's reach squared twice over. An active field grows at about 1,500 km² a year, as Amirani's new flows covered 620 km² in five months. The fields are grown in the finish from the paterae alive at the epoch; the loop no longer traces them, and Io's loop takes 3 seconds instead of 142.
+- **F86, the buried plains.** The plains carried the base terrain's bumps, slopes of 2.5 degrees at 3 km. The regime renews its surface at a centimetre a year, so relief lower than the burial since the surface formed, 1.1 km, is filled at every scale of the base's pyramid, and only the broadest undulations stand. The plains are flat, as Io's are, under mountains, paterae and flows.
+
+It took seven renders:
+
+- **Streaks.** The first fields were narrow streaks, neighbours parallel: the fall line steered a front per step, so a short lobe swung onto the regional slope within a few steps, and on the buried plains that slope is coherent over continents. It now steers per distance, over 20 km at full slope, and breakouts leave earlier breakouts too, so a field fans out.
+- **Invisible fields.** A field's lobes share its span, so most fields were wholly old and coated over. Rough lava now hides only under 300 optical depths of fallout, about a centimetre of fines filling its hollows, so old fields stay grey, as the map's undivided flows do.
+- **White fields.** Young fields came out white. Probes found two causes. A halo landed on cells partly covered by young lava, and one top layer per cell spread that frost over the lava too; frost now does not settle on lava laid within 20 years, and a halo lands only beside young lava. And a flow's coverage texture left a fifth of each cell uncovered, which the halo filled; the breakouts' ages carry a field's variety now, and the texture is 0.1.
+- **Grey fields.** Active fields came out grey because a Prometheus-class plume's pyroclasts were 40 percent of its condensate, some 4 x 10^4 kg/s of solids, which buried its own field in a couple of years; they are 3 percent.
+- **Coverage.** Flows covered 12 percent against the map's 28; the longest fields now reach 500 km, and they cover 20.
+
+What the maps show:
+
+- **Io:** dark compound fields of lobes of many tones, the youngest black, older ones grey and olive, with white frost round the young ones' margins; plains flat in the shaded relief, mountains and paterae standing on them. Flows 20 percent of the surface, plains 70, patera floors 1, mountains 9. The whole render takes 89 seconds instead of 207.
+
+What they still do not show:
+
+- **Mottled plains** at small scales: the plains between deposits are one tone; small eruptions as a population, in place of the uniform background fallout, would mottle them.
+- **Flow coverage** (M8): 20 percent against 28.
+- **Lobe sizes** from the lava's yield strength and supply (W1); bright sulfur flows.
+- **Mountains and paterae** (T1): grey blotches over 9 percent of the surface against Io's 3, and polygons.
+- **White plains** (M7).
+
+Tests 155 (one ignored). Two are new: a compound field fans out from its trunk, its breakouts spread over a good share of its reach, each laid within the field's span; and the burial fills small relief and keeps the broad. Clippy is clean and validate passes its 117 checks.
