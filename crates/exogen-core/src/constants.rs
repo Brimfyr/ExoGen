@@ -308,6 +308,12 @@ pub const FLOOD_MAX_REACH: f64 = 1.5e6;
 /// into the next low (audit W7); what is left after the last does not flow on. A stated
 /// choice, larger than a cascade of lows down a rise's flank needs.
 pub const FLOOD_MAX_SPILLS: usize = 32;
+/// A flow's sheet down a slope is as wide as its volume spreads it (audit M15): its area at
+/// a flow's thickness, laid in a swath this many times as long as wide round its path,
+/// wherever the lava need not climb (the Roza flow field of the Columbia River basalts,
+/// some 1,300 km³ over 40,300 km² and 300 km long, is about 2.2 times as long as wide:
+/// Thordarson and Self 1998).
+pub const FLOOD_SHEET_ASPECT: f64 = 2.2;
 /// Flow fronts at the finishing resolution: the coarse footprint's indicator, each cell
 /// half its own and a sixteenth each of its neighbours', is kept where it exceeds this
 /// threshold (below a half, so a single flooded cell keeps its area and fronts sit a

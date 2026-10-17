@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 88;
+pub const FINISH_VERSION: u64 = 89;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -929,9 +929,11 @@ pub fn finish(
     );
     if !floods.is_empty() || resurfacing.is_some() {
         with_stamper(&grid, |stamper| {
+            // Inside its rim: beyond, its restore buries the passes' relief by the
+            // ejecta's thickness, so that the floods fade under its ejecta (M15).
             for c in &loop_craters {
                 let dim = dimensions(c.diameter, &inputs.scaling);
-                let radius = 1.05 * CONTINUOUS_EJECTA_MULTIPLE * dim.radius * c.ellipticity.sqrt();
+                let radius = 1.05 * dim.radius * c.ellipticity.sqrt();
                 stamper.gather(&grid, body_radius, c.center, radius);
                 let t = c.time_gyr as f32;
                 for &(idx, _, _) in &stamper.footprint {
@@ -2651,7 +2653,10 @@ mod tests {
         let mut stamper = Stamper::new(&grid);
         let (mut checked, mut older) = (0usize, 0usize);
         for c in moon.finish.craters.iter().filter(|c| c.from_loop) {
-            let inner = 0.45 * c.diameter / c.ellipticity.sqrt();
+            // Inside the floor and the wall: a complex crater's rim, scalloped by the
+            // slumps of its outermost terrace (F67), comes inside 0.45 of its diameter at
+            // places, and beyond it the ejecta keep the age of the ground under them (F100).
+            let inner = 0.35 * c.diameter / c.ellipticity.sqrt();
             stamper.gather(&grid, 1.7374e6, c.center, inner);
             for &(idx, _, _) in &stamper.footprint {
                 checked += 1;

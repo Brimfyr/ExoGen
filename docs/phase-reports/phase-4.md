@@ -918,3 +918,32 @@ Still to do:
 - **Floods run off the slopes** without leaving their sheets, and the shields' late lava with them (audit M15).
 
 Tests 181 (five ignored). Two are new: a rise's shields take their share of what the rise adds to the vent weights, out of the floods' weights, the weights away from the rise staying as they were; and the share is nothing before the first shield starts, then each started shield's share of their volume. Clippy is clean and validate passes its 117 checks.
+
+## The forty-second milestone: floods leave their sheets on the slopes
+
+Asked for before the revisit's fifth item, closing audit M15.
+
+- **F109, sheets down the slopes.** The lava leaves its sheet, a flow's thickness, on each cell it runs over, as wide as its volume spreads it, and ponds only with what is left; the finish draws a sheet over the ground rather than a fill to a level.
+
+How it went:
+
+- **The first sheets, a cell wide,** carried only 3.5 percent of Mars's lava: most paths reach a low within two to four cells, and the largest floods still cascaded from lake to lake past the reach, losing 14.5 percent of their volume. A flood's sheet is now as wide as its volume spreads it, from the shape of the Roza flow field; less than 1 percent is lost.
+- **A block on Mars's flank,** a mesa 100 km across: the hollow fill took a sheet's surface on a steep slope for a lake's level and filled hollows 1.7 km below it to it. Sheets no longer seed the fill. A smaller step was left: the fill's test compared the fine ground with the base, and the gaps that the sheets' fine outlines leave stand hundreds of metres below the base, so the fill walked 40 km down the slope. A hollow now needs the loop's own ground at the floor.
+- **Barred canyon floors** (the user, at the end of a graben on the flank): the floor stepped by a kilometre from one fine cell to the next. The finish rebuilds the ground each flood found from what the slow processes added since, and there the canyon was missing at each landslide: at the loop's cell-wide walls a landslide's debris lobe had no floor to run out on and came out 340 km thick, emptying the canyon. A bug of F106, hidden while the floods filled the canyons; a test fails on the old code. A grid now draws only the landslides wider than its cell: drawn at the loop's cells, the alcoves stood in blocky steps at a canyon's end where the finish drew it anew.
+- **Rings round young craters** (the user, on the Moon): a raised circle with a sharp step 2.3 radii out, faint before and plain with the sheets. Older floods left the base alone under a younger crater's whole ejecta, the coarse lava in it, while beside it they drew their fine sheets and gaps. Laying the sheets under the ejecta too left the rings fainter and a blocky pattern within them. They now leave only the cavity alone, and beyond the rim the crater's restore buries their relief by its ejecta's thickness, so the rings are gone.
+- **Craters' ages:** a test found 10 cells inside young craters carrying older craters' ejecta, a surface restored where a flood did not reach, older than a crater formed since; and 2 beyond a terraced crater's scalloped rim, where its ejecta keep the age of the ground under them (F100), inside the test's circle. A restored surface is no older than the latest crater over the cell, and the test checks the floor and wall (0.35 of the diameter).
+
+What the maps show:
+
+- **Mars:** the rise's flanks carry the floods' sheets, its graben partly buried and its old ground showing between; its canyons' floors are clean to their ends.
+- **The Moon:** the maria cover 16.3 percent of the surface, against the 17 percent measured, their flows draping the craters under them as ghosts; no rings round the young craters.
+- **Mercury:** the smooth plains cover 30.9 percent, against the 27 percent measured.
+- **Venus:** as before.
+
+Still to do:
+
+- **Canyons and graben** read as worms (the user): their structural shapes, next.
+- **A few small blocky spots** of old relief show through the maria beside young craters, where older floods now act, a fine cell or two across.
+- **The swath's aspect** is one flow field's; a flow's width from its supply and slope waits on W1.
+
+Tests 182 (five ignored). One is new: a canyon whose walls leave its floor no room keeps its depth at each landslide (failing on the old code at 0 m of 1,738); the downhill test now counts the flow's swath, and the crater ages test its floor and wall. Clippy is clean and validate passes its 117 checks.
