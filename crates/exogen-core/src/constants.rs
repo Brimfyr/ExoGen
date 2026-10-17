@@ -535,7 +535,35 @@ pub const SEGMENT_STEP_PROBABILITY: f64 = 0.3;
 pub const SEGMENT_STEP_WIDTHS: (f64, f64) = (0.5, 1.5);
 pub const SEGMENT_LINK_ANGLE_DEG: f64 = 45.0;
 pub const SEGMENT_THROW_PER_LENGTH: f64 = 0.008;
-pub const SEGMENT_LINK_DEFICIT: f64 = 0.5;
+pub const SEGMENT_LINK_DEFICIT: f64 = 0.25;
+/// A graben's faults are confined to their layer (F112), so a long one keeps its throw
+/// along its length, a flat-topped profile with a low gradient over most of it and steep
+/// ones at its tips (Soliva and Benedicto 2005 on vertically restricted normal faults;
+/// restricted faults grow by linking, their greatest throw rising far more slowly than
+/// their length): its throw, SEGMENT_THROW_PER_LENGTH of its segments' mean length, rises
+/// from each tip at twice that rate, and its segments' throws scatter about it by this
+/// share.
+pub const SEGMENT_THROW_SCATTER: f64 = 0.15;
+/// A fault's surface is rough at every scale, self-affine with a Hurst exponent of about
+/// 0.8 across its slip (Candela et al. 2012, from surface ruptures 200 m to 50 km long),
+/// so its trace at the surface is too (F112): a graben's two walls, each such a trace,
+/// stand in or out on their own by this share of its width over wavelengths from this
+/// many widths down, so the graben pinches and swells; and a fault's trace wanders off its
+/// segments' great circles by this share of its width over wavelengths from this many
+/// widths down (stated choices).
+pub const FAULT_HURST: f64 = 0.8;
+pub const GRABEN_WALL_ROUGHNESS: f64 = 0.3;
+pub const GRABEN_WALL_WIDTHS: f64 = 6.0;
+pub const FAULT_MEANDER: f64 = 0.5;
+pub const FAULT_MEANDER_WIDTHS: f64 = 20.0;
+/// Graben in a parallel set stand apart, wall to wall, by this many thicknesses of their
+/// faulted layer, log-normal with this spread in its logarithm, no less than a quarter of
+/// it (F112: confined faults' spacing is linear in the mechanical layer's thickness,
+/// log-normal, at least a quarter of it, Soliva, Benedicto and Maerten 2006; the median a
+/// stated choice, setting graben a width or two apart, as in Ceraunius and Claritas Fossae
+/// on the MOLA relief).
+pub const GRABEN_SPACING_LAYERS: f64 = 4.0;
+pub const GRABEN_SPACING_SPREAD: f64 = 0.5;
 pub const TROUGH_TIP_WIDTHS: f64 = 1.0;
 /// A rift's segments are half-graben (F111): one master fault drops the floor more on its
 /// side, the floor tilting down toward it so the far wall stands this share lower, and

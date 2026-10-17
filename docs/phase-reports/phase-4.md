@@ -1001,3 +1001,28 @@ Still to do:
 - **The finish's floods** keep four fifths of the loop's lava (audit M16).
 
 Tests 185 (five ignored). Two are new: a fault's trace keeps to a great circle within each segment and turns or steps only where they link, its throw peaking in each segment, dipping at the links and falling to nothing at its ends, its width kept to its tips, and a rift's half-graben floor standing deeper toward its master fault; and on Mars's rise every graben is as wide as its layer sets it and no deeper than its layer or a fifth of its width, the rifts several times as long. Clippy is clean and validate passes its 117 checks.
+
+## The forty-fifth milestone: graben along their length, rough and in sets
+
+Asked for by the user, after the forty-fourth: the graben looked short, too even in width and too straight, and seldom parallel, each to be checked against measurement first.
+
+- **F112, flat-topped throws, rough walls and traces, parallel sets.** A graben keeps its throw along its length, as faults confined to a layer do, dipping a little where its segments link; its walls are rough fault traces, so it pinches and swells, and every fault's trace wanders a little, self-affine at every scale; a graben joining another stands apart from it by a few thicknesses of its faulted layer.
+
+How it went:
+
+- **Checked against the MOLA relief** at its own 2.6 km a pixel: Claritas and Ceraunius Fossae run unbroken across hundreds of kilometres, pinch and swell, wander, and stand in sets about 10 km apart. Confirmed by measurement: confined faults' flat-topped profiles (Soliva and Benedicto 2005), faults' self-affine roughness (Candela et al. 2012), confined faults' spacing in proportion to their layer (Soliva, Benedicto and Maerten 2006).
+- **Length, half right.** Our graben average 85 km on Mars, as the Mars fault catalogue's 8,500 faults average 80 km (Knapmeyer et al. 2006); what is missing is Tharsis's radial graben systems thousands of kilometres long, read as the surface of giant dike swarms (Ernst, Grosfils and Mège 2001; Wilson and Head 2002), entered as audit M17 and next.
+- **Throw from the whole length,** the first version, made each graben 470 m deep on average and spent the rise's extension on half as many; the throw now comes from the graben's segments' mean length, 188 m on average, within the 10 to 636 m measured across northern Tharsis (Plescia 1991).
+
+What the maps show:
+
+- **Mars, at the high quality:** graben run unbroken along their length, their walls pinching and swelling, their traces wandering a little, some in parallel pairs and sets; at the standard quality, where a graben is under a cell wide, the change is slight.
+- **Venus:** its rifts' walls a little rougher.
+- **The other bodies:** unchanged.
+
+Still to do:
+
+- **Radiating dike swarms** and their long graben (audit M17), next.
+- **The faulted layer** as a field over the rise; **pit chains**; **the finish's floods** keep four fifths of the loop's lava (audit M16).
+
+Tests 185 (five ignored). The fault test now checks a graben's flat-topped throw, its dips at the links between segments' throws and its unbroken profile across a link. Clippy is clean and validate passes its 117 checks.

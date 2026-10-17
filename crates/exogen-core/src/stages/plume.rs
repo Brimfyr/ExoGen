@@ -31,7 +31,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 11;
+pub const VERSION: u64 = 12;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -166,10 +166,11 @@ pub struct Trough {
 }
 
 /// A trough's depth at a distance along its trace at its full growth, m. A fault's is its
-/// segments' throw (F111): each greatest near its middle and falling toward its ends, by
-/// SEGMENT_LINK_DEFICIT where it links with the next and to nothing at the fault's own
-/// ends, as an ellipse, or for a rift as its whole profile does. A trough without segments
-/// tapers to its ends as a sine to TROUGH_TAPER_POWER.
+/// segments' throw (F111), dipping by SEGMENT_LINK_DEFICIT where segments link and running
+/// on unbroken from one segment's throw to the next's. A graben's faults are confined to
+/// its layer, so its throw stays up along its length and falls only toward its tips, as a
+/// flat-topped profile (F112); a rift's falls toward its ends as its whole profile does. A
+/// trough without segments tapers to its ends as a sine to TROUGH_TAPER_POWER.
 pub fn trough_throw(trough: &Trough, s: f64) -> f64 {
     let whole = (std::f64::consts::PI * s / trough.length.max(1.0))
         .sin()
@@ -187,14 +188,36 @@ pub fn trough_throw(trough: &Trough, s: f64) -> f64 {
     let g = &trough.segments[j];
     let x = (2.0 * (s - g.start) / (g.end - g.start).max(1.0) - 1.0).clamp(-1.0, 1.0);
     let ellipse = (1.0 - x * x).max(0.0).sqrt();
-    let linked = 1.0 - SEGMENT_LINK_DEFICIT * (1.0 - ellipse);
+    // The segment's throw turns toward the mean of its own and its neighbour's at a link.
+    let throw = if x < 0.0 && j > 0 {
+        g.throw + 0.5 * (trough.segments[j - 1].throw - g.throw) * -x
+    } else if x > 0.0 && j + 1 < n {
+        g.throw + 0.5 * (trough.segments[j + 1].throw - g.throw) * x
+    } else {
+        g.throw
+    };
     let outer = (j == 0 && x < 0.0) || (j + 1 == n && x > 0.0);
-    match (trough.kind, outer) {
-        (TroughKind::Rift, true) => g.throw * whole,
-        (TroughKind::Rift, false) => g.throw * whole * linked,
-        (_, true) => g.throw * ellipse,
-        (_, false) => g.throw * linked,
+    let link = if outer {
+        1.0
+    } else {
+        1.0 - SEGMENT_LINK_DEFICIT * (1.0 - ellipse)
+    };
+    if trough.kind == TroughKind::Rift {
+        return throw * whole * link;
     }
+    // Confined to its layer, a graben keeps its throw along its length, rising from each
+    // tip as fast as twice its throw per length allows.
+    let tip = (trough.depth / (2.0 * SEGMENT_THROW_PER_LENGTH))
+        .min(0.5 * trough.length)
+        .max(1.0);
+    let d = s.min(trough.length - s).max(0.0);
+    let rise = if d >= tip {
+        1.0
+    } else {
+        let u = d / tip;
+        (1.0 - (1.0 - u) * (1.0 - u)).sqrt()
+    };
+    throw * rise * link
 }
 
 impl Trough {
@@ -992,8 +1015,18 @@ impl PlumeProcess {
                         } else {
                             1.0
                         };
-                        let (g_lo, g_hi) = RIFT_CLUSTER_OFFSET;
-                        let gap = g_lo + (g_hi - g_lo) * rng.uniform(draw, 7).powi(2);
+                        // Graben in a set stand apart by a few thicknesses of their faulted
+                        // layer, wall to wall (F112); chasmata by a width or a few.
+                        let distance = if hf.kind == TroughKind::Graben {
+                            let spread =
+                                GRABEN_SPACING_SPREAD * rng.normal(draw ^ 0x5BAC_0000_0000, 0);
+                            let gap = layer * (GRABEN_SPACING_LAYERS * spread.exp()).max(0.25);
+                            0.5 * (hf.width + width) + gap
+                        } else {
+                            let (g_lo, g_hi) = RIFT_CLUSTER_OFFSET;
+                            let gap = g_lo + (g_hi - g_lo) * rng.uniform(draw, 7).powi(2);
+                            gap * hf.width.max(width)
+                        };
                         length = span as f64 * hf.spacing;
                         // The neighbour follows its host's segments along the span it runs
                         // beside.
@@ -1006,11 +1039,7 @@ impl PlumeProcess {
                             .map(|e| e - s0)
                             .collect();
                         (
-                            offset_trace(
-                                &hf.points[i0..i0 + span],
-                                side * gap * hf.width.max(width),
-                                body_radius,
-                            ),
+                            offset_trace(&hf.points[i0..i0 + span], side * distance, body_radius),
                             breaks,
                         )
                     }
@@ -1061,14 +1090,20 @@ impl PlumeProcess {
                     .windows(2)
                     .enumerate()
                     .map(|(j, w)| {
+                        // A graben confined to its layer throws as far as its segments'
+                        // length allows, linked or not, along its whole length (F112), within
+                        // its layer and its width, each segment a little more or less.
                         let throw = if rift {
                             zone
                         } else {
-                            let scatter = (RIFT_DEPTH_SCATTER
+                            let cap = layer.min(GRABEN_DEPTH_PER_WIDTH * width);
+                            let mean_segment = length / (bounds.len() - 1).max(1) as f64;
+                            let plateau = (SEGMENT_THROW_PER_LENGTH * mean_segment * scatter)
+                                .clamp(RIFT_MIN_DEPTH, cap);
+                            let own = (SEGMENT_THROW_SCATTER
                                 * rng.normal(draw ^ 0x5E67_0000_0000, 2 * j as u64))
                             .exp();
-                            (SEGMENT_THROW_PER_LENGTH * (w[1] - w[0]) * scatter)
-                                .clamp(RIFT_MIN_DEPTH, layer.min(GRABEN_DEPTH_PER_WIDTH * width))
+                            (plateau * own).clamp(RIFT_MIN_DEPTH, cap)
                         };
                         if j > 0
                             && rng.uniform(draw ^ 0x5E67_0000_0000, 2 * j as u64 + 1)
@@ -1595,8 +1630,9 @@ pub struct TroughFrames {
     /// A debris lobe's volume over its peak thickness, its alcove's half width and its
     /// run-out.
     lobe_shape: f64,
-    /// A graben's walls are straight fault scarps (F111).
+    /// A graben's walls are rough fault scarps (F111, F112), and a fault's trace wanders.
     graben: bool,
+    segmented: bool,
 }
 
 /// A debris lobe's volume over its peak thickness, its alcove's half width and its
@@ -1780,7 +1816,27 @@ impl TroughFrames {
             slide_reach,
             lobe_shape: lobe_shape(),
             graben: trough.kind == TroughKind::Graben,
+            segmented: !trough.segments.is_empty(),
         }
+    }
+
+    /// How far a fault's trace wanders sideways off its segments at a distance along it, m
+    /// (F112): self-affine, FAULT_MEANDER of its width over wavelengths from
+    /// FAULT_MEANDER_WIDTHS widths down; none for a trough without segments.
+    fn meander(&self, s: f64) -> f64 {
+        if !self.segmented {
+            return 0.0;
+        }
+        let wavelength = (FAULT_MEANDER_WIDTHS * self.width).max(1.0);
+        FAULT_MEANDER
+            * self.width
+            * self.noise.fbm(
+                [s / wavelength, 0.71, 0.13],
+                1.0,
+                3,
+                2.0,
+                2f64.powf(-FAULT_HURST),
+            )
     }
 
     /// What the landslides near a point do to it (F106), at the trough's growth: how far
@@ -1881,6 +1937,11 @@ impl TroughFrames {
                 + 3.0 * wall
                 + 2.0 * cell
                 + if trough.flank != 0.0 { width } else { 0.0 }
+                + if trough.segments.is_empty() {
+                    0.0
+                } else {
+                    (1.5 * FAULT_MEANDER + GRABEN_WALL_ROUGHNESS) * trough.width
+                }
                 + if trough.depth >= LANDSLIDE_MIN_WALL {
                     LANDSLIDE_BACK.1 * LANDSLIDE_HALF_WIDTH.1 * depth
                 } else {
@@ -1910,15 +1971,25 @@ impl TroughFrames {
         if along.abs() > size.half_band {
             return None;
         }
-        let across = dot(d, f.normal) * body_radius;
-        let scallop_frequency = body_radius / TROUGH_SCALLOP_LENGTH.max(self.width);
+        // A fault's trace wanders off its segments' great circles, rough at every scale
+        // (F112).
+        let across = dot(d, f.normal) * body_radius - self.meander(f.along + along);
         let scallop = if self.graben {
-            1.0
+            // A graben's walls are rough fault traces, each standing in or out on its own,
+            // so the graben pinches and swells (F112).
+            1.0 + GRABEN_WALL_ROUGHNESS
+                * self.noise.fbm(
+                    [d[0] + across.signum() * 3.0, d[1], d[2]],
+                    body_radius / (GRABEN_WALL_WIDTHS * self.width).max(1.0),
+                    3,
+                    2.0,
+                    2f64.powf(-FAULT_HURST),
+                )
         } else {
             1.0 + TROUGH_SCALLOP
                 * self.noise.fbm(
                     [d[0] + across.signum() * 3.0, d[1], d[2]],
-                    scallop_frequency,
+                    body_radius / TROUGH_SCALLOP_LENGTH.max(self.width),
                     2,
                     2.0,
                     0.5,
@@ -2472,6 +2543,7 @@ mod tests {
             slide_reach: l.half * (1.0 + LANDSLIDE_SPREAD),
             lobe_shape: lobe_shape(),
             graben: false,
+            segmented: false,
         };
         let step = 250.0;
         let mut volume = 0.0;
@@ -2653,7 +2725,7 @@ mod tests {
             .map(|(j, w)| Segment {
                 start: w[0],
                 end: w[1],
-                throw: 200.0 + 50.0 * j as f64,
+                throw: 200.0 + 10.0 * (j % 5) as f64,
                 polarity: 0.0,
             })
             .collect();
@@ -2670,16 +2742,36 @@ mod tests {
             kind: TroughKind::Graben,
             segments: segments.clone(),
         };
+        // Away from its tips, a graben keeps each segment's throw at its middle and dips by
+        // SEGMENT_LINK_DEFICIT at a link, between the two segments' throws; at its tips it
+        // falls to nothing (F112).
+        let tip = trough.depth / (2.0 * SEGMENT_THROW_PER_LENGTH);
+        let inside = |s: f64| s > tip && s < length - tip;
         for g in &segments {
-            let mid = trough_throw(&trough, 0.5 * (g.start + g.end));
-            assert!((mid - g.throw).abs() < 1e-6, "{mid} vs {}", g.throw);
+            let s = 0.5 * (g.start + g.end);
+            if inside(s) {
+                let mid = trough_throw(&trough, s);
+                assert!((mid - g.throw).abs() < 1e-6, "{mid} vs {}", g.throw);
+            }
         }
         for (k, &b) in breaks.iter().enumerate() {
-            let dip = trough_throw(&trough, b);
-            let expect = (1.0 - SEGMENT_LINK_DEFICIT) * segments[k].throw;
-            assert!((dip - expect).abs() < 1.0, "{dip} vs {expect}");
+            if inside(b) {
+                let dip = trough_throw(&trough, b);
+                let expect = (1.0 - SEGMENT_LINK_DEFICIT)
+                    * 0.5
+                    * (segments[k].throw + segments[k + 1].throw);
+                assert!((dip - expect).abs() < 1.0, "{dip} vs {expect}");
+            }
         }
         assert!(trough_throw(&trough, 0.0) < 1e-6 && trough_throw(&trough, length) < 1e-6);
+        // The profile runs on unbroken across a link.
+        for &b in &breaks {
+            let (a, c) = (
+                trough_throw(&trough, b - 1.0),
+                trough_throw(&trough, b + 1.0),
+            );
+            assert!((a - c).abs() < 5.0, "{a} {c}");
+        }
         let frames = TroughFrames::new(&trough);
         for f in &frames.frames {
             if f.along > 2.0 * width && f.along < length - 2.0 * width {
