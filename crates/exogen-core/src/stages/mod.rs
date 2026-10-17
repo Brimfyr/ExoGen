@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 85;
+pub const FINISH_VERSION: u64 = 86;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -901,7 +901,7 @@ pub fn finish(
     // The floods that show at the end are drawn as their flows (F94), traced over the base
     // smoothed over a front's width.
     let flood_visible = volcanism::visible_floods(&floods);
-    let flood_ground = (!floods.is_empty()).then(|| {
+    let flood_ground = (!floods.is_empty() || !shields.is_empty()).then(|| {
         let smoothed = relaxation::low_pass(&layers.bedrock, cell, FLOOD_GROUND_SMOOTH);
         crate::grid::projection::PaddedField::new(&grid, &smoothed)
     });
@@ -1174,8 +1174,25 @@ pub fn finish(
             + cryodomes.len()
             + replay.len(),
     );
+    // A shield is drawn when the flows that show on it begin (F101), over the craters they
+    // bury, or just after a resurfacing they outlast, which buries the ones before it.
+    let shield_times: Vec<f64> = shields
+        .iter()
+        .map(|sh| {
+            let start = plume::shield_window(sh, present).map_or(sh.start_gyr, |w| w.0);
+            match &resurfacing {
+                Some(r) if r.time_gyr >= start && r.time_gyr < present => r.time_gyr + 1e-6,
+                _ => start,
+            }
+        })
+        .collect();
     for (k, sh) in shields.iter().enumerate() {
-        events.push((sh.start_gyr, 0, sh.id ^ 0x5B1E_0000_0000, Event::Shield(k)));
+        events.push((
+            shield_times[k],
+            0,
+            sh.id ^ 0x5B1E_0000_0000,
+            Event::Shield(k),
+        ));
     }
     for (k, c) in canyons.iter().enumerate() {
         events.push((
@@ -1491,6 +1508,9 @@ pub fn finish(
                             &grid,
                             body_radius,
                             &shields[*k],
+                            flood_ground.as_ref(),
+                            present,
+                            shield_times[*k],
                             stamper,
                         );
                         Some((out, None, None))

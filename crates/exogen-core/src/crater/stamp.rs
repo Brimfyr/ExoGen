@@ -222,6 +222,9 @@ pub struct StampOutput {
     /// The composition an eruption's lava cells take (F55); none for every other stamp,
     /// whose cells keep the composition under them.
     pub composition: Option<f32>,
+    /// Per cell, the composition of the lava a stamp lays where its flows differ (F101);
+    /// it takes the place of `composition` where given.
+    pub compositions: Option<Vec<f32>>,
     /// Per cell, the stain a crack lays (F78) and the share of the older stain it cuts
     /// away; none for a stamp that lays none, whose renewed cells lose the stain under
     /// them.
@@ -257,11 +260,15 @@ impl StampOutput {
                 deep[i] = c.deep;
                 melt[i] = c.melt;
                 cover[i] = c.cover;
-                if let Some(x) = self.composition
-                    && c.unit == crate::units::UNIT_LAVA
-                {
-                    composition[i] = x;
-                    lava_age[i] = c.age;
+                if c.unit == crate::units::UNIT_LAVA {
+                    let laid = match &self.compositions {
+                        Some(v) => Some(v[j]),
+                        None => self.composition,
+                    };
+                    if let Some(x) = laid {
+                        composition[i] = x;
+                        lava_age[i] = c.age;
+                    }
                 }
                 if self.stain.is_none() {
                     stain[i] = 0.0;
@@ -702,6 +709,7 @@ pub fn stamp_compute(
         stain: None,
         steep: Some(steep),
         ejecta_age: Some(ejecta_age),
+        compositions: None,
     }
 }
 
@@ -1948,6 +1956,7 @@ pub fn restore_compute(
         stain: None,
         steep: Some(steep),
         ejecta_age: Some(ejecta_age),
+        compositions: None,
     }
 }
 

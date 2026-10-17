@@ -70,7 +70,7 @@ impl<'a> Deformation<'a> {
             );
         }
         for (j, s) in shields.iter().enumerate() {
-            stamper.gather(&coarse, body_radius, s.center, s.radius + cell);
+            stamper.gather(&coarse, body_radius, s.center, s.extent() + cell);
             pairs.extend(
                 stamper
                     .footprint
@@ -243,6 +243,8 @@ mod tests {
             height: 20e3,
             start_gyr: 1.0,
             calderas: Vec::new(),
+            rift: 0.0,
+            elongation: 1.0,
             id: 7,
         }];
         let present = 4.5;

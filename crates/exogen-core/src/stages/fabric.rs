@@ -424,6 +424,7 @@ pub fn fabric_compute(
         stain: Some(stain),
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 

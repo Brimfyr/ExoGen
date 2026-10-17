@@ -1158,6 +1158,7 @@ pub fn flood_compute(
             stain: None,
             steep: None,
             ejecta_age: None,
+            compositions: None,
         },
         taken,
         stats,
@@ -1209,17 +1210,14 @@ pub fn visible_floods(floods: &[FloodRecord]) -> Vec<bool> {
 }
 
 /// A lobe's area, m²: its length times its mean width.
-fn lobe_area(lobe: &Lobe) -> f64 {
+pub(crate) fn lobe_area(lobe: &Lobe) -> f64 {
     (lobe.points.len().max(1) - 1) as f64 * lobe.spacing * 2.0 * lobe.half_width
 }
 
-/// The flows of one flood at the finishing resolution (F94): from the coarse cell of its
-/// low nearest its vent, where its lava came in, a trunk across the low toward its middle,
-/// up to FLOOD_BRANCHES.1 branches, and breakouts on the lobes already laid, at their
-/// fronts and along them, until the lobes cover the low FLOOD_LOBE_COVER times over. Each
-/// lobe is a path over the ground (F59), a share of the low's reach long and a share of
-/// its own length wide, wandering at its width's scale and ponding where it would climb
-/// more than a sheet.
+/// The flows of one flood at the finishing resolution (F94): a compound flow field from
+/// the coarse cell of its low nearest its vent, where its lava came in, its trunk heading
+/// across the low toward its middle, until its lobes cover the low FLOOD_LOBE_COVER times
+/// over.
 pub fn flood_lobes(
     rec: &FloodRecord,
     coarse: &CubeSphere,
@@ -1264,10 +1262,6 @@ pub fn flood_lobes(
         fill_depth: FLOOD_SHEET_THICKNESS,
         width_wobble: IO_FLOW_WIDTH_WOBBLE,
     };
-    let (w_lo, w_hi) = FLOOD_LOBE_WIDTH;
-    let width = |index: u64, length: f64| {
-        (length * (w_lo + (w_hi - w_lo) * rng.uniform(index, 0))).max(1.5 * cell)
-    };
     // The trunk heads across the low toward its middle.
     let toward = {
         let v = [
@@ -1297,6 +1291,51 @@ pub fn flood_lobes(
             )
         }
     };
+    flow_field(
+        grid,
+        r,
+        ground,
+        &rng,
+        rec.id,
+        entry,
+        toward,
+        reach,
+        FLOOD_LOBE_COVER * rec.area,
+        0.0,
+        &rules,
+        &outside,
+    )
+}
+
+/// A compound flow field (F94): from its source a trunk along a heading, a share of the
+/// field's reach long, up to FLOOD_BRANCHES.1 branches off it, and breakouts on the lobes
+/// already laid, at their fronts and along them, until the lobes cover `target` m². Each
+/// lobe is a path over the ground (F59), a share of the reach long and a share of its own
+/// length wide, wandering at its width's scale and ponding where it would climb more than
+/// a sheet; the trunk widens by `trunk_toe` from its source, a breakout by IO_FLOW_TOE.
+/// A path stops where `outside` says its margin, at its half width, would leave the
+/// field's bounds.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn flow_field(
+    grid: &CubeSphere,
+    body_radius: f64,
+    ground: &PaddedField,
+    rng: &Rng,
+    id: u64,
+    source: [f64; 3],
+    heading: [f64; 3],
+    reach: f64,
+    target: f64,
+    trunk_toe: f64,
+    rules: &dyn Fn(f64) -> PathRules,
+    outside: &dyn Fn([f64; 3], f64) -> bool,
+) -> Vec<Lobe> {
+    let r = body_radius;
+    let cell = grid.delta() * r;
+    let (w_lo, w_hi) = FLOOD_LOBE_WIDTH;
+    let width = |index: u64, length: f64| {
+        (length * (w_lo + (w_hi - w_lo) * rng.uniform(index, 0))).max(1.5 * cell)
+    };
     let (t_lo, t_hi) = FLOOD_TRUNK_SHARE;
     let trunk_length = reach * (t_lo + (t_hi - t_lo) * rng.uniform(3, 0));
     let hw = width(4, trunk_length);
@@ -1305,13 +1344,13 @@ pub fn flood_lobes(
             grid,
             r,
             &rules(hw),
-            rec.id,
+            id,
             5,
-            entry,
-            toward,
+            source,
+            heading,
             trunk_length,
             hw,
-            0.0,
+            trunk_toe,
             ground,
             &|q| outside(q, hw),
             0.0,
@@ -1347,7 +1386,7 @@ pub fn flood_lobes(
             grid,
             r,
             &rules(hw),
-            rec.id,
+            id,
             30 + b,
             p,
             heading,
@@ -1362,8 +1401,7 @@ pub fn flood_lobes(
         area += lobe_area(&lobe);
         lobes.push(lobe);
     }
-    // Breakouts on the lobes already laid, until they cover the low.
-    let target = FLOOD_LOBE_COVER * rec.area;
+    // Breakouts on the lobes already laid, until they cover the target.
     let (l_lo, l_hi) = FLOOD_LOBE_LENGTH;
     let mut j = 0u64;
     while area < target && lobes.len() < FLOOD_LOBES_MAX && j < 4 * FLOOD_LOBES_MAX as u64 {
@@ -1404,7 +1442,7 @@ pub fn flood_lobes(
             grid,
             r,
             &rules(hw),
-            rec.id,
+            id,
             base + 6,
             p,
             heading,
@@ -1425,7 +1463,7 @@ pub fn flood_lobes(
 /// The share of each cell a flood's lobes cover (F94), the strongest where they cross: a
 /// tube about each lobe's path, as Io's flows are drawn (F59), its margin lobate at its
 /// width's scale and soft over a share of its width or a cell and a half.
-fn lobe_cover(
+pub(crate) fn lobe_cover(
     lobes: &[Lobe],
     grid: &CubeSphere,
     body_radius: f64,

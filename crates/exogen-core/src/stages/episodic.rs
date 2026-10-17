@@ -496,6 +496,7 @@ pub fn resurfacing_compute(
             stain: None,
             steep: None,
             ejecta_age: None,
+            compositions: None,
         },
         taken,
     )
@@ -548,6 +549,7 @@ pub fn corona_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 
@@ -601,6 +603,7 @@ pub fn dome_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 

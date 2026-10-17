@@ -39,7 +39,7 @@ use crate::units::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-pub const VERSION: u64 = 14;
+pub const VERSION: u64 = 15;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -2022,8 +2022,9 @@ pub const IO_PATHS: PathRules = PathRules {
 /// A flow's path (F59): from a point along a heading, downslope over the ground with
 /// the inertia of a flow and a wander, deflecting along a contour but never turning
 /// back, stopping where `blocked` says something stands, where it would have to climb out of the
-/// ground it has ponded in, or at its length; a lobe about it this half wide,
-/// widening by `toe` from its source to its end. Returns the lobe and how it ended: 0
+/// ground it has ponded in, or at its length; a lobe about it this half wide on level
+/// ground, widening by `toe` from its source to its end, narrowing where the ground is
+/// steep and spreading where it flattens (F101). Returns the lobe and how it ended: 0
 /// at its length, 1 at a mountain, 2 ponded.
 #[allow(clippy::too_many_arguments)]
 pub fn trace_flow(
@@ -2054,6 +2055,7 @@ pub fn trace_flow(
     let noise = GradientNoise::new(crate::rng::hash_words(&[idx, draw, 0x0F10_7ACE]));
     let delta = (0.5 * spacing / r).max(1e-7);
     let mut points = vec![p];
+    let mut slopes = Vec::with_capacity(steps + 1);
     let mut lowest = sample_bilinear(grid, ground, p) as f64;
     let mut end = 0usize;
     for i in 0..steps {
@@ -2073,6 +2075,7 @@ pub fn trace_flow(
             - sample_bilinear(grid, ground, at(0.0, -1.0))) as f64
             / (2.0 * delta * r);
         let grad = hx.hypot(hy);
+        slopes.push(grad);
         let down = if grad > 1e-12 {
             normalize([
                 -(hx * e[0] + hy * n[0]),
@@ -2082,10 +2085,13 @@ pub fn trace_flow(
         } else {
             h
         };
-        // The fall line turns the front at a rate per distance, over the steering
-        // length at full slope.
+        // The fall line turns the front at a rate per distance, over the steering length
+        // at full slope; on ground steeper than FLOW_STEEP_SLOPE faster as the slope
+        // grows, as gravity's push across the front does (F101): on a shield's flank a
+        // breakout swings downhill within a few kilometres.
         let follow = rules.slope_follow
             * (grad / rules.slope_scale).tanh()
+            * (grad / FLOW_STEEP_SLOPE).clamp(1.0, FLOW_STEER_MAX)
             * (spacing / rules.steer_length).min(1.0);
         // The fall line steers the flow sideways and speeds it on, but never turns it
         // back: a front deflects along a contour and ponds rather than reverse.
@@ -2147,8 +2153,18 @@ pub fn trace_flow(
         p = q;
         points.push(p);
     }
-    // The width along the lobe: a channel at the vent widening to the toe, wandering.
+    // The width along the lobe: a channel at the vent widening to the toe, wandering, and
+    // narrowing on steep ground, where the flow runs fast between its levees, as one over
+    // the slope past FLOW_NARROWING_SLOPE (Hulme 1974). The lobe's half width is its mean.
     let count = points.len();
+    while slopes.len() < count {
+        slopes.push(slopes.last().copied().unwrap_or(0.0));
+    }
+    let narrowing: Vec<f64> = slopes
+        .iter()
+        .map(|&g| 1.0 / (1.0 + (g / FLOW_NARROWING_SLOPE).powi(2)).sqrt())
+        .collect();
+    let mean_narrowing = narrowing.iter().sum::<f64>() / count as f64;
     let widths = (0..count)
         .map(|i| {
             let s = i as f64 / (count.max(2) - 1) as f64;
@@ -2162,14 +2178,14 @@ pub fn trace_flow(
                         0.5,
                     )
                     / 0.6;
-            (wander.max(0.4) * (1.0 - toe + toe * s)) as f32
+            (wander.max(0.4) * (1.0 - toe + toe * s) * narrowing[i] / mean_narrowing) as f32
         })
         .collect();
     (
         Lobe {
             points,
             spacing,
-            half_width,
+            half_width: half_width * mean_narrowing,
             widths,
             age_yr,
         },
@@ -2597,6 +2613,7 @@ pub fn patera_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 
@@ -2647,6 +2664,7 @@ pub fn mountain_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 
@@ -2758,6 +2776,7 @@ pub fn flow_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 

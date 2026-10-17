@@ -753,3 +753,35 @@ Still to do:
 - **Degraded troughs and rims** on Callisto, with the ice table and the daytime sublimation rate.
 
 Tests 175 (four ignored); the stamp's age test now holds the surface age to the cavity and the maturity's age to the continuous blanket. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-fifth milestone: shields and calderas from flows and collapses
+
+The third item of the earlier-phases revisit, which the user agreed after the thirty-fourth: "Do you want to defer that to the atmosphere and climate phase, and continue with shields and calderas?"
+
+- **F101, shields built over by their eruptions.** A shield shows the eruptions since its edifice last grew by three sheets, each a compound flow field as a flood's is, from fissures round its caldera, on its flanks and on its rift zone, whose eruptions run the farthest and spread onto the plains as aprons. Every flow narrows on steep ground and spreads where it flattens, and on ground steeper than a degree turns downhill faster. A shield's lavas come from one reservoir. Its edifice is longer along its rift and its foot is lobed.
+- **F102, calderas from summit collapses.** Each collapse sinks a pit about as wide as the chamber; the vent wanders, the chamber shrinks, and each pit is smaller and deeper than the last, cutting the older ones.
+
+How it went:
+
+- **Spokes.** The first shields drew each eruption as one flow from the summit or a flank vent, and on the smooth cone every flow ran straight down the fall line: stars of straight spokes. The real shields, shaded from the user's Mars height map, have smooth flanks with a fine radial texture and a summit caldera complex, and the user's albedo map shows a fine, low-contrast radial striation on Arsia Mons's lower flanks.
+- **A pie chart.** Drawing each eruption as a compound field turned the spokes into wedges: the fields spread on the gentle summit plateau, and down the flanks their breakouts walked sideways before the fall line pulled them back, because the steering held its pull at that of 0.3 degrees on any steeper ground.
+- **Narrowing.** With flows narrow on steep ground (Hulme 1974; Peters et al. 2021), a flank flow is finer than the grid at the standard quality and the flanks read as one smooth unit.
+- **Two tries taken back.** Dating each point of the edifice to when its flows last laid three sheets there made the summit young and the foot old, but the profile's steep foot packed the change into a narrow band, a ring of maturity round every shield; and scaling the whole profile by a lobed outline drew radial creases up to the summit. The foot alone is now lobed, and the loop dates the edifice to the eruptions' start.
+- **Steering on steep ground.** A breakout on a 5 degree flank now swings downhill within a few kilometres. Letting the pull grow with the slope from 0.3 degrees changed 2.5 percent of Io's pixels by more than 16 levels, its flows reshaped where they cross ground of 0.3 to 1 degree; from a degree, 0.7 percent, the same fields with lobes moved.
+- **Rings at the foot.** Flows hidden on the flanks reappeared where they spread at the foot, and on the small shields of Venus that drew a ring of fans. Real shields' aprons lie at the ends of their rift zones, so only the rift zone's eruptions now run long; the fissures round the summit and on the flanks build the edifice with short flows.
+- **Squares and tessera.** Writing the shield's composition in the loop drew the loop's cells as squares; the finishing pass now writes it at its own resolution, out to the edifice's outline. On Venus the global resurfacing makes tessera of a standing shield, after which the shield's own pass had drawn only a band of lava at its foot; a shield whose eruptions outlast the resurfacing is now drawn just after it, its earlier eruptions buried, its lava laid over the tessera.
+
+What the maps show:
+
+- **Mars:** shields of lobed outline, longer along their rift zones, their flanks smooth in the shield's own lava with a few young flows and summit fields, their calderas one to six pits of 5 to 28 percent of the shield's radius.
+- **Venus:** each shield a disc of its own lava with a lobed foot and a younger summit, where at the last commit the resurfacing had left their flanks tessera.
+- **Io:** 0.7 percent of the pixels change by more than 16 levels, the same fields with lobes moved where they cross ground steeper than a degree.
+- **The Moon:** unchanged, 0.07 percent of its pixels changing by more than 4 levels and none by more than 16.
+
+Still to do:
+
+- **Flows finer than the grid** show only where their cover reaches half a cell (audit W6), so at the standard quality a shield's flank flows hardly show, and the Tharsis Montes' striation is missing.
+- **The edifice's profile** is one power law at five degrees on every body (audit T1); Venus's large volcanoes are broad and gentle.
+- **Venus's resurfacing** still makes tessera of any shield standing at the event whose eruptions end before it.
+
+Tests 178 (four ignored). Three are new: a summit sinks in collapses, each smaller and deeper; a shield's eruptions run down its flanks and together cover it more than once; and a shield stretches along its rift and lobes at its foot. Clippy is clean and validate passes its 117 checks.

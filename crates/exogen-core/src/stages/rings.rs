@@ -343,6 +343,7 @@ pub fn system_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 

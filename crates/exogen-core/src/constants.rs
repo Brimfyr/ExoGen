@@ -355,10 +355,18 @@ pub const RISE_END_GYR: f64 = 1.5;
 /// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
 /// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise
 /// they sit (fraction of its radius), when they start, their growth timescale, and the
-/// thickness of flows that renews a flank's surface. Calderas as fractions of the
-/// shield's radius and height, with a cap on depth and the wall width as a fraction of
-/// the caldera radius. Flank texture: radial flow ridges of this relative amplitude and
-/// length.
+/// thickness of flows that renews a flank's surface; its edifice longer along its rift
+/// zone, whose fissures feed it more lava there, by up to this axis ratio, the area kept
+/// (a stated choice: the Tharsis Montes stretch along the line of their rift aprons,
+/// Ascraeus Mons 375 by 870 km with its aprons), and its foot lobed where its flows ran
+/// out farther, by harmonics of these orders whose amplitudes fall as the order to the
+/// 0.75, as the ejecta curtain's do (F91), this rms share of its radius, coming in as
+/// the square of the distance from the summit (a stated choice). The first and largest caldera's
+/// radius a share of the shield's, log-uniform between these (Olympus Mons's largest pit,
+/// Zeus Patera, some 60 km across on a 600 km edifice, Mouginis-Mark 2021; Arsia Mons's
+/// caldera about 120 km on 450 km; Pavonis Mons's older one about 100 km on 375 km; Mauna
+/// Loa's 6 km on some 120 km), its depth a fraction of the shield's height with a cap,
+/// and the wall width a fraction of the caldera radius.
 pub const SHIELDS_PER_RISE: f64 = 5.0;
 pub const SHIELD_MAX_DIAMETER_FRACTION: f64 = 0.12;
 pub const SHIELD_SLOPE_DEG: f64 = 5.0;
@@ -368,12 +376,54 @@ pub const SHIELD_PLACEMENT: (f64, f64) = (0.1, 0.6);
 pub const SHIELD_START_GYR: (f64, f64) = (1.0, 2.5);
 pub const SHIELD_GROWTH_GYR: f64 = 1.0;
 pub const SHIELD_RENEWAL_THICKNESS: f64 = 5.0;
-pub const CALDERA_RADIUS_FRACTION: f64 = 0.1;
+pub const SHIELD_ELONGATION_MAX: f64 = 1.4;
+pub const SHIELD_OUTLINE_ORDERS: (u32, u32) = (3, 24);
+pub const SHIELD_OUTLINE_LOBING: f64 = 0.04;
+pub const CALDERA_RADIUS: (f64, f64) = (0.05, 0.28);
 pub const CALDERA_DEPTH_FRACTION: f64 = 0.12;
 pub const CALDERA_MAX_DEPTH: f64 = 3e3;
 pub const CALDERA_WALL_WIDTH: f64 = 0.15;
-pub const SHIELD_FLOW_TEXTURE: f64 = 0.3;
-pub const SHIELD_FLOW_TEXTURE_LENGTH: f64 = 15e3;
+/// A shield's summit sinks in collapses (F102): up to this many, fewer more often; the
+/// vent wanders between them by up to this share of the last pit's radius; each pit this
+/// share of the last one's size, the chamber shrinking as the supply wanes (Olympus Mons's
+/// youngest caldera is its smallest and its deepest: Mouginis-Mark et al. 1991); its long
+/// axis over its short up to one plus this; its wall scalloped by this share of its
+/// radius (stated choices; Olympus Mons's summit holds six collapses in 65 by 80 km,
+/// 3.2 km deep at most, Ascraeus Mons's eight).
+pub const CALDERA_COUNT_MAX: usize = 7;
+pub const CALDERA_WANDER: f64 = 0.6;
+pub const CALDERA_SHRINK: (f64, f64) = (0.5, 0.95);
+pub const CALDERA_ELONGATION: f64 = 0.3;
+pub const CALDERA_SCALLOP: f64 = 0.06;
+/// A shield's eruptions (F101): those since its edifice last grew on average by
+/// SHIELD_FLOW_COVER sheets show; this share of them come from circumferential fissures
+/// round its summit caldera, this far from the summit in the chamber's radii, and of the
+/// rest this share from fissures on its rift zone, within this many radians of its axis,
+/// this far from the summit in shares of the way to the foot, the others anywhere on the
+/// flanks this far; a rift eruption's lava runs out this far in shield radii
+/// (log-uniform), a fissure's this far; until their lobes cover the shield this many
+/// times over, at most this many eruptions; none runs farther from the summit than this
+/// many times the foot's distance; an eruption's batch varies by this share of a flood's
+/// about the shield's own (stated choices: the Tharsis Montes' young flows run for
+/// hundreds of kilometres down their flanks and onto the plains, Peters et al. 2021
+/// measuring 15 to 310 km, and vents at the ends of Arsia and Ascraeus Montes' rift zones
+/// feed broad aprons that run more than 100 km onto the plains; on the Galapagos shields
+/// circumferential fissures ring the calderas and radial ones cut the flanks, Chadwick
+/// and Howard 1991, and on Mauna Loa the rift zones' flows run the farthest; enough cover
+/// to leave a twentieth of the edifice to older flows; a central reservoir mixes the
+/// batches that feed it, so that each Hawaiian volcano keeps its own composition).
+pub const SHIELD_SUMMIT_VENT_SHARE: f64 = 0.25;
+pub const SHIELD_RIM_VENTS: (f64, f64) = (1.0, 1.3);
+pub const SHIELD_RIFT_VENT_SHARE: f64 = 0.5;
+pub const SHIELD_RIFT_SPREAD: f64 = 0.35;
+pub const SHIELD_RIFT_VENTS: (f64, f64) = (0.4, 1.0);
+pub const SHIELD_FLANK_VENTS: (f64, f64) = (0.1, 0.7);
+pub const SHIELD_RIFT_FLOW_LENGTH: (f64, f64) = (0.2, 1.0);
+pub const SHIELD_FISSURE_FLOW_LENGTH: (f64, f64) = (0.1, 0.4);
+pub const SHIELD_FLOW_COVER: f64 = 3.0;
+pub const SHIELD_ERUPTIONS_MAX: usize = 120;
+pub const SHIELD_FLOW_REACH: f64 = 1.4;
+pub const SHIELD_BATCH_SPREAD: f64 = 0.3;
 /// Rifting on a rise: the uplift stretches the lithosphere, and the extension across
 /// the rift zone comes to a few times the uplift (Valles Marineris some 30 km on
 /// Tharsis's 8 km, Andrews-Hanna 2012; Devana Chasma 10 to 20 km on Beta Regio's 4 km).
@@ -552,16 +602,31 @@ pub const IO_FLOW_LOBING: f64 = 0.3;
 pub const IO_FLOW_EDGE: f64 = 0.15;
 pub const IO_FLOW_THICKNESS: f64 = 20.0;
 /// Flows follow the ground (F59): a lobe is traced from the patera's rim downslope, its
-/// heading turning toward the fall line by this much times tanh(slope / this slope) for
-/// each this many metres of path (a stated choice: a front swings to the fall line over
-/// a couple of tens of kilometres), with a wander of this many radians over this length of path, m, stopping where
-/// a mountain stands or where going on would climb more than this depth, m, above the
-/// lowest ground it has reached (a flow ponds in a basin and crosses a bump no higher
-/// than its own pile); a field's lobes at least this half width where the field needs
-/// one, m, this share narrower at the source than at the toe, wandering by this rms
-/// share; its points this far apart at most, m.
+/// heading turning toward the fall line by this much times tanh(slope / this slope), and
+/// faster on steep ground (FLOW_STEEP_SLOPE), for each this many metres of path (a
+/// stated choice: a front swings to the fall line over a couple of tens of kilometres),
+/// with a wander of this many radians over this length
+/// of path, m, stopping where a mountain stands or where going on would climb more than
+/// this depth, m, above the lowest ground it has reached (a flow ponds in a basin and
+/// crosses a bump no higher than its own pile); a field's lobes at least this half width
+/// where the field needs one, m, this share narrower at the source than at the toe,
+/// wandering by this rms share; its points this far apart at most, m.
 pub const IO_FLOW_SLOPE_FOLLOW: f64 = 2.0;
 pub const IO_FLOW_SLOPE_SCALE: f64 = 0.005;
+/// A flow narrows where the ground is steep and spreads where it flattens (F101): its
+/// width at a point goes as one over the root of one plus the square of the slope over
+/// this slope, so that on steep ground it goes as one over the slope (Hulme 1974's
+/// levéed flows; calibrated so that a 5 degree flank narrows a flow to about a third of
+/// its width on the plains: Peters et al. 2021 measured Tharsis flows 0.5 to 29 km wide,
+/// the narrowest on Olympus Mons's flanks).
+pub const FLOW_NARROWING_SLOPE: f64 = 0.027;
+/// On ground steeper than this slope the fall line's pull on a flow grows with the slope,
+/// as gravity's push across its front does, up to this many times its pull on gentler
+/// ground, past which a flow follows the fall line at once anyway (F101: a stated
+/// choice, a degree, above the plains' slopes, so that only an edifice's flanks feel
+/// it).
+pub const FLOW_STEEP_SLOPE: f64 = 0.0175;
+pub const FLOW_STEER_MAX: f64 = 10.0;
 pub const IO_FLOW_STEER_LENGTH: f64 = 20e3;
 pub const IO_FLOW_WANDER_RAD: f64 = 1.0;
 pub const IO_FLOW_WANDER_LENGTH: f64 = 40e3;

@@ -20,14 +20,16 @@ use std::collections::HashMap;
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
-use crate::geom::{angle_between, cross, dot, local_basis, normalize, offset};
+use crate::geom::{angle_between, azimuth_from, cross, dot, local_basis, normalize, offset};
 use crate::grid::CubeSphere;
+use crate::grid::projection::PaddedField;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
-use crate::units::UNIT_LAVA;
+use crate::stages::io::{Lobe, PathRules};
+use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -46,18 +48,39 @@ pub struct Shield {
     pub radius: f64,
     pub height: f64,
     pub start_gyr: f64,
-    /// Summit calderas: offset from the centre as a fraction of the radius along an
-    /// azimuth, radius and depth, metres.
+    /// Its summit's collapses, oldest first (F102).
     pub calderas: Vec<Caldera>,
+    /// The azimuth of its rift zone, rad from east towards north at its centre, along
+    /// which its flank vents open (F101).
+    pub rift: f64,
+    /// Its edifice's axis along the rift over its axis across (F101).
+    pub elongation: f64,
     pub id: u64,
 }
 
+/// One collapse of a shield's summit (F102): a pit sunk over the magma chamber as an
+/// eruption drained it, about as wide as the chamber.
 #[derive(Clone, Copy, Debug)]
 pub struct Caldera {
-    pub offset: f64,
-    pub azimuth: f64,
+    /// Its centre's offset from the shield's, east and north, m.
+    pub east: f64,
+    pub north: f64,
+    /// The radius of the circle of its area, m; its long axis over its short, and the
+    /// long axis's azimuth, rad from east towards north.
     pub radius: f64,
+    pub ellipticity: f64,
+    pub axis: f64,
+    /// Its floor's depth below the summit, m.
     pub depth: f64,
+}
+
+/// One eruption that shows on a shield (F101): its flow field's lobes, when it erupted,
+/// its lava's composition and whether it came from the summit.
+pub struct ShieldFlow {
+    pub lobes: Vec<Lobe>,
+    pub time_gyr: f64,
+    pub composition: f32,
+    pub summit: bool,
 }
 
 /// A trough along a trace: graben on the flanks and the canyon.
@@ -89,7 +112,64 @@ impl Trough {
 
 impl Shield {
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.3 * self.radius / body_radius
+        1.05 * SHIELD_FLOW_REACH * self.extent() / body_radius
+    }
+
+    /// A point's distance from the summit, m, and its azimuth there, rad from east
+    /// towards north.
+    pub fn polar(&self, d: [f64; 3], body_radius: f64) -> (f64, f64) {
+        let (east, north) = local_basis(self.center);
+        (
+            angle_between(self.center, d) * body_radius,
+            azimuth_from(self.center, east, north, d),
+        )
+    }
+
+    /// The edifice's outline toward an azimuth (F101): the radius of its core, longer
+    /// along its rift zone, whose fissures feed it more lava there, by its elongation with
+    /// the area kept; and the lobing of its foot, where its flows ran out farther in some
+    /// directions than others: harmonics of orders SHIELD_OUTLINE_ORDERS, their amplitudes
+    /// the order to the -0.75, SHIELD_OUTLINE_LOBING rms.
+    fn outline(&self, phi: f64) -> (f64, f64) {
+        let a = phi - self.rift;
+        let e = self.elongation;
+        let core = self.radius / (a.cos().powi(2) / e + e * a.sin().powi(2)).sqrt();
+        let rng = Rng::new(self.id ^ 0x0071_1E5E_0000);
+        let (lo, hi) = SHIELD_OUTLINE_ORDERS;
+        let (mut sum, mut power) = (0.0, 0.0);
+        for k in lo..=hi {
+            let amplitude = (k as f64).powf(-0.75);
+            let phase = 2.0 * std::f64::consts::PI * rng.uniform(k as u64, 0);
+            sum += amplitude * (k as f64 * phi + phase).cos();
+            power += 0.5 * amplitude * amplitude;
+        }
+        let lobing = (SHIELD_OUTLINE_LOBING * sum / power.sqrt())
+            .clamp(-3.0 * SHIELD_OUTLINE_LOBING, 3.0 * SHIELD_OUTLINE_LOBING);
+        (core, lobing)
+    }
+
+    /// A point's share of the way from the summit to the edifice's foot (F101): the
+    /// core's ellipse on the upper flanks, the lobing coming in as the square of the
+    /// distance, so that the summit stays round and the foot is lobed.
+    fn reach_share(&self, r: f64, phi: f64) -> f64 {
+        let (core, lobing) = self.outline(phi);
+        let u = r / core;
+        u / (1.0 + lobing * u * u)
+    }
+
+    /// The edifice's radius toward an azimuth, to its foot, m.
+    pub fn radius_toward(&self, phi: f64) -> f64 {
+        let (core, lobing) = self.outline(phi);
+        if lobing.abs() < 1e-9 {
+            core
+        } else {
+            core * (1.0 - (1.0 - 4.0 * lobing).sqrt()) / (2.0 * lobing)
+        }
+    }
+
+    /// The farthest the edifice reaches from its summit, m.
+    pub fn extent(&self) -> f64 {
+        self.radius * self.elongation.sqrt() * (1.0 + 5.0 * SHIELD_OUTLINE_LOBING)
     }
 }
 
@@ -133,24 +213,253 @@ pub fn shield_progress(t: f64, start: f64) -> f64 {
     }
 }
 
-/// Caldera depth at a point, metres below the summit surface: nested flat-floored pits.
+/// Caldera depth at a point, metres below the summit surface (F102): each collapse a pit
+/// with a flat floor at its own depth inside a scarp, its outline scalloped by the slumps
+/// of its wall; a younger pit, deeper, cuts the older ones it overlaps.
 fn caldera_depth(shield: &Shield, d: [f64; 3], body_radius: f64, blur: f64) -> f64 {
     let (east, north) = local_basis(shield.center);
+    let v = [
+        d[0] - shield.center[0],
+        d[1] - shield.center[1],
+        d[2] - shield.center[2],
+    ];
+    let (x, y) = (dot(v, east) * body_radius, dot(v, north) * body_radius);
     let mut depth: f64 = 0.0;
-    for c in &shield.calderas {
-        let centre = offset(
-            shield.center,
-            east,
-            north,
-            c.offset * shield.radius / body_radius,
-            c.azimuth,
+    for (k, c) in shield.calderas.iter().enumerate() {
+        let (dx, dy) = (x - c.east, y - c.north);
+        let (ca, sa) = (c.axis.cos(), c.axis.sin());
+        let (u, w) = (dx * ca + dy * sa, dy * ca - dx * sa);
+        let long = c.ellipticity.sqrt();
+        let r = ((u / long).powi(2) + (w * long).powi(2)).sqrt();
+        let scallop = crate::crater::stamp::crenulation(
+            shield.id.wrapping_mul(0x9E37_79B9) ^ k as u64,
+            w.atan2(u),
         );
-        let r = angle_between(centre, d) * body_radius;
+        let edge = c.radius * (1.0 + CALDERA_SCALLOP * scallop);
         let wall = (CALDERA_WALL_WIDTH * c.radius).hypot(blur);
-        let w = 0.5 * (1.0 - ((r - c.radius) / wall).tanh());
-        depth = depth.max(c.depth * w);
+        depth = depth.max(c.depth * 0.5 * (1.0 - ((r - edge) / wall).tanh()));
     }
     depth
+}
+
+/// A shield's summit collapses (F102): each time an eruption drains the chamber the roof
+/// sinks into it, a pit about as wide as the chamber; the vent wanders between collapses
+/// and the chamber shrinks as the supply wanes, so each pit is offset from the last,
+/// smaller, and sunk deeper into the floors the later lava ponded in. Olympus Mons's
+/// summit holds six, the youngest the smallest and the deepest (Mouginis-Mark et al.
+/// 1991; Mouginis-Mark 2021).
+pub fn summit_collapses(rng: &Rng, draw: u64, radius: f64, height: f64) -> Vec<Caldera> {
+    let tau = 2.0 * std::f64::consts::PI;
+    let n = (1 + (CALDERA_COUNT_MAX as f64 * rng.uniform(draw, 0).powi(2)).floor() as usize)
+        .min(CALDERA_COUNT_MAX);
+    let deepest = (CALDERA_DEPTH_FRACTION * height).min(CALDERA_MAX_DEPTH);
+    let (c_lo, c_hi) = CALDERA_RADIUS;
+    let mut size = radius * c_lo * (c_hi / c_lo).powf(rng.uniform(draw, 1));
+    let mut depth = deepest * (0.35 + 0.25 * rng.uniform(draw, 2));
+    let mut at = (0.0, 0.0);
+    let mut out = Vec::with_capacity(n);
+    for c in 0..n as u64 {
+        let k = 3 + 8 * c;
+        if c > 0 {
+            let phi = tau * rng.uniform(draw, k);
+            let step = CALDERA_WANDER * size * rng.uniform(draw, k + 1);
+            at = (at.0 + step * phi.cos(), at.1 + step * phi.sin());
+            let (s0, s1) = CALDERA_SHRINK;
+            size *= s0 + (s1 - s0) * rng.uniform(draw, k + 2);
+            depth += (deepest - depth) * (0.25 + 0.5 * rng.uniform(draw, k + 3));
+        }
+        out.push(Caldera {
+            east: at.0,
+            north: at.1,
+            radius: size,
+            ellipticity: 1.0 + CALDERA_ELONGATION * rng.uniform(draw, k + 4),
+            axis: tau * rng.uniform(draw, k + 5),
+            depth,
+        });
+    }
+    out
+}
+
+/// A shield's lava composition at a time (F101): its lavas come from one reservoir under
+/// its summit, which mixes the batches that feed it, so they share the source there, the
+/// drift by the time and the shield's own batch, an eruption's batch varying about it by
+/// SHIELD_BATCH_SPREAD of a flood's.
+pub fn shield_composition(shield: &Shield, time_gyr: f64, eruption: Option<u64>) -> f32 {
+    let rng = Rng::new(shield.id ^ 0x5B1E_BA7C_0000);
+    let batch =
+        rng.normal(0, 0) + eruption.map_or(0.0, |j| SHIELD_BATCH_SPREAD * rng.normal(1 + j, 0));
+    crate::stages::volcanism::flood_composition(time_gyr, shield.center, batch)
+}
+
+/// The time by which a shield had grown to a share of its edifice.
+fn progress_time(shield: &Shield, progress: f64) -> f64 {
+    shield.start_gyr - SHIELD_GROWTH_GYR * (1.0 - progress).ln()
+}
+
+/// The edifice's mean height over its area as a share of its summit's.
+fn shield_mean_shape() -> f64 {
+    let n = 256;
+    (0..n)
+        .map(|i| {
+            let x = (i as f64 + 0.5) / n as f64;
+            2.0 * x * shield_shape(x) / n as f64
+        })
+        .sum()
+}
+
+/// The growth of a shield, shares of its edifice, over which the eruptions that can
+/// show on it came (F101): since the edifice last grew on average by SHIELD_FLOW_COVER
+/// sheets of flows, which lie over the rest; none before it starts.
+fn shield_span(shield: &Shield, present: f64) -> Option<(f64, f64)> {
+    let now = shield_progress(present, shield.start_gyr);
+    if now <= 0.0 {
+        return None;
+    }
+    let laid = SHIELD_FLOW_COVER * FLOOD_SHEET_THICKNESS / (shield.height * shield_mean_shape());
+    Some(((now - laid).max(0.0), now))
+}
+
+/// The times of the eruptions that can show on a shield (F101).
+pub fn shield_window(shield: &Shield, present: f64) -> Option<(f64, f64)> {
+    shield_span(shield, present)
+        .map(|(from, _)| (progress_time(shield, from).min(present), present))
+}
+
+/// The eruptions that show on a shield (F101). Its lava comes out at circumferential
+/// fissures round its summit caldera and on its flanks, and at fissures low on its rift
+/// zone (Chadwick and Howard 1991), whose eruptions are the largest and run onto the
+/// plains as aprons. Each eruption's lava runs down the edifice as a
+/// flood's does (F94), a compound flow field: a trunk from its vent away from the summit,
+/// widening as a breakout does, its branches and breakouts, until its lobes cover a field
+/// as Io's do, its run-out long and half as wide, FLOOD_LOBE_COVER times over. A flow
+/// narrows on the steep flanks and spreads where the ground flattens, on the summit and at
+/// the foot (`trace_flow`). The eruptions follow one another until their lobes cover the
+/// shield SHIELD_FLOW_COVER times over, the later lying on the earlier.
+pub fn shield_flows(
+    shield: &Shield,
+    grid: &CubeSphere,
+    body_radius: f64,
+    ground: &PaddedField,
+    present: f64,
+) -> Vec<ShieldFlow> {
+    let Some((from, now)) = shield_span(shield, present) else {
+        return Vec::new();
+    };
+    let tau = 2.0 * std::f64::consts::PI;
+    let cell = grid.delta() * body_radius;
+    let rng = Rng::new(shield.id ^ 0x5F10_0000_0000);
+    let center = shield.center;
+    let (east, north) = local_basis(center);
+    let rules = |hw: f64| PathRules {
+        min_spacing: 0.5 * cell,
+        slope_follow: IO_FLOW_SLOPE_FOLLOW,
+        slope_scale: IO_FLOW_SLOPE_SCALE,
+        steer_length: FLOOD_STEER_LENGTH,
+        wander_rad: FLOOD_WANDER_RAD,
+        wander_length: FLOOD_WANDER_WIDTHS * hw,
+        fill_depth: FLOOD_SHEET_THICKNESS,
+        width_wobble: IO_FLOW_WIDTH_WOBBLE,
+    };
+    let outside = |q: [f64; 3], hw: f64| {
+        let (r, phi) = shield.polar(q, body_radius);
+        r > SHIELD_FLOW_REACH * shield.radius_toward(phi) - hw
+    };
+    let target = SHIELD_FLOW_COVER * std::f64::consts::PI * shield.radius.powi(2);
+    let chamber = shield
+        .calderas
+        .first()
+        .map_or(CALDERA_RADIUS.0 * shield.radius, |c| c.radius);
+    let (m_lo, m_hi) = SHIELD_RIM_VENTS;
+    let mut laid: Vec<(Vec<Lobe>, bool)> = Vec::new();
+    let mut area = 0.0;
+    let mut i = 0u64;
+    while area < target && laid.len() < SHIELD_ERUPTIONS_MAX {
+        let k = 8 * i;
+        let summit = rng.uniform(k, 0) < SHIELD_SUMMIT_VENT_SHARE;
+        let rift = !summit && rng.uniform(k, 1) < SHIELD_RIFT_VENT_SHARE;
+        let (dist, phi) = if summit {
+            // A circumferential fissure round the caldera.
+            (
+                chamber * (m_lo + (m_hi - m_lo) * rng.uniform(k, 3)),
+                tau * rng.uniform(k, 2),
+            )
+        } else if rift {
+            // A fissure on the rift zone either side of the summit, low on the flank,
+            // where the dikes that feed the largest eruptions break out.
+            let phi = shield.rift
+                + if rng.uniform(k, 2) < 0.5 {
+                    0.0
+                } else {
+                    std::f64::consts::PI
+                }
+                + SHIELD_RIFT_SPREAD * (2.0 * rng.uniform(k, 5) - 1.0);
+            let (lo, hi) = SHIELD_RIFT_VENTS;
+            (
+                shield.radius_toward(phi) * (lo + (hi - lo) * rng.uniform(k, 3)),
+                phi,
+            )
+        } else {
+            // A fissure anywhere on the upper flanks.
+            let phi = tau * rng.uniform(k, 2);
+            let (lo, hi) = SHIELD_FLANK_VENTS;
+            (
+                shield.radius_toward(phi) * (lo + (hi - lo) * rng.uniform(k, 3)),
+                phi,
+            )
+        };
+        let vent = offset(center, east, north, dist / body_radius, phi);
+        // The lava sets off away from the summit.
+        let heading = [
+            vent[0] - center[0],
+            vent[1] - center[1],
+            vent[2] - center[2],
+        ];
+        // The rift zone's eruptions are the largest and run the farthest, onto the plains
+        // as aprons; the fissures round the summit and on the flanks build the edifice.
+        let (l_lo, l_hi) = if rift {
+            SHIELD_RIFT_FLOW_LENGTH
+        } else {
+            SHIELD_FISSURE_FLOW_LENGTH
+        };
+        let run = shield.radius * l_lo * (l_hi / l_lo).powf(rng.uniform(k, 6));
+        let field = FLOOD_LOBE_COVER * IO_FLOW_FIELD_AREA * run * run;
+        let id = crate::rng::hash_words(&[shield.id, i, 0x5F1E_1D00]);
+        let lobes = crate::stages::volcanism::flow_field(
+            grid,
+            body_radius,
+            ground,
+            &Rng::new(id),
+            id,
+            vent,
+            heading,
+            run,
+            field,
+            IO_FLOW_TOE,
+            &rules,
+            &outside,
+        );
+        area += lobes
+            .iter()
+            .map(crate::stages::volcanism::lobe_area)
+            .sum::<f64>();
+        laid.push((lobes, summit));
+        i += 1;
+    }
+    let n = laid.len().max(1) as f64;
+    laid.into_iter()
+        .enumerate()
+        .map(|(j, (lobes, summit))| {
+            // Eruptions come as the supply does, evenly through the growth.
+            let time =
+                progress_time(shield, from + (now - from) * (j as f64 + 0.5) / n).min(present);
+            ShieldFlow {
+                lobes,
+                time_gyr: time,
+                composition: shield_composition(shield, time, Some(j as u64)),
+                summit,
+            }
+        })
+        .collect()
 }
 
 /// Height of a shield's edifice at a point, fully grown, with or without the calderas
@@ -163,8 +472,8 @@ pub fn shield_height(
     with_calderas: bool,
     blur: f64,
 ) -> f64 {
-    let r = angle_between(shield.center, d) * body_radius;
-    let h = shield.height * shield_shape(r / shield.radius);
+    let (r, phi) = shield.polar(d, body_radius);
+    let h = shield.height * shield_shape(shield.reach_share(r, phi));
     if with_calderas {
         (h - caldera_depth(shield, d, body_radius, blur)).max(0.0)
     } else {
@@ -202,6 +511,8 @@ pub struct PlumeProcess {
     /// Cumulative dome uplift per coarse cell, m.
     pub load: Vec<f32>,
     rise_height: f64,
+    /// The body's age, Gyr.
+    present: f64,
     /// Shield height so far per coarse cell, m.
     shield_built: Vec<f32>,
     /// Canyon depth carved so far per coarse cell, m.
@@ -288,26 +599,11 @@ impl PlumeProcess {
                         break;
                     }
                 }
-                let n_cal = 1 + (rng.bits(draw, 4) % 3) as usize;
-                let mut calderas = Vec::with_capacity(n_cal);
-                for c in 0..n_cal as u64 {
-                    calderas.push(Caldera {
-                        offset: if c == 0 {
-                            0.0
-                        } else {
-                            CALDERA_RADIUS_FRACTION * (0.6 + 0.8 * rng.uniform(draw, 5 + 3 * c))
-                        },
-                        azimuth: 2.0 * std::f64::consts::PI * rng.uniform(draw, 6 + 3 * c),
-                        radius: CALDERA_RADIUS_FRACTION
-                            * radius
-                            * (if c == 0 {
-                                1.0
-                            } else {
-                                0.4 + 0.4 * rng.uniform(draw, 7 + 3 * c)
-                            }),
-                        depth: (CALDERA_DEPTH_FRACTION * height).min(CALDERA_MAX_DEPTH),
-                    });
-                }
+                let calderas = summit_collapses(&rng, draw ^ 0xCA1D_E7A5_0000, radius, height);
+                // Its rift zone runs along the rise's radial graben, where the dikes rise
+                // that feed its flank vents.
+                let (se, sn) = local_basis(center);
+                let rift = azimuth_from(center, se, sn, rise.center);
                 shields.push(Shield {
                     center,
                     radius,
@@ -315,6 +611,8 @@ impl PlumeProcess {
                     start_gyr: SHIELD_START_GYR.0
                         + (SHIELD_START_GYR.1 - SHIELD_START_GYR.0) * rng.uniform(draw, 14),
                     calderas,
+                    rift,
+                    elongation: 1.0 + (SHIELD_ELONGATION_MAX - 1.0) * rng.uniform(draw, 15),
                     id: sid,
                 });
                 sid += 1;
@@ -448,6 +746,7 @@ impl PlumeProcess {
             graben,
             load: vec![0.0; grid.cell_count()],
             rise_height: rise_height.max(1.0),
+            present: graph.f64("body.age"),
             shield_built: vec![0.0; grid.cell_count()],
             carved: vec![0.0; grid.cell_count()],
             stamper: Stamper::new(&grid),
@@ -490,13 +789,17 @@ impl PlumeProcess {
                 continue;
             }
             self.stamper
-                .gather(&grid, body_radius, shield.center, shield.radius);
+                .gather(&grid, body_radius, shield.center, shield.extent());
             let bedrock = layers.bedrock.as_mut_slice();
             let ages = layers.surface_age.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
             let deep = layers.deep.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
+            // The eruptions that show from the window's start are drawn in the finishing
+            // pass, so the surface they lie on is dated no later than that (F101); the
+            // finishing pass lays its lava's composition at its own resolution.
+            let renewed = shield_window(shield, self.present).map_or(t_mid, |w| t_mid.min(w.0));
             for &(idx, _, _) in &self.stamper.footprint {
                 let d = grid.center(grid.cell(idx));
                 let full = shield_height(shield, d, body_radius, false, 0.0);
@@ -507,7 +810,7 @@ impl PlumeProcess {
                 bedrock[idx] += dh as f32;
                 self.shield_built[idx] += dh as f32;
                 if dh > SHIELD_RENEWAL_THICKNESS {
-                    ages[idx] = t_mid as f32;
+                    ages[idx] = renewed as f32;
                     units[idx] = UNIT_LAVA;
                     deep[idx] = 0.0;
                     melt[idx] = 0.0;
@@ -915,59 +1218,114 @@ pub fn trough_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 
-/// Finishing pass of a shield: the calderas cut into the summit and the flank texture,
-/// neither of which the coarse grid carried.
+/// Finishing pass of a shield (F101, F102): the calderas cut into the summit, and the
+/// eruptions that show laid over the edifice, whose surface the loop dated to their
+/// start, each flow field a sheet with fronts where its lobes end; the ground takes the
+/// topmost eruption's lava, its age and composition, and the caldera floors are the lava
+/// the last summit eruption ponded in them. Elsewhere on the edifice the loop's lava keeps
+/// its age and takes the shield's composition when the eruptions began, out to the
+/// edifice's own outline, over the tessera a resurfacing may have made of it. Only the
+/// eruptions after `after` are laid: those before a resurfacing lie under it.
+#[allow(clippy::too_many_arguments)]
 pub fn shield_compute(
     layers: &LayerSet,
     grid: &CubeSphere,
     body_radius: f64,
     shield: &Shield,
+    ground: Option<&PaddedField>,
+    present: f64,
+    after: f64,
     stamper: &mut Stamper,
 ) -> StampOutput {
-    let bedrock = layers.bedrock.as_slice();
-    stamper.gather(grid, body_radius, shield.center, shield.radius * 1.05);
-    let noise = GradientNoise::new(shield.id ^ 0x5B1E_1D00);
-    let flow_frequency = body_radius / SHIELD_FLOW_TEXTURE_LENGTH;
-    let cells = stamper
-        .footprint
+    let flows: Vec<ShieldFlow> = ground.map_or_else(Vec::new, |g| {
+        shield_flows(shield, grid, body_radius, g, present)
+            .into_iter()
+            .filter(|f| f.time_gyr > after)
+            .collect()
+    });
+    let covers: Vec<HashMap<usize, f32>> = flows
         .iter()
-        .map(|&(idx, r, phi)| {
-            let d = grid.center(grid.cell(idx));
-            let fine = shield_height(shield, d, body_radius, true, 0.0);
-            let coarse = shield_height(shield, d, body_radius, false, 0.0);
-            let x = r / shield.radius;
-            // Radial flow ridges down the flank, fading at the summit and the base.
-            let flank = (4.0 * x * (1.0 - x)).clamp(0.0, 1.0);
-            let streak = noise.fbm(
-                [
-                    d[0] * flow_frequency + 11.0 * phi.cos(),
-                    d[1] * flow_frequency + 11.0 * phi.sin(),
-                    d[2] * flow_frequency,
-                ],
-                1.0,
-                3,
-                2.0,
-                0.5,
-            );
-            let texture = SHIELD_FLOW_TEXTURE * shield.height * flank * streak * 0.01;
-            CellWrite {
-                idx: idx as u32,
-                bedrock: (bedrock[idx] as f64 + (fine - coarse) + texture) as f32,
-                surface: false,
-                age: 0.0,
-                unit: 0,
-                deep: 0.0,
-                melt: 0.0,
-                cover: 0.0,
-            }
+        .enumerate()
+        .map(|(j, f)| {
+            crate::stages::volcanism::lobe_cover(
+                &f.lobes,
+                grid,
+                body_radius,
+                shield.id ^ ((j as u64) << 24),
+                stamper,
+            )
         })
         .collect();
+    let ponded = flows
+        .iter()
+        .rev()
+        .find(|f| f.summit)
+        .or(flows.last())
+        .map(|f| (f.time_gyr as f32, f.composition));
+    let bedrock = layers.bedrock.as_slice();
+    let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    // The edifice's lava under the eruptions that show, as it was when they began.
+    let older = shield_window(shield, present).map(|w| shield_composition(shield, w.0, None));
+    stamper.gather(
+        grid,
+        body_radius,
+        shield.center,
+        shield.cap_radius(body_radius) * body_radius,
+    );
+    let mut cells = Vec::with_capacity(stamper.footprint.len());
+    let mut compositions = Vec::with_capacity(stamper.footprint.len());
+    for &(idx, _, _) in &stamper.footprint {
+        let d = grid.center(grid.cell(idx));
+        let fine = shield_height(shield, d, body_radius, true, 0.0);
+        let coarse = shield_height(shield, d, body_radius, false, 0.0);
+        let mut stack = 0.0;
+        let mut top: Option<usize> = None;
+        for (j, c) in covers.iter().enumerate() {
+            if let Some(&v) = c.get(&idx) {
+                stack += FLOOD_SHEET_THICKNESS * v as f64;
+                if v >= 0.5 {
+                    top = Some(j);
+                }
+            }
+        }
+        let mut write = CellWrite {
+            idx: idx as u32,
+            bedrock: (bedrock[idx] as f64 + (fine - coarse) + stack) as f32,
+            surface: false,
+            age: 0.0,
+            unit: 0,
+            deep: 0.0,
+            melt: 0.0,
+            cover: 0.0,
+        };
+        let mut composition = 0.0;
+        let lava = match top {
+            Some(j) => Some((flows[j].time_gyr as f32, flows[j].composition)),
+            None if coarse - fine > 1.0 => ponded,
+            None if coarse > 0.0 && matches!(units[idx], UNIT_LAVA | UNIT_TESSERA) => {
+                older.map(|c| (ages[idx], c))
+            }
+            None => None,
+        };
+        if let Some((age, comp)) = lava {
+            write.surface = true;
+            write.age = age;
+            write.unit = UNIT_LAVA;
+            write.cover = 1.0;
+            composition = comp;
+        }
+        cells.push(write);
+        compositions.push(composition);
+    }
     StampOutput {
         cells,
         composition: None,
+        compositions: Some(compositions),
         stain: None,
         steep: None,
         ejecta_age: None,
@@ -1001,11 +1359,15 @@ mod tests {
             height: 20e3,
             start_gyr: 1.0,
             calderas: vec![Caldera {
-                offset: 0.0,
-                azimuth: 0.0,
+                east: 0.0,
+                north: 0.0,
                 radius: 30e3,
+                ellipticity: 1.0,
+                axis: 0.0,
                 depth: 2.5e3,
             }],
+            rift: 0.0,
+            elongation: 1.0,
             id: 1,
         };
         let r = 3.39e6;
@@ -1021,11 +1383,119 @@ mod tests {
         assert!(
             shield_height(
                 &shield,
-                offset(shield.center, east, north, 310e3 / r, 0.0),
+                offset(shield.center, east, north, shield.extent() / r + 1e-4, 0.0),
                 r,
                 true,
                 0.0
             ) == 0.0
         );
+    }
+
+    #[test]
+    fn a_summit_sinks_in_collapses_each_smaller_and_deeper() {
+        // F102: over many shields, a summit sinks in one to CALDERA_COUNT_MAX collapses,
+        // each no larger and no shallower than the one before, wandering from the first.
+        let rng = Rng::new(9);
+        let mut most = 0;
+        for s in 0..200u64 {
+            let calderas = summit_collapses(&rng, s * 64, 300e3, 20e3);
+            most = most.max(calderas.len());
+            assert!((1..=CALDERA_COUNT_MAX).contains(&calderas.len()));
+            for pair in calderas.windows(2) {
+                assert!(pair[1].radius <= pair[0].radius + 1e-6);
+                assert!(pair[1].depth >= pair[0].depth - 1e-6);
+            }
+            let first = calderas[0].radius;
+            for c in &calderas {
+                assert!(c.east.hypot(c.north) < 3.0 * first);
+                assert!(c.depth <= CALDERA_MAX_DEPTH + 1e-6);
+            }
+        }
+        assert!(most >= 4, "the most collapses on a summit was {most}");
+    }
+
+    #[test]
+    fn a_shield_s_flows_run_down_its_flanks() {
+        // F101: the eruptions that show on a shield start round its summit or on its
+        // flanks, their trunks run down it, and together their lobes cover it more than
+        // once.
+        let grid = CubeSphere::new(256);
+        let body_radius = 3.39e6;
+        let center = normalize([0.3, 1.0, 0.2]);
+        let shield = Shield {
+            center,
+            radius: 300e3,
+            height: 20e3,
+            start_gyr: 1.0,
+            calderas: summit_collapses(&Rng::new(3), 0, 300e3, 20e3),
+            rift: 0.7,
+            elongation: 1.3,
+            id: 5,
+        };
+        let height: Vec<f32> = (0..grid.cell_count())
+            .map(|k| {
+                shield_height(&shield, grid.center(grid.cell(k)), body_radius, false, 0.0) as f32
+            })
+            .collect();
+        let ground = PaddedField::new(&grid, &height);
+        let flows = shield_flows(&shield, &grid, body_radius, &ground, 4.5);
+        assert!(flows.len() > 5, "{} flows", flows.len());
+        let mut downhill = 0;
+        for f in &flows {
+            let p = &f.lobes[0].points;
+            let h = |q: [f64; 3]| shield_height(&shield, q, body_radius, false, 0.0);
+            if h(p[p.len() - 1]) < h(p[0]) {
+                downhill += 1;
+            }
+            for q in f.lobes.iter().flat_map(|l| &l.points) {
+                let (r, phi) = shield.polar(*q, body_radius);
+                assert!(r <= SHIELD_FLOW_REACH * shield.radius_toward(phi) + 1e3);
+            }
+        }
+        assert!(
+            downhill * 10 >= flows.len() * 9,
+            "{downhill} of {} run downhill",
+            flows.len()
+        );
+        let area: f64 = flows
+            .iter()
+            .flat_map(|f| &f.lobes)
+            .map(crate::stages::volcanism::lobe_area)
+            .sum();
+        assert!(area > std::f64::consts::PI * shield.radius.powi(2));
+        assert!(flows.windows(2).all(|w| w[1].time_gyr > w[0].time_gyr));
+    }
+
+    #[test]
+    fn a_shield_stretches_along_its_rift_and_lobes_at_its_foot() {
+        // F101: the edifice is longer along its rift, round near its summit and lobed at
+        // its foot; the eruptions that show came after its last few sheets were laid.
+        let shield = Shield {
+            center: [1.0, 0.0, 0.0],
+            radius: 300e3,
+            height: 20e3,
+            start_gyr: 1.0,
+            calderas: Vec::new(),
+            rift: 0.0,
+            elongation: 1.3,
+            id: 2,
+        };
+        let pi = std::f64::consts::PI;
+        let along = shield.radius_toward(0.0) + shield.radius_toward(pi);
+        let across = shield.radius_toward(0.5 * pi) + shield.radius_toward(1.5 * pi);
+        assert!(along > 1.1 * across, "{along} {across}");
+        // Near the summit the share of the way to the foot follows the ellipse alone; at
+        // the foot it varies with the lobing.
+        let core = |phi: f64| shield.outline(phi).0;
+        let (mut near, mut foot) = (0.0f64, 0.0f64);
+        for k in 0..64 {
+            let phi = 2.0 * pi * k as f64 / 64.0;
+            near = near.max((shield.reach_share(0.1 * core(phi), phi) - 0.1).abs());
+            foot = foot.max((shield.radius_toward(phi) / core(phi) - 1.0).abs());
+            assert!(shield.radius_toward(phi) <= shield.extent());
+        }
+        assert!(near < 0.002 && foot > 0.03, "{near} {foot}");
+        let (window, now) = shield_window(&shield, 4.5).unwrap();
+        assert!(window > shield.start_gyr && window < now && now == 4.5);
     }
 }

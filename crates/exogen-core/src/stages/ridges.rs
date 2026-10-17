@@ -340,6 +340,7 @@ pub fn ridge_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 

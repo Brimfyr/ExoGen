@@ -176,6 +176,14 @@ Direction: a narrow ridge's relief drawn as the cell-averaged cross-section, a s
 
 When: the earlier-phases revisit.
 
+### W6. Flows finer than the grid
+
+A lobe sets its lava where its cover reaches half a cell (F94, F101), so a flow narrower than about a cell and a half does not show at all, and one that narrows and widens along its path shows only where it is wide. On a shield's flanks, where flows narrow on the steep ground (F101), the flows are finer than the grid at the standard quality and their toes show where they spread; at higher qualities more of the flank flows show.
+
+Direction: a flow's lava blended into its cells by its cover, its composition at least, so that the flows finer than the grid show as a faint striation, as the Tharsis Montes' flanks do at a few kilometres a pixel.
+
+When: the earlier-phases revisit.
+
 ## Stamped shapes (principle 14)
 
 ### T1. Shapes from a profile and noise
@@ -189,7 +197,7 @@ These features take a fixed profile, with noise for variety, rather than a form 
 | Coronae | `corona_core` (stages/episodic.rs) | a plume head under a lid: uplift, then a moat and rim as it spreads and sinks |
 | Tessera texture | `tessera_texture` (stages/episodic.rs) | fold and fault fabric oriented by the stress of the event |
 | Rises | `dome` (stages/plume.rs) | a plume's buoyancy under the lid's flexure |
-| Shields | `shield_height` (stages/plume.rs) | built from flows, each laid down where the last left the slope |
+| Shields | `shield_height`, `shield_flows` (stages/plume.rs) | partly by F101 and F102, the thirty-fifth milestone: the surface is the eruptions since the edifice last grew by three sheets, compound flow fields from fissures round the caldera, on the flanks and on the rift zone, whose eruptions run the farthest and spread as aprons, the flows narrowing on the steep flanks; the summit sinks in collapses that wander, shrink and deepen; the edifice stretches along its rift and its foot is lobed. Still drawn: the edifice's profile, one power law at five degrees on every body, where its flows' lengths and the lithosphere's support would set it (Venus's large volcanoes are broad and gentle); the foot's lobing; the vents' shares and the run-outs, where the supply and the effusion rates would set them |
 | Canyons | `trough_depth_at` (stages/plume.rs) | strike from the stress field, depth and width from the extension and the lid |
 | Io's mountains | `mountain_height`, `raise_mountains` (stages/io.rs) | partly by F87, the twenty-eighth milestone: each a block thrust up along a fault striking with the tide's compression, its uplift the throw tapering to the fault's tips times its fall across the block, buried by the plains so that its back and tips are where it dips under them, its trace bowed by the heave and its scarp cut back by landslides. Its sizes, its form's shares and its relief and ridges are still drawn, where the compression of the burial against the lithosphere's strength would set them (Schenk and Bulmer 1998; McKinnon et al. 2001) |
 | Io's plume deposits | `deposit_profile`, `plume_history` (stages/io.rs) | partly by F84, the twenty-sixth milestone: each eruption's range from its speed (v²/g), its oval from its vent's elongation, its range scattered with azimuth, its gas condensing in a ring and its pyroclasts falling within; the ring's radial profile is still a fixed Gaussian each side and the fall within a fixed ramp, where the canopy shock and the particles' sizes would set them (Zhang et al. 2003's DSMC plumes) |
@@ -266,6 +274,8 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | RING_STRAIN | the strain of Tyre's and Callanish's inner graben (Singer et al. 2023) | check against the graben depths of Valhalla and Ganymede's furrows once measured |
 | PIT_DIAMETER_SHARE, PIT_GROWTH, PIT_DEPTH_SHARE, DOME_PIT_SHARE, DOME_RISE | Ganymede's pits and domes (Alzate and Barlow 2011; Bray et al. 2012; Schenk 1993) | check against Callisto's dome craters and Ceres's pits (Occator, Dantu) |
 | MANTLE_SPREAD | a stated choice: the length over which a mantle evens the ground, twice its thickness | check against the rim profiles of Enceladus's muted craters (Kirchoff and Schenk 2009) |
+| FLOW_NARROWING_SLOPE | Tharsis: a 5 degree flank narrows a flow to about a third of its width on the plains (Peters et al. 2021: the narrowest flows on Olympus Mons's flanks) | a flow's width from its lava's yield strength and its effusion rate on the slope (Hulme 1974) |
+| FLOW_STEEP_SLOPE | a stated choice: a degree, above the plains' slopes, so that the plains' floods and Io's flows keep the steering they had | the slope at which gravity's push across a front outweighs the bumps it rides over; check against flow paths on a shield's flanks |
 
 Constants marked provisional for Phases 5 and 7 (atmosphere, albedo, imagery) are left to those phases.
 

@@ -3383,6 +3383,7 @@ pub fn groove_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 
@@ -3647,6 +3648,7 @@ pub fn polar_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        compositions: None,
     }
 }
 
