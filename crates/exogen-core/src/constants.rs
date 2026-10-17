@@ -439,8 +439,19 @@ pub const SHIELD_BATCH_SPREAD: f64 = 0.3;
 /// existing one as an en-echelon neighbour, a width or a few to its side, so the big
 /// ones gather parallel chasmata and the small ones form swarms. Troughs wider than two
 /// coarse cells are carved through the loop over a gigayear; the rest are cut at the
-/// finish. On a stagnant lid the rifting follows the dome; on an episodic lid it
-/// follows the resurfacing event.
+/// finish. On a stagnant lid the faults form from the rise's start to the present at the
+/// pace of the body's volcanism, which builds the rise's load (Tharsis faulted from the
+/// Noachian into the Amazonian: Anderson et al. 2001); on an episodic lid they follow the
+/// resurfacing event. The rest of a fault's course follows the rise's stress field
+/// (F105): it starts where the ground is in tension, as often as the tension is strong,
+/// out to this many rise radii; strikes across the most tensile direction, turning toward
+/// it by this share a step as far as the stress is anisotropic, and keeps its own heading
+/// where the tension is within this share of the same in every direction; the rise's load
+/// stretches the ground beyond its foot in hoop by this share of the crest's tension,
+/// falling as the square of the distance; and a fault grows, and starts, only where the
+/// tension is above this share of the crest's (stated choices: Tharsis's radial graben
+/// run thousands of kilometres out, Banerdt et al. 1992, and Noctis Labyrinthus's maze
+/// stands on its crest).
 pub const RIFT_EXTENSION_PER_UPLIFT: f64 = 4.0;
 pub const RIFT_TRANSECT_FRACTION: f64 = 0.7;
 pub const RIFT_LENGTH_SLOPE: f64 = 2.0;
@@ -452,12 +463,15 @@ pub const RIFT_MIN_DEPTH: f64 = 50.0;
 pub const RIFT_WIDTH_PER_DEPTH: f64 = 30.0;
 pub const RIFT_MIN_WIDTH: f64 = 2e3;
 pub const RIFT_HEAVE_PER_DEPTH: f64 = 1.2;
-pub const RIFT_START_FRACTION: (f64, f64) = (0.3, 1.1);
+pub const RIFT_REACH: f64 = 2.0;
+pub const RIFT_STEER: f64 = 0.25;
+pub const RIFT_LABYRINTH: f64 = 0.15;
+pub const RIFT_FAR_HOOP: f64 = 0.1;
+pub const RIFT_MIN_TENSION: f64 = 0.05;
 pub const RIFT_CLUSTER_PROBABILITY: f64 = 0.5;
 pub const RIFT_CLUSTER_OFFSET: (f64, f64) = (0.8, 3.5);
 pub const RIFT_LOOP_WIDTH_CELLS: f64 = 2.0;
 pub const RIFT_CARVING_GYR: f64 = 1.0;
-pub const RIFT_END_GYR: f64 = 2.0;
 pub const RIFT_MAX_FAULTS: u64 = 20_000;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;

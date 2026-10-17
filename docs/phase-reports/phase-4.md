@@ -821,3 +821,27 @@ What the maps show:
 - **Venus:** its three rises within 12 degrees of the equator, where they had stood at 63 north, 36 south and 28 north.
 
 Tests 180 (four ignored). One is new: a rise near the pole is carried near the equator against a small frozen bulge and hardly at all against a large one, the fluid Love number is right for a uniform body and the Earth, and the eigen solver finds a known matrix's axes. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-eighth milestone: graben and canyons follow the rise's stress
+
+The second part of the revisit's fourth item.
+
+- **F105, faults from the stress field.** A rise's faults start where its lithosphere is in tension, strike across the most tensile direction and die out where the tension fades: radial graben on the flanks, a maze of short graben on the crest, canyons running out from it, and the load's hoop tension carrying the graben a little past the foot. They form from the rise's start to the present at the pace of the body's volcanism, which builds the load.
+
+How it went:
+
+- **Buried graben.** The faults had formed only until 2 Gyr, and the lava that kept flooding the rise buried nearly all of them; Tharsis faulted from the Noachian into the Amazonian (Anderson et al. 2001), as its load kept growing. The chronology now follows the load.
+- **A canyon on the far side.** The first trace sampled starts by rejection, and where no draw passed in 64 it kept the last, anywhere out to two and a half rise radii: the longest canyon, 4,139 km, started beyond the foot and ran on through the load's weak hoop tension, which never turns to compression, to the far side of Mars. Starts are now drawn from the tabulated distribution, and a fault grows only while the tension is above a twentieth of the crest's.
+- **Buried floods' steps.** The flanks' plains show the coarse outlines of buried floods as a staircase in the hillshade, an artefact of the lava plains' milestone, entered as audit W7.
+
+What the maps show:
+
+- **Mars:** radial graben in swarms on the rise's flanks, the youngest across the plains, a maze of short troughs on its crest, its canyons running out from near the crest; every trough within 1.4 rise radii.
+- **Venus:** each rise ringed by a star of fine radial graben about its shields, its canyons curving.
+
+Still to do:
+
+- **Pit chains and the canyons' landslide walls**, the item's last part, and the rise's flexure.
+- **Buried floods' margins** in coarse steps (audit W7).
+
+Tests 181 (four ignored). One is new: the crest is in tension every way alike, the flank in hoop tension and the foot in compression, a flank fault runs along the radius, and the starts are drawn as the tension is. Clippy is clean and validate passes its 117 checks.

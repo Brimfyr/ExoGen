@@ -184,6 +184,14 @@ Direction: a flow's lava blended into its cells by its cover, its composition at
 
 When: the earlier-phases revisit.
 
+### W7. Buried floods' margins in coarse steps
+
+A flood the finish draws as its flows (F94) has lobate margins, but one buried under four or more successors keeps the outline the loop gave it, cell by coarse cell, and the steps of its thickness stay in the ground under the thin sheets above. On Mars's volcanic plains the hillshade shows them as a staircase of straight edges a loop cell long (21 km), the plains' most visible artefact at a kilometre a pixel.
+
+Direction: a buried flood's relief laid with the same lobate margins as a visible one's, or its coarse steps softened over the lobes' scale, so that the old flows under the young show as lobes too.
+
+When: the earlier-phases revisit, before the Mars dichotomy's lowland burial, which buries with floods.
+
 ## Stamped shapes (principle 14)
 
 ### T1. Shapes from a profile and noise
@@ -198,7 +206,7 @@ These features take a fixed profile, with noise for variety, rather than a form 
 | Tessera texture | `tessera_texture` (stages/episodic.rs) | fold and fault fabric oriented by the stress of the event |
 | Rises | `dome` (stages/plume.rs) | a plume's buoyancy under the lid's flexure |
 | Shields | `shield_height`, `shield_flows` (stages/plume.rs) | partly by F101 and F102, the thirty-fifth milestone: the surface is the eruptions since the edifice last grew by three sheets, compound flow fields from fissures round the caldera, on the flanks and on the rift zone, whose eruptions run the farthest and spread as aprons, the flows narrowing on the steep flanks; the summit sinks in collapses that wander, shrink and deepen; the edifice stretches along its rift and its foot is lobed. Still drawn: the edifice's profile, one power law at five degrees on every body, where its flows' lengths and the lithosphere's support would set it (Venus's large volcanoes are broad and gentle); the foot's lobing; the vents' shares and the run-outs, where the supply and the effusion rates would set them |
-| Canyons | `trough_depth_at` (stages/plume.rs) | strike from the stress field, depth and width from the extension and the lid |
+| Canyons | `trough_depth_at`, `stress_trace` (stages/plume.rs) | partly by F105, the thirty-eighth milestone: the faults start where the rise's stress is tensile, strike across its most tensile direction and die out where the tension fades, so the flanks carry radial graben, the crest a maze and the canyons run out from it; they form as the rise's load grows. Still drawn: the profile across a trough (a flat floor between tanh walls), its depth and width from its length, and the stress field's shape, a dome's bending and a load's hoop tension rather than a thin shell solved for the rise's load and support |
 | Io's mountains | `mountain_height`, `raise_mountains` (stages/io.rs) | partly by F87, the twenty-eighth milestone: each a block thrust up along a fault striking with the tide's compression, its uplift the throw tapering to the fault's tips times its fall across the block, buried by the plains so that its back and tips are where it dips under them, its trace bowed by the heave and its scarp cut back by landslides. Its sizes, its form's shares and its relief and ridges are still drawn, where the compression of the burial against the lithosphere's strength would set them (Schenk and Bulmer 1998; McKinnon et al. 2001) |
 | Io's plume deposits | `deposit_profile`, `plume_history` (stages/io.rs) | partly by F84, the twenty-sixth milestone: each eruption's range from its speed (v²/g), its oval from its vent's elongation, its range scattered with azimuth, its gas condensing in a ring and its pyroclasts falling within; the ring's radial profile is still a fixed Gaussian each side and the fall within a fixed ramp, where the canopy shock and the particles' sizes would set them (Zhang et al. 2003's DSMC plumes) |
 | Paterae | `patera_radius`, `foot_edges`, `populate` (stages/io.rs) | partly by F88 and F90: the outline is a chain of nested collapses along the crust's fabric, elongated as Radebaugh et al. measured, cut straight by its faults, and ending at the foot of a mountain it abuts. The sizes, shapes and shares are Radebaugh et al.'s counts, not yet read from the magma reservoirs beneath; the faults that cut a patera show nowhere outside it |
