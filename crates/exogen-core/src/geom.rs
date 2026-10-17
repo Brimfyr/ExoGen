@@ -72,6 +72,53 @@ pub fn offset(center: [f64; 3], east: [f64; 3], north: [f64; 3], theta: f64, phi
     ])
 }
 
+/// The eigenvalues of a symmetric 3x3 matrix, largest first, and their unit eigenvectors
+/// in the same order (cyclic Jacobi rotations).
+pub fn symmetric_eigen(m: [[f64; 3]; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
+    let mut a = m;
+    // Column k of v is the k-th eigenvector.
+    let mut v = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    for _ in 0..64 {
+        let scale = a[0][0].abs() + a[1][1].abs() + a[2][2].abs();
+        let off = a[0][1].abs() + a[0][2].abs() + a[1][2].abs();
+        if off <= 1e-15 * scale.max(f64::MIN_POSITIVE) {
+            break;
+        }
+        for (p, q) in [(0, 1), (0, 2), (1, 2)] {
+            if a[p][q] == 0.0 {
+                continue;
+            }
+            let theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+            let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
+            let c = 1.0 / (t * t + 1.0).sqrt();
+            let s = t * c;
+            for row in a.iter_mut() {
+                let (x, y) = (row[p], row[q]);
+                row[p] = c * x - s * y;
+                row[q] = s * x + c * y;
+            }
+            let (mut row_p, mut row_q) = (a[p], a[q]);
+            for (x, y) in row_p.iter_mut().zip(row_q.iter_mut()) {
+                let (u, w) = (*x, *y);
+                *x = c * u - s * w;
+                *y = s * u + c * w;
+            }
+            a[p] = row_p;
+            a[q] = row_q;
+            for row in v.iter_mut() {
+                let (x, y) = (row[p], row[q]);
+                row[p] = c * x - s * y;
+                row[q] = s * x + c * y;
+            }
+        }
+    }
+    let mut order = [0usize, 1, 2];
+    order.sort_by(|&i, &j| a[j][j].total_cmp(&a[i][i]));
+    let values = order.map(|i| a[i][i]);
+    let vectors = order.map(|i| normalize([v[0][i], v[1][i], v[2][i]]));
+    (values, vectors)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

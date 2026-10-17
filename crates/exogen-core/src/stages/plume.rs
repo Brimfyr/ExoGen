@@ -20,7 +20,9 @@ use std::collections::HashMap;
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
-use crate::geom::{angle_between, azimuth_from, cross, dot, local_basis, normalize, offset};
+use crate::geom::{
+    angle_between, azimuth_from, cross, dot, local_basis, normalize, offset, rotate,
+};
 use crate::grid::CubeSphere;
 use crate::grid::projection::PaddedField;
 use crate::noise::GradientNoise;
@@ -29,7 +31,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -39,6 +41,8 @@ pub struct Rise {
     pub height: f64,
     pub start_gyr: f64,
     pub end_gyr: f64,
+    /// Its latitude when it began to rise, before the body turned under it (F104), rad.
+    pub paleo_latitude: f64,
 }
 
 /// A shield volcano on a rise, growing from its start to the present.
@@ -171,6 +175,112 @@ impl Shield {
     pub fn extent(&self) -> f64 {
         self.radius * self.elongation.sqrt() * (1.0 + 5.0 * SHIELD_OUTLINE_LOBING)
     }
+}
+
+/// The fluid Love number of a body with a moment of inertia factor (the Darwin-Radau
+/// relation): 3/2 for a uniform body, about 0.94 for the Earth.
+pub fn fluid_love_number(moment_of_inertia: f64) -> f64 {
+    let s = 2.5 * (1.0 - 1.5 * moment_of_inertia);
+    (4.0 - s * s) / (1.0 + s * s)
+}
+
+/// The share of a load at degree two that an elastic lithosphere `te` thick holds up
+/// rather than isostasy, by its membrane strength (Turcotte et al. 1981; its bending
+/// strength is negligible at degree two): a few percent for Mars's.
+pub fn degree_two_support(te: f64, gravity: f64, body_radius: f64) -> f64 {
+    let n = 6.0;
+    let xi = ROCK_YOUNG_MODULUS * te.max(0.0)
+        / (DENSITY_ROCK * gravity.max(1e-3) * body_radius * body_radius)
+        * (n - 2.0)
+        / (n - (1.0 - ROCK_POISSON));
+    xi / (1.0 + xi)
+}
+
+/// The rotational bulge an elastic lithosphere holds frozen as the body turns under it,
+/// kg m²: the excess of the polar moment of inertia over the equatorial, (k_f / 3)
+/// ω² R⁵ / G for a fluid body, times the share the lithosphere supports (Willemann 1984;
+/// Matsuyama et al. 2006).
+pub fn frozen_bulge(
+    body_radius: f64,
+    gravity: f64,
+    angular_velocity: f64,
+    moment_of_inertia: f64,
+    te: f64,
+) -> f64 {
+    let fluid =
+        fluid_love_number(moment_of_inertia) / 3.0 * angular_velocity.powi(2) * body_radius.powi(5)
+            / G;
+    fluid * degree_two_support(te, gravity, body_radius)
+}
+
+/// True polar wander (F104): the turn that brings the body's axis of greatest moment of
+/// inertia to its spin axis, from the rises' mass and the frozen bulge about the axis
+/// they began under. A plume holds its rise up rather than isostasy, so its mass turns
+/// the body against only the bulge the elastic lithosphere holds frozen, and a large
+/// rise is carried to the equator (Matsuyama et al. 2006: a dynamic planet's stability
+/// is the remnant bulge's; the Earth's two great upwellings lie under its equator; Bouley
+/// et al. 2016 on Tharsis's turn of Mars); several rise to a great circle. Returns the
+/// axis and angle of the rotation that carries the body-fixed directions of before into
+/// the frame of the present spin axis, the shortest turn that does.
+pub fn polar_wander(rises: &[Rise], body_radius: f64, bulge: f64) -> ([f64; 3], f64) {
+    let pole = [0.0, 0.0, 1.0];
+    // The traceless inertia tensor: the bulge about the old pole, less each rise's mass
+    // m R² (u uᵀ - I/3) summed over its dome.
+    let mut tensor = [[0.0f64; 3]; 3];
+    for (i, row) in tensor.iter_mut().enumerate() {
+        for (j, t) in row.iter_mut().enumerate() {
+            *t = bulge * (pole[i] * pole[j] - if i == j { 1.0 / 3.0 } else { 0.0 });
+        }
+    }
+    let (rings, spokes) = (48, 48);
+    for rise in rises {
+        let (east, north) = local_basis(rise.center);
+        let dr = rise.radius / rings as f64;
+        let dphi = 2.0 * std::f64::consts::PI / spokes as f64;
+        for a in 0..rings {
+            let r = (a as f64 + 0.5) * dr;
+            let mass = DENSITY_CRUST_ROCK * rise.height * dome(r / rise.radius) * r * dr * dphi;
+            for b in 0..spokes {
+                let u = offset(rise.center, east, north, r / body_radius, b as f64 * dphi);
+                for (i, row) in tensor.iter_mut().enumerate() {
+                    for (j, t) in row.iter_mut().enumerate() {
+                        let iso = if i == j { 1.0 / 3.0 } else { 0.0 };
+                        *t -= mass * body_radius * body_radius * (u[i] * u[j] - iso);
+                    }
+                }
+            }
+        }
+    }
+    let (values, vectors) = crate::geom::symmetric_eigen(tensor);
+    // The new spin axis: the greatest axis, or where two tie, the one of their plane
+    // nearest the old pole.
+    let spin = if values[0] - values[1] <= 1e-9 * values[0].abs().max(f64::MIN_POSITIVE) {
+        let (a, b) = (dot(pole, vectors[0]), dot(pole, vectors[1]));
+        let v = [
+            a * vectors[0][0] + b * vectors[1][0],
+            a * vectors[0][1] + b * vectors[1][1],
+            a * vectors[0][2] + b * vectors[1][2],
+        ];
+        if dot(v, v) > 1e-24 {
+            normalize(v)
+        } else {
+            vectors[0]
+        }
+    } else {
+        vectors[0]
+    };
+    let spin = if dot(spin, pole) < 0.0 {
+        [-spin[0], -spin[1], -spin[2]]
+    } else {
+        spin
+    };
+    let axis = cross(spin, pole);
+    let size = dot(axis, axis).sqrt();
+    if size < 1e-12 {
+        return (pole, 0.0);
+    }
+    let axis = [axis[0] / size, axis[1] / size, axis[2] / size];
+    (axis, dot(spin, pole).clamp(-1.0, 1.0).acos())
 }
 
 /// Dome shape, 1 at the centre to 0 at the radius.
@@ -565,7 +675,30 @@ impl PlumeProcess {
                 height: rise_height * (0.8 + 0.4 * rng.uniform(i, 5)),
                 start_gyr: RISE_START_GYR,
                 end_gyr: RISE_END_GYR,
+                paleo_latitude: center[2].clamp(-1.0, 1.0).asin(),
             });
+        }
+        // The body turns under its rises as they grow, carrying them toward its equator
+        // (F104); everything on them is placed where they stand now.
+        {
+            let mid = 0.5 * (RISE_START_GYR + RISE_END_GYR);
+            let lithosphere_now = graph.f64("interior.lithosphere_thickness").max(1.0);
+            let te = graph.f64("interior.elastic_thickness")
+                * graph
+                    .curve("interior.lithosphere_history")
+                    .map_or(lithosphere_now, |c| c.eval(mid))
+                / lithosphere_now;
+            let bulge = frozen_bulge(
+                body_radius,
+                graph.f64("body.gravity"),
+                graph.f64("rotation.angular_velocity"),
+                graph.f64("body.moment_of_inertia_factor"),
+                te,
+            );
+            let (axis, angle) = polar_wander(&rises, body_radius, bulge);
+            for rise in &mut rises {
+                rise.center = normalize(rotate(rise.center, axis, angle));
+            }
         }
         // Shields: a few large ones on the first rise, smaller ones on each.
         let shield_count = graph.f64("volcanism.shield_count").round() as usize;
@@ -1506,6 +1639,49 @@ mod tests {
             .sum();
         assert!(area > std::f64::consts::PI * shield.radius.powi(2));
         assert!(flows.windows(2).all(|w| w[1].time_gyr > w[0].time_gyr));
+    }
+
+    #[test]
+    fn a_rise_turns_the_body_toward_its_equator() {
+        // F104: the fluid Love number is 3/2 for a uniform body and about 0.93 for the
+        // Earth's moment of inertia; Mars's lithosphere holds a few percent of a degree-two
+        // load; a rise near the pole is carried near the equator against a small frozen
+        // bulge and hardly at all against a large one; with no bulge one rise goes to the
+        // equator, and the eigen solver finds a known matrix's axes.
+        assert!((fluid_love_number(0.4) - 1.5).abs() < 1e-12);
+        assert!((fluid_love_number(0.3307) - 0.93).abs() < 0.01);
+        let support = degree_two_support(33e3, 3.73, 3.39e6);
+        assert!(support > 0.005 && support < 0.05, "{support}");
+        let (east, north) = local_basis([0.0, 0.0, 1.0]);
+        let rise = Rise {
+            center: offset([0.0, 0.0, 1.0], east, north, 7f64.to_radians(), 0.4),
+            radius: 2.85e6,
+            height: 8e3,
+            start_gyr: 0.3,
+            end_gyr: 1.5,
+            paleo_latitude: 83f64.to_radians(),
+        };
+        let r = 3.39e6;
+        let latitude = |bulge: f64| {
+            let (axis, angle) = polar_wander(std::slice::from_ref(&rise), r, bulge);
+            normalize(rotate(rise.center, axis, angle))[2]
+                .asin()
+                .to_degrees()
+        };
+        let mars = frozen_bulge(r, 3.73, 7.09e-5, 0.33, 33e3);
+        assert!(latitude(mars).abs() < 15.0, "{}", latitude(mars));
+        assert!(latitude(1e3 * mars) > 75.0, "{}", latitude(1e3 * mars));
+        assert!(latitude(0.0).abs() < 1e-6, "{}", latitude(0.0));
+        let (c, s) = (0.6f64, 0.8f64);
+        let m = [
+            [2.0 * c * c + s * s, (2.0 - 1.0) * c * s, 0.0],
+            [(2.0 - 1.0) * c * s, 2.0 * s * s + c * c, 0.0],
+            [0.0, 0.0, -3.0],
+        ];
+        let (values, vectors) = crate::geom::symmetric_eigen(m);
+        assert!((values[0] - 2.0).abs() < 1e-12 && (values[1] - 1.0).abs() < 1e-12);
+        assert!((dot(vectors[0], [c, s, 0.0]).abs() - 1.0).abs() < 1e-12);
+        assert!((values[2] + 3.0).abs() < 1e-12);
     }
 
     #[test]

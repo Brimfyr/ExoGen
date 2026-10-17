@@ -88,6 +88,8 @@ pub struct RiseInfo {
     pub lon_deg: f64,
     pub diameter_km: f64,
     pub height_m: f64,
+    /// Its latitude when it began to rise, before the body turned under it (F104).
+    pub paleo_lat_deg: f64,
 }
 
 #[derive(Serialize)]
@@ -744,6 +746,7 @@ pub fn export(
                     lon_deg: lon.to_degrees(),
                     diameter_km: 2.0 * r.radius / 1e3,
                     height_m: r.height,
+                    paleo_lat_deg: r.paleo_latitude.to_degrees(),
                 }
             })
             .collect(),

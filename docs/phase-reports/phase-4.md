@@ -803,3 +803,21 @@ What the maps show:
 - **Venus:** smooth shields, each a disc of its own lava.
 
 Tests 179 (four ignored). One is new: a shield fills a trough formed before it by the lava it laid there since, kilometres near its summit and a few hundred metres at its foot. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-seventh milestone: a rise turns the body
+
+The user after the thirty-sixth: "Looks good. Make sure you always check the chronological order of processes is correct. Continue with the next goal when you are ready." The next goal in the revisit is the rises with flexure and true polar wander, graben and canyons; this milestone is the polar wander (audit M9).
+
+- **F104, true polar wander.** A body turns until its axis of greatest moment of inertia is its spin axis: its rises' mass, which their plumes hold up, against the share of the rotational bulge its elastic lithosphere holds frozen. A large rise is carried to the equator; several rise to a great circle.
+
+How it went:
+
+- **Which bulge resists.** A rocky planet's whole rotational bulge would hold a rise of Mars's in place, its mass a tenth of the bulge's. But the bulge readjusts as the body turns, all but the share the lithosphere holds frozen, 1.6 percent on Mars when its rise grows (Willemann 1984; Matsuyama et al. 2006); and a surface load the lithosphere holds would be stiffened by the same share, which cancels, where a plume holds its rise up whatever the lithosphere does. So the rise turns the body against the frozen bulge alone, eight times its weight on Mars.
+- **The chronology.** The body turns while the rise grows, from 0.3 to 1.5 Gyr. Everything fixed to the body turns with it, and what was drawn at random over the body before is as random after; the rise's shields and rifts are placed where it stands now. Nothing on Mars or Venus yet reads the latitude it had at its time, so nothing older needs to be turned back; the climate's processes, in Phase 5, will.
+
+What the maps show:
+
+- **Mars:** the rise, its five shields and its rifts on the equator at 0.8 degrees south, where they had stood round the south pole.
+- **Venus:** its three rises within 12 degrees of the equator, where they had stood at 63 north, 36 south and 28 north.
+
+Tests 180 (four ignored). One is new: a rise near the pole is carried near the equator against a small frozen bulge and hardly at all against a large one, the fluid Love number is right for a uniform body and the Earth, and the eigen solver finds a known matrix's axes. Clippy is clean and validate passes its 117 checks.

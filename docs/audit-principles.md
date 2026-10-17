@@ -361,6 +361,8 @@ Direction: the body's reorientation from its loads, positive and negative, the r
 
 When: the earlier-phases revisit, with Mars's rise.
 
+Closed in part by F104, the thirty-seventh milestone: the body turns until its axis of greatest moment of inertia is its spin axis, from its rises' mass against the rotational bulge its elastic lithosphere holds frozen, so Mars's rise is carried from 83 degrees south to the equator and Venus's three rises to within 12 degrees of it. Still open: the negative loads stay with F53's own turn (Enceladus's thinned pole), and the rises' shields and floods add no mass of their own; the latitudes things had before the turn will matter when the climate's processes come in Phase 5.
+
 ### M10. Venus's deformation belts and rifts
 
 Venus's plains are cut by belts of ridges and fractures and by rift zones (chasmata) that join its highlands and coronae into a network, the bright web of the radar maps; coronae string along the rifts. ExoGen's Venus has none: 506 coronae stand alone as thin rings, the tesserae are plateaus of noise, and the plains between are smooth under their wrinkle ridges.

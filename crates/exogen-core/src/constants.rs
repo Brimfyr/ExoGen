@@ -352,6 +352,11 @@ pub const PLUME_RISE_DIAMETER_FRACTION_EPISODIC: f64 = 0.4;
 pub const RISE_HEIGHT_FRACTION: f64 = 0.28;
 pub const RISE_START_GYR: f64 = 0.3;
 pub const RISE_END_GYR: f64 = 1.5;
+/// A rocky lithosphere's Young's modulus, Pa, and Poisson's ratio, for its membrane
+/// strength at the longest wavelengths (the values flexure studies of Mars use: McGovern
+/// et al. 2002).
+pub const ROCK_YOUNG_MODULUS: f64 = 1.0e11;
+pub const ROCK_POISSON: f64 = 0.25;
 /// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
 /// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise
 /// they sit (fraction of its radius), when they start, their growth timescale, and the
