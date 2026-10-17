@@ -375,6 +375,14 @@ Direction: check the counts of rayed craters on Ganymede and Callisto, and their
 
 When: with the icy moons' crater population, or a colour pass.
 
+### M13. Callisto's troughs and rims stand undegraded
+
+Callisto's ring troughs and crater rims keep the shapes they were drawn with, smoothed by diffusion, where Galileo shows them broken into knobs and short scarps with the dark lag gathered in the lows (PIA01297, PIA01649; Moore et al. 1999). The process is sublimation: ice sublimes from the walls that have shed their lag (F98), so they retreat, and the crests between retreating walls break into knobs (Howard and Moore 2008). A pass breaking crests by the ice their walls sublimed against their height was tried in the thirty-fourth milestone and set aside: at the lag model's rate from the latitude's mean temperature it barely acts outside Callisto's equatorial band, while sublimation follows the daytime peak, some twenty to thirty times faster; at that rate it would strip Ceres, which the model treats as icy and warm, because the model does not place a body's near-surface ice at depth.
+
+Direction: an ice table, ice stable at the surface only where the sublimation it would lose over the surface's life is small and elsewhere below a dry layer as deep as the sublimation and the vapour's diffusion through the layer leave it; sublimation from the diurnal temperatures, the lag (F55, F93) and the shedding (F98) from the same; then the walls' retreat and the crests' breaking into knobs from the ice the walls lose, on every icy body by its own temperature and ice table.
+
+When: Phase 5, with the surface temperatures through the day and the year and the stability of the volatiles.
+
 ## Validation (principle 15)
 
 ### V1. Interpolated bodies in validation
