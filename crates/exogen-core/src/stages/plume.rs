@@ -29,7 +29,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -517,6 +517,8 @@ pub struct PlumeProcess {
     shield_built: Vec<f32>,
     /// Canyon depth carved so far per coarse cell, m.
     carved: Vec<f32>,
+    /// The share of that the shields' lava has filled since, m.
+    filled: Vec<f32>,
     stamper: Stamper,
 }
 
@@ -749,6 +751,7 @@ impl PlumeProcess {
             present: graph.f64("body.age"),
             shield_built: vec![0.0; grid.cell_count()],
             carved: vec![0.0; grid.cell_count()],
+            filled: vec![0.0; grid.cell_count()],
             stamper: Stamper::new(&grid),
         })
     }
@@ -807,7 +810,11 @@ impl PlumeProcess {
                 if dh <= 0.0 {
                     continue;
                 }
-                bedrock[idx] += dh as f32;
+                // The lava ponds in a canyon it comes to, filling it as fast as the
+                // shield thickens round it (F103).
+                let fill = (self.carved[idx] - self.filled[idx]).clamp(0.0, dh as f32);
+                self.filled[idx] += fill;
+                bedrock[idx] += dh as f32 + fill;
                 self.shield_built[idx] += dh as f32;
                 if dh > SHIELD_RENEWAL_THICKNESS {
                     ages[idx] = renewed as f32;
@@ -1152,10 +1159,35 @@ pub fn trough_depth_at(
     best.1
 }
 
+/// The shields' lava laid on a point since a time, m (F103): each shield's growth there
+/// since then, which fills a trough formed before it, as it ponds in the trough rather
+/// than draping it.
+pub fn shield_burial(
+    shields: &[Shield],
+    d: [f64; 3],
+    body_radius: f64,
+    since: f64,
+    present: f64,
+) -> f64 {
+    shields
+        .iter()
+        .map(|s| {
+            let grown = shield_progress(present, s.start_gyr) - shield_progress(since, s.start_gyr);
+            if grown <= 0.0 || angle_between(s.center, d) * body_radius > s.extent() {
+                0.0
+            } else {
+                shield_height(s, d, body_radius, false, 0.0) * grown
+            }
+        })
+        .sum()
+}
+
 /// Finishing pass of a trough: the fine profile minus the version the loop carried,
 /// with the loop's wall width and the coarse smear, or the whole trough when the loop
 /// did not carry it. Inside the floor the fine relief of older features is removed, as a
-/// crater's cavity removes it.
+/// crater's cavity removes it. A shield that grew over the trough since has filled it by
+/// the lava it laid there (F103), the loop's coarse trough as well, and the trough shows
+/// only where it is deeper than that, its raised flanks only where higher.
 #[allow(clippy::too_many_arguments)]
 pub fn trough_compute(
     layers: &LayerSet,
@@ -1166,6 +1198,8 @@ pub fn trough_compute(
     time_gyr: f32,
     blur_fine: f64,
     coarse: Option<(f64, f64)>,
+    shields: &[Shield],
+    present: f64,
     stamper: &mut Stamper,
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
@@ -1183,7 +1217,15 @@ pub fn trough_compute(
     let cells = fine
         .into_iter()
         .map(|(idx, depth)| {
-            let smeared = coarse.get(&idx).copied().unwrap_or(0.0);
+            let buried = shield_burial(
+                shields,
+                grid.center(grid.cell(idx)),
+                body_radius,
+                time_gyr as f64,
+                present,
+            );
+            let smeared = (coarse.get(&idx).copied().unwrap_or(0.0) - buried).max(0.0);
+            let depth = depth.signum() * (depth.abs() - buried).max(0.0);
             // How deep inside the trough this cell is, 0 on the rim to 1 on the floor.
             let inside = (depth / trough.depth.max(1.0)).clamp(0.0, 1.0);
             // What the finish has added since the base is kept outside the floor and
@@ -1464,6 +1506,37 @@ mod tests {
             .sum();
         assert!(area > std::f64::consts::PI * shield.radius.powi(2));
         assert!(flows.windows(2).all(|w| w[1].time_gyr > w[0].time_gyr));
+    }
+
+    #[test]
+    fn a_shield_buries_the_troughs_it_grows_over() {
+        // F103: a shield fills a trough formed before it by the lava it laid there since:
+        // near its summit kilometres, at its foot a few hundred metres, and over a trough
+        // formed near the present hardly any; nothing beyond its foot.
+        let shield = Shield {
+            center: [1.0, 0.0, 0.0],
+            radius: 300e3,
+            height: 20e3,
+            start_gyr: 1.0,
+            calderas: Vec::new(),
+            rift: 0.0,
+            elongation: 1.0,
+            id: 3,
+        };
+        let shields = std::slice::from_ref(&shield);
+        let r = 3.39e6;
+        let (east, north) = local_basis(shield.center);
+        let at = |dist: f64| offset(shield.center, east, north, dist / r, 0.3);
+        let summit = shield_burial(shields, at(10e3), r, 0.9, 4.5);
+        let foot = shield_burial(shields, at(0.99 * shield.radius_toward(0.3)), r, 0.9, 4.5);
+        let late = shield_burial(shields, at(10e3), r, 4.4, 4.5);
+        assert!(summit > 18e3 && summit < 20e3, "{summit}");
+        assert!(foot > 0.0 && foot < 1.5e3, "{foot}");
+        assert!(late < 0.01 * summit, "{late}");
+        assert_eq!(
+            shield_burial(shields, at(1.1 * shield.extent()), r, 0.9, 4.5),
+            0.0
+        );
     }
 
     #[test]

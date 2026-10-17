@@ -785,3 +785,21 @@ Still to do:
 - **Venus's resurfacing** still makes tessera of any shield standing at the event whose eruptions end before it.
 
 Tests 178 (four ignored). Three are new: a summit sinks in collapses, each smaller and deeper; a shield's eruptions run down its flanks and together cover it more than once; and a shield stretches along its rift and lobes at its foot. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-sixth milestone: shields bury the troughs they grow over
+
+The user after the thirty-fifth: "These look good, and I imagine erosion will improve their look further when we get to that. One of Mars' shields in the example you showed me is in the same place as what I believe is a canyon or graben. It looks fine to me, but is the interaction between them correct? The canyon partially cuts through the shield's cone, leaving a bit of the cone visible in the valley. Venus' shields show a grid pattern which should be addressed."
+
+- **F103, troughs under shields.** A shield's lava fills the troughs it grows over, in the loop and in the finishing pass, so a canyon or graben older than a shield's growth is buried under its upper flanks and comes out from under its foot.
+
+How it went:
+
+- **The canyon and the cone.** The canyon crossing that shield was done 3.49 Gyr ago; the shield began 3.46 Gyr ago and grew 17 km high, so its lava should have buried the canyon, 2.1 km deep. The loop laid the shield as an even drape over the canyon it had carved, and the finishing pass cut the canyon's detail and every graben out of the final ground, whatever had grown since. The floor following the cone's slope inside the trough is right for a graben cutting a cone, a down-dropped block keeping its slope; the order of events was not.
+- **The grid on Venus** was in the images, not the maps: the crop script took each map pixel by the nearest one, which at Venus's zoom drew the pixels as a grid of lines. The export samples the grid bilinearly; sampled the same way the shields are smooth, with a faint quilting at the scale of the finish's cells, 9 km on Venus, at the zoom where a 140 km shield spans 300 pixels. The scripts now sample bilinearly.
+
+What the maps show:
+
+- **Mars:** the shield of 395 km is whole, its old canyon and graben ending at its foot and running on across the plains.
+- **Venus:** smooth shields, each a disc of its own lava.
+
+Tests 179 (four ignored). One is new: a shield fills a trough formed before it by the lava it laid there since, kilometres near its summit and a few hundred metres at its foot. Clippy is clean and validate passes its 117 checks.

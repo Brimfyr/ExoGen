@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 86;
+pub const FINISH_VERSION: u64 = 87;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1532,6 +1532,8 @@ pub fn finish(
                                 coarse_cell,
                                 (4.0 * kappa_t + 2.0 * smooth_sigma * smooth_sigma).sqrt(),
                             )),
+                            &shields,
+                            present,
                             stamper,
                         );
                         Some((out, None, None))
@@ -1723,6 +1725,8 @@ pub fn finish(
                             g.start_gyr as f32,
                             (4.0 * kappa_t).sqrt(),
                             None,
+                            &shields,
+                            present,
                             stamper,
                         );
                         Some((out, None, None))
