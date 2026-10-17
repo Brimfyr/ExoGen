@@ -435,13 +435,15 @@ Direction: flows that cover their runs, their lobes sized by the lava's supply a
 
 When: the earlier-phases revisit, with W1.
 
-### M17. Tharsis's long radial graben come from dikes the model lacks
+### M17. Tharsis's long radial graben come from dikes the model lacks (closed in part by F113)
 
 The longest graben systems on Mars, Memnonia, Sirenum, Icaria, Thaumasia and Claritas Fossae, radiate 3,000 to 4,000 km from Tharsis (Wilson and Head 2002), and Venus carries 163 radial systems of graben, fissures and fractures, radii averaging some 325 km and some beyond 2,000 km, at least 72 percent of them made by dike swarms (Grosfils and Head 1994). Mars bears up to 16 giant dike swarms, most about Tharsis (Ernst, Grosfils and Mège 2001); dikes lie beneath the graben south of Arsia Mons (Goudy and Schultz 2005), though whether one swarm or several, and how much of the radial faulting is the regional stress instead, is debated. The model's graben are tectonic only: their lengths follow fault populations' power law, averaging 85 km on Mars, and the systems thousands of kilometres long do not form.
 
 Direction: radiating dike swarms from a rise's plume and its volcanoes, each dike propagating laterally along the stress trajectories as far as its magma carries it, a graben above it as wide as twice the depth to its top (Mastin and Pollard 1988) and as long as the dike, with pit chains where the ground collapses into it (Mège and Masson 1996); the swarms' magma from the plume's intrusive budget.
 
 When: the next milestone.
+
+Closed in part in the forty-sixth milestone (F113): a rise's plume head and its volcanoes send out radiating dike swarms, a graben above each dike as long as the dike, so Mars carries 68 graben longer than 1,000 km and Venus fans of long graben about its volcanoes. Still open: the swarms' counts, reaches and fans are stated choices rather than the plume's intrusive magma budget and the dikes' overpressure; the pit chains that form above dikes; and dike swarms about the volcanoes and coronae off the rises, which on Venus are most of its radial systems.
 
 ## Validation (principle 15)
 

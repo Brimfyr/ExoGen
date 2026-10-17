@@ -31,7 +31,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 12;
+pub const VERSION: u64 = 13;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1060,6 +1060,8 @@ impl PlumeProcess {
                             &rng,
                             draw,
                             width,
+                            None,
+                            RIFT_MIN_TENSION,
                         );
                         length = (trace.len().max(2) - 1) as f64 * spacing;
                         let breaks = breaks.into_iter().filter(|&b| b < length).collect();
@@ -1156,6 +1158,104 @@ impl PlumeProcess {
                     },
                     segments,
                 });
+            }
+            // Radiating dike swarms (F113): the plume's head and each volcano on the rise
+            // send dikes out laterally through the crust, each on its own heading within
+            // its swarm's fan and on along the stress trajectories as far as its magma
+            // carries it, magma-driven whatever the tension; a graben opens above each, as
+            // wide as twice the depth to the dike's top, subsiding as a graben over its
+            // faulted layer does.
+            let mut sources: Vec<([f64; 3], f64, f64, u64)> = Vec::new();
+            for m in 0..DIKE_SWARMS_PER_RISE {
+                let key = 0x0D1C_0000 + ri as u64 * 0x1000 + m;
+                let (q_lo, q_hi) = DIKE_RISE_REACH;
+                let reach = rise.radius * q_lo * (q_hi / q_lo).powf(rng.uniform(key, 0));
+                sources.push((rise.center, rise.radius, reach, key));
+            }
+            for s in shields.iter().filter(|s| rise_of(&rises, s.center) == ri) {
+                let key = 0x0D1D_0000 + s.id;
+                let (q_lo, q_hi) = DIKE_SHIELD_REACH;
+                let reach = s.radius * q_lo * (q_hi / q_lo).powf(rng.uniform(key, 0));
+                sources.push((s.center, s.radius, reach, key));
+            }
+            for &(source, source_radius, reach, key) in &sources {
+                let time = time_cdf.sample(rng.uniform(key, 1));
+                let axis = 2.0 * std::f64::consts::PI * rng.uniform(key, 2);
+                let (w_lo, w_hi) = DIKE_SWARM_SECTOR_DEG;
+                let sector = (w_lo * (w_hi / w_lo).powf(rng.uniform(key, 3))).to_radians();
+                let (n_lo, n_hi) = DIKES_PER_SWARM;
+                let count = (n_lo * (n_hi / n_lo).powf(rng.uniform(key, 4))).round() as u64;
+                let (se, sn) = local_basis(source);
+                for d in 0..count {
+                    let draw = key * 0x100 + d;
+                    let phi = axis + sector * (rng.uniform(draw, 0) - 0.5);
+                    let (l_lo, l_hi) = DIKE_LENGTH_SHARE;
+                    let length = reach * l_lo * (l_hi / l_lo).powf(rng.uniform(draw, 1));
+                    let (o_lo, o_hi) = DIKE_START_SHARE;
+                    let from = source_radius * (o_lo + (o_hi - o_lo) * rng.uniform(draw, 2));
+                    let start = offset(source, se, sn, from / body_radius, phi);
+                    let along = dot(source, start);
+                    let out = normalize([
+                        start[0] * along - source[0],
+                        start[1] * along - source[1],
+                        start[2] * along - source[2],
+                    ]);
+                    let width = (GRABEN_WIDTH
+                        * (GRABEN_WIDTH_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 0)).exp())
+                    .clamp(GRABEN_WIDTH_RANGE.0, GRABEN_WIDTH_RANGE.1);
+                    let layer = (FAULT_LAYER_DEPTH
+                        * (FAULT_LAYER_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 2)).exp())
+                    .clamp(FAULT_LAYER_RANGE.0, FAULT_LAYER_RANGE.1);
+                    let (trace, breaks) = stress_trace(
+                        rise,
+                        start,
+                        length,
+                        spacing,
+                        body_radius,
+                        &rng,
+                        draw,
+                        width,
+                        Some(out),
+                        f64::NEG_INFINITY,
+                    );
+                    let length = (trace.len().max(2) - 1) as f64 * spacing;
+                    let mut bounds = vec![0.0];
+                    bounds.extend(breaks.into_iter().filter(|&b| b < length));
+                    bounds.push(length);
+                    let cap = layer.min(GRABEN_DEPTH_PER_WIDTH * width);
+                    let mean_segment = length / (bounds.len() - 1).max(1) as f64;
+                    let scatter = (RIFT_DEPTH_SCATTER * rng.normal(draw, 4)).exp();
+                    let plateau = (SEGMENT_THROW_PER_LENGTH * mean_segment * scatter)
+                        .clamp(RIFT_MIN_DEPTH, cap);
+                    let segments: Vec<Segment> = bounds
+                        .windows(2)
+                        .enumerate()
+                        .map(|(j, w)| {
+                            let own = (SEGMENT_THROW_SCATTER
+                                * rng.normal(draw ^ 0x5E67_0000_0000, 2 * j as u64))
+                            .exp();
+                            Segment {
+                                start: w[0],
+                                end: w[1],
+                                throw: (plateau * own).clamp(RIFT_MIN_DEPTH, cap),
+                                polarity: 0.0,
+                            }
+                        })
+                        .collect();
+                    faults.push(Trough {
+                        points: trace,
+                        spacing,
+                        length,
+                        width,
+                        depth: segments.iter().map(|g| g.throw).fold(0.0, f64::max),
+                        flank: 0.0,
+                        start_gyr: time,
+                        end_gyr: time,
+                        id: 0x0D1C_0000_0000_0000 | draw,
+                        kind: TroughKind::Graben,
+                        segments,
+                    });
+                }
             }
             for f in faults {
                 if f.width >= RIFT_LOOP_WIDTH_CELLS * cell {
@@ -1412,6 +1512,8 @@ pub(crate) fn stress_trace(
     rng: &Rng,
     draw: u64,
     width: f64,
+    first: Option<[f64; 3]>,
+    min_tension: f64,
 ) -> (Vec<[f64; 3]>, Vec<f64>) {
     let n = (length / spacing).ceil().max(2.0) as usize;
     let key = draw ^ 0x5E61_0000_0000;
@@ -1448,7 +1550,10 @@ pub(crate) fn stress_trace(
     let (sr, st) = rise_stress(distance(start));
     let (out, round) = directions(start);
     let own = 2.0 * std::f64::consts::PI * rng.uniform(draw, 9);
-    let mut heading = if (st - sr).abs() <= RIFT_LABYRINTH * sr.max(st).abs() {
+    // A dike leaves its source on a heading of its own (F113).
+    let mut heading = if let Some(h) = first {
+        tangent(h, start)
+    } else if (st - sr).abs() <= RIFT_LABYRINTH * sr.max(st).abs() {
         normalize([
             out[0] * own.cos() + round[0] * own.sin(),
             out[1] * own.cos() + round[1] * own.sin(),
@@ -1480,7 +1585,7 @@ pub(crate) fn stress_trace(
     for i in 0..=n {
         points.push(p);
         let (sr, st) = rise_stress(distance(p));
-        if i >= 2 && sr.max(st) < RIFT_MIN_TENSION {
+        if i >= 2 && sr.max(st) < min_tension {
             break;
         }
         let s = i as f64 * spacing;
@@ -2640,7 +2745,18 @@ mod tests {
         let r = 3.39e6;
         let (east, north) = local_basis(rise.center);
         let start = offset(rise.center, east, north, 0.55 * rise.radius / r, 1.0);
-        let (trace, _) = stress_trace(&rise, start, 800e3, 10e3, r, &Rng::new(4), 7, 3e3);
+        let (trace, _) = stress_trace(
+            &rise,
+            start,
+            800e3,
+            10e3,
+            r,
+            &Rng::new(4),
+            7,
+            3e3,
+            None,
+            RIFT_MIN_TENSION,
+        );
         assert!(trace.len() > 20);
         let (out, _) = (
             normalize([
@@ -2681,8 +2797,18 @@ mod tests {
         let (east, north) = local_basis(rise.center);
         let start = offset(rise.center, east, north, 0.55 * rise.radius / r, 1.0);
         let (width, spacing) = (3e3, 1e3);
-        let (trace, breaks) =
-            stress_trace(&rise, start, 600e3, spacing, r, &Rng::new(5), 11, width);
+        let (trace, breaks) = stress_trace(
+            &rise,
+            start,
+            600e3,
+            spacing,
+            r,
+            &Rng::new(5),
+            11,
+            width,
+            None,
+            RIFT_MIN_TENSION,
+        );
         assert!(breaks.len() >= 3, "{} segments", breaks.len() + 1);
         // Within a segment the trace keeps to a great circle: successive steps turn by far
         // less than a degree, except at a break and on the link after it.
@@ -2858,6 +2984,40 @@ mod tests {
             rift_length > 3.0 * graben_length,
             "{rift_length} vs {graben_length}"
         );
+    }
+
+    #[test]
+    fn a_rise_s_dike_swarms_radiate_long_graben() {
+        // F113: the plume and the volcanoes on Mars's rise send dikes out in swarms, each
+        // leaving its source and running on away from it, a graben above each; some run
+        // thousands of kilometres, as Tharsis's radial graben systems do.
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let r = g.f64("body.radius");
+        let dikes: Vec<&Trough> = p
+            .graben
+            .iter()
+            .chain(&p.canyons)
+            .filter(|t| t.id & 0xFFFF_0000_0000_0000 == 0x0D1C_0000_0000_0000)
+            .collect();
+        assert!(dikes.len() > 50, "{} dike graben", dikes.len());
+        let longest = dikes.iter().map(|t| t.length).fold(0.0, f64::max);
+        assert!(longest > 2000e3, "{longest}");
+        let mut sources: Vec<[f64; 3]> = p.rises.iter().map(|x| x.center).collect();
+        sources.extend(p.shields.iter().map(|s| s.center));
+        for t in &dikes {
+            assert_eq!(t.kind, TroughKind::Graben);
+            assert!(t.width <= GRABEN_WIDTH_RANGE.1);
+            let k = t.points.len().min(20) - 1;
+            let gain = sources
+                .iter()
+                .map(|&c| angle_between(c, t.points[k]) - angle_between(c, t.points[0]))
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                gain * r > 0.5 * k as f64 * t.spacing,
+                "a dike runs back toward its source"
+            );
+        }
     }
 
     #[test]

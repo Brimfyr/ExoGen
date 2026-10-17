@@ -1022,7 +1022,32 @@ What the maps show:
 
 Still to do:
 
-- **Radiating dike swarms** and their long graben (audit M17), next.
+- **Radiating dike swarms** and their long graben (audit M17), next (the forty-sixth milestone).
 - **The faulted layer** as a field over the rise; **pit chains**; **the finish's floods** keep four fifths of the loop's lava (audit M16).
 
 Tests 185 (five ignored). The fault test now checks a graben's flat-topped throw, its dips at the links between segments' throws and its unbroken profile across a link. Clippy is clean and validate passes its 117 checks.
+
+## The forty-sixth milestone: dike swarms
+
+The answer to the user's sense that the graben should be longer (audit M17).
+
+- **F113, radiating dike swarms.** A rise's plume head and each volcano on it send out swarms of dikes, each running out along the stress trajectories as far as its magma carries it, a graben above each as long as the dike; Tharsis's radial graben systems, read as the surface of giant dike swarms, and Venus's radial systems about its volcanoes.
+
+How it went:
+
+- **The finding.** Our tectonic graben average what Mars's fault catalogue does, and their lengths follow fault populations' power law; Tharsis's radial graben systems, 3,000 to 4,000 km long, are another population, the surface of dikes the plume fed (Ernst, Grosfils and Mège 2001; Wilson and Head 2002), debated but measured beneath the graben south of Arsia Mons (Goudy and Schultz 2005).
+- **The dikes' graben** are graben as F111 and F112 draw them, as wide as twice the depth to the dike's top (Mastin and Pollard 1988), segmented, rough and flat-topped, their traces leaving their source on their own headings and running on along the rise's stress trajectories.
+
+What the maps show:
+
+- **Mars:** 68 graben longer than 1,000 km (3 before) and 13 longer than 2,000 km, radiating from the rise's centre and its volcanoes across the rise and onto the plains, best seen at the high quality; at the standard quality, where a graben is under a cell wide, they are faint lines.
+- **Venus:** 63 graben longer than 1,000 km, in fans about its volcanoes, faint at its 9 km cells.
+- **The other bodies:** unchanged.
+
+Still to do:
+
+- **The swarms' magma** from the plume's intrusive budget, and **pit chains** above the dikes (audit M17).
+- **Dike swarms off the rises**, about Venus's volcanoes and coronae elsewhere.
+- **Charon's chasmata**, which need a driver the model lacks: the extension of an ice shell as its ocean freezes.
+
+Tests 186 (five ignored). One is new: on Mars's rise, more than fifty dike graben, each running away from its source, the longest more than 2,000 km. Clippy is clean and validate passes its 117 checks.

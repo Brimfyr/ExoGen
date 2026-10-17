@@ -564,6 +564,31 @@ pub const FAULT_MEANDER_WIDTHS: f64 = 20.0;
 /// on the MOLA relief).
 pub const GRABEN_SPACING_LAYERS: f64 = 4.0;
 pub const GRABEN_SPACING_SPREAD: f64 = 0.5;
+/// Radiating dike swarms (F113). A plume's head and the volcanoes on its rise send dikes
+/// out laterally through the crust, each along the stress trajectories as far as its
+/// magma carries it, and the ground above a dike whose top stalls near the surface
+/// subsides in a graben as long as the dike: Tharsis's radial graben systems, Memnonia,
+/// Sirenum, Icaria, Thaumasia and Claritas Fossae, run 3,000 to 4,000 km from the rise
+/// (Wilson and Head 2002), and Mars bears up to 16 giant dike swarms, most about Tharsis
+/// (Ernst, Grosfils and Mège 2001); Venus carries 163 radial systems of graben, fissures
+/// and fractures, at least 72 percent of them made by dikes, radii averaging some 325 km
+/// and some beyond 2,000 km (Grosfils and Head 1994). Each rise's plume sends this many
+/// swarms out, each over a reach of this many rise radii (log-uniform), and each volcano
+/// on the rise one, over this many of its radii; a swarm fans over a sector this many
+/// degrees wide (log-uniform), with this many dikes (log-uniform), each running this share
+/// of the swarm's reach (log-uniform) from this share of its source's radius out. A
+/// dike's graben is twice as wide as the depth to the dike's top (Mastin and Pollard
+/// 1988), which the graben's width distribution stands for (GRABEN_WIDTH), and subsides
+/// as a graben over its faulted layer does; its swarm's dikes come at one time, drawn as
+/// the rise's faults' are (stated choices of the counts and shares, the giant swarms'
+/// reach from Tharsis's).
+pub const DIKE_SWARMS_PER_RISE: u64 = 8;
+pub const DIKE_RISE_REACH: (f64, f64) = (0.5, 1.4);
+pub const DIKE_SHIELD_REACH: (f64, f64) = (2.0, 8.0);
+pub const DIKE_SWARM_SECTOR_DEG: (f64, f64) = (30.0, 360.0);
+pub const DIKES_PER_SWARM: (f64, f64) = (8.0, 30.0);
+pub const DIKE_LENGTH_SHARE: (f64, f64) = (0.2, 1.0);
+pub const DIKE_START_SHARE: (f64, f64) = (0.1, 0.3);
 pub const TROUGH_TIP_WIDTHS: f64 = 1.0;
 /// A rift's segments are half-graben (F111): one master fault drops the floor more on its
 /// side, the floor tilting down toward it so the far wall stands this share lower, and
