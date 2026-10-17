@@ -304,6 +304,10 @@ pub const LAVA_COVER_DEPTH: f64 = 6.0;
 /// How far from its vent a flow can travel, m: the longest flood-basalt flows run a
 /// thousand kilometres or so (Tharsis, the Deccan), not around the body.
 pub const FLOOD_MAX_REACH: f64 = 1.5e6;
+/// Lakes one flood may fill, each spilling the rest of its lava on over its lowest pass
+/// into the next low (audit W7); what is left after the last does not flow on. A stated
+/// choice, larger than a cascade of lows down a rise's flank needs.
+pub const FLOOD_MAX_SPILLS: usize = 32;
 /// Flow fronts at the finishing resolution: the coarse footprint's indicator, each cell
 /// half its own and a sixteenth each of its neighbours', is kept where it exceeds this
 /// threshold (below a half, so a single flooded cell keeps its area and fronts sit a

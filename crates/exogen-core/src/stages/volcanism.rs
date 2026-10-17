@@ -32,7 +32,7 @@ use crate::stages::io::{Lobe, PathRules, path_point, rotate_about, trace_flow};
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 14;
+pub const VERSION: u64 = 15;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -442,18 +442,25 @@ impl FloodProcess {
         }
     }
 
-    /// Steepest descent from a cell to a local minimum.
-    fn descend(&self, bedrock: &[f32], mut idx: usize) -> usize {
+    /// Steepest descent over a surface from a cell to a local minimum, or to the last cell
+    /// within `within` of the vent.
+    fn descend(
+        &self,
+        height: impl Fn(usize) -> f32,
+        within: impl Fn(usize) -> bool,
+        mut idx: usize,
+    ) -> usize {
         for _ in 0..self.grid.cell_count() {
             let cell = self.grid.cell(idx);
-            let mut best = (bedrock[idx], idx);
+            let mut best = (height(idx), idx);
             for (di, dj) in NEIGHBOURS {
                 let n = self.grid.index(self.grid.neighbor(cell, di, dj));
-                if bedrock[n] < best.0 {
-                    best = (bedrock[n], n);
+                let h = height(n);
+                if h < best.0 {
+                    best = (h, n);
                 }
             }
-            if best.1 == idx {
+            if best.1 == idx || !within(best.1) {
                 return idx;
             }
             idx = best.1;
@@ -462,9 +469,14 @@ impl FloodProcess {
     }
 
     /// Flood the terrain from a vent with a volume. The lava runs down to the nearest
-    /// low and fills one flat lake there: cells join in order of height from the seed,
-    /// over passes into deeper ground when the level reaches them, until the volume
-    /// cannot lift the lake to the next cell. A basin fed many times fills as one lake.
+    /// low and fills a flat lake there: cells join in order of height from the seed,
+    /// until the volume cannot lift the lake to the next cell. A lake that fills to its
+    /// lowest pass spills the rest over it: the next cell would lie more than a flow's
+    /// thickness below the lake, on ground that falls away beyond the pass, so the lava
+    /// runs on down from there to the next low and fills a lake of its own, and so on
+    /// (audit W7: one lake taking in the ground beyond its pass stood level over it, a
+    /// cliff where it stopped). A lake whose spill reaches back to an earlier one rises
+    /// with it as one. A basin fed many times fills as one lake.
     fn erupt(
         &mut self,
         layers: &mut LayerSet,
@@ -475,73 +487,127 @@ impl FloodProcess {
     ) -> FloodRecord {
         let grid = self.grid;
         let vent_dir = grid.center(grid.cell(vent));
-        let bedrock = layers.bedrock.as_slice();
-        let seed = self.descend(bedrock, vent);
-        self.generation = self.generation.wrapping_add(1);
-        if self.generation == 0 {
-            self.visited.iter_mut().for_each(|v| *v = 0);
-            self.generation = 1;
-        }
-        let generation = self.generation;
-        let seed_dir = grid.center(grid.cell(seed));
-        self.heap.clear();
-        self.visited[seed] = generation;
-        self.heap.push(Reverse(Key(bedrock[seed], 0.0, seed)));
-        let mut popped: Vec<(usize, f32)> = Vec::new();
-        let (mut area_sum, mut vol_sum) = (0.0f64, 0.0f64);
-        while let Some(Reverse(Key(h, _, idx))) = self.heap.pop() {
-            // The lowest cell on the frontier: if the volume cannot lift everything
-            // taken so far to its height, or would spread thinner than a flow does,
-            // the lake stops here.
-            let a = self.areas[idx];
-            if h as f64 * (area_sum + a) - (vol_sum + a * h as f64) > volume
-                || (area_sum + a) * FLOOD_SHEET_THICKNESS > volume
-            {
-                break;
+        let drape = FLOOD_SHEET_THICKNESS as f32;
+        // Flows run only so far from their vent.
+        let body_radius = self.body_radius;
+        let within = |n: usize| {
+            crate::geom::angle_between(vent_dir, grid.center(grid.cell(n))) * body_radius
+                <= FLOOD_MAX_REACH
+        };
+        // The lakes, each its level and the cells it took with the surface it found
+        // there; the lava surface they leave, which a later lake of the eruption finds.
+        let mut lakes: Vec<(f64, Vec<(usize, f32)>)> = Vec::new();
+        let mut surface: HashMap<usize, f32> = HashMap::new();
+        let mut remaining = volume;
+        let mut start = vent;
+        for _ in 0..FLOOD_MAX_SPILLS {
+            let bedrock = layers.bedrock.as_slice();
+            let height = |i: usize| surface.get(&i).copied().unwrap_or(bedrock[i]);
+            let seed = self.descend(height, within, start);
+            self.generation = self.generation.wrapping_add(1);
+            if self.generation == 0 {
+                self.visited.iter_mut().for_each(|v| *v = 0);
+                self.generation = 1;
             }
-            area_sum += a;
-            vol_sum += a * h as f64;
-            popped.push((idx, h));
-            if popped.len() >= FLOOD_MAX_CELLS {
-                break;
-            }
-            let cell = grid.cell(idx);
-            for (di, dj) in NEIGHBOURS {
-                let n = grid.index(grid.neighbor(cell, di, dj));
-                if self.visited[n] != generation {
-                    self.visited[n] = generation;
-                    let centre = grid.center(grid.cell(n));
-                    // Flows run only so far from their vent.
-                    if crate::geom::angle_between(vent_dir, centre) * self.body_radius
-                        > FLOOD_MAX_REACH
-                    {
-                        continue;
+            let generation = self.generation;
+            let seed_dir = grid.center(grid.cell(seed));
+            self.heap.clear();
+            self.visited[seed] = generation;
+            self.heap.push(Reverse(Key(height(seed), 0.0, seed)));
+            // The cells taken, each with the surface it had and the lake's highest
+            // ground when it joined: the pass it was reached over.
+            let mut popped: Vec<(usize, f32, f32)> = Vec::new();
+            let (mut area_sum, mut vol_sum) = (0.0f64, 0.0f64);
+            let mut top = f32::NEG_INFINITY;
+            // The lowest ground next to the lake past the flows' reach: the lake rises no
+            // more than a flow's thickness above it.
+            let mut outlet = f32::INFINITY;
+            let mut next: Option<f32> = None;
+            let mut spill: Option<usize> = None;
+            let mut full = false;
+            while let Some(Reverse(Key(h, _, idx))) = self.heap.pop() {
+                // The lowest cell on the frontier. Below the lake's highest ground by more
+                // than a flow's thickness, it lies past a pass: the lake is full to it and
+                // the rest spills on from here.
+                if h < top - drape {
+                    spill = Some(idx);
+                    break;
+                }
+                // A cell joins if the volume can lift everything taken so far, and the
+                // cell, to a flow's thickness above it: a flow advances only where it
+                // stands that thick, so the lake ends in a flow's front. Nor does it rise
+                // more than that above the ground past the flows' reach.
+                let a = self.areas[idx];
+                let lift = (h + drape) as f64;
+                if lift * (area_sum + a) - (vol_sum + a * h as f64) > remaining
+                    || lift > (outlet + drape) as f64
+                {
+                    next = Some(h + drape);
+                    break;
+                }
+                area_sum += a;
+                vol_sum += a * h as f64;
+                top = top.max(h);
+                popped.push((idx, h, top));
+                if popped.len() >= FLOOD_MAX_CELLS {
+                    full = true;
+                    break;
+                }
+                let cell = grid.cell(idx);
+                for (di, dj) in NEIGHBOURS {
+                    let n = grid.index(grid.neighbor(cell, di, dj));
+                    if self.visited[n] != generation {
+                        self.visited[n] = generation;
+                        if !within(n) {
+                            outlet = outlet.min(height(n));
+                            continue;
+                        }
+                        let dist = crate::geom::angle_between(seed_dir, grid.center(grid.cell(n)));
+                        self.heap.push(Reverse(Key(height(n), dist as f32, n)));
                     }
-                    let dist = crate::geom::angle_between(seed_dir, centre);
-                    self.heap.push(Reverse(Key(bedrock[n], dist as f32, n)));
                 }
             }
-        }
-        // Ground beyond a pass joins below the pass, so order by height before finding
-        // the level: the largest k whose first k cells the volume lifts to the k-th
-        // height, then the level that spends the rest.
-        popped.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-        let (mut area_sum, mut vol_sum) = (0.0f64, 0.0f64);
-        let mut level = popped.first().map_or(0.0, |p| p.1 as f64);
-        for k in 0..popped.len() {
-            let h = popped[k].1 as f64;
-            let a = self.areas[popped[k].0];
-            if h * (area_sum + a) - (vol_sum + a * h) > volume {
+            if popped.is_empty() {
                 break;
             }
-            area_sum += a;
-            vol_sum += a * h;
-            level = (volume + vol_sum) / area_sum;
-            if k + 1 < popped.len() {
-                level = level.min(popped[k + 1].1 as f64);
+            // The level that spends the volume over the cells taken, every one of them
+            // below it: full to its pass where it spills; where it stopped, at the volume
+            // or at the most cells a lake takes, no more than a flow's thickness above the
+            // ground at its edge; and no more than that above the ground past the flows'
+            // reach.
+            let mut level = (remaining + vol_sum) / area_sum;
+            if spill.is_some() {
+                level = level.min(top as f64);
+            } else if let Some(h) = next {
+                level = level.min(h.max(top) as f64);
+            }
+            if full && let Some(Reverse(Key(h, _, _))) = self.heap.peek() {
+                level = level.min((h + drape).max(top) as f64);
+            }
+            level = level.min((outlet + drape) as f64);
+            let lake: Vec<(usize, f32)> = popped
+                .iter()
+                .filter(|&&(_, h, pass)| pass as f64 <= level && (h as f64) < level)
+                .map(|&(idx, h, _)| (idx, h))
+                .collect();
+            let used: f64 = lake
+                .iter()
+                .map(|&(idx, h)| (level - h as f64) * self.areas[idx])
+                .sum();
+            remaining -= used;
+            for &(idx, _) in &lake {
+                surface.insert(idx, level as f32);
+            }
+            if !lake.is_empty() {
+                lakes.push((level, lake));
+            }
+            match spill {
+                Some(cell) if remaining > 0.0 => start = cell,
+                _ => break,
             }
         }
-        let mut recorded = Vec::new();
+        // Lay the lakes' lava, each over what the ones before it left.
+        let mut ponds = Vec::new();
         let mut placed = 0.0;
         {
             let bedrock = layers.bedrock.as_mut_slice();
@@ -552,40 +618,44 @@ impl FloodProcess {
             let composition = layers.composition.as_mut_slice();
             let lava_age = layers.lava_age.as_mut_slice();
             let drift = flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C));
-            for &(idx, h) in &popped {
-                let t = level - h as f64;
-                if t <= FLOOD_MIN_THICKNESS {
-                    continue;
+            let mut laid: HashMap<usize, (f64, u16, f32)> = HashMap::new();
+            for (level, lake) in &lakes {
+                let mut recorded = Vec::new();
+                for &(idx, h) in lake {
+                    let t = level - h as f64;
+                    if t <= FLOOD_MIN_THICKNESS {
+                        continue;
+                    }
+                    // The pile subsides by a share of its thickness: what is recorded and
+                    // added is the height left after that.
+                    let added = (1.0 - LAVA_SUBSIDENCE) * t;
+                    placed += t * self.areas[idx];
+                    let e = laid.entry(idx).or_insert((0.0, units[idx], ages[idx]));
+                    e.0 += t;
+                    recorded.push(FloodCell {
+                        idx: idx as u32,
+                        thickness: added as f32,
+                        prev_unit: e.1,
+                        prev_age: e.2,
+                    });
+                    self.thickness[idx] += t as f32;
+                    self.last_time[idx] = time_gyr as f32;
+                    bedrock[idx] += added as f32;
+                    ages[idx] = time_gyr as f32;
+                    units[idx] = UNIT_LAVA;
+                    melt[idx] = 0.0;
+                    cover[idx] = (e.0 / LAVA_COVER_DEPTH).min(1.0) as f32;
+                    composition[idx] = drift;
+                    lava_age[idx] = time_gyr as f32;
                 }
-                // The pile subsides by a share of its thickness: what is recorded and
-                // added is the height left after that.
-                let added = (1.0 - LAVA_SUBSIDENCE) * t;
-                placed += t * self.areas[idx];
-                recorded.push(FloodCell {
-                    idx: idx as u32,
-                    thickness: added as f32,
-                    prev_unit: units[idx],
-                    prev_age: ages[idx],
-                });
-                self.thickness[idx] += t as f32;
-                self.last_time[idx] = time_gyr as f32;
-                bedrock[idx] = (h as f64 + added) as f32;
-                ages[idx] = time_gyr as f32;
-                units[idx] = UNIT_LAVA;
-                melt[idx] = 0.0;
-                cover[idx] = (t / LAVA_COVER_DEPTH).min(1.0) as f32;
-                composition[idx] = drift;
-                lava_age[idx] = time_gyr as f32;
+                if !recorded.is_empty() {
+                    ponds.push(Pond {
+                        level: *level as f32,
+                        cells: recorded,
+                    });
+                }
             }
         }
-        let ponds = if recorded.is_empty() {
-            Vec::new()
-        } else {
-            vec![Pond {
-                level: level as f32,
-                cells: recorded,
-            }]
-        };
         let mut rec = FloodRecord {
             vent: vent_dir,
             volume: placed,
@@ -693,6 +763,7 @@ pub fn flood_compute(
     smear: &LavaSmear,
     deform: &Deformation,
     flows: Option<FloodFlows>,
+    base: &[f32],
     stamper: &mut Stamper,
 ) -> (StampOutput, Vec<(u32, f32)>, [usize; 4]) {
     let ratio = grid.face_size() / coarse.face_size();
@@ -779,6 +850,12 @@ pub fn flood_compute(
     let melt = layers.melt.as_slice();
     let cover = layers.cover.as_slice();
     let time = rec.time_gyr as f32;
+    // Outside the flood's footprint a hollow is one the finish made, a crater the loop never
+    // saw, standing a sheet below the base the loop left (audit W7): the coarse
+    // resampling's ramp from the ring toward lower ground beyond carries the ground below
+    // the level too, but that is an open slope, which the lava runs down rather than
+    // ponds in, and ponding it filled the ring to its edge in coarse steps.
+    let finer_hollow = |idx: usize| bedrock[idx] - base[idx] < -(FLOOD_SHEET_THICKNESS as f32);
     let mut cells = Vec::with_capacity(levels.len() * (ratio * ratio) as usize);
     let mut taken = Vec::with_capacity(levels.len() * (ratio * ratio) as usize);
     let mut coarse_cells: Vec<(&usize, &Reach)> = levels.iter().collect();
@@ -871,12 +948,12 @@ pub fn flood_compute(
             // A hollow finer than the loop's cells, a crater the loop never saw, lies
             // deeper below the level than the ground the loop flooded there (F95). Both
             // grounds carry the same ramps between the coarse cells, so only the finer
-            // relief tells; in the ring round the low, whose coarse ground stood above the
-            // level, a ramp only raises the ground, so a hollow there is the finer relief
-            // too.
+            // relief tells; in the ring round the low a ramp toward lower ground beyond
+            // also runs below the level, so there only the finer relief counts (F107).
             w.hollow = w.near
                 && ground
-                    < level - own / (1.0 - LAVA_SUBSIDENCE as f32) - FLOOD_SHEET_THICKNESS as f32;
+                    < level - own / (1.0 - LAVA_SUBSIDENCE as f32) - FLOOD_SHEET_THICKNESS as f32
+                && (previous.is_some() || finer_hollow(idx));
             // Inside the flood's own footprint, where the base still says this lava
             // and no finer pass has written, the loop's surface was the flood's own
             // sheet at its level: what stands above the level there is the
@@ -1003,6 +1080,7 @@ pub fn flood_compute(
                         >= level
                             - own / (1.0 - LAVA_SUBSIDENCE as f32)
                             - FLOOD_SHEET_THICKNESS as f32
+                        || !finer_hollow(n)
                     {
                         continue;
                     }
@@ -1190,13 +1268,12 @@ pub fn visible_floods(floods: &[FloodRecord]) -> Vec<bool> {
     });
     let mut last: HashMap<u32, Vec<usize>> = HashMap::new();
     for &k in &order {
-        for pond in &floods[k].ponds {
-            for c in &pond.cells {
-                let stack = last.entry(c.idx).or_default();
-                stack.push(k);
-                if stack.len() > FLOOD_VISIBLE_DEPTH {
-                    stack.remove(0);
-                }
+        // Each cell once, however many of the flood's lakes covered it.
+        for idx in floods[k].cells().into_keys() {
+            let stack = last.entry(idx).or_default();
+            stack.push(k);
+            if stack.len() > FLOOD_VISIBLE_DEPTH {
+                stack.remove(0);
             }
         }
     }
@@ -1685,6 +1762,50 @@ mod tests {
         );
     }
 
+    /// A lake stands no more than a flow's thickness above the open ground beyond it
+    /// (audit W7): over rough ground, one that fills to its pass spills the rest on into
+    /// the next low rather than standing level over the ground beyond the pass, so each
+    /// flood ends in flow fronts, not cliffs.
+    #[test]
+    fn a_flood_over_rough_ground_ends_in_flow_fronts_not_cliffs() {
+        let grid = CubeSphere::new(32);
+        let mut p = process(grid);
+        let mut layers = LayerSet::new(grid);
+        let noise = GradientNoise::new(7);
+        for (k, h) in layers.bedrock.as_mut_slice().iter_mut().enumerate() {
+            *h = (3_000.0 * noise.fbm(grid.center(grid.cell(k)), 4.0, 4, 2.0, 0.5)) as f32;
+        }
+        let rng = Rng::new(11);
+        let mut spilled = 0;
+        for e in 0..60u64 {
+            let vent = grid.index(grid.locate(rng.unit_direction(e, 0)).0);
+            let before = layers.bedrock.as_slice().to_vec();
+            let volume = 1e11 * 100f64.powf(rng.uniform(e, 1));
+            let rec = p.erupt(&mut layers, vent, volume, 1.0, e);
+            if rec.ponds.len() > 1 {
+                spilled += 1;
+            }
+            let covered = rec.cells();
+            for (&idx, c) in &covered {
+                let t = c.thickness as f64 / (1.0 - LAVA_SUBSIDENCE);
+                let cell = grid.cell(idx as usize);
+                for (di, dj) in NEIGHBOURS {
+                    let n = grid.index(grid.neighbor(cell, di, dj));
+                    if covered.contains_key(&(n as u32)) {
+                        continue;
+                    }
+                    let front = (c.level as f64 - before[n] as f64).min(t);
+                    assert!(
+                        front <= FLOOD_SHEET_THICKNESS + 1.0,
+                        "flood {e}: lava {t:.0} m thick at level {} stands {front:.0} m over the ground beyond",
+                        c.level
+                    );
+                }
+            }
+        }
+        assert!(spilled > 0, "no lake spilled");
+    }
+
     /// A flood over flat ground: a disc of coarse cells about a vent.
     fn disc_flood(
         coarse: &CubeSphere,
@@ -1778,6 +1899,7 @@ mod tests {
                 &smear,
                 &deform,
                 Some(flows),
+                &smear.total,
                 &mut stamper,
             );
             out.apply(&mut layers);

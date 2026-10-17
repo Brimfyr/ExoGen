@@ -184,7 +184,7 @@ Direction: a flow's lava blended into its cells by its cover, its composition at
 
 When: the earlier-phases revisit.
 
-### W7. Buried floods' margins in coarse steps
+### W7. Buried floods' margins in coarse steps (closed by F107)
 
 A flood the finish draws as its flows (F94) has lobate margins, but one buried under four or more successors keeps the outline the loop gave it, cell by coarse cell, and the steps of its thickness stay in the ground under the thin sheets above. On Mars's volcanic plains the hillshade shows them as a staircase of straight edges a loop cell long (21 km), the plains' most visible artefact at a kilometre a pixel.
 
@@ -193,6 +193,8 @@ Direction: a buried flood's relief laid with the same lobate margins as a visibl
 When: the earlier-phases revisit, before the Mars dichotomy's lowland burial, which buries with floods.
 
 Diagnosed in the thirty-ninth milestone's session. The steps are not the coarse outlines: a cell's trace through the flood passes (EXOGEN_DEBUG_CELL) shows a flood filling a cell of the ring round its low some 800 m, to its level, while the cell next to it, outside the cells the pass visits, keeps its ground. F95's hollow fill takes any fine ground in the ring below the level for a crater the loop never saw; but where the ring stands high between the low and lower ground beyond, the coarse resampling's ramp toward the lower neighbour carries the fine ground below the level too, an open slope, and the fill ponds it out to the ring's edge, which runs in coarse cells. Sampling the level smoothly between coarse cells changed nothing; draining the open slopes, hollows that still run below the level past the reach of any unseen crater, took the cliffs away but bared the ground the finish pieces together from the coarse smears, blocky at a few fine cells, which the ponds had hidden. Both were taken back. The fix needs that reconstructed ground made smooth first, and then the open slopes drained.
+
+Closed in the fortieth milestone (F107). Gating the ring's fill to the finer relief took the large cliffs away and left walls a fine cell wide. A trace of one wall showed the cause in the loop. A flood's lake took in the ground beyond its pass, down to where the lake would spread thinner than 50 m on average, and filled it all to one level, so the lake stood over the open ground where it stopped: by more than 100 m at a fifth of Mars's floods, and by up to 4.6 km. The finish resampled those steps, the later floods laid thin sheets over them, and the ground the finish pieced together from the coarse smears was blocky because the loop's lakes were. A full lake now spills the rest of its lava into the next low, so every lake ends in a flow's front, and the ring's fill takes only the finer relief. Mars's and Venus's plains are flow fields with lobate margins. The only blockiness left, at a fine cell or two, is graben a few kilometres wide on Mars's rise, partly buried by flows, a matter of their own shapes at the standard grid.
 
 ## Stamped shapes (principle 14)
 
@@ -412,6 +414,14 @@ On Mars the floods keep coming over the rise to the present, at the pace of the 
 Direction: the share of a body's magma erupted in floods falling as its lithosphere thickens and the share erupted at central vents, the shields, rising, so that late volcanism builds the shields and leaves the canyons open.
 
 When: the earlier-phases revisit, with the Mars dichotomy's lowland burial, which also sets where the floods go.
+
+### M15. Floods run off the slopes
+
+The loop's lava runs from its vent, and from a full lake's pass, down the steepest way to the next low, and lays nothing on the way (F107). Lava flows leave their sheets on the slopes they run down: Tharsis's flanks and the plains about its shields are covered by flows hundreds of kilometres long from their vents. In the model, a rise's flanks keep their older ground, graben and craters, except in the lows on them, and the lava gathers in its canyons and at its foot. Lava whose cascade would run past the flows' reach of 1,500 km is not laid at all: 1 percent of the Moon's erupted volume, 9 percent of Mercury's, 18 percent of Mars's and 24 percent of Venus's.
+
+Direction: a flow's sheet laid on its way down, a flow's thickness over the cells it crosses and as wide as its supply spreads it, until its volume is spent or it reaches a low, which is the loop's spreading following the flows (W1's open part). The finish would draw it as a sheet over the ground, not a fill to a level, which a sheet on a slope cannot be.
+
+When: the earlier-phases revisit, with M14, which sets where a rise's late lava erupts.
 
 ## Validation (principle 15)
 

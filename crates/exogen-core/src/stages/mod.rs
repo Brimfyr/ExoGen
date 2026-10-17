@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 87;
+pub const FINISH_VERSION: u64 = 88;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1498,6 +1498,7 @@ pub fn finish(
                             &smear,
                             &deform,
                             flows,
+                            &base,
                             stamper,
                         );
                         Some((out, None, Some((taken, stats))))

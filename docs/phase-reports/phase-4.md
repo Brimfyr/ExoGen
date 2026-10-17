@@ -868,3 +868,28 @@ Still to do:
 - **Pit chains and the rise's flexure**, the item's remaining parts, and the buried floods' coarse steps (audit W7).
 
 Tests 183 (five ignored). Two are new: a deep canyon's walls carry alcoves along both sides and a shallow one's none, with a landslide's debris holding its alcove's volume; and the diagnostic. Clippy is clean and validate passes its 117 checks.
+
+## The fortieth milestone: a full lake spills into the next low
+
+The first of the two fixes before the revisit's fifth item, closing audit W7.
+
+- **F107, fill and spill.** A flood's lake fills only to its lowest pass and spills the rest of its lava into the next low, so every lake ends in a flow's front; in the finish, the hollow fill takes only the finer relief in the ring round a low.
+
+How it went:
+
+- **Two false starts.** Gating the ring's fill to the finer relief took the large cliffs away and left walls a fine cell wide. Sampling the level smoothly between coarse cells changed 0.05 percent of the pixels and was taken back.
+- **The cause was in the loop.** A wall's trace showed a flood filling a cell 1,560 m deep, to the level of a lake that stood 1,780 m above the open ground at its edge. Logging every flood on Mars showed the pattern. A lake took the ground beyond its pass as well, down to where it would spread thinner than 50 m on average, and filled everything to one level, standing over the open ground where it stopped. That happened in 69 percent of the floods by more than 50 m and in 18 percent by more than 100 m, and the worst lake stood 4.6 km above the ground beside it.
+- **The volume.** The first spilling lakes laid only 15 percent of Mars's lava, because a lake that stopped on flat ground was held to the height of the ground it stopped at. A cell now joins where the lava would stand a flow's thickness deep on it. What is lost now is lava that runs past the flows' reach: 1 to 24 percent by body (audit M15).
+
+What the maps show:
+
+- **Mars:** the plains are flow fields with lobate margins, with the staircase gone. Tharsis's radial graben swarms show on its flanks, since the lava runs off the flanks into the lows instead of stacking up in terraces. Narrow graben on the crest, a few kilometres wide and partly buried, show at a fine cell or two.
+- **Venus:** its blocky flood margins are lobate too.
+- **The Moon and Mercury:** the maria and smooth plains keep their look; a few craters near them are flooded or left dry where the lava spilled differently.
+
+Still to do:
+
+- **A rise's late floods** still fill its oldest canyons (audit M14), next.
+- **Floods run off the slopes** without leaving their sheets (audit M15).
+
+Tests 179 (five ignored). One is new: floods from sixty vents over rough ground end in flow fronts, none standing more than a flow's thickness over the ground beside it, and some of their lakes spill. Clippy is clean and validate passes its 117 checks.
