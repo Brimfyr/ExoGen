@@ -192,6 +192,8 @@ Direction: a buried flood's relief laid with the same lobate margins as a visibl
 
 When: the earlier-phases revisit, before the Mars dichotomy's lowland burial, which buries with floods.
 
+Diagnosed in the thirty-ninth milestone's session. The steps are not the coarse outlines: a cell's trace through the flood passes (EXOGEN_DEBUG_CELL) shows a flood filling a cell of the ring round its low some 800 m, to its level, while the cell next to it, outside the cells the pass visits, keeps its ground. F95's hollow fill takes any fine ground in the ring below the level for a crater the loop never saw; but where the ring stands high between the low and lower ground beyond, the coarse resampling's ramp toward the lower neighbour carries the fine ground below the level too, an open slope, and the fill ponds it out to the ring's edge, which runs in coarse cells. Sampling the level smoothly between coarse cells changed nothing; draining the open slopes, hollows that still run below the level past the reach of any unseen crater, took the cliffs away but bared the ground the finish pieces together from the coarse smears, blocky at a few fine cells, which the ponds had hidden. Both were taken back. The fix needs that reconstructed ground made smooth first, and then the open slopes drained.
+
 ## Stamped shapes (principle 14)
 
 ### T1. Shapes from a profile and noise
