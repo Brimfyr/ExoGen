@@ -23,7 +23,7 @@ use crate::geom::{angle_between, local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
 use crate::rng::Rng;
-use crate::stages::plume::{Trough, trough_depths};
+use crate::stages::plume::{Trough, TroughKind, trough_depths};
 use crate::stages::relaxation::Shell;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -214,6 +214,8 @@ pub fn ring_system(
                                         | (ring << 32)
                                         | (arc << 12)
                                         | f as u64),
+                                kind: TroughKind::Ring,
+                                segments: Vec::new(),
                             });
                         }
                         _ => {}

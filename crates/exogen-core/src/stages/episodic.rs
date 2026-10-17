@@ -25,7 +25,7 @@ use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::deform::Deformation;
-use crate::stages::plume::{Trough, radial_trace};
+use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::LavaSmear;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
@@ -303,6 +303,8 @@ impl EpisodicProcess {
                     start_gyr: c.time_gyr,
                     end_gyr: c.time_gyr,
                     id: 2_000_000 + draw,
+                    kind: TroughKind::Fracture,
+                    segments: Vec::new(),
                 });
             }
         }

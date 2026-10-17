@@ -497,6 +497,56 @@ pub const TROUGH_SCALLOP_LENGTH: f64 = 60e3;
 pub const TROUGH_WIDTH_PULSE: f64 = 0.4;
 pub const TROUGH_PULSE_LENGTH: f64 = 700e3;
 pub const TROUGH_TAPER_POWER: f64 = 0.3;
+/// A rise's faults in segments (F111). A graben's bounding faults meet near the base of a
+/// faulted layer near the surface, so its width is set by the layer, not its length:
+/// log-normal about this median with this spread in its logarithm, within this range
+/// (Tharsis graben 1 to 8.7 km wide, 3.7 km on average, on a profile across northern
+/// Tharsis, Plescia 1991; Golombek 1979's model of lunar graben). The layer's thickness is
+/// drawn apart from the width, which correlates poorly with it (Schultz 2000): log-normal
+/// about this median with this spread, within this range (faulted layers 0.4 to 0.6, 1.0
+/// to 1.4 and 2 km deep, at most about 4 km, in most of Tharsis, Davis, Tanaka and
+/// Golombek 1993). A fault whose throw over its whole length, as RIFT_DEPTH_PER_LENGTH
+/// gives it, would exceed the layer cuts deeper and opens a rift, as wide as its throw
+/// allows (RIFT_WIDTH_PER_DEPTH); a graben's segments throw no more than the layer, nor
+/// than this share of its width (a stated choice: the graben on Plescia's profile stand
+/// 10 to 636 m deep for widths of 1 to 8.7 km). A fault grows in straight segments, each this many trough
+/// widths long (log-uniform), that link where they meet: the next turns toward the stress
+/// field by this share of the way and by this many degrees more or less, and with this
+/// probability steps sideways, always to the same side along a fault (en-echelon), by this
+/// many widths over a link at this angle to the fault. A graben's segment throws this
+/// share of its length at most, near its middle (Martian normal faults' greatest
+/// displacement about 0.01 of their length, near the middle of the trace, Hauber et al.
+/// 2013; 0.007 for those of Memnonia Fossae), and where segments link the throw falls by
+/// this share (displacement minima at relay ramps, Hauber et al. 2013); at a fault's ends
+/// it falls to nothing, as an ellipse, and the trough narrows to its tips over this many
+/// widths, where its faults meet (stated choices: segments tens of kilometres long, as
+/// graben depths of up to some 600 m give them at that displacement).
+pub const GRABEN_WIDTH: f64 = 3.0e3;
+pub const GRABEN_WIDTH_SPREAD: f64 = 0.5;
+pub const GRABEN_WIDTH_RANGE: (f64, f64) = (0.8e3, 12e3);
+pub const FAULT_LAYER_DEPTH: f64 = 1.2e3;
+pub const FAULT_LAYER_SPREAD: f64 = 0.5;
+pub const FAULT_LAYER_RANGE: (f64, f64) = (0.4e3, 4e3);
+pub const GRABEN_DEPTH_PER_WIDTH: f64 = 0.2;
+pub const SEGMENT_LENGTH_WIDTHS: (f64, f64) = (2.0, 10.0);
+pub const SEGMENT_STEER: f64 = 0.6;
+pub const SEGMENT_STRIKE_SPREAD_DEG: f64 = 4.0;
+pub const SEGMENT_STEP_PROBABILITY: f64 = 0.3;
+pub const SEGMENT_STEP_WIDTHS: (f64, f64) = (0.5, 1.5);
+pub const SEGMENT_LINK_ANGLE_DEG: f64 = 45.0;
+pub const SEGMENT_THROW_PER_LENGTH: f64 = 0.008;
+pub const SEGMENT_LINK_DEFICIT: f64 = 0.5;
+pub const TROUGH_TIP_WIDTHS: f64 = 1.0;
+/// A rift's segments are half-graben (F111): one master fault drops the floor more on its
+/// side, the floor tilting down toward it so the far wall stands this share lower, and
+/// the master fault's side flips from one segment to the next with this probability, the
+/// floor turning over a transfer zone this many trough widths long about each link (the
+/// East African rift's basins switch polarity across accommodation zones every 60 to 100
+/// km, Rosendahl 1987; Valles Marineris's troughs are asymmetric; the shares are stated
+/// choices).
+pub const RIFT_TILT: f64 = 0.4;
+pub const RIFT_POLARITY_FLIP: f64 = 0.5;
+pub const RIFT_TRANSFER_WIDTHS: f64 = 1.0;
 /// A canyon's walls retreat in landslides (F106) where they stand at least this high, m:
 /// each an alcove this many wall heights in half width along the wall (log-uniform),
 /// cut back into the plateau by this share of its half width, the next this many alcove

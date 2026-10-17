@@ -31,7 +31,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 10;
+pub const VERSION: u64 = 11;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -87,6 +87,63 @@ pub struct ShieldFlow {
     pub summit: bool,
 }
 
+/// What made a trough (F111): a graben, its faults meeting at the base of a faulted layer
+/// near the surface; a rift, cutting deeper, as wide as its throw allows; a ring graben
+/// round a basin (F69); a fracture round a corona.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TroughKind {
+    Graben,
+    Rift,
+    Ring,
+    Fracture,
+}
+
+/// One segment of a fault (F111): where it starts and ends along the trace, m, its
+/// greatest throw, m, and for a rift's half-graben the side of its master fault, +1 or -1
+/// along the trace's normal; 0 for a graben's symmetric floor.
+#[derive(Clone, Copy, Debug)]
+pub struct Segment {
+    pub start: f64,
+    pub end: f64,
+    pub throw: f64,
+    pub polarity: f64,
+}
+
+/// The side a trough's floor tilts down toward at a distance along it (F111), -1 to 1: a
+/// rift segment's master fault's, turning over a transfer zone about each link; 0 for a
+/// symmetric floor.
+pub fn trough_polarity(trough: &Trough, s: f64) -> f64 {
+    if trough.segments.is_empty() {
+        return 0.0;
+    }
+    let n = trough.segments.len();
+    let j = trough
+        .segments
+        .iter()
+        .position(|g| s <= g.end)
+        .unwrap_or(n - 1);
+    let here = trough.segments[j].polarity;
+    let zone = 0.5 * RIFT_TRANSFER_WIDTHS * trough.width;
+    // Toward a link with a segment of the other polarity, the floor turns linearly to
+    // level at the link itself.
+    let blend = |other: f64, distance: f64| {
+        if zone <= 0.0 || distance >= zone {
+            here
+        } else {
+            let mid = 0.5 * (here + other);
+            mid + (here - mid) * distance / zone
+        }
+    };
+    let g = &trough.segments[j];
+    if j > 0 && s - g.start < zone {
+        blend(trough.segments[j - 1].polarity, s - g.start)
+    } else if j + 1 < n && g.end - s < zone {
+        blend(trough.segments[j + 1].polarity, g.end - s)
+    } else {
+        here
+    }
+}
+
 /// A trough along a trace: graben on the flanks and the canyon.
 #[derive(Clone, Debug)]
 pub struct Trough {
@@ -102,6 +159,42 @@ pub struct Trough {
     pub start_gyr: f64,
     pub end_gyr: f64,
     pub id: u64,
+    pub kind: TroughKind,
+    /// A fault's segments in order along the trace (F111); none for a trough drawn as one
+    /// profile tapering to its ends, a ring's arc or a fracture.
+    pub segments: Vec<Segment>,
+}
+
+/// A trough's depth at a distance along its trace at its full growth, m. A fault's is its
+/// segments' throw (F111): each greatest near its middle and falling toward its ends, by
+/// SEGMENT_LINK_DEFICIT where it links with the next and to nothing at the fault's own
+/// ends, as an ellipse, or for a rift as its whole profile does. A trough without segments
+/// tapers to its ends as a sine to TROUGH_TAPER_POWER.
+pub fn trough_throw(trough: &Trough, s: f64) -> f64 {
+    let whole = (std::f64::consts::PI * s / trough.length.max(1.0))
+        .sin()
+        .max(0.0)
+        .powf(TROUGH_TAPER_POWER);
+    if trough.segments.is_empty() {
+        return trough.depth * whole;
+    }
+    let n = trough.segments.len();
+    let j = trough
+        .segments
+        .iter()
+        .position(|g| s <= g.end)
+        .unwrap_or(n - 1);
+    let g = &trough.segments[j];
+    let x = (2.0 * (s - g.start) / (g.end - g.start).max(1.0) - 1.0).clamp(-1.0, 1.0);
+    let ellipse = (1.0 - x * x).max(0.0).sqrt();
+    let linked = 1.0 - SEGMENT_LINK_DEFICIT * (1.0 - ellipse);
+    let outer = (j == 0 && x < 0.0) || (j + 1 == n && x > 0.0);
+    match (trough.kind, outer) {
+        (TroughKind::Rift, true) => g.throw * whole,
+        (TroughKind::Rift, false) => g.throw * whole * linked,
+        (_, true) => g.throw * ellipse,
+        (_, false) => g.throw * linked,
+    }
 }
 
 impl Trough {
@@ -850,9 +943,27 @@ impl PlumeProcess {
                 let ratio = (l_min / l_max).powf(RIFT_LENGTH_SLOPE);
                 let mut length = l_min * (1.0 - u * (1.0 - ratio)).powf(-1.0 / RIFT_LENGTH_SLOPE);
                 let scatter = (RIFT_DEPTH_SCATTER * rng.normal(draw, 2)).exp();
-                let depth =
-                    (RIFT_DEPTH_PER_LENGTH * length * scatter).clamp(RIFT_MIN_DEPTH, depth_cap);
-                let width = (RIFT_WIDTH_PER_DEPTH * depth).max(RIFT_MIN_WIDTH);
+                // The faulted layer near the surface: a graben is as wide as the layer
+                // sets it, and a fault whose throw over its whole length would exceed the
+                // layer cuts deeper, a rift as wide as its throw (F111).
+                let layer_width = (GRABEN_WIDTH
+                    * (GRABEN_WIDTH_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 0)).exp())
+                .clamp(GRABEN_WIDTH_RANGE.0, GRABEN_WIDTH_RANGE.1);
+                let layer = (FAULT_LAYER_DEPTH
+                    * (FAULT_LAYER_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 2)).exp())
+                .clamp(FAULT_LAYER_RANGE.0, FAULT_LAYER_RANGE.1);
+                let zone_depth = |length: f64| {
+                    (RIFT_DEPTH_PER_LENGTH * length * scatter).clamp(RIFT_MIN_DEPTH, depth_cap)
+                };
+                let class_width = |length: f64| {
+                    let d = zone_depth(length);
+                    if d >= layer {
+                        (RIFT_WIDTH_PER_DEPTH * d).max(RIFT_MIN_WIDTH)
+                    } else {
+                        layer_width
+                    }
+                };
+                let width = class_width(length);
                 // Beside an existing fault, chosen by length, or on its own.
                 let host = if !faults.is_empty() && rng.uniform(draw, 3) < RIFT_CLUSTER_PROBABILITY
                 {
@@ -870,7 +981,7 @@ impl PlumeProcess {
                 } else {
                     None
                 };
-                let points = match host {
+                let (points, breaks) = match host {
                     Some(h) => {
                         let hf = &faults[h];
                         let n_points = hf.points.len();
@@ -884,29 +995,96 @@ impl PlumeProcess {
                         let (g_lo, g_hi) = RIFT_CLUSTER_OFFSET;
                         let gap = g_lo + (g_hi - g_lo) * rng.uniform(draw, 7).powi(2);
                         length = span as f64 * hf.spacing;
-                        offset_trace(
-                            &hf.points[i0..i0 + span],
-                            side * gap * hf.width.max(width),
-                            body_radius,
+                        // The neighbour follows its host's segments along the span it runs
+                        // beside.
+                        let (s0, s1) = (i0 as f64 * hf.spacing, (i0 + span) as f64 * hf.spacing);
+                        let breaks: Vec<f64> = hf
+                            .segments
+                            .iter()
+                            .map(|g| g.end)
+                            .filter(|&e| e > s0 && e < s1)
+                            .map(|e| e - s0)
+                            .collect();
+                        (
+                            offset_trace(
+                                &hf.points[i0..i0 + span],
+                                side * gap * hf.width.max(width),
+                                body_radius,
+                            ),
+                            breaks,
                         )
                     }
                     None => {
                         // A fault starts where the ground is in tension, as often as the
-                        // tension is strong, and runs as the stress field leads it (F105).
+                        // tension is strong, and runs as the stress field leads it (F105),
+                        // in segments (F111).
                         let x = start_cdf.sample(rng.uniform(draw, 20));
                         let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 21);
                         let start =
                             offset(rise.center, east, north, x * rise.radius / body_radius, phi);
-                        let trace =
-                            stress_trace(rise, start, length, spacing, body_radius, &rng, draw);
+                        let (trace, breaks) = stress_trace(
+                            rise,
+                            start,
+                            length,
+                            spacing,
+                            body_radius,
+                            &rng,
+                            draw,
+                            width,
+                        );
                         length = (trace.len().max(2) - 1) as f64 * spacing;
-                        trace
+                        let breaks = breaks.into_iter().filter(|&b| b < length).collect();
+                        (trace, breaks)
                     }
                 };
-                // A fault that died out early slipped as its own length allows.
-                let depth =
-                    (RIFT_DEPTH_PER_LENGTH * length * scatter).clamp(RIFT_MIN_DEPTH, depth_cap);
-                let width = (RIFT_WIDTH_PER_DEPTH * depth).max(RIFT_MIN_WIDTH);
+                // A fault that died out early slipped as its own length allows; it is a
+                // rift if that throw exceeds the faulted layer, else a graben whose
+                // segments each throw as their own length allows (F111).
+                let zone = zone_depth(length);
+                let rift = zone >= layer;
+                let width = if rift {
+                    (RIFT_WIDTH_PER_DEPTH * zone).max(RIFT_MIN_WIDTH)
+                } else {
+                    layer_width
+                };
+                let mut bounds = vec![0.0];
+                bounds.extend(breaks);
+                bounds.push(length);
+                // A rift's segments are half-graben whose master fault's side flips now
+                // and then from one to the next.
+                let mut polarity = if rng.uniform(draw ^ 0x5E67_0000_0000, 1) < 0.5 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let segments: Vec<Segment> = bounds
+                    .windows(2)
+                    .enumerate()
+                    .map(|(j, w)| {
+                        let throw = if rift {
+                            zone
+                        } else {
+                            let scatter = (RIFT_DEPTH_SCATTER
+                                * rng.normal(draw ^ 0x5E67_0000_0000, 2 * j as u64))
+                            .exp();
+                            (SEGMENT_THROW_PER_LENGTH * (w[1] - w[0]) * scatter)
+                                .clamp(RIFT_MIN_DEPTH, layer.min(GRABEN_DEPTH_PER_WIDTH * width))
+                        };
+                        if j > 0
+                            && rng.uniform(draw ^ 0x5E67_0000_0000, 2 * j as u64 + 1)
+                                < RIFT_POLARITY_FLIP
+                        {
+                            polarity = -polarity;
+                        }
+                        Segment {
+                            start: w[0],
+                            end: w[1],
+                            throw,
+                            polarity: if rift { polarity } else { 0.0 },
+                        }
+                    })
+                    .collect();
+                let depth = segments.iter().map(|g| g.throw).fold(0.0, f64::max);
                 let time = time_cdf.sample(rng.uniform(draw, 8));
                 let carried = width >= RIFT_LOOP_WIDTH_CELLS * cell;
                 let (start_gyr, end_gyr) = if carried {
@@ -917,7 +1095,15 @@ impl PlumeProcess {
                 } else {
                     (time, time)
                 };
-                spent += RIFT_HEAVE_PER_DEPTH * depth * length;
+                // The extension a fault takes up: its heave along its length, each segment's
+                // mean throw over it.
+                let mean = 1.0 - SEGMENT_LINK_DEFICIT * (1.0 - std::f64::consts::FRAC_PI_4);
+                spent += RIFT_HEAVE_PER_DEPTH
+                    * mean
+                    * segments
+                        .iter()
+                        .map(|g| g.throw * (g.end - g.start))
+                        .sum::<f64>();
                 faults.push(Trough {
                     points,
                     spacing,
@@ -928,6 +1114,12 @@ impl PlumeProcess {
                     start_gyr,
                     end_gyr,
                     id: 1_000 + ri as u64 * 1_000_000 + k,
+                    kind: if rift {
+                        TroughKind::Rift
+                    } else {
+                        TroughKind::Graben
+                    },
+                    segments,
                 });
             }
             for f in faults {
@@ -1165,12 +1357,17 @@ pub fn rise_stress(x: f64) -> (f64, f64) {
     (radial - far, hoop + far)
 }
 
-/// A fault's trace through a rise's stress field (F105), from a point: it strikes across
-/// the most tensile direction, along the radius where the hoop is the more tensile and
-/// round the rise where the radial is, turning toward that by RIFT_STEER a step as far as
-/// the stress is anisotropic and keeping its own heading where the tension is about the
-/// same every way, as on the crest; it wanders a little, and dies out where the tension
-/// falls below RIFT_MIN_TENSION of the crest's.
+/// A fault's trace through a rise's stress field (F105), from a point, in straight segments
+/// (F111): it strikes across the most tensile direction, along the radius where the hoop
+/// is the more tensile and round the rise where the radial is, and keeps its own heading
+/// where the tension is about the same every way, as on the crest. Each segment runs
+/// straight, SEGMENT_LENGTH_WIDTHS of the trough's `width` long; where it ends the next
+/// turns toward the stress field by SEGMENT_STEER of the way as far as the stress is
+/// anisotropic and by a few degrees more or less, and now and then steps sideways to one
+/// side, en-echelon, over a short oblique link. The fault dies out where the tension falls
+/// below RIFT_MIN_TENSION of the crest's. Returns the trace and the distances along it
+/// where each segment after the first begins.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stress_trace(
     rise: &Rise,
     start: [f64; 3],
@@ -1179,10 +1376,12 @@ pub(crate) fn stress_trace(
     body_radius: f64,
     rng: &Rng,
     draw: u64,
-) -> Vec<[f64; 3]> {
+    width: f64,
+) -> (Vec<[f64; 3]>, Vec<f64>) {
     let n = (length / spacing).ceil().max(2.0) as usize;
-    let noise = GradientNoise::new(draw ^ 0x57E5_5000);
-    let turn_scale = TROUGH_WOBBLE_DEG.to_radians() * (0.5 + rng.uniform(draw, 8));
+    let key = draw ^ 0x5E61_0000_0000;
+    let (l_lo, l_hi) = SEGMENT_LENGTH_WIDTHS;
+    let segment = |j: u64| width * l_lo * (l_hi / l_lo).powf(rng.uniform(key, 4 * j));
     let directions = |p: [f64; 3]| {
         // The radial direction outward from the centre and the hoop direction round it,
         // in the tangent plane at p.
@@ -1201,6 +1400,14 @@ pub(crate) fn stress_trace(
         (out, normalize(cross(p, out)))
     };
     let distance = |p: [f64; 3]| angle_between(rise.center, p) * body_radius / rise.radius;
+    let tangent = |v: [f64; 3], p: [f64; 3]| {
+        let radial = dot(v, p);
+        normalize([
+            v[0] - radial * p[0],
+            v[1] - radial * p[1],
+            v[2] - radial * p[2],
+        ])
+    };
     // The first heading: across the most tensile direction, or the fault's own where the
     // stress is about the same every way.
     let (sr, st) = rise_stress(distance(start));
@@ -1219,7 +1426,21 @@ pub(crate) fn stress_trace(
     } else {
         [-round[0], -round[1], -round[2]]
     };
+    // A fault's en-echelon steps all go to one side.
+    let side = if rng.uniform(draw, 11) < 0.5 {
+        -1.0
+    } else {
+        1.0
+    };
+    let (s_lo, s_hi) = SEGMENT_STEP_WIDTHS;
+    let link_angle = SEGMENT_LINK_ANGLE_DEG.to_radians();
     let mut points = Vec::with_capacity(n + 1);
+    let mut breaks = Vec::new();
+    let mut j = 0u64;
+    let mut next_break = segment(0);
+    // The steps left on a sideways link between segments, and its heading.
+    let mut link = 0usize;
+    let mut link_heading = heading;
     let mut p = start;
     for i in 0..=n {
         points.push(p);
@@ -1227,46 +1448,61 @@ pub(crate) fn stress_trace(
         if i >= 2 && sr.max(st) < RIFT_MIN_TENSION {
             break;
         }
-        let (out, round) = directions(p);
-        let along = if st >= sr { out } else { round };
-        let along = if dot(along, heading) < 0.0 {
-            [-along[0], -along[1], -along[2]]
-        } else {
-            along
-        };
-        let anisotropy = ((st - sr).abs() / (st.abs() + sr.abs()).max(1e-9)).clamp(0.0, 1.0);
-        let k = RIFT_STEER * anisotropy;
         let s = i as f64 * spacing;
-        let turn = turn_scale
-            * (noise.fbm([s / TROUGH_WOBBLE_LENGTH, 0.5, 0.25], 1.0, 2, 2.0, 0.5) / 0.6)
-                .clamp(-1.0, 1.0)
-            / n.max(1) as f64
-            * 4.0;
-        let side = normalize(cross(p, heading));
-        let steered = [
-            heading[0] + k * (along[0] - heading[0]),
-            heading[1] + k * (along[1] - heading[1]),
-            heading[2] + k * (along[2] - heading[2]),
-        ];
-        let steered = [
-            steered[0] + turn * side[0],
-            steered[1] + turn * side[1],
-            steered[2] + turn * side[2],
-        ];
-        let radial = dot(steered, p);
-        heading = normalize([
-            steered[0] - radial * p[0],
-            steered[1] - radial * p[1],
-            steered[2] - radial * p[2],
-        ]);
+        if link == 0 && s >= next_break && i < n {
+            j += 1;
+            breaks.push(s);
+            // The next segment turns toward the stress field, and a little either way.
+            let (out, round) = directions(p);
+            let along = if st >= sr { out } else { round };
+            let along = if dot(along, heading) < 0.0 {
+                [-along[0], -along[1], -along[2]]
+            } else {
+                along
+            };
+            let isotropic = (st - sr).abs() <= RIFT_LABYRINTH * sr.max(st).abs();
+            let anisotropy = ((st - sr).abs() / (st.abs() + sr.abs()).max(1e-9)).clamp(0.0, 1.0);
+            let k = if isotropic {
+                0.0
+            } else {
+                SEGMENT_STEER * anisotropy
+            };
+            let steered = tangent(
+                [
+                    heading[0] + k * (along[0] - heading[0]),
+                    heading[1] + k * (along[1] - heading[1]),
+                    heading[2] + k * (along[2] - heading[2]),
+                ],
+                p,
+            );
+            let turn = SEGMENT_STRIKE_SPREAD_DEG.to_radians() * rng.normal(key, 4 * j + 1);
+            heading = crate::stages::io::rotate_about(p, steered, turn);
+            // Now and then it steps sideways to the next segment, en-echelon.
+            if rng.uniform(key, 4 * j + 3) < SEGMENT_STEP_PROBABILITY {
+                let step = width * (s_lo + (s_hi - s_lo) * rng.uniform(key, 4 * j + 2));
+                link = (step / (spacing * link_angle.sin())).ceil() as usize;
+                link_heading = crate::stages::io::rotate_about(p, heading, side * link_angle);
+            }
+            next_break = s + link as f64 * spacing + segment(j);
+        }
+        let dir = if link > 0 {
+            link -= 1;
+            link_heading
+        } else {
+            heading
+        };
         let step = spacing / body_radius;
         p = normalize([
-            p[0] + step * heading[0],
-            p[1] + step * heading[1],
-            p[2] + step * heading[2],
+            p[0] + step * dir[0],
+            p[1] + step * dir[1],
+            p[2] + step * dir[2],
         ]);
+        // The headings stay in the tangent plane as the trace moves on: straight segments
+        // along great circles.
+        heading = tangent(heading, p);
+        link_heading = tangent(link_heading, p);
     }
-    points
+    (points, breaks)
 }
 
 /// A trace shifted sideways by a distance: each point moved along the local normal.
@@ -1359,6 +1595,8 @@ pub struct TroughFrames {
     /// A debris lobe's volume over its peak thickness, its alcove's half width and its
     /// run-out.
     lobe_shape: f64,
+    /// A graben's walls are straight fault scarps (F111).
+    graben: bool,
 }
 
 /// A debris lobe's volume over its peak thickness, its alcove's half width and its
@@ -1401,6 +1639,8 @@ struct Frame {
     taper: f64,
     narrow: f64,
     pulse: f64,
+    /// The side its floor tilts down toward, -1 to 1 (F111).
+    polarity: f64,
 }
 
 /// A trough's dimensions at a growth fraction, m.
@@ -1435,18 +1675,38 @@ impl TroughFrames {
             }
             let normal = normalize(cross(p, t));
             let along_trace = k as f64 * trough.spacing;
-            let taper = (std::f64::consts::PI * along_trace / trough.length)
+            let sine = (std::f64::consts::PI * along_trace / trough.length)
                 .sin()
                 .max(0.0);
+            if sine <= 0.0 {
+                continue;
+            }
+            // A fault's depth follows its segments' throw (F111); a trough drawn as one
+            // profile, a ring's arc or ridge whose depth may be negative, tapers as a sine.
+            let taper = if trough.segments.is_empty() {
+                sine.powf(TROUGH_TAPER_POWER)
+            } else {
+                trough_throw(trough, along_trace) / trough.depth.max(1.0)
+            };
             if taper <= 0.0 {
                 continue;
             }
-            let narrow = taper.sqrt();
-            let taper = taper.powf(TROUGH_TAPER_POWER);
-            // Chasmata: the width swells and narrows along the trace, and each wall is
-            // scalloped.
-            let pulse = (1.0
-                + TROUGH_WIDTH_PULSE
+            // A fault's trough keeps its width, narrowing only to its tips, where its
+            // faults meet (F111); one drawn as one profile narrows all the way.
+            let narrow = if trough.segments.is_empty() {
+                sine.sqrt()
+            } else {
+                (along_trace.min(trough.length - along_trace)
+                    / (TROUGH_TIP_WIDTHS * trough.width).max(1.0))
+                .clamp(0.0, 1.0)
+                .sqrt()
+            };
+            // Chasmata: a rift's width swells and narrows along the trace, and each wall is
+            // scalloped; a graben keeps its width between straight walls.
+            let pulse = if trough.kind == TroughKind::Graben {
+                1.0
+            } else {
+                (1.0 + TROUGH_WIDTH_PULSE
                     * (noise.fbm(
                         [along_trace / TROUGH_PULSE_LENGTH, 0.37, 0.61],
                         1.0,
@@ -1454,7 +1714,8 @@ impl TroughFrames {
                         2.0,
                         0.5,
                     ) / 0.6))
-                .clamp(0.5, 1.6);
+                    .clamp(0.5, 1.6)
+            };
             frames.push(Frame {
                 p,
                 t,
@@ -1463,6 +1724,7 @@ impl TroughFrames {
                 taper,
                 narrow,
                 pulse,
+                polarity: trough_polarity(trough, along_trace),
             });
         }
         // The walls retreat in landslides where they stand high enough (F106): along each
@@ -1476,8 +1738,7 @@ impl TroughFrames {
                 loop {
                     let draw = (w as u64) << 40 | k;
                     k += 1;
-                    let taper = (std::f64::consts::PI * s / trough.length).sin().max(0.0);
-                    let fall = trough.depth * taper.powf(TROUGH_TAPER_POWER);
+                    let fall = trough_throw(trough, s);
                     let (h_lo, h_hi) = LANDSLIDE_HALF_WIDTH;
                     let half = fall.max(LANDSLIDE_MIN_WALL)
                         * h_lo
@@ -1487,8 +1748,7 @@ impl TroughFrames {
                     if s >= trough.length {
                         break;
                     }
-                    let taper = (std::f64::consts::PI * s / trough.length).sin().max(0.0);
-                    let fall = trough.depth * taper.powf(TROUGH_TAPER_POWER);
+                    let fall = trough_throw(trough, s);
                     if fall >= LANDSLIDE_MIN_WALL {
                         let (b_lo, b_hi) = LANDSLIDE_BACK;
                         let (r_lo, r_hi) = LANDSLIDE_REACH;
@@ -1519,6 +1779,7 @@ impl TroughFrames {
             landslides,
             slide_reach,
             lobe_shape: lobe_shape(),
+            graben: trough.kind == TroughKind::Graben,
         }
     }
 
@@ -1651,15 +1912,18 @@ impl TroughFrames {
         }
         let across = dot(d, f.normal) * body_radius;
         let scallop_frequency = body_radius / TROUGH_SCALLOP_LENGTH.max(self.width);
-        let scallop = 1.0
-            + TROUGH_SCALLOP
+        let scallop = if self.graben {
+            1.0
+        } else {
+            1.0 + TROUGH_SCALLOP
                 * self.noise.fbm(
                     [d[0] + across.signum() * 3.0, d[1], d[2]],
                     scallop_frequency,
                     2,
                     2.0,
                     0.5,
-                );
+                )
+        };
         let width = size.width * f.pulse * scallop * f.narrow;
         // The landslides cut the wall back on their side and lay their debris on the floor,
         // by the trough's own walls, not the grid's: a grid that widens the walls draws the
@@ -1673,6 +1937,13 @@ impl TroughFrames {
             size.cell,
         );
         let mut u = trough_profile(across, width + 2.0 * cut, size.depth, size.wall, blur);
+        // A half-graben's floor tilts down toward its master fault, the far wall standing
+        // lower (F111).
+        if f.polarity != 0.0 && u > 0.0 {
+            let toward = (f.polarity * across / (0.5 * width).max(1.0)).clamp(-1.0, 1.0);
+            let tilt = f.polarity.abs() * RIFT_TILT;
+            u *= 1.0 - tilt * 0.5 * (1.0 - toward);
+        }
         if self.flank != 0.0 {
             u -= self.flank * size.depth * flank_profile(across, width, size.wall, blur);
         }
@@ -2120,6 +2391,8 @@ mod tests {
             start_gyr: 1.0,
             end_gyr: 2.0,
             id: 11,
+            kind: TroughKind::Rift,
+            segments: Vec::new(),
         };
         let frames = TroughFrames::new(&canyon);
         let n = 600usize;
@@ -2169,6 +2442,8 @@ mod tests {
             start_gyr: 1.0,
             end_gyr: 2.0,
             id: 11,
+            kind: TroughKind::Rift,
+            segments: Vec::new(),
         };
         let frames = TroughFrames::new(&canyon);
         assert!(frames.landslides.len() > 20, "{}", frames.landslides.len());
@@ -2196,6 +2471,7 @@ mod tests {
             landslides: vec![*l],
             slide_reach: l.half * (1.0 + LANDSLIDE_SPREAD),
             lobe_shape: lobe_shape(),
+            graben: false,
         };
         let step = 250.0;
         let mut volume = 0.0;
@@ -2233,6 +2509,8 @@ mod tests {
             start_gyr: 1.0,
             end_gyr: 2.0,
             id: 13,
+            kind: TroughKind::Rift,
+            segments: Vec::new(),
         };
         let frames = TroughFrames::new(&canyon);
         assert!(!frames.landslides.is_empty());
@@ -2290,7 +2568,7 @@ mod tests {
         let r = 3.39e6;
         let (east, north) = local_basis(rise.center);
         let start = offset(rise.center, east, north, 0.55 * rise.radius / r, 1.0);
-        let trace = stress_trace(&rise, start, 800e3, 10e3, r, &Rng::new(4), 7);
+        let (trace, _) = stress_trace(&rise, start, 800e3, 10e3, r, &Rng::new(4), 7, 3e3);
         assert!(trace.len() > 20);
         let (out, _) = (
             normalize([
@@ -2312,6 +2590,182 @@ mod tests {
         let x_end = angle_between(rise.center, end) * r / rise.radius;
         let x_start = angle_between(rise.center, start) * r / rise.radius;
         assert!((x_end - x_start).abs() > 0.15, "{x_start} {x_end}");
+    }
+
+    #[test]
+    fn a_fault_grows_in_straight_segments_that_link() {
+        // F111: a fault's trace runs straight within each segment and turns or steps where
+        // segments meet; a graben keeps its width to its tips, and its throw peaks within
+        // each segment, dips where they link and falls to nothing at its ends.
+        let rise = Rise {
+            center: [1.0, 0.0, 0.0],
+            radius: 2.85e6,
+            height: 8e3,
+            start_gyr: 0.3,
+            end_gyr: 1.5,
+            paleo_latitude: 0.0,
+        };
+        let r = 3.39e6;
+        let (east, north) = local_basis(rise.center);
+        let start = offset(rise.center, east, north, 0.55 * rise.radius / r, 1.0);
+        let (width, spacing) = (3e3, 1e3);
+        let (trace, breaks) =
+            stress_trace(&rise, start, 600e3, spacing, r, &Rng::new(5), 11, width);
+        assert!(breaks.len() >= 3, "{} segments", breaks.len() + 1);
+        // Within a segment the trace keeps to a great circle: successive steps turn by far
+        // less than a degree, except at a break and on the link after it.
+        let link = (SEGMENT_STEP_WIDTHS.1 * width
+            / (spacing * SEGMENT_LINK_ANGLE_DEG.to_radians().sin()))
+        .ceil();
+        let chord = |k: usize| {
+            let (a, b) = (trace[k], trace[k + 1]);
+            let m = normalize([a[0] + b[0], a[1] + b[1], a[2] + b[2]]);
+            let v = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let radial = dot(v, m);
+            normalize([
+                v[0] - radial * m[0],
+                v[1] - radial * m[1],
+                v[2] - radial * m[2],
+            ])
+        };
+        let mut bent = 0;
+        for k in 1..trace.len() - 1 {
+            let s = k as f64 * spacing;
+            let near = breaks
+                .iter()
+                .any(|&b| s >= b - spacing && s <= b + (link + 1.0) * spacing);
+            let turn = dot(chord(k - 1), chord(k))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees();
+            if !near && turn > 0.2 {
+                bent += 1;
+            }
+        }
+        assert_eq!(bent, 0, "a segment bends");
+        let length = (trace.len() - 1) as f64 * spacing;
+        let mut bounds = vec![0.0];
+        bounds.extend(breaks.iter().copied());
+        bounds.push(length);
+        let segments: Vec<Segment> = bounds
+            .windows(2)
+            .enumerate()
+            .map(|(j, w)| Segment {
+                start: w[0],
+                end: w[1],
+                throw: 200.0 + 50.0 * j as f64,
+                polarity: 0.0,
+            })
+            .collect();
+        let trough = Trough {
+            points: trace.clone(),
+            spacing,
+            length,
+            width,
+            depth: segments.iter().map(|g| g.throw).fold(0.0, f64::max),
+            flank: 0.0,
+            start_gyr: 1.0,
+            end_gyr: 1.0,
+            id: 5,
+            kind: TroughKind::Graben,
+            segments: segments.clone(),
+        };
+        for g in &segments {
+            let mid = trough_throw(&trough, 0.5 * (g.start + g.end));
+            assert!((mid - g.throw).abs() < 1e-6, "{mid} vs {}", g.throw);
+        }
+        for (k, &b) in breaks.iter().enumerate() {
+            let dip = trough_throw(&trough, b);
+            let expect = (1.0 - SEGMENT_LINK_DEFICIT) * segments[k].throw;
+            assert!((dip - expect).abs() < 1.0, "{dip} vs {expect}");
+        }
+        assert!(trough_throw(&trough, 0.0) < 1e-6 && trough_throw(&trough, length) < 1e-6);
+        let frames = TroughFrames::new(&trough);
+        for f in &frames.frames {
+            if f.along > 2.0 * width && f.along < length - 2.0 * width {
+                assert!(
+                    (f.narrow - 1.0).abs() < 1e-9 && f.pulse == 1.0,
+                    "{} {}",
+                    f.narrow,
+                    f.pulse
+                );
+            }
+        }
+        // A rift's half-graben: its floor stands deeper toward its master fault, by
+        // RIFT_TILT at the far wall, and turns over at a link where the polarity flips.
+        let mut rift = trough.clone();
+        rift.kind = TroughKind::Rift;
+        for (j, g) in rift.segments.iter_mut().enumerate() {
+            g.polarity = if j % 2 == 0 { 1.0 } else { -1.0 };
+        }
+        let mid = 0.5 * (rift.segments[0].start + rift.segments[0].end);
+        assert_eq!(trough_polarity(&rift, mid), 1.0);
+        assert!(trough_polarity(&rift, rift.segments[0].end).abs() < 1e-9);
+        let frames = TroughFrames::new(&rift);
+        let f = frames
+            .frames
+            .iter()
+            .min_by(|a, b| (a.along - mid).abs().total_cmp(&(b.along - mid).abs()))
+            .unwrap();
+        let size = TroughFrames::size(&rift, 1.0, 0.0, 100.0);
+        let side = |s: f64| {
+            let q = normalize([
+                f.p[0] + s * 0.3 * width / r * f.normal[0],
+                f.p[1] + s * 0.3 * width / r * f.normal[1],
+                f.p[2] + s * 0.3 * width / r * f.normal[2],
+            ]);
+            frames.depth_from(q, r, &size, 0.0, f).unwrap().1
+        };
+        let (master, far) = (side(1.0), side(-1.0));
+        assert!(master > far && far > 0.0, "{master} {far}");
+    }
+
+    #[test]
+    fn graben_are_as_wide_as_their_layer_and_long_faults_open_rifts() {
+        // F111: on Mars's rise a graben's width is its faulted layer's, whatever its
+        // length, and its throw stays within the layer; the faults whose throw over their
+        // length would exceed the layer are rifts, as wide as their throw, the long ones.
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let all: Vec<&Trough> = p.canyons.iter().chain(&p.graben).collect();
+        let graben: Vec<&&Trough> = all
+            .iter()
+            .filter(|t| t.kind == TroughKind::Graben)
+            .collect();
+        let rifts: Vec<&&Trough> = all.iter().filter(|t| t.kind == TroughKind::Rift).collect();
+        assert!(
+            graben.len() > 1000 && !rifts.is_empty(),
+            "{} graben, {} rifts",
+            graben.len(),
+            rifts.len()
+        );
+        for t in &graben {
+            assert!(
+                t.width >= GRABEN_WIDTH_RANGE.0 && t.width <= GRABEN_WIDTH_RANGE.1,
+                "{}",
+                t.width
+            );
+            assert!(t.depth <= FAULT_LAYER_RANGE.1 + 1e-6, "{}", t.depth);
+            assert!(t.depth <= (GRABEN_DEPTH_PER_WIDTH * t.width).max(RIFT_MIN_DEPTH) + 1e-6);
+            assert!(!t.segments.is_empty());
+        }
+        for t in &rifts {
+            assert!(
+                t.width >= RIFT_WIDTH_PER_DEPTH * FAULT_LAYER_RANGE.0 - 1.0,
+                "{}",
+                t.width
+            );
+        }
+        let median = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let rift_length = median(&mut rifts.iter().map(|t| t.length).collect());
+        let graben_length = median(&mut graben.iter().map(|t| t.length).collect());
+        assert!(
+            rift_length > 3.0 * graben_length,
+            "{rift_length} vs {graben_length}"
+        );
     }
 
     #[test]

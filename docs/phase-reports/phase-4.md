@@ -970,6 +970,34 @@ What the maps show:
 Still to do:
 
 - **The finish's floods** keep four fifths of the loop's lava (audit M16).
-- **Canyons and graben** read as worms (the user): their structural shapes, next.
+- **Canyons and graben** read as worms (the user): their structural shapes, next (the forty-fourth milestone).
 
 Tests 183 (five ignored). One is new: a flood running as a sheet from its vent down to a lake draws flows over both runs, staying near its own cells (on the old code its flows covered none of the sheet). Clippy is clean and validate passes its 117 checks.
+
+## The forty-fourth milestone: faults in segments
+
+Asked for by the user: the canyons and graben read as worms.
+
+- **F111, segments, faulted layers and half-graben.** A rise's faults grow in straight segments that link, turning toward the stress field and stepping en-echelon where they meet. A graben is as wide as its faulted layer sets it, a few kilometres whatever its length, with straight walls to its tips, its throw peaking in each segment and dipping where segments link. A fault whose throw would exceed its layer opens a rift, whose segments are half-graben, their floors tilting toward a master fault whose side flips from one to the next.
+
+How it went:
+
+- **What made the worms.** Each trace steered toward the stress field a little at every step, so it curved smoothly; each trough's depth and width came from its length, so it tapered as a lens from tip to tip; and every one swelled and scalloped like a chasma. Measured graben (Plescia 1991; Davis, Tanaka and Golombek 1993; Hauber et al. 2013) are a few kilometres wide whatever their length, with throws a hundredth of each segment's length.
+- **The faulted layer.** The first version set a graben's width from its layer's thickness, and the long faults all came out as wide rifts with 2 of Mars's 22 loop troughs left. The width correlates poorly with the layer's thickness (Schultz 2000), so the two are now drawn apart, and 17 remain.
+- **Segment lengths.** Segments 3 to 20 widths long left most rifts in one or two pieces; 2 to 10 widths gives a long rift several segments, as Valles Marineris's troughs are, and a graben segments tens of kilometres long.
+- **Deep narrow graben.** With the throw capped only by the layer, some graben stood deeper than they were wide; a graben now throws no more than a fifth of its width.
+- **A regression caught.** The icy moons' ring systems include ridges of negative depth, whose frames the new taper dropped; a check against the last commit found Ganymede and Callisto changed, and a trough without segments keeps its old taper. They are identical to the last commit again.
+
+What the maps show:
+
+- **Mars:** the rise's canyons run in straight segments with kinks and steps, their master walls standing out; its graben are straight lines a few kilometres wide in parallel swarms with en-echelon steps, the crest a maze of short straight graben.
+- **Venus:** its rifts are straight half-graben; its graben, mostly finer than its 9 km cells at the standard quality, show faintly, where they were drawn 10 to 15 km wide before.
+- **The other bodies:** unchanged.
+
+Still to do:
+
+- **The faulted layer** as a field over the rise, thickening toward a volcano's summit, rather than drawn per fault.
+- **Pit chains** along the graben, finer than the standard grid.
+- **The finish's floods** keep four fifths of the loop's lava (audit M16).
+
+Tests 185 (five ignored). Two are new: a fault's trace keeps to a great circle within each segment and turns or steps only where they link, its throw peaking in each segment, dipping at the links and falling to nothing at its ends, its width kept to its tips, and a rift's half-graben floor standing deeper toward its master fault; and on Mars's rise every graben is as wide as its layer sets it and no deeper than its layer or a fifth of its width, the rifts several times as long. Clippy is clean and validate passes its 117 checks.
