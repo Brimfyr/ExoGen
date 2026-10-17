@@ -31,7 +31,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 7;
+pub const VERSION: u64 = 8;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1275,12 +1275,52 @@ pub struct TroughFrames {
     width: f64,
     flank: f64,
     noise: GradientNoise,
+    /// The trough's full depth, and the landslides off its walls in order along it
+    /// (F106), with the farthest any reaches along the wall from its centre, m.
+    depth: f64,
+    landslides: Vec<Landslide>,
+    slide_reach: f64,
+    /// A debris lobe's volume over its peak thickness, its alcove's half width and its
+    /// run-out.
+    lobe_shape: f64,
+}
+
+/// A debris lobe's volume over its peak thickness, its alcove's half width and its
+/// run-out (F106): the integral of its thickness across, (1 - x²)^1.5 to 3π/8, times its
+/// shape along, (1 - u²) times its widening and its rounded toe.
+fn lobe_shape() -> f64 {
+    let n = 256;
+    let along: f64 = (0..n)
+        .map(|k| {
+            let u = (k as f64 + 0.5) / n as f64;
+            (1.0 - u * u) * (1.0 + LANDSLIDE_SPREAD * u) * (1.0 - u.powi(4)).sqrt() / n as f64
+        })
+        .sum();
+    3.0 * std::f64::consts::PI / 8.0 * along
+}
+
+/// One landslide off a canyon's wall (F106): an alcove cut back into the plateau and the
+/// debris it shed, a lobe running out across the floor. Its sizes are in metres at the
+/// trough's full depth, and grow with the trough.
+#[derive(Clone, Copy, Debug)]
+struct Landslide {
+    /// Its centre along the trace, m, and the wall it fell from: the side of the normal.
+    along: f64,
+    side: f64,
+    /// The alcove's half width along the wall and how far it cut back, m; the wall's
+    /// height it fell, m; and its run-out over that height.
+    half: f64,
+    back: f64,
+    fall: f64,
+    reach: f64,
 }
 
 struct Frame {
     p: [f64; 3],
     t: [f64; 3],
     normal: [f64; 3],
+    /// Its distance along the trace, m.
+    along: f64,
     /// Depth and width factors towards the ends of the trace.
     taper: f64,
     narrow: f64,
@@ -1341,17 +1381,123 @@ impl TroughFrames {
                 p,
                 t,
                 normal,
+                along: along_trace,
                 taper,
                 narrow,
                 pulse,
             });
         }
+        // The walls retreat in landslides where they stand high enough (F106): along each
+        // wall, alcoves sized by the wall's height there, one after another.
+        let mut landslides = Vec::new();
+        if trough.depth >= LANDSLIDE_MIN_WALL && trough.length > 0.0 {
+            let rng = Rng::new(trough.id ^ 0x1A2D_5D1D_0000);
+            for (w, side) in [1.0f64, -1.0].into_iter().enumerate() {
+                let mut s = 0.0;
+                let mut k = 0u64;
+                loop {
+                    let draw = (w as u64) << 40 | k;
+                    k += 1;
+                    let taper = (std::f64::consts::PI * s / trough.length).sin().max(0.0);
+                    let fall = trough.depth * taper.powf(TROUGH_TAPER_POWER);
+                    let (h_lo, h_hi) = LANDSLIDE_HALF_WIDTH;
+                    let half = fall.max(LANDSLIDE_MIN_WALL)
+                        * h_lo
+                        * (h_hi / h_lo).powf(rng.uniform(draw, 0));
+                    let (g_lo, g_hi) = LANDSLIDE_GAP;
+                    s += half * (1.0 + 2.0 * (g_lo + (g_hi - g_lo) * rng.uniform(draw, 1)));
+                    if s >= trough.length {
+                        break;
+                    }
+                    let taper = (std::f64::consts::PI * s / trough.length).sin().max(0.0);
+                    let fall = trough.depth * taper.powf(TROUGH_TAPER_POWER);
+                    if fall >= LANDSLIDE_MIN_WALL {
+                        let (b_lo, b_hi) = LANDSLIDE_BACK;
+                        let (r_lo, r_hi) = LANDSLIDE_REACH;
+                        landslides.push(Landslide {
+                            along: s,
+                            side,
+                            half,
+                            back: half * (b_lo + (b_hi - b_lo) * rng.uniform(draw, 2)),
+                            fall,
+                            reach: r_lo + (r_hi - r_lo) * rng.uniform(draw, 3),
+                        });
+                    }
+                    s += half;
+                }
+            }
+            landslides.sort_by(|a, b| a.along.total_cmp(&b.along));
+        }
+        let slide_reach = landslides
+            .iter()
+            .map(|l| l.half * (1.0 + LANDSLIDE_SPREAD))
+            .fold(0.0, f64::max);
         Self {
             frames,
             width: trough.width,
             flank: trough.flank,
             noise,
+            depth: trough.depth,
+            landslides,
+            slide_reach,
+            lobe_shape: lobe_shape(),
         }
+    }
+
+    /// What the landslides near a point do to it (F106), at the trough's growth: how far
+    /// the alcoves cut the wall back on its side, m, and how thick their debris lies on
+    /// it, m. `along` is its distance along the trace and `across` off it, the trough
+    /// `width` wide with walls `wall` wide there.
+    fn landslides_at(
+        &self,
+        along: f64,
+        across: f64,
+        width: f64,
+        wall: f64,
+        scale: f64,
+    ) -> (f64, f64) {
+        if self.landslides.is_empty() || scale <= 0.0 {
+            return (0.0, 0.0);
+        }
+        let first = self
+            .landslides
+            .partition_point(|l| l.along < along - self.slide_reach);
+        let side = if across >= 0.0 { 1.0 } else { -1.0 };
+        let foot = (0.5 * width - wall).max(0.0);
+        let (mut cut, mut debris) = (0.0f64, 0.0f64);
+        for l in &self.landslides[first..] {
+            if l.along > along + self.slide_reach {
+                break;
+            }
+            let ds = along - l.along;
+            let (half, back, fall) = (l.half * scale, l.back * scale, l.fall * scale);
+            if l.side == side && ds.abs() < half {
+                cut = cut.max(back * (1.0 - (ds / half).powi(2)));
+            }
+            // The debris: the alcove's volume, a half cone, in a lobe from the foot of its
+            // wall across the floor, as far as the floor goes; it widens toward its rounded
+            // toe and thins to its edges, and drapes the wall's lower slope above the foot.
+            let run = (l.reach * fall).min(2.0 * foot).max(1.0);
+            let into = foot - l.side * across;
+            if into < -wall || into > run {
+                continue;
+            }
+            let u = (into / run).max(0.0);
+            let spread = half * (1.0 + LANDSLIDE_SPREAD * u) * (1.0 - u.powi(4)).max(0.0).sqrt();
+            if ds.abs() >= spread {
+                continue;
+            }
+            let volume = std::f64::consts::FRAC_PI_2 * half * back * fall / 3.0;
+            let peak = volume / (self.lobe_shape * half * run);
+            let drape = if into < 0.0 {
+                smooth(into, -wall, 0.0)
+            } else {
+                1.0
+            };
+            debris +=
+                peak * drape * (1.0 - u * u) * (1.0 - (ds / spread).powi(2)).max(0.0).powf(1.5);
+        }
+        (cut, debris)
     }
 
     /// The trace points that carry a frame, in frame order.
@@ -1379,7 +1525,12 @@ impl TroughFrames {
             search: 0.5 * width
                 + 3.0 * wall
                 + 2.0 * cell
-                + if trough.flank != 0.0 { width } else { 0.0 },
+                + if trough.flank != 0.0 { width } else { 0.0 }
+                + if trough.depth >= LANDSLIDE_MIN_WALL {
+                    LANDSLIDE_BACK.1 * LANDSLIDE_HALF_WIDTH.1 * depth
+                } else {
+                    0.0
+                },
             half_band: 0.5 * trough.spacing + cell,
         }
     }
@@ -1415,11 +1566,20 @@ impl TroughFrames {
                     0.5,
                 );
         let width = size.width * f.pulse * scallop * f.narrow;
-        let mut u = trough_profile(across, width, size.depth, size.wall, blur);
+        // The landslides cut the wall back on their side and lay their debris on the floor.
+        let (cut, debris) = self.landslides_at(
+            f.along + along,
+            across,
+            width,
+            size.wall,
+            size.depth / self.depth.max(1.0),
+        );
+        let mut u = trough_profile(across, width + 2.0 * cut, size.depth, size.wall, blur);
         if self.flank != 0.0 {
             u -= self.flank * size.depth * flank_profile(across, width, size.wall, blur);
         }
         let u = f.taper * u;
+        let u = if u > 0.0 { (u - debris).max(0.0) } else { u };
         Some((along.abs(), u))
     }
 }
@@ -1834,6 +1994,124 @@ mod tests {
             .sum();
         assert!(area > std::f64::consts::PI * shield.radius.powi(2));
         assert!(flows.windows(2).all(|w| w[1].time_gyr > w[0].time_gyr));
+    }
+
+    #[test]
+    #[ignore = "diagnostic: writes a canyon's relief with its landslides to a file"]
+    fn write_canyon_patch() {
+        let r = 3.39e6;
+        let (east, north) = local_basis([1.0, 0.0, 0.0]);
+        let points: Vec<[f64; 3]> = (0..=200)
+            .map(|k| {
+                offset(
+                    [1.0, 0.0, 0.0],
+                    east,
+                    north,
+                    (k as f64 * 10e3 - 1000e3) / r,
+                    0.0,
+                )
+            })
+            .collect();
+        let canyon = Trough {
+            points,
+            spacing: 10e3,
+            length: 2000e3,
+            width: 150e3,
+            depth: 6e3,
+            flank: 0.0,
+            start_gyr: 1.0,
+            end_gyr: 2.0,
+            id: 11,
+        };
+        let frames = TroughFrames::new(&canyon);
+        let n = 600usize;
+        let half = 300e3;
+        let mut out = String::from("P2\n600 600\n65535\n");
+        let cell = 1e3;
+        for y in 0..n {
+            for x in 0..n {
+                let e = (x as f64 / (n - 1) as f64 * 2.0 - 1.0) * half;
+                let no = (1.0 - y as f64 / (n - 1) as f64 * 2.0) * half;
+                let d = normalize([1.0, e / r, no / r]);
+                let depth = trough_depth_at(
+                    d,
+                    r,
+                    &canyon,
+                    &frames,
+                    (0, frames.len()),
+                    1.0,
+                    0.0,
+                    cell,
+                    0.0,
+                );
+                let v = ((1.0 - depth / 6.5e3).clamp(0.0, 1.0) * 65535.0) as u32;
+                out.push_str(&format!("{v} "));
+            }
+            out.push('\n');
+        }
+        std::fs::write(std::env::temp_dir().join("exogen_canyon_patch.pgm"), out).unwrap();
+    }
+
+    #[test]
+    fn a_canyon_s_walls_fall_in_landslides() {
+        // F106: a deep canyon's walls carry alcoves along both sides, a shallow trough's
+        // none, and a landslide's debris on the floor holds the volume its alcove lost.
+        let r = 3.39e6;
+        let (east, north) = local_basis([1.0, 0.0, 0.0]);
+        let points: Vec<[f64; 3]> = (0..=200)
+            .map(|k| offset([1.0, 0.0, 0.0], east, north, k as f64 * 10e3 / r, 0.3))
+            .collect();
+        let canyon = Trough {
+            points: points.clone(),
+            spacing: 10e3,
+            length: 2000e3,
+            width: 150e3,
+            depth: 6e3,
+            flank: 0.0,
+            start_gyr: 1.0,
+            end_gyr: 2.0,
+            id: 11,
+        };
+        let frames = TroughFrames::new(&canyon);
+        assert!(frames.landslides.len() > 20, "{}", frames.landslides.len());
+        assert!(frames.landslides.iter().any(|l| l.side > 0.0));
+        assert!(frames.landslides.iter().any(|l| l.side < 0.0));
+        let shallow = Trough {
+            depth: 500.0,
+            id: 12,
+            ..canyon.clone()
+        };
+        assert!(TroughFrames::new(&shallow).landslides.is_empty());
+        // One landslide's debris, summed over the floor about it, against its alcove.
+        let l = frames
+            .landslides
+            .iter()
+            .find(|l| l.along > 500e3 && l.side > 0.0)
+            .unwrap();
+        let (width, wall) = (150e3, TROUGH_WALL_FRACTION * 150e3);
+        let only = TroughFrames {
+            frames: Vec::new(),
+            width,
+            flank: 0.0,
+            noise: GradientNoise::new(1),
+            depth: canyon.depth,
+            landslides: vec![*l],
+            slide_reach: l.half * (1.0 + LANDSLIDE_SPREAD),
+            lobe_shape: lobe_shape(),
+        };
+        let step = 250.0;
+        let mut volume = 0.0;
+        let mut a = l.along - 2.0 * l.half;
+        while a < l.along + 2.0 * l.half {
+            let mut x = -0.5 * width;
+            while x < 0.5 * width {
+                volume += only.landslides_at(a, x, width, wall, 1.0).1 * step * step;
+                x += step;
+            }
+            a += step;
+        }
+        let alcove = std::f64::consts::FRAC_PI_2 * l.half * l.back * l.fall / 3.0;
+        assert!((volume / alcove - 1.0).abs() < 0.1, "{volume} {alcove}");
     }
 
     #[test]

@@ -403,6 +403,14 @@ Direction: an ice table, ice stable at the surface only where the sublimation it
 
 When: Phase 5, with the surface temperatures through the day and the year and the stability of the volatiles.
 
+### M14. A rise's late floods fill its canyons
+
+On Mars the floods keep coming over the rise to the present, at the pace of the body's magma production, so a canyon opened in the first half of the body's life is mostly filled by the lava that follows it: the deepest, 7.4 km, keeps 2.8 km of relief and a floor of flows, and its landslides (F106) lie under the lava. Valles Marineris is younger than the plains about it and stands open, because Mars's later volcanism gathered at its great shields as its lithosphere thickened, rather than flooding the rise (Hauber et al. 2011 on Tharsis's evolution from plains to central volcanism).
+
+Direction: the share of a body's magma erupted in floods falling as its lithosphere thickens and the share erupted at central vents, the shields, rising, so that late volcanism builds the shields and leaves the canyons open.
+
+When: the earlier-phases revisit, with the Mars dichotomy's lowland burial, which also sets where the floods go.
+
 ## Validation (principle 15)
 
 ### V1. Interpolated bodies in validation

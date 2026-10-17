@@ -487,6 +487,21 @@ pub const TROUGH_SCALLOP_LENGTH: f64 = 60e3;
 pub const TROUGH_WIDTH_PULSE: f64 = 0.4;
 pub const TROUGH_PULSE_LENGTH: f64 = 700e3;
 pub const TROUGH_TAPER_POWER: f64 = 0.3;
+/// A canyon's walls retreat in landslides (F106) where they stand at least this high, m:
+/// each an alcove this many wall heights in half width along the wall (log-uniform),
+/// cut back into the plateau by this share of its half width, the next this many alcove
+/// widths on; its debris, the alcove's volume, runs out across the floor this many times
+/// its fall height (the inverse of the Fahrboschung) in a lobe that widens by this share
+/// of the alcove's width by its toe (Quantin et al. 2004: some fifty large landslides in
+/// Valles Marineris, 3.5 Gyr to 50 Myr old, of 350 to 460 km³ with Fahrboschungen of
+/// 0.07 to 0.12, lower the larger, McEwen 1989; an alcove 30 km wide cut 8 km back into a
+/// 6 km wall holds about 380 km³; the shares are stated choices).
+pub const LANDSLIDE_MIN_WALL: f64 = 1000.0;
+pub const LANDSLIDE_HALF_WIDTH: (f64, f64) = (1.0, 4.0);
+pub const LANDSLIDE_BACK: (f64, f64) = (0.3, 0.8);
+pub const LANDSLIDE_GAP: (f64, f64) = (0.5, 3.0);
+pub const LANDSLIDE_REACH: (f64, f64) = (7.0, 14.0);
+pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// The episodic lid (PLAN.md 4.3, Venus). The event fills every depression this far
 /// towards its spill point and lays this veneer everywhere else on the plains, m; the
 /// tessera are the highest-standing fraction of the surface by a height smoothed this

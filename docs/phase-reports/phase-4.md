@@ -845,3 +845,26 @@ Still to do:
 - **Buried floods' margins** in coarse steps (audit W7).
 
 Tests 181 (four ignored). One is new: the crest is in tension every way alike, the flank in hoop tension and the foot in compression, a flank fault runs along the radius, and the starts are drawn as the tension is. Clippy is clean and validate passes its 117 checks.
+
+## The thirty-ninth milestone: canyon walls fall in landslides
+
+The third part of the revisit's fourth item.
+
+- **F106, landslides.** A canyon's walls, where at least a kilometre high, retreat in alcoves sized by the wall's height, and each alcove's volume runs out across the floor in a lobe that widens toward its rounded toe, as Valles Marineris's landslides did.
+
+How it went:
+
+- **The first lobes** were flat fans with straight sides that began in a step at the wall's foot; they now widen toward a rounded toe, thin to their edges and drape the wall's lower slope, each holding its alcove's volume (a test sums one over the floor against its alcove, within a tenth).
+- **Where they show: nowhere yet on this Mars.** Its large canyons opened in the first half of its life, and the floods that kept coming over the rise filled them: the deepest, 7.4 km, keeps 2.8 km of relief, a floor of flows and walls worn by the time since, with no alcove to be told at a kilometre a pixel. That is the right order of events for the floods the model draws, but Valles Marineris stands open because Mars's later volcanism gathered at its shields; entered as audit M14. The young canyons, a kilometre and a half deep, cut alcoves a few kilometres across, under the standard grid. The landslides are drawn and conserve their volume; they will show on a canyon that stays open.
+
+What the maps show:
+
+- **A synthetic canyon** 150 km wide and 6 km deep, drawn by the trough's own profile: alcoves along both walls and tongues of debris across its floor (a diagnostic, ignored test, writes it).
+- **Mars:** no visible change at the standard quality; its canyons are filled and worn.
+
+Still to do:
+
+- **A rise's late floods** fill its canyons (audit M14).
+- **Pit chains and the rise's flexure**, the item's remaining parts, and the buried floods' coarse steps (audit W7).
+
+Tests 183 (five ignored). Two are new: a deep canyon's walls carry alcoves along both sides and a shallow one's none, with a landslide's debris holding its alcove's volume; and the diagnostic. Clippy is clean and validate passes its 117 checks.
