@@ -943,7 +943,33 @@ What the maps show:
 Still to do:
 
 - **Canyons and graben** read as worms (the user): their structural shapes, next.
-- **A few small blocky spots** of old relief show through the maria beside young craters, where older floods now act, a fine cell or two across.
+- **A few small blocky spots** of old relief show through the maria beside young craters, where older floods now act, a fine cell or two across (fixed in the forty-third milestone).
 - **The swath's aspect** is one flow field's; a flow's width from its supply and slope waits on W1.
 
 Tests 182 (five ignored). One is new: a canyon whose walls leave its floor no room keeps its depth at each landslide (failing on the old code at 0 m of 1,738); the downhill test now counts the flow's swath, and the crater ages test its floor and wall. Clippy is clean and validate passes its 117 checks.
+
+## The forty-third milestone: the plains' blocks
+
+Asked for after the forty-second milestone's images (the user: the blocky terrain artefacts round the Moon's craters had become worse).
+
+- **F110, flows per run and fills that follow the fine relief.** A flood's flows are traced for each of its runs and stay within two coarse cells of its own cells; a lake's fill, and a sheet's, enters any finer hollow beside it whatever its coarse cell; a buried flood's sheet lies everywhere the loop laid it.
+
+How it went:
+
+- **A trace of a block's edge** showed a lake filling one side by 160 m, to its level, and leaving the other, where the cell's coarse cell carried only a flood's sheet. The fine ground on both sides lay some 500 m below the loop's.
+- **The drift.** Each flood's pass takes its coarse smear off where its flows do not reach, and the lava goes nowhere. On the Moon the passes kept 81 percent of the loop's lava, visible floods with sheets 61 percent, and lakes refilled the drift within their coarse cells, in steps along the cells' edges.
+- **A bug of F109.** Some visible floods kept almost none of their lava. Their flows were bound by the flood's cap and started at its vent, which for a cascade lies on the cap's edge: 47 floods on the Moon drew no flows at all. A test of a cascade fails on the old code with no flows on its sheet.
+- **Conserving the volume** by spreading each pass's lost lava over the cells it laid made the plains grainy, and capped at a sheet it dimmed the flows; set aside (audit M16). The fills that follow the fine relief remove the blocks without it.
+- **Trenches.** A thin trench 100 to 150 m deep was left where many floods' flows had missed the same strip; a sheet now fills the finer hollows it crosses, which the loop's own ground keeps off open slopes.
+
+What the maps show:
+
+- **The Moon:** the blocks and stairs round the craters are gone; the maria cover 15.5 percent of the surface.
+- **Mars, Mercury, Venus:** as before or a little smoother; Mercury's smooth plains cover 27.5 percent, against the 27 percent measured.
+
+Still to do:
+
+- **The finish's floods** keep four fifths of the loop's lava (audit M16).
+- **Canyons and graben** read as worms (the user): their structural shapes, next.
+
+Tests 183 (five ignored). One is new: a flood running as a sheet from its vent down to a lake draws flows over both runs, staying near its own cells (on the old code its flows covered none of the sheet). Clippy is clean and validate passes its 117 checks.

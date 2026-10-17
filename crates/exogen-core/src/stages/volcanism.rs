@@ -1105,9 +1105,6 @@ pub fn flood_compute(
         hollow: bool,
         reached: bool,
         ponded: bool,
-        /// Its lava a sheet over the ground (M15), which drapes a hollow rather than
-        /// ponding in it.
-        sheet: bool,
     }
     let mut work: Vec<Work> = visits
         .into_par_iter()
@@ -1127,12 +1124,15 @@ pub fn flood_compute(
                 hollow: false,
                 reached: false,
                 ponded: false,
-                sheet: false,
             };
+            // A buried flood's sheet lies its thickness, sampled smoothly, wherever the loop
+            // laid it: its margin is hidden under the flows after it, and its outline cut a
+            // step a sheet deep along the coarse cells, a staircase on the plains (M15).
             w.reached = match &lobed {
                 Some(lobed) => {
                     own > ponded_thickness || lobed.get(&idx).copied().unwrap_or(0.0) >= 0.5
                 }
+                None if level.is_nan() => true,
                 None => {
                     let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
                     if outline > 0.0 && outline < 1.0 {
@@ -1155,7 +1155,6 @@ pub fn flood_compute(
                 level
             };
             w.level = level;
-            w.sheet = sheet;
             if w.younger {
                 return w;
             }
@@ -1198,12 +1197,13 @@ pub fn flood_compute(
     // the lava follows it as far as the loop's largest unseen crater reaches.
     if lobed.is_some() {
         let drape = FLOOD_SHEET_THICKNESS as f32;
-        // Lava lying in the low or its ring: the pond and the flows next to it, not a
-        // lobe's sheet far beyond, nor a sheet down a slope, whose surface is no level a
-        // hollow beside it fills to (M15).
-        let lava = |w: &Work| {
-            w.near && !w.younger && !w.hollow && !w.sheet && w.reached && w.ground < w.level + drape
-        };
+        // Lava lying in the low or its ring: the pond and the flows next to it, and the
+        // sheets running down to it, not a lobe's sheet far beyond. A sheet fills the
+        // finer hollows it crosses to its surface; down an open slope the loop's own
+        // ground falls below that, and the slope stays as it is (the strips its flows
+        // missed time after time had stood as trenches between them).
+        let lava =
+            |w: &Work| w.near && !w.younger && !w.hollow && w.reached && w.ground < w.level + drape;
         let mut index: HashMap<usize, usize> =
             work.iter().enumerate().map(|(k, w)| (w.idx, k)).collect();
         let neighbours = |idx: usize| {
@@ -1262,7 +1262,27 @@ pub fn flood_compute(
                             work[j].ponded = true;
                             work[j].reached = true;
                         } else if !lava(&work[j]) {
-                            continue;
+                            // A cell beside the pond lying below its floor ponds too,
+                            // whatever the level of its own coarse cell, a flood's
+                            // sheet or the ring round it: the fill follows the fine
+                            // relief, not the coarse cells (the edge of a coarse cell
+                            // had stopped it in a step a cell long). The loop's own
+                            // ground there stands at the floor, so it is finer relief.
+                            let wj = &work[j];
+                            let floor = level
+                                - wj.own / (1.0 - LAVA_SUBSIDENCE as f32)
+                                - FLOOD_SHEET_THICKNESS as f32;
+                            if !(work[k].ponded || lava(&work[k]))
+                                || wj.younger
+                                || wj.ground >= floor
+                                || base[wj.idx] - (wj.carry + wj.own) < floor
+                            {
+                                continue;
+                            }
+                            work[j].level = level;
+                            work[j].hollow = true;
+                            work[j].ponded = true;
+                            work[j].reached = true;
                         }
                         seen[j] = true;
                         queue.push(j);
@@ -1301,7 +1321,6 @@ pub fn flood_compute(
                         hollow: true,
                         reached: true,
                         ponded: true,
-                        sheet: false,
                     });
                 }
             }
@@ -1503,10 +1522,13 @@ pub(crate) fn lobe_area(lobe: &Lobe) -> f64 {
     (lobe.points.len().max(1) - 1) as f64 * lobe.spacing * 2.0 * lobe.half_width
 }
 
-/// The flows of one flood at the finishing resolution (F94): a compound flow field from
-/// the coarse cell of its low nearest its vent, where its lava came in, its trunk heading
-/// across the low toward its middle, until its lobes cover the low FLOOD_LOBE_COVER times
-/// over.
+/// The flows of one flood at the finishing resolution (F94): for each run of it, a sheet
+/// down a slope or a lake (F109), a compound flow field from the run's cell nearest the
+/// vent, where its lava came in, its trunk heading across the run toward its middle,
+/// until its lobes cover the run FLOOD_LOBE_COVER times over. The lobes stay within two
+/// coarse cells of the flood's own cells, inside the cap its pass may write: bound by the
+/// cap alone, a cascade's flows, starting at its vent on the cap's edge, stopped before
+/// they began.
 pub fn flood_lobes(
     rec: &FloodRecord,
     coarse: &CubeSphere,
@@ -1516,31 +1538,65 @@ pub fn flood_lobes(
     seed: u64,
 ) -> Vec<Lobe> {
     let covered = rec.cells();
-    let Some(entry_idx) = covered.keys().copied().min_by(|&a, &b| {
-        let da = angle_between(rec.vent, coarse.center(coarse.cell(a as usize)));
-        let db = angle_between(rec.vent, coarse.center(coarse.cell(b as usize)));
-        da.total_cmp(&db).then(a.cmp(&b))
-    }) else {
+    if covered.is_empty() {
         return Vec::new();
-    };
+    }
     let r = body_radius;
     let cell = grid.delta() * r;
-    let entry = coarse.center(coarse.cell(entry_idx as usize));
-    let (middle, cap) = rec.cap(coarse);
-    // The lobes stay inside the flood's pass, whose cap reaches 2.5 coarse cells past its
-    // footprint: a path stops where its lobe's margin would cross 2 of them.
-    let limit = cap + 2.0 * coarse.delta();
+    let coarse_cell = coarse.delta() * r;
+    // The flood's coarse cells and those within two of them, each with how far it lies
+    // inside that area's edge, in coarse cells: a lobe goes where its margin stays inside.
+    let mut area: HashSet<usize> = covered.keys().map(|&i| i as usize).collect();
+    for _ in 0..2 {
+        let ring: Vec<usize> = area
+            .iter()
+            .flat_map(|&i| {
+                let c = coarse.cell(i);
+                NEIGHBOURS
+                    .iter()
+                    .map(move |&(di, dj)| coarse.index(coarse.neighbor(c, di, dj)))
+            })
+            .filter(|n| !area.contains(n))
+            .collect();
+        area.extend(ring);
+    }
+    let mut inside: HashMap<usize, u32> = HashMap::with_capacity(area.len());
+    let mut front: Vec<usize> = area
+        .iter()
+        .copied()
+        .filter(|&i| {
+            let c = coarse.cell(i);
+            NEIGHBOURS
+                .iter()
+                .any(|&(di, dj)| !area.contains(&coarse.index(coarse.neighbor(c, di, dj))))
+        })
+        .collect();
+    for &i in &front {
+        inside.insert(i, 0);
+    }
+    let mut depth = 0;
+    while !front.is_empty() {
+        depth += 1;
+        let mut next = Vec::new();
+        for &i in &front {
+            let c = coarse.cell(i);
+            for (di, dj) in NEIGHBOURS {
+                let n = coarse.index(coarse.neighbor(c, di, dj));
+                if area.contains(&n) && !inside.contains_key(&n) {
+                    inside.insert(n, depth);
+                    next.push(n);
+                }
+            }
+        }
+        front = next;
+    }
     let outside = |q: [f64; 3], hw: f64| {
-        angle_between(middle, q)
-            > limit - (hw * (1.0 + IO_FLOW_LOBING) + (IO_FLOW_EDGE * hw).max(1.5 * cell)) / r
+        let margin = hw * (1.0 + IO_FLOW_LOBING) + (IO_FLOW_EDGE * hw).max(1.5 * cell);
+        match inside.get(&coarse.index(coarse.locate(q).0)) {
+            Some(&d) => (d as f64 + 0.5) * coarse_cell < margin,
+            None => true,
+        }
     };
-    let reach = covered
-        .keys()
-        .map(|&i| angle_between(entry, coarse.center(coarse.cell(i as usize))))
-        .fold(0.0, f64::max)
-        * r
-        + coarse.delta() * r;
-    let rng = Rng::new(seed ^ rec.id ^ 0xF100_D10B);
     let rules = |half_width: f64| PathRules {
         min_spacing: 0.5 * cell,
         slope_follow: IO_FLOW_SLOPE_FOLLOW,
@@ -1551,49 +1607,87 @@ pub fn flood_lobes(
         fill_depth: FLOOD_SHEET_THICKNESS,
         width_wobble: IO_FLOW_WIDTH_WOBBLE,
     };
-    // The trunk heads across the low toward its middle.
-    let toward = {
-        let v = [
-            middle[0] - entry[0],
-            middle[1] - entry[1],
-            middle[2] - entry[2],
-        ];
-        let radial = dot(v, entry);
-        let t = [
-            v[0] - radial * entry[0],
-            v[1] - radial * entry[1],
-            v[2] - radial * entry[2],
-        ];
-        if t[0] * t[0] + t[1] * t[1] + t[2] * t[2] > 1e-18 {
-            normalize(t)
-        } else {
-            // Entered at the middle: any heading.
-            let a = if entry[2].abs() < 0.9 {
-                [0.0, 0.0, 1.0]
+    let mut lobes = Vec::new();
+    for (k, pond) in rec.ponds.iter().enumerate() {
+        let cells: Vec<[f64; 3]> = pond
+            .cells
+            .iter()
+            .map(|c| coarse.center(coarse.cell(c.idx as usize)))
+            .collect();
+        let Some(&entry) = cells
+            .iter()
+            .min_by(|a, b| angle_between(rec.vent, **a).total_cmp(&angle_between(rec.vent, **b)))
+        else {
+            continue;
+        };
+        let middle = {
+            let sum = cells
+                .iter()
+                .fold([0.0; 3], |s, d| [s[0] + d[0], s[1] + d[1], s[2] + d[2]]);
+            if sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2] < 1e-18 {
+                entry
             } else {
-                [1.0, 0.0, 0.0]
-            };
-            rotate_about(
-                entry,
-                normalize(crate::geom::cross(entry, a)),
-                std::f64::consts::TAU * rng.uniform(2, 0),
-            )
-        }
-    };
-    flow_field(
-        grid,
-        r,
-        ground,
-        &rng,
-        rec.id,
-        entry,
-        toward,
-        reach,
-        FLOOD_LOBE_COVER * rec.area,
-        0.0,
-        &rules,
-        &outside,
-    )
+                normalize(sum)
+            }
+        };
+        let run_area: f64 = pond
+            .cells
+            .iter()
+            .map(|c| coarse.cell_area(coarse.cell(c.idx as usize)) * r * r)
+            .sum();
+        let reach = cells
+            .iter()
+            .map(|&d| angle_between(entry, d))
+            .fold(0.0, f64::max)
+            * r
+            + coarse_cell;
+        let id = rec.id ^ ((k as u64) << 52);
+        let rng = Rng::new(seed ^ id ^ 0xF100_D10B);
+        // The trunk heads across the run toward its middle.
+        let toward = {
+            let v = [
+                middle[0] - entry[0],
+                middle[1] - entry[1],
+                middle[2] - entry[2],
+            ];
+            let radial = dot(v, entry);
+            let t = [
+                v[0] - radial * entry[0],
+                v[1] - radial * entry[1],
+                v[2] - radial * entry[2],
+            ];
+            if t[0] * t[0] + t[1] * t[1] + t[2] * t[2] > 1e-18 {
+                normalize(t)
+            } else {
+                // Entered at the middle: any heading.
+                let a = if entry[2].abs() < 0.9 {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    [1.0, 0.0, 0.0]
+                };
+                rotate_about(
+                    entry,
+                    normalize(crate::geom::cross(entry, a)),
+                    std::f64::consts::TAU * rng.uniform(2, 0),
+                )
+            }
+        };
+        lobes.extend(flow_field(
+            grid,
+            r,
+            ground,
+            &rng,
+            id,
+            entry,
+            toward,
+            reach,
+            FLOOD_LOBE_COVER * run_area,
+            0.0,
+            &rules,
+            &outside,
+        ));
+    }
+    lobes
 }
 
 /// A compound flow field (F94): from its source a trunk along a heading, a share of the
@@ -2231,6 +2325,112 @@ mod tests {
         let shown = visible.iter().filter(|&&v| v).count();
         assert_eq!(shown, FLOOD_VISIBLE_DEPTH, "{visible:?}");
         assert!(visible[5] && !visible[0], "{visible:?}");
+    }
+
+    #[test]
+    fn a_cascade_s_flows_cover_its_runs() {
+        // F110: a flood running as a sheet from its vent down to a lake draws flows over
+        // both runs, each from its cell nearest the vent, and they stay within two coarse
+        // cells of the flood's own cells. Bound by the flood's cap and started at the vent,
+        // on the cap's edge, they had stopped before they began.
+        let coarse = CubeSphere::new(32);
+        let grid = CubeSphere::new(128);
+        let body_radius = 1_000e3;
+        let flat = vec![0.0f32; grid.cell_count()];
+        let ground = PaddedField::new(&grid, &flat);
+        let vent = normalize([0.3, 1.0, 0.2]);
+        let (east, north) = crate::geom::local_basis(vent);
+        let step = coarse.delta();
+        let mut path: Vec<u32> = Vec::new();
+        for k in 0..14 {
+            let p = crate::geom::offset(vent, east, north, k as f64 * step, 0.4);
+            let c = coarse.locate(p).0;
+            for (di, dj) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let n = coarse.index(coarse.neighbor(c, di, dj)) as u32;
+                if !path.contains(&n) {
+                    path.push(n);
+                }
+            }
+        }
+        let end = crate::geom::offset(vent, east, north, 16.0 * step, 0.4);
+        let lake = disc_flood(&coarse, end, 3.0 * step, 1.0, 9).ponds.remove(0);
+        let sheet = Pond {
+            level: 0.0,
+            cells: path
+                .iter()
+                .map(|&idx| FloodCell {
+                    idx,
+                    thickness: 47.5,
+                    prev_unit: UNIT_PRIMORDIAL,
+                    prev_age: 0.0,
+                })
+                .collect(),
+            sheet: true,
+        };
+        let mut flood = FloodRecord {
+            vent,
+            volume: 0.0,
+            time_gyr: 1.0,
+            area: 0.0,
+            ponds: vec![sheet, lake],
+            composition: 0.0,
+            id: 9,
+        };
+        flood.area = flood
+            .cells()
+            .keys()
+            .map(|&i| coarse.cell_area(coarse.cell(i as usize)) * body_radius * body_radius)
+            .sum();
+        let lobes = flood_lobes(&flood, &coarse, &grid, body_radius, &ground, 3);
+        let mut stamper = Stamper::new(&grid);
+        let cover = lobe_cover(&lobes, &grid, body_radius, flood.id, &mut stamper);
+        let ratio = grid.face_size() / coarse.face_size();
+        let share = |pond: &Pond| {
+            let (mut n, mut hit) = (0usize, 0usize);
+            for c in &pond.cells {
+                let cell = coarse.cell(c.idx as usize);
+                for a in 0..ratio {
+                    for b in 0..ratio {
+                        let fine = crate::grid::Cell {
+                            face: cell.face,
+                            i: cell.i * ratio + a,
+                            j: cell.j * ratio + b,
+                        };
+                        n += 1;
+                        if cover.get(&grid.index(fine)).copied().unwrap_or(0.0) >= 0.5 {
+                            hit += 1;
+                        }
+                    }
+                }
+            }
+            hit as f64 / n as f64
+        };
+        let (on_sheet, on_lake) = (share(&flood.ponds[0]), share(&flood.ponds[1]));
+        assert!(
+            on_sheet > 0.2,
+            "the flows cover {on_sheet:.2} of the sheet's run"
+        );
+        assert!(on_lake > 0.2, "the flows cover {on_lake:.2} of the lake");
+        let centres: Vec<[f64; 3]> = flood
+            .cells()
+            .keys()
+            .map(|&i| coarse.center(coarse.cell(i as usize)))
+            .collect();
+        for (&idx, &c) in &cover {
+            if c < 0.5 {
+                continue;
+            }
+            let d = grid.center(grid.cell(idx));
+            let near = centres
+                .iter()
+                .map(|&q| angle_between(q, d))
+                .fold(f64::INFINITY, f64::min);
+            assert!(
+                near <= 3.0 * step,
+                "a flow strays {:.1} coarse cells",
+                near / step
+            );
+        }
     }
 
     #[test]

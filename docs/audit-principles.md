@@ -427,6 +427,14 @@ When: the earlier-phases revisit, with M14, which sets where a rise's late lava 
 
 Closed in the forty-second milestone (F109): the lava leaves its sheet, a flow's thickness, on each cell it runs over, as wide as its volume spreads it (a swath 2.2 times as long as wide, from the Roza flow field), until its volume is spent or it reaches a low; the finish draws a sheet over the ground. Less than 1 percent of any body's lava is lost past the reach, and the Moon's lava covers 16.3 percent of its surface against the maria's 17. Still open: the swath's aspect is one flow field's; a flow's width from its supply and the slope (Hulme 1974), its thickness from the lava's yield strength, wait on the same revisit as W1's.
 
+### M16. The finish's floods keep four fifths of the loop's lava
+
+A flood's pass at the finishing resolution takes its coarse smear off where its flows do not reach, and that lava goes nowhere: on the Moon the passes keep about four fifths of the lava the loop laid. A visible flood's flows cover about a third of its runs, where F94 meant seven tenths when its lakes were deep, and a buried flood loses some at its outline and where the fine ground stands above its lake. Where floods stack, the fine ground drifts below the loop's surface. The lakes refill the drift as finer hollows (F95, F110), so it shows as gaps between flows rather than steps, and the Moon's lava covers 15.5 percent of its surface against the 17 percent the maria cover.
+
+Direction: flows that cover their runs, their lobes sized by the lava's supply and the slope (Hulme 1974, W1's open part), with the lava of the gaps on the lobes; then each pass keeps its flood's volume. Spreading the lost lava evenly over the cells laid was tried in the forty-third milestone and made the plains grainy.
+
+When: the earlier-phases revisit, with W1.
+
 ## Validation (principle 15)
 
 ### V1. Interpolated bodies in validation
