@@ -407,7 +407,7 @@ Direction: an ice table, ice stable at the surface only where the sublimation it
 
 When: Phase 5, with the surface temperatures through the day and the year and the stability of the volatiles.
 
-### M14. A rise's late floods fill its canyons
+### M14. A rise's late floods fill its canyons (closed by F108)
 
 On Mars the floods keep coming over the rise to the present, at the pace of the body's magma production, so a canyon opened in the first half of the body's life is mostly filled by the lava that follows it: the deepest, 7.4 km, keeps 2.8 km of relief and a floor of flows, and its landslides (F106) lie under the lava. Valles Marineris is younger than the plains about it and stands open, because Mars's later volcanism gathered at its great shields as its lithosphere thickened, rather than flooding the rise (Hauber et al. 2011 on Tharsis's evolution from plains to central volcanism).
 
@@ -415,9 +415,11 @@ Direction: the share of a body's magma erupted in floods falling as its lithosph
 
 When: the earlier-phases revisit, with the Mars dichotomy's lowland burial, which also sets where the floods go.
 
+Closed in the forty-first milestone (F108): a rise's shields take its eruptions as they start, each by its share of their volume, and what they take leaves the floods. Mars's canyons carved after its first shields started keep their relief, its largest a median 2,980 m of its 7,400 m along its trace, against 790 m before; those carved during the plains volcanism stay buried. Still open: when a shield starts is a time drawn between 1.0 and 2.5 Gyr (SHIELD_START_GYR), not a threshold in the lithosphere's thickness, which is what the direction asks; a shield's size comes from its own rule, not from the magma it takes, so Mars's edifices hold 8.3 million km³ of the 61 million km³ the shields take, and the rest is not laid; and the shields' own aprons in the loop wait on M15.
+
 ### M15. Floods run off the slopes
 
-The loop's lava runs from its vent, and from a full lake's pass, down the steepest way to the next low, and lays nothing on the way (F107). Lava flows leave their sheets on the slopes they run down: Tharsis's flanks and the plains about its shields are covered by flows hundreds of kilometres long from their vents. In the model, a rise's flanks keep their older ground, graben and craters, except in the lows on them, and the lava gathers in its canyons and at its foot. Lava whose cascade would run past the flows' reach of 1,500 km is not laid at all: 1 percent of the Moon's erupted volume, 9 percent of Mercury's, 18 percent of Mars's and 24 percent of Venus's.
+The loop's lava runs from its vent, and from a full lake's pass, down the steepest way to the next low, and lays nothing on the way (F107). Lava flows leave their sheets on the slopes they run down: Tharsis's flanks and the plains about its shields are covered by flows hundreds of kilometres long from their vents. In the model, a rise's flanks keep their older ground, graben and craters, except in the lows on them, and the lava gathers in its canyons and at its foot. Lava whose cascade would run past the flows' reach of 1,500 km is not laid at all: 1 percent of the Moon's erupted volume, 9 percent of Mercury's, 18 percent of Mars's and 24 percent of Venus's; since F108, which gives the shields a rise's late eruptions, 12 percent of what Mars's floods erupt and 9 percent of Venus's. A shield's eruptions could not be laid as floods round it for the same reason: on its slopes there are no closed lows to hold them.
 
 Direction: a flow's sheet laid on its way down, a flow's thickness over the cells it crosses and as wide as its supply spreads it, until its volume is spent or it reaches a low, which is the loop's spreading following the flows (W1's open part). The finish would draw it as a sheet over the ground, not a fill to a level, which a sheet on a slope cannot be.
 

@@ -893,3 +893,28 @@ Still to do:
 - **Floods run off the slopes** without leaving their sheets (audit M15).
 
 Tests 179 (five ignored). One is new: floods from sixty vents over rough ground end in flow fronts, none standing more than a flow's thickness over the ground beside it, and some of their lakes spill. Clippy is clean and validate passes its 117 checks.
+
+## The forty-first milestone: a rise's shields take its eruptions
+
+The second of the two fixes before the revisit's fifth item, closing audit M14.
+
+- **F108, central volcanism.** From each shield's start, its share of what the rise adds to the vent weights goes to the shields, whose edifices and flows are their own, and leaves the floods, so a rise's late volcanism builds its shields and leaves its canyons open.
+
+How it went:
+
+- **Growing with the shields.** The share first grew as the shields grew. Mars's largest canyon, carved from 1.0 to 2.0 Gyr, was filled during its carving, when the shields held less than half the rise's eruptions. Each shield now takes its full share from its start.
+- **Floods at the shields.** The shields' share first erupted as floods from the shields. A trace of the largest canyon's centre showed most of its late fill coming from them, the lava running 1,300 km down the rise from shield to canyon. Held to the shields' aprons, 1.4 times the foot's distance as the finish draws their flows, 98 percent of it ran past the aprons and was lost, since the loop ponds lava only in closed lows. What the shields take is now theirs, not the floods'.
+- **The volume.** The shields take a quarter of Mars's eruptive budget and 61 percent of what erupts on Venus after its resurfacing. Their edifices, sized by their own rule, hold 8.3 million km³ of the 61 million km³ they take on Mars; the rest is not laid.
+
+What the maps show:
+
+- **Mars:** the canyons carved after the shields started stand open, walls and floors, the largest keeping 2,980 m of its 7,400 m along its trace; the rise's crest shows its older ground, with its graben swarms and craters, and an old basin the late floods had buried.
+- **Venus:** its rises' graben show more clearly; its plains are as before.
+- **The Moon and Mercury:** unchanged, having no rises.
+
+Still to do:
+
+- **When a shield starts** is a time, not a threshold in the lithosphere's thickness, and its size comes from its own rule, not from the magma it takes (audit M14).
+- **Floods run off the slopes** without leaving their sheets, and the shields' late lava with them (audit M15).
+
+Tests 181 (five ignored). Two are new: a rise's shields take their share of what the rise adds to the vent weights, out of the floods' weights, the weights away from the rise staying as they were; and the share is nothing before the first shield starts, then each started shield's share of their volume. Clippy is clean and validate passes its 117 checks.

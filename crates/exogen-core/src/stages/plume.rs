@@ -31,7 +31,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 8;
+pub const VERSION: u64 = 9;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -321,6 +321,48 @@ pub fn shield_progress(t: f64, start: f64) -> f64 {
     } else {
         1.0 - (-(t - start) / SHIELD_GROWTH_GYR).exp()
     }
+}
+
+/// A shield's volume up to its shape's constant: its area times its height.
+fn shield_volume(shield: &Shield) -> f64 {
+    shield.radius * shield.radius * shield.height
+}
+
+/// The share of a rise's eruptions its shields take by a time (F108): those of the shields
+/// that have started, each its share of their volume. A shield's conduits, once open,
+/// carry the magma that reaches the rise beneath it, as much as the shield is to grow by
+/// (Carr and Head 2010: Mars's volcanism gathered at the large shields of Tharsis and
+/// Elysium in the Amazonian, after the widespread plains volcanism of the Hesperian).
+pub fn shield_capture(shields: &[&Shield], t: f64) -> f64 {
+    let volume: f64 = shields.iter().map(|s| shield_volume(s)).sum();
+    if volume <= 0.0 {
+        return 0.0;
+    }
+    shields
+        .iter()
+        .filter(|s| t > s.start_gyr)
+        .map(|s| shield_volume(s))
+        .sum::<f64>()
+        / volume
+}
+
+/// The rise a point belongs to: the nearest in units of each rise's radius.
+fn rise_of(rises: &[Rise], d: [f64; 3]) -> usize {
+    rises
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            (angle_between(a.center, d) / a.radius)
+                .total_cmp(&(angle_between(b.center, d) / b.radius))
+        })
+        .map_or(0, |(i, _)| i)
+}
+
+/// Where a rise's eruptions go in a step (F108): its dome's height over the tallest
+/// rise's at each cell it covers, and the share of its eruptions its shields take.
+pub struct RiseVent {
+    pub dome: Vec<(usize, f32)>,
+    pub capture: f64,
 }
 
 /// Caldera depth at a point, metres below the summit surface (F102): each collapse a pit
@@ -919,6 +961,40 @@ impl PlumeProcess {
             .iter()
             .map(|&l| 1.0 + PLUME_VENT_BOOST * (l as f64 / self.rise_height).clamp(0.0, 1.0))
             .collect()
+    }
+
+    /// Where each rise's eruptions go for the vents a step draws between two times
+    /// (F108): its dome as it stands at the step's end, and the share of its eruptions
+    /// its shields take at the step's middle.
+    pub fn rise_vents(&mut self, t0: f64, t1: f64) -> Vec<RiseVent> {
+        let grid = self.grid;
+        let body_radius = self.body_radius;
+        let mut out = Vec::with_capacity(self.rises.len());
+        for (ri, rise) in self.rises.iter().enumerate() {
+            let grown = rise_progress(rise, t1);
+            self.stamper
+                .gather(&grid, body_radius, rise.center, rise.radius);
+            let dome_cells: Vec<(usize, f32)> = self
+                .stamper
+                .footprint
+                .iter()
+                .map(|&(idx, r, _)| {
+                    let d = rise.height * grown * dome(r / rise.radius) / self.rise_height;
+                    (idx, d as f32)
+                })
+                .filter(|&(_, d)| d > 0.0)
+                .collect();
+            let mine: Vec<&Shield> = self
+                .shields
+                .iter()
+                .filter(|s| rise_of(&self.rises, s.center) == ri)
+                .collect();
+            out.push(RiseVent {
+                dome: dome_cells,
+                capture: shield_capture(&mine, 0.5 * (t0 + t1)),
+            });
+        }
+        out
     }
 
     /// Dome uplift, shield growth and canyon carving between two times.
@@ -2206,6 +2282,27 @@ mod tests {
         assert!((values[0] - 2.0).abs() < 1e-12 && (values[1] - 1.0).abs() < 1e-12);
         assert!((dot(vectors[0], [c, s, 0.0]).abs() - 1.0).abs() < 1e-12);
         assert!((values[2] + 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn shields_take_a_rise_s_eruptions_as_they_start() {
+        // F108: none before the first shield starts, then each started shield's share of
+        // their volume.
+        let shield = |radius: f64, start: f64| Shield {
+            center: [1.0, 0.0, 0.0],
+            radius,
+            height: 0.0875 * radius,
+            start_gyr: start,
+            calderas: Vec::new(),
+            rift: 0.0,
+            elongation: 1.0,
+            id: 0,
+        };
+        let (big, small) = (shield(300e3, 1.0), shield(100e3, 2.0));
+        let at = |t: f64| shield_capture(&[&big, &small], t);
+        assert_eq!(at(0.9), 0.0);
+        assert!((at(1.5) - 27.0 / 28.0).abs() < 1e-12, "{}", at(1.5));
+        assert!((at(2.5) - 1.0).abs() < 1e-12, "{}", at(2.5));
     }
 
     #[test]

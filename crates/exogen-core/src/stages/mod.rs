@@ -460,15 +460,18 @@ pub fn run_coarse_loop(
             i.step(&mut layers, t0, t1, s % keep_every == 0 || s == steps);
         }
         let boost = plume.as_ref().map(|p| p.vent_boost());
+        let rise_vents = plume
+            .as_mut()
+            .map_or_else(Vec::new, |p| p.rise_vents(t0, t1));
         // Everything that happens in the step, in order of time: craters, scarps and
         // eruptions interleaved as they come, so what is older is cut by what is younger.
         let craters = impacts.sample(t0, t1);
         let scarps = contraction
             .as_mut()
             .map_or_else(Vec::new, |c| c.sample(t0, t1));
-        let eruptions = floods
-            .as_mut()
-            .map_or_else(Vec::new, |f| f.sample(&layers, boost.as_deref(), t0, t1));
+        let eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
+            f.sample(&layers, boost.as_deref(), &rise_vents, t0, t1)
+        });
         let mut order: Vec<(f64, u8, usize)> =
             Vec::with_capacity(craters.len() + scarps.len() + eruptions.len());
         order.extend(craters.iter().enumerate().map(|(i, c)| (c.time_gyr, 0, i)));
