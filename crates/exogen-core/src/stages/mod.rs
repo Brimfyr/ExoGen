@@ -361,7 +361,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 96;
+pub const FINISH_VERSION: u64 = 97;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -896,21 +896,33 @@ pub fn finish(
         .filter(|m| m.alive(present))
         .cloned()
         .collect();
+    // The floods' coarse lava, each flood's smeared over a coarse cell at its margin, for its
+    // pass to take up where it goes.
+    let mut smear = volcanism::LavaSmear::new(
+        loop_output.grid,
+        grid,
+        &floods,
+        resurfacing.as_ref().map(|r| r.fill.as_slice()),
+    );
     // The Io regime's mountains and paterae are drawn whole at this resolution on the
     // buried plains the loop laid its coarse versions on (F87, F88), smoothed over the
     // loop's cell as the rest of the bedrock is, so nothing of the coarse ones is left.
     if let Some(io_base) = &loop_output.io_base {
         let coarse_cell_m = loop_output.grid.delta() * body_radius;
-        // The floods' coarse lava lies on the plains, smoothed with them, as the base
-        // carries it on every body, for their passes to take up (F117).
-        let mut plains = io_base.clone();
-        for f in &floods {
-            for (idx, c) in f.cells() {
-                plains.as_mut_slice()[idx as usize] += c.thickness;
-            }
+        // The floods' coarse lava lies on the smoothed plains just as their passes take it
+        // up (F117), so that the ground each finds is the plains: smoothed with them, the
+        // lava had left its coarse cells' facets where a pass took it up, and on the flat
+        // plains its lakes' edges ran in steps along them.
+        let smoothed = relaxation::low_pass(&io_base.resample(grid), cell, coarse_cell_m);
+        for ((b, s), l) in layers
+            .bedrock
+            .as_mut_slice()
+            .iter_mut()
+            .zip(&smoothed)
+            .zip(&smear.total)
+        {
+            *b = s + l;
         }
-        let smoothed = relaxation::low_pass(&plains.resample(grid), cell, coarse_cell_m);
-        layers.bedrock.as_mut_slice().copy_from_slice(&smoothed);
     }
     // The small eruptions between the paterae over the same history, laid one by one where
     // the grid resolves them (F89).
@@ -935,18 +947,18 @@ pub fn finish(
     let base_deep: Vec<f32> = layers.deep.as_slice().to_vec();
     // The floods that show at the end are drawn as their flows (F94), traced over the base
     // smoothed over a front's width.
-    let flood_visible = volcanism::visible_floods(&floods);
+    // Io's floods are all young, years apart, and its successors' lobes leave gaps a
+    // buried flood shows through: every one is drawn as its flows (F117).
+    let flood_visible = if io_regime {
+        vec![true; floods.len()]
+    } else {
+        volcanism::visible_floods(&floods)
+    };
     let flood_ground = (!floods.is_empty() || !shields.is_empty()).then(|| {
         let smoothed = relaxation::low_pass(&layers.bedrock, cell, FLOOD_GROUND_SMOOTH);
         crate::grid::projection::PaddedField::new(&grid, &smoothed)
     });
     let flood_seed = graph.f64("seed.volcanism") as u64;
-    let mut smear = volcanism::LavaSmear::new(
-        loop_output.grid,
-        grid,
-        &floods,
-        resurfacing.as_ref().map(|r| r.fill.as_slice()),
-    );
     // What the slow processes added after each flood, so a refill sees the ground the
     // flood found and not the dome or shield that grew under it since.
     let deform = deform::Deformation::new(

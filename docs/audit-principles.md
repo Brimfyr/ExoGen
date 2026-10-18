@@ -359,7 +359,7 @@ Tried after F89 and not kept (2026-10-16; the experiment is not on main): the al
 
 ### M8. Io's flow coverage
 
-Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al. 2011). F85's fields cover 20 percent and the plains 70: the fields' areas are stated shares of their reach, and the number of fields three generations a patera. Since F87 and F88, with the lava that ponds in a patera counted as its floor, the fields cover 16 percent and the plains 79. Since F117, the flows floods from the paterae's rims that run down and pond, they cover 20.7 percent and the plains 73.6, the patera floors 2.3.
+Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al. 2011). F85's fields cover 20 percent and the plains 70: the fields' areas are stated shares of their reach, and the number of fields three generations a patera. Since F87 and F88, with the lava that ponds in a patera counted as its floor, the fields cover 16 percent and the plains 79. Since F117, the flows floods from the paterae's rims that run down and pond in the closed lows they reach, they cover 19.9 percent and the plains 74.5, the patera floors 2.3.
 
 Direction: the fields' areas from the lava erupted over their lives, the eruptive share of the magma rate (Spencer et al. 2020: most of Io's magma intrudes) over a field's thickness, so that the coverage follows from the heat the lava carries out.
 

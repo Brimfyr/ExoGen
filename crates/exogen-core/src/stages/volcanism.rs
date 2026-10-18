@@ -1159,6 +1159,10 @@ pub fn flood_compute(
         reached: bool,
         ponded: bool,
         lobe: f32,
+        // The level the loop's pond stood at in the cell's coarse cell, if any, and whether
+        // the cell lies in one of a soft flood's lakes.
+        pond: f32,
+        lake: bool,
     }
     let mut work: Vec<Work> = visits
         .into_par_iter()
@@ -1181,12 +1185,17 @@ pub fn flood_compute(
                 lobe: lobed
                     .as_ref()
                     .map_or(0.0, |l| l.get(&idx).copied().unwrap_or(0.0)),
+                pond: level,
+                lake: false,
             };
             // A buried flood's sheet lies its thickness, sampled smoothly, wherever the loop
             // laid it: its margin is hidden under the flows after it, and its outline cut a
             // step a sheet deep along the coarse cells, a staircase on the plains (M15).
             w.reached = match &lobed {
-                Some(_) if soft => own > ponded_thickness || w.lobe > 0.0,
+                // A soft flood's lobes reach where they go, and its lakes are the fine
+                // ground's closed lows (below), not its coarse thickness's contour, which runs
+                // in steps along the coarse cells.
+                Some(_) if soft => w.lobe > 0.0,
                 Some(_) => own > ponded_thickness || w.lobe >= 0.5,
                 None if level.is_nan() => true,
                 None => {
@@ -1219,8 +1228,11 @@ pub fn flood_compute(
             // grounds carry the same ramps between the coarse cells, so only the finer
             // relief tells, where the loop's own ground stands at the floor or above.
             let floor = level - own / (1.0 - LAVA_SUBSIDENCE as f32) - FLOOD_SHEET_THICKNESS as f32;
-            w.hollow =
-                w.near && !sheet && ground < floor && loop_ground(idx, remaining, later) >= floor;
+            w.hollow = !soft
+                && w.near
+                && !sheet
+                && ground < floor
+                && loop_ground(idx, remaining, later) >= floor;
             // Inside the flood's own footprint, where the base still says this lava
             // and no finer pass has written, the loop's surface was the flood's own
             // sheet at its level: what stands above the level there is the
@@ -1229,9 +1241,15 @@ pub fn flood_compute(
             // deep. Elsewhere what stands above the level is a rim or an older
             // floor, and the flood ends against it. The lobed outline bounds the
             // fill either way; what it leaves inside the coarse footprint keeps the
-            // loop's surface, the older lava's own.
-            let own_floor =
-                !sheet && previous.is_some() && units[idx] == UNIT_LAVA && !smear.touched[idx];
+            // loop's surface, the older lava's own. A soft flood's ground is the smoothed
+            // plains the finish draws it on, with no ramps to level (F117): levelled where
+            // the units, resampled from the loop's cells, said lava, its slopes had stood in
+            // terraces a coarse cell square.
+            let own_floor = !soft
+                && !sheet
+                && previous.is_some()
+                && units[idx] == UNIT_LAVA
+                && !smear.touched[idx];
             w.ground = if own_floor {
                 ground.min(level - FLOOD_SHEET_THICKNESS as f32)
             } else {
@@ -1241,6 +1259,98 @@ pub fn flood_compute(
             w
         })
         .collect();
+    // A soft flood's lakes (F117): its lava ponds in the fine ground's closed lows that its
+    // flows run into within its cells and their ring, each filled to where it spills
+    // (priority flood, Barnes et al. 2014) and no higher than the loop's pond stood, the
+    // lava draining away over the ring's edge wherever the ground there lies lower. The
+    // loop's pond stood in a coarse low that the fine ground, smoothed over the loop's
+    // cell, holds in part or not at all: filled to the pond's level wherever the ground lay
+    // below it, a lake had stood perched on a slope and ended in steps along the coarse
+    // cells. Elsewhere its lobes lay their sheets over the ground they cross. The finer
+    // hollows of F95 are these lakes on a soft flood: the gaps between the lobes of the
+    // floods before it, which the loop saw filled with their coarse lava, had passed for
+    // craters it never saw and filled to the level of the lava beside them, across the
+    // earlier flood's coarse footprint.
+    if soft {
+        let index: HashMap<usize, usize> = work
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.near)
+            .map(|(k, w)| (w.idx, k))
+            .collect();
+        let around = |idx: usize| {
+            let cell = grid.cell(idx);
+            (-1..=1)
+                .flat_map(move |di| (-1..=1).map(move |dj| (di, dj)))
+                .filter(|&d| d != (0, 0))
+                .map(move |(di, dj)| grid.index(grid.neighbor(cell, di, dj)))
+        };
+        let mut spill = vec![f32::INFINITY; work.len()];
+        let mut heap = BinaryHeap::new();
+        for (k, w) in work.iter().enumerate() {
+            if w.near && around(w.idx).any(|n| !index.contains_key(&n)) {
+                spill[k] = w.ground;
+                heap.push(Reverse(Key(w.ground, 0.0, k)));
+            }
+        }
+        while let Some(Reverse(Key(at, _, k))) = heap.pop() {
+            if at > spill[k] {
+                continue;
+            }
+            for n in around(work[k].idx) {
+                if let Some(&j) = index.get(&n) {
+                    let up = work[j].ground.max(at);
+                    if up < spill[j] {
+                        spill[j] = up;
+                        heap.push(Reverse(Key(up, 0.0, j)));
+                    }
+                }
+            }
+        }
+        // The closed lows, and those of them the flows run into, each a lake at one level:
+        // where it spills, and no higher than the loop's pond stood in any of its cells (a
+        // lake at each cell's own pond level had stood in steps along the coarse cells).
+        let low = |w: &Work, top: f32| w.near && !w.younger && w.ground < top;
+        let mut seen = vec![false; work.len()];
+        for start in 0..work.len() {
+            if seen[start] || !low(&work[start], spill[start]) {
+                continue;
+            }
+            seen[start] = true;
+            let mut lake = vec![start];
+            let mut entered = false;
+            let mut at = 0;
+            while at < lake.len() {
+                let k = lake[at];
+                entered |= work[k].lobe > 0.0;
+                for n in around(work[k].idx) {
+                    if let Some(&j) = index.get(&n) {
+                        entered |= work[j].lobe > 0.0;
+                        if !seen[j] && low(&work[j], spill[j]) {
+                            seen[j] = true;
+                            lake.push(j);
+                        }
+                    }
+                }
+                at += 1;
+            }
+            if entered {
+                let level = lake
+                    .iter()
+                    .map(|&k| work[k].pond)
+                    .fold(f32::NEG_INFINITY, f32::max)
+                    .min(spill[start]);
+                for k in lake {
+                    let w = &mut work[k];
+                    if w.ground < level {
+                        w.level = level;
+                        w.reached = true;
+                        w.lake = true;
+                    }
+                }
+            }
+        }
+    }
     taken.extend(work.iter().map(|w| (w.idx as u32, w.own)));
     // The lava ponds in the finer hollows it comes to, filling each to its level from
     // where it comes in over the hollow's edge (F95): from the lava lying in the low, over
@@ -1251,7 +1361,7 @@ pub fn flood_compute(
     // on past them, its ground there above the level only where the finer relief does not
     // reach below it, since the coarse ground beyond the ring stood above the level too;
     // the lava follows it as far as the loop's largest unseen crater reaches.
-    if lobed.is_some() {
+    if lobed.is_some() && !soft {
         let drape = FLOOD_SHEET_THICKNESS as f32;
         // Lava lying in the low or its ring: the pond and the flows next to it, and the
         // sheets running down to it, not a lobe's sheet far beyond. A sheet fills the
@@ -1378,6 +1488,8 @@ pub fn flood_compute(
                         reached: true,
                         ponded: true,
                         lobe: 0.0,
+                        pond: level,
+                        lake: false,
                     });
                 }
             }
@@ -1396,6 +1508,7 @@ pub fn flood_compute(
             reached,
             ponded,
             lobe,
+            lake,
             ..
         } = w;
         if younger {
@@ -1442,15 +1555,18 @@ pub fn flood_compute(
         }
         // Outside the low the loop filled, a lobe of a flood drawn as its flows lays a
         // sheet on the ground it crosses rather than filling to the low's level, unless
-        // the lava ponds in a hollow there.
-        let level = if lobed.is_some() && previous.is_none() && !ponded {
+        // the lava ponds in a hollow there; outside its lakes, a soft flood's lobes lay
+        // their sheets wherever they go.
+        let level = if soft && !lake && !ponded {
+            ground + FLOOD_SHEET_THICKNESS as f32
+        } else if lobed.is_some() && previous.is_none() && !ponded {
             level.min(ground + FLOOD_SHEET_THICKNESS as f32)
         } else {
             level
         };
         if watched == Some(idx) {
             eprintln!(
-                "watch flood {} t {:.4}: level {:.1} own {:.1} ground {:.1} hollow {} ponded {} previous {:?} touched {} unit {} lobe {:?} reached {:?}",
+                "watch flood {} t {:.4}: level {:.1} own {:.1} ground {:.1} hollow {} ponded {} previous {:?} touched {} unit {} lobe {:?} reached {:?} lake {}",
                 rec.id,
                 rec.time_gyr,
                 level,
@@ -1463,6 +1579,7 @@ pub fn flood_compute(
                 units[idx],
                 lobed.as_ref().map(|l| l.get(&idx).copied().unwrap_or(0.0)),
                 reached,
+                lake,
             );
         }
         // A flow drapes what stands less than its own thickness above its level.
@@ -1470,13 +1587,18 @@ pub fn flood_compute(
         if ground < level + drape && reached {
             stats[0] += 1;
             // A soft flood's lobe margin (F117) covers its cell by the lobe's share and
-            // lays that share of its sheet; a lake or a pond it fills whole.
-            let share = if soft && own <= ponded_thickness && !ponded {
+            // lays that share of its sheet; a lake or a pond it fills whole, a lobe running
+            // into a lake keeping its sheet until the lake is deeper.
+            let share = if soft && !ponded && !lake {
                 lobe.clamp(0.0, 1.0)
             } else {
                 1.0
             };
-            let fill = (level - ground).max(0.0) * share;
+            let fill = if lake {
+                (level - ground).max(FLOOD_SHEET_THICKNESS as f32 * lobe.clamp(0.0, 1.0))
+            } else {
+                (level - ground).max(0.0) * share
+            };
             // A high the flow drapes carries a veneer, the sheet's thickness less
             // what the high stands above the level: thin lava over it, but lava,
             // not the ground it hides (the ghost craters of the maria show in
@@ -2408,6 +2530,95 @@ mod tests {
             held.abs() < 1.0,
             "a crater whose rim holds the lava out rose {held} m"
         );
+    }
+
+    #[test]
+    fn a_soft_flood_ponds_only_in_the_closed_lows_its_lobes_run_into() {
+        // F117: Io's flood ponded at 50 m in the loop. On an open slope of the fine ground
+        // that level is no lake's: its lobes lay their sheets over the ground, with no lake
+        // perched below the level and no terrace where the units still say lava. A closed
+        // bowl its lobes run into fills to where it spills.
+        let coarse = CubeSphere::new(64);
+        let grid = CubeSphere::new(512);
+        let body_radius = 1_000e3;
+        let center = normalize([0.3, 1.0, 0.2]);
+        let across = normalize([center[1], -center[0], 0.0]);
+        let thickness = |relief: &dyn Fn([f64; 3]) -> f32| -> Vec<(f32, f32)> {
+            let flood = disc_flood(&coarse, center, 0.12, 1.0, 7);
+            let footprint: HashSet<u32> = flood.cells().keys().copied().collect();
+            let smear = LavaSmear::new(coarse, grid, std::slice::from_ref(&flood), None);
+            let mut layers = LayerSet::new(grid);
+            let ground: Vec<f32> = (0..grid.cell_count())
+                .map(|k| relief(grid.center(grid.cell(k))))
+                .collect();
+            for (k, g) in ground.iter().enumerate() {
+                let d = grid.center(grid.cell(k));
+                layers.bedrock.as_mut_slice()[k] = smear.total[k] + g;
+                layers.unit_id.as_mut_slice()[k] =
+                    if footprint.contains(&(coarse.index(coarse.locate(d).0) as u32)) {
+                        UNIT_LAVA
+                    } else {
+                        UNIT_PRIMORDIAL
+                    };
+            }
+            let base = layers.bedrock.as_slice().to_vec();
+            let padded = PaddedField::new(&grid, &ground);
+            let deform = Deformation::new(coarse, body_radius, 0.01, 4.5, &[], &[], &[], &[]);
+            let mut stamper = Stamper::new(&grid);
+            let flows = FloodFlows {
+                ground: &padded,
+                body_radius,
+                seed: 3,
+                hollow_reach: 40e3,
+                soft: true,
+            };
+            let (out, _, _) = flood_compute(
+                &layers,
+                &grid,
+                &coarse,
+                &flood,
+                &smear,
+                &deform,
+                Some(flows),
+                &base,
+                &mut stamper,
+            );
+            out.apply(&mut layers);
+            ground
+                .iter()
+                .zip(layers.bedrock.as_slice())
+                .map(|(&g, &b)| (g, b - g))
+                .collect()
+        };
+        let sheet = ((1.0 - LAVA_SUBSIDENCE) * FLOOD_SHEET_THICKNESS) as f32;
+        // A slope of 1 in 200 across the flood: 600 m down from its middle to its edge.
+        let slope = thickness(&|d| (0.005 * body_radius * dot(d, across)) as f32);
+        let thickest = slope.iter().map(|c| c.1).fold(0.0f32, f32::max);
+        assert!(
+            thickest > 0.5 * sheet && thickest < sheet + 0.5,
+            "on a slope the lava is up to {thickest} m thick, its sheet {sheet} m"
+        );
+        let cut = slope.iter().map(|c| c.1).fold(0.0f32, f32::min);
+        assert!(cut > -0.5, "the slope was cut {cut} m down");
+        // A bowl 100 m deep and 15 km across at the vent, on flat ground.
+        let bowl = thickness(&|d| {
+            let x = angle_between(center, d) * body_radius / 15e3;
+            (-100.0 * (-x * x).exp()) as f32
+        });
+        let (deepest, filled) = bowl
+            .iter()
+            .copied()
+            .fold((0.0f32, 0.0f32), |a, c| if c.0 < a.0 { c } else { a });
+        assert!(
+            (filled - (1.0 - LAVA_SUBSIDENCE as f32) * -deepest).abs() < 1.0,
+            "the bowl's floor at {deepest} m took {filled} m of lava"
+        );
+        let plain = bowl
+            .iter()
+            .filter(|c| c.0 > -1.0)
+            .map(|c| c.1)
+            .fold(0.0f32, f32::max);
+        assert!(plain < sheet + 0.5, "the plain round it took {plain} m");
     }
 
     #[test]
