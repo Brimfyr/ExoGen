@@ -1051,3 +1051,32 @@ Still to do:
 - **Charon's chasmata**, which need a driver the model lacks: the extension of an ice shell as its ocean freezes.
 
 Tests 186 (five ignored). One is new: on Mars's rise, more than fifty dike graben, each running away from its source, the longest more than 2,000 km. Clippy is clean and validate passes its 117 checks.
+
+## The forty-seventh milestone: a rise's axis
+
+Asked for by the user, with a figure of Tharsis's giant dike swarms: its graben run out to the south-west and north-east, the ground between largely free of them. Burial by later volcanism, or something the model lacks?
+
+- **F114, a rise grows along an axis.** Its volcanoes line up on the axis, as the Tharsis Montes stand on their trend; its stress adds a pure shear about it, tension across the axis, so the faults beyond its foot gather along the axis and spare the ground across it; its dike swarms fan along the axis, so they run out on both sides of the rise.
+
+How it went:
+
+- **The finding.** In part burial, which the model draws: younger floods and shields fill or cover older graben. In part the regional stress: Tharsis's dike swarms propagated through a stress field made by the rise's growth, with its magmatism concentrated along the Tharsis Montes' axial trend (Orlov et al. 2023), and dikes follow the total stress (Muller and Pollard 1977; Cailleau et al. 2005 at Alba Patera). The model's rise stress was axisymmetric, so its faults and dikes radiated evenly.
+- **How the pure shear fades.** Fading as the load's own stress does, as the inverse square of the distance, it never turns the dikes far out, the load's hoop tension being the larger. Fading as the inverse of the distance, the second try, it overtook the load's beyond some 1.4 rise radii and turned them there, but it kept the ground along the axis faulting out to 2.3 radii and raised five canyons, up to 134 km wide and 4.5 km deep, alone on the plains as far as 5,600 km from the rise's centre; Mars has none. Back to the inverse square: the faults reach some 1.8 radii along the axis, none beyond the foot across it, and turning dikes far from their source waits for a regional stress from its own sources (audit M18).
+- **The axis is carried along the great circles** from the rise's centre to each point; the first test took it in the wrong frame.
+
+What the maps show:
+
+- **Mars:** beyond the foot the graben gather along the axis, 1,437 beyond 1.1 rise radii, all but 6 within 60 degrees of it (604 spread evenly before), and the volcanoes line up along it; 3 canyons beyond the foot (1 before).
+- **Venus:** its three rises take axes of their own; faint at its 9 km cells.
+- **The other bodies:** unchanged, having no rises.
+
+Still to do:
+
+- **The axis from computed stresses** (audit M18): the body's reorientation under the rise, the dichotomy, the other rises' loads; dikes turning into the regional strike far out; the rise's centre of activity moving over its life.
+- **Pit chains** above the dikes and graben, sub-grid at the standard quality; **the swarms' magma** from the plume's intrusive budget; **dike swarms off the rises**, about Venus's volcanoes and coronae (audit M17).
+- **A rift's depth from the strain where it runs,** not its length alone: a long fault far out along the axis still opens a canyon now and then, three beyond the foot on Mars (one before), 50 to 65 km wide.
+- **The faulted layer** as a field over the rise; **the finish's floods** keep four fifths of the loop's lava (audit M16).
+- **Charon's chasmata**, from an ice shell's extension as its ocean freezes, a process the model lacks.
+- **Then the revisit plan's fifth item:** the rise's flexure and the Mars dichotomy, which may supply the regional stress.
+
+Tests 187 (five ignored). One is new: a rise's stress keeps its crest's maze, puts the ground along its axis beyond the foot in tension farther out than the load alone does and the ground across it not, and on Mars the volcanoes lie on the axis and the faults beyond the foot gather along it. One bound is loosened: on the preview Mars the deepest canyon the loop carried stands 2.7 km below its rims (over 3 km before), the new start table having reshuffled the canyons, the deepest at the standard quality now 1,674 km long and 5.0 km deep (2,371 km and 7.0 km before); the test asks for 2.5 km, still kilometres deep after the later floods. Clippy is clean and validate passes its 117 checks.

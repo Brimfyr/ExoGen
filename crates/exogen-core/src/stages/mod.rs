@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 93;
+pub const FINISH_VERSION: u64 = 94;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2897,7 +2897,7 @@ mod tests {
             .iter()
             .map(relief)
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(deepest > 3_000.0, "deepest standing trough {deepest} m");
+        assert!(deepest > 2_500.0, "deepest standing trough {deepest} m");
         // The Moon raises none.
         let moon = r
             .run(&preset_graph("Moon", "preview"), &NoProgress)

@@ -31,7 +31,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 13;
+pub const VERSION: u64 = 14;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -43,6 +43,8 @@ pub struct Rise {
     pub end_gyr: f64,
     /// Its latitude when it began to rise, before the body turned under it (F104), rad.
     pub paleo_latitude: f64,
+    /// The axis it grows along, a unit vector in the tangent plane at its centre (F114).
+    pub axis: [f64; 3],
 }
 
 /// A shield volcano on a rise, growing from its start to the present.
@@ -834,6 +836,7 @@ impl PlumeProcess {
                 start_gyr: RISE_START_GYR,
                 end_gyr: RISE_END_GYR,
                 paleo_latitude: center[2].clamp(-1.0, 1.0).asin(),
+                axis: [0.0, 0.0, 0.0],
             });
         }
         // The body turns under its rises as they grow, carrying them toward its equator
@@ -858,6 +861,29 @@ impl PlumeProcess {
                 rise.center = normalize(rotate(rise.center, axis, angle));
             }
         }
+        // Each rise grows along an axis (F114), its azimuth drawn as its first dikes break
+        // the symmetry of its crest.
+        let axes: Vec<(f64, Axial)> = rises
+            .iter_mut()
+            .enumerate()
+            .map(|(ri, rise)| {
+                let (east, north) = local_basis(rise.center);
+                let phi = std::f64::consts::TAU * rng.uniform(0x0A21_5000 + ri as u64, 0);
+                let axis = normalize([
+                    east[0] * phi.cos() + north[0] * phi.sin(),
+                    east[1] * phi.cos() + north[1] * phi.sin(),
+                    east[2] * phi.cos() + north[2] * phi.sin(),
+                ]);
+                rise.axis = axis;
+                (
+                    phi,
+                    Axial {
+                        axis,
+                        stress: RISE_AXIAL_STRESS,
+                    },
+                )
+            })
+            .collect();
         // Shields: a few large ones on the first rise, smaller ones on each.
         let shield_count = graph.f64("volcanism.shield_count").round() as usize;
         let relief_limit = graph.f64("interior.max_relief");
@@ -883,7 +909,15 @@ impl PlumeProcess {
                         * (SHIELD_PLACEMENT.0
                             + (SHIELD_PLACEMENT.1 - SHIELD_PLACEMENT.0)
                                 * rng.uniform(draw, 1 + 3 * attempt));
-                    let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 2 + 3 * attempt);
+                    // On the rise's axis, on either side of its centre (F114).
+                    let side = if rng.uniform(draw, 2 + 3 * attempt) < 0.5 {
+                        0.0
+                    } else {
+                        std::f64::consts::PI
+                    };
+                    let spread = SHIELD_AXIS_SPREAD_DEG.to_radians()
+                        * rng.normal(draw ^ 0xA715_0000_0000, 2 * attempt);
+                    let phi = axes[ri].0 + side + spread;
                     center = offset(rise.center, east, north, dist / body_radius, phi);
                     let clear = shields.iter().all(|s: &Shield| {
                         angle_between(s.center, center) * body_radius > 1.1 * (s.radius + radius)
@@ -919,11 +953,8 @@ impl PlumeProcess {
         let cell = grid.delta() * body_radius;
         let extension = graph.f64("tectonics.rift_extension");
         // Where faults start: as often as the ground is in tension, over the area round a
-        // rise (F105).
-        let start_cdf = Tabulated::new(0.0, RIFT_REACH, 512, |x| {
-            let (sr, st) = rise_stress(x);
-            (sr.max(st) - RIFT_MIN_TENSION).max(0.0) * x
-        });
+        // rise (F105), by the total stress (F114).
+        let starts = StartTable::new(RISE_AXIAL_STRESS);
         let mut canyons = Vec::new();
         let mut graben = Vec::new();
         for (ri, rise) in rises.iter().enumerate() {
@@ -1047,8 +1078,13 @@ impl PlumeProcess {
                         // A fault starts where the ground is in tension, as often as the
                         // tension is strong, and runs as the stress field leads it (F105),
                         // in segments (F111).
-                        let x = start_cdf.sample(rng.uniform(draw, 20));
-                        let phi = 2.0 * std::f64::consts::PI * rng.uniform(draw, 21);
+                        let (x, a) = starts.sample(
+                            rng.uniform(draw, 20),
+                            rng.uniform(draw, 22),
+                            rng.uniform(draw, 23),
+                        );
+                        // The axis lies at `a` from the direction outward at the start.
+                        let phi = axes[ri].0 - a;
                         let start =
                             offset(rise.center, east, north, x * rise.radius / body_radius, phi);
                         let (trace, breaks) = stress_trace(
@@ -1062,6 +1098,7 @@ impl PlumeProcess {
                             width,
                             None,
                             RIFT_MIN_TENSION,
+                            Some(axes[ri].1),
                         );
                         length = (trace.len().max(2) - 1) as f64 * spacing;
                         let breaks = breaks.into_iter().filter(|&b| b < length).collect();
@@ -1180,12 +1217,20 @@ impl PlumeProcess {
             }
             for &(source, source_radius, reach, key) in &sources {
                 let time = time_cdf.sample(rng.uniform(key, 1));
-                let axis = 2.0 * std::f64::consts::PI * rng.uniform(key, 2);
+                // The swarm fans along the rise's axis, to one side or the other of its
+                // source: its magma opens its way most easily across the axis (F114).
+                let (se, sn) = local_basis(source);
+                let along = axis_at(rise.center, axes[ri].1.axis, source);
+                let side = if rng.uniform(key, 2) < 0.5 {
+                    0.0
+                } else {
+                    std::f64::consts::PI
+                };
+                let axis = dot(along, sn).atan2(dot(along, se)) + side;
                 let (w_lo, w_hi) = DIKE_SWARM_SECTOR_DEG;
                 let sector = (w_lo * (w_hi / w_lo).powf(rng.uniform(key, 3))).to_radians();
                 let (n_lo, n_hi) = DIKES_PER_SWARM;
                 let count = (n_lo * (n_hi / n_lo).powf(rng.uniform(key, 4))).round() as u64;
-                let (se, sn) = local_basis(source);
                 for d in 0..count {
                     let draw = key * 0x100 + d;
                     let phi = axis + sector * (rng.uniform(draw, 0) - 0.5);
@@ -1217,6 +1262,7 @@ impl PlumeProcess {
                         width,
                         Some(out),
                         f64::NEG_INFINITY,
+                        Some(axes[ri].1),
                     );
                     let length = (trace.len().max(2) - 1) as f64 * spacing;
                     let mut bounds = vec![0.0];
@@ -1492,16 +1538,156 @@ pub fn rise_stress(x: f64) -> (f64, f64) {
     (radial - far, hoop + far)
 }
 
+/// The stress a rise's growth along its axis adds (F114): the axis, a unit vector in the
+/// tangent plane at the rise's centre, and the tension across it and the compression along
+/// it, a share of the crest's tension, fading beyond the foot as the load's own stress
+/// does, as the inverse square of the distance.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Axial {
+    pub axis: [f64; 3],
+    pub stress: f64,
+}
+
+/// A rise's axis carried from its centre along the great circle to a point (F114): a unit
+/// vector in the tangent plane there, keeping its shares along and across that circle.
+pub(crate) fn axis_at(center: [f64; 3], axis: [f64; 3], p: [f64; 3]) -> [f64; 3] {
+    let along = dot(center, p);
+    // At the centre, toward the point; at the point, away from the centre.
+    let toward = [
+        p[0] - along * center[0],
+        p[1] - along * center[1],
+        p[2] - along * center[2],
+    ];
+    let out = [
+        p[0] * along - center[0],
+        p[1] * along - center[1],
+        p[2] * along - center[2],
+    ];
+    if dot(toward, toward) < 1e-20 || dot(out, out) < 1e-20 {
+        let r = dot(axis, p);
+        return normalize([axis[0] - r * p[0], axis[1] - r * p[1], axis[2] - r * p[2]]);
+    }
+    let (toward, out) = (normalize(toward), normalize(out));
+    let round = normalize(cross(p, out));
+    let (a, b) = (dot(axis, toward), dot(axis, round));
+    normalize([
+        out[0] * a + round[0] * b,
+        out[1] * a + round[1] * b,
+        out[2] * a + round[2] * b,
+    ])
+}
+
+/// The total surface stress about a rise at a point (F105, F114), tension positive in
+/// units of the crest's tension, in the frame of the direction outward from the rise's
+/// centre and the hoop direction round it there: radial, hoop and their shear, and the
+/// frame's two unit vectors. The axis is carried from the centre along the great circle to
+/// the point, keeping its shares along and across that circle.
+pub(crate) fn total_stress(
+    rise: &Rise,
+    axial: Option<Axial>,
+    p: [f64; 3],
+    body_radius: f64,
+) -> (f64, f64, f64, [f64; 3], [f64; 3]) {
+    let c = rise.center;
+    let x = angle_between(c, p) * body_radius / rise.radius;
+    let (radial, hoop) = rise_stress(x);
+    let along = dot(c, p);
+    let out = [
+        p[0] * along - c[0],
+        p[1] * along - c[1],
+        p[2] * along - c[2],
+    ];
+    let out = if dot(out, out) < 1e-20 {
+        local_basis(p).0
+    } else {
+        normalize(out)
+    };
+    let round = normalize(cross(p, out));
+    let Some(a) = axial else {
+        return (radial, hoop, 0.0, out, round);
+    };
+    let carried = axis_at(c, a.axis, p);
+    let (ca, sa) = (dot(carried, out), dot(carried, round));
+    let (cos2, sin2) = (ca * ca - sa * sa, 2.0 * ca * sa);
+    let s = a.stress / x.max(1.0).powi(2);
+    (radial - s * cos2, hoop + s * cos2, -s * sin2, out, round)
+}
+
+/// The principal stresses of a surface stress given in a frame, the most tensile first,
+/// and the strike across the most tensile direction in the frame's components: the
+/// direction a fault or a dike runs.
+fn principal(radial: f64, hoop: f64, shear: f64) -> (f64, f64, f64, f64) {
+    let mean = 0.5 * (radial + hoop);
+    let half = (0.25 * (radial - hoop).powi(2) + shear * shear).sqrt();
+    // The most tensile lies at this angle from the radial direction, toward the hoop.
+    let theta = 0.5 * (2.0 * shear).atan2(radial - hoop);
+    (mean + half, mean - half, -theta.sin(), theta.cos())
+}
+
+/// Where faults start about a rise (F105, F114): as often as the ground is in tension,
+/// over the distance from its centre in rise radii and the angle of its axis from the
+/// direction outward there.
+struct StartTable {
+    cumulative: Vec<f64>,
+    nx: usize,
+    na: usize,
+}
+
+impl StartTable {
+    fn new(axial: f64) -> Self {
+        let (nx, na) = (256, 72);
+        let dx = RIFT_REACH / nx as f64;
+        let da = std::f64::consts::TAU / na as f64;
+        let mut cumulative = Vec::with_capacity(nx * na + 1);
+        cumulative.push(0.0);
+        let mut sum = 0.0;
+        for ix in 0..nx {
+            let x = (ix as f64 + 0.5) * dx;
+            let (radial, hoop) = rise_stress(x);
+            let s = axial / x.max(1.0).powi(2);
+            for ia in 0..na {
+                let a = 2.0 * (ia as f64 + 0.5) * da;
+                let (t1, _, _, _) =
+                    principal(radial - s * a.cos(), hoop + s * a.cos(), -s * a.sin());
+                sum += (t1 - RIFT_MIN_TENSION).max(0.0) * x * dx * da;
+                cumulative.push(sum);
+            }
+        }
+        Self { cumulative, nx, na }
+    }
+
+    /// A start's distance in rise radii and the angle of the axis from the direction
+    /// outward there, rad, for three uniform draws.
+    fn sample(&self, u: f64, v: f64, w: f64) -> (f64, f64) {
+        let total = *self.cumulative.last().unwrap_or(&0.0);
+        let cells = self.cumulative.len() - 1;
+        let k = if total <= 0.0 {
+            ((u * cells as f64) as usize).min(cells - 1)
+        } else {
+            let target = u.clamp(0.0, 1.0) * total;
+            self.cumulative
+                .partition_point(|&c| c <= target)
+                .saturating_sub(1)
+                .min(cells - 1)
+        };
+        let (ix, ia) = (k / self.na, k % self.na);
+        (
+            (ix as f64 + v) * RIFT_REACH / self.nx as f64,
+            (ia as f64 + w) * std::f64::consts::TAU / self.na as f64,
+        )
+    }
+}
+
 /// A fault's trace through a rise's stress field (F105), from a point, in straight segments
-/// (F111): it strikes across the most tensile direction, along the radius where the hoop
-/// is the more tensile and round the rise where the radial is, and keeps its own heading
-/// where the tension is about the same every way, as on the crest. Each segment runs
-/// straight, SEGMENT_LENGTH_WIDTHS of the trough's `width` long; where it ends the next
-/// turns toward the stress field by SEGMENT_STEER of the way as far as the stress is
-/// anisotropic and by a few degrees more or less, and now and then steps sideways to one
-/// side, en-echelon, over a short oblique link. The fault dies out where the tension falls
-/// below RIFT_MIN_TENSION of the crest's. Returns the trace and the distances along it
-/// where each segment after the first begins.
+/// (F111): it strikes across the most tensile direction of the total stress (F114), along
+/// the radius where the hoop is the more tensile and round the rise where the radial is,
+/// and keeps its own heading where the tension is about the same every way, as on the
+/// crest. Each segment runs straight, SEGMENT_LENGTH_WIDTHS of the trough's `width` long;
+/// where it ends the next turns toward the stress field by SEGMENT_STEER of the way as far
+/// as the stress is anisotropic and by a few degrees more or less, and now and then steps
+/// sideways to one side, en-echelon, over a short oblique link. The fault dies out where
+/// the tension falls below RIFT_MIN_TENSION of the crest's. Returns the trace and the
+/// distances along it where each segment after the first begins.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stress_trace(
     rise: &Rise,
@@ -1514,29 +1700,24 @@ pub(crate) fn stress_trace(
     width: f64,
     first: Option<[f64; 3]>,
     min_tension: f64,
+    axial: Option<Axial>,
 ) -> (Vec<[f64; 3]>, Vec<f64>) {
     let n = (length / spacing).ceil().max(2.0) as usize;
     let key = draw ^ 0x5E61_0000_0000;
     let (l_lo, l_hi) = SEGMENT_LENGTH_WIDTHS;
     let segment = |j: u64| width * l_lo * (l_hi / l_lo).powf(rng.uniform(key, 4 * j));
-    let directions = |p: [f64; 3]| {
-        // The radial direction outward from the centre and the hoop direction round it,
-        // in the tangent plane at p.
-        let c = rise.center;
-        let radial_dot = dot(c, p);
-        let out = [
-            p[0] * radial_dot - c[0],
-            p[1] * radial_dot - c[1],
-            p[2] * radial_dot - c[2],
+    // The total stress at a point, its principal values and the strike across the most
+    // tensile direction there, and the frame's outward direction.
+    let field = |p: [f64; 3]| {
+        let (radial, hoop, shear, out, round) = total_stress(rise, axial, p, body_radius);
+        let (s1, s2, so, sk) = principal(radial, hoop, shear);
+        let strike = [
+            out[0] * so + round[0] * sk,
+            out[1] * so + round[1] * sk,
+            out[2] * so + round[2] * sk,
         ];
-        let out = if dot(out, out) < 1e-20 {
-            local_basis(p).0
-        } else {
-            normalize(out)
-        };
-        (out, normalize(cross(p, out)))
+        (s1, s2, strike, out, round)
     };
-    let distance = |p: [f64; 3]| angle_between(rise.center, p) * body_radius / rise.radius;
     let tangent = |v: [f64; 3], p: [f64; 3]| {
         let radial = dot(v, p);
         normalize([
@@ -1545,26 +1726,30 @@ pub(crate) fn stress_trace(
             v[2] - radial * p[2],
         ])
     };
-    // The first heading: across the most tensile direction, or the fault's own where the
-    // stress is about the same every way.
-    let (sr, st) = rise_stress(distance(start));
-    let (out, round) = directions(start);
+    // The first heading: across the most tensile direction, outward where that runs along
+    // the radius, or the fault's own where the stress is about the same every way.
+    let (s1, s2, strike, out, round) = field(start);
     let own = 2.0 * std::f64::consts::PI * rng.uniform(draw, 9);
+    let flip = |v: [f64; 3]| [-v[0], -v[1], -v[2]];
     // A dike leaves its source on a heading of its own (F113).
     let mut heading = if let Some(h) = first {
         tangent(h, start)
-    } else if (st - sr).abs() <= RIFT_LABYRINTH * sr.max(st).abs() {
+    } else if s1 - s2 <= RIFT_LABYRINTH * s1.abs() {
         normalize([
             out[0] * own.cos() + round[0] * own.sin(),
             out[1] * own.cos() + round[1] * own.sin(),
             out[2] * own.cos() + round[2] * own.sin(),
         ])
-    } else if st >= sr {
-        out
+    } else if dot(strike, out).abs() >= dot(strike, round).abs() {
+        if dot(strike, out) >= 0.0 {
+            strike
+        } else {
+            flip(strike)
+        }
     } else if rng.uniform(draw, 10) < 0.5 {
-        round
+        strike
     } else {
-        [-round[0], -round[1], -round[2]]
+        flip(strike)
     };
     // A fault's en-echelon steps all go to one side.
     let side = if rng.uniform(draw, 11) < 0.5 {
@@ -1584,8 +1769,8 @@ pub(crate) fn stress_trace(
     let mut p = start;
     for i in 0..=n {
         points.push(p);
-        let (sr, st) = rise_stress(distance(p));
-        if i >= 2 && sr.max(st) < min_tension {
+        let (s1, s2, strike, _, _) = field(p);
+        if i >= 2 && s1 < min_tension {
             break;
         }
         let s = i as f64 * spacing;
@@ -1593,15 +1778,13 @@ pub(crate) fn stress_trace(
             j += 1;
             breaks.push(s);
             // The next segment turns toward the stress field, and a little either way.
-            let (out, round) = directions(p);
-            let along = if st >= sr { out } else { round };
-            let along = if dot(along, heading) < 0.0 {
-                [-along[0], -along[1], -along[2]]
+            let along = if dot(strike, heading) < 0.0 {
+                flip(strike)
             } else {
-                along
+                strike
             };
-            let isotropic = (st - sr).abs() <= RIFT_LABYRINTH * sr.max(st).abs();
-            let anisotropy = ((st - sr).abs() / (st.abs() + sr.abs()).max(1e-9)).clamp(0.0, 1.0);
+            let isotropic = s1 - s2 <= RIFT_LABYRINTH * s1.abs();
+            let anisotropy = ((s1 - s2) / (s1.abs() + s2.abs()).max(1e-9)).clamp(0.0, 1.0);
             let k = if isotropic {
                 0.0
             } else {
@@ -2741,6 +2924,7 @@ mod tests {
             start_gyr: 0.3,
             end_gyr: 1.5,
             paleo_latitude: 0.0,
+            axis: [0.0, 1.0, 0.0],
         };
         let r = 3.39e6;
         let (east, north) = local_basis(rise.center);
@@ -2756,6 +2940,7 @@ mod tests {
             3e3,
             None,
             RIFT_MIN_TENSION,
+            None,
         );
         assert!(trace.len() > 20);
         let (out, _) = (
@@ -2792,6 +2977,7 @@ mod tests {
             start_gyr: 0.3,
             end_gyr: 1.5,
             paleo_latitude: 0.0,
+            axis: [0.0, 1.0, 0.0],
         };
         let r = 3.39e6;
         let (east, north) = local_basis(rise.center);
@@ -2808,6 +2994,7 @@ mod tests {
             width,
             None,
             RIFT_MIN_TENSION,
+            None,
         );
         assert!(breaks.len() >= 3, "{} segments", breaks.len() + 1);
         // Within a segment the trace keeps to a great circle: successive steps turn by far
@@ -2987,6 +3174,85 @@ mod tests {
     }
 
     #[test]
+    fn a_rise_grows_along_its_axis() {
+        // F114: tension across the axis and compression along it. On the crest the tension
+        // is still nearly the same every way; beyond the foot the ground along the axis is
+        // in tension farther out than the load alone puts it, and the ground across it is
+        // not; on Mars the faults gather along the axis and the shields line up on it.
+        let rise = Rise {
+            center: [1.0, 0.0, 0.0],
+            radius: 2.85e6,
+            height: 8e3,
+            start_gyr: 0.3,
+            end_gyr: 1.5,
+            paleo_latitude: 0.0,
+            axis: [0.0, 1.0, 0.0],
+        };
+        let r = 3.39e6;
+        let (east, north) = local_basis(rise.center);
+        let axial = Axial {
+            axis: east,
+            stress: RISE_AXIAL_STRESS,
+        };
+        let at = |x: f64, phi: f64| offset(rise.center, east, north, x * rise.radius / r, phi);
+        let tension = |p: [f64; 3]| {
+            let (radial, hoop, shear, _, _) = total_stress(&rise, Some(axial), p, r);
+            principal(radial, hoop, shear)
+        };
+        let (c1, c2, _, _) = tension(at(0.01, 0.3));
+        assert!((c1 - 1.0 - RISE_AXIAL_STRESS).abs() < 0.01 && c1 - c2 <= RIFT_LABYRINTH * c1);
+        let (along, _, _, _) = tension(at(1.4, 0.0));
+        let (across, _, _, _) = tension(at(1.4, std::f64::consts::FRAC_PI_2));
+        assert!(
+            along > 1.5 * RIFT_MIN_TENSION && across < RIFT_MIN_TENSION,
+            "{along} {across}"
+        );
+        // Along the axis the faults reach past where the load's tension alone would end
+        // them, and die out short of twice the rise's radius.
+        let alone = |x: f64| {
+            let (radial, hoop) = rise_stress(x);
+            radial.max(hoop)
+        };
+        let (beyond, _, _, _) = tension(at(1.6, 0.0));
+        let (farther, _, _, _) = tension(at(2.0, 0.0));
+        assert!(
+            alone(1.6) < RIFT_MIN_TENSION
+                && beyond > RIFT_MIN_TENSION
+                && farther < RIFT_MIN_TENSION,
+            "{} {beyond} {farther}",
+            alone(1.6)
+        );
+        // On Mars the faults beyond the foot gather along the axis, and the shields lie on it.
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let rise = &p.rises[0];
+        let (re, rn) = local_basis(rise.center);
+        let phi_axis = dot(rise.axis, rn).atan2(dot(rise.axis, re));
+        let off_axis = |d: [f64; 3]| {
+            let phi = azimuth_from(rise.center, re, rn, d) - phi_axis;
+            let wrapped = phi.rem_euclid(std::f64::consts::PI);
+            wrapped.min(std::f64::consts::PI - wrapped)
+        };
+        for s in &p.shields {
+            assert!(off_axis(s.center) < 3.5 * SHIELD_AXIS_SPREAD_DEG.to_radians());
+        }
+        let (mut near, mut far) = (0, 0);
+        for t in p.graben.iter().chain(&p.canyons) {
+            let m = t.midpoint();
+            if angle_between(rise.center, m) * g.f64("body.radius") < 1.2 * rise.radius {
+                continue;
+            }
+            let o = off_axis(m);
+            if o < 30f64.to_radians() {
+                near += 1;
+            } else if o > 60f64.to_radians() {
+                far += 1;
+            }
+        }
+        assert!(near > 3 * far, "{near} along the axis, {far} across it");
+    }
+
+    #[test]
     fn a_rise_s_dike_swarms_radiate_long_graben() {
         // F113: the plume and the volcanoes on Mars's rise send dikes out in swarms, each
         // leaving its source and running on away from it, a graben above each; some run
@@ -3039,6 +3305,7 @@ mod tests {
             start_gyr: 0.3,
             end_gyr: 1.5,
             paleo_latitude: 83f64.to_radians(),
+            axis: [0.0, 1.0, 0.0],
         };
         let r = 3.39e6;
         let latitude = |bulge: f64| {

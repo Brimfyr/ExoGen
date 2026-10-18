@@ -90,6 +90,8 @@ pub struct RiseInfo {
     pub height_m: f64,
     /// Its latitude when it began to rise, before the body turned under it (F104).
     pub paleo_lat_deg: f64,
+    /// The azimuth of the axis it grows along, degrees east of north, 0 to 180 (F114).
+    pub axis_azimuth_deg: f64,
 }
 
 #[derive(Serialize)]
@@ -741,12 +743,18 @@ pub fn export(
             .iter()
             .map(|r| {
                 let (lon, lat) = crate::grid::lon_lat_from_direction(r.center);
+                let (east, north) = crate::geom::local_basis(r.center);
+                let azimuth = crate::geom::dot(r.axis, east)
+                    .atan2(crate::geom::dot(r.axis, north))
+                    .to_degrees()
+                    .rem_euclid(180.0);
                 RiseInfo {
                     lat_deg: lat.to_degrees(),
                     lon_deg: lon.to_degrees(),
                     diameter_km: 2.0 * r.radius / 1e3,
                     height_m: r.height,
                     paleo_lat_deg: r.paleo_latitude.to_degrees(),
+                    axis_azimuth_deg: azimuth,
                 }
             })
             .collect(),
