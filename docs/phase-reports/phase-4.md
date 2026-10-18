@@ -1080,3 +1080,33 @@ Still to do:
 - **Then the revisit plan's fifth item:** the rise's flexure and the Mars dichotomy, which may supply the regional stress.
 
 Tests 187 (five ignored). One is new: a rise's stress keeps its crest's maze, puts the ground along its axis beyond the foot in tension farther out than the load alone does and the ground across it not, and on Mars the volcanoes lie on the axis and the faults beyond the foot gather along it. One bound is loosened: on the preview Mars the deepest canyon the loop carried stands 2.7 km below its rims (over 3 km before), the new start table having reshuffled the canyons, the deepest at the standard quality now 1,674 km long and 5.0 km deep (2,371 km and 7.0 km before); the test asks for 2.5 km, still kilometres deep after the later floods. Clippy is clean and validate passes its 117 checks.
+
+## The forty-eighth milestone: a shield buries what it grows over, and the rise's faults as old as it
+
+Asked for by the user after the forty-seventh: graben cutting through shields, their floors following the flank; craters half on a shield and half on the plains, the half on the shield raised sharply; and craters half in a valley or graben and half on the ground about it, at two levels.
+
+- **F115, a shield's lava buries what it grows over.** In the loop the lava buries the ground the edifice grows over as a deposit buries what it falls on, the lows filling and the highs drowning as it thickens; in the finishing pass a crater or a trough keeps the share of its relief the lava laid on it since has not reached.
+- **F116, the rise's faults form as its dome rises.** The rise's stress is its dome's, so its faults form at the pace the dome grows, and none after; the plume head's dike swarms with them, each volcano's as it grows.
+
+How it went:
+
+- **The craters on the shields** rode up on them: the loop added a shield's thickness to whatever stood there. A crater at a shield's foot that formed while it grew kept a floor tilted 8 km across the flank.
+- **The graben over the shields** were young: on Mars 54 percent of the graben formed in the Amazonian, at the pace of the body's volcanism to the present, though the dome stopped rising at 3.0 Ga. Tharsis's faulting was about half Noachian and declined (Anderson et al. 2001); now 40 percent Noachian and 60 percent Hesperian, the volcanoes' dikes on into the Amazonian. The shields bury the faults older than them (F103).
+- **The craters split by valleys and graben** that I found are older than the trough that cut them: a 167 km crater 3.41 Ga old has its south half dropped by a 113 km rift 3.08 Ga old, as faults offset older craters. A crater younger than a trough replaces its floor inside its rim (the stamp's floor from the mean height inside the rim, the restore cutting the finish's older relief), so it shows one level; with the faults now older, more craters postdate them.
+- **A buried graben** first showed as a hairline over the flank: F103 took the lava's thickness off the trough's depth, leaving only the deepest line of its floor once the faults were older than the shields; the lava now takes the same share of a trough's relief, or a crater's, across its whole width.
+- **The canyons** now open in the Hesperian and the rise's eruptions before its shields take them fill them in part: the deepest standing canyon at the preview quality stands 1.7 km below its rims, against 2.7 km before (audit M14 reopened in part).
+
+What the maps show:
+
+- **Mars:** the crater at the shield's foot keeps its eastern half as an arc against the flank, the half the lava reached gone under it; the graben are older and softer, partly buried by the plains that came after them, and fewer cross the shields.
+- **Venus:** its shields bury what they grow over; its faults' timing is unchanged, after the event.
+- **The other bodies:** unchanged, having no rises.
+
+Still to do:
+
+- **A volcano's load in the stress field** and its lava ponding at its foot (audit M19), with the rise's flexure.
+- **The canyons' fill** (audit M14): the floods' share of the magma falling as the lithosphere thickens.
+- **Io's flow fields as the floods' process** (audit M20).
+- **Pit chains, the swarms' magma, swarms off the rises** (audit M17); **the axis from computed stresses** (audit M18); **the faulted layer as a field**; **M16**; **Charon's chasmata**.
+
+Tests 189 (five ignored). Two are new: a crater a shield grows over keeps under a tenth of its depth while one beyond its foot keeps it all; and Mars's faults and the plume head's dikes form while the dome rises, each volcano's dikes while it grows. One bound is loosened: the deepest standing canyon on the preview Mars, 1.5 km (2.5 km). Clippy is clean and validate passes its 117 checks.

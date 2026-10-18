@@ -391,6 +391,12 @@ pub const SHIELD_PLACEMENT: (f64, f64) = (0.1, 0.6);
 pub const SHIELD_START_GYR: (f64, f64) = (1.0, 2.5);
 pub const SHIELD_GROWTH_GYR: f64 = 1.0;
 pub const SHIELD_RENEWAL_THICKNESS: f64 = 5.0;
+/// A shield's lava buries the ground it grows over (F115), the relief measured against the
+/// mean of that ground in this many rings about the edifice's centre, as a deposit buries
+/// what it falls on (BURIAL_FACTOR_LOW and _HIGH, the ejecta's law, a stated choice for
+/// lava as for ejecta). The rings, one or two of the loop's cells wide on the large
+/// shields, keep the ground's broad slope under the edifice and take its craters.
+pub const SHIELD_BURIAL_RINGS: usize = 32;
 pub const SHIELD_ELONGATION_MAX: f64 = 1.4;
 pub const SHIELD_OUTLINE_ORDERS: (u32, u32) = (3, 24);
 pub const SHIELD_OUTLINE_LOBING: f64 = 0.04;

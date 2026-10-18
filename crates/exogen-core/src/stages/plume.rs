@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 
 use crate::constants::*;
+use crate::crater::stamp::burial_factor;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
 use crate::geom::{
@@ -31,7 +32,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 14;
+pub const VERSION: u64 = 15;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -462,6 +463,16 @@ pub fn shield_capture(shields: &[&Shield], t: f64) -> f64 {
         .map(|s| shield_volume(s))
         .sum::<f64>()
         / volume
+}
+
+/// Where a dike swarm starts (F113, F116): its source's centre and radius, how far its
+/// dikes reach, its random key, and the volcano that feeds it, if one does.
+struct SwarmSource<'a> {
+    center: [f64; 3],
+    radius: f64,
+    reach: f64,
+    key: u64,
+    volcano: Option<&'a Shield>,
 }
 
 /// The rise a point belongs to: the nearest in units of each rise's radius.
@@ -967,21 +978,23 @@ impl PlumeProcess {
                 * rise.radius;
             let l_min = RIFT_MIN_LENGTH;
             let l_max = (RIFT_MAX_LENGTH_FRACTION * 2.0 * rise.radius).max(2.0 * l_min);
-            // Faults form as the rise's load grows (F105): on a stagnant lid from the rise's
-            // start at the pace of the body's volcanism, which builds the load, to the
-            // present; on an episodic lid after the resurfacing event.
+            // Faults form as the rise's stress grows (F105, F116): on a stagnant lid as its
+            // dome rises, the dome's bending and load being that stress, at the pace of its
+            // growth and none once it has stopped; on an episodic lid after the resurfacing
+            // event, which would otherwise fill them.
             let (t_lo, t_hi) = if episodic {
                 (event_time, age)
             } else {
-                (rise.start_gyr.min(age), age)
+                (rise.start_gyr.min(age), rise.end_gyr.min(age))
             };
             let time_cdf = Tabulated::new(t_lo, t_hi, 256, |t| {
                 if episodic {
                     1.0
                 } else {
-                    graph
-                        .curve("volcanism.history")
-                        .map_or(1.0, |c| c.eval(t).max(0.0))
+                    // The rate of the dome's smoothstep growth.
+                    let x =
+                        ((t - rise.start_gyr) / (rise.end_gyr - rise.start_gyr)).clamp(0.0, 1.0);
+                    6.0 * x * (1.0 - x)
                 }
             });
             let depth_cap = (CANYON_DEPTH_FRACTION * rise.height).max(RIFT_MIN_DEPTH);
@@ -1202,21 +1215,48 @@ impl PlumeProcess {
             // carries it, magma-driven whatever the tension; a graben opens above each, as
             // wide as twice the depth to the dike's top, subsiding as a graben over its
             // faulted layer does.
-            let mut sources: Vec<([f64; 3], f64, f64, u64)> = Vec::new();
+            // A swarm comes with the magma that feeds it (F116): the plume head's as the
+            // dome rises, a volcano's as it grows; on an episodic lid after the event.
+            let mut sources: Vec<SwarmSource> = Vec::new();
             for m in 0..DIKE_SWARMS_PER_RISE {
                 let key = 0x0D1C_0000 + ri as u64 * 0x1000 + m;
                 let (q_lo, q_hi) = DIKE_RISE_REACH;
                 let reach = rise.radius * q_lo * (q_hi / q_lo).powf(rng.uniform(key, 0));
-                sources.push((rise.center, rise.radius, reach, key));
+                sources.push(SwarmSource {
+                    center: rise.center,
+                    radius: rise.radius,
+                    reach,
+                    key,
+                    volcano: None,
+                });
             }
             for s in shields.iter().filter(|s| rise_of(&rises, s.center) == ri) {
                 let key = 0x0D1D_0000 + s.id;
                 let (q_lo, q_hi) = DIKE_SHIELD_REACH;
                 let reach = s.radius * q_lo * (q_hi / q_lo).powf(rng.uniform(key, 0));
-                sources.push((s.center, s.radius, reach, key));
+                sources.push(SwarmSource {
+                    center: s.center,
+                    radius: s.radius,
+                    reach,
+                    key,
+                    volcano: Some(s),
+                });
             }
-            for &(source, source_radius, reach, key) in &sources {
-                let time = time_cdf.sample(rng.uniform(key, 1));
+            for &SwarmSource {
+                center: source,
+                radius: source_radius,
+                reach,
+                key,
+                volcano,
+            } in &sources
+            {
+                let time = match volcano {
+                    Some(v) if !episodic && v.start_gyr < age => {
+                        let grown = shield_progress(age, v.start_gyr);
+                        progress_time(v, rng.uniform(key, 1) * grown).min(age)
+                    }
+                    _ => time_cdf.sample(rng.uniform(key, 1)),
+                };
                 // The swarm fans along the rise's axis, to one side or the other of its
                 // source: its magma opens its way most easily across the axis (F114).
                 let (se, sn) = local_basis(source);
@@ -1390,7 +1430,8 @@ impl PlumeProcess {
                 self.load[idx] += dh as f32;
             }
         }
-        // Shields: flows pile up, renewing the surface where they add more than a veneer.
+        // Shields: flows pile up, renewing the surface where they add more than a veneer,
+        // and burying what they flow over (F115).
         let t_mid = 0.5 * (t0 + t1);
         for shield in &self.shields {
             let dp = shield_progress(t1, shield.start_gyr) - shield_progress(t0, shield.start_gyr);
@@ -1409,18 +1450,40 @@ impl PlumeProcess {
             // pass, so the surface they lie on is dated no later than that (F101); the
             // finishing pass lays its lava's composition at its own resolution.
             let renewed = shield_window(shield, self.present).map_or(t_mid, |w| t_mid.min(w.0));
-            for &(idx, _, _) in &self.stamper.footprint {
+            // The ground the edifice grows on, in rings about its centre: the surface less
+            // the lava the shields have piled there and less the canyons' open depth, which
+            // their lava fills as it comes (F103). The lava buries that ground's relief,
+            // measured against its ring's mean, as a deposit buries what it falls on: the
+            // lows fill first and the highs drown as it thickens (F115). A crater the
+            // shield grows over fills and vanishes under it, rather than riding up on it.
+            let extent = shield.extent();
+            let ring_of = |r: f64| {
+                ((r / extent * SHIELD_BURIAL_RINGS as f64) as usize).min(SHIELD_BURIAL_RINGS - 1)
+            };
+            let mut ring_sum = [0.0f64; SHIELD_BURIAL_RINGS];
+            let mut ring_count = [0.0f64; SHIELD_BURIAL_RINGS];
+            for &(idx, r, _) in &self.stamper.footprint {
+                let under =
+                    bedrock[idx] - self.shield_built[idx] + (self.carved[idx] - self.filled[idx]);
+                ring_sum[ring_of(r)] += under as f64;
+                ring_count[ring_of(r)] += 1.0;
+            }
+            for &(idx, r, _) in &self.stamper.footprint {
                 let d = grid.center(grid.cell(idx));
                 let full = shield_height(shield, d, body_radius, false, 0.0);
                 let dh = full * dp;
                 if dh <= 0.0 {
                     continue;
                 }
+                let under =
+                    bedrock[idx] - self.shield_built[idx] + (self.carved[idx] - self.filled[idx]);
+                let relief = under as f64 - ring_sum[ring_of(r)] / ring_count[ring_of(r)].max(1.0);
+                let drowned = relief * (1.0 - burial_factor(relief, dh));
                 // The lava ponds in a canyon it comes to, filling it as fast as the
                 // shield thickens round it (F103).
                 let fill = (self.carved[idx] - self.filled[idx]).clamp(0.0, dh as f32);
                 self.filled[idx] += fill;
-                bedrock[idx] += dh as f32 + fill;
+                bedrock[idx] += (dh - drowned) as f32 + fill;
                 self.shield_built[idx] += dh as f32;
                 if dh > SHIELD_RENEWAL_THICKNESS {
                     ages[idx] = renewed as f32;
@@ -2378,15 +2441,15 @@ pub fn trough_depth_at(
 /// The shields' lava laid on a point since a time, m (F103): each shield's growth there
 /// since then, which fills a trough formed before it, as it ponds in the trough rather
 /// than draping it.
-pub fn shield_burial(
-    shields: &[Shield],
+pub fn shield_burial<'a>(
+    shields: impl IntoIterator<Item = &'a Shield>,
     d: [f64; 3],
     body_radius: f64,
     since: f64,
     present: f64,
 ) -> f64 {
     shields
-        .iter()
+        .into_iter()
         .map(|s| {
             let grown = shield_progress(present, s.start_gyr) - shield_progress(since, s.start_gyr);
             if grown <= 0.0 || angle_between(s.center, d) * body_radius > s.extent() {
@@ -2396,6 +2459,66 @@ pub fn shield_burial(
             }
         })
         .sum()
+}
+
+/// The share of a feature's relief that stands after lava this thick has buried it, the
+/// feature this deep or high (F115): the lava fills it from below as it thickens, taking
+/// its relief across its whole extent, and it is gone once the lava is as thick.
+pub fn lava_keep(lava: f64, relief: f64) -> f64 {
+    (1.0 - lava / relief.max(1.0)).clamp(0.0, 1.0)
+}
+
+/// Bury a crater's stamp under the lava the shields laid where it fell since it formed
+/// (F115), as a trough is buried (F103): each cell's change kept by the share of the
+/// crater's `relief` the lava there has not reached; where it has reached most of it, the
+/// crater's surface no longer shows. `reach` is the stamp's radius about `center`.
+#[allow(clippy::too_many_arguments)]
+pub fn bury_under_shields(
+    out: &mut StampOutput,
+    layers: &LayerSet,
+    grid: &CubeSphere,
+    shields: &[Shield],
+    body_radius: f64,
+    center: [f64; 3],
+    reach: f64,
+    relief: f64,
+    since: f64,
+    present: f64,
+) {
+    let near: Vec<&Shield> = shields
+        .iter()
+        .filter(|s| {
+            s.start_gyr < present
+                && angle_between(s.center, center) * body_radius < s.extent() + reach
+        })
+        .collect();
+    if near.is_empty() {
+        return;
+    }
+    let bedrock = layers.bedrock.as_slice();
+    let steeps = layers.steep.as_slice();
+    let ejecta_ages = layers.ejecta_age.as_slice();
+    for (j, cell) in out.cells.iter_mut().enumerate() {
+        let idx = cell.idx as usize;
+        let d = grid.center(grid.cell(idx));
+        let lava = shield_burial(near.iter().copied(), d, body_radius, since, present);
+        if lava <= 0.0 {
+            continue;
+        }
+        let old = bedrock[idx] as f64;
+        let change = cell.bedrock as f64 - old;
+        let keep = lava_keep(lava, relief);
+        cell.bedrock = (old + change * keep) as f32;
+        if keep < 0.5 {
+            cell.surface = false;
+            if let Some(s) = &mut out.steep {
+                s[j] = steeps[idx];
+            }
+            if let Some(e) = &mut out.ejecta_age {
+                e[j] = ejecta_ages[idx];
+            }
+        }
+    }
 }
 
 /// Finishing pass of a trough: the fine profile minus the version the loop carried,
@@ -2440,8 +2563,11 @@ pub fn trough_compute(
                 time_gyr as f64,
                 present,
             );
-            let smeared = (coarse.get(&idx).copied().unwrap_or(0.0) - buried).max(0.0);
-            let depth = depth.signum() * (depth.abs() - buried).max(0.0);
+            // The lava fills the trough as it fills a crater (F115): what stands is the
+            // share of its depth the lava has not reached, across its whole width.
+            let keep = lava_keep(buried, trough.depth);
+            let smeared = coarse.get(&idx).copied().unwrap_or(0.0) * keep;
+            let depth = depth * keep;
             // How deep inside the trough this cell is, 0 on the rim to 1 on the floor.
             let inside = (depth / trough.depth.max(1.0)).clamp(0.0, 1.0);
             // What the finish has added since the base is kept outside the floor and
@@ -2722,6 +2848,42 @@ mod tests {
             .sum();
         assert!(area > std::f64::consts::PI * shield.radius.powi(2));
         assert!(flows.windows(2).all(|w| w[1].time_gyr > w[0].time_gyr));
+    }
+
+    #[test]
+    #[ignore = "diagnostic: lists Mars's troughs passing a point (EXOGEN_PT=lon,lat,km,face)"]
+    fn troughs_near_a_point() {
+        let spec = std::env::var("EXOGEN_PT").unwrap_or_else(|_| "-140.62,-3.57,120,512".into());
+        let v: Vec<f64> = spec.split(',').map(|x| x.parse().unwrap()).collect();
+        let (lon, lat) = (v[0].to_radians(), v[1].to_radians());
+        let p = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let r = g.f64("body.radius");
+        let age = g.f64("body.age");
+        let pp = PlumeProcess::new(&g, CubeSphere::new(v[3] as u32)).unwrap();
+        for (kind, list) in [("canyon", &pp.canyons), ("graben", &pp.graben)] {
+            for t in list.iter() {
+                let near = t
+                    .points
+                    .iter()
+                    .map(|q| angle_between(*q, p) * r / 1e3)
+                    .fold(f64::INFINITY, f64::min);
+                if near < v[2] {
+                    println!(
+                        "{kind} {:?} id {:x} time {:.3} ({:.2} Ga) start {:.3} width {:.1} km depth {:.0} m length {:.0} km nearest {:.0} km",
+                        t.kind,
+                        t.id,
+                        t.end_gyr,
+                        age - t.end_gyr,
+                        t.start_gyr,
+                        t.width / 1e3,
+                        t.depth,
+                        t.length / 1e3,
+                        near
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -3379,6 +3541,118 @@ mod tests {
         assert_eq!(
             shield_burial(shields, at(1.1 * shield.extent()), r, 0.9, 4.5),
             0.0
+        );
+    }
+
+    #[test]
+    fn a_shield_buries_the_craters_it_grows_over() {
+        // F115: a crater on the ground a shield grows over fills with its lava rather than
+        // riding up on it. Two runs of Mars's plume, one with bowls 1 km deep stamped
+        // before anything grew, one at mid-flank on its largest shield and one beyond that
+        // shield's foot: at the present, the difference between the runs is what is left
+        // of each bowl.
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let grid = CubeSphere::new(128);
+        let r = g.f64("body.radius");
+        let age = g.f64("body.age");
+        let mut plain = PlumeProcess::new(&g, grid).unwrap();
+        let mut cratered = PlumeProcess::new(&g, grid).unwrap();
+        let shield = plain
+            .shields
+            .iter()
+            .max_by(|a, b| a.height.total_cmp(&b.height))
+            .unwrap()
+            .clone();
+        let (east, north) = local_basis(shield.center);
+        let flank = offset(shield.center, east, north, 0.5 * shield.radius / r, 0.7);
+        // Beyond its foot, where no other shield reaches either.
+        let beyond = (0..16)
+            .map(|k| {
+                let phi = k as f64 * std::f64::consts::PI / 8.0;
+                offset(
+                    shield.center,
+                    east,
+                    north,
+                    (shield.extent() + 200e3) / r,
+                    phi,
+                )
+            })
+            .find(|q| {
+                plain
+                    .shields
+                    .iter()
+                    .all(|s| angle_between(s.center, *q) * r > s.extent() + 100e3)
+            })
+            .unwrap();
+        let bowl = |c: [f64; 3], q: [f64; 3]| {
+            let x = angle_between(c, q) * r / 60e3;
+            if x < 1.0 { -1e3 * (1.0 - x * x) } else { 0.0 }
+        };
+        let mut flat = LayerSet::new(grid);
+        let mut pitted = LayerSet::new(grid);
+        for (i, b) in pitted.bedrock.as_mut_slice().iter_mut().enumerate() {
+            let q = grid.center(grid.cell(i));
+            *b = (bowl(flank, q) + bowl(beyond, q)) as f32;
+        }
+        let left = |flat: &LayerSet, pitted: &LayerSet, c: [f64; 3]| {
+            let i = grid.index(grid.locate(c).0);
+            (flat.bedrock.as_slice()[i] - pitted.bedrock.as_slice()[i]) as f64
+        };
+        let (on, off) = (left(&flat, &pitted, flank), left(&flat, &pitted, beyond));
+        let steps = 90;
+        for k in 0..steps {
+            let (t0, t1) = (
+                age * k as f64 / steps as f64,
+                age * (k + 1) as f64 / steps as f64,
+            );
+            plain.step(&mut flat, t0, t1);
+            cratered.step(&mut pitted, t0, t1);
+        }
+        let (on_now, off_now) = (left(&flat, &pitted, flank), left(&flat, &pitted, beyond));
+        assert!(
+            on > 500.0 && on_now < 0.1 * on,
+            "on the flank {on} m, now {on_now} m"
+        );
+        assert!(
+            (off_now - off).abs() < 0.02 * off,
+            "beyond the foot {off} m, now {off_now} m"
+        );
+    }
+
+    #[test]
+    fn faults_and_swarms_come_with_what_drives_them() {
+        // F116: on Mars the rise's faults form while its dome rises, and the plume head's
+        // dikes with them; each volcano's dikes come while it grows.
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let rise = &p.rises[0];
+        let age = g.f64("body.age");
+        let (mut faults, mut plume_dikes, mut volcano_dikes) = (0, 0, 0);
+        for t in p.graben.iter().chain(&p.canyons) {
+            let time = 0.5 * (t.start_gyr + t.end_gyr);
+            let rising = time >= rise.start_gyr - 1e-9 && time <= rise.end_gyr + 1e-9;
+            if t.id & 0xFFFF_0000_0000_0000 == 0x0D1C_0000_0000_0000 {
+                let key = (t.id & 0x0000_FFFF_FFFF_FFFF) >> 8;
+                if key & 0xFFFF_0000 == 0x0D1D_0000 {
+                    let s = p
+                        .shields
+                        .iter()
+                        .find(|s| s.id == key - 0x0D1D_0000)
+                        .unwrap();
+                    assert!(time >= s.start_gyr - 1e-9 && time <= age + 1e-9, "{time}");
+                    volcano_dikes += 1;
+                } else {
+                    assert!(rising, "a plume dike at {time}");
+                    plume_dikes += 1;
+                }
+            } else {
+                assert!(rising, "a fault at {time}");
+                faults += 1;
+            }
+        }
+        assert!(
+            faults > 100 && plume_dikes > 20 && volcano_dikes > 5,
+            "{faults} faults, {plume_dikes} plume dikes, {volcano_dikes} volcano dikes"
         );
     }
 

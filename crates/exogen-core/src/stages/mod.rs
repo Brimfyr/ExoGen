@@ -362,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 94;
+pub const FINISH_VERSION: u64 = 95;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1469,7 +1469,7 @@ pub fn finish(
                             maturity_timescale: inputs.maturity_timescale,
                             shed: inputs.shed,
                         };
-                        let out = restore_compute(
+                        let mut out = restore_compute(
                             &layers,
                             &grid,
                             body_radius,
@@ -1481,6 +1481,19 @@ pub fn finish(
                             &walls,
                             &params,
                             stamper,
+                        );
+                        // A shield that grew over it since buried it (F115).
+                        plume::bury_under_shields(
+                            &mut out,
+                            &layers,
+                            &grid,
+                            &shields,
+                            body_radius,
+                            c.center,
+                            fresh.dim.ejecta_radius * c.ellipticity.sqrt(),
+                            fresh.dim.depth + fresh.dim.rim_height,
+                            c.time_gyr,
+                            present,
                         );
                         Some((out, None, None))
                     }
@@ -1839,7 +1852,7 @@ pub fn finish(
                             terraced: true,
                             shed: inputs.shed,
                         };
-                        let out = stamp_compute(
+                        let mut out = stamp_compute(
                             &layers,
                             &grid,
                             body_radius,
@@ -1847,6 +1860,19 @@ pub fn finish(
                             &table,
                             &params,
                             stamper,
+                        );
+                        // A shield that grew over it since buried it (F115).
+                        plume::bury_under_shields(
+                            &mut out,
+                            &layers,
+                            &grid,
+                            &shields,
+                            body_radius,
+                            c.center,
+                            dim.ejecta_radius * c.ellipticity.sqrt(),
+                            dim.depth + dim.rim_height,
+                            c.time_gyr,
+                            present,
                         );
                         let record =
                             (c.diameter >= record_min && !*secondary).then_some(CraterRecord {
@@ -2868,9 +2894,11 @@ mod tests {
             summit - foot > 0.5 * big.height,
             "shield {summit} vs foot {foot}"
         );
-        // Some trough the loop carried still stands kilometres deep below the plateau
-        // either side, the rims being the highest ground within a few widths past the
-        // en-echelon neighbours; a later flood may have filled another.
+        // Some trough the loop carried still stands well over a kilometre deep below the
+        // plateau either side, the rims being the highest ground within a few widths past
+        // the en-echelon neighbours; a later flood may have filled another. The canyons
+        // open as the dome rises (F116), and the rise's eruptions before its shields take
+        // them fill them in part (audit M14).
         let relief = |canyon: &plume::Trough| {
             let mid = canyon.midpoint();
             let next = canyon.points[canyon.points.len() / 2 + 1];
@@ -2897,7 +2925,7 @@ mod tests {
             .iter()
             .map(relief)
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(deepest > 2_500.0, "deepest standing trough {deepest} m");
+        assert!(deepest > 1_500.0, "deepest standing trough {deepest} m");
         // The Moon raises none.
         let moon = r
             .run(&preset_graph("Moon", "preview"), &NoProgress)
