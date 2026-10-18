@@ -716,6 +716,7 @@ pub fn shield_flows(
             run,
             field,
             IO_FLOW_TOE,
+            0.0,
             &rules,
             &outside,
         );

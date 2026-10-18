@@ -1109,4 +1109,32 @@ Still to do:
 - **Io's flow fields as the floods' process** (audit M20).
 - **Pit chains, the swarms' magma, swarms off the rises** (audit M17); **the axis from computed stresses** (audit M18); **the faulted layer as a field**; **M16**; **Charon's chasmata**.
 
-Tests 189 (five ignored). Two are new: a crater a shield grows over keeps under a tenth of its depth while one beyond its foot keeps it all; and Mars's faults and the plume head's dikes form while the dome rises, each volcano's dikes while it grows. One bound is loosened: the deepest standing canyon on the preview Mars, 1.5 km (2.5 km). Clippy is clean and validate passes its 117 checks.
+Tests 189 (six ignored, one of them a new diagnostic that lists the troughs passing a point). Two are new: a crater a shield grows over keeps under a tenth of its depth while one beyond its foot keeps it all; and Mars's faults and the plume head's dikes form while the dome rises, each volcano's dikes while it grows. One bound is loosened: the deepest standing canyon on the preview Mars, 1.5 km (2.5 km). Clippy is clean and validate passes its 117 checks.
+
+## The forty-ninth milestone: Io's lava as floods, and its paterae
+
+Asked for by the user after the forty-eighth: Io's flows aligned with the floods' newer physics (audit M20); and, on the first renders, whether the dark lava pools' colour was right, and what the perfectly oval pool in the north-west was.
+
+- **F117, Io's lava erupts as floods.** The paterae's eruptions run down from their rims, fill and spill over the lows and the paterae they reach, and lay their sheets and lobes as every body's floods do; the form of a flood's flows follows how fast it poured out, compound fields where slow, sheet lobes where fast.
+- **F118, a patera collapses piecemeal.** More collapses of comparable size break out of the first, its margin wanders at every scale, and its floor lies in patches of different ages.
+
+How it went:
+
+- **The floods filled the paterae.** Erupted after the pits were cut, the lava ponded in them, 900 km³ to fill one, and the paterae vanished from the map; cut after the lava, as a patera born at the step's end is, they stand, their floors lava of their own.
+- **Steps along the coarse cells.** The finish starts Io from the loop's bare plains, which carried none of the floods' coarse lava that the flood passes take out, so each pass cut its coarse footprint into the plains; the plains now carry that lava, smoothed with them, as every body's base does.
+- **Angular lobes.** The floods' lobes, long sheets after the Imbrium flows', drew Io's fields as bundles of sticks. The physics that tells them apart is how fast the lava pours out (Walker 1971): slow, compound fields of short broad breakouts off narrow insulated paths (Io's Prometheus, 49 m³/s); fast, a few long sheet lobes (the maria, Tharsis). A compound field's trunk is the narrow path, its breakouts broad; drawn at the breakouts' proportions, the trunk left its flood's footprint at once and the fields stopped short.
+- **The colour of the dark pools** is right: an active patera's floor is its lava lake, fresh silicate at 0.05 reflectance, Io's darkest ground (Loki's floor near that); quiet floors and the flows are lighter as the plumes' fallout and frost coat them by their age. The new floods leave the floors alone, the paterae being cut after them.
+- **The oval pool** was a patera 217 km across at 55°W, 68°N, one collapse hardly elongated, drawn as a smooth ellipse since F88. Small collapses round its rim left a circle with bites in it, as the user saw; collapses of comparable size breaking out of the first, and a margin wandering at every scale, give arcs of different curvature meeting at corners.
+- **Generic lava left in the margins.** The resampling gave a few fine cells beside each flood the coarse lava's unit, which no pass then reached: 1.3 percent of Io; they keep the plains now.
+
+What the maps show:
+
+- **Io:** its flows run down the ground and pond in its lows and in the paterae they reach, larger fields than before following the slopes, mostly compound, a few in sheets; they cover 20.7 percent (16.9 before; Io's 28 percent, Williams et al. 2011). Its paterae's margins are irregular, arcs meeting at corners; its lava lakes stay dark.
+- **Every other body:** unchanged, Mars to the metre and the pixel, its floods' rates keeping their sheets.
+
+Still to do:
+
+- **Io's eruptions from its heat budget's magma** rather than the old fields' shares (audit M8, M20), at a compound field's own thickness rather than the flood sheet's 50 m, each breakout its own age.
+- **The canyons' fill** (audit M14), next.
+
+Tests 189 (six ignored, one of them the trough diagnostic of the forty-eighth). One is new: Io's eruptions come oldest first from past their paterae's pits on the side the ground falls away, as large as a flood's sheet over their fields' share of their reach squared; the Io test now reads its floods. Clippy is clean and validate passes its 117 checks.

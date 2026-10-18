@@ -845,7 +845,12 @@ pub fn export(
                 }
             })
             .collect(),
-        flow_field_count: out.io_flows.len(),
+        // Io's lava erupts as floods from its paterae (F117).
+        flow_field_count: if out.paterae.is_empty() {
+            0
+        } else {
+            out.floods.len()
+        },
         plume_count: out
             .plume_episodes
             .iter()

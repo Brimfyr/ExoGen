@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 17;
+pub const VERSION: u64 = 18;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -97,6 +97,8 @@ pub struct FloodEvent {
     pub volume: f64,
     pub time_gyr: f64,
     pub id: u64,
+    /// How fast it pours out, m³/s (F117).
+    pub effusion: f64,
 }
 
 /// What a flood did to one coarse cell over all its ponds: the thickness added, the last
@@ -124,6 +126,15 @@ pub struct FloodRecord {
     /// The lava's composition, -1 to 1 (F55, F94).
     pub composition: f32,
     pub id: u64,
+    /// How fast it poured out, m³/s, which sets the form of its flows (F117).
+    pub effusion: f64,
+}
+
+/// How compound a lava's flows are for how fast it pours out (F117): 1 at or below the
+/// slow rate, 0 at or above the fast, between them by the logarithm.
+pub fn compound_share(effusion: f64) -> f64 {
+    let (slow, fast) = LAVA_COMPOUND_RATE;
+    ((fast.ln() - effusion.max(1e-9).ln()) / (fast.ln() - slow.ln())).clamp(0.0, 1.0)
 }
 
 impl FloodRecord {
@@ -334,6 +345,35 @@ impl FloodProcess {
         })
     }
 
+    /// Io's lava as floods (F117): no provinces nor rises, its eruptions the paterae's
+    /// (`io::eruptions`), emplaced as any body's floods are.
+    pub fn for_io(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Self {
+        let body_radius = graph.f64("body.radius");
+        let n = grid.cell_count();
+        Self {
+            grid,
+            body_radius,
+            thermal: thermal.clone(),
+            rng: Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x7F10_0D5A),
+            areas: (0..n)
+                .map(|k| grid.cell_area(grid.cell(k)) * body_radius * body_radius)
+                .collect(),
+            provinces: Vec::new(),
+            province_weight: vec![1.0; n],
+            rise_province: Vec::new(),
+            thickness: vec![0.0; n],
+            last_time: vec![f32::NEG_INFINITY; n],
+            visited: vec![0; n],
+            generation: 0,
+            heap: BinaryHeap::new(),
+            carry: 0.0,
+            event_time: None,
+            flood_share: 1.0,
+            age: graph.f64("body.age"),
+            records: Vec::new(),
+        }
+    }
+
     /// Take the resurfacing event's fill into the thickness and last-flow records.
     pub fn note_resurfacing(&mut self, fill: &[f32], time_gyr: f64) {
         for (k, &f) in fill.iter().enumerate() {
@@ -504,11 +544,13 @@ impl FloodProcess {
                 .partition_point(|&c| c < u)
                 .min(cumulative.len() - 1);
             let time_gyr = t0 + (t1 - t0) * self.rng.uniform(step_index, draw + 2);
+            let (e_lo, e_hi) = FLOOD_EFFUSION_RATE;
             out.push(FloodEvent {
                 vent,
                 volume,
                 time_gyr,
                 id: (step_index << 32) | j,
+                effusion: e_lo * (e_hi / e_lo).powf(self.rng.uniform(step_index, draw + 3)),
             });
             budget -= volume;
             j += 1;
@@ -518,7 +560,8 @@ impl FloodProcess {
 
     /// Erupt one event onto the surface as it is now, and record it.
     pub fn apply(&mut self, layers: &mut LayerSet, ev: FloodEvent) {
-        let rec = self.erupt(layers, ev.vent, ev.volume, ev.time_gyr, ev.id);
+        let mut rec = self.erupt(layers, ev.vent, ev.volume, ev.time_gyr, ev.id);
+        rec.effusion = ev.effusion;
         if !rec.ponds.is_empty() {
             self.records.push(rec);
         }
@@ -840,6 +883,7 @@ impl FloodProcess {
             ponds,
             composition: flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C)),
             id,
+            effusion: FLOOD_EFFUSION_RATE.0,
         };
         // Summed in the cells' order, so that the area does not depend on the map's.
         let mut keys: Vec<u32> = rec.cells().keys().copied().collect();
@@ -993,9 +1037,18 @@ pub fn flood_compute(
     // the ground keeps the surface it had, unless it lies so far below the level that the
     // lava ponds there. A buried flood keeps the coarse outline its successors hide.
     let lobed: Option<HashMap<usize, f32>> = flows.map(|f| {
-        let lobes = flood_lobes(rec, coarse, grid, f.body_radius, f.ground, f.seed);
+        let lobes = flood_lobes(
+            rec,
+            coarse,
+            grid,
+            f.body_radius,
+            f.ground,
+            f.seed,
+            compound_share(rec.effusion),
+        );
         lobe_cover(&lobes, grid, f.body_radius, rec.id, stamper)
     });
+    let soft = flows.is_some_and(|f| f.soft);
     let hollow_steps = flows.map_or(0, |f| {
         (f.hollow_reach / (grid.delta() * f.body_radius)).ceil() as usize
     });
@@ -1105,6 +1158,7 @@ pub fn flood_compute(
         hollow: bool,
         reached: bool,
         ponded: bool,
+        lobe: f32,
     }
     let mut work: Vec<Work> = visits
         .into_par_iter()
@@ -1124,14 +1178,16 @@ pub fn flood_compute(
                 hollow: false,
                 reached: false,
                 ponded: false,
+                lobe: lobed
+                    .as_ref()
+                    .map_or(0.0, |l| l.get(&idx).copied().unwrap_or(0.0)),
             };
             // A buried flood's sheet lies its thickness, sampled smoothly, wherever the loop
             // laid it: its margin is hidden under the flows after it, and its outline cut a
             // step a sheet deep along the coarse cells, a staircase on the plains (M15).
             w.reached = match &lobed {
-                Some(lobed) => {
-                    own > ponded_thickness || lobed.get(&idx).copied().unwrap_or(0.0) >= 0.5
-                }
+                Some(_) if soft => own > ponded_thickness || w.lobe > 0.0,
+                Some(_) => own > ponded_thickness || w.lobe >= 0.5,
                 None if level.is_nan() => true,
                 None => {
                     let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
@@ -1321,6 +1377,7 @@ pub fn flood_compute(
                         hollow: true,
                         reached: true,
                         ponded: true,
+                        lobe: 0.0,
                     });
                 }
             }
@@ -1338,6 +1395,7 @@ pub fn flood_compute(
             hollow,
             reached,
             ponded,
+            lobe,
             ..
         } = w;
         if younger {
@@ -1411,12 +1469,19 @@ pub fn flood_compute(
         let drape = FLOOD_SHEET_THICKNESS as f32;
         if ground < level + drape && reached {
             stats[0] += 1;
-            let fill = (level - ground).max(0.0);
+            // A soft flood's lobe margin (F117) covers its cell by the lobe's share and
+            // lays that share of its sheet; a lake or a pond it fills whole.
+            let share = if soft && own <= ponded_thickness && !ponded {
+                lobe.clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let fill = (level - ground).max(0.0) * share;
             // A high the flow drapes carries a veneer, the sheet's thickness less
             // what the high stands above the level: thin lava over it, but lava,
             // not the ground it hides (the ghost craters of the maria show in
             // relief, not in albedo).
-            let sheet = fill.max(drape - (ground - level).max(0.0));
+            let sheet = fill.max((drape - (ground - level).max(0.0)) * share);
             let surface = ground + (1.0 - LAVA_SUBSIDENCE as f32) * fill;
             cells.push(CellWrite {
                 idx: idx as u32,
@@ -1426,7 +1491,11 @@ pub fn flood_compute(
                 unit: UNIT_LAVA,
                 deep: deep[idx],
                 melt: 0.0,
-                cover: (sheet / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0),
+                cover: if soft {
+                    share
+                } else {
+                    (sheet / LAVA_COVER_DEPTH as f32).clamp(0.0, 1.0)
+                },
             });
         } else {
             if ground >= level + drape {
@@ -1484,6 +1553,10 @@ pub struct FloodFlows<'a> {
     /// How far past the cells a flood's pass visits its lava may follow a hollow the
     /// loop never saw, m: the radius of the largest crater the loop left to the finish.
     pub hollow_reach: f64,
+    /// Whether a lobe's margin covers its cells by its share (F117): Io's flows, whose
+    /// colours the coverage sets, fade out at their edges as they did (F85); elsewhere
+    /// a lava unit covers a cell whole where its lobes reach half of it.
+    pub soft: bool,
 }
 
 /// Which floods can show at the end (F94): those among the last FLOOD_VISIBLE_DEPTH floods
@@ -1536,6 +1609,7 @@ pub fn flood_lobes(
     body_radius: f64,
     ground: &PaddedField,
     seed: u64,
+    compound: f64,
 ) -> Vec<Lobe> {
     let covered = rec.cells();
     if covered.is_empty() {
@@ -1597,13 +1671,14 @@ pub fn flood_lobes(
             None => true,
         }
     };
+    let mix = |a: f64, b: f64| a + (b - a) * compound;
     let rules = |half_width: f64| PathRules {
         min_spacing: 0.5 * cell,
         slope_follow: IO_FLOW_SLOPE_FOLLOW,
         slope_scale: IO_FLOW_SLOPE_SCALE,
-        steer_length: FLOOD_STEER_LENGTH,
-        wander_rad: FLOOD_WANDER_RAD,
-        wander_length: FLOOD_WANDER_WIDTHS * half_width,
+        steer_length: mix(FLOOD_STEER_LENGTH, IO_FLOW_STEER_LENGTH),
+        wander_rad: mix(FLOOD_WANDER_RAD, IO_FLOW_WANDER_RAD),
+        wander_length: mix(FLOOD_WANDER_WIDTHS * half_width, IO_FLOW_WANDER_LENGTH),
         fill_depth: FLOOD_SHEET_THICKNESS,
         width_wobble: IO_FLOW_WIDTH_WOBBLE,
     };
@@ -1681,8 +1756,9 @@ pub fn flood_lobes(
             entry,
             toward,
             reach,
-            FLOOD_LOBE_COVER * run_area,
+            mix(FLOOD_LOBE_COVER, IO_FLOW_OVERLAP) * run_area,
             0.0,
+            compound,
             &rules,
             &outside,
         ));
@@ -1710,18 +1786,37 @@ pub(crate) fn flow_field(
     reach: f64,
     target: f64,
     trunk_toe: f64,
+    compound: f64,
     rules: &dyn Fn(f64) -> PathRules,
     outside: &dyn Fn([f64; 3], f64) -> bool,
 ) -> Vec<Lobe> {
     let r = body_radius;
     let cell = grid.delta() * r;
-    let (w_lo, w_hi) = FLOOD_LOBE_WIDTH;
+    // A compound field's breakouts are short and broad, a sheet flow's lobes long
+    // (F117): its shares by how compound the eruption is.
+    let blend =
+        |a: (f64, f64), b: (f64, f64)| (a.0 + (b.0 - a.0) * compound, a.1 + (b.1 - a.1) * compound);
+    // The breakouts' half widths as shares of their lengths.
+    let (w_lo, w_hi) = blend(
+        FLOOD_LOBE_WIDTH,
+        (
+            0.5 * IO_FLOW_BREAKOUT_ASPECT.0,
+            0.5 * IO_FLOW_BREAKOUT_ASPECT.1,
+        ),
+    );
     let width = |index: u64, length: f64| {
         (length * (w_lo + (w_hi - w_lo) * rng.uniform(index, 0))).max(1.5 * cell)
     };
+    // The trunk and its branches: a sheet flow's as its lobes are, a compound field's the
+    // narrow insulated paths its breakouts spread from (F85).
+    let (f_lo, f_hi) = FLOOD_LOBE_WIDTH;
+    let path_width = |index: u64, length: f64| {
+        let sheet = length * (f_lo + (f_hi - f_lo) * rng.uniform(index, 0));
+        (sheet + (0.5 * IO_FLOW_TRUNK_WIDTH - sheet) * compound).max(1.5 * cell)
+    };
     let (t_lo, t_hi) = FLOOD_TRUNK_SHARE;
     let trunk_length = reach * (t_lo + (t_hi - t_lo) * rng.uniform(3, 0));
-    let hw = width(4, trunk_length);
+    let hw = path_width(4, trunk_length);
     let mut lobes = vec![
         trace_flow(
             grid,
@@ -1763,7 +1858,7 @@ pub(crate) fn flow_field(
         if length < 4.0 * cell {
             continue;
         }
-        let hw = width(20 + b, length);
+        let hw = path_width(20 + b, length);
         let heading = rotate_about(p, tangent, turn);
         let lobe = trace_flow(
             grid,
@@ -1785,7 +1880,7 @@ pub(crate) fn flow_field(
         lobes.push(lobe);
     }
     // Breakouts on the lobes already laid, until they cover the target.
-    let (l_lo, l_hi) = FLOOD_LOBE_LENGTH;
+    let (l_lo, l_hi) = blend(FLOOD_LOBE_LENGTH, IO_FLOW_BREAKOUT_LENGTH);
     let mut j = 0u64;
     while area < target && lobes.len() < FLOOD_LOBES_MAX && j < 4 * FLOOD_LOBES_MAX as u64 {
         let base = 1_000 + 16 * j;
@@ -2224,6 +2319,7 @@ mod tests {
             }],
             composition: 0.0,
             id,
+            effusion: FLOOD_EFFUSION_RATE.0,
         }
     }
 
@@ -2279,6 +2375,7 @@ mod tests {
                 body_radius,
                 seed: 3,
                 hollow_reach: 40e3,
+                soft: false,
             };
             let (out, _, _) = flood_compute(
                 &layers,
@@ -2375,13 +2472,14 @@ mod tests {
             ponds: vec![sheet, lake],
             composition: 0.0,
             id: 9,
+            effusion: FLOOD_EFFUSION_RATE.0,
         };
         flood.area = flood
             .cells()
             .keys()
             .map(|&i| coarse.cell_area(coarse.cell(i as usize)) * body_radius * body_radius)
             .sum();
-        let lobes = flood_lobes(&flood, &coarse, &grid, body_radius, &ground, 3);
+        let lobes = flood_lobes(&flood, &coarse, &grid, body_radius, &ground, 3, 0.0);
         let mut stamper = Stamper::new(&grid);
         let cover = lobe_cover(&lobes, &grid, body_radius, flood.id, &mut stamper);
         let ratio = grid.face_size() / coarse.face_size();
@@ -2449,7 +2547,7 @@ mod tests {
             .keys()
             .map(|&i| coarse.cell_area(coarse.cell(i as usize)) * body_radius * body_radius)
             .sum();
-        let lobes = flood_lobes(&flood, &coarse, &grid, body_radius, &ground, 3);
+        let lobes = flood_lobes(&flood, &coarse, &grid, body_radius, &ground, 3, 0.0);
         assert!(lobes.len() > 3, "{} lobes", lobes.len());
         let area: f64 = lobes.iter().map(lobe_area).sum();
         assert!(

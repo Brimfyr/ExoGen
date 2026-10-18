@@ -211,7 +211,6 @@ pub struct FinishOutput {
     /// paterae over the history the surface remembers (F84).
     pub paterae: Vec<io::Patera>,
     pub mountains: Vec<io::Mountain>,
-    pub io_flows: Vec<io::FlowField>,
     pub plume_episodes: Vec<io::PlumeEpisode>,
     /// The small eruptions laid one by one over that history (F89).
     pub small_eruption_count: usize,
@@ -362,7 +361,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 95;
+pub const FINISH_VERSION: u64 = 96;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -404,6 +403,10 @@ pub fn run_coarse_loop(
     );
     let mut episodic = episodic::EpisodicProcess::new(graph, grid);
     let mut io = io::IoProcess::new(graph, grid);
+    // Io's lava erupts as floods, from its paterae (F117).
+    let mut io_floods = io
+        .as_ref()
+        .map(|_| volcanism::FloodProcess::for_io(graph, grid, &thermal));
     let ice_shell = ice_shell_history(graph, &thermal);
     let mut ice_shell_process = ice_shell::IceShellProcess::new(graph, grid);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
@@ -457,7 +460,28 @@ pub fn run_coarse_loop(
             f.note_resurfacing(&fill, e.event_time());
         }
         if let Some(i) = &mut io {
-            i.step(&mut layers, t0, t1, s % keep_every == 0 || s == steps);
+            let lay = s % keep_every == 0 || s == steps;
+            i.step(&mut layers, t0, t1, lay);
+            // Io's lava in the surface the step keeps: its paterae's eruptions of the last
+            // few centuries of millennia, floods as on any body (F117).
+            if lay && let Some(f) = &mut io_floods {
+                let eruptions = io::eruptions(graph, &i.paterae, &layers.bedrock, t1);
+                for (n, e) in eruptions.into_iter().enumerate() {
+                    f.apply(
+                        &mut layers,
+                        volcanism::FloodEvent {
+                            vent: grid.index(grid.locate(e.vent).0),
+                            volume: e.volume,
+                            time_gyr: t1 - e.age_yr * 1e-9,
+                            id: ((s as u64) << 32) | n as u64,
+                            effusion: e.effusion,
+                        },
+                    );
+                }
+            }
+            if lay {
+                i.cut_paterae(&mut layers, t1);
+            }
         }
         let boost = plume.as_ref().map(|p| p.vent_boost());
         let rise_vents = plume
@@ -568,7 +592,11 @@ pub fn run_coarse_loop(
             );
             (f.records, ridges, f.provinces)
         }
-        None => (Vec::new(), Vec::new(), Vec::new()),
+        None => (
+            io_floods.map_or_else(Vec::new, |f| f.records),
+            Vec::new(),
+            Vec::new(),
+        ),
     };
     let (lanes, lane_coverage, lane_core, episodes, polar_start, renewed_fraction) =
         match ice_shell_process {
@@ -806,10 +834,13 @@ pub fn finish(
         .filter(|s| s.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
+    // On Io the floods are the epoch's alone: each kept step erupts its own over the
+    // surface it lays afresh (F117).
+    let io_regime = io::is_io_regime(graph);
     let floods: Vec<volcanism::FloodRecord> = loop_output
         .floods
         .iter()
-        .filter(|f| f.time_gyr <= present + 1e-9)
+        .filter(|f| f.time_gyr <= present + 1e-9 && (!io_regime || present - f.time_gyr < 1e-3))
         .cloned()
         .collect();
     let ridges: Vec<ridges::RidgeRecord> = loop_output
@@ -865,19 +896,20 @@ pub fn finish(
         .filter(|m| m.alive(present))
         .cloned()
         .collect();
-    // The flow fields of the paterae alive at the epoch, traced over the finish's ground
-    // (F85).
-    let io_flows = if io::is_io_regime(graph) {
-        io::flow_fields(graph, &paterae, &mountains, &layers.bedrock)
-    } else {
-        Vec::new()
-    };
     // The Io regime's mountains and paterae are drawn whole at this resolution on the
     // buried plains the loop laid its coarse versions on (F87, F88), smoothed over the
     // loop's cell as the rest of the bedrock is, so nothing of the coarse ones is left.
     if let Some(io_base) = &loop_output.io_base {
         let coarse_cell_m = loop_output.grid.delta() * body_radius;
-        let smoothed = relaxation::low_pass(&io_base.resample(grid), cell, coarse_cell_m);
+        // The floods' coarse lava lies on the plains, smoothed with them, as the base
+        // carries it on every body, for their passes to take up (F117).
+        let mut plains = io_base.clone();
+        for f in &floods {
+            for (idx, c) in f.cells() {
+                plains.as_mut_slice()[idx as usize] += c.thickness;
+            }
+        }
+        let smoothed = relaxation::low_pass(&plains.resample(grid), cell, coarse_cell_m);
         layers.bedrock.as_mut_slice().copy_from_slice(&smoothed);
     }
     // The small eruptions between the paterae over the same history, laid one by one where
@@ -1152,7 +1184,6 @@ pub fn finish(
         Dome(usize),
         Patera(usize),
         Mountain(usize),
-        IoFlow(usize),
         Linea(usize),
         Groove(usize),
         PolarTerrain,
@@ -1225,13 +1256,11 @@ pub fn finish(
         events.push((d.time_gyr, 0, d.id ^ 0xD03E_0000_0000, Event::Dome(k)));
     }
     for (k, p) in paterae.iter().enumerate() {
-        events.push((present, 0, p.id, Event::Patera(k)));
+        // After the floods (F117).
+        events.push((present, 2, p.id, Event::Patera(k)));
     }
     for (k, m) in mountains.iter().enumerate() {
         events.push((present, 0, m.id, Event::Mountain(k)));
-    }
-    for (k, f) in io_flows.iter().enumerate() {
-        events.push((present, 0, f.id, Event::IoFlow(k)));
     }
     for (k, l) in lineae.iter().enumerate() {
         events.push((l.time_gyr, 0, l.id ^ 0x11CE_0000_0000, Event::Linea(k)));
@@ -1263,7 +1292,13 @@ pub fn finish(
         events.push((r.time_gyr, 0, r.id ^ 0x51D6_0000_0000, Event::Ridge(k)));
     }
     for (k, f) in floods.iter().enumerate() {
-        events.push((f.time_gyr, 0, f.id ^ 0x7F10_0000_0000, Event::Flood(k)));
+        // Io's lava runs over the paterae and mountains the step laid (F117), in the order
+        // it erupted.
+        if io_regime {
+            events.push((present, 1, f.id, Event::Flood(k)));
+        } else {
+            events.push((f.time_gyr, 0, f.id ^ 0x7F10_0000_0000, Event::Flood(k)));
+        }
     }
     for (k, s) in scarps.iter().enumerate() {
         events.push((s.time_gyr, 0, s.id ^ 0x5CA2_0000_0000, Event::Scarp(k)));
@@ -1361,10 +1396,6 @@ pub fn finish(
                 Event::Mountain(k) => {
                     let m = &mountains[*k];
                     (m.center, m.reach(cell) / body_radius + 2.0 * grid.delta())
-                }
-                Event::IoFlow(k) => {
-                    let f = &io_flows[*k];
-                    (f.center, f.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
                 Event::Linea(k) => {
                     let l = &lineae[*k];
@@ -1507,8 +1538,9 @@ pub fn finish(
                                     body_radius,
                                     seed: flood_seed,
                                     hollow_reach: 0.5 * graph.f64("cratering.loop_threshold"),
+                                    soft: io_regime,
                                 });
-                        let (out, taken, stats) = volcanism::flood_compute(
+                        let (mut out, taken, stats) = volcanism::flood_compute(
                             &layers,
                             &grid,
                             &loop_output.grid,
@@ -1519,6 +1551,16 @@ pub fn finish(
                             &base,
                             stamper,
                         );
+                        if io_regime {
+                            io::as_io_flow(
+                                &mut out,
+                                &layers,
+                                &grid,
+                                body_radius,
+                                floods[*k].id,
+                                (present - floods[*k].time_gyr) * 1e9,
+                            );
+                        }
                         Some((out, None, Some((taken, stats))))
                     }
                     Event::Shield(k) => {
@@ -1609,11 +1651,6 @@ pub fn finish(
                             &mountains[*k],
                             stamper,
                         );
-                        Some((out, None, None))
-                    }
-                    Event::IoFlow(k) => {
-                        let out =
-                            io::flow_compute(&layers, &grid, body_radius, &io_flows[*k], stamper);
                         Some((out, None, None))
                     }
                     Event::Groove(k) => {
@@ -1916,6 +1953,25 @@ pub fn finish(
             next_report = done + 10_000;
         }
     }
+    // Io's floods leave no generic lava (F117): a margin cell that took a flood's coarse
+    // lava in the resampling and that no pass reached keeps the plains.
+    if io_regime {
+        let now = (present - IO_SURFACE_AGE_GYR) as f32;
+        let units = layers.unit_id.as_mut_slice();
+        let ages = layers.surface_age.as_mut_slice();
+        let deep = layers.deep.as_mut_slice();
+        let melt = layers.melt.as_mut_slice();
+        let cover = layers.cover.as_mut_slice();
+        for k in 0..units.len() {
+            if units[k] == crate::units::UNIT_LAVA {
+                units[k] = crate::units::UNIT_PRIMORDIAL;
+                ages[k] = now;
+                deep[k] = 0.0;
+                melt[k] = 0.0;
+                cover[k] = 0.0;
+            }
+        }
+    }
     let replayed_count = replay.len();
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         eprintln!(
@@ -2131,7 +2187,6 @@ pub fn finish(
         domes,
         paterae,
         mountains,
-        io_flows,
         plume_episodes,
         small_eruption_count: small_eruptions.len(),
         lineae,
@@ -3253,7 +3308,7 @@ mod tests {
         let lo = &out.loop_output;
         assert!(lo.paterae.len() > 100, "{} paterae", lo.paterae.len());
         assert!(lo.mountains.len() > 20, "{} mountains", lo.mountains.len());
-        assert!(!out.finish.io_flows.is_empty() && !out.finish.plume_episodes.is_empty());
+        assert!(!out.finish.floods.is_empty() && !out.finish.plume_episodes.is_empty());
         assert!(
             out.finish.craters.is_empty(),
             "{} craters",

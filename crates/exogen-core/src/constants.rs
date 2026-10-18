@@ -304,6 +304,17 @@ pub const LAVA_COVER_DEPTH: f64 = 6.0;
 /// How far from its vent a flow can travel, m: the longest flood-basalt flows run a
 /// thousand kilometres or so (Tharsis, the Deccan), not around the body.
 pub const FLOOD_MAX_REACH: f64 = 1.5e6;
+/// How fast an eruption pours out its lava sets the form of its flows (F117): slowly, a
+/// compound field of many short broad breakouts off narrow insulated paths; fast, a few
+/// long sheet lobes (Walker 1971: compound flows from the slow effusion of fluid lava,
+/// fewer flow units from faster). Io's Prometheus laid thin compound pahoehoe at 49 m³/s
+/// on average (Davies et al. 2006); Tharsis's long flows came at 3,000 to 35,000 m³/s
+/// (Peters et al. 2021) and the Imbrium flows at 1e5 to 1e6 (Wilson and Head 2024). An
+/// eruption is wholly compound at or below the first rate and wholly sheets at or above
+/// the second, between them by the logarithm (stated choices); a flood's rate is
+/// log-uniform over the flood lavas' range, m³/s.
+pub const LAVA_COMPOUND_RATE: (f64, f64) = (300.0, 1e4);
+pub const FLOOD_EFFUSION_RATE: (f64, f64) = (1e4, 1e6);
 /// Lakes one flood may fill, each spilling the rest of its lava on over its lowest pass
 /// into the next low (audit W7); what is left after the last does not flow on. A stated
 /// choice, larger than a cascade of lows down a rise's flank needs.
@@ -708,6 +719,22 @@ pub const IO_PATERA_POLAR_WEIGHT: f64 = 0.3;
 pub const IO_PATERA_DIAMETER: (f64, f64) = (34.5e3, 0.59);
 pub const IO_PATERA_DIAMETER_RANGE: (f64, f64) = (2.5e3, 210e3);
 pub const IO_PATERA_DEPTH: f64 = 1_200.0;
+/// A patera collapses piecemeal (F117): besides its first collapse, this many more of
+/// this share of its size, set off from its centre in any direction by this share of its
+/// size, so that they break out of the first and its margin is a run of arcs of
+/// different curvature meeting at corners, as coalescing collapses leave Io's paterae
+/// (Radebaugh et al. 2001: margins scalloped, straight or irregular, few smooth); and its
+/// margin wanders off those arcs by this share of its radius, at every scale from a
+/// quarter of its outline down. The size of the patches its floor's lava lies in, as a
+/// share of its radius: a lake's crust in patches from its last overturn up to
+/// IO_FLOW_ACTIVE_YR old (Loki's lake overturns in a wave every 540 days or so, Rathbun et
+/// al. 2002), a quiet floor's up to twice older or younger than its age. The counts and
+/// shares are stated choices.
+pub const IO_PATERA_PIECES: (u64, u64) = (2, 5);
+pub const IO_PATERA_PIECE_SIZE: (f64, f64) = (0.45, 0.9);
+pub const IO_PATERA_PIECE_OFFSET: (f64, f64) = (0.3, 0.7);
+pub const IO_PATERA_WANDER: f64 = 0.06;
+pub const IO_FLOOR_PATCH_SHARE: f64 = 0.3;
 pub const IO_PATERA_WALL_SLOPE_DEG: f64 = 70.0;
 pub const IO_PATERA_FAULTED_SHARE: f64 = 0.42;
 /// The ratio of a patera's long axis to its short (F90): its logarithm half-normal with
