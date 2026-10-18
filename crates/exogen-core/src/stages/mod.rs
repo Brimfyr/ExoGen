@@ -2888,6 +2888,64 @@ mod tests {
 
     /// Mars raises one plume: a rise kilometres high with shields on it, a canyon
     /// kilometres deep on its flank, graben, and lava concentrated around it.
+    /// Diagnostic: each of Mars's canyons with its window, carved depth and the relief it
+    /// keeps below its rims at a quarter, half and three quarters along its trace, and the
+    /// shields' starts; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_mars_canyon_relief() {
+        let mut r = Runner::new();
+        let quality = std::env::var("EXOGEN_QUALITY").unwrap_or_else(|_| "preview".into());
+        let g = preset_graph("Mars", &quality);
+        let out = r.run(&g, &NoProgress).unwrap();
+        let lo = &out.loop_output;
+        let grid = out.finish.grid;
+        let radius = g.f64("body.radius");
+        let height = out.finish.height.as_slice();
+        let at = |d: [f64; 3]| height[grid.index(grid.locate(d).0)] as f64;
+        let relief = |canyon: &plume::Trough, share: f64| {
+            let k = ((canyon.points.len() - 2) as f64 * share) as usize;
+            let (mid, next) = (canyon.points[k], canyon.points[k + 1]);
+            let t = crate::geom::normalize([next[0] - mid[0], next[1] - mid[1], next[2] - mid[2]]);
+            let n = crate::geom::normalize(crate::geom::cross(mid, t));
+            let side = |s: f64| {
+                let d = canyon.width * s / radius;
+                at(crate::geom::normalize([
+                    mid[0] + d * n[0],
+                    mid[1] + d * n[1],
+                    mid[2] + d * n[2],
+                ]))
+            };
+            let rim = |sign: f64| {
+                [1.0, 1.5, 2.0, 2.5]
+                    .iter()
+                    .map(|&s| side(sign * s))
+                    .fold(f64::NEG_INFINITY, f64::max)
+            };
+            0.5 * (rim(1.0) + rim(-1.0)) - at(mid)
+        };
+        println!("shields start: {:?}", lo.shields.iter().map(|s| (s.start_gyr * 100.0).round() / 100.0).collect::<Vec<_>>());
+        println!("start end depth_m width_km | relief_m at 1/4 1/2 3/4");
+        let mut canyons: Vec<&plume::Trough> = lo.canyons.iter().collect();
+        canyons.sort_by(|a, b| a.start_gyr.total_cmp(&b.start_gyr));
+        let mut deepest = f64::NEG_INFINITY;
+        for c in canyons {
+            let rel: Vec<f64> = [0.25, 0.5, 0.75].iter().map(|&f| relief(c, f)).collect();
+            deepest = rel.iter().cloned().fold(deepest, f64::max);
+            println!(
+                "{:.2} {:.2} {:.0} {:.0} | {:.0} {:.0} {:.0}",
+                c.start_gyr,
+                c.end_gyr,
+                c.depth,
+                c.width / 1e3,
+                rel[0],
+                rel[1],
+                rel[2]
+            );
+        }
+        println!("deepest standing {deepest:.0} m");
+    }
+
     #[test]
     fn mars_raises_a_rise_with_shields_and_a_canyon() {
         let mut r = Runner::new();
@@ -2964,8 +3022,8 @@ mod tests {
         // Some trough the loop carried still stands well over a kilometre deep below the
         // plateau either side, the rims being the highest ground within a few widths past
         // the en-echelon neighbours; a later flood may have filled another. The canyons
-        // open as the dome rises (F116), and the rise's eruptions before its shields take
-        // them fill them in part (audit M14).
+        // open as the dome rises (F116), and the rise's eruptions fill them in part until
+        // its shields gather its dikes as its stretching wanes (F119).
         let relief = |canyon: &plume::Trough| {
             let mid = canyon.midpoint();
             let next = canyon.points[canyon.points.len() / 2 + 1];
@@ -2992,7 +3050,7 @@ mod tests {
             .iter()
             .map(relief)
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(deepest > 1_500.0, "deepest standing trough {deepest} m");
+        assert!(deepest > 2_200.0, "deepest standing trough {deepest} m");
         // The Moon raises none.
         let moon = r
             .run(&preset_graph("Moon", "preview"), &NoProgress)

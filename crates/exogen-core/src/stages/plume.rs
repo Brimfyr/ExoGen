@@ -32,7 +32,7 @@ use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 15;
+pub const VERSION: u64 = 16;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -442,27 +442,39 @@ pub fn shield_progress(t: f64, start: f64) -> f64 {
     }
 }
 
-/// A shield's volume up to its shape's constant: its area times its height.
-fn shield_volume(shield: &Shield) -> f64 {
-    shield.radius * shield.radius * shield.height
+/// The share of a rise's dikes its shields' loads gather by a time (F119), and so the share
+/// of its eruptions its shields take (F108). A rising dike bends toward a volcano's load,
+/// from several of its widths away where the load's pressure outweighs the regional
+/// differential stress, a feedback between the edifice and the ground it draws dikes from
+/// (Muller, Ito and Martel 2001). While a rise's dome grows it stretches its lithosphere,
+/// its faults and dike swarms taking up the stretching (F105, F113, F116), and its dikes
+/// run along that stress to erupt as fissure floods; as the growth slows the stress falls
+/// and the loads gather the dikes. The stress follows the growth's rate, as the faults do,
+/// and the shields gather the share by which it has fallen from its peak (a stated choice,
+/// for the comparison of pressures whose magnitudes the loop does not carry): none while
+/// the growth quickens, all once it has stopped (Carr and Head 2010: Mars's volcanism
+/// gathered at the large shields of Tharsis and Elysium in the Amazonian, after the
+/// widespread plains volcanism of the Hesperian).
+pub fn rise_focus(rise: &Rise, t: f64) -> f64 {
+    let span = rise.end_gyr - rise.start_gyr;
+    if span <= 0.0 {
+        return if t >= rise.end_gyr { 1.0 } else { 0.0 };
+    }
+    let x = ((t - rise.start_gyr) / span).clamp(0.0, 1.0);
+    if x <= 0.5 {
+        0.0
+    } else {
+        // One less the growth's rate against its peak, 4 x (1 - x).
+        (2.0 * x - 1.0).powi(2)
+    }
 }
 
-/// The share of a rise's eruptions its shields take by a time (F108): those of the shields
-/// that have started, each its share of their volume. A shield's conduits, once open,
-/// carry the magma that reaches the rise beneath it, as much as the shield is to grow by
-/// (Carr and Head 2010: Mars's volcanism gathered at the large shields of Tharsis and
-/// Elysium in the Amazonian, after the widespread plains volcanism of the Hesperian).
-pub fn shield_capture(shields: &[&Shield], t: f64) -> f64 {
-    let volume: f64 = shields.iter().map(|s| shield_volume(s)).sum();
-    if volume <= 0.0 {
-        return 0.0;
-    }
-    shields
-        .iter()
-        .filter(|s| t > s.start_gyr)
-        .map(|s| shield_volume(s))
-        .sum::<f64>()
-        / volume
+/// When a rise's shield starts (F119): once its rise's shields gather as much of its dikes
+/// as the larger shields before it hold, a share of their volume, so that the largest
+/// starts as the dome's growth turns and the rest follow as the stretching wanes.
+pub fn shield_start(rise: &Rise, before: f64) -> f64 {
+    let x = 0.5 * (1.0 + before.clamp(0.0, 1.0).sqrt());
+    rise.start_gyr + x * (rise.end_gyr - rise.start_gyr)
 }
 
 /// Where a dike swarm starts (F113, F116): its source's centre and radius, how far its
@@ -908,13 +920,26 @@ impl PlumeProcess {
                 (shield_count / 2).max(1)
             };
             let (east, north) = local_basis(rise.center);
-            for k in 0..n_here as u64 {
-                let draw = 100 + sid * 16;
-                // The largest first, then down a power law.
+            // The largest first, then down a power law.
+            let size = |k: usize| {
                 let rank = k as f64 + 1.0;
                 let diameter = SHIELD_MAX_DIAMETER_FRACTION * 2.0 * rise.radius / rank.powf(0.5);
                 let radius = 0.5 * diameter;
-                let height = (radius * SHIELD_SLOPE_DEG.to_radians().tan()).min(relief_limit);
+                (
+                    radius,
+                    (radius * SHIELD_SLOPE_DEG.to_radians().tan()).min(relief_limit),
+                )
+            };
+            // Each starts once the rise's shields gather what the larger ones hold (F119).
+            let volume = |k: usize| {
+                let (r, h) = size(k);
+                r * r * h
+            };
+            let total: f64 = (0..n_here).map(volume).sum();
+            let mut before = 0.0;
+            for k in 0..n_here as u64 {
+                let draw = 100 + sid * 16;
+                let (radius, height) = size(k as usize);
                 let mut center = rise.center;
                 for attempt in 0..24u64 {
                     let dist = rise.radius
@@ -947,13 +972,13 @@ impl PlumeProcess {
                     center,
                     radius,
                     height,
-                    start_gyr: SHIELD_START_GYR.0
-                        + (SHIELD_START_GYR.1 - SHIELD_START_GYR.0) * rng.uniform(draw, 14),
+                    start_gyr: shield_start(rise, before / total.max(f64::MIN_POSITIVE)),
                     calderas,
                     rift,
                     elongation: 1.0 + (SHIELD_ELONGATION_MAX - 1.0) * rng.uniform(draw, 15),
                     id: sid,
                 });
+                before += volume(k as usize);
                 sid += 1;
             }
         }
@@ -1405,7 +1430,11 @@ impl PlumeProcess {
                 .collect();
             out.push(RiseVent {
                 dome: dome_cells,
-                capture: shield_capture(&mine, 0.5 * (t0 + t1)),
+                capture: if mine.is_empty() {
+                    0.0
+                } else {
+                    rise_focus(rise, 0.5 * (t0 + t1))
+                },
             });
         }
         out
@@ -3494,24 +3523,38 @@ mod tests {
     }
 
     #[test]
-    fn shields_take_a_rise_s_eruptions_as_they_start() {
-        // F108: none before the first shield starts, then each started shield's share of
-        // their volume.
-        let shield = |radius: f64, start: f64| Shield {
+    fn a_rise_s_shields_gather_its_dikes_as_its_stretching_wanes() {
+        // F119: none while the dome's growth quickens, then the share by which its rate has
+        // fallen from its peak, all once it has stopped; each shield starts when that share
+        // reaches what the larger ones hold, the largest as the growth turns.
+        let rise = Rise {
             center: [1.0, 0.0, 0.0],
-            radius,
-            height: 0.0875 * radius,
-            start_gyr: start,
-            calderas: Vec::new(),
-            rift: 0.0,
-            elongation: 1.0,
-            id: 0,
+            radius: 2.5e6,
+            height: 7e3,
+            start_gyr: 0.3,
+            end_gyr: 1.5,
+            paleo_latitude: 0.0,
+            axis: [0.0, 0.0, 1.0],
         };
-        let (big, small) = (shield(300e3, 1.0), shield(100e3, 2.0));
-        let at = |t: f64| shield_capture(&[&big, &small], t);
-        assert_eq!(at(0.9), 0.0);
-        assert!((at(1.5) - 27.0 / 28.0).abs() < 1e-12, "{}", at(1.5));
-        assert!((at(2.5) - 1.0).abs() < 1e-12, "{}", at(2.5));
+        let at = |t: f64| rise_focus(&rise, t);
+        assert_eq!(at(0.2), 0.0);
+        assert!(at(0.9) < 1e-12, "{}", at(0.9));
+        assert!((at(1.2) - 0.25).abs() < 1e-12, "{}", at(1.2));
+        assert_eq!(at(1.6), 1.0);
+        assert!((shield_start(&rise, 0.0) - 0.9).abs() < 1e-12);
+        for share in [0.1, 0.57, 0.9] {
+            let t = shield_start(&rise, share);
+            assert!((at(t) - share).abs() < 1e-12, "{share}: {t} {}", at(t));
+        }
+        assert!((shield_start(&rise, 1.0) - 1.5).abs() < 1e-12);
+        // A rise raised at once gathers all after it.
+        let sudden = Rise {
+            start_gyr: 4.0,
+            end_gyr: 4.0,
+            ..rise
+        };
+        assert_eq!(rise_focus(&sudden, 3.9), 0.0);
+        assert_eq!(rise_focus(&sudden, 4.1), 1.0);
     }
 
     #[test]
@@ -3610,8 +3653,9 @@ mod tests {
             cratered.step(&mut pitted, t0, t1);
         }
         let (on_now, off_now) = (left(&flat, &pitted, flank), left(&flat, &pitted, beyond));
+        // Riding up on the shield it would keep its depth; buried it keeps a tenth or so.
         assert!(
-            on > 500.0 && on_now < 0.1 * on,
+            on > 500.0 && on_now < 0.15 * on,
             "on the flank {on} m, now {on_now} m"
         );
         assert!(

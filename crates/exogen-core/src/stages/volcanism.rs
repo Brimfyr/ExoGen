@@ -496,6 +496,14 @@ impl FloodProcess {
             None
         };
         let share = kept.as_ref().map_or(1.0, |k| k.1);
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            let full: f64 = bins.iter().map(|&(_, b0, b1)| self.budget(b0, b1)).sum();
+            eprintln!(
+                "floods {t0:.3} to {t1:.3}: budget {:.4e} km3, the shields take {:.4}",
+                full / 1e9,
+                1.0 - share
+            );
+        }
         let step_budget: f64 = bins
             .iter()
             .map(|&(_, b0, b1)| self.budget(b0, b1))
@@ -2145,20 +2153,25 @@ mod tests {
     #[test]
     #[ignore]
     fn print_eruptive_history() {
-        for name in ["Moon", "Mercury", "Mars"] {
+        for name in ["Moon", "Mercury", "Mars", "Venus", "Io"] {
             let (g, _) = preset(name).unwrap().to_graph();
             let thermal = ThermalHistory::from_graph(&g);
             let grid = CubeSphere::new(8);
-            let p = FloodProcess::new(&g, grid, &thermal, &[]).unwrap();
+            let Some(p) = FloodProcess::new(&g, grid, &thermal, &[]) else {
+                println!("{name}: its volcanism is handled elsewhere");
+                continue;
+            };
             println!(
-                "{name}: t  lithosphere_km  magma_m3_s  strain  eruptive  budget_km3_per_0.1Gyr"
+                "{name}: t  lithosphere_km  elastic_km  heat_mW  magma_m3_s  strain  eruptive  budget_km3_per_0.1Gyr"
             );
             let mut t = 0.0;
             while t < g.f64("body.age") {
                 let s = thermal.at(t);
                 println!(
-                    "  {t:.1}  {:.0}  {:.2}  {:.2e}  {:.3}  {:.3e}",
+                    "  {t:.1}  {:.0}  {:.0}  {:.0}  {:.2}  {:.2e}  {:.3}  {:.3e}",
                     s.lithosphere / 1e3,
+                    s.elastic / 1e3,
+                    s.heat_flux * 1e3,
                     s.magma_rate,
                     2.0 * s.contraction / p.body_radius,
                     p.eruptive_fraction(t),

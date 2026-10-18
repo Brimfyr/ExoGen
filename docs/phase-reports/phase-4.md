@@ -1147,3 +1147,27 @@ Revised after the forty-ninth was committed, when the renders at high quality sh
 - **A residue.** The plains were smoothed together with the floods' coarse lava, which the passes take up unsmoothed; they now carry that lava just as the passes take it up.
 
 And every Io flood is now drawn as its flows: a flood its successors bury on the loop's cells was drawn by its coarse outline, but on Io its successors' lobes leave gaps it shows through. Io's flows now cover 19.9 percent and the plains 74.5; every other body is unchanged, Mars to the pixel. Tests 190 (six ignored), one new: on an open slope a soft flood lays its sheets with no lake below its pond's level and no terrace, and a closed bowl at its vent fills to where it spills. Clippy is clean and validate passes its 117 checks.
+
+## The fiftieth milestone: a rise's shields gather its dikes (audit M14)
+
+Asked for by the user after the forty-eighth, with M20: the canyons' fill, the floods' share of a rise's eruptions falling as the lithosphere thickens and the shields starting at that threshold.
+
+- **F119, a rise's shields gather its dikes as its stretching wanes.** A rising dike bends toward a volcano's load where the load's pressure outweighs the regional differential stress (Muller, Ito and Martel 2001). While a rise's dome grows its dikes run along the stretching and erupt as fissure floods; as the growth slows, its shields take the share of its eruptions by which the growth's rate has fallen from its peak, each starting as that share reaches what the larger ones hold, the largest as the growth turns.
+
+How it went:
+
+- **The lithosphere threshold, tested first.** The thermal histories show no threshold that holds across the bodies: the Moon's maria erupted as floods through a lithosphere the model makes 210 to 320 km thick; Io's floods rise through a thick lithosphere its volcanism keeps cold (O'Reilly and Davies 1981); a threshold set at Mars's turn, its thermal lithosphere about 100 km, would never start Venus's shields on its 65 to 71 km. A volcano's height does not follow the lithosphere's thickness in any simple way (Wilson, Head and Parfitt 1992), so it could not set when shields can grow; by my estimate from the distance over which a dike's walls cool its flow, u w^2 / kappa, a basaltic dike a metre wide stays open across 100 km of cold lithosphere, so freezing could not set it either; and the flood basalts' high eruption rates (White, Crisp and Spera 2006) are long-term rates the maria fall short of.
+- **The load against the stretching.** The control that holds is the one between a volcano's load and the regional stress, which the model already has in the rise's growth: its faults and swarms follow the growth's rate (F116), and the shields now follow its fall.
+
+What the maps show:
+
+- **Mars:** its shields start in order of size from 0.90 to 1.48 Gyr, and take 25.7 percent of its eruptive budget, their share rising from the dome's turn; the floods on the rise stop as it stops growing. At the standard quality Mars's 19 canyons keep a median 914 m below their rims at a quarter, a half and three quarters along them, half their carved depth, where they had kept 705 m, 38 percent; those opened after 0.4 Gyr gain the most, and 6 of the 57 points lie buried flush, against 9.
+- **Venus:** its shields still take all that erupts on its rises after its resurfacing; its floods are as many and cover as much, their margins falling a little differently.
+- **Every other body:** unchanged.
+
+Still to do:
+
+- **The early canyons**, opened during the dome's growth with its floods, stay filled: the faults and the floods both follow the growth.
+- **The shields' size from the magma they take**, rather than their own rule.
+
+Tests 190 (seven ignored, one of them a new diagnostic printing Mars's canyons' relief). The shields' test now reads the stretching: none while the growth quickens, the share by which its rate has fallen after, all once it has stopped, each shield starting at the share the larger ones hold; Mars's deepest standing canyon is held to 2.2 km at the preview quality; and a crater on the flank of Mars's largest shield, which now starts as the dome turns, keeps 86 m of its 852, where the test had allowed a tenth: it allows 15 percent now, a crater riding up on the shield keeping all its depth. Clippy is clean and validate passes its 117 checks.
