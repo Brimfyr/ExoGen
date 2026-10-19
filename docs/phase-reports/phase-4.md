@@ -1398,3 +1398,33 @@ Still to do:
 - **Ganymede's lanes and polar caps**, as above.
 
 Tests 204 (12 ignored). Three are new: a straight margin covers a cell by its share; rays end a quarter of the way round, whole near the crater and at the Moon's longest rays' length; a basin's rays are a large crater's scaled up. Ceres's test holds its salted floors to partial cover at their margins. Clippy is clean and validate passes its 115 checks.
+
+## The fifty-ninth milestone: a ray is the clusters of its secondaries
+
+Asked for by the user after the fifty-eighth's revision ("Is the seed 75 rayed ejecta correct though or are we just capping a wrong number? In globe view it still looks ridiculous."): the ray fit, measured on craters up to 85 km across, had been carried to a 378 km basin, and every ray, a smooth band of fixed angular width, saturated into a solid wedge across the hemisphere it faced. The user agreed to draw rays from their secondaries, on every body that shows rays.
+
+- **F128.** A ray is the clusters its fragments' secondaries make: chains of secondaries sized from the largest a crater throws (Croft 1992) and shrinking outward, opening downrange in the herringbone's V, falling in proportion to what the fragments excavate so that Elliott et al.'s ray lengths hold on average; the secondaries the finish stamps are bright where they lie; and beyond Tycho's size a crater's rays are shorter in its own radii, from Tycho's to Orientale's.
+
+How it went:
+
+- **The prototype first.** One crater's rays on flat ground, drawn smooth and as clusters, showed a Tycho's rays breaking into chains and flecks with ground between them, and a basin's still solid near the crater, as a fresh crater's near rays are.
+- **Self-similar was not enough.** In the engine the basin's rays kept their solid wedges: scaled with the crater, its rays saturate out to some twelve of its radii, and on the Moon that is most of a hemisphere. Thinning the fragments that land near the quarter-round limit, rather than dimming the ray, broke the ends into clusters but left the wedges.
+- **What a basin's rays are.** Singer et al. (2020) find the largest fragments falling off ever more steeply with their speed for larger craters, so a basin's far ejecta are too fine to make secondaries that show; Orientale's secondary chains reach some 2,000 km, four of its radii, where Tycho's median ray is eighteen of its. A fit between the two shortens the seed's basin's median ray from 3,400 km to 1,400 km: a bright halo some 30 degrees across and rays that break into clusters beyond.
+- **Mars and the icy worlds.** The user asked whether the change reaches every body. It does, as one process: the icy worlds' rays break into clusters under their lag as the Moon's do, Ceres's barely change, its lag hiding them, and Europa has few young craters to throw them. Mars's map did not change: above 100 Pa nothing weathers its ground, so a ray has no mature ground to freshen, though its rays are still drawn, for an airless body's 1.5 Gyr, its 6 mbar being under the rays' 1 kPa threshold.
+
+What the maps show:
+
+- **The Moon at seed 75:** its 378 km basin a bright halo some 30 degrees across, its rays solid near the crater and broken into clusters and chains beyond, the far side free of them, where the last commit's wedges covered the hemisphere it faces.
+- **The default Moon:** its Tycho-sized crater's rays clustered streaks with ground between them, where they were smooth bands; a quarter of the map changed by more than 0.005, about as much brighter as darker, its mean 0.125 against 0.124.
+- **Callisto:** its largest young crater's sweeping rays shorter and broken into clusters; its map 0.244 against 0.247, 28 percent of it changed.
+- **Ganymede:** its rays broken into clusters across the dark terrain; half its map changed, about as much brighter as darker, its mean 0.492 as it was.
+- **Mercury, Ceres and Europa:** within 0.001 of what they were: Mercury's rays fade in 150 Myr, so few of its craters keep them; Ceres's lag hides its rays; Europa has few young craters.
+- **Mars:** as it was, its ground unweathered above 100 Pa, so its rays cannot show.
+
+Still to do:
+
+- **Mars's two thresholds**: nothing weathers its ground above 100 Pa, yet its rays last as on an airless body below 1 kPa, so it draws rays that cannot show; real Martian rays barely show in visible light (Tornabene et al. 2006). The climate's (Phase 5).
+- **Secondaries stamped along the whole ray**, not only a loop crater's near ones.
+- **The rays' cost**, 23 s on the Moon where it was 9.
+
+Tests 205 (12 ignored). One is new: a ray is the clusters of its secondaries, carrying what the fragments excavate and leaving the ground between them far out. The basin's test of the fifty-eighth now holds a basin's rays shorter in its own radii, Orientale's some 2,000 km. Clippy is clean and validate passes its 115 checks.

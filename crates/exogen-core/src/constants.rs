@@ -1683,11 +1683,42 @@ pub const CURTAIN_EDGE_ORDER: f64 = 11.0;
 pub const RAY_LENGTH_COEFF_KM: f64 = 6.59;
 pub const RAY_LENGTH_EXPONENT: f64 = 1.27;
 /// The largest crater radius the lunar fit was measured on, km (Tycho, 85 km across).
-/// Beyond it the rays scale with the crater (F127): a large crater's ejecta are
-/// self-similar (the gravity regime), its fragments and secondaries as much larger as its
-/// ejecta are thicker, so its secondaries cover the same share of the ground at the same
-/// distance in crater radii, where the fit carried on would make a basin's ever denser.
+/// Beyond it a crater's rays are shorter in its own radii the larger it is (F128): its
+/// largest fragments fall off ever more steeply with their speed (Singer et al. 2020: the
+/// exponent from about -0.3 for kilometre craters to -3 for basins), so a basin's
+/// far-flung ejecta are too fine to make secondaries that show. The median ray grows as
+/// the radius to RAY_LENGTH_LARGE_EXPONENT, a fit from Tycho's 773 km to Orientale's
+/// secondary chains, lines of 10 to 30 km craters reaching some 2,000 km from its centre,
+/// 465 km in radius (Wilhelms; the extent a stated reading).
 pub const RAY_LENGTH_MAX_RADIUS_KM: f64 = 42.5;
+pub const RAY_LENGTH_LARGE_EXPONENT: f64 = 0.4;
+/// A ray is the clusters its fragments' secondaries make (F128). The largest secondary is
+/// SECONDARY_MAX_COEFF_KM (D / km)^SECONDARY_MAX_EXPONENT km for a crater D across (Croft
+/// 1992, one fit for the Moon, Mercury, Mars and Ganymede), placed at the continuous
+/// blanket's edge, where the largest lie (a stated choice); farther out the fragments
+/// left faster and are smaller (Singer et al. 2020: the largest
+/// fragment falls as the ejection speed to a power between -0.3 and -3, steeper for larger
+/// craters), here as the distance to -SECONDARY_SIZE_FALL, the speed to -1 at a flat
+/// ballistic range, a stated middle.
+pub const SECONDARY_MAX_COEFF_KM: f64 = 0.07;
+pub const SECONDARY_MAX_EXPONENT: f64 = 0.87;
+pub const SECONDARY_SIZE_FALL: f64 = 0.5;
+/// A cluster is RAY_CLUSTER_WIDTH of those secondaries wide and RAY_CLUSTER_ASPECT times as
+/// long along the radial, a chain, opening downrange by RAY_CLUSTER_SPLAY of its width per
+/// length, the herringbone's V that points back at the crater (Oberbeck and Morrison
+/// 1973); it excavates the area of its footprint. Where the jets' excavated area per area
+/// passes RAY_CLUSTER_CAP their clusters overlap into a solid ray and the rest of it is
+/// drawn smooth; below RAY_CLUSTER_LEAST none shows. Stated choices.
+pub const RAY_CLUSTER_WIDTH: f64 = 3.0;
+pub const RAY_CLUSTER_ASPECT: f64 = 3.0;
+pub const RAY_CLUSTER_SPLAY: f64 = 0.6;
+pub const RAY_CLUSTER_CAP: f64 = 3.0;
+pub const RAY_CLUSTER_LEAST: f64 = 0.005;
+/// A cluster is drawn at least this many cells wide, by its share, so that one finer than
+/// the grid is not aliased into a speck; and a crater draws at most RAY_CLUSTER_MAX
+/// clusters, larger ones past that, to bound the cost.
+pub const RAY_CLUSTER_DRAW_CELLS: f64 = 1.2;
+pub const RAY_CLUSTER_MAX: usize = 40_000;
 pub const RAY_DENSITY_SLOPE: f64 = 3.48;
 /// Downrange ejecta leave 20 to 40% faster than uprange ejecta in oblique impacts
 /// (Anderson et al. 2003): the speed factor 1 + RAY_DOWNRANGE_SPEED cos(angle) cos(azimuth

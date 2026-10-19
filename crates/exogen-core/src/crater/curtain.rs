@@ -23,9 +23,12 @@
 
 use crate::constants::{
     CONTINUOUS_EJECTA_MULTIPLE, CURTAIN_EDGE_ORDER, CURTAIN_ORDERS, CURTAIN_SLOPE, CURTAIN_SPREAD,
-    RAY_CLUMPING, RAY_DENSITY_SLOPE, RAY_DOWNRANGE_SPEED, RAY_LENGTH_COEFF_KM, RAY_LENGTH_EXPONENT,
-    RAY_LENGTH_MAX_RADIUS_KM, RAY_VISIBLE, RAY_WARP,
+    RAY_CLUMPING, RAY_CLUSTER_ASPECT, RAY_CLUSTER_CAP, RAY_CLUSTER_LEAST, RAY_CLUSTER_MAX,
+    RAY_CLUSTER_WIDTH, RAY_DENSITY_SLOPE, RAY_DOWNRANGE_SPEED, RAY_LENGTH_COEFF_KM,
+    RAY_LENGTH_EXPONENT, RAY_LENGTH_LARGE_EXPONENT, RAY_LENGTH_MAX_RADIUS_KM, RAY_VISIBLE,
+    RAY_WARP, SECONDARY_MAX_COEFF_KM, SECONDARY_MAX_EXPONENT, SECONDARY_SIZE_FALL,
 };
+use crate::crater::production::poisson;
 use crate::crater::stamp::ejecta_modulation;
 use crate::rng::Rng;
 
@@ -309,15 +312,16 @@ pub struct Rays {
 
 /// The median ray length, m, of a crater of radius `radius`, m: Elliott et al. (2018)'s
 /// lunar fit, RAY_LENGTH_COEFF_KM (R / km)^RAY_LENGTH_EXPONENT, up to the largest crater
-/// it was measured on, and beyond, self-similar, as many crater radii as that crater's
-/// (F127).
+/// it was measured on, and beyond, growing more slowly than the crater, as the radius to
+/// RAY_LENGTH_LARGE_EXPONENT (F128).
 pub fn ray_length(radius: f64) -> f64 {
     let fit = |r_km: f64| RAY_LENGTH_COEFF_KM * r_km.powf(RAY_LENGTH_EXPONENT);
     let r_km = radius / 1e3;
     let km = if r_km <= RAY_LENGTH_MAX_RADIUS_KM {
         fit(r_km)
     } else {
-        fit(RAY_LENGTH_MAX_RADIUS_KM) * r_km / RAY_LENGTH_MAX_RADIUS_KM
+        fit(RAY_LENGTH_MAX_RADIUS_KM)
+            * (r_km / RAY_LENGTH_MAX_RADIUS_KM).powf(RAY_LENGTH_LARGE_EXPONENT)
     };
     km * 1e3
 }
@@ -371,6 +375,122 @@ impl Rays {
         self.radius
             * (self.scale * self.curtain.peak_reach / self.least).powf(1.0 / RAY_DENSITY_SLOPE)
     }
+
+    /// The area the fragments thrown toward `launch` excavate per unit area at distance
+    /// `r`, m, before the skin and the bursts: what `excavated` saturates.
+    fn launch_area(&self, r: f64, launch: f64) -> f64 {
+        let reach = self.curtain.speed(launch).powi(2);
+        self.scale
+            * self.curtain.mass(launch)
+            * (r / (self.radius * reach)).powf(-RAY_DENSITY_SLOPE)
+    }
+
+    /// The area the fragments excavate per unit area at distance `r`, m, and azimuth `phi`
+    /// from the centre, before the skin and the bursts (F128); none inside the rim.
+    pub fn area(&self, r: f64, phi: f64) -> f64 {
+        if r <= self.radius {
+            return 0.0;
+        }
+        let launch = self.curtain.launch_azimuth(phi, (r / self.radius).ln());
+        self.launch_area(r, launch)
+    }
+
+    /// The footprint, m across and along the radial, of a cluster of secondaries at
+    /// distance `r`, m: RAY_CLUSTER_WIDTH of the largest there wide, RAY_CLUSTER_ASPECT
+    /// times as long, and no narrower than `least`.
+    pub fn cluster_size(&self, r: f64, least: f64) -> (f64, f64) {
+        let w =
+            (RAY_CLUSTER_WIDTH * largest_secondary(2.0 * self.radius, r / self.radius)).max(least);
+        (w, RAY_CLUSTER_ASPECT * w)
+    }
+
+    /// The clusters of secondaries the jets' fragments make between the rim and `reach`, m
+    /// (F128): each carries the area its footprint excavates, and they fall at random in
+    /// proportion to the area the fragments excavate there, up to RAY_CLUSTER_CAP per
+    /// area, each on its jet's bent path, so that on average they excavate what the
+    /// fragments do, and a ray far out breaks into its clusters with ground between them.
+    /// `least` is the narrowest cluster drawn; past RAY_CLUSTER_MAX the clusters are
+    /// larger and fewer; `thin` is the share of the fragments that still land by distance,
+    /// m, the rest scattered (F127). The same `seed` gives the same clusters.
+    pub fn clusters(
+        &self,
+        seed: u64,
+        reach: f64,
+        least: f64,
+        thin: &dyn Fn(f64) -> f64,
+    ) -> Vec<Cluster> {
+        const AZIMUTHS: usize = 360;
+        let x_max = (reach / self.radius).max(1.0).ln();
+        let bins = ((x_max / 0.04).ceil() as usize).max(1);
+        let dx = x_max / bins as f64;
+        let dphi = 2.0 * std::f64::consts::PI / AZIMUTHS as f64;
+        let mut expected = vec![0.0f64; bins * AZIMUTHS];
+        for (i, row) in expected.chunks_mut(AZIMUTHS).enumerate() {
+            let r = self.radius * ((i as f64 + 0.5) * dx).exp();
+            let (w, l) = self.cluster_size(r, least);
+            let bin = r * r * dx * dphi;
+            let landing = thin(r);
+            for (j, n) in row.iter_mut().enumerate() {
+                let a =
+                    (landing * self.launch_area(r, (j as f64 + 0.5) * dphi)).min(RAY_CLUSTER_CAP);
+                if a >= RAY_CLUSTER_LEAST {
+                    *n = a * bin / (w * l);
+                }
+            }
+        }
+        let total: f64 = expected.iter().sum();
+        let grow = (total / RAY_CLUSTER_MAX as f64).max(1.0).sqrt();
+        let rng = Rng::new(seed ^ 0xC1A5_7E25);
+        let mut out = Vec::new();
+        for (k, &n) in expected.iter().enumerate() {
+            if n <= 0.0 {
+                continue;
+            }
+            let key = k as u64;
+            let (count, mut draw) = poisson(&rng, key, 0, n / (grow * grow));
+            let (i, j) = (k / AZIMUTHS, k % AZIMUTHS);
+            for _ in 0..count {
+                let x = (i as f64 + rng.uniform(key, draw)) * dx;
+                let launch = (j as f64 + rng.uniform(key, draw + 1)) * dphi;
+                let size = grow * (0.7 + 0.6 * rng.uniform(key, draw + 2));
+                draw += 3;
+                let r = self.radius * x.exp();
+                let (w, l) = self.cluster_size(r, least);
+                out.push(Cluster {
+                    r,
+                    phi: self.curtain.path_azimuth(launch, x),
+                    width: w * size,
+                    length: l * size,
+                    amount: w * l * size * size,
+                });
+            }
+        }
+        out
+    }
+}
+
+/// The largest secondary, m, a crater `diameter` m across makes at `r_over_radius` crater
+/// radii (F128): Croft (1992)'s 0.07 (D / km)^0.87 km at the continuous blanket's edge,
+/// falling past it as the distance to -SECONDARY_SIZE_FALL.
+pub fn largest_secondary(diameter: f64, r_over_radius: f64) -> f64 {
+    let at_edge = SECONDARY_MAX_COEFF_KM * (diameter / 1e3).powf(SECONDARY_MAX_EXPONENT) * 1e3;
+    at_edge
+        * (r_over_radius / CONTINUOUS_EJECTA_MULTIPLE)
+            .max(1.0)
+            .powf(-SECONDARY_SIZE_FALL)
+}
+
+/// One cluster of secondaries a ray's fragments make (F128).
+#[derive(Clone, Copy, Debug)]
+pub struct Cluster {
+    /// Distance from the crater's centre, m, and the azimuth it lies at.
+    pub r: f64,
+    pub phi: f64,
+    /// Across and along the radial, m.
+    pub width: f64,
+    pub length: f64,
+    /// The ground it excavates, m².
+    pub amount: f64,
 }
 
 #[cfg(test)]
@@ -464,21 +584,74 @@ mod tests {
         }
     }
 
-    /// F127: beyond the largest crater measured, a crater's rays are its scaled up: as
-    /// many crater radii long, and as dense at the same distance in crater radii.
+    /// F128: beyond the largest crater measured a crater's rays are shorter in its own
+    /// radii the larger it is: an Orientale's reach some 2,000 km, about four of its
+    /// radii, where Tycho's median ray is eighteen of its.
     #[test]
-    fn a_basin_s_rays_are_a_large_crater_s_scaled_up() {
+    fn a_basin_s_rays_are_shorter_in_its_radii() {
         let edge = RAY_LENGTH_MAX_RADIUS_KM * 1e3;
         let ratio = |r: f64| ray_length(r) / r;
-        assert!((ratio(4.0 * edge) - ratio(edge)).abs() < 1e-9);
-        assert!(ratio(0.5 * edge) < ratio(edge));
+        assert!((ratio(edge) - 18.2).abs() < 0.2, "{}", ratio(edge));
+        assert!(ratio(0.5 * edge) < ratio(edge) && ratio(4.0 * edge) < ratio(edge));
+        let orientale = ray_length(465e3) / 1e3;
+        assert!((1_800.0..2_200.0).contains(&orientale), "{orientale}");
+        // At its own scaled distance a basin's rays are thinner than a large crater's.
         let curtain = || Curtain::new(7, 0.0, std::f64::consts::FRAC_PI_2);
         let (crater, basin) = (Rays::new(curtain(), edge), Rays::new(curtain(), 4.0 * edge));
-        for x in [3.0, 10.0, 30.0] {
-            let a = crater.excavated(x * edge, 0.3, 1.0);
-            let b = basin.excavated(x * 4.0 * edge, 0.3, 1.0);
-            assert!((a - b).abs() < 1e-9, "{x}: {a} {b}");
+        assert!(basin.area(10.0 * 4.0 * edge, 0.3) < crater.area(10.0 * edge, 0.3));
+    }
+
+    /// F128: a ray is the clusters of its secondaries. They carry what the fragments
+    /// excavate, up to RAY_CLUSTER_CAP per area; far out their footprints leave most of
+    /// the ground between them; the same seed gives the same clusters.
+    #[test]
+    fn a_ray_is_the_clusters_of_its_secondaries() {
+        let radius = 40e3;
+        let rays = Rays::new(Curtain::new(11, 0.0, std::f64::consts::FRAC_PI_2), radius);
+        let reach = 60.0 * radius;
+        let clusters = rays.clusters(11, reach, 1e3, &|_| 1.0);
+        let again = rays.clusters(11, reach, 1e3, &|_| 1.0);
+        assert_eq!(clusters.len(), again.len());
+        assert!(
+            clusters
+                .iter()
+                .zip(&again)
+                .all(|(a, b)| a.r == b.r && a.phi == b.phi)
+        );
+        let (lo, hi) = (10.0 * radius, 20.0 * radius);
+        let carried: f64 = clusters
+            .iter()
+            .filter(|c| c.r >= lo && c.r < hi)
+            .map(|c| c.amount)
+            .sum();
+        let (n_r, n_phi) = (200, 720);
+        let (dr, dphi) = (
+            (hi - lo) / n_r as f64,
+            2.0 * std::f64::consts::PI / n_phi as f64,
+        );
+        let mut expected = 0.0;
+        for i in 0..n_r {
+            let r = lo + (i as f64 + 0.5) * dr;
+            for j in 0..n_phi {
+                let phi = (j as f64 + 0.5) * dphi;
+                expected += rays.area(r, phi).min(RAY_CLUSTER_CAP) * r * dr * dphi;
+            }
         }
+        assert!(
+            (carried / expected - 1.0).abs() < 0.15,
+            "carried {carried:.3e} against {expected:.3e}"
+        );
+        let far: f64 = clusters
+            .iter()
+            .filter(|c| c.r > 30.0 * radius)
+            .map(|c| c.width * c.length)
+            .sum();
+        let ring = std::f64::consts::PI * ((60.0 * radius).powi(2) - (30.0 * radius).powi(2));
+        assert!(
+            far < 0.2 * ring,
+            "far clusters cover {:.3} of their ring",
+            far / ring
+        );
     }
 
     #[test]

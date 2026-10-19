@@ -361,7 +361,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 100;
+pub const FINISH_VERSION: u64 = 101;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1024,6 +1024,8 @@ pub fn finish(
     } else {
         sample_secondaries(&loop_craters, &inputs, d_min, present)
     };
+    // The rays draw the secondaries' fresh ground where they lie (F128).
+    let thrown = secondaries.clone();
     let replay: Vec<(crate::crater::CraterSample, bool)> = population
         .into_iter()
         .map(|c| (c, false))
@@ -2146,8 +2148,8 @@ pub fn finish(
         &records,
         &inputs,
         present,
-        cell,
         skin.as_ref(),
+        &thrown,
     );
 
     sink.report(Progress {
@@ -2382,13 +2384,19 @@ fn ray_field(
     craters: &[CraterRecord],
     inputs: &impacts::CraterInputs,
     present: f64,
-    cell: f64,
     skin: Option<&Field<f32>>,
+    secondaries: &[crate::crater::CraterSample],
 ) -> Field<f32> {
+    let cell = grid.delta() * body_radius;
     let skin = skin.map(|s| s.as_slice());
     let mut rays = Field::new(*grid);
     let out = rays.as_mut_slice();
     let lifetime = inputs.ray_lifetime.max(1e-6);
+    // The secondaries the finish stamped, by the crater that threw them.
+    let mut thrown: HashMap<u64, Vec<&crate::crater::CraterSample>> = HashMap::new();
+    for s in secondaries {
+        thrown.entry(s.key >> 16).or_default().push(s);
+    }
     let systems: Vec<RaySystem> = craters
         .iter()
         .filter(|c| {
@@ -2397,7 +2405,10 @@ fn ray_field(
         })
         .collect::<Vec<_>>()
         .par_iter()
-        .map(|c| RaySystem::new(c, inputs, present, cell))
+        .map(|c| {
+            let own = thrown.get(&c.id).map_or(&[][..], |v| v.as_slice());
+            RaySystem::new(c, inputs, present, cell, own)
+        })
         .collect();
     // A system whose rays could cover many cells is drawn over the whole grid in
     // parallel; the rest are gathered, a batch of systems at a time.
@@ -2426,6 +2437,10 @@ fn ray_field(
     for s in &large {
         let (east, north) = local_basis(s.center);
         let theta_max = (s.reach / body_radius).min(std::f64::consts::PI) + grid.delta();
+        let mut clustered = vec![0.0f32; grid.cell_count()];
+        with_stamper(grid, |stamper| {
+            s.lay_clusters(grid, stamper, |k, v| clustered[k] += v)
+        });
         out.par_iter_mut().enumerate().for_each(|(k, o)| {
             let d = grid.center(grid.cell(k));
             let theta = angle_between(s.center, d);
@@ -2436,6 +2451,7 @@ fn ray_field(
                 theta * body_radius,
                 azimuth_from(s.center, east, north, d),
                 skin.map_or(1.0, |s| s[k] as f64),
+                clustered[k] as f64,
             );
             if v > 0.0 {
                 *o = 1.0 - (1.0 - *o) * (1.0 - v);
@@ -2453,10 +2469,11 @@ fn ray_field(
     rays
 }
 
-/// The share of a crater's rays its fragments lay at `theta`, radians, round the body
-/// (F127): whole near the crater, fading from RAY_COHERENT_K of the circular orbital speed
-/// to none at a quarter of the way round, beyond which a jet's fragments scatter over the
-/// far hemisphere or escape.
+/// The share of a crater's ray fragments that still land on it at `theta`, radians, round
+/// the body (F127): all near the crater, thinning from RAY_COHERENT_K of the circular
+/// orbital speed to none at a quarter of the way round, beyond which a jet's fragments
+/// scatter over the far hemisphere or escape; a ray thins, and breaks into its clusters,
+/// as it ends (F128).
 fn ray_coherence(theta: f64) -> f64 {
     if theta >= std::f64::consts::FRAC_PI_2 {
         return 0.0;
@@ -2474,6 +2491,9 @@ fn ray_coherence(theta: f64) -> f64 {
 /// ice the lag that hides its rays hides its floor and blanket as it grows (F127).
 struct RaySystem {
     body_radius: f64,
+    /// The clusters its rays' secondaries make, and the secondaries the finish stamped
+    /// (F128).
+    clusters: Vec<crate::crater::curtain::Cluster>,
     center: [f64; 3],
     radius: f64,
     azimuth: f64,
@@ -2488,7 +2508,13 @@ struct RaySystem {
 }
 
 impl RaySystem {
-    fn new(c: &CraterRecord, inputs: &impacts::CraterInputs, present: f64, cell: f64) -> Self {
+    fn new(
+        c: &CraterRecord,
+        inputs: &impacts::CraterInputs,
+        present: f64,
+        cell: f64,
+        secondaries: &[&crate::crater::CraterSample],
+    ) -> Self {
         let lifetime = inputs.ray_lifetime.max(1e-6);
         let age = present - c.time_gyr;
         let radius = 0.5 * c.diameter;
@@ -2506,8 +2532,26 @@ impl RaySystem {
             .reach()
             .min(std::f64::consts::FRAC_PI_2 * inputs.body_radius)
             .max(halo);
+        // Its rays are the clusters its fragments' secondaries make, and the secondaries the
+        // finish stamped are clusters of their own, their fresh ground where they lie, a
+        // crater's width round it and twice that downrange (F128).
+        let least = RAY_CLUSTER_DRAW_CELLS * cell;
+        let body_radius = inputs.body_radius;
+        let mut clusters = rays.clusters(c.id, reach, least, &|r| ray_coherence(r / body_radius));
+        let (east, north) = local_basis(c.center);
+        for s in secondaries {
+            let width = (2.0 * s.diameter).max(least);
+            clusters.push(crate::crater::curtain::Cluster {
+                r: angle_between(c.center, s.center) * inputs.body_radius,
+                phi: azimuth_from(c.center, east, north, s.center),
+                width,
+                length: 2.0 * width,
+                amount: 2.0 * width * width,
+            });
+        }
         Self {
             body_radius: inputs.body_radius,
+            clusters,
             center: c.center,
             radius,
             azimuth: c.azimuth,
@@ -2523,9 +2567,56 @@ impl RaySystem {
         }
     }
 
+    /// The area the clusters excavate per unit area, cell by cell, handed to `add` (F128):
+    /// each spread over its footprint, a Gaussian along the radial whose width opens
+    /// downrange by RAY_CLUSTER_SPLAY, laying its whole amount on the cells it covers.
+    fn lay_clusters(
+        &self,
+        grid: &CubeSphere,
+        stamper: &mut Stamper,
+        mut add: impl FnMut(usize, f32),
+    ) {
+        let (east, north) = local_basis(self.center);
+        let r2 = self.body_radius * self.body_radius;
+        let mut weights: Vec<(usize, f64)> = Vec::new();
+        for c in &self.clusters {
+            let at = offset(self.center, east, north, c.r / self.body_radius, c.phi);
+            let (ce, cn) = local_basis(at);
+            let down = azimuth_from(at, ce, cn, self.center) + std::f64::consts::PI;
+            let (su, sv) = (c.length / 2.5, c.width / 2.5);
+            stamper.gather(
+                grid,
+                self.body_radius,
+                at,
+                3.0 * su.max(sv * (1.0 + 3.0 * RAY_CLUSTER_SPLAY)),
+            );
+            weights.clear();
+            let mut sum = 0.0;
+            for &(idx, r, phi) in &stamper.footprint {
+                let (u, v) = (r * (phi - down).cos(), r * (phi - down).sin());
+                let spread = sv * (1.0 + RAY_CLUSTER_SPLAY * (u / su).max(0.0));
+                let k = (-0.5 * ((u / su).powi(2) + (v / spread).powi(2))).exp();
+                if k > 1e-4 {
+                    let w = k * grid.cell_area(grid.cell(idx));
+                    weights.push((idx, k));
+                    sum += w;
+                }
+            }
+            if sum <= 0.0 {
+                let k = grid.index(grid.locate(at).0);
+                add(k, (c.amount / (grid.cell_area(grid.cell(k)) * r2)) as f32);
+                continue;
+            }
+            for &(idx, k) in &weights {
+                add(idx, (c.amount * k / (sum * r2)) as f32);
+            }
+        }
+    }
+
     /// The brightening at distance `r`, m, and azimuth `phi` from the centre, where the
-    /// skin leaves the share `skin` of the area the rays' secondaries would excavate.
-    fn value(&self, r: f64, phi: f64, skin: f64) -> f32 {
+    /// skin leaves the share `skin` of the area the rays' secondaries would excavate and
+    /// the clusters there excavate `clustered` per unit area.
+    fn value(&self, r: f64, phi: f64, skin: f64, clustered: f64) -> f32 {
         if r <= self.radius {
             return (self.freshness * skin) as f32;
         }
@@ -2539,7 +2630,11 @@ impl RaySystem {
             }))
         .clamp(0.0, 1.0)
             * skin;
-        let ray = self.rays.excavated(r, phi, skin) * ray_coherence(r / self.body_radius);
+        // The rays are their clusters; where the jets excavate more than clusters carry,
+        // the rest is a solid ray (F128).
+        let landing = ray_coherence(r / self.body_radius);
+        let solid = (landing * self.rays.area(r, phi) - RAY_CLUSTER_CAP).max(0.0);
+        let ray = 1.0 - (-(solid + clustered) * skin).exp();
         ((1.0 - (1.0 - blanket) * (1.0 - ray)) * self.freshness) as f32
     }
 
@@ -2551,12 +2646,21 @@ impl RaySystem {
         skin: Option<&[f32]>,
         stamper: &mut Stamper,
     ) -> Vec<(u32, f32)> {
+        let mut clustered: HashMap<usize, f32> = HashMap::new();
+        self.lay_clusters(grid, stamper, |k, v| {
+            *clustered.entry(k).or_insert(0.0) += v
+        });
         stamper.gather(grid, body_radius, self.center, self.reach);
         stamper
             .footprint
             .iter()
             .filter_map(|&(idx, r, phi)| {
-                let v = self.value(r, phi, skin.map_or(1.0, |s| s[idx] as f64));
+                let v = self.value(
+                    r,
+                    phi,
+                    skin.map_or(1.0, |s| s[idx] as f64),
+                    clustered.get(&idx).copied().unwrap_or(0.0) as f64,
+                );
                 (v > 0.0).then_some((idx as u32, v))
             })
             .collect()
