@@ -48,6 +48,8 @@ Partly closed in the fifty-second milestone (F121): the episodic lid is no longe
 
 In the fifty-third milestone (F122) the stagnant bodies' mantles keep their own heat too, the composition model giving the Moon its rock: Mars, the Moon and Mercury cool under lids that grow and thin by the heat at their bases and never break, and Venus's breaks 42 times, last 0.49 Ga. Still open: the plates' rule and the ice shells' names; the Io regime (S3); the melt efficiency by name.
 
+In the fifty-fourth (F123) a mantle melts only while it, or its plumes, stand above the solidus at its stiff lid's base, so that a mantle's volcanism ends as its lid thickens and it cools, whatever its regime: the Moon's by about 1 Ga. The share of its heat that goes into melt is still the regime's.
+
 ### S2. The composition class
 
 `composition_class` (params/derive.rs) cuts the core and ice mass fractions into four names at IRON_RICH_CORE_FRACTION, ROCK_MAX_ICE_FRACTION and ROCK_ICE_MAX_ICE_FRACTION. The derivations read the name in 23 places. Among them are the moment of inertia factor (0.33, 0.35 or 0.40 by class), the bedrock and lava materials, the Io regime, and whether the body is icy at all (`is_icy`), which decides between an ice shell and a rock lid.

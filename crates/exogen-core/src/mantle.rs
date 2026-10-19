@@ -23,6 +23,13 @@
 //! interior reheats under a thickening lid until the lid fails). Whether a body's lid ever
 //! breaks, and how often, comes out of its size, its heat, its surface temperature and its
 //! lid's friction.
+//!
+//! The crust holds a share of the heat-producing elements, which the melts that made it took
+//! from the mantle, and its heat leaves through the surface without heating the mantle
+//! (F123). The mantle melts only while it stands above the rock's solidus at the base of its
+//! stiff lid, where the mantle rising under the lid stops, so that as its lid thickens and it
+//! cools its melting ends; a body's plumes rise hotter than the mantle about them and go on
+//! melting where it no longer does.
 
 use crate::constants::*;
 use crate::params::derive::physics::radiogenic_per_kg;
@@ -43,6 +50,9 @@ pub struct MantleInputs {
     pub tidal_flux_now: f64,
     pub eccentricity_now: f64,
     pub eccentricity_history: Curve,
+    /// The crust's thickness, m, whose volume against the mantle's sets its share of the
+    /// heat-producing elements (F123).
+    pub crust_thickness: f64,
 }
 
 impl MantleInputs {
@@ -61,7 +71,21 @@ impl MantleInputs {
                 .curve("orbit.eccentricity_history")
                 .cloned()
                 .unwrap_or_else(|| Curve::constant(graph.f64("orbit.eccentricity"))),
+            crust_thickness: graph.f64("tectonics.initial_crust_thickness"),
         }
+    }
+
+    /// The share of the heat-producing elements the crust holds (F123): its volume's share
+    /// of the rock, phi, weighted by the enrichment of incompatible elements in the melts
+    /// that made it, Lambda phi / (Lambda phi + 1 - phi).
+    pub fn crust_share(&self) -> f64 {
+        let r = self.radius;
+        let core = self.mass * self.core_fraction;
+        let core_radius = (3.0 * core / (4.0 * std::f64::consts::PI * DENSITY_IRON)).cbrt();
+        let rock = (r.powi(3) - core_radius.powi(3)).max(1.0);
+        let crust = r.powi(3) - (r - self.crust_thickness.clamp(0.0, r - core_radius)).powi(3);
+        let phi = (crust / rock).clamp(0.0, 1.0);
+        CRUST_ENRICHMENT * phi / (CRUST_ENRICHMENT * phi + 1.0 - phi)
     }
 }
 
@@ -75,6 +99,11 @@ pub struct MantleHistory {
     pub lid: Vec<f64>,
     /// When the lid broke and foundered, Gyr after formation, oldest first.
     pub overturns: Vec<f64>,
+    /// The crust's share of the heat-producing elements.
+    pub crust_share: f64,
+    /// The body's surface gravity, m/s², and temperature, K, for the stiff lid's base.
+    pub gravity: f64,
+    pub surface_temperature: f64,
 }
 
 impl MantleHistory {
@@ -98,6 +127,39 @@ impl MantleHistory {
         self.temperature[k]
     }
 
+    /// Whether the mantle melts at a time, 0 to 1 (F123): how far the mantle rising under the
+    /// lid, or on a body with plumes its plumes, stand above the solidus at the stiff lid's
+    /// base, over one rheological temperature scale. The stiff lid ends where the conductive
+    /// profile reaches LID_BASE_SCALES rheological scales below the mantle's temperature,
+    /// where the mantle stops flowing (Davaille and Jaupart 1993).
+    pub fn melt_gate_at(&self, t: f64, plumes: bool) -> f64 {
+        let n = self.times.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let k = self.times.partition_point(|&x| x < t).min(n - 1);
+        let temp = self.temperature[k];
+        let ts = self.surface_temperature;
+        let rheological = GAS_CONSTANT * temp * temp / MANTLE_ACTIVATION;
+        let stiff = self.lid[k] * (temp - LID_BASE_SCALES * rheological - ts).max(0.0)
+            / (temp - ts).max(1.0);
+        let solidus = solidus(DENSITY_ROCK * self.gravity * stiff);
+        let excess = if plumes {
+            temp + PLUME_EXCESS_K - solidus
+        } else {
+            temp - solidus
+        };
+        (excess / rheological).clamp(0.0, 1.0)
+    }
+
+    /// The surface heat flux averaged over the body's life, W/m².
+    pub fn mean_heat_flux(&self) -> f64 {
+        if self.heat_flux.is_empty() {
+            return 0.0;
+        }
+        self.heat_flux.iter().sum::<f64>() / self.heat_flux.len() as f64
+    }
+
     /// The last time the lid foundered, if it ever did.
     pub fn last_overturn(&self) -> Option<f64> {
         self.overturns.last().copied()
@@ -115,6 +177,12 @@ fn stagnant_flux(t: f64, gravity: f64) -> f64 {
         * K_ROCK
         * (DENSITY_ROCK * gravity * MANTLE_EXPANSIVITY / (MANTLE_DIFFUSIVITY * eta)).cbrt()
         * rheological.powf(4.0 / 3.0)
+}
+
+/// The dry peridotite solidus at a pressure, K (Hirschmann 2000's fit, P in GPa).
+pub fn solidus(pressure: f64) -> f64 {
+    let p = pressure / 1e9;
+    273.15 + SOLIDUS_C0 + SOLIDUS_C1 * p + SOLIDUS_C2 * p * p
 }
 
 /// Whether the lid breaks: where the sublayer's buoyancy stress rho g alpha dT_rh delta_rh,
@@ -164,12 +232,16 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
     };
     let n = MANTLE_STEPS;
     let dt = inp.age_gyr / n as f64;
+    let crust_share = inp.crust_share();
     let mut out = MantleHistory {
         times: Vec::with_capacity(n),
         heat_flux: Vec::with_capacity(n),
         temperature: Vec::with_capacity(n),
         lid: Vec::with_capacity(n),
         overturns: Vec::new(),
+        crust_share,
+        gravity: inp.gravity,
+        surface_temperature: ts,
     };
     let mut temp = MANTLE_START_K;
     // The first lid grows from the surface as the body's magma ocean freezes.
@@ -179,7 +251,10 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
     let mut k = 0;
     let step = dt * GYR;
     while k < n {
-        let heat = radiogenic_per_kg(t + 0.5 * dt) * mantle / area + tides(t + 0.5 * dt);
+        // The crust's share of the radioactive heat leaves through the surface; the rest and
+        // the tides heat the mantle.
+        let radioactive = radiogenic_per_kg(t + 0.5 * dt) * mantle / area;
+        let heat = (1.0 - crust_share) * radioactive + tides(t + 0.5 * dt);
         let q = stagnant_flux(temp, inp.gravity);
         let steady = (K_ROCK * (temp - ts) / q).min(0.99 * depth);
         // Grown as thick as a stagnant lid: by the time a half space would have, since the
@@ -205,8 +280,9 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         let square =
             lid * lid + step * 4.0 * kappa * (1.0 - lid * q / (K_ROCK * dtemp)) / base_share;
         let grown = square.max(0.0).sqrt().min(0.99 * depth);
-        // The surface loses the heat made less the heat the body keeps.
-        let surface = heat - (energy(next, grown) - energy(temp, lid)) / step;
+        // The surface loses the heat made less the heat the body keeps, and the crust's.
+        let surface =
+            heat - (energy(next, grown) - energy(temp, lid)) / step + crust_share * radioactive;
         temp = next;
         lid = grown;
         t += dt;
@@ -281,8 +357,17 @@ mod tests {
         let (g, _) = preset("Venus").unwrap().to_graph();
         let inp = MantleInputs::from_graph(&g);
         let age = g.f64("body.age");
+        // EXOGEN_MU_START and EXOGEN_MU_STEP narrow the scan.
+        let start = std::env::var("EXOGEN_MU_START")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.004);
+        let stride = std::env::var("EXOGEN_MU_STEP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0005);
         for i in 0..=40 {
-            let mu = 0.004 + 0.0005 * i as f64;
+            let mu: f64 = start + stride * i as f64;
             let h = evolve_with(&inp, mu);
             let ago: Vec<String> = h
                 .overturns

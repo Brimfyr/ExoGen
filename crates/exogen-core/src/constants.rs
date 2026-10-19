@@ -385,8 +385,8 @@ pub const PLUME_RISE_DIAMETER_FRACTION: f64 = 1.5;
 /// A thin, hot episodic lid supports narrower rises (Beta Regio: 2,500 km on Venus).
 pub const PLUME_RISE_DIAMETER_FRACTION_EPISODIC: f64 = 0.4;
 pub const RISE_HEIGHT_FRACTION: f64 = 0.28;
-pub const RISE_START_MELT: f64 = 1_400.0;
-pub const RISE_END_MELT: f64 = 5_400.0;
+pub const RISE_START_MELT: f64 = 1_360.0;
+pub const RISE_END_MELT: f64 = 4_100.0;
 /// A rocky lithosphere's Young's modulus, Pa, and Poisson's ratio, for its membrane
 /// strength at the longest wavelengths (the values flexure studies of Mars use: McGovern
 /// et al. 2002).
@@ -417,7 +417,7 @@ pub const SHIELD_SLOPE_DEG: f64 = 5.0;
 pub const SHIELD_FLANK_EXPONENT: f64 = 1.6;
 pub const SHIELD_FLANK_POWER: f64 = 0.9;
 pub const SHIELD_PLACEMENT: (f64, f64) = (0.1, 0.6);
-pub const SHIELD_GROWTH_MELT: f64 = 3_500.0;
+pub const SHIELD_GROWTH_MELT: f64 = 2_200.0;
 pub const SHIELD_RENEWAL_THICKNESS: f64 = 5.0;
 /// A shield's lava buries the ground it grows over (F115), the relief measured against the
 /// mean of that ground in this many rings about the edifice's centre, as a deposit buries
@@ -518,7 +518,7 @@ pub const RIFT_LOOP_WIDTH_CELLS: f64 = 2.0;
 /// A canyon carried by the loop is carved over the melt its mantle makes per unit area
 /// about the time it formed, m (F120: Mars's melt over the gigayear about its dome's turn,
 /// as the gigayear it was carved over before; set again on its own mantle's history, F122).
-pub const RIFT_CARVING_MELT: f64 = 3_300.0;
+pub const RIFT_CARVING_MELT: f64 = 2_250.0;
 pub const RIFT_MAX_FAULTS: u64 = 20_000;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
@@ -1057,6 +1057,7 @@ pub const IO_MOUNTAIN_BARE_SLOPE_DEG: (f64, f64) = (5.0, 15.0);
 pub const MAGMA_EFFICIENCY_MOBILE: f64 = 0.15;
 pub const MAGMA_EFFICIENCY_EPISODIC: f64 = 0.05;
 pub const MAGMA_EFFICIENCY_STAGNANT: f64 = 0.01;
+
 pub const MAGMA_EFFICIENCY_ICE: f64 = 3e-5;
 pub const MAGMA_EFFICIENCY_TIDAL_MAX: f64 = 0.9;
 pub const MAGMA_TIDAL_FLUX_SCALE: f64 = 1.0;
@@ -1092,7 +1093,25 @@ pub const MANTLE_EXPANSIVITY: f64 = 3e-5;
 pub const MANTLE_DIFFUSIVITY: f64 = 1e-6;
 pub const MANTLE_HEAT_CAPACITY: f64 = 1_250.0;
 pub const CORE_HEAT_CAPACITY: f64 = 800.0;
-pub const LID_FRICTION: f64 = 0.014;
+pub const LID_FRICTION: f64 = 0.0105;
+/// The crust's share of the heat-producing elements (F123): the melts that made it took the
+/// incompatible elements of the mantle they came from, enriched about one over their melt
+/// fraction, so the crust holds them by its volume's share of the rock weighted by this
+/// enrichment (a stated choice: melts of some 5 percent, which gives Mars's crust 44 percent
+/// against the half its thorium implies, Taylor and McLennan 2009, and the Moon's 59).
+pub const CRUST_ENRICHMENT: f64 = 20.0;
+/// A plume rises this much hotter than the mantle about it, K, so that it goes on melting
+/// where the mantle no longer does (F123; a stated choice within the 100 to 300 K of Earth's
+/// hotspots, Herzberg et al. 2007).
+pub const PLUME_EXCESS_K: f64 = 200.0;
+/// The mantle rising under a stagnant lid stops at the stiff lid's base, this many
+/// rheological temperature scales below the mantle's temperature (F123; Davaille and Jaupart
+/// 1993: 2.24).
+pub const LID_BASE_SCALES: f64 = 2.24;
+/// The dry peridotite solidus, C = c0 + c1 P + c2 P² with P in GPa (Hirschmann 2000).
+pub const SOLIDUS_C0: f64 = 1_120.661;
+pub const SOLIDUS_C1: f64 = 132.899;
+pub const SOLIDUS_C2: f64 = -5.104;
 pub const EPISODIC_RECENT_SHARE: f64 = 0.5;
 pub const MANTLE_STEPS: usize = 4_000;
 

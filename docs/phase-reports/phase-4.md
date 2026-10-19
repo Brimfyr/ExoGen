@@ -1255,3 +1255,30 @@ Still to do:
 - **Io's ice**: the warm disc it formed in around Jupiter, inside whose snow line it formed, is not yet the model's.
 
 Tests 193 (12 ignored, three of them new diagnostics printing each rocky preset's mantle history beside the pipeline's, Venus's overturns over a range of frictions, and each stagnant body's eruptions over its life). One is new: a body formed inside the snow line carries no ice, the Moon all rock and Mars a core under a quarter of its mass, and one beyond it keeps its ice. The mantle's test now asks that Mars's, the Moon's and Mercury's heat flows stay positive from the start and highest when young. The Mars test now takes a canyon's standing relief as its median along its length, since a local fill decides any one point: the main canyon's middle point fell from 2,414 to 2,058 m while its median fell from 2,210 to 1,757, and its floor is 1,500 m where a single point's was 2,200. Clippy is clean and validate passes its 117 checks.
+
+## The fifty-fourth milestone: the crust's heat, and melting above the solidus
+
+Asked for by the user after the fifty-third: the Moon showed lighter, patchier maria, to be fixed. On its own heat the Moon's mantle kept all its rock's radioactive elements and erupted until 1 Ga, a third of its lava after 2.5 Ga, its young flows of a lighter composition laid in patches over the older floods of the great basins.
+
+- **F123, a crust holds a share of the heat-producing elements, and a mantle melts only above its solidus.** The crust holds the incompatible elements its melts took from the mantle, by its volume's share of the rock and their enrichment, and its heat leaves through the surface. A mantle's melt comes of its own part of the heat flux and only while it, or its plumes, stand above the solidus at the base of its stiff lid.
+
+How it went:
+
+- **In a prototype first.** A Python port of the mantle and the eruptive budget reproduced the model to the metre of lava, and showed that neither the crust's share nor melt from the mantle's own heat ended the Moon's volcanism alone: the cutoff by the lithosphere stayed open while the crust's heat kept the surface flux up. What ends it is the mantle falling to its solidus at its lid's base, and the Moon's mantle reached it once its crust held the share of the heat-producing elements its volume and their enrichment give.
+- **A melt law that left Venus without its rises.** Melt drawn from the convected heat in proportion to the mantle's excess over the solidus fixed the Moon, but Venus's high gravity puts its solidus at its lid's base beyond its mantle a hundred million years after an overturn, so its rises would not have started until 10.7 Gyr; plumes rising hotter than the mantle, and the stiff lid's shallower base, were not enough. The share of the heat that goes into melt stays F17's, by the regime, and the solidus decides only whether the mantle, or its plumes, melt at all.
+- **Venus's friction.** With a third of its heat-producing elements in its crust, Venus's mantle is cooler and its overturns come every 0.3 Gyr at the end, the last at 0.64 Ga for frictions from 0.0101 to 0.0108.
+- **The core's heat, tried and left.** A hot core heating Mercury's thin mantle from below would give back its plains, but against the mantle's adiabat a core loses no heat into Venus's or Mars's mantles unless the viscosity at their cores' boundaries is taken from a rheology for their pressures, which the model does not have.
+
+What the maps show:
+
+- **The Moon:** its maria dark and even again. The lava's mean albedo is 79.1, with a spread of 5.7, against 87.9 and 10.7 on its own heat alone (F122) and 78.7 and 6.3 before. The lava covers 15.8 percent of the surface (15.4 before F122, 20.8 with it; the real maria cover 17). The maria's surfaces formed at 1.5 Ga at the median, against 0.67 Ga in F122 and 2.2 Ga before it: the floods of the last two gigayears of its volcanism, a fifth of its lava, still spread thin over the same basins. The real maria's surfaces are mostly 3.3 to 3.8 Ga (Hiesinger et al. 2011), which is a matter of where late floods go, still open.
+- **Mercury:** its lava covers 16 percent of the surface, against 19 in F122 and 27 before it and on the real planet.
+- **Mars:** Tharsis keeps its times, its rise from 0.30 to 1.51 Gyr and its shields started from 0.90 to 1.49 Gyr. Its lava covers 35 percent of the surface, against 42 in F122 and 50 before it, the crust's heat no longer counted as melt.
+- **Venus:** its last overturn is at 0.64 Ga, the one before at 0.94 Ga. Its rises grow from 0.60 to 0.35 Ga, and its shields, begun from 0.47 Ga, are built by today, the tallest standing 12.9 km where a third-built one stood 10.3 km, which leaves the shields' size on Venus for its milestone.
+
+Still to do:
+
+- **Mercury's plains**, from the core's own heat, with a rheology for the deep mantles of the large bodies.
+- **The melt's share by the regime's name**, and the crust's thickness by class, which sets its share of the heat-producing elements.
+
+Tests 194 (12 ignored). One is new: the Moon's crust holds between half and seven tenths of its heat-producing elements, three quarters of its melt comes by 2 Gyr and none now, while Mars's and Venus's plumes melt today. Clippy is clean and validate passes its 117 checks.

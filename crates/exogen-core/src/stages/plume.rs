@@ -33,7 +33,7 @@ use crate::stages::io::{Lobe, PathRules};
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 18;
+pub const VERSION: u64 = 19;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]

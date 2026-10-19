@@ -36,8 +36,10 @@ pub struct ThermalInputs {
     /// shell's share of the present tidal flux is then recomputed, not scaled.
     pub shell: Option<crate::stages::tidal::ShellTides>,
     pub core_tidal_flux_now: f64,
-    /// A dry rocky mantle keeps its own heat's history (F121, F122).
+    /// A dry rocky mantle keeps its own heat's history (F121, F122); whether it has plumes,
+    /// which go on melting where it no longer does (F123).
     pub mantle: Option<crate::mantle::MantleHistory>,
+    pub plumes: bool,
     pub icy: bool,
     pub surface_temperature: f64,
     pub melting_point: f64,
@@ -138,6 +140,11 @@ impl ThermalInputs {
             "rock_ice" | "ice_dominated"
         );
         let regime = graph.str("interior.tectonic_regime");
+        // A dry rocky mantle outside the plates' rule and the Io regime keeps its own heat's
+        // history (F121, F122).
+        let mantle = (matches!(regime, "stagnant_lid" | "episodic_lid")
+            && graph.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX)
+            .then(|| crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph)));
         let base = match regime {
             "mobile_lid" => MAGMA_EFFICIENCY_MOBILE,
             "episodic_lid" => MAGMA_EFFICIENCY_EPISODIC,
@@ -162,11 +169,8 @@ impl ThermalInputs {
             uncompressed_density: graph.f64("body.uncompressed_density"),
             rock_mass: graph.f64("body.mass") * graph.f64("body.rock_mass_fraction"),
             secular_fraction: graph.f64("interior.secular_cooling_fraction"),
-            // A dry rocky mantle outside the plates' rule and the Io regime keeps its own
-            // heat's history (F121, F122).
-            mantle: (matches!(regime, "stagnant_lid" | "episodic_lid")
-                && graph.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX)
-                .then(|| crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph))),
+            mantle: mantle.clone(),
+            plumes: graph.f64("tectonics.plume_rise_count") >= 1.0,
             tidal_flux_now: graph.f64("interior.tidal_flux"),
             eccentricity_now: graph.f64("orbit.eccentricity"),
             eccentricity_history: graph
@@ -336,6 +340,17 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
     } else {
         MAGMA_HEAT_PER_M3_ROCK
     };
+    // A share of the heat the mantle loses goes into melt (F17); a dry rocky mantle's, not
+    // the crust's own radioactive heat, and only while it or its plumes stand above the
+    // solidus at its stiff lid's base (F123).
+    let magma = match &inp.mantle {
+        Some(m) => {
+            let crust = m.crust_share * radiogenic_per_kg(t) * inp.rock_mass / area;
+            magma_rate((heat_flux - crust).max(0.0), area, efficiency, heat_per_m3)
+                * m.melt_gate_at(t, inp.plumes)
+        }
+        None => magma_rate(heat_flux, area, efficiency, heat_per_m3),
+    };
     ThermalState {
         time_gyr: t,
         heat_flux,
@@ -345,7 +360,7 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         elastic,
         relief_limit,
         contraction: contraction(inp.radius, inp.uncompressed_density, t),
-        magma_rate: magma_rate(heat_flux, area, efficiency, heat_per_m3),
+        magma_rate: magma,
     }
 }
 
@@ -471,6 +486,33 @@ mod tests {
                 now.magma_rate,
                 g.f64("interior.magma_production_rate")
             );
+        }
+    }
+
+    /// F123: the crust holds a share of the heat-producing elements, so the Moon's mantle,
+    /// which has no plumes, cools under its thickening lid until it no longer stands above
+    /// the solidus at the stiff lid's base: most of its melt comes in its first two
+    /// gigayears and none now. Mars's and Venus's plumes go on melting today.
+    #[test]
+    fn the_moon_s_melting_ends_as_its_mantle_falls_to_its_solidus() {
+        let (g, _) = preset("Moon").unwrap().to_graph();
+        let h = ThermalHistory::from_graph(&g);
+        let share = crate::mantle::MantleInputs::from_graph(&g).crust_share();
+        assert!(share > 0.5 && share < 0.7, "Moon crust share {share}");
+        let r = g.f64("body.radius");
+        let clock = h.melt_clock(4.0 * std::f64::consts::PI * r * r);
+        let age = g.f64("body.age");
+        let total = clock.at(age);
+        assert!(
+            clock.at(2.0) > 0.75 * total,
+            "{} of {total} m by 2 Gyr",
+            clock.at(2.0)
+        );
+        assert_eq!(h.at(age).magma_rate, 0.0);
+        assert_eq!(g.f64("interior.magma_production_rate"), 0.0);
+        for name in ["Mars", "Venus"] {
+            let (g, _) = preset(name).unwrap().to_graph();
+            assert!(g.f64("interior.magma_production_rate") > 0.0, "{name}");
         }
     }
 

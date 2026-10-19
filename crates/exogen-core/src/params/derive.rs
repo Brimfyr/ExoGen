@@ -1141,6 +1141,7 @@ fn mantle_inputs(c: &Ctx) -> crate::mantle::MantleInputs {
         tidal_flux_now: c.f64("interior.tidal_flux"),
         eccentricity_now: c.f64("orbit.eccentricity"),
         eccentricity_history: c.curve("orbit.eccentricity_history").clone(),
+        crust_thickness: c.f64("tectonics.initial_crust_thickness"),
     }
 }
 
@@ -1193,6 +1194,7 @@ pub fn interior_surface_heat_flux(c: &Ctx) -> Value {
 /// `ThermalInputs::from_graph`.
 fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
     let regime = c.str("interior.tectonic_regime");
+    let mantle = mantle_keeps_heat(c).then(|| mantle_history(c));
     crate::thermal::ThermalInputs {
         age_gyr: c.f64("body.age"),
         radius: c.f64("body.radius"),
@@ -1200,7 +1202,8 @@ fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
         uncompressed_density: c.f64("body.uncompressed_density"),
         rock_mass: c.f64("body.mass") * c.f64("body.rock_mass_fraction"),
         secular_fraction: c.f64("interior.secular_cooling_fraction"),
-        mantle: mantle_keeps_heat(c).then(|| mantle_history(c)),
+        mantle: mantle.clone(),
+        plumes: c.f64("tectonics.plume_rise_count") >= 1.0,
         tidal_flux_now: c.f64("interior.tidal_flux"),
         eccentricity_now: c.f64("orbit.eccentricity"),
         eccentricity_history: c.curve("orbit.eccentricity_history").clone(),
@@ -1463,6 +1466,7 @@ pub fn interior_tectonic_regime(c: &Ctx) -> Value {
 }
 
 pub fn interior_magma_production_rate(c: &Ctx) -> Value {
+    let r = c.f64("body.radius");
     let regime = c.str("interior.tectonic_regime");
     let icy = is_icy(c.str("body.composition_class"));
     let base = match regime {
@@ -1475,12 +1479,31 @@ pub fn interior_magma_production_rate(c: &Ctx) -> Value {
         * (c.f64("interior.tidal_flux") / MAGMA_TIDAL_FLUX_SCALE).min(1.0))
     .max(0.0);
     let efficiency = base.max(tidal);
-    let r = c.f64("body.radius");
     let heat = if icy {
         MAGMA_HEAT_PER_M3_ICE
     } else {
         MAGMA_HEAT_PER_M3_ROCK
     };
+    // A dry rocky mantle's melt comes of its own part of the heat flux, not the crust's
+    // radioactive heat, and only while it or its plumes stand above the solidus at its stiff
+    // lid's base (F123).
+    if mantle_keeps_heat(c) {
+        let h = mantle_history(c);
+        let age = c.f64("body.age");
+        let crust = h.crust_share
+            * radiogenic_per_kg(age)
+            * c.f64("body.mass")
+            * c.f64("body.rock_mass_fraction")
+            / (4.0 * PI * r * r);
+        let gate = h.melt_gate_at(age, c.f64("tectonics.plume_rise_count") >= 1.0);
+        return (magma_rate(
+            (c.f64("interior.surface_heat_flux") - crust).max(0.0),
+            4.0 * PI * r * r,
+            efficiency,
+            heat,
+        ) * gate)
+            .into();
+    }
     magma_rate(
         c.f64("interior.surface_heat_flux"),
         4.0 * PI * r * r,
@@ -2036,7 +2059,7 @@ pub fn tectonics_plume_count(c: &Ctx) -> Value {
     let mean = if h.heat_flux.is_empty() {
         c.f64("interior.surface_heat_flux")
     } else {
-        h.heat_flux.iter().sum::<f64>() / h.heat_flux.len() as f64
+        h.mean_heat_flux()
     };
     (mean * 4.0 * PI * r * r / PLUME_POWER_PER_PLUME)
         .floor()
