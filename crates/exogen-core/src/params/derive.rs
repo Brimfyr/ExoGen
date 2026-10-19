@@ -150,22 +150,31 @@ pub mod physics {
         1.0 + COMPRESSION_A * (mass / M_EARTH).powf(COMPRESSION_B)
     }
 
-    /// F8: (core, rock, ice) mass fractions from the uncompressed density.
-    pub fn composition_fractions(rho_u: f64) -> (f64, f64, f64) {
+    /// F8, F122: (core, rock, ice) mass fractions from the uncompressed density. A body
+    /// formed where water ice condensed (`wet` 1) carries iron and rock in the chondritic
+    /// ratio and ice for the rest of a deficit below their mix; one formed too warm for
+    /// ice (`wet` 0) carries none, and a deficit below the chondritic mix is iron it lacks
+    /// (the Moon's, Mars's); between them a blend. Above the chondritic mix both are the
+    /// same: iron and rock.
+    pub fn composition_fractions(rho_u: f64, wet: f64) -> (f64, f64, f64) {
         let core_share = CHONDRITIC_CORE_TO_ROCK / (1.0 + CHONDRITIC_CORE_TO_ROCK);
         let rho_rock_iron = 1.0 / (core_share / DENSITY_IRON + (1.0 - core_share) / DENSITY_ROCK);
+        let f = ((1.0 / DENSITY_ROCK - 1.0 / rho_u) / (1.0 / DENSITY_ROCK - 1.0 / DENSITY_IRON))
+            .clamp(0.0, 1.0);
+        let dry = (f, 1.0 - f, 0.0);
         if rho_u >= rho_rock_iron {
-            let f = ((1.0 / DENSITY_ROCK - 1.0 / rho_u)
-                / (1.0 / DENSITY_ROCK - 1.0 / DENSITY_IRON))
-                .clamp(0.0, 1.0);
-            (f, 1.0 - f, 0.0)
-        } else {
-            let fi = ((1.0 / rho_u - 1.0 / rho_rock_iron)
-                / (1.0 / DENSITY_ICE - 1.0 / rho_rock_iron))
-                .clamp(0.0, 1.0);
-            let core = (1.0 - fi) * core_share;
-            (core, 1.0 - fi - core, fi)
+            return dry;
         }
+        let fi = ((1.0 / rho_u - 1.0 / rho_rock_iron) / (1.0 / DENSITY_ICE - 1.0 / rho_rock_iron))
+            .clamp(0.0, 1.0);
+        let core = (1.0 - fi) * core_share;
+        let icy = (core, 1.0 - fi - core, fi);
+        let w = wet.clamp(0.0, 1.0);
+        (
+            w * icy.0 + (1.0 - w) * dry.0,
+            w * icy.1 + (1.0 - w) * dry.1,
+            w * icy.2 + (1.0 - w) * dry.2,
+        )
     }
 
     pub fn composition_class(core: f64, ice: f64) -> &'static str {
@@ -631,14 +640,24 @@ pub fn body_uncompressed_density(c: &Ctx) -> Value {
     (c.f64("body.density") / c.f64("body.compression_factor")).into()
 }
 
+/// How far a body formed where water ice could condense (F122): 1 at or below the snow
+/// line's temperature, 0 from SNOW_LINE_DRY_K, by its blackbody temperature at its distance
+/// from its star (zero albedo, its whole surface sharing the heat).
+fn formed_wet(c: &Ctx) -> f64 {
+    let t = (c.f64("orbit.insolation") / (4.0 * SIGMA_SB))
+        .max(0.0)
+        .powf(0.25);
+    ((SNOW_LINE_DRY_K - t) / (SNOW_LINE_DRY_K - SNOW_LINE_WET_K)).clamp(0.0, 1.0)
+}
+
 pub fn body_core_mass_fraction(c: &Ctx) -> Value {
-    composition_fractions(c.f64("body.uncompressed_density"))
+    composition_fractions(c.f64("body.uncompressed_density"), formed_wet(c))
         .0
         .into()
 }
 
 pub fn body_ice_mass_fraction(c: &Ctx) -> Value {
-    composition_fractions(c.f64("body.uncompressed_density"))
+    composition_fractions(c.f64("body.uncompressed_density"), formed_wet(c))
         .2
         .into()
 }
@@ -1137,14 +1156,18 @@ fn plates(c: &Ctx) -> bool {
         && c.f64("body.radius") >= MOBILE_LID_MIN_RADIUS
 }
 
-/// Whether a dry rocky lid has broken lately (F121): a rocky body with no plates, not
-/// heated past the Io regime, whose mantle broke its lid within EPISODIC_RECENT_SHARE of
-/// its life before the present.
+/// Whether a body's mantle keeps its own heat's history (F121, F122): a rocky body with no
+/// plates, not heated past the Io regime.
+fn mantle_keeps_heat(c: &Ctx) -> bool {
+    !is_icy(c.str("body.composition_class"))
+        && !plates(c)
+        && c.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX
+}
+
+/// Whether a dry rocky lid has broken lately (F121): its mantle broke it within
+/// EPISODIC_RECENT_SHARE of its life before the present.
 fn lid_breaks_lately(c: &Ctx) -> bool {
-    if is_icy(c.str("body.composition_class"))
-        || plates(c)
-        || c.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX
-    {
+    if !mantle_keeps_heat(c) {
         return false;
     }
     let age = c.f64("body.age");
@@ -1154,8 +1177,8 @@ fn lid_breaks_lately(c: &Ctx) -> bool {
 }
 
 pub fn interior_surface_heat_flux(c: &Ctx) -> Value {
-    // A lid that breaks: the flux the mantle's history gives now (F121).
-    if lid_breaks_lately(c) {
+    // A rocky mantle that keeps its heat: the flux its history gives now (F121, F122).
+    if mantle_keeps_heat(c) {
         return mantle_history(c)
             .heat_flux
             .last()
@@ -1177,7 +1200,7 @@ fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
         uncompressed_density: c.f64("body.uncompressed_density"),
         rock_mass: c.f64("body.mass") * c.f64("body.rock_mass_fraction"),
         secular_fraction: c.f64("interior.secular_cooling_fraction"),
-        mantle: (regime == "episodic_lid").then(|| mantle_history(c)),
+        mantle: mantle_keeps_heat(c).then(|| mantle_history(c)),
         tidal_flux_now: c.f64("interior.tidal_flux"),
         eccentricity_now: c.f64("orbit.eccentricity"),
         eccentricity_history: c.curve("orbit.eccentricity_history").clone(),
@@ -2005,8 +2028,17 @@ pub fn tectonics_plume_count(c: &Ctx) -> Value {
     {
         return 0.0.into();
     }
+    // A plume carries a share of the heat its mantle loses while it rises, so their number
+    // follows what the mantle has lost on average over its life (F122), not what it loses
+    // today, long after its plumes rose.
     let r = c.f64("body.radius");
-    (c.f64("interior.surface_heat_flux") * 4.0 * PI * r * r / PLUME_POWER_PER_PLUME)
+    let h = mantle_history(c);
+    let mean = if h.heat_flux.is_empty() {
+        c.f64("interior.surface_heat_flux")
+    } else {
+        h.heat_flux.iter().sum::<f64>() / h.heat_flux.len() as f64
+    };
+    (mean * 4.0 * PI * r * r / PLUME_POWER_PER_PLUME)
         .floor()
         .clamp(0.0, 3.0)
         .into()
@@ -2331,7 +2363,7 @@ mod tests {
     fn composition_classes_match_the_reference_bodies() {
         let class = |rho: f64, mass_earth: f64| {
             let rho_u = rho / compression_factor(mass_earth * M_EARTH);
-            let (core, _, ice) = composition_fractions(rho_u);
+            let (core, _, ice) = composition_fractions(rho_u, 1.0);
             composition_class(core, ice)
         };
         assert_eq!(class(5_427.0, 0.0553), "iron_rich");
@@ -2343,6 +2375,46 @@ mod tests {
         assert_eq!(class(1_936.0, 0.0248), "rock_ice");
         assert_eq!(class(1_880.0, 0.0225), "rock_ice");
         assert_eq!(class(1_609.0, 1.8e-5), "ice_dominated");
+    }
+
+    #[test]
+    fn a_body_formed_inside_the_snow_line_carries_no_ice() {
+        // F122: the Moon and Mars formed too warm for water ice, so the deficit of their
+        // densities below the chondritic mix is iron they lack: the Moon is all rock (its
+        // core is one or two percent of its mass, Weber et al. 2011), Mars's core under a
+        // quarter of its mass (Stähler et al. 2021). Bodies formed beyond the snow line keep
+        // their ice, and between the two temperatures the shares blend.
+        let fractions = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            (
+                g.f64("body.core_mass_fraction"),
+                g.f64("body.ice_mass_fraction"),
+            )
+        };
+        let (core, ice) = fractions("Moon");
+        assert!(ice == 0.0 && core < 0.05, "Moon core {core} ice {ice}");
+        let (core, ice) = fractions("Mars");
+        assert!(
+            ice == 0.0 && core > 0.1 && core < 0.25,
+            "Mars core {core} ice {ice}"
+        );
+        for name in ["Europa", "Ganymede", "Ceres"] {
+            let (_, ice) = fractions(name);
+            assert!(ice > 0.1, "{name} ice {ice}");
+        }
+        // Between pure rock and the chondritic mix a dry body lacks iron where a wet one
+        // carries ice beside the chondritic share.
+        let (wet, half, dry) = (
+            composition_fractions(3_600.0, 1.0),
+            composition_fractions(3_600.0, 0.5),
+            composition_fractions(3_600.0, 0.0),
+        );
+        assert!(
+            dry.2 == 0.0 && wet.2 > 0.0 && dry.0 < wet.0,
+            "{wet:?} {dry:?}"
+        );
+        assert!((half.0 - 0.5 * (wet.0 + dry.0)).abs() < 1e-12);
+        assert!((half.2 - 0.5 * wet.2).abs() < 1e-12);
     }
 
     #[test]

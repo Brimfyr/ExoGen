@@ -5,17 +5,24 @@
 //!
 //! The mantle below the lid has one temperature, which its radioactive and tidal heat raise
 //! and the heat it convects into the lid's base lowers; its heat capacity is the rock's and
-//! the core's, less the lid's, which grows as the mantle cools. Under a stagnant lid the
-//! convected flux follows the boundary-layer scaling of stagnant-lid convection, the
-//! viscosity Arrhenian in the mantle's temperature; the surface loses that flux and the heat
-//! the lid gives up as it thickens. The lid breaks when the stress the convecting sublayer
-//! puts on it, along a cell as long as the mantle is deep, exceeds the lid's frictional
-//! strength over its thickness (after Moresi and Solomatov 1998's comparison of convective
-//! and yield stresses): it founders into the mantle, which takes up its cold, and a new lid
-//! grows as a cooling half space until it is as thick as a stagnant lid would be, when it
-//! can break again (Turcotte 1993: the interior reheats under a thickening lid until the lid
-//! fails). Whether a body's lid ever breaks, and how often, comes out of its size, its heat,
-//! its surface temperature and its lid's friction.
+//! the core's, less the share of the lid's that moves with it. The convected flux follows
+//! the boundary-layer scaling of stagnant-lid convection, the viscosity Arrhenian in the
+//! mantle's temperature. The lid conducts from the mantle's temperature at its base to the
+//! surface's; it grows where it conducts more than the mantle convects into its base and
+//! thins where it conducts less, by the heat its base takes up or gives (a Stefan
+//! condition, as in parameterized histories since Schubert, Cassen and Young 1979), so that
+//! a lid that has just formed grows as a cooling half space and an old one follows the
+//! thickness a stagnant lid would have; the surface loses what the body's energy says it
+//! does. The first lid grows from the surface as the body forms. The lid breaks when the
+//! stress the convecting sublayer puts on it, along a cell as long as the mantle is deep,
+//! exceeds the lid's frictional strength over its thickness (after Moresi and Solomatov
+//! 1998's comparison of convective and yield stresses), but only once it has grown as thick
+//! as a stagnant lid since it formed: until then the cold boundary layer is the lid itself,
+//! growing, with no sublayer under it. A lid that breaks founders into the mantle, which
+//! takes up its cold, and a new lid grows until it can break again (Turcotte 1993: the
+//! interior reheats under a thickening lid until the lid fails). Whether a body's lid ever
+//! breaks, and how often, comes out of its size, its heat, its surface temperature and its
+//! lid's friction.
 
 use crate::constants::*;
 use crate::params::derive::physics::radiogenic_per_kg;
@@ -110,17 +117,23 @@ fn stagnant_flux(t: f64, gravity: f64) -> f64 {
         * rheological.powf(4.0 / 3.0)
 }
 
-/// The flux above which the lid breaks, W/m²: where the sublayer's buoyancy stress
-/// rho g alpha dT_rh delta_rh, over a cell as long as the mantle is deep, matches the lid's
-/// friction mu rho g delta² / 2, with delta_rh = k dT_rh / q and delta = k dT / q.
-fn breaking_flux(t: f64, surface: f64, depth: f64) -> f64 {
+/// Whether the lid breaks: where the sublayer's buoyancy stress rho g alpha dT_rh delta_rh,
+/// delta_rh = k dT_rh / q, over a cell as long as the mantle is deep, exceeds the lid's
+/// friction mu rho g d² / 2 over its thickness d. At a stagnant lid's thickness,
+/// d = k dT / q, this is a flux above mu k dT² / (2 alpha dT_rh² D).
+fn breaks(t: f64, depth: f64, lid: f64, q: f64, friction: f64) -> bool {
     let rheological = GAS_CONSTANT * t * t / MANTLE_ACTIVATION;
-    LID_FRICTION * K_ROCK * (t - surface).powi(2)
-        / (2.0 * MANTLE_EXPANSIVITY * rheological * rheological * depth.max(1.0))
+    2.0 * MANTLE_EXPANSIVITY * rheological * rheological * K_ROCK * depth.max(1.0)
+        > friction * lid * lid * q
 }
 
 /// The mantle's history from formation to the present (F121).
 pub fn evolve(inp: &MantleInputs) -> MantleHistory {
+    evolve_with(inp, LID_FRICTION)
+}
+
+/// The mantle's history under a lid of this effective friction.
+fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
     let r = inp.radius;
     let area = 4.0 * std::f64::consts::PI * r * r;
     let mantle = inp.mass * inp.rock_fraction;
@@ -129,10 +142,17 @@ pub fn evolve(inp: &MantleInputs) -> MantleHistory {
     let depth = (r - core_radius).max(1.0);
     let capacity = (mantle * MANTLE_HEAT_CAPACITY + core * CORE_HEAT_CAPACITY) / area;
     let ts = inp.surface_temperature;
-    // The lid's volume per unit area, m, and the heat it holds below the mantle's, J/m².
+    let rho_c = DENSITY_ROCK * MANTLE_HEAT_CAPACITY;
+    // The lid's diffusivity, its conductivity over the heat capacity its deficit counts, so
+    // that its growth and its heat agree.
+    let kappa = K_ROCK / rho_c;
+    // The lid's volume per unit area, m, and the heat it holds below the mantle's, J/m², its
+    // temperature rising evenly from the surface's to the mantle's.
     let shell = |d: f64| (r.powi(3) - (r - d.min(depth)).powi(3)) / (3.0 * r * r);
-    let deficit =
-        |t: f64, d: f64| DENSITY_ROCK * MANTLE_HEAT_CAPACITY * shell(d) * (t - ts).max(0.0) / 2.0;
+    let deficit = |t: f64, d: f64| rho_c * shell(d) * (t - ts).max(0.0) / 2.0;
+    // The body's heat per unit area, J/m²: all of it at the mantle's temperature, less the
+    // lid's deficit.
+    let energy = |t: f64, d: f64| capacity * t - deficit(t, d);
     let tides = |t: f64| {
         let e = inp.eccentricity_history.eval(t).max(0.0);
         let scale = if inp.eccentricity_now > 0.0 {
@@ -152,50 +172,41 @@ pub fn evolve(inp: &MantleInputs) -> MantleHistory {
         overturns: Vec::new(),
     };
     let mut temp = MANTLE_START_K;
-    let mut lid = (K_ROCK * (temp - ts) / stagnant_flux(temp, inp.gravity)).min(0.99 * depth);
-    let mut broke: Option<f64> = None;
+    // The first lid grows from the surface as the body's magma ocean freezes.
+    let mut lid = 0.0_f64;
+    let mut formed = 0.0;
     let mut t = 0.0;
     let mut k = 0;
+    let step = dt * GYR;
     while k < n {
         let heat = radiogenic_per_kg(t + 0.5 * dt) * mantle / area + tides(t + 0.5 * dt);
-        let q_stagnant = stagnant_flux(temp, inp.gravity);
-        let steady = (K_ROCK * (temp - ts) / q_stagnant).min(0.99 * depth);
-        // A lid that broke grows back as a cooling half space, its thickness the
-        // conductive one its flux gives, sqrt(pi kappa tau), and the flux it loses over the
-        // step the half space's, averaged exactly (a flux sampled once a step had made the
-        // overturns' count hang on the step).
-        let (grown, young, mature) = match broke {
-            Some(t0) => {
-                let ta = (t - t0).max(0.0) * GYR;
-                let tb = ta + dt * GYR;
-                let pk = std::f64::consts::PI * MANTLE_DIFFUSIVITY;
-                let young = K_ROCK * (temp - ts) * 2.0 * (tb.sqrt() - ta.sqrt())
-                    / (pk.sqrt() * (tb - ta));
-                ((pk * tb).sqrt().min(steady), young, (pk * ta).sqrt() >= steady)
-            }
-            None => (steady, 0.0, true),
-        };
-        if mature && q_stagnant > breaking_flux(temp, ts, depth) {
-            // The lid founders, and the mantle takes up its cold.
-            let convecting = (capacity - DENSITY_ROCK * MANTLE_HEAT_CAPACITY * shell(lid))
-                .max(0.05 * capacity);
-            temp -= deficit(temp, lid) / convecting;
-            broke = Some(t);
+        let q = stagnant_flux(temp, inp.gravity);
+        let steady = (K_ROCK * (temp - ts) / q).min(0.99 * depth);
+        // Grown as thick as a stagnant lid: by the time a half space would have, since the
+        // lid under a cooling mantle only nears that thickness.
+        let mature = std::f64::consts::PI * kappa * (t - formed) * GYR >= steady * steady;
+        if mature && breaks(temp, depth, lid, q, friction) {
+            // The lid founders, and the whole mantle takes up its cold.
+            temp -= deficit(temp, lid) / capacity;
             lid = 0.0;
+            formed = t;
             out.overturns.push(t);
             continue;
         }
-        let base = if grown < steady {
-            young.max(q_stagnant)
-        } else {
-            q_stagnant
-        };
-        let convecting =
-            (capacity - DENSITY_ROCK * MANTLE_HEAT_CAPACITY * shell(grown)).max(0.05 * capacity);
-        let next = temp + (heat - base) * dt * GYR / convecting;
-        // The surface loses what reaches the lid's base and what the lid gives up as its
-        // cold grows.
-        let surface = base + (deficit(next, grown) - deficit(temp, lid)) / (dt * GYR);
+        // The mantle keeps its heat less what it convects into the lid's base; the lid's
+        // deficit moves with its base's temperature by half its volume.
+        let convecting = (capacity - 0.5 * rho_c * shell(lid)).max(0.05 * capacity);
+        let next = temp + (heat - q) * step / convecting;
+        // The lid's base takes up the heat it conducts beyond what reaches it, so its square
+        // grows at 4 kappa (1 - d q / (k dT)) per its base's share of the surface: a half
+        // space's from nothing, none at a stagnant lid's thickness, shrinking past it.
+        let dtemp = (temp - ts).max(1.0);
+        let base_share = ((r - lid.min(depth)) / r).powi(2).max(1e-3);
+        let square =
+            lid * lid + step * 4.0 * kappa * (1.0 - lid * q / (K_ROCK * dtemp)) / base_share;
+        let grown = square.max(0.0).sqrt().min(0.99 * depth);
+        // The surface loses the heat made less the heat the body keeps.
+        let surface = heat - (energy(next, grown) - energy(temp, lid)) / step;
         temp = next;
         lid = grown;
         t += dt;
@@ -218,6 +229,77 @@ mod tests {
         (evolve(&MantleInputs::from_graph(&g)), g.f64("body.age"))
     }
 
+    /// Diagnostic: each rocky preset's mantle history beside the thermal history the
+    /// pipeline reads, mW/m² and K, at a few times; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_mantle_histories() {
+        let mut csv = String::from("body,time_gyr,heat_flux,temperature,lid\n");
+        for name in ["Mercury", "Venus", "Earth", "Moon", "Mars", "Io"] {
+            let (g, _) = preset(name).unwrap().to_graph();
+            let h = evolve(&MantleInputs::from_graph(&g));
+            let th = crate::thermal::ThermalHistory::from_graph(&g);
+            let age = g.f64("body.age");
+            let r = g.f64("body.radius");
+            let mean = h.heat_flux.iter().sum::<f64>() / h.heat_flux.len() as f64;
+            println!(
+                "{name}: rock {:.3} core {:.3}, overturns {}, regime {}, mean loss {:.2} TW",
+                g.f64("body.rock_mass_fraction"),
+                g.f64("body.core_mass_fraction"),
+                h.overturns.len(),
+                g.str("interior.tectonic_regime"),
+                mean * 4.0 * std::f64::consts::PI * r * r / 1e12
+            );
+            for k in 0..h.times.len() {
+                csv += &format!(
+                    "{name},{:.5},{:.6},{:.1},{:.0}\n",
+                    h.times[k], h.heat_flux[k], h.temperature[k], h.lid[k]
+                );
+            }
+            for t in [0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, age] {
+                let k = h.times.partition_point(|&x| x < t).min(h.times.len() - 1);
+                println!(
+                    "  {t:>5.2} Gyr: mantle {:>6.1} mW/m² {:>6.0} K lid {:>5.0} km | pipeline {:>6.1} mW/m² {:>6.0} K",
+                    1e3 * h.heat_flux_at(t),
+                    h.temperature_at(t),
+                    h.lid[k] / 1e3,
+                    1e3 * th.at(t).heat_flux,
+                    th.at(t).mantle_temperature
+                );
+            }
+        }
+        if let Ok(path) = std::env::var("EXOGEN_MANTLE_CSV") {
+            std::fs::write(path, csv).unwrap();
+        }
+    }
+
+    /// Diagnostic: Venus's overturns under a range of frictions; run with `--ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_friction_scan() {
+        let (g, _) = preset("Venus").unwrap().to_graph();
+        let inp = MantleInputs::from_graph(&g);
+        let age = g.f64("body.age");
+        for i in 0..=40 {
+            let mu = 0.004 + 0.0005 * i as f64;
+            let h = evolve_with(&inp, mu);
+            let ago: Vec<String> = h
+                .overturns
+                .iter()
+                .rev()
+                .take(4)
+                .map(|t| format!("{:.2}", age - t))
+                .collect();
+            println!(
+                "mu {mu:.4}: {:>3} overturns, last Ga {:?}, now {:.1} mW/m²",
+                h.overturns.len(),
+                ago,
+                1e3 * h.heat_flux.last().unwrap()
+            );
+        }
+    }
+
     #[test]
     fn venus_s_lid_breaks_again_and_again_and_the_small_bodies_never() {
         // F121: Venus's mantle heats under its lid until the lid founders, again and again,
@@ -226,12 +308,28 @@ mod tests {
         let (venus, age) = history("Venus");
         assert!(venus.overturns.len() >= 3, "{:?}", venus.overturns);
         let last = age - venus.last_overturn().unwrap();
-        assert!(last > 0.3 && last < 0.7, "Venus last overturned {last} Gyr ago");
-        for (name, lo, hi) in [("Mars", 0.015, 0.045), ("Moon", 0.009, 0.021), ("Mercury", 0.008, 0.03)] {
+        assert!(
+            last > 0.3 && last < 0.7,
+            "Venus last overturned {last} Gyr ago"
+        );
+        for (name, lo, hi) in [
+            ("Mars", 0.015, 0.045),
+            ("Moon", 0.009, 0.021),
+            ("Mercury", 0.008, 0.03),
+        ] {
             let (h, _) = history(name);
             assert!(h.overturns.is_empty(), "{name}: {:?}", h.overturns);
             let now = *h.heat_flux.last().unwrap();
             assert!(now > lo && now < hi, "{name}: {now} W/m²");
+            // F122: the surface loses heat from the start, a lid thinning under a heating
+            // mantle only as fast as its base takes up the heat, and lost most when young.
+            let least = h.heat_flux.iter().copied().fold(f64::INFINITY, f64::min);
+            assert!(least > 0.0, "{name}: {least} W/m²");
+            assert!(
+                h.heat_flux[0] > 2.0 * now,
+                "{name}: young {} now {now}",
+                h.heat_flux[0]
+            );
         }
     }
 }

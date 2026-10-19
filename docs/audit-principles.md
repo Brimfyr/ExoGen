@@ -46,6 +46,8 @@ Since F120 a rise keeps the melt clock of its mantle, which takes each body's pa
 
 Partly closed in the fifty-second milestone (F121): the episodic lid is no longer a cut on proxies. A dry rocky body's mantle stores its heat under a lid that breaks where the convecting sublayer's stress along a cell as deep as the mantle exceeds the lid's friction over its thickness (after Moresi and Solomatov 1998): Venus's breaks 21 times and last 0.61 Ga; Mars's, the Moon's and Mercury's never. A lid broken within the last half of its body's life is episodic, its retention and resurfacing ages the time since. Still open: the plates' rule and the ice shells' names; the Io regime (S3); the stagnant bodies' histories, which keep the equilibrium heat flux until the composition model gives the Moon its rock (S2); the melt efficiency by name, so that Venus's melt clock still runs on the episodic lid's constant.
 
+In the fifty-third milestone (F122) the stagnant bodies' mantles keep their own heat too, the composition model giving the Moon its rock: Mars, the Moon and Mercury cool under lids that grow and thin by the heat at their bases and never break, and Venus's breaks 42 times, last 0.49 Ga. Still open: the plates' rule and the ice shells' names; the Io regime (S3); the melt efficiency by name.
+
 ### S2. The composition class
 
 `composition_class` (params/derive.rs) cuts the core and ice mass fractions into four names at IRON_RICH_CORE_FRACTION, ROCK_MAX_ICE_FRACTION and ROCK_ICE_MAX_ICE_FRACTION. The derivations read the name in 23 places. Among them are the moment of inertia factor (0.33, 0.35 or 0.40 by class), the bedrock and lava materials, the Io regime, and whether the body is icy at all (`is_icy`), which decides between an ice shell and a rock lid.
@@ -55,6 +57,8 @@ The fractions are continuous inputs. A body just under the ice cut has no ice sh
 Direction: the moment of inertia from the layered density profile the composition already implies; an ice shell wherever the ice layer has a thickness (`ice_layer_thickness`), not by class; materials by process (S7).
 
 When: the earlier-phases revisit.
+
+The fractions themselves were wrong for the bodies formed inside the snow line: a density below the chondritic mix was taken for ice wherever a body formed, so that the Moon carried 8 percent ice and a 30 percent core. Since the fifty-third milestone (F122) a body takes up ice by the temperature where it formed, and one formed too warm for it lacks iron instead: the Moon is all rock, Mars carries a 16 percent core and no ice. The cuts on the fractions are still open.
 
 ### S3. The Io regime
 

@@ -29,11 +29,11 @@ use crate::grid::projection::PaddedField;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
-use crate::thermal::ThermalHistory;
 use crate::stages::io::{Lobe, PathRules};
+use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 17;
+pub const VERSION: u64 = 18;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -2900,7 +2900,12 @@ mod tests {
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
         let r = g.f64("body.radius");
         let age = g.f64("body.age");
-        let pp = PlumeProcess::new(&g, CubeSphere::new(v[3] as u32), &ThermalHistory::from_graph(&g)).unwrap();
+        let pp = PlumeProcess::new(
+            &g,
+            CubeSphere::new(v[3] as u32),
+            &ThermalHistory::from_graph(&g),
+        )
+        .unwrap();
         for (kind, list) in [("canyon", &pp.canyons), ("graben", &pp.graben)] {
             for t in list.iter() {
                 let near = t
@@ -3333,7 +3338,8 @@ mod tests {
         // length, and its throw stays within the layer; the faults whose throw over their
         // length would exceed the layer are rifts, as wide as their throw, the long ones.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
+        let p =
+            PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let all: Vec<&Trough> = p.canyons.iter().chain(&p.graben).collect();
         let graben: Vec<&&Trough> = all
             .iter()
@@ -3385,7 +3391,12 @@ mod tests {
         let thermal = ThermalHistory::from_graph(&g);
         let p = PlumeProcess::new(&g, CubeSphere::new(32), &thermal).unwrap();
         for (i, r) in p.rises.iter().enumerate() {
-            println!("rise {i}: {:.3} to {:.3} Gyr, radius {:.0} km", r.start_gyr, r.end_gyr, r.radius / 1e3);
+            println!(
+                "rise {i}: {:.3} to {:.3} Gyr, radius {:.0} km",
+                r.start_gyr,
+                r.end_gyr,
+                r.radius / 1e3
+            );
         }
         for s in &p.shields {
             println!(
@@ -3509,7 +3520,8 @@ mod tests {
         );
         // On Mars the faults beyond the foot gather along the axis, and the shields lie on it.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
+        let p =
+            PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let rise = &p.rises[0];
         let (re, rn) = local_basis(rise.center);
         let phi_axis = dot(rise.axis, rn).atan2(dot(rise.axis, re));
@@ -3543,7 +3555,8 @@ mod tests {
         // leaving its source and running on away from it, a graben above each; some run
         // thousands of kilometres, as Tharsis's radial graben systems do.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
+        let p =
+            PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let r = g.f64("body.radius");
         let dikes: Vec<&Trough> = p
             .graben
@@ -3763,7 +3776,8 @@ mod tests {
         // F116: on Mars the rise's faults form while its dome rises, and the plume head's
         // dikes with them; each volcano's dikes come while it grows.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
+        let p =
+            PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let rise = &p.rises[0];
         let age = g.f64("body.age");
         let (mut faults, mut plume_dikes, mut volcano_dikes) = (0, 0, 0);

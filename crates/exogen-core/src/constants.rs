@@ -93,6 +93,13 @@ pub const DENSITY_ICE: f64 = 1_000.0;
 /// Chondritic core-to-silicate mass ratio assumed when the body also carries ice
 /// (Earth: 0.325 / 0.675 = 0.48).
 pub const CHONDRITIC_CORE_TO_ROCK: f64 = 0.48;
+/// Where a body formed decides whether it could take up water ice (F122): at or below the
+/// snow line's temperature, K (Hayashi 1981: 170 K, at 2.7 AU), fully; at or above the
+/// second, not at all, its density's deficit below the chondritic mix then iron it lacks;
+/// between them by the temperature (a stated choice). Its blackbody temperature at its
+/// distance from its star today stands for its birthplace's.
+pub const SNOW_LINE_WET_K: f64 = 170.0;
+pub const SNOW_LINE_DRY_K: f64 = 200.0;
 /// Compression correction: bulk density = uncompressed density x (1 + a (M / M_earth)^b).
 /// Fit to Earth (1.30), Venus (1.30), Mars (1.05), Mercury (1.02). Provisional, Phase 4.
 pub const COMPRESSION_A: f64 = 0.30;
@@ -364,22 +371,22 @@ pub const RIDGE_LOAD_WEIGHT: f64 = 0.5;
 /// Plume loading (PLAN.md 4.3). A stagnant lid at least this big raises one plume per
 /// this much of the heat its mantle loses, W, up to three: a plume carries a share of the
 /// mantle's heat, so their number grows with what it loses in all rather than per square
-/// metre (F121; a stated choice keeping Mars's one, Tharsis, and Venus's three, which Venus
-/// had kept only by a heat flux of an equilibrium mantle twice its own); the rise spans this
+/// metre (F121), and on average over its life rather than today, long after its plumes rose
+/// (F122; a stated choice keeping Mars's one, Tharsis, and Venus's three); the rise spans this
 /// fraction of the radius and stands this fraction of the strength-limited relief
 /// (Tharsis: 5,000 km across, 7 km high). It grows as its plume's mantle melts beneath its
 /// lid (F120): its head rises once the mantle has made this much melt per unit area since
 /// the lid last formed, and its dome is built by this much, m (stated choices, set so that
 /// Tharsis grew from 4.2 to 3.0 Ga as the times the rise kept before did, 0.3 and 1.5 Gyr
-/// after Mars formed).
+/// after Mars formed; set again on the history of Mars's own mantle, F122).
 pub const PLUME_MIN_RADIUS: f64 = 3.0e6;
 pub const PLUME_POWER_PER_PLUME: f64 = 4.0e12;
 pub const PLUME_RISE_DIAMETER_FRACTION: f64 = 1.5;
 /// A thin, hot episodic lid supports narrower rises (Beta Regio: 2,500 km on Venus).
 pub const PLUME_RISE_DIAMETER_FRACTION_EPISODIC: f64 = 0.4;
 pub const RISE_HEIGHT_FRACTION: f64 = 0.28;
-pub const RISE_START_MELT: f64 = 2_700.0;
-pub const RISE_END_MELT: f64 = 10_300.0;
+pub const RISE_START_MELT: f64 = 1_400.0;
+pub const RISE_END_MELT: f64 = 5_400.0;
 /// A rocky lithosphere's Young's modulus, Pa, and Poisson's ratio, for its membrane
 /// strength at the longest wavelengths (the values flexure studies of Mars use: McGovern
 /// et al. 2002).
@@ -390,7 +397,8 @@ pub const ROCK_POISSON: f64 = 0.25;
 /// they sit (fraction of its radius), the melt per unit area over which a shield grows
 /// by a factor e of what it has still to grow, its magma coming as fast as its mantle
 /// melts (F120: Mars's melt in a gigayear as its shields start, so that they grow as they
-/// did over a gigayear; each starts as its rise's stretching wanes, F119), and the
+/// did over a gigayear, set again on its own mantle's history in F122; each starts as its
+/// rise's stretching wanes, F119), and the
 /// thickness of flows that renews a flank's surface; its edifice longer along its rift
 /// zone, whose fissures feed it more lava there, by up to this axis ratio, the area kept
 /// (a stated choice: the Tharsis Montes stretch along the line of their rift aprons,
@@ -409,7 +417,7 @@ pub const SHIELD_SLOPE_DEG: f64 = 5.0;
 pub const SHIELD_FLANK_EXPONENT: f64 = 1.6;
 pub const SHIELD_FLANK_POWER: f64 = 0.9;
 pub const SHIELD_PLACEMENT: (f64, f64) = (0.1, 0.6);
-pub const SHIELD_GROWTH_MELT: f64 = 5_500.0;
+pub const SHIELD_GROWTH_MELT: f64 = 3_500.0;
 pub const SHIELD_RENEWAL_THICKNESS: f64 = 5.0;
 /// A shield's lava buries the ground it grows over (F115), the relief measured against the
 /// mean of that ground in this many rings about the edifice's centre, as a deposit buries
@@ -509,8 +517,8 @@ pub const RIFT_CLUSTER_OFFSET: (f64, f64) = (0.8, 3.5);
 pub const RIFT_LOOP_WIDTH_CELLS: f64 = 2.0;
 /// A canyon carried by the loop is carved over the melt its mantle makes per unit area
 /// about the time it formed, m (F120: Mars's melt over the gigayear about its dome's turn,
-/// as the gigayear it was carved over before).
-pub const RIFT_CARVING_MELT: f64 = 6_300.0;
+/// as the gigayear it was carved over before; set again on its own mantle's history, F122).
+pub const RIFT_CARVING_MELT: f64 = 3_300.0;
 pub const RIFT_MAX_FAULTS: u64 = 20_000;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
@@ -1084,7 +1092,7 @@ pub const MANTLE_EXPANSIVITY: f64 = 3e-5;
 pub const MANTLE_DIFFUSIVITY: f64 = 1e-6;
 pub const MANTLE_HEAT_CAPACITY: f64 = 1_250.0;
 pub const CORE_HEAT_CAPACITY: f64 = 800.0;
-pub const LID_FRICTION: f64 = 0.010;
+pub const LID_FRICTION: f64 = 0.014;
 pub const EPISODIC_RECENT_SHARE: f64 = 0.5;
 pub const MANTLE_STEPS: usize = 4_000;
 

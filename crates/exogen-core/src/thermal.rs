@@ -36,7 +36,7 @@ pub struct ThermalInputs {
     /// shell's share of the present tidal flux is then recomputed, not scaled.
     pub shell: Option<crate::stages::tidal::ShellTides>,
     pub core_tidal_flux_now: f64,
-    /// A rocky mantle whose lid breaks keeps its own heat's history (F121).
+    /// A dry rocky mantle keeps its own heat's history (F121, F122).
     pub mantle: Option<crate::mantle::MantleHistory>,
     pub icy: bool,
     pub surface_temperature: f64,
@@ -162,9 +162,11 @@ impl ThermalInputs {
             uncompressed_density: graph.f64("body.uncompressed_density"),
             rock_mass: graph.f64("body.mass") * graph.f64("body.rock_mass_fraction"),
             secular_fraction: graph.f64("interior.secular_cooling_fraction"),
-            mantle: (regime == "episodic_lid").then(|| {
-                crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph))
-            }),
+            // A dry rocky mantle outside the plates' rule and the Io regime keeps its own
+            // heat's history (F121, F122).
+            mantle: (matches!(regime, "stagnant_lid" | "episodic_lid")
+                && graph.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX)
+                .then(|| crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph))),
             tidal_flux_now: graph.f64("interior.tidal_flux"),
             eccentricity_now: graph.f64("orbit.eccentricity"),
             eccentricity_history: graph
@@ -203,8 +205,8 @@ impl ThermalHistory {
         } else {
             THERMAL_SAMPLES
         };
-        // A lid that breaks surges with heat after each overturn, over tens of millions of
-        // years (F121).
+        // A mantle that keeps its heat changes over tens of millions of years, and a lid that
+        // breaks surges with heat after each overturn (F121).
         let n = if inp.mantle.is_some() {
             THERMAL_SAMPLES_MAX
         } else {
@@ -294,7 +296,7 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         }
         None => inp.tidal_flux_now * scale,
     };
-    // A rocky mantle whose lid breaks loses its heat as its history gives it (F121).
+    // A dry rocky mantle loses its heat as its history gives it (F121, F122).
     let heat_flux = match &inp.mantle {
         Some(m) => m.heat_flux_at(t),
         None => radiogenic + tidal,
@@ -387,6 +389,56 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+        }
+    }
+
+    /// Diagnostic: each stagnant body's heat flux, lithosphere, the volcanism stage's ascent
+    /// and contraction factors, and the lava erupted per unit area since formation, m, at a
+    /// few times; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_eruptions() {
+        for name in ["Moon", "Mercury", "Mars"] {
+            let (g, _) = preset(name).unwrap().to_graph();
+            let h = ThermalHistory::from_graph(&g);
+            let r = g.f64("body.radius");
+            let area = 4.0 * std::f64::consts::PI * r * r;
+            let age = g.f64("body.age");
+            println!("{name}:");
+            let n = 2000;
+            let mut erupted = 0.0;
+            let marks = [0.1, 0.3, 0.5, 0.7, 0.9, 1.2, 1.5, 2.0, 3.0, 4.5];
+            let mut next = 0;
+            for k in 0..n {
+                let t = age * (k as f64 + 0.5) / n as f64;
+                let s = h.at(t);
+                let ascent = 1.0
+                    / (1.0
+                        + ((s.lithosphere - VOLCANISM_ASCENT_LITHOSPHERE)
+                            / VOLCANISM_ASCENT_WIDTH)
+                            .exp());
+                let strain = 2.0 * s.contraction / r;
+                let open = (-(strain / VOLCANISM_SHUTOFF_STRAIN).powi(2)).exp();
+                erupted += s.magma_rate
+                    * VOLCANISM_EXTRUSIVE_FRACTION
+                    * ascent
+                    * open
+                    * (age / n as f64)
+                    * GYR
+                    / area;
+                while next < marks.len() && t + 0.5 * age / n as f64 >= marks[next] {
+                    println!(
+                        "  {:>4.1} Gyr: {:>5.1} mW/m², lithosphere {:>4.0} km, ascent {:.2}, open {:.2}, erupted {:>5.0} m",
+                        marks[next],
+                        1e3 * s.heat_flux,
+                        s.lithosphere / 1e3,
+                        ascent,
+                        open,
+                        erupted
+                    );
+                    next += 1;
+                }
+            }
         }
     }
 

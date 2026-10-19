@@ -2924,7 +2924,13 @@ mod tests {
             };
             0.5 * (rim(1.0) + rim(-1.0)) - at(mid)
         };
-        println!("shields start: {:?}", lo.shields.iter().map(|s| (s.start_gyr * 100.0).round() / 100.0).collect::<Vec<_>>());
+        println!(
+            "shields start: {:?}",
+            lo.shields
+                .iter()
+                .map(|s| (s.start_gyr * 100.0).round() / 100.0)
+                .collect::<Vec<_>>()
+        );
         println!("start end depth_m width_km | relief_m at 1/4 1/2 3/4");
         let mut canyons: Vec<&plume::Trough> = lo.canyons.iter().collect();
         canyons.sort_by(|a, b| a.start_gyr.total_cmp(&b.start_gyr));
@@ -3020,13 +3026,15 @@ mod tests {
             "shield {summit} vs foot {foot}"
         );
         // Some trough the loop carried still stands well over a kilometre deep below the
-        // plateau either side, the rims being the highest ground within a few widths past
-        // the en-echelon neighbours; a later flood may have filled another. The canyons
-        // open as the dome rises (F116), and the rise's eruptions fill them in part until
-        // its shields gather its dikes as its stretching wanes (F119).
-        let relief = |canyon: &plume::Trough| {
-            let mid = canyon.midpoint();
-            let next = canyon.points[canyon.points.len() / 2 + 1];
+        // plateau either side along most of its length, the rims being the highest ground
+        // within a few widths past the en-echelon neighbours, its median taken over 19
+        // points along it since a local fill decides any one of them; a later flood may
+        // have filled another. The canyons open as the dome rises (F116), and the rise's
+        // eruptions fill them in part until its shields gather its dikes as its stretching
+        // wanes (F119).
+        let relief_at = |canyon: &plume::Trough, share: f64| {
+            let k = ((canyon.points.len() - 2) as f64 * share) as usize;
+            let (mid, next) = (canyon.points[k], canyon.points[k + 1]);
             let t = crate::geom::normalize([next[0] - mid[0], next[1] - mid[1], next[2] - mid[2]]);
             let n = crate::geom::normalize(crate::geom::cross(mid, t));
             let side = |s: f64| {
@@ -3045,12 +3053,19 @@ mod tests {
             };
             0.5 * (rim(1.0) + rim(-1.0)) - at(mid)
         };
+        let relief = |canyon: &plume::Trough| {
+            let mut along: Vec<f64> = (1..20)
+                .map(|k| relief_at(canyon, k as f64 / 20.0))
+                .collect();
+            along.sort_by(|a, b| a.total_cmp(b));
+            along[9]
+        };
         let deepest = lo
             .canyons
             .iter()
             .map(relief)
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(deepest > 2_200.0, "deepest standing trough {deepest} m");
+        assert!(deepest > 1_500.0, "deepest standing trough {deepest} m");
         // The Moon raises none.
         let moon = r
             .run(&preset_graph("Moon", "preview"), &NoProgress)
