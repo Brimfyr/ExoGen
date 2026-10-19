@@ -150,17 +150,29 @@ impl MantleHistory {
         }
         let k = self.times.partition_point(|&x| x < t).min(n - 1);
         let temp = self.temperature[k];
-        let ts = self.surface_temperature;
         let rheological = GAS_CONSTANT * temp * temp / MANTLE_ACTIVATION;
-        let stiff = self.lid[k] * (temp - LID_BASE_SCALES * rheological - ts).max(0.0)
-            / (temp - ts).max(1.0);
-        let solidus = solidus(DENSITY_ROCK * self.gravity * stiff);
+        let solidus = solidus(DENSITY_ROCK * self.gravity * self.stiff_lid_at(t));
         let excess = if plumes {
             temp + PLUME_EXCESS_K - solidus
         } else {
             temp - solidus
         };
         (excess / rheological).clamp(0.0, 1.0)
+    }
+
+    /// The depth the mantle rising under the lid reaches at a time, the stiff lid's base, m
+    /// (F123): where the conductive profile reaches LID_BASE_SCALES rheological scales below
+    /// the mantle's temperature.
+    pub fn stiff_lid_at(&self, t: f64) -> f64 {
+        let n = self.times.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let k = self.times.partition_point(|&x| x < t).min(n - 1);
+        let temp = self.temperature[k];
+        let ts = self.surface_temperature;
+        let rheological = GAS_CONSTANT * temp * temp / MANTLE_ACTIVATION;
+        self.lid[k] * (temp - LID_BASE_SCALES * rheological - ts).max(0.0) / (temp - ts).max(1.0)
     }
 
     /// The surface heat flux averaged over the body's life, W/m².

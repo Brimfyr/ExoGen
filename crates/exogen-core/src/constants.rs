@@ -243,6 +243,11 @@ pub const SCARP_LENGTH_STRAIN_EXPONENT: f64 = 2.0;
 /// height; and the range of single eruption volumes, m³ (mare flow units of hundreds to
 /// thousands of km³). Provisional.
 pub const VOLCANISM_EXTRUSIVE_FRACTION: f64 = 0.10;
+/// A rocky body's extrusive share where its crust does not hold its magma down (F125): its
+/// magma erupts by what the crust's buoyancy leaves of this (a stated choice within Crisp
+/// 1984's 5:1 to 10:1, set so that the Moon keeps the lava its maria hold under its light
+/// crust); cryolava keeps the share above.
+pub const VOLCANISM_EXTRUSIVE_FRACTION_ROCK: f64 = 0.13;
 /// Lithosphere thickness past which magma no longer reaches the surface, and the width of
 /// that cutoff, m: the Moon's maria waned once its lithosphere passed some 500 km.
 pub const VOLCANISM_ASCENT_LITHOSPHERE: f64 = 400e3;
@@ -1094,6 +1099,41 @@ pub const MANTLE_DIFFUSIVITY: f64 = 1e-6;
 pub const MANTLE_HEAT_CAPACITY: f64 = 1_250.0;
 pub const CORE_HEAT_CAPACITY: f64 = 800.0;
 pub const LID_FRICTION: f64 = 0.0112;
+/// The iron a mantle keeps in its silicates, as FeO, mass fraction (F125): what the warmth
+/// where the body formed left oxidized, from a reduced body formed hot in the inner nebula
+/// to an oxidized one formed cool, linear in its blackbody temperature between these anchors,
+/// K (a stated relation set on Mercury, whose surface carries some 1.5 percent iron by
+/// MESSENGER, much of it in sulfides, Weider et al. 2014, and Mars, 18 percent FeO, Taylor
+/// and McLennan 2009; it gives the Moon 14 percent and Venus 11, where Earth's mantle, its
+/// iron drawn into its core under pressure, keeps 8).
+pub const FEO_REDUCED: f64 = 0.02;
+pub const FEO_REDUCED_K: f64 = 449.0;
+pub const FEO_OXIDIZED: f64 = 0.18;
+pub const FEO_OXIDIZED_K: f64 = 226.0;
+/// A basalt's colour follows its iron (F125): the iron-poor end-member at or below this FeO
+/// (Mercury's lavas), the iron-rich at or above the second (the lunar maria's mantle).
+pub const BASALT_IRON_POOR_FEO: f64 = 0.03;
+pub const BASALT_IRON_RICH_FEO: f64 = 0.13;
+/// A magma ocean's flotation crust (F125). Plagioclase crystallizes only below about this
+/// pressure, Pa (the plagioclase-spinel peridotite transition), and joins the cumulates once
+/// some three quarters of the ocean has frozen, so that the last liquid, this share of the
+/// ocean, lies at its top (Snyder et al. 1992): where the plagioclase field holds that
+/// liquid, from half to all of it, plagioclase floats as an anorthositic crust, if the
+/// liquid is denser than plagioclase, which takes an iron-rich ocean, none below the first
+/// FeO and fully above the second (stated, after Vander Kaaden and McCubbin 2015, who found
+/// that Mercury's iron-poor ocean floated graphite instead).
+pub const PLAGIOCLASE_MAX_PRESSURE: f64 = 1.0e9;
+pub const PLAGIOCLASE_RESIDUAL: f64 = 0.22;
+pub const FLOTATION_IRON_FEO: (f64, f64) = (0.04, 0.08);
+/// Densities for a magma's buoyancy in its crust, kg/m³ (F125): basaltic magma by its iron,
+/// some 2,700 for an iron-poor lava to 3,000 for an iron-rich one (a stated linear fit); an
+/// anorthositic crust; a basaltic or graphite-bearing crust by its iron; a felsic crust.
+pub const MAGMA_DENSITY_BASE: f64 = 2_670.0;
+pub const MAGMA_DENSITY_PER_FEO: f64 = 1_650.0;
+pub const CRUST_DENSITY_ANORTHOSITE: f64 = 2_750.0;
+pub const CRUST_DENSITY_MAFIC_BASE: f64 = 2_850.0;
+pub const CRUST_DENSITY_MAFIC_PER_FEO: f64 = 1_000.0;
+pub const CRUST_DENSITY_FELSIC: f64 = 2_700.0;
 /// The crust's share of the heat-producing elements (F123): the melts that made it took the
 /// incompatible elements of the mantle they came from, enriched about one over their melt
 /// fraction, so the crust holds them by its volume's share of the rock weighted by this
@@ -1575,7 +1615,7 @@ pub const TEXTURE_FADE_RADII: (f64, f64) = (1.3, 2.0);
 /// Provisional: Phase 4 for ice, Phase 7 for the material library.
 pub const EXCAVATION_DEPTH_FRACTION: f64 = 0.1;
 pub const DEEP_BEDROCK_DEPTH_ROCK: f64 = 25_000.0;
-pub const DEEP_BEDROCK_DEPTH_IRON_RICH: f64 = 10_000.0;
+pub const DEEP_BEDROCK_DEPTH_GRAPHITE: f64 = 10_000.0;
 pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;
 /// Brightness mottling of fresh ejecta in the ray field, and the lobing of the continuous
 /// ejecta edge as a fraction of its radius: the edge wanders by 15% in the ejecta

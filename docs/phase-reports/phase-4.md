@@ -1309,3 +1309,30 @@ Still to do:
 - **The core's boundary under pressure**, for the large bodies; the inner core's growth, and contraction from the cooling itself.
 
 Tests 195 (12 ignored). One is new: Mercury's core, left hot by its formation, gives its mantle more than five times as much heat young as now and cools by over 200 K, and the Moon's gives none. Clippy is clean and validate passes its 117 checks.
+
+## The fifty-sixth milestone: a rocky crust's materials from its processes
+
+Asked for by the user after the fifty-fifth: audit S7, the materials list, rocky bodies first and icy ones in the next milestone. The list mixed rocks with bodies and units ("Mercurian regolith", "smooth plains", "mare basalt"), each chosen by class and regime, and every body erupted the same share of its magma whatever its crust.
+
+- **F125, a rocky crust's materials come from the processes that make it.** The mantle's iron from where the body formed; the magma ocean's flotation crust, anorthosite where plagioclase floated on an iron-rich ocean and a graphite crust where an iron-poor one floated graphite; the body's basalt with its mantle's iron; the rock colour where no regolith forms; and the crust's buoyancy deciding how much magma erupts.
+
+How it went:
+
+- **The list.** Sixteen materials by what they are: anorthosite, norite, the body's basalt and the iron-rich and iron-poor basalts it blends, felsic rock, graphite-bearing and graphite-rich crust, impact melt, sulfur deposit, carbonaceous material and the ices. The Moon, Mercury, Mars, Venus, Earth and Io keep the colours they had.
+- **Rock and regolith.** One basalt for the Moon's maria and Mars's plains needed two kinds of fresh: an airless body's fresh regolith, finely ground and bright, and the darker rock or sand under an atmosphere, so a material may carry a rock colour that a surface impacts do not garden shows.
+- **The buoyancy, in the prototype first.** Magma's buoyancy budget over its path, gained in the mantle and lost in a lighter crust, holds the Moon's iron-rich basalt down most while its lid is thin: its eruptions came later, half by 1.17 Gyr after it formed where it was 0.88, and its lava after 2 Gyr from 88 to 108 m per unit area, which the renders showed did not bring back the patches of the fifty-third. The rocky extrusive share, raised from 0.10 to 0.13 so that the Moon keeps its maria, gives Mercury and Mars more.
+
+What the maps show:
+
+- **The Moon:** as it was, its maria dark and even, their lava over 15.8 percent of the surface; their surfaces formed a little later, at 1.46 Ga at the median where they formed at 1.51.
+- **Mercury:** its lava covers 21.8 percent of the surface, against 18.5 in the fifty-fifth and 27 on the real planet; more of its tan plains are back, its surface the graphite-bearing crust and its basins' floors the graphite-rich one, in the colours they had.
+- **Mars:** its lava covers 40.0 percent of the surface, against 35.3 in the fifty-fifth and 50.1 before the fifty-third; its colours as they were, its basalt shown as rock under its atmosphere.
+- **Venus:** its units as they were; its basalt, its mantle's FeO 11 percent, between the two end-members, the surface 5 percent brighter on average.
+- **Io and Earth:** the same to the pixel; Io's coat is now a sulfur deposit by name.
+
+Still to do:
+
+- **The icy bodies' materials** and the presets that pin them, the next milestone.
+- **The crust's porosity and thickness**, and a body's carbon, which the buoyancy and the graphite crust take as given.
+
+Tests 199 (12 ignored). Four are new: the Moon floats anorthosite over norite and Mercury graphite while Mars and Venus show their basalt; a body's basalt takes its mantle's iron and shows its rock where no regolith forms; a light crust holds a dense magma down more while the lid is thin; retired material names load as their replacements. Clippy is clean and validate passes its 117 checks.

@@ -63,6 +63,9 @@ pub struct ThermalState {
     pub contraction: f64,
     /// Magma production, m³/s.
     pub magma_rate: f64,
+    /// The depth the mantle rising under the lid reaches, the stiff lid's base, m, where
+    /// its magma comes from (F125); the lithosphere where no mantle history is kept.
+    pub melt_depth: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -254,6 +257,7 @@ impl ThermalHistory {
             relief_limit: lerp(a.relief_limit, b.relief_limit),
             contraction: lerp(a.contraction, b.contraction),
             magma_rate: lerp(a.magma_rate, b.magma_rate),
+            melt_depth: lerp(a.melt_depth, b.melt_depth),
         }
     }
 
@@ -361,6 +365,10 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         relief_limit,
         contraction: contraction(inp.radius, inp.uncompressed_density, t),
         magma_rate: magma,
+        melt_depth: inp
+            .mantle
+            .as_ref()
+            .map_or(lithosphere, |m| m.stiff_lid_at(t)),
     }
 }
 

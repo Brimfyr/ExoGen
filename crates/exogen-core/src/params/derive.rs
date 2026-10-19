@@ -644,10 +644,49 @@ pub fn body_uncompressed_density(c: &Ctx) -> Value {
 /// line's temperature, 0 from SNOW_LINE_DRY_K, by its blackbody temperature at its distance
 /// from its star (zero albedo, its whole surface sharing the heat).
 fn formed_wet(c: &Ctx) -> f64 {
-    let t = (c.f64("orbit.insolation") / (4.0 * SIGMA_SB))
+    ((SNOW_LINE_DRY_K - formation_temperature(c)) / (SNOW_LINE_DRY_K - SNOW_LINE_WET_K))
+        .clamp(0.0, 1.0)
+}
+
+/// A body's blackbody temperature at its distance from its star, K, standing for where it
+/// formed (F122, F125).
+fn formation_temperature(c: &Ctx) -> f64 {
+    (c.f64("orbit.insolation") / (4.0 * SIGMA_SB))
         .max(0.0)
-        .powf(0.25);
-    ((SNOW_LINE_DRY_K - t) / (SNOW_LINE_DRY_K - SNOW_LINE_WET_K)).clamp(0.0, 1.0)
+        .powf(0.25)
+}
+
+/// F125: the mantle's FeO, mass fraction, from the warmth where the body formed.
+pub fn body_mantle_feo(c: &Ctx) -> Value {
+    let reduced = ((FEO_REDUCED_K - formation_temperature(c)) / (FEO_REDUCED_K - FEO_OXIDIZED_K))
+        .clamp(0.0, 1.0);
+    (FEO_REDUCED + (FEO_OXIDIZED - FEO_REDUCED) * reduced).into()
+}
+
+/// F125: what a rocky body's magma ocean floated, as shares of its primary crust: plagioclase
+/// where its last liquid lay within the plagioclase field and was iron-rich enough to float
+/// it, graphite where the ocean was too iron-poor to oxidize its carbon.
+fn flotation(c: &Ctx) -> (f64, f64) {
+    let r = c.f64("body.radius");
+    let core = c.f64("body.mass") * c.f64("body.core_mass_fraction");
+    let core_radius = (3.0 * core / (4.0 * PI * DENSITY_IRON)).cbrt();
+    let field = PLAGIOCLASE_MAX_PRESSURE / (DENSITY_ROCK * c.f64("body.gravity")).max(1e-9);
+    let share = ((r.powi(3) - (r - field.min(r)).powi(3))
+        / (r.powi(3) - core_radius.powi(3)).max(1.0))
+    .clamp(0.0, 1.0);
+    let room = ((share / PLAGIOCLASE_RESIDUAL - 0.5) / 0.5).clamp(0.0, 1.0);
+    let feo = c.f64("body.mantle_feo");
+    let iron = ((feo - FLOTATION_IRON_FEO.0) / (FLOTATION_IRON_FEO.1 - FLOTATION_IRON_FEO.0))
+        .clamp(0.0, 1.0);
+    (room * iron, 1.0 - iron)
+}
+
+/// Whether a body's surface is rock under the materials' process rules (F125): a rocky or
+/// iron-rich body neither renewed by a tidally heated body's plumes nor recycled by plates.
+fn rocky_crust(c: &Ctx) -> bool {
+    matches!(c.str("body.composition_class"), "rock" | "iron_rich")
+        && c.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX
+        && c.str("interior.tectonic_regime") != "mobile_lid"
 }
 
 pub fn body_core_mass_fraction(c: &Ctx) -> Value {
@@ -1540,8 +1579,13 @@ pub fn atmosphere_bond_albedo(c: &Ctx) -> Value {
         }
         .into();
     }
+    // An airless surface is gardened, its basalt with the mantle's iron (F125).
+    let library = crate::stages::materials::Library {
+        feo: c.f64("body.mantle_feo"),
+        gardened: true,
+    };
     let (fresh, mature) =
-        crate::stages::materials::mixture_luminance(c.map("materials.regolith_mix"));
+        crate::stages::materials::mixture_luminance(&library, c.map("materials.regolith_mix"));
     let frosted = crate::stages::cryo::mean_frost_share(c.f64("volcanism.plume_fallout_rate"));
     (mature + (fresh - mature) * frosted).into()
 }
@@ -2193,17 +2237,24 @@ pub fn materials_bedrock(c: &Ctx) -> Value {
     let class = c.str("body.composition_class");
     let regime = c.str("interior.tectonic_regime");
     let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
+    // F125: a tidally heated body's plumes coat it with sulfur; plates recycle a crust with
+    // water into a felsic one; otherwise what the magma ocean floated, or the basalt of the
+    // body's own volcanism.
     let bedrock = match class {
-        "iron_rich" => "mercurian_regolith",
-        "rock" => {
+        "rock" | "iron_rich" => {
             if c.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX {
-                "sulfur_coated"
+                "sulfur_deposit"
             } else if regime == "mobile_lid" {
                 "felsic"
-            } else if airless && regime == "stagnant_lid" {
-                "anorthosite"
             } else {
-                "basalt"
+                let (plagioclase, graphite) = flotation(c);
+                if plagioclase >= 0.5 && plagioclase >= graphite {
+                    "anorthosite"
+                } else if graphite >= 0.5 {
+                    "graphite_bearing_crust"
+                } else {
+                    "basalt"
+                }
             }
         }
         "rock_ice" => {
@@ -2220,25 +2271,32 @@ pub fn materials_bedrock(c: &Ctx) -> Value {
 
 pub fn materials_regolith_mix(c: &Ctx) -> Value {
     let mut m = BTreeMap::new();
+    // F125: a rocky crust's surface mixes what its magma ocean floated with its basalt, by
+    // their shares, so that a body between a flotation crust and none has a surface between.
+    if rocky_crust(c) {
+        let (plagioclase, graphite) = flotation(c);
+        let basalt = (1.0 - plagioclase - graphite).max(0.0);
+        for (id, share) in [
+            ("anorthosite", plagioclase),
+            ("graphite_bearing_crust", graphite),
+            ("basalt", basalt),
+        ] {
+            if share > 1e-6 {
+                m.insert(id.to_string(), share);
+            }
+        }
+        if !m.is_empty() {
+            return Value::Map(m);
+        }
+    }
     m.insert(c.str("materials.bedrock").to_string(), 1.0);
     Value::Map(m)
 }
 
 pub fn materials_lava(c: &Ctx) -> Value {
-    let regime = c.str("interior.tectonic_regime");
-    let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
+    // F125: a rocky body's lavas are its basalt, the iron of its mantle in them.
     let lava = match c.str("body.composition_class") {
-        "iron_rich" => "smooth_plains",
-        "rock" => {
-            if airless
-                && regime == "stagnant_lid"
-                && c.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX
-            {
-                "mare_basalt"
-            } else {
-                "basalt"
-            }
-        }
+        "rock" | "iron_rich" => "basalt",
         "rock_ice" => "water_ice_dirty",
         _ => "water_ice",
     };
@@ -2247,16 +2305,20 @@ pub fn materials_lava(c: &Ctx) -> Value {
 
 pub fn materials_deep_bedrock(c: &Ctx) -> Value {
     let regime = c.str("interior.tectonic_regime");
-    let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
     let deep = match c.str("body.composition_class") {
-        "iron_rich" => "low_reflectance_material",
-        "rock" => {
-            if airless && regime == "stagnant_lid" {
+        // F125: under a flotation crust its mafic lower crust, under a reduced body's lavas
+        // the graphite flotation crust, otherwise the basalt.
+        "rock" | "iron_rich" if regime != "mobile_lid" => {
+            let (plagioclase, graphite) = flotation(c);
+            if plagioclase >= 0.5 && plagioclase >= graphite {
                 "norite"
+            } else if graphite >= 0.5 {
+                "graphite_rich_crust"
             } else {
                 "basalt"
             }
         }
+        "rock" | "iron_rich" => "basalt",
         // Under a shell that floats on an ocean the deep ice is clean; a crust over rock
         // is the same mixture all the way down.
         "rock_ice" | "ice_dominated" => {
@@ -2272,9 +2334,16 @@ pub fn materials_deep_bedrock(c: &Ctx) -> Value {
 }
 
 pub fn materials_deep_bedrock_depth(c: &Ctx) -> Value {
+    // F125: the graphite flotation crust lies under a reduced body's lavas; a flotation
+    // crust's mafic base, or a basaltic crust's, deeper.
     match c.str("body.composition_class") {
-        "iron_rich" => DEEP_BEDROCK_DEPTH_IRON_RICH,
-        "rock" => DEEP_BEDROCK_DEPTH_ROCK,
+        "rock" | "iron_rich" => {
+            if flotation(c).1 >= 0.5 {
+                DEEP_BEDROCK_DEPTH_GRAPHITE
+            } else {
+                DEEP_BEDROCK_DEPTH_ROCK
+            }
+        }
         _ => DEEP_BEDROCK_DEPTH_ICE,
     }
     .into()

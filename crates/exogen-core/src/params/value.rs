@@ -234,14 +234,48 @@ impl ValueType {
         match (self, v) {
             (ValueType::Curve, Value::F64(x)) => Value::Curve(Curve::constant(x)),
             (ValueType::Bool, Value::F64(x)) => Value::Bool(x != 0.0),
+            (ValueType::Enum(_), Value::Str(s)) => {
+                Value::Str(retired_name(&s).unwrap_or(&s).into())
+            }
+            (ValueType::Map(_), Value::Map(m)) => Value::Map(
+                m.into_iter()
+                    .map(|(k, x)| (retired_name(&k).map_or(k, str::to_string), x))
+                    .collect(),
+            ),
             (_, v) => v,
         }
     }
 }
 
+/// Material names retired in F125, read as what replaced them so that saved projects load.
+fn retired_name(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "mercurian_regolith" => "graphite_bearing_crust",
+        "low_reflectance_material" => "graphite_rich_crust",
+        "mare_basalt" => "basalt_iron_rich",
+        "smooth_plains" => "basalt_iron_poor",
+        "sulfur_coated" => "sulfur_deposit",
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_material_names_load_as_their_replacements() {
+        // F125: a saved project naming a retired material reads as what replaced it.
+        let ty = ValueType::Enum(&["basalt_iron_rich", "sulfur_deposit"]);
+        let v = ty.normalise(Value::Str("mare_basalt".into()));
+        assert!(ty.accepts(&v));
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("smooth_plains".to_string(), 1.0);
+        let Value::Map(n) = ValueType::Map(&["basalt_iron_poor"]).normalise(Value::Map(m)) else {
+            panic!("not a map")
+        };
+        assert!(n.contains_key("basalt_iron_poor"));
+    }
 
     #[test]
     fn curve_interpolates_and_clamps() {

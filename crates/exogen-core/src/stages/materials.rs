@@ -25,53 +25,100 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 23;
+pub const VERSION: u64 = 24;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
     pub id: &'static str,
     pub fresh: [f32; 3],
     pub mature: [f32; 3],
+    /// The colour of the solid rock or coarse sand, where impacts do not garden a fine
+    /// regolith from it (under an atmosphere, or on a surface renewed faster): fresh
+    /// regolith is brighter than its rock (F125). None where the two are alike.
+    pub rock: Option<[f32; 3]>,
     pub roughness: f32,
 }
 
-/// The initial library. Fresh colours are immature regolith or clean deposits; mature
-/// colours are after space weathering (darkened and reddened on silicates).
+/// The library, by what the materials are and the processes that make them (F125). Fresh
+/// colours are immature regolith or clean deposits; mature colours are after space
+/// weathering (darkened and reddened on silicates).
 pub const END_MEMBERS: &[EndMember] = &[
+    // A flotation crust: plagioclase risen through an iron-rich magma ocean.
     EndMember {
         id: "anorthosite",
         fresh: [0.34, 0.34, 0.35],
         mature: [0.150, 0.138, 0.125],
+        rock: None,
         roughness: 0.85,
     },
+    // The mafic lower crust under a flotation crust: noritic, darker than the anorthositic
+    // highlands even when fresh.
     EndMember {
-        id: "basalt",
-        fresh: [0.100, 0.090, 0.085],
-        mature: [0.065, 0.058, 0.052],
-        roughness: 0.80,
+        id: "norite",
+        fresh: [0.24, 0.23, 0.22],
+        mature: [0.11, 0.10, 0.09],
+        rock: None,
+        roughness: 0.85,
     },
+    // Basalt from an oxidized mantle, iron-rich: dark and faintly blue-grey when mature,
+    // brighter where fresh craters turn it over (the lunar maria); as rock or coarse sand
+    // under an atmosphere, dark.
+    EndMember {
+        id: "basalt_iron_rich",
+        fresh: [0.19, 0.18, 0.165],
+        mature: [0.075, 0.072, 0.070],
+        rock: Some([0.100, 0.090, 0.085]),
+        roughness: 0.55,
+    },
+    // Basalt from a reduced mantle, iron-poor: a shade brighter and redder than the crust
+    // around it (Mercury's smooth plains, Denevi et al. 2013); its rock a stated estimate,
+    // the iron-rich rock brightened as its regolith is.
+    EndMember {
+        id: "basalt_iron_poor",
+        fresh: [0.27, 0.255, 0.235],
+        mature: [0.125, 0.112, 0.098],
+        rock: Some([0.142, 0.134, 0.124]),
+        roughness: 0.55,
+    },
+    // Granitic crust, from recycling with water.
     EndMember {
         id: "felsic",
         fresh: [0.26, 0.23, 0.19],
         mature: [0.24, 0.21, 0.17],
+        rock: None,
         roughness: 0.75,
     },
+    // The crust of a reduced body, carrying the graphite its magma ocean floated (Vander
+    // Kaaden and McCubbin 2015), mixed through the lavas over it: Mercury's intermediate
+    // terrain.
     EndMember {
-        id: "mercurian_regolith",
+        id: "graphite_bearing_crust",
         fresh: [0.17, 0.17, 0.17],
         mature: [0.085, 0.085, 0.085],
+        rock: None,
+        roughness: 0.85,
+    },
+    // The graphite flotation crust itself, excavated by basins and large craters: Mercury's
+    // low-reflectance material.
+    EndMember {
+        id: "graphite_rich_crust",
+        fresh: [0.11, 0.11, 0.12],
+        mature: [0.065, 0.065, 0.07],
+        rock: None,
         roughness: 0.85,
     },
     EndMember {
         id: "water_ice",
         fresh: [0.80, 0.82, 0.86],
         mature: [0.64, 0.65, 0.68],
+        rock: None,
         roughness: 0.55,
     },
     EndMember {
         id: "water_ice_dirty",
         fresh: [0.36, 0.35, 0.34],
         mature: [0.26, 0.25, 0.24],
+        rock: None,
         roughness: 0.70,
     },
     // Ceres's crust: hydrated silicates, carbonates and clathrates with a third of ice,
@@ -80,70 +127,45 @@ pub const END_MEMBERS: &[EndMember] = &[
         id: "carbonaceous_ice",
         fresh: [0.160, 0.155, 0.150],
         mature: [0.095, 0.090, 0.085],
+        rock: None,
         roughness: 0.80,
     },
     EndMember {
         id: "carbonaceous",
         fresh: [0.120, 0.115, 0.110],
         mature: [0.090, 0.085, 0.080],
+        rock: None,
         roughness: 0.85,
     },
     EndMember {
         id: "ammonia_water_ice",
         fresh: [0.70, 0.72, 0.75],
         mature: [0.50, 0.50, 0.52],
+        rock: None,
         roughness: 0.55,
     },
     EndMember {
         id: "rock_ice_mixture",
         fresh: [0.45, 0.44, 0.43],
         mature: [0.30, 0.29, 0.28],
+        rock: None,
         roughness: 0.75,
     },
+    // What a tidally heated body's plumes lay over everything: sulfur and its frosts.
     EndMember {
-        id: "sulfur_coated",
+        id: "sulfur_deposit",
         fresh: [0.65, 0.55, 0.25],
         mature: [0.50, 0.42, 0.20],
+        rock: None,
         roughness: 0.70,
     },
-    // Lunar lower crust: noritic, darker than the anorthositic highlands even when fresh.
-    EndMember {
-        id: "norite",
-        fresh: [0.24, 0.23, 0.22],
-        mature: [0.11, 0.10, 0.09],
-        roughness: 0.85,
-    },
-    // Mercury's low-reflectance material, excavated by basins and large craters.
-    EndMember {
-        id: "low_reflectance_material",
-        fresh: [0.11, 0.11, 0.12],
-        mature: [0.065, 0.065, 0.07],
-        roughness: 0.85,
-    },
-    // Mare basalt: iron- and titanium-rich flood lavas, dark and faintly blue-grey when
-    // mature, brighter where fresh craters turn them over.
-    EndMember {
-        id: "mare_basalt",
-        fresh: [0.19, 0.18, 0.165],
-        mature: [0.075, 0.072, 0.070],
-        roughness: 0.55,
-    },
-    // Mercury's smooth plains: low-iron lavas a shade brighter and redder than the
-    // intercrater plains around them (Denevi et al. 2013).
-    EndMember {
-        id: "smooth_plains",
-        fresh: [0.27, 0.255, 0.235],
-        mature: [0.125, 0.112, 0.098],
-        roughness: 0.55,
-    },
-    // Glassy impact melt on silicate bodies: distinctly dark when fresh, buried by regolith
-    // with age.
     // Hydrated salts and sulfuric acid hydrates from an ocean, brown-red when fresh,
     // paling as frost settles on them.
     EndMember {
         id: "hydrated_salt",
         fresh: [0.40, 0.26, 0.17],
         mature: [0.52, 0.42, 0.34],
+        rock: None,
         roughness: 0.6,
     },
     // Sodium carbonates and chlorides from an ocean where no magnetosphere irradiates
@@ -152,15 +174,74 @@ pub const END_MEMBERS: &[EndMember] = &[
         id: "carbonate_salt",
         fresh: [0.86, 0.85, 0.80],
         mature: [0.72, 0.70, 0.66],
+        rock: None,
         roughness: 0.6,
     },
+    // Glassy impact melt on silicate bodies: distinctly dark when fresh, buried by regolith
+    // with age.
     EndMember {
         id: "impact_melt",
         fresh: [0.10, 0.095, 0.09],
         mature: [0.07, 0.065, 0.06],
+        rock: None,
         roughness: 0.60,
     },
 ];
+
+/// How a body's materials resolve (F125): its basalt takes the iron of its mantle, blending
+/// the iron-poor and the iron-rich end-members, and where impacts garden no fine regolith a
+/// material shows its rock colour fresh.
+#[derive(Clone, Copy, Debug)]
+pub struct Library {
+    /// The mantle's FeO, mass fraction.
+    pub feo: f64,
+    /// Whether impacts garden a fine regolith: an airless body not renewed by plumes.
+    pub gardened: bool,
+}
+
+impl Library {
+    pub fn from_graph(graph: &ParamGraph) -> Self {
+        Self {
+            feo: graph.f64("body.mantle_feo"),
+            gardened: graph.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE
+                && graph.str("materials.bedrock") != "sulfur_deposit",
+        }
+    }
+
+    /// The basalt's share of the iron-rich end-member: none below the iron-poor lavas'
+    /// FeO, all above the iron-rich ones'.
+    pub fn basalt_iron(&self) -> f64 {
+        ((self.feo - BASALT_IRON_POOR_FEO) / (BASALT_IRON_RICH_FEO - BASALT_IRON_POOR_FEO))
+            .clamp(0.0, 1.0)
+    }
+
+    pub fn member(&self, id: &str) -> Option<EndMember> {
+        let base = if id == "basalt" {
+            let (poor, rich) = (
+                end_member("basalt_iron_poor")?,
+                end_member("basalt_iron_rich")?,
+            );
+            let w = self.basalt_iron() as f32;
+            let rock = |e: &EndMember| e.rock.unwrap_or(e.fresh);
+            EndMember {
+                id: "basalt",
+                fresh: lerp3(poor.fresh, rich.fresh, w),
+                mature: lerp3(poor.mature, rich.mature, w),
+                rock: Some(lerp3(rock(poor), rock(rich), w)),
+                roughness: poor.roughness + (rich.roughness - poor.roughness) * w,
+            }
+        } else {
+            *end_member(id)?
+        };
+        Some(match (self.gardened, base.rock) {
+            (false, Some(rock)) => EndMember {
+                fresh: rock,
+                ..base
+            },
+            _ => base,
+        })
+    }
+}
 
 /// Ice end-members, whose excavated bright material darkens back to the lag it came from.
 pub fn is_ice(id: &str) -> bool {
@@ -199,7 +280,7 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
 }
 
 /// Colour of a mixture at a given maturity.
-fn mixture_colour(mix: &[(&'static EndMember, f32)], maturity: f32) -> [f32; 3] {
+fn mixture_colour(mix: &[(EndMember, f32)], maturity: f32) -> [f32; 3] {
     let mut out = [0.0f32; 3];
     for (e, f) in mix {
         let c = lerp3(e.fresh, e.mature, maturity);
@@ -210,16 +291,16 @@ fn mixture_colour(mix: &[(&'static EndMember, f32)], maturity: f32) -> [f32; 3] 
     out
 }
 
-/// Resolve a map of end-member fractions into references, normalised to sum to one.
-fn resolve_mix(map: &BTreeMap<String, f64>) -> Vec<(&'static EndMember, f32)> {
-    let mut out: Vec<(&'static EndMember, f32)> = map
+/// Resolve a map of end-member fractions through the library, normalised to sum to one.
+fn resolve_mix(library: &Library, map: &BTreeMap<String, f64>) -> Vec<(EndMember, f32)> {
+    let mut out: Vec<(EndMember, f32)> = map
         .iter()
-        .filter_map(|(k, v)| end_member(k).map(|e| (e, *v as f32)))
+        .filter_map(|(k, v)| library.member(k).map(|e| (e, *v as f32)))
         .filter(|(_, f)| *f > 0.0)
         .collect();
     let total: f32 = out.iter().map(|(_, f)| f).sum();
     if out.is_empty() || total <= 0.0 {
-        return vec![(end_member("basalt").unwrap(), 1.0)];
+        return vec![(library.member("basalt").unwrap(), 1.0)];
     }
     for (_, f) in &mut out {
         *f /= total;
@@ -327,9 +408,9 @@ fn garden_mix(
 }
 
 /// The luminance of a regolith mixture when fresh and when mature, for the body's own
-/// albedo (F52).
-pub fn mixture_luminance(map: &BTreeMap<String, f64>) -> (f64, f64) {
-    let mix = resolve_mix(map);
+/// albedo (F52), its basalt with the mantle's iron.
+pub fn mixture_luminance(library: &Library, map: &BTreeMap<String, f64>) -> (f64, f64) {
+    let mix = resolve_mix(library, map);
     let lum = |c: [f32; 3]| (c[0] + c[1] + c[2]) as f64 / 3.0;
     (
         lum(mixture_colour(&mix, 0.0)),
@@ -348,12 +429,14 @@ pub struct SurfaceAlbedos {
 
 pub fn surface_albedos(graph: &ParamGraph) -> SurfaceAlbedos {
     let luminance = |c: [f32; 3]| (c[0] + c[1] + c[2]) as f64 / 3.0;
-    let bedrock =
-        end_member(graph.str("materials.bedrock")).unwrap_or_else(|| end_member("basalt").unwrap());
+    let library = Library::from_graph(graph);
+    let bedrock = library
+        .member(graph.str("materials.bedrock"))
+        .unwrap_or_else(|| library.member("basalt").unwrap());
     let regolith = graph
         .get("materials.regolith_mix")
         .as_map()
-        .map(resolve_mix)
+        .map(|m| resolve_mix(&library, m))
         .unwrap_or_else(|| vec![(bedrock, 1.0)]);
     let ice = end_member("water_ice").unwrap();
     SurfaceAlbedos {
@@ -373,12 +456,14 @@ pub fn albedo(
     present: f64,
     slope: Option<&Field<f32>>,
 ) -> Field<[f32; 3]> {
-    let bedrock =
-        end_member(graph.str("materials.bedrock")).unwrap_or_else(|| end_member("basalt").unwrap());
+    let library = Library::from_graph(graph);
+    let bedrock = library
+        .member(graph.str("materials.bedrock"))
+        .unwrap_or_else(|| library.member("basalt").unwrap());
     let regolith = graph
         .get("materials.regolith_mix")
         .as_map()
-        .map(resolve_mix)
+        .map(|m| resolve_mix(&library, m))
         .unwrap_or_else(|| vec![(bedrock, 1.0)]);
     let base = Pair {
         fresh: bedrock.fresh,
@@ -386,7 +471,9 @@ pub fn albedo(
     };
     // What deep craters excavate. Silicates keep their contrast when mature; ice brought
     // up from under a lag darkens back to the lag.
-    let deep = end_member(graph.str("materials.deep_bedrock")).unwrap_or(bedrock);
+    let deep = library
+        .member(graph.str("materials.deep_bedrock"))
+        .unwrap_or(bedrock);
     let deep_pair = Pair {
         fresh: deep.fresh,
         mature: if is_ice(deep.id) {
@@ -406,8 +493,8 @@ pub fn albedo(
         },
         mature: base.mature,
     };
-    let felsic = end_member("felsic").unwrap();
-    let basalt = end_member("basalt").unwrap();
+    let felsic = library.member("felsic").unwrap();
+    let basalt = library.member("basalt").unwrap();
     let continental = Pair {
         fresh: felsic.fresh,
         mature: felsic.mature,
@@ -416,7 +503,9 @@ pub fn albedo(
         fresh: basalt.fresh,
         mature: basalt.mature,
     };
-    let lava_member = end_member(graph.str("materials.lava")).unwrap_or(bedrock);
+    let lava_member = library
+        .member(graph.str("materials.lava"))
+        .unwrap_or(bedrock);
     let lava = Pair {
         fresh: lava_member.fresh,
         mature: lava_member.mature,
@@ -436,7 +525,7 @@ pub fn albedo(
     let m = maturity.as_slice();
     // On an airless surface small impacts mix the regolith sideways, and a contact
     // between lava and its substrate blurs in colour as it ages.
-    let io = graph.str("materials.bedrock") == "sulfur_coated";
+    let io = graph.str("materials.bedrock") == "sulfur_deposit";
     let gardened = !io && graph.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
     // An icy surface wears frost where it is cold enough to keep what the warm
     // latitudes sublimed.
@@ -710,6 +799,56 @@ pub fn albedo(
 mod tests {
     use super::*;
     use crate::grid::Cell;
+
+    #[test]
+    fn materials_come_from_the_processes_that_make_them() {
+        // F125: the Moon's iron-rich magma ocean floated plagioclase within its plagioclase
+        // field, over a noritic lower crust; Mercury's iron-poor one floated graphite; Mars
+        // and Venus, their oceans too deep for a plagioclase crust, show their basalt; plates
+        // with water make Earth felsic; Io's plumes coat it with sulfur.
+        let materials = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            (
+                g.str("materials.bedrock").to_string(),
+                g.str("materials.deep_bedrock").to_string(),
+                g.str("materials.lava").to_string(),
+                g.f64("body.mantle_feo"),
+            )
+        };
+        let (bedrock, deep, lava, feo) = materials("Moon");
+        assert_eq!(
+            (bedrock.as_str(), deep.as_str(), lava.as_str()),
+            ("anorthosite", "norite", "basalt")
+        );
+        assert!(feo > 0.12 && feo < 0.16, "Moon FeO {feo}");
+        let (bedrock, deep, _, feo) = materials("Mercury");
+        assert_eq!(
+            (bedrock.as_str(), deep.as_str()),
+            ("graphite_bearing_crust", "graphite_rich_crust")
+        );
+        assert!(feo < 0.03, "Mercury FeO {feo}");
+        for name in ["Mars", "Venus"] {
+            assert_eq!(materials(name).0, "basalt", "{name}");
+        }
+        assert_eq!(materials("Earth").0, "felsic");
+        assert_eq!(materials("Io").0, "sulfur_deposit");
+    }
+
+    #[test]
+    fn a_body_s_basalt_takes_its_mantle_s_iron() {
+        // F125: iron-poor lavas are bright (Mercury's plains), iron-rich ones dark (the lunar
+        // maria), and between them the basalt blends; where no regolith forms it shows its
+        // rock, darker than its fresh regolith.
+        let lum = |c: [f32; 3]| (c[0] + c[1] + c[2]) / 3.0;
+        let basalt = |feo: f64, gardened: bool| Library { feo, gardened }.member("basalt").unwrap();
+        let (poor, mid, rich) = (basalt(0.02, true), basalt(0.08, true), basalt(0.15, true));
+        assert_eq!(poor.mature, end_member("basalt_iron_poor").unwrap().mature);
+        assert_eq!(rich.mature, end_member("basalt_iron_rich").unwrap().mature);
+        assert!(lum(poor.mature) > lum(mid.mature) && lum(mid.mature) > lum(rich.mature));
+        let rock = basalt(0.15, false);
+        assert!(lum(rock.fresh) < lum(rich.fresh));
+        assert_eq!(rock.mature, rich.mature);
+    }
 
     #[test]
     fn gardening_blurs_an_old_contact_and_keeps_a_young_one_sharp() {

@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 19;
+pub const VERSION: u64 = 20;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -68,6 +68,16 @@ pub fn flood_composition(time_gyr: f64, vent: [f64; 3], batch: f64) -> f32 {
 /// the plains' units to come, audit M10).
 pub fn overturn_composition(time_gyr: f64) -> f32 {
     (LAVA_DRIFT_SHARE * composition_drift(time_gyr) as f64).clamp(-1.0, 1.0) as f32
+}
+
+/// The share of a rocky body's magma that its crust lets through (F125): magma rising from
+/// `depth`, the stiff lid's base, gains buoyancy through the mantle part of its path and
+/// loses it through a crust `thickness` thick and lighter than itself, and erupts by what
+/// the loss leaves of the gain; a crust denser than the magma takes nothing.
+pub fn crust_buoyancy(magma: f64, crust: f64, thickness: f64, depth: f64) -> f64 {
+    let loss = (magma - crust).max(0.0) * thickness;
+    let gain = (DENSITY_ROCK - magma).max(1.0) * (depth - thickness).max(1.0);
+    (1.0 - loss / gain).clamp(0.0, 1.0)
 }
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
@@ -258,6 +268,9 @@ pub struct FloodProcess {
     event_time: Option<f64>,
     /// The share of the ice magma budget that floods rather than builds domes.
     flood_share: f64,
+    /// A rocky crust's buoyancy for its magma (F125): the magma's and the crust's densities,
+    /// kg/m³, and the crust's thickness, m. None for cryolava.
+    buoyancy: Option<(f64, f64, f64)>,
     age: f64,
     pub records: Vec<FloodRecord>,
 }
@@ -277,6 +290,23 @@ impl FloodProcess {
         if crate::stages::io::is_io_regime(graph) {
             return None;
         }
+        // A rocky crust holds its magma down by how much lighter than the magma it is
+        // (F125): the magma by the mantle's iron, the crust by what it is.
+        let feo = graph.f64("body.mantle_feo");
+        let crust_density = match graph.str("materials.bedrock") {
+            "anorthosite" => CRUST_DENSITY_ANORTHOSITE,
+            "felsic" => CRUST_DENSITY_FELSIC,
+            _ => CRUST_DENSITY_MAFIC_BASE + CRUST_DENSITY_MAFIC_PER_FEO * feo,
+        };
+        let rocky = Some((
+            MAGMA_DENSITY_BASE + MAGMA_DENSITY_PER_FEO * feo,
+            crust_density,
+            graph.f64("tectonics.initial_crust_thickness"),
+        ));
+        let buoyancy = match graph.str("interior.tectonic_regime") {
+            "stagnant_lid" | "episodic_lid" => rocky,
+            _ => None,
+        };
         let event_time = match graph.str("interior.tectonic_regime") {
             "stagnant_lid" => None,
             "episodic_lid" => Some(
@@ -352,6 +382,7 @@ impl FloodProcess {
             } else {
                 1.0
             },
+            buoyancy,
             age: graph.f64("body.age"),
             records: Vec::new(),
         })
@@ -381,6 +412,7 @@ impl FloodProcess {
             carry: 0.0,
             event_time: None,
             flood_share: 1.0,
+            buoyancy: None,
             age: graph.f64("body.age"),
             records: Vec::new(),
         }
@@ -397,14 +429,26 @@ impl FloodProcess {
     }
 
     /// Fraction of the magma that reaches the surface at a time: the extrusive share,
-    /// cut back as the lithosphere thickens and as contraction closes the pathways.
+    /// cut back as the lithosphere thickens and as contraction closes the pathways. On a
+    /// rocky body the share is what the crust's buoyancy leaves (F125): magma rising from the
+    /// stiff lid's base gains buoyancy through the mantle part of its path and loses it
+    /// through a crust lighter than itself, and erupts by what the loss leaves of the gain,
+    /// so that a light anorthositic crust holds most of a dense basalt down while the lid is
+    /// thin.
     pub fn eruptive_fraction(&self, t: f64) -> f64 {
         let s = self.thermal.at(t);
         let strain = 2.0 * s.contraction / self.body_radius;
         let ascent = 1.0
             / (1.0
                 + ((s.lithosphere - VOLCANISM_ASCENT_LITHOSPHERE) / VOLCANISM_ASCENT_WIDTH).exp());
-        VOLCANISM_EXTRUSIVE_FRACTION * ascent * (-(strain / VOLCANISM_SHUTOFF_STRAIN).powi(2)).exp()
+        let share = match self.buoyancy {
+            Some((magma, crust, thickness)) => {
+                VOLCANISM_EXTRUSIVE_FRACTION_ROCK
+                    * crust_buoyancy(magma, crust, thickness, s.melt_depth)
+            }
+            None => VOLCANISM_EXTRUSIVE_FRACTION,
+        };
+        share * ascent * (-(strain / VOLCANISM_SHUTOFF_STRAIN).powi(2)).exp()
     }
 
     /// Extrusive volume between two times, m³, by midpoint rule over sub-intervals. On an
@@ -2150,6 +2194,16 @@ pub fn is_lava_unit(unit: u16) -> bool {
 mod tests {
     use super::*;
     use crate::presets::preset;
+
+    #[test]
+    fn a_light_crust_holds_a_dense_magma_down() {
+        // F125: the Moon's iron-rich magma, denser than its anorthositic crust, loses through
+        // the crust much of the buoyancy it gains below it while the lid is thin, less as the
+        // lid thickens; Mercury's iron-poor magma, lighter than its crust, rises through it.
+        let moon = |depth: f64| crust_buoyancy(2_905.0, 2_750.0, 40e3, depth);
+        assert!(moon(60e3) < 0.5 && moon(200e3) > moon(60e3) && moon(200e3) < 1.0);
+        assert_eq!(crust_buoyancy(2_705.0, 2_871.0, 40e3, 80e3), 1.0);
+    }
 
     fn process(grid: CubeSphere) -> FloodProcess {
         let (g, _) = preset("Moon").unwrap().to_graph();

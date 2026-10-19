@@ -177,11 +177,11 @@ pub fn reference_checks() -> Vec<Check> {
             4_000.0,
             "Nahm and Schultz 2011",
         ),
-        text("Mercury", "materials.bedrock", "mercurian_regolith", ""),
+        text("Mercury", "materials.bedrock", "graphite_bearing_crust", ""),
         text(
             "Mercury",
             "materials.deep_bedrock",
-            "low_reflectance_material",
+            "graphite_rich_crust",
             "",
         ),
         range(
@@ -207,7 +207,7 @@ pub fn reference_checks() -> Vec<Check> {
             0.01,
             "resurfaced faster than craters form",
         ),
-        text("Io", "materials.bedrock", "sulfur_coated", ""),
+        text("Io", "materials.bedrock", "sulfur_deposit", ""),
         range(
             "Europa",
             "cratering.retention_age",
