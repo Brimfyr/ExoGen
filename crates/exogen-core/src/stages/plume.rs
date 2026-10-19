@@ -33,7 +33,7 @@ use crate::stages::io::{Lobe, PathRules};
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 20;
+pub const VERSION: u64 = 21;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -2691,6 +2691,16 @@ pub fn shield_compute(
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
+    let deep = layers.deep.as_slice();
+    let melt = layers.melt.as_slice();
+    let cover = layers.cover.as_slice();
+    // The summit's pond where the fine summit lies below the coarse, and the edifice's
+    // own outline, each by the share of a cell its margin covers (F131).
+    let pond = |e: [f64; 3]| {
+        shield_height(shield, e, body_radius, false, 0.0)
+            - shield_height(shield, e, body_radius, true, 0.0)
+    };
+    let edifice = |e: [f64; 3]| shield_height(shield, e, body_radius, false, 0.0);
     // The edifice's lava under the eruptions that show, as it was when they began.
     let older = shield_window(shield, present).map(|w| shield_composition(shield, w.0, None));
     stamper.gather(
@@ -2706,15 +2716,23 @@ pub fn shield_compute(
         let fine = shield_height(shield, d, body_radius, true, 0.0);
         let coarse = shield_height(shield, d, body_radius, false, 0.0);
         let mut stack = 0.0;
-        let mut top: Option<usize> = None;
+        // The topmost eruption that holds the cell, else the topmost that touches it, and
+        // the share of the cell the eruptions cover together (F131).
+        let (mut whole, mut touched): (Option<usize>, Option<usize>) = (None, None);
+        let mut bare = 1.0f64;
         for (j, c) in covers.iter().enumerate() {
             if let Some(&v) = c.get(&idx) {
                 stack += FLOOD_SHEET_THICKNESS * v as f64;
+                if v > 0.0 {
+                    touched = Some(j);
+                    bare *= 1.0 - (v as f64).clamp(0.0, 1.0);
+                }
                 if v >= 0.5 {
-                    top = Some(j);
+                    whole = Some(j);
                 }
             }
         }
+        let top = whole.or(touched);
         let mut write = CellWrite {
             idx: idx as u32,
             bedrock: (bedrock[idx] as f64 + (fine - coarse) + stack) as f32,
@@ -2726,19 +2744,41 @@ pub fn shield_compute(
             cover: 0.0,
         };
         let mut composition = 0.0;
-        let lava = match top {
-            Some(j) => Some((flows[j].time_gyr as f32, flows[j].composition)),
-            None if coarse - fine > 1.0 => ponded,
-            None if coarse > 0.0 && matches!(units[idx], UNIT_LAVA | UNIT_TESSERA) => {
-                older.map(|c| (ages[idx], c))
+        let delta = grid.delta();
+        let (lava, share) = match top {
+            Some(j) => (
+                Some((flows[j].time_gyr as f32, flows[j].composition)),
+                1.0 - bare,
+            ),
+            None => {
+                let pond_share = if coarse - fine > 0.0 {
+                    crate::fields::level_share(&pond, d, 1.0, delta)
+                } else {
+                    0.0
+                };
+                if pond_share > 0.0 {
+                    (ponded, pond_share)
+                } else if coarse > 0.0 && matches!(units[idx], UNIT_LAVA | UNIT_TESSERA) {
+                    (
+                        older.map(|c| (ages[idx], c)),
+                        crate::fields::level_share(&edifice, d, 1.0, delta),
+                    )
+                } else {
+                    (None, 0.0)
+                }
             }
-            None => None,
         };
-        if let Some((age, comp)) = lava {
+        if let Some((age, comp)) = lava
+            && share > 0.0
+        {
+            let share = share as f32;
+            let held = share >= 0.5;
             write.surface = true;
-            write.age = age;
-            write.unit = UNIT_LAVA;
-            write.cover = 1.0;
+            write.age = if held { age } else { ages[idx] };
+            write.unit = if held { UNIT_LAVA } else { units[idx] };
+            write.deep = (1.0 - share) * deep[idx];
+            write.melt = (1.0 - share) * melt[idx];
+            write.cover = share + (1.0 - share) * cover[idx];
             composition = comp;
         }
         cells.push(write);

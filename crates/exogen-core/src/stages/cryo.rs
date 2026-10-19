@@ -27,7 +27,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::*;
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 /// A polar plume's fallout of fresh ice.
 pub struct Fallout {
@@ -757,6 +757,8 @@ pub fn cryodome_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
+    let deep = layers.deep.as_slice();
+    let melt = layers.melt.as_slice();
     let noise = GradientNoise::new(dome.id ^ 0xD0CE_0000);
     let streak_frequency = body_radius / (0.2 * dome.radius);
     let time = dome.time_gyr as f32;
@@ -773,11 +775,19 @@ pub fn cryodome_compute(
                 * (1.0 - bell)
                 * noise.fbm(d, streak_frequency, 2, 2.0, 0.5);
             let mut w = write(k, bedrock[k] as f64 + height_now * (bell + streaks));
-            if bell > 0.05 && ages[k] <= time + 1e-6 {
-                w.surface = true;
-                w.age = time;
-                w.unit = UNIT_CRYODOME;
-                w.cover = CRYODOME_SALT as f32;
+            if ages[k] <= time + 1e-6 {
+                // The dome's surface by the share of the cell its edifice covers (F131): its
+                // salts are the cover the albedo reads on its unit, so it takes the unit and
+                // time wherever it lies, as a flow's margin does, its salts the share.
+                let share = dome_share(dome, d, body_radius, grid.delta()) as f32;
+                if share > 0.0 {
+                    w.surface = true;
+                    w.age = time;
+                    w.unit = UNIT_CRYODOME;
+                    w.deep = (1.0 - share) * deep[k];
+                    w.melt = (1.0 - share) * melt[k];
+                    w.cover = share * CRYODOME_SALT as f32;
+                }
             }
             w
         })
@@ -793,6 +803,16 @@ pub fn cryodome_compute(
     }
 }
 
+/// The share of a cell about `d`, `cell` radians wide, that a cryodome's edifice covers,
+/// where its profile stands above a twentieth of its height (F131).
+fn dome_share(dome: &Cryodome, d: [f64; 3], body_radius: f64, cell: f64) -> f64 {
+    let bell = |e: [f64; 3]| {
+        let x = (crate::geom::angle_between(dome.center, e) * body_radius / dome.radius).min(1.0);
+        (1.0 - x * x).powf(1.5)
+    };
+    crate::fields::level_share(&bell, d, 0.05, cell)
+}
+
 /// After the stamps: the domes' substrate is partly clean ice, and the floors of
 /// craters deep enough to reach the brines carry salts in patches.
 pub fn post_pass(
@@ -805,15 +825,20 @@ pub fn post_pass(
 ) {
     let grid = layers.grid;
     if !domes.is_empty() {
-        let units = layers.unit_id.as_slice().to_vec();
+        let ages = layers.surface_age.as_slice().to_vec();
         let clean = layers.clean.as_mut_slice();
         crate::crater::with_stamper(&grid, |stamper| {
             for dome in domes {
                 stamper.gather(&grid, body_radius, dome.center, dome.radius);
                 for &(k, _, _) in &stamper.footprint {
-                    if units[k] == UNIT_CRYODOME {
-                        clean[k] = clean[k].max(CRYODOME_CLEAN as f32);
+                    // The dome's clean ice by its share of the cell, where nothing younger
+                    // has renewed it (F131).
+                    if ages[k] > dome.time_gyr as f32 + 1e-3 {
+                        continue;
                     }
+                    let d = grid.center(grid.cell(k));
+                    let share = dome_share(dome, d, body_radius, grid.delta()) as f32;
+                    clean[k] = clean[k].max(share * CRYODOME_CLEAN as f32);
                 }
             }
         });

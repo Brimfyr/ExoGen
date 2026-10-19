@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 16;
+pub const VERSION: u64 = 17;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -428,10 +428,7 @@ impl<'a> PateraDrawing<'a> {
     /// below its scarp sank with the floor, or lies under its lava, so the floor is level.
     fn cut(&self, r: f64, phi: f64, d: [f64; 3], body_radius: f64) -> (f64, bool) {
         let p = self.patera;
-        let mut edge = patera_radius(phi, p);
-        if let Some(foot) = &self.foot {
-            edge = edge.min(foot_edge(foot, phi));
-        }
+        let edge = self.edge(phi);
         let pit = pit_profile(r, edge, p.depth, self.wall);
         let debris = match &p.abuts {
             Some(m) if pit > 0.01 * p.depth => {
@@ -445,6 +442,16 @@ impl<'a> PateraDrawing<'a> {
 
     fn needs_direction(&self) -> bool {
         self.foot.is_some()
+    }
+
+    /// The floor's edge at azimuth `phi`, m from the centre: its outline, against the
+    /// mountain's foot where it sank beside one.
+    fn edge(&self, phi: f64) -> f64 {
+        let edge = patera_radius(phi, self.patera);
+        match &self.foot {
+            Some(foot) => edge.min(foot_edge(foot, phi)),
+            None => edge,
+        }
     }
 }
 
@@ -2432,7 +2439,15 @@ pub fn patera_compute(
     let drawing = PateraDrawing::new(p, body_radius, cell, cell);
     stamper.gather(grid, body_radius, p.center, p.extent() + 3.0 * drawing.wall);
     let time = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let covered = layers.cover.as_slice();
     let patches = GradientNoise::new(p.id ^ 0xF100_A7E5);
+    // The floor's share of each cell, from where its edge crosses the cell (F131).
+    let (east, north) = crate::geom::local_basis(p.center);
+    let inside = |e: [f64; 3]| {
+        drawing.edge(crate::geom::azimuth_from(p.center, east, north, e))
+            - crate::geom::angle_between(p.center, e) * body_radius
+    };
     let cells = stamper
         .footprint
         .iter()
@@ -2442,7 +2457,10 @@ pub fn patera_compute(
             } else {
                 p.center
             };
-            let (cut, floor) = drawing.cut(r, phi, d, body_radius);
+            let (cut, _) = drawing.cut(r, phi, d, body_radius);
+            let share =
+                crate::fields::level_share(&inside, grid.center(grid.cell(idx)), 0.0, grid.delta())
+                    as f32;
             let mut write = CellWrite {
                 idx: idx as u32,
                 bedrock: (bedrock[idx] as f64 - cut) as f32,
@@ -2453,14 +2471,22 @@ pub fn patera_compute(
                 melt: 0.0,
                 cover: 0.0,
             };
-            if floor {
+            // A floor cell carries its lava's share of the cell, over a flow's lava on the
+            // rest, as a flow's margin does, so that the deposit history coats each by its
+            // share.
+            if share > 0.0 {
+                let under = if matches!(units[idx], UNIT_IO_FLOW | UNIT_PATERA_FLOOR) {
+                    covered[idx]
+                } else {
+                    0.0
+                };
                 write.surface = true;
                 write.age = time[idx];
                 write.unit = UNIT_PATERA_FLOOR;
-                write.deep = 1.0;
+                write.deep = share;
                 write.melt =
                     floor_age(p, grid.center(grid.cell(idx)), &patches, body_radius) as f32;
-                write.cover = 1.0;
+                write.cover = share + (1.0 - share) * under;
             }
             write
         })

@@ -18,7 +18,7 @@ use std::collections::BinaryHeap;
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
-use crate::geom::{local_basis, offset};
+use crate::geom::{angle_between, local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::noise::GradientNoise;
@@ -29,7 +29,7 @@ use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -483,36 +483,45 @@ pub fn resurfacing_compute(
         let carry = remaining - own + later;
         let score = sample_bilinear(coarse, &padded_score, d);
         let lift = plateau_lift(score, rec.threshold);
-        if score > rec.threshold {
-            let fabric = tessera_texture(d, &noise, body_radius) as f32;
-            cells.push(CellWrite {
-                idx: idx as u32,
-                bedrock: ground + lift + fabric + carry,
-                surface: true,
-                age: ages[idx].min(rec.tessera_age),
-                unit: UNIT_TESSERA,
-                deep: deep[idx],
-                melt: melt[idx],
-                cover: 0.0,
-            });
-            compositions.push(0.0);
+        // The tessera's share of the cell, from where its score's margin crosses it, and
+        // the plains' the rest (F131): a contact drawn by share, not a staircase of cells.
+        let held = crate::fields::level_share(
+            &|e: [f64; 3]| sample_bilinear(coarse, &padded_score, e) as f64,
+            d,
+            rec.threshold as f64,
+            grid.delta(),
+        ) as f32;
+        let tessera = if held > 0.0 {
+            ground + lift + tessera_texture(d, &noise, body_radius) as f32 + carry
         } else {
+            0.0
+        };
+        let plains = if held < 1.0 {
             let target = sample_bilinear(coarse, &padded_filled, d);
-            let t = (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0)
+            ground
+                + (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0)
                 + EPISODIC_VENEER as f32
-                + lift;
-            cells.push(CellWrite {
-                idx: idx as u32,
-                bedrock: ground + t + carry,
-                surface: true,
-                age: time,
-                unit: UNIT_LAVA,
-                deep: 0.0,
-                melt: 0.0,
-                cover: 1.0,
-            });
-            compositions.push(lava);
-        }
+                + lift
+                + carry
+        } else {
+            0.0
+        };
+        let whole = held >= 0.5;
+        cells.push(CellWrite {
+            idx: idx as u32,
+            bedrock: held * tessera + (1.0 - held) * plains,
+            surface: true,
+            age: if whole {
+                ages[idx].min(rec.tessera_age)
+            } else {
+                time
+            },
+            unit: if whole { UNIT_TESSERA } else { UNIT_LAVA },
+            deep: held * deep[idx],
+            melt: held * melt[idx],
+            cover: 1.0 - held,
+        });
+        compositions.push(if held < 1.0 { lava } else { 0.0 });
     }
     (
         StampOutput {
@@ -537,8 +546,18 @@ pub fn corona_compute(
     stamper: &mut Stamper,
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
+    let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let deep = layers.deep.as_slice();
+    let melt = layers.melt.as_slice();
+    let cover = layers.cover.as_slice();
     stamper.gather(grid, body_radius, c.center, 1.4 * c.radius);
     let noise = GradientNoise::new(c.id ^ 0xC020_0A00);
+    let time = c.time_gyr as f32;
+    // The interior's lava, inside the rim, by the share of each cell it covers (F131): the
+    // loop laid it on whole coarse cells.
+    let inside =
+        |e: [f64; 3]| CORONA_RIM_POSITION - angle_between(c.center, e) * body_radius / c.radius;
     let cells = stamper
         .footprint
         .iter()
@@ -556,7 +575,7 @@ pub fn corona_compute(
                     .cos()
                 * (-((x - CORONA_RIM_POSITION) / (3.0 * CORONA_RIM_WIDTH)).powi(2)).exp();
             let soft = (blur / (CORONA_RIM_WIDTH * c.radius)).min(1.0);
-            CellWrite {
+            let mut write = CellWrite {
                 idx: idx as u32,
                 bedrock: (bedrock[idx] as f64 + (1.0 - 0.5 * soft) * (full + fractures)) as f32,
                 surface: false,
@@ -565,7 +584,22 @@ pub fn corona_compute(
                 deep: 0.0,
                 melt: 0.0,
                 cover: 0.0,
+            };
+            if units[idx] != UNIT_TESSERA && ages[idx] <= time + 1e-6 {
+                let share = crate::fields::level_share(
+                    &inside,
+                    grid.center(grid.cell(idx)),
+                    0.0,
+                    grid.delta(),
+                ) as f32;
+                if share > 0.0 {
+                    lava_by_share(
+                        &mut write, share, time, ages[idx], units[idx], deep[idx], melt[idx],
+                        cover[idx],
+                    );
+                }
             }
+            write
         })
         .collect();
     StampOutput {
@@ -588,8 +622,15 @@ pub fn dome_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
+    let units = layers.unit_id.as_slice();
+    let deep = layers.deep.as_slice();
+    let melt = layers.melt.as_slice();
+    let cover = layers.cover.as_slice();
     stamper.gather(grid, body_radius, dome.center, dome.radius);
     let noise = GradientNoise::new(dome.id ^ 0xD03E_0000);
+    // The dome's lava where its edifice stands, by the share of each cell (F131).
+    let edifice =
+        |e: [f64; 3]| dome_profile(angle_between(dome.center, e) * body_radius / dome.radius);
     let f = body_radius / (0.25 * dome.radius);
     let time = dome.time_gyr as f32;
     let cells = stamper
@@ -613,11 +654,14 @@ pub fn dome_compute(
                 melt: 0.0,
                 cover: 0.0,
             };
-            if top > 0.05 && ages[idx] <= time + 1e-6 {
-                write.surface = true;
-                write.age = time;
-                write.unit = UNIT_LAVA;
-                write.cover = 1.0;
+            if ages[idx] <= time + 1e-6 {
+                let share = crate::fields::level_share(&edifice, d, 0.05, grid.delta()) as f32;
+                if share > 0.0 {
+                    lava_by_share(
+                        &mut write, share, time, ages[idx], units[idx], deep[idx], melt[idx],
+                        cover[idx],
+                    );
+                }
             }
             write
         })
@@ -630,6 +674,28 @@ pub fn dome_compute(
         ejecta_age: None,
         compositions: None,
     }
+}
+
+/// Lava laid over `share` of a cell (F131): its cover over what was there by that share,
+/// its time and unit where it takes more than half, the ground's own otherwise.
+#[allow(clippy::too_many_arguments)]
+pub fn lava_by_share(
+    write: &mut CellWrite,
+    share: f32,
+    time: f32,
+    age: f32,
+    unit: u16,
+    deep: f32,
+    melt: f32,
+    cover: f32,
+) {
+    let whole = share >= 0.5;
+    write.surface = true;
+    write.age = if whole { time } else { age };
+    write.unit = if whole { UNIT_LAVA } else { unit };
+    write.deep = (1.0 - share) * deep;
+    write.melt = (1.0 - share) * melt;
+    write.cover = share + (1.0 - share) * cover;
 }
 
 /// Fraction of the surface that is tessera.

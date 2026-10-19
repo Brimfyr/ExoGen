@@ -212,13 +212,15 @@ Diagnosed in the thirty-ninth milestone's session. The steps are not the coarse 
 
 Closed in the fortieth milestone (F107). Gating the ring's fill to the finer relief took the large cliffs away and left walls a fine cell wide. A trace of one wall showed the cause in the loop. A flood's lake took in the ground beyond its pass, down to where the lake would spread thinner than 50 m on average, and filled it all to one level, so the lake stood over the open ground where it stopped: by more than 100 m at a fifth of Mars's floods, and by up to 4.6 km. The finish resampled those steps, the later floods laid thin sheets over them, and the ground the finish pieced together from the coarse smears was blocky because the loop's lakes were. A full lake now spills the rest of its lava into the next low, so every lake ends in a flow's front, and the ring's fill takes only the finer relief. Mars's and Venus's plains are flow fields with lobate margins. The only blockiness left, at a fine cell or two, is graben a few kilometres wide on Mars's rise, partly buried by flows, a matter of their own shapes at the standard grid.
 
-### W8. Deposits drawn by whole cells
+### W8. Deposits drawn by whole cells (closed by F131)
 
 A deposit set where a field passes its level in each cell is a staircase of whole cells at any output resolution. Ceres's faculae were (`if patch > 0.45 { cover = 1 }`), and the user found them pixelated, as lava flows had been before.
 
 Direction: every deposit a field bounds is drawn by the share of each cell its margin covers (`fields::level_share`, F127), the margin a straight edge at the cell's scale from the field's value and gradient. A test holds the faculae to it.
 
 When: each with its process's revisit. Closed for the faculae in the fifty-eighth milestone (F127). Still drawn by whole cells: an overturn's lava and a corona's interior (episodic.rs), a shield's renewed lava (plume.rs), a patera's floor (io.rs), Enceladus's polar terrain (ice_shell.rs, under its plume's frost), and a flood's lobes, which set their lava where they cover half a cell (W6), the regolith's mixing blurring an old flow's margin but not a young one's.
+
+Closed in the sixty-second milestone (F131): the overturn's tessera and plains, a corona's interior, a pancake dome, a shield's flows, pond and edifice, a flood's lobes and outline, a patera's floor and Ceres's cryodomes cover each cell by their share, and a deposit whose cover the albedo reads by its unit takes its unit wherever it lies. Enceladus's polar terrain was already drawn by share in the finish. Tests hold the tessera's contact and the domes' edges to it, with the faculae. The rule stands for every deposit to come.
 
 ## Stamped shapes (principle 14)
 

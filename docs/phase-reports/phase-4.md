@@ -1481,3 +1481,28 @@ Still to do:
 - **Mars's two thresholds**, its rays drawn where they cannot show.
 
 Tests 208 (12 ignored). One is new: a cluster's grain shares its whole ground among parts narrower than the narrowest that would split, scattered over its footprint, and a cluster too narrow to split is laid whole. Clippy is clean and validate passes its 115 checks.
+
+## The sixty-second milestone: deposits drawn by share
+
+Asked for by the user after the sixty-first, before the terrain features ("Shall we do the pixelated deposits first, then the terrain features (icy moons, Venus' coronae etc.)?"): the deposits still laid by whole cells, audit W8.
+
+- **F131.** Every deposit a field bounds covers each cell by the share its margin covers: Venus's tessera and plains, coronae and pancake domes, a shield's flows, a flood's lobes and outline, Io's patera floors and Ceres's cryodomes; a cell takes a deposit's time and unit where it covers more than half, and a deposit whose cover the albedo reads by its unit takes its unit wherever it lies.
+
+How it went:
+
+- **The sweep.** Each half-cell test in the stages was read for what it sets. The audit's list held, with one more, Ceres's cryodomes; Europa's chaos and bands and Ganymede's lanes already blended by share, and so did Enceladus's polar terrain in the finish, whose relief and frost showed no cell steps. Venus's coronae had their interiors only from the loop's coarse cells, which the finish now draws.
+- **What the cover means.** The first render's domes were as stepped as before: the albedo reads a cell's cover as salts only on a dome's unit, and the edge cells kept their old one. A deposit read by its unit takes it wherever it lies, as Io's flows already did.
+
+What the maps show:
+
+- **Io:** its patera floors, dark on the bright plains, end smoothly where they ended in steps; 0.7 percent of the map changed.
+- **Ceres:** its domes are smooth circles where they were stepped; their shape is still a circle (with Venus's domes and coronae, audit M10 and T1).
+- **Venus, Mars and the Moon:** their maps within 2.4 percent of what they were, the contacts' colours too close, or blurred by gardening, for their steps to have shown; the data under them is the deposits' share.
+- **Enceladus:** as it was.
+
+Still to do:
+
+- **A lava margin over a crater floor** keeps the floor's unit where it covers less than half, its cover read as salts.
+- **The terrain features next:** the icy moons' grooves and tiger stripes (audit T6, T7), then Venus's coronae and the other shapes.
+
+Tests 208 (12 ignored). Venus's test holds the tessera's contact to partial cover, and Ceres's test the domes' edges, beside the faculae. Clippy is clean and validate passes its 115 checks.

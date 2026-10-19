@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 20;
+pub const VERSION: u64 = 21;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -1234,6 +1234,10 @@ pub fn flood_compute(
         // the cell lies in one of a soft flood's lakes.
         pond: f32,
         lake: bool,
+        // The share of the cell the flood's margin covers, and whether the cell lies on
+        // its margin outside what it holds whole (F131).
+        share: f32,
+        margin: bool,
     }
     let mut work: Vec<Work> = visits
         .into_par_iter()
@@ -1258,6 +1262,8 @@ pub fn flood_compute(
                     .map_or(0.0, |l| l.get(&idx).copied().unwrap_or(0.0)),
                 pond: level,
                 lake: false,
+                share: 1.0,
+                margin: false,
             };
             // A buried flood's sheet lies its thickness, sampled smoothly, wherever the loop
             // laid it: its margin is hidden under the flows after it, and its outline cut a
@@ -1267,16 +1273,35 @@ pub fn flood_compute(
                 // ground's closed lows (below), not its coarse thickness's contour, which runs
                 // in steps along the coarse cells.
                 Some(_) if soft => w.lobe > 0.0,
-                Some(_) => own > ponded_thickness || w.lobe >= 0.5,
+                // A lobe holds the cells it covers more than half of, and lays its share of
+                // the rest (F131).
+                Some(_) => {
+                    let ponds = own > ponded_thickness;
+                    if !ponds {
+                        w.share = w.lobe.clamp(0.0, 1.0);
+                    }
+                    ponds || w.lobe >= 0.5
+                }
                 None if level.is_nan() => true,
                 None => {
-                    let mut outline = sample_bilinear_sparse(coarse, &padded_ind, d) as f64;
-                    if outline > 0.0 && outline < 1.0 {
-                        outline += FLOOD_MARGIN_WOBBLE * lobes.fbm(d, lobe_frequency, 3, 2.0, 0.5);
-                    }
-                    outline >= FLOOD_MARGIN_THRESHOLD
+                    // The outline by the share of the cell beyond its margin (F131).
+                    let outline = |e: [f64; 3]| {
+                        let mut o = sample_bilinear_sparse(coarse, &padded_ind, e) as f64;
+                        if o > 0.0 && o < 1.0 {
+                            o += FLOOD_MARGIN_WOBBLE * lobes.fbm(e, lobe_frequency, 3, 2.0, 0.5);
+                        }
+                        o
+                    };
+                    w.share = crate::fields::level_share(
+                        &outline,
+                        d,
+                        FLOOD_MARGIN_THRESHOLD,
+                        grid.delta(),
+                    ) as f32;
+                    w.share >= 0.5
                 }
             };
+            w.margin = !w.reached && !soft && w.share > 0.0 && w.share < 0.5;
             // The ground as the flood found it: the base less the smears not yet
             // taken out and less what the slow processes, the domes, shields,
             // canyon and coronae, have added since; both ride on top of whatever
@@ -1546,6 +1571,8 @@ pub fn flood_compute(
                         lobe: 0.0,
                         pond: level,
                         lake: false,
+                        share: 1.0,
+                        margin: false,
                     });
                 }
             }
@@ -1569,6 +1596,8 @@ pub fn flood_compute(
             ponded,
             lobe,
             lake,
+            share: margin_share,
+            margin,
             ..
         } = w;
         if younger {
@@ -1646,15 +1675,18 @@ pub fn flood_compute(
         }
         // A flow drapes what stands less than its own thickness above its level.
         let drape = FLOOD_SHEET_THICKNESS as f32;
-        if ground < level + drape && reached {
+        if ground < level + drape && (reached || margin) {
             stats[0] += 1;
             // A soft flood's lobe margin (F117) covers its cell by the lobe's share and
             // lays that share of its sheet; a lake or a pond it fills whole, a lobe running
-            // into a lake keeping its sheet until the lake is deeper.
+            // into a lake keeping its sheet until the lake is deeper. A hard flood's lobes
+            // and outline lay the share of the cell their margin covers (F131).
             let share = if soft && !ponded && !lake {
                 lobe.clamp(0.0, 1.0)
-            } else {
+            } else if ponded || lake || hollow {
                 1.0
+            } else {
+                margin_share
             };
             let fill = if lake {
                 (level - ground).max(FLOOD_SHEET_THICKNESS as f32 * lobe.clamp(0.0, 1.0))
@@ -1668,14 +1700,17 @@ pub fn flood_compute(
             let sheet = fill.max((drape - (ground - level).max(0.0)) * share);
             let surface = ground + (1.0 - LAVA_SUBSIDENCE as f32) * fill;
             compositions.push(rec.composition);
+            // Its time and unit where it holds the cell, the ground's where it lays only
+            // its margin's share.
+            let held = soft || share >= 0.5;
             cells.push(CellWrite {
                 idx: idx as u32,
                 bedrock: surface + carry,
                 surface: true,
-                age: time,
-                unit: UNIT_LAVA,
+                age: if held { time } else { ages[idx] },
+                unit: if held { UNIT_LAVA } else { units[idx] },
                 deep: deep[idx],
-                melt: 0.0,
+                melt: if held { 0.0 } else { melt[idx] * (1.0 - share) },
                 cover: if soft {
                     share
                 } else {

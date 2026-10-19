@@ -364,7 +364,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 103;
+pub const FINISH_VERSION: u64 = 104;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3407,6 +3407,35 @@ mod tests {
         assert!(tessera > 0.04 && tessera < 0.14, "tessera {tessera}");
         // Plains carry the event's age; tessera is older.
         let layers = &out.finish.layers;
+        // The tessera meets the plains by the share of each cell its margin covers (F131),
+        // not along whole cells.
+        {
+            let grid = layers.grid;
+            let units = layers.unit_id.as_slice();
+            let cover = layers.cover.as_slice();
+            let (mut contact, mut partial) = (0usize, 0usize);
+            for k in 0..units.len() {
+                if units[k] != crate::units::UNIT_TESSERA && units[k] != crate::units::UNIT_LAVA {
+                    continue;
+                }
+                let cell = grid.cell(k);
+                let other = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(di, dj)| {
+                    let u = units[grid.index(grid.neighbor(cell, di, dj))];
+                    (u == crate::units::UNIT_TESSERA || u == crate::units::UNIT_LAVA)
+                        && u != units[k]
+                });
+                if other {
+                    contact += 1;
+                    if cover[k] > 0.02 && cover[k] < 0.98 {
+                        partial += 1;
+                    }
+                }
+            }
+            assert!(
+                contact > 0 && partial * 4 > contact,
+                "{partial} of {contact} cells on the tessera's contact partly covered"
+            );
+        }
         let units = layers.unit_id.as_slice();
         let ages = layers.surface_age.as_slice();
         let (mut plains, mut plains_at_event) = (0usize, 0usize);
@@ -3570,6 +3599,21 @@ mod tests {
         assert!(
             partial * 10 > salted,
             "{partial} of {salted} salted floor cells partly covered"
+        );
+        // The domes' salts end by the share of each cell their edifice covers (F131).
+        let salt = CRYODOME_SALT as f32;
+        let domed = units
+            .iter()
+            .filter(|u| **u == crate::units::UNIT_CRYODOME)
+            .count();
+        let edged = units
+            .iter()
+            .zip(cover)
+            .filter(|(u, c)| **u == crate::units::UNIT_CRYODOME && **c > 0.01 && **c < 0.95 * salt)
+            .count();
+        assert!(
+            domed > 0 && edged * 20 > domed,
+            "{edged} of {domed} dome cells partly covered"
         );
     }
 
