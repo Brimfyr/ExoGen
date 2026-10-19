@@ -66,6 +66,69 @@ pub struct ThermalHistory {
     pub samples: Vec<ThermalState>,
 }
 
+/// The melt a body's mantle has made per unit area since it formed, m, through its life
+/// (F120): the clock a plume's rise and its volcanoes keep, growing as fast as their
+/// mantle melts. Past the present it runs on at the present's rate.
+#[derive(Clone, Debug)]
+pub struct MeltClock {
+    times: Vec<f64>,
+    melt: Vec<f64>,
+}
+
+impl MeltClock {
+    /// The rate at the end, m per Gyr.
+    fn last_rate(&self) -> f64 {
+        let n = self.times.len();
+        if n < 2 {
+            return 0.0;
+        }
+        (self.melt[n - 1] - self.melt[n - 2]) / (self.times[n - 1] - self.times[n - 2]).max(1e-12)
+    }
+
+    /// The melt per unit area made by a time, m.
+    pub fn at(&self, t: f64) -> f64 {
+        let n = self.times.len();
+        if t <= self.times[0] {
+            return 0.0;
+        }
+        if t >= self.times[n - 1] {
+            return self.melt[n - 1] + self.last_rate() * (t - self.times[n - 1]);
+        }
+        let k = self.times.partition_point(|&x| x <= t).clamp(1, n - 1);
+        let f = (t - self.times[k - 1]) / (self.times[k] - self.times[k - 1]).max(1e-12);
+        self.melt[k - 1] + f * (self.melt[k] - self.melt[k - 1])
+    }
+
+    /// The time by which the melt per unit area reached an amount, Gyr; never, past the
+    /// present, if the mantle no longer melts.
+    pub fn time_of(&self, m: f64) -> f64 {
+        let n = self.times.len();
+        if m <= 0.0 {
+            return self.times[0];
+        }
+        if m >= self.melt[n - 1] {
+            let rate = self.last_rate();
+            return if rate > 0.0 {
+                self.times[n - 1] + (m - self.melt[n - 1]) / rate
+            } else {
+                f64::INFINITY
+            };
+        }
+        let k = self.melt.partition_point(|&x| x < m).clamp(1, n - 1);
+        let span = self.melt[k] - self.melt[k - 1];
+        if span <= 0.0 {
+            return self.times[k];
+        }
+        self.times[k - 1] + (m - self.melt[k - 1]) / span * (self.times[k] - self.times[k - 1])
+    }
+
+    /// The rate at a time, m per Gyr.
+    pub fn rate(&self, t: f64) -> f64 {
+        let h = 0.01;
+        (self.at(t + h) - self.at((t - h).max(0.0))) / (t + h - (t - h).max(0.0))
+    }
+}
+
 impl ThermalInputs {
     pub fn from_graph(graph: &ParamGraph) -> Self {
         let icy = matches!(
@@ -176,6 +239,24 @@ impl ThermalHistory {
         }
     }
 
+    /// The melt the mantle has made per unit area since formation (F120), for a body of
+    /// this surface area, m².
+    pub fn melt_clock(&self, area: f64) -> MeltClock {
+        let mut times = Vec::with_capacity(self.samples.len());
+        let mut melt = Vec::with_capacity(self.samples.len());
+        let mut m = 0.0;
+        for (k, s) in self.samples.iter().enumerate() {
+            if k > 0 {
+                let a = &self.samples[k - 1];
+                m += 0.5 * (a.magma_rate + s.magma_rate) * (s.time_gyr - a.time_gyr) * GYR
+                    / area.max(1.0);
+            }
+            times.push(s.time_gyr);
+            melt.push(m);
+        }
+        MeltClock { times, melt }
+    }
+
     /// A curve of one quantity over the body's life.
     pub fn curve(&self, f: impl Fn(&ThermalState) -> f64) -> Curve {
         Curve::new(self.samples.iter().map(|s| (s.time_gyr, f(s))).collect())
@@ -254,6 +335,44 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
 mod tests {
     use super::*;
     use crate::presets::preset;
+
+    /// Diagnostic: each rock body's melt per unit area since formation, m, at a few times
+    /// (the calibration of F120); run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_melt_per_area() {
+        for name in ["Mars", "Venus", "Moon", "Mercury", "Earth"] {
+            let (g, _) = preset(name).unwrap().to_graph();
+            let h = ThermalHistory::from_graph(&g);
+            let r = g.f64("body.radius");
+            let area = 4.0 * std::f64::consts::PI * r * r;
+            let age = g.f64("body.age");
+            let n = 4000;
+            let mut m = 0.0;
+            let mut marks = vec![];
+            let times = [0.3, 0.4, 0.9, 1.0, 1.2, 1.3, 1.4, 1.5, 4.0, 4.5];
+            let mut next = 0;
+            for k in 0..n {
+                let t0 = age * k as f64 / n as f64;
+                let t1 = age * (k + 1) as f64 / n as f64;
+                let rate = h.at(0.5 * (t0 + t1)).magma_rate;
+                m += rate * (t1 - t0) * 3.156e16 / area;
+                while next < times.len() && t1 >= times[next] - 1e-9 {
+                    marks.push((times[next], m));
+                    next += 1;
+                }
+            }
+            println!(
+                "{name} ({}): {}",
+                g.str("interior.tectonic_regime"),
+                marks
+                    .iter()
+                    .map(|(t, m)| format!("{t}: {m:.0}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
 
     /// At the present the history reproduces the present-day nodes it was built from.
     #[test]

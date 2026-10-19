@@ -178,7 +178,7 @@ impl<'a> Deformation<'a> {
                 }
                 Deformer::Shield(j) => {
                     let s = &self.shields[j];
-                    let p = shield_progress(t_slow, s.start_gyr);
+                    let p = shield_progress(t_slow, s);
                     if p > 0.0 {
                         h += shield_height(s, d, r_body, false, 0.0) * p;
                     }
@@ -230,7 +230,6 @@ impl<'a> Deformation<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::SHIELD_GROWTH_GYR;
 
     #[test]
     fn growth_after_a_flood_is_what_the_loop_added_later() {
@@ -245,6 +244,7 @@ mod tests {
             calderas: Vec::new(),
             rift: 0.0,
             elongation: 1.0,
+            growth_gyr: 1.0,
             id: 7,
         }];
         let present = 4.5;
@@ -263,16 +263,15 @@ mod tests {
         // came after is the rest of the exponential approach to the full height.
         let t = 2.0;
         let t1 = (present / steps as f64) * (t * steps as f64 / present).ceil();
-        let expect = 20e3
-            * ((-(t1 - 1.0) / SHIELD_GROWTH_GYR).exp()
-                - (-(present - 1.0) / SHIELD_GROWTH_GYR).exp());
+        let tau = shields[0].growth_gyr;
+        let expect = 20e3 * ((-(t1 - 1.0) / tau).exp() - (-(present - 1.0) / tau).exp());
         let got = deform.since_flood(center, t);
         assert!((got - expect).abs() < 1.0, "{got} vs {expect}");
         // Nothing grew since the present, and nothing grows far from the shield.
         assert!(deform.since_flood(center, present).abs() < 1e-6);
         assert_eq!(deform.since_flood([0.0, 1.0, 0.0], 0.5), 0.0);
         // A flood before the shield started sees all of it as later growth.
-        let all = 20e3 * (1.0 - (-(present - 1.0) / SHIELD_GROWTH_GYR).exp());
+        let all = 20e3 * (1.0 - (-(present - 1.0) / tau).exp());
         assert!((deform.since_flood(center, 0.5) - all).abs() < 1.0);
     }
 }

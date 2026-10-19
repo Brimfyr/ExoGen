@@ -26,10 +26,10 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::deform::Deformation;
 use crate::stages::plume::{Trough, TroughKind, radial_trace};
-use crate::stages::volcanism::LavaSmear;
+use crate::stages::volcanism::{LavaSmear, regional_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -360,6 +360,9 @@ impl EpisodicProcess {
                 let deep = layers.deep.as_mut_slice();
                 let melt = layers.melt.as_mut_slice();
                 let cover = layers.cover.as_mut_slice();
+                let composition = layers.composition.as_mut_slice();
+                let lava_age = layers.lava_age.as_mut_slice();
+                let lava = regional_composition(self.event_time);
                 for k in 0..n {
                     let lift = plateau_lift(score[k], threshold);
                     if score[k] > threshold {
@@ -380,6 +383,9 @@ impl EpisodicProcess {
                     deep[k] = 0.0;
                     melt[k] = 0.0;
                     cover[k] = 1.0;
+                    // Its lava rose everywhere, each place's from the mantle under it.
+                    composition[k] = lava(grid.center(grid.cell(k)));
+                    lava_age[k] = self.event_time as f32;
                 }
             }
             event_fill = Some(fill.clone());
@@ -439,12 +445,15 @@ pub fn resurfacing_compute(
     let noise = GradientNoise::new(seed ^ 0x7E55_E2A0);
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
-    let units = layers.unit_id.as_slice();
     let deep = layers.deep.as_slice();
     let melt = layers.melt.as_slice();
     let time = rec.time_gyr as f32;
     let n = grid.cell_count();
     let mut cells = Vec::with_capacity(n);
+    // The event's lava rose everywhere, each place's from the mantle under it: its
+    // composition at this resolution, not the coarse cells' tint of the floods after it.
+    let mut compositions = Vec::with_capacity(n);
+    let lava = regional_composition(rec.time_gyr);
     let mut taken = Vec::with_capacity(n);
     for idx in 0..n {
         let d = grid.center(grid.cell(idx));
@@ -474,6 +483,7 @@ pub fn resurfacing_compute(
                 melt: melt[idx],
                 cover: 0.0,
             });
+            compositions.push(0.0);
         } else {
             let target = sample_bilinear(coarse, &padded_filled, d);
             let t = (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0)
@@ -482,13 +492,14 @@ pub fn resurfacing_compute(
             cells.push(CellWrite {
                 idx: idx as u32,
                 bedrock: ground + t + carry,
-                surface: units[idx] != UNIT_LAVA || ages[idx] != time,
+                surface: true,
                 age: time,
                 unit: UNIT_LAVA,
                 deep: 0.0,
                 melt: 0.0,
                 cover: 1.0,
             });
+            compositions.push(lava(d));
         }
     }
     (
@@ -498,7 +509,7 @@ pub fn resurfacing_compute(
             stain: None,
             steep: None,
             ejecta_age: None,
-            compositions: None,
+            compositions: Some(compositions),
         },
         taken,
     )

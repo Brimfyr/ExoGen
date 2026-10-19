@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 18;
+pub const VERSION: u64 = 19;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -62,6 +62,19 @@ pub fn flood_composition(time_gyr: f64, vent: [f64; 3], batch: f64) -> f32 {
         .clamp(-1.0, 1.0) as f32
 }
 
+/// The composition of lava risen everywhere at a time, each place's from the mantle under
+/// it (F120): `flood_composition` with no batch of its own, its fields built once for the
+/// many places an overturn's lava covers.
+pub fn regional_composition(time_gyr: f64) -> impl Fn([f64; 3]) -> f32 {
+    let drift = composition_drift(time_gyr) as f64;
+    let noise = GradientNoise::new(0x5A0C_E5ED);
+    move |d| {
+        let source = (noise.fbm(d, LAVA_SOURCE_ORDER, 2, 2.0, 0.5) / 0.6).clamp(-1.0, 1.0);
+        (LAVA_DRIFT_SHARE * drift + LAVA_SOURCE_SHARE * source + LAVA_BATCH_SHARE * 0.0)
+            .clamp(-1.0, 1.0) as f32
+    }
+}
+
 /// A coarse cell a flood covered: the thickness added and what the surface was before.
 #[derive(Clone, Copy, Debug)]
 pub struct FloodCell {
@@ -69,6 +82,8 @@ pub struct FloodCell {
     pub thickness: f32,
     pub prev_unit: u16,
     pub prev_age: f32,
+    /// The composition of the lava it found, if it found lava (F55).
+    pub prev_composition: f32,
 }
 
 /// One pond of a flood: the level it filled to and the coarse cells it covered; or a
@@ -110,6 +125,7 @@ pub struct Covered {
     pub sheet: bool,
     pub prev_unit: u16,
     pub prev_age: f32,
+    pub prev_composition: f32,
 }
 
 /// A flood that was emplaced, kept for the sidecar and for sharpening its margins at the
@@ -151,6 +167,7 @@ impl FloodRecord {
                     sheet: true,
                     prev_unit: c.prev_unit,
                     prev_age: c.prev_age,
+                    prev_composition: c.prev_composition,
                 });
                 e.thickness += c.thickness;
                 if !pond.sheet {
@@ -844,7 +861,7 @@ impl FloodProcess {
             let composition = layers.composition.as_mut_slice();
             let lava_age = layers.lava_age.as_mut_slice();
             let drift = flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C));
-            let mut laid: HashMap<usize, (f64, u16, f32)> = HashMap::new();
+            let mut laid: HashMap<usize, (f64, u16, f32, f32)> = HashMap::new();
             for run in &runs {
                 let mut recorded = Vec::new();
                 for &(idx, _, t) in &run.cells {
@@ -856,13 +873,16 @@ impl FloodProcess {
                     // added is the height left after that.
                     let added = (1.0 - LAVA_SUBSIDENCE) * t;
                     placed += t * self.areas[idx];
-                    let e = laid.entry(idx).or_insert((0.0, units[idx], ages[idx]));
+                    let e =
+                        laid.entry(idx)
+                            .or_insert((0.0, units[idx], ages[idx], composition[idx]));
                     e.0 += t;
                     recorded.push(FloodCell {
                         idx: idx as u32,
                         thickness: added as f32,
                         prev_unit: e.1,
                         prev_age: e.2,
+                        prev_composition: e.3,
                     });
                     self.thickness[idx] += t as f32;
                     self.last_time[idx] = time_gyr as f32;
@@ -903,11 +923,11 @@ impl FloodProcess {
 
 /// A coarse cell the fine fill may reach: the level, and the previous surface when the
 /// cell is inside the coarse footprint.
-type Reach = (f32, Option<(u16, f32)>);
+type Reach = (f32, Option<(u16, f32, f32)>);
 
 /// A fine cell a flood's pass visits: its index, the level the lava could reach there and,
 /// inside the coarse footprint, the surface the flood found.
-type Visit = (usize, f32, Option<(u16, f32)>);
+type Visit = (usize, f32, Option<(u16, f32, f32)>);
 
 /// The finishing pass's lava bookkeeping. The base carries every flood's coarse fill,
 /// smeared over a coarse cell at its margin. Each flood's pass takes its own smear out
@@ -1080,7 +1100,10 @@ pub fn flood_compute(
     // thickness over the ground.
     let mut levels: HashMap<usize, Reach> = HashMap::new();
     for (&idx, c) in &covered {
-        levels.insert(idx as usize, (c.level, Some((c.prev_unit, c.prev_age))));
+        levels.insert(
+            idx as usize,
+            (c.level, Some((c.prev_unit, c.prev_age, c.prev_composition))),
+        );
         let cell = coarse.cell(idx as usize);
         for di in -1..=1 {
             for dj in -1..=1 {
@@ -1098,6 +1121,7 @@ pub fn flood_compute(
     let deep = layers.deep.as_slice();
     let melt = layers.melt.as_slice();
     let cover = layers.cover.as_slice();
+    let found = layers.composition.as_slice();
     let time = rec.time_gyr as f32;
     // A hollow the lava ponds in is finer relief, a crater the loop never saw: the fine
     // ground lies below the floor the lava's level stands over, `floor`, while the ground the
@@ -1157,7 +1181,7 @@ pub fn flood_compute(
     struct Work {
         idx: usize,
         level: f32,
-        previous: Option<(u16, f32)>,
+        previous: Option<(u16, f32, f32)>,
         own: f32,
         ground: f32,
         carry: f32,
@@ -1241,28 +1265,13 @@ pub fn flood_compute(
                 && !sheet
                 && ground < floor
                 && loop_ground(idx, remaining, later) >= floor;
-            // Inside the flood's own footprint, where the base still says this lava
-            // and no finer pass has written, the loop's surface was the flood's own
-            // sheet at its level: what stands above the level there is the
-            // resampling's ramp toward a higher neighbour, not ground the flood
-            // found, and the sheet lies level over it, at least its own thickness
-            // deep. Elsewhere what stands above the level is a rim or an older
-            // floor, and the flood ends against it. The lobed outline bounds the
-            // fill either way; what it leaves inside the coarse footprint keeps the
-            // loop's surface, the older lava's own. A soft flood's ground is the smoothed
-            // plains the finish draws it on, with no ramps to level (F117): levelled where
-            // the units, resampled from the loop's cells, said lava, its slopes had stood in
-            // terraces a coarse cell square.
-            let own_floor = !soft
-                && !sheet
-                && previous.is_some()
-                && units[idx] == UNIT_LAVA
-                && !smear.touched[idx];
-            w.ground = if own_floor {
-                ground.min(level - FLOOD_SHEET_THICKNESS as f32)
-            } else {
-                ground
-            };
+            // The ground is the ground the flood found, on every body: what stands above
+            // the level ends the flood there, a rim, an older floor or a slope. Levelled to
+            // a sheet below the level where the units, resampled from the loop's cells,
+            // still said this lava (as the resampling's ramps were once read), slopes had
+            // stood in terraces a coarse cell square, on a shield's flank and in old
+            // craters on Mars as on Io's plains (F117, F120).
+            w.ground = ground;
             w.carry = remaining - own + later;
             w
         })
@@ -1503,6 +1512,10 @@ pub fn flood_compute(
             }
         }
     }
+    // The composition each written cell takes: the flood's where its lava lies, the lava it
+    // found where it gives the surface back, whose coarse cells would otherwise carry the
+    // flood's tint over its whole footprint.
+    let mut compositions: Vec<f32> = Vec::with_capacity(work.len());
     for w in work {
         let Work {
             idx,
@@ -1544,7 +1557,8 @@ pub fn flood_compute(
                     melt: 0.0,
                     cover: 1.0,
                 });
-            } else if let Some((prev_unit, prev_age)) = previous
+                compositions.push(rec.composition);
+            } else if let Some((prev_unit, prev_age, prev_composition)) = previous
                 && !smear.touched[idx]
                 && units[idx] == UNIT_LAVA
             {
@@ -1558,6 +1572,7 @@ pub fn flood_compute(
                     melt: melt[idx],
                     cover: cover[idx],
                 });
+                compositions.push(prev_composition);
             }
             continue;
         }
@@ -1613,6 +1628,7 @@ pub fn flood_compute(
             // relief, not in albedo).
             let sheet = fill.max((drape - (ground - level).max(0.0)) * share);
             let surface = ground + (1.0 - LAVA_SUBSIDENCE as f32) * fill;
+            compositions.push(rec.composition);
             cells.push(CellWrite {
                 idx: idx as u32,
                 bedrock: surface + carry,
@@ -1637,16 +1653,17 @@ pub fn flood_compute(
             // base says lava where no pass has written yet; give it back the
             // surface the flood found, unless a crater formed since then covers the
             // cell, whose coarse cell the loop's record of that surface missed.
-            let (unit, age) = match previous {
-                Some((u, a))
+            let (unit, age, composition) = match previous {
+                Some((u, a, c))
                     if !smear.touched[idx]
                         && units[idx] == UNIT_LAVA
                         && a >= smear.crater_time[idx] =>
                 {
-                    (u, a)
+                    (u, a, c)
                 }
-                _ => (units[idx], ages[idx]),
+                _ => (units[idx], ages[idx], found[idx]),
             };
+            compositions.push(composition);
             cells.push(CellWrite {
                 idx: idx as u32,
                 bedrock: ground + carry,
@@ -1659,6 +1676,7 @@ pub fn flood_compute(
             });
         }
     }
+    debug_assert_eq!(cells.len(), compositions.len());
     (
         StampOutput {
             cells,
@@ -1666,7 +1684,7 @@ pub fn flood_compute(
             stain: None,
             steep: None,
             ejecta_age: None,
-            compositions: None,
+            compositions: Some(compositions),
         },
         taken,
         stats,
@@ -2436,6 +2454,7 @@ mod tests {
                 thickness: 50.0,
                 prev_unit: UNIT_PRIMORDIAL,
                 prev_age: 0.0,
+                prev_composition: 0.0,
             })
             .collect();
         let area = cells
@@ -2684,6 +2703,7 @@ mod tests {
                     thickness: 47.5,
                     prev_unit: UNIT_PRIMORDIAL,
                     prev_age: 0.0,
+                    prev_composition: 0.0,
                 })
                 .collect(),
             sheet: true,

@@ -29,10 +29,11 @@ use crate::grid::projection::PaddedField;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
+use crate::thermal::ThermalHistory;
 use crate::stages::io::{Lobe, PathRules};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 16;
+pub const VERSION: u64 = 17;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -62,6 +63,9 @@ pub struct Shield {
     pub rift: f64,
     /// Its edifice's axis along the rift over its axis across (F101).
     pub elongation: f64,
+    /// The time over which it grows by a factor e of what it has still to grow, Gyr: its
+    /// magma comes as fast as its mantle melts as it starts (F120).
+    pub growth_gyr: f64,
     pub id: u64,
 }
 
@@ -434,11 +438,11 @@ pub fn trough_progress(trough: &Trough, t: f64) -> f64 {
 }
 
 /// Shield growth: most of it early, a tail to the present.
-pub fn shield_progress(t: f64, start: f64) -> f64 {
-    if t <= start {
+pub fn shield_progress(t: f64, shield: &Shield) -> f64 {
+    if t <= shield.start_gyr {
         0.0
     } else {
-        1.0 - (-(t - start) / SHIELD_GROWTH_GYR).exp()
+        1.0 - (-(t - shield.start_gyr) / shield.growth_gyr.max(1e-6)).exp()
     }
 }
 
@@ -586,7 +590,7 @@ pub fn shield_composition(shield: &Shield, time_gyr: f64, eruption: Option<u64>)
 
 /// The time by which a shield had grown to a share of its edifice.
 fn progress_time(shield: &Shield, progress: f64) -> f64 {
-    shield.start_gyr - SHIELD_GROWTH_GYR * (1.0 - progress).ln()
+    shield.start_gyr - shield.growth_gyr * (1.0 - progress).ln()
 }
 
 /// The edifice's mean height over its area as a share of its summit's.
@@ -604,7 +608,7 @@ fn shield_mean_shape() -> f64 {
 /// show on it came (F101): since the edifice last grew on average by SHIELD_FLOW_COVER
 /// sheets of flows, which lie over the rest; none before it starts.
 fn shield_span(shield: &Shield, present: f64) -> Option<(f64, f64)> {
-    let now = shield_progress(present, shield.start_gyr);
+    let now = shield_progress(present, shield);
     if now <= 0.0 {
         return None;
     }
@@ -818,7 +822,7 @@ pub struct PlumeProcess {
 
 impl PlumeProcess {
     /// None when the body raises no plume.
-    pub fn new(graph: &ParamGraph, grid: CubeSphere) -> Option<Self> {
+    pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
         let count = graph.f64("tectonics.plume_rise_count").round() as usize;
         if count == 0
             || !matches!(
@@ -829,15 +833,19 @@ impl PlumeProcess {
             return None;
         }
         let body_radius = graph.f64("body.radius");
-        let episodic = graph.str("interior.tectonic_regime") == "episodic_lid";
-        // On an episodic lid the rifts and graben come after the event, which would
-        // otherwise fill them; on a stagnant lid they follow the dome.
         let age = graph.f64("body.age");
-        let event_time = if episodic {
+        // A rise grows as its plume's mantle melts beneath its lid, since the lid last
+        // formed (F120): a stagnant lid when the body formed, an episodic lid at its
+        // overturn, which foundered the lid and the domes on it.
+        let renewal = if graph.str("interior.tectonic_regime") == "episodic_lid" {
             (age - graph.f64("tectonics.resurfacing_event_age")).max(0.0)
         } else {
             0.0
         };
+        let clock = thermal.melt_clock(4.0 * std::f64::consts::PI * body_radius * body_radius);
+        let since = clock.at(renewal);
+        let rise_start = clock.time_of(since + RISE_START_MELT);
+        let rise_end = clock.time_of(since + RISE_END_MELT);
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
         let rise_radius = 0.5 * graph.f64("tectonics.plume_rise_diameter");
         let rise_height = graph.f64("tectonics.plume_rise_height");
@@ -857,8 +865,8 @@ impl PlumeProcess {
                 center,
                 radius: rise_radius * (0.8 + 0.4 * rng.uniform(i, 4)),
                 height: rise_height * (0.8 + 0.4 * rng.uniform(i, 5)),
-                start_gyr: RISE_START_GYR,
-                end_gyr: RISE_END_GYR,
+                start_gyr: rise_start,
+                end_gyr: rise_end,
                 paleo_latitude: center[2].clamp(-1.0, 1.0).asin(),
                 axis: [0.0, 0.0, 0.0],
             });
@@ -866,7 +874,7 @@ impl PlumeProcess {
         // The body turns under its rises as they grow, carrying them toward its equator
         // (F104); everything on them is placed where they stand now.
         {
-            let mid = 0.5 * (RISE_START_GYR + RISE_END_GYR);
+            let mid = (0.5 * (rise_start + rise_end)).min(age);
             let lithosphere_now = graph.f64("interior.lithosphere_thickness").max(1.0);
             let te = graph.f64("interior.elastic_thickness")
                 * graph
@@ -968,14 +976,16 @@ impl PlumeProcess {
                 // that feed its flank vents.
                 let (se, sn) = local_basis(center);
                 let rift = azimuth_from(center, se, sn, rise.center);
+                let start_gyr = shield_start(rise, before / total.max(f64::MIN_POSITIVE));
                 shields.push(Shield {
                     center,
                     radius,
                     height,
-                    start_gyr: shield_start(rise, before / total.max(f64::MIN_POSITIVE)),
+                    start_gyr,
                     calderas,
                     rift,
                     elongation: 1.0 + (SHIELD_ELONGATION_MAX - 1.0) * rng.uniform(draw, 15),
+                    growth_gyr: SHIELD_GROWTH_MELT / clock.rate(start_gyr.min(age)).max(1e-9),
                     id: sid,
                 });
                 before += volume(k as usize);
@@ -1004,24 +1014,20 @@ impl PlumeProcess {
                 * rise.radius;
             let l_min = RIFT_MIN_LENGTH;
             let l_max = (RIFT_MAX_LENGTH_FRACTION * 2.0 * rise.radius).max(2.0 * l_min);
-            // Faults form as the rise's stress grows (F105, F116): on a stagnant lid as its
-            // dome rises, the dome's bending and load being that stress, at the pace of its
-            // growth and none once it has stopped; on an episodic lid after the resurfacing
-            // event, which would otherwise fill them.
-            let (t_lo, t_hi) = if episodic {
-                (event_time, age)
-            } else {
-                (rise.start_gyr.min(age), rise.end_gyr.min(age))
-            };
+            // Faults form as the rise's stress grows (F105, F116): as its dome rises, the
+            // dome's bending and load being that stress, at the pace of its growth and none
+            // once it has stopped, on every lid, the dome growing since its lid last formed
+            // (F120); a rise still growing has stretched by its growth so far, and one whose
+            // plume has yet to rise not at all.
+            if rise.start_gyr >= age {
+                continue;
+            }
+            let budget = budget * rise_progress(rise, age);
+            let (t_lo, t_hi) = (rise.start_gyr, rise.end_gyr.min(age));
             let time_cdf = Tabulated::new(t_lo, t_hi, 256, |t| {
-                if episodic {
-                    1.0
-                } else {
-                    // The rate of the dome's smoothstep growth.
-                    let x =
-                        ((t - rise.start_gyr) / (rise.end_gyr - rise.start_gyr)).clamp(0.0, 1.0);
-                    6.0 * x * (1.0 - x)
-                }
+                // The rate of the dome's smoothstep growth.
+                let x = ((t - rise.start_gyr) / (rise.end_gyr - rise.start_gyr)).clamp(0.0, 1.0);
+                6.0 * x * (1.0 - x)
             });
             let depth_cap = (CANYON_DEPTH_FRACTION * rise.height).max(RIFT_MIN_DEPTH);
             let spacing = 0.5 * cell;
@@ -1201,9 +1207,11 @@ impl PlumeProcess {
                 let time = time_cdf.sample(rng.uniform(draw, 8));
                 let carried = width >= RIFT_LOOP_WIDTH_CELLS * cell;
                 let (start_gyr, end_gyr) = if carried {
+                    // Carved over the melt its mantle makes about its time (F120).
+                    let m = clock.at(time);
                     (
-                        (time - 0.5 * RIFT_CARVING_GYR).max(t_lo),
-                        (time + 0.5 * RIFT_CARVING_GYR).min(age),
+                        clock.time_of(m - 0.5 * RIFT_CARVING_MELT).max(t_lo),
+                        clock.time_of(m + 0.5 * RIFT_CARVING_MELT).min(age),
                     )
                 } else {
                     (time, time)
@@ -1242,7 +1250,7 @@ impl PlumeProcess {
             // wide as twice the depth to the dike's top, subsiding as a graben over its
             // faulted layer does.
             // A swarm comes with the magma that feeds it (F116): the plume head's as the
-            // dome rises, a volcano's as it grows; on an episodic lid after the event.
+            // dome rises, a volcano's as it grows.
             let mut sources: Vec<SwarmSource> = Vec::new();
             for m in 0..DIKE_SWARMS_PER_RISE {
                 let key = 0x0D1C_0000 + ri as u64 * 0x1000 + m;
@@ -1277,8 +1285,8 @@ impl PlumeProcess {
             } in &sources
             {
                 let time = match volcano {
-                    Some(v) if !episodic && v.start_gyr < age => {
-                        let grown = shield_progress(age, v.start_gyr);
+                    Some(v) if v.start_gyr < age => {
+                        let grown = shield_progress(age, v);
                         progress_time(v, rng.uniform(key, 1) * grown).min(age)
                     }
                     _ => time_cdf.sample(rng.uniform(key, 1)),
@@ -1464,7 +1472,7 @@ impl PlumeProcess {
         // and burying what they flow over (F115).
         let t_mid = 0.5 * (t0 + t1);
         for shield in &self.shields {
-            let dp = shield_progress(t1, shield.start_gyr) - shield_progress(t0, shield.start_gyr);
+            let dp = shield_progress(t1, shield) - shield_progress(t0, shield);
             if dp <= 0.0 {
                 continue;
             }
@@ -2481,7 +2489,7 @@ pub fn shield_burial<'a>(
     shields
         .into_iter()
         .map(|s| {
-            let grown = shield_progress(present, s.start_gyr) - shield_progress(since, s.start_gyr);
+            let grown = shield_progress(present, s) - shield_progress(since, s);
             if grown <= 0.0 || angle_between(s.center, d) * body_radius > s.extent() {
                 0.0
             } else {
@@ -2782,6 +2790,7 @@ mod tests {
             }],
             rift: 0.0,
             elongation: 1.0,
+            growth_gyr: 1.0,
             id: 1,
         };
         let r = 3.39e6;
@@ -2844,6 +2853,7 @@ mod tests {
             calderas: summit_collapses(&Rng::new(3), 0, 300e3, 20e3),
             rift: 0.7,
             elongation: 1.3,
+            growth_gyr: 1.0,
             id: 5,
         };
         let height: Vec<f32> = (0..grid.cell_count())
@@ -2890,7 +2900,7 @@ mod tests {
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
         let r = g.f64("body.radius");
         let age = g.f64("body.age");
-        let pp = PlumeProcess::new(&g, CubeSphere::new(v[3] as u32)).unwrap();
+        let pp = PlumeProcess::new(&g, CubeSphere::new(v[3] as u32), &ThermalHistory::from_graph(&g)).unwrap();
         for (kind, list) in [("canyon", &pp.canyons), ("graben", &pp.graben)] {
             for t in list.iter() {
                 let near = t
@@ -3323,7 +3333,7 @@ mod tests {
         // length, and its throw stays within the layer; the faults whose throw over their
         // length would exceed the layer are rifts, as wide as their throw, the long ones.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let all: Vec<&Trough> = p.canyons.iter().chain(&p.graben).collect();
         let graben: Vec<&&Trough> = all
             .iter()
@@ -3363,6 +3373,54 @@ mod tests {
             rift_length > 3.0 * graben_length,
             "{rift_length} vs {graben_length}"
         );
+    }
+
+    #[test]
+    fn a_rise_grows_after_its_lid_last_formed_as_fast_as_its_mantle_melts() {
+        // F120: Mars's rise keeps Tharsis's window; Venus's grows after its overturn and is
+        // built before the present, its shields starting after the overturn and growing
+        // faster, its mantle melting faster.
+        let run = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let thermal = ThermalHistory::from_graph(&g);
+            let p = PlumeProcess::new(&g, CubeSphere::new(32), &thermal).unwrap();
+            (g, thermal, p)
+        };
+        let (_, _, mars) = run("Mars");
+        let rise = &mars.rises[0];
+        assert!(
+            (rise.start_gyr - 0.3).abs() < 0.02 && (rise.end_gyr - 1.5).abs() < 0.02,
+            "Mars's rise {} to {}",
+            rise.start_gyr,
+            rise.end_gyr
+        );
+        let (g, thermal, venus) = run("Venus");
+        let age = g.f64("body.age");
+        let overturn = age - g.f64("tectonics.resurfacing_event_age");
+        assert!(!venus.rises.is_empty());
+        for r in &venus.rises {
+            assert!(
+                r.start_gyr > overturn && r.end_gyr < age,
+                "overturn {overturn}, rise {} to {}",
+                r.start_gyr,
+                r.end_gyr
+            );
+        }
+        for s in &venus.shields {
+            assert!(s.start_gyr > overturn && s.start_gyr < age, "{}", s.start_gyr);
+            assert!(
+                s.growth_gyr < 0.5 * mars.shields[0].growth_gyr,
+                "{} vs {}",
+                s.growth_gyr,
+                mars.shields[0].growth_gyr
+            );
+        }
+        // The melt clock runs both ways, and on past the present.
+        let r = g.f64("body.radius");
+        let clock = thermal.melt_clock(4.0 * std::f64::consts::PI * r * r);
+        for t in [0.5, 2.0, 4.2, 5.0] {
+            assert!((clock.time_of(clock.at(t)) - t).abs() < 1e-9, "{t}");
+        }
     }
 
     #[test]
@@ -3416,7 +3474,7 @@ mod tests {
         );
         // On Mars the faults beyond the foot gather along the axis, and the shields lie on it.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let rise = &p.rises[0];
         let (re, rn) = local_basis(rise.center);
         let phi_axis = dot(rise.axis, rn).atan2(dot(rise.axis, re));
@@ -3450,7 +3508,7 @@ mod tests {
         // leaving its source and running on away from it, a graben above each; some run
         // thousands of kilometres, as Tharsis's radial graben systems do.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let r = g.f64("body.radius");
         let dikes: Vec<&Trough> = p
             .graben
@@ -3570,6 +3628,7 @@ mod tests {
             calderas: Vec::new(),
             rift: 0.0,
             elongation: 1.0,
+            growth_gyr: 1.0,
             id: 3,
         };
         let shields = std::slice::from_ref(&shield);
@@ -3599,8 +3658,8 @@ mod tests {
         let grid = CubeSphere::new(128);
         let r = g.f64("body.radius");
         let age = g.f64("body.age");
-        let mut plain = PlumeProcess::new(&g, grid).unwrap();
-        let mut cratered = PlumeProcess::new(&g, grid).unwrap();
+        let mut plain = PlumeProcess::new(&g, grid, &ThermalHistory::from_graph(&g)).unwrap();
+        let mut cratered = PlumeProcess::new(&g, grid, &ThermalHistory::from_graph(&g)).unwrap();
         let shield = plain
             .shields
             .iter()
@@ -3669,7 +3728,7 @@ mod tests {
         // F116: on Mars the rise's faults form while its dome rises, and the plume head's
         // dikes with them; each volcano's dikes come while it grows.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(&g, CubeSphere::new(64)).unwrap();
+        let p = PlumeProcess::new(&g, CubeSphere::new(64), &ThermalHistory::from_graph(&g)).unwrap();
         let rise = &p.rises[0];
         let age = g.f64("body.age");
         let (mut faults, mut plume_dikes, mut volcano_dikes) = (0, 0, 0);
@@ -3713,6 +3772,7 @@ mod tests {
             calderas: Vec::new(),
             rift: 0.0,
             elongation: 1.3,
+            growth_gyr: 1.0,
             id: 2,
         };
         let pi = std::f64::consts::PI;

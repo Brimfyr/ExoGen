@@ -361,7 +361,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 97;
+pub const FINISH_VERSION: u64 = 98;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -394,7 +394,7 @@ pub fn run_coarse_loop(
     let mut layers = crust.init();
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
-    let mut plume = plume::PlumeProcess::new(graph, grid);
+    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(
         graph,
         grid,

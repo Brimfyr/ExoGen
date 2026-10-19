@@ -364,15 +364,19 @@ pub const RIDGE_LOAD_WEIGHT: f64 = 0.5;
 /// Plume loading (PLAN.md 4.3). A stagnant lid at least this big raises one plume per
 /// this much surface heat flux, up to three (Mars: one, Tharsis); the rise spans this
 /// fraction of the radius and stands this fraction of the strength-limited relief
-/// (Tharsis: 5,000 km across, 7 km high); it grows between these times.
+/// (Tharsis: 5,000 km across, 7 km high). It grows as its plume's mantle melts beneath its
+/// lid (F120): its head rises once the mantle has made this much melt per unit area since
+/// the lid last formed, and its dome is built by this much, m (stated choices, set so that
+/// Tharsis grew from 4.2 to 3.0 Ga as the times the rise kept before did, 0.3 and 1.5 Gyr
+/// after Mars formed).
 pub const PLUME_MIN_RADIUS: f64 = 3.0e6;
 pub const PLUME_FLUX_PER_PLUME: f64 = 0.02;
 pub const PLUME_RISE_DIAMETER_FRACTION: f64 = 1.5;
 /// A thin, hot episodic lid supports narrower rises (Beta Regio: 2,500 km on Venus).
 pub const PLUME_RISE_DIAMETER_FRACTION_EPISODIC: f64 = 0.4;
 pub const RISE_HEIGHT_FRACTION: f64 = 0.28;
-pub const RISE_START_GYR: f64 = 0.3;
-pub const RISE_END_GYR: f64 = 1.5;
+pub const RISE_START_MELT: f64 = 2_700.0;
+pub const RISE_END_MELT: f64 = 10_300.0;
 /// A rocky lithosphere's Young's modulus, Pa, and Poisson's ratio, for its membrane
 /// strength at the longest wavelengths (the values flexure studies of Mars use: McGovern
 /// et al. 2002).
@@ -380,8 +384,11 @@ pub const ROCK_YOUNG_MODULUS: f64 = 1.0e11;
 pub const ROCK_POISSON: f64 = 0.25;
 /// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
 /// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise
-/// they sit (fraction of its radius), their growth timescale (each starts as its rise's
-/// stretching wanes, F119), and the thickness of flows that renews a flank's surface; its edifice longer along its rift
+/// they sit (fraction of its radius), the melt per unit area over which a shield grows
+/// by a factor e of what it has still to grow, its magma coming as fast as its mantle
+/// melts (F120: Mars's melt in a gigayear as its shields start, so that they grow as they
+/// did over a gigayear; each starts as its rise's stretching wanes, F119), and the
+/// thickness of flows that renews a flank's surface; its edifice longer along its rift
 /// zone, whose fissures feed it more lava there, by up to this axis ratio, the area kept
 /// (a stated choice: the Tharsis Montes stretch along the line of their rift aprons,
 /// Ascraeus Mons 375 by 870 km with its aprons), and its foot lobed where its flows ran
@@ -399,7 +406,7 @@ pub const SHIELD_SLOPE_DEG: f64 = 5.0;
 pub const SHIELD_FLANK_EXPONENT: f64 = 1.6;
 pub const SHIELD_FLANK_POWER: f64 = 0.9;
 pub const SHIELD_PLACEMENT: (f64, f64) = (0.1, 0.6);
-pub const SHIELD_GROWTH_GYR: f64 = 1.0;
+pub const SHIELD_GROWTH_MELT: f64 = 5_500.0;
 pub const SHIELD_RENEWAL_THICKNESS: f64 = 5.0;
 /// A shield's lava buries the ground it grows over (F115), the relief measured against the
 /// mean of that ground in this many rings about the edifice's centre, as a deposit buries
@@ -464,11 +471,11 @@ pub const SHIELD_BATCH_SPREAD: f64 = 0.3;
 /// width thirty depths; heave 1.2 depths, two faults dipping 60°. Half the faults join an
 /// existing one as an en-echelon neighbour, a width or a few to its side, so the big
 /// ones gather parallel chasmata and the small ones form swarms. Troughs wider than two
-/// coarse cells are carved through the loop over a gigayear; the rest are cut at the
-/// finish. On a stagnant lid the faults form from the rise's start to the present at the
-/// pace of the body's volcanism, which builds the rise's load (Tharsis faulted from the
-/// Noachian into the Amazonian: Anderson et al. 2001); on an episodic lid they follow the
-/// resurfacing event. The rest of a fault's course follows the rise's stress field
+/// coarse cells are carved through the loop over the melt their mantle makes about their
+/// time (RIFT_CARVING_MELT); the rest are cut at the finish. The faults form as the rise's
+/// dome grows, at the pace of its growth and none once it has stopped (F116), on every
+/// lid, the dome growing since its lid last formed (F120). The rest of a fault's course
+/// follows the rise's stress field
 /// (F105): it starts where the ground is in tension, as often as the tension is strong,
 /// out to this many rise radii; strikes across the most tensile direction, turning toward
 /// it by this share a step as far as the stress is anisotropic, and keeps its own heading
@@ -497,7 +504,10 @@ pub const RIFT_MIN_TENSION: f64 = 0.05;
 pub const RIFT_CLUSTER_PROBABILITY: f64 = 0.5;
 pub const RIFT_CLUSTER_OFFSET: (f64, f64) = (0.8, 3.5);
 pub const RIFT_LOOP_WIDTH_CELLS: f64 = 2.0;
-pub const RIFT_CARVING_GYR: f64 = 1.0;
+/// A canyon carried by the loop is carved over the melt its mantle makes per unit area
+/// about the time it formed, m (F120: Mars's melt over the gigayear about its dome's turn,
+/// as the gigayear it was carved over before).
+pub const RIFT_CARVING_MELT: f64 = 6_300.0;
 pub const RIFT_MAX_FAULTS: u64 = 20_000;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;

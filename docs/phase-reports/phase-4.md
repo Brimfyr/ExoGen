@@ -1171,3 +1171,28 @@ Still to do:
 - **The shields' size from the magma they take**, rather than their own rule.
 
 Tests 190 (seven ignored, one of them a new diagnostic printing Mars's canyons' relief). The shields' test now reads the stretching: none while the growth quickens, the share by which its rate has fallen after, all once it has stopped, each shield starting at the share the larger ones hold; Mars's deepest standing canyon is held to 2.2 km at the preview quality; and a crater on the flank of Mars's largest shield, which now starts as the dome turns, keeps 86 m of its 852, where the test had allowed a tenth: it allows 15 percent now, a crater riding up on the shield keeping all its depth. Clippy is clean and validate passes its 117 checks.
+
+## The fifty-first milestone: Venus's rises after its overturn
+
+Asked for by the user after the fiftieth, on its account of Venus: every rise grew on Mars's clock, so Venus's rises and shields grew three billion years before the overturn that resurfaced them, its shields drowned and reset by it while its rifts, drawn after it, outlived the stretching that drove them. The user asked for this first, and the overturn's cycle as the next milestone.
+
+- **F120, a rise keeps its mantle's melt clock since its lid last formed.** A rise grows as its plume's mantle melts beneath its lid, since the lid last formed, at the body's formation on a stagnant lid and at its overturn on an episodic one: its head rises once the mantle has made a stated amount of melt per unit area since then, its dome is built by another, its canyons are carved and its shields grow over amounts of melt, all set on Mars's history so that Tharsis keeps its times. The episodic lid's special cases for faults and swarms are gone.
+
+How it went:
+
+- **The clock.** Mars's rise starts after 2,739 m of melt per unit area and is built by 10,333 m; Venus's mantle makes that much in 107 and about 400 Myr after its overturn, 25.6 m per Myr against Mars's 6 at its dome's turn. A rise still growing at the present has stretched by its growth so far, and its faults with it.
+- **Blocky lava on Venus.** Its rises' young floods, now on its plains, came out in dark blocks a loop cell square that the units did not show. The resurfacing event had laid its lava without a composition, so it kept the coarse cells' tint of the floods after it; and a flood's pass gave its own composition to the cells it gave back to the lava it had found, tinting its whole coarse footprint. The event's lava now takes the composition of the mantle under each place, and a flood gives back the lava it found with its composition. Building the event's composition fields for each of six million cells had doubled Venus's render; they are built once.
+- **Terraces on Mars.** A stepped scar on Mars's largest shield's flank, seen at the forty-ninth and the fiftieth, and square pits in old craters' floors were the levelling of a flood's own floor (F36), which inside a flood's coarse footprint cut the ground to a sheet below its pond wherever the units, resampled from the loop's cells, still said lava. Without it they are gone, and nothing else changes but a few hundred metres here and there over a hundredth of Mars, with no strips left dry along the loop's cells, which the rule had been written against.
+
+What the maps show:
+
+- **Venus:** its rises grow from 0.40 to 0.10 Ga and its shields start from 0.25 to 0.10 Ga, still growing today, their calderas at their summits and their flows on the plains; its floods' lava lies on the plains in smooth patches.
+- **Mars:** its rise, shields and canyons keep their times; the shield's flank and the old craters lose their terraces.
+- **The other bodies with floods:** the levelling's terraces gone, and their floods giving back the composition they found where their flows did not reach; the bodies without floods are unchanged.
+
+Still to do:
+
+- **Venus's pace** comes from its regime's melt efficiency, a constant of the name (audit S1), until the next milestone gives the episodic lid a mantle whose heat builds until its lid overturns.
+- **The shields' size from the magma they take**, rather than their own rule.
+
+Tests 191 (eight ignored, one of them a new diagnostic printing each rock body's melt per unit area). One is new: Mars's rise keeps Tharsis's window, Venus's rises grow between its overturn and the present, its shields start after it and grow at least twice as fast as Mars's, and the melt clock runs both ways. Clippy is clean and validate passes its 117 checks.

@@ -42,6 +42,8 @@ Direction: keep the name as a label for reports. Each derivation reads the conti
 
 When: the earlier-phases revisit; the ice-shell names with Europa.
 
+Since F120 a rise keeps the melt clock of its mantle, which takes each body's pace from its magma production: Venus's rises grow within the half gigayear since its overturn because its mantle makes 4.3 times Mars's melt per unit area, its regime's efficiency (MAGMA_EFFICIENCY_EPISODIC, five times the stagnant lid's) being a constant of the name. The next milestone takes this entry's direction for the episodic lid: a mantle whose heat builds under its lid until the lid fails and overturns, its melting following its own temperature.
+
 ### S2. The composition class
 
 `composition_class` (params/derive.rs) cuts the core and ice mass fractions into four names at IRON_RICH_CORE_FRACTION, ROCK_MAX_ICE_FRACTION and ROCK_ICE_MAX_ICE_FRACTION. The derivations read the name in 23 places. Among them are the moment of inertia factor (0.33, 0.35 or 0.40 by class), the bedrock and lava materials, the Io regime, and whether the body is icy at all (`is_icy`), which decides between an ice shell and a rock lid.
