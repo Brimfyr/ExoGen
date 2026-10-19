@@ -24,7 +24,7 @@
 use crate::constants::{
     CONTINUOUS_EJECTA_MULTIPLE, CURTAIN_EDGE_ORDER, CURTAIN_ORDERS, CURTAIN_SLOPE, CURTAIN_SPREAD,
     RAY_CLUMPING, RAY_DENSITY_SLOPE, RAY_DOWNRANGE_SPEED, RAY_LENGTH_COEFF_KM, RAY_LENGTH_EXPONENT,
-    RAY_VISIBLE, RAY_WARP,
+    RAY_LENGTH_MAX_RADIUS_KM, RAY_VISIBLE, RAY_WARP,
 };
 use crate::crater::stamp::ejecta_modulation;
 use crate::rng::Rng;
@@ -307,12 +307,27 @@ pub struct Rays {
     least: f64,
 }
 
+/// The median ray length, m, of a crater of radius `radius`, m: Elliott et al. (2018)'s
+/// lunar fit, RAY_LENGTH_COEFF_KM (R / km)^RAY_LENGTH_EXPONENT, up to the largest crater
+/// it was measured on, and beyond, self-similar, as many crater radii as that crater's
+/// (F127).
+pub fn ray_length(radius: f64) -> f64 {
+    let fit = |r_km: f64| RAY_LENGTH_COEFF_KM * r_km.powf(RAY_LENGTH_EXPONENT);
+    let r_km = radius / 1e3;
+    let km = if r_km <= RAY_LENGTH_MAX_RADIUS_KM {
+        fit(r_km)
+    } else {
+        fit(RAY_LENGTH_MAX_RADIUS_KM) * r_km / RAY_LENGTH_MAX_RADIUS_KM
+    };
+    km * 1e3
+}
+
 impl Rays {
     /// The rays of a crater of radius `radius`, m: scaled so that its median jet's
-    /// fragments excavate half the ground at Elliott et al. (2018)'s median ray length,
-    /// RAY_LENGTH_COEFF_KM (R / km)^RAY_LENGTH_EXPONENT, the share they took as visible.
+    /// fragments excavate half the ground at its median ray length (`ray_length`), the
+    /// share Elliott et al. (2018) took as visible.
     pub fn new(curtain: Curtain, radius: f64) -> Self {
-        let length = RAY_LENGTH_COEFF_KM * (radius / 1e3).powf(RAY_LENGTH_EXPONENT) * 1e3;
+        let length = ray_length(radius);
         let scale = std::f64::consts::LN_2 / curtain.median_jet()
             * (length / radius).powf(RAY_DENSITY_SLOPE);
         Self {
@@ -446,6 +461,23 @@ mod tests {
                 (got / want - 1.0).abs() < 0.35,
                 "R {radius_km} km: median ray {got:.0} km against {want:.0} km"
             );
+        }
+    }
+
+    /// F127: beyond the largest crater measured, a crater's rays are its scaled up: as
+    /// many crater radii long, and as dense at the same distance in crater radii.
+    #[test]
+    fn a_basin_s_rays_are_a_large_crater_s_scaled_up() {
+        let edge = RAY_LENGTH_MAX_RADIUS_KM * 1e3;
+        let ratio = |r: f64| ray_length(r) / r;
+        assert!((ratio(4.0 * edge) - ratio(edge)).abs() < 1e-9);
+        assert!(ratio(0.5 * edge) < ratio(edge));
+        let curtain = || Curtain::new(7, 0.0, std::f64::consts::FRAC_PI_2);
+        let (crater, basin) = (Rays::new(curtain(), edge), Rays::new(curtain(), 4.0 * edge));
+        for x in [3.0, 10.0, 30.0] {
+            let a = crater.excavated(x * edge, 0.3, 1.0);
+            let b = basin.excavated(x * 4.0 * edge, 0.3, 1.0);
+            assert!((a - b).abs() < 1e-9, "{x}: {a} {b}");
         }
     }
 

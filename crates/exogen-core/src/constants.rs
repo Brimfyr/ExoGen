@@ -1682,6 +1682,12 @@ pub const CURTAIN_EDGE_ORDER: f64 = 11.0;
 /// calibration, which a body's skin depth and fragment population would change.
 pub const RAY_LENGTH_COEFF_KM: f64 = 6.59;
 pub const RAY_LENGTH_EXPONENT: f64 = 1.27;
+/// The largest crater radius the lunar fit was measured on, km (Tycho, 85 km across).
+/// Beyond it the rays scale with the crater (F127): a large crater's ejecta are
+/// self-similar (the gravity regime), its fragments and secondaries as much larger as its
+/// ejecta are thicker, so its secondaries cover the same share of the ground at the same
+/// distance in crater radii, where the fit carried on would make a basin's ever denser.
+pub const RAY_LENGTH_MAX_RADIUS_KM: f64 = 42.5;
 pub const RAY_DENSITY_SLOPE: f64 = 3.48;
 /// Downrange ejecta leave 20 to 40% faster than uprange ejecta in oblique impacts
 /// (Anderson et al. 2003): the speed factor 1 + RAY_DOWNRANGE_SPEED cos(angle) cos(azimuth

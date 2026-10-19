@@ -1381,6 +1381,7 @@ How it went:
 - **One cause for two findings.** The layers dumped from Ceres (EXOGEN_DUMP_LAYERS) showed its rays covering the whole body and meeting at a point: the antipode of its young 352 km crater, as the Moon's at seed 75 met at the antipode of its 378 km basin. Both are Elliott et al.'s lunar ray lengths, measured on craters up to 85 km, carried to basins and drawn on flat ground.
 - **Where rays end.** A sphere's ballistics: a 45-degree fragment lands a quarter of the way round at the circular orbital speed and at the antipode at escape speed, and near those speeds a spread of launch angles scatters a jet's fragments over the far hemisphere, so they lay no ray.
 - **The alternating floor.** The crater's floor took its full freshness inside the rim, where on Ceres the lag regrows in centuries, while its melt sheet kept the lag's maturity: the floor showed the melt as blobs. The floor and blanket now fade under the lag, as the rays do.
+- **The basin, seen again by the user.** In a globe view the seed's basin still covered the hemisphere it faces with solid wedges: the quarter-round limit had trimmed a wrong number. The ray fit, measured on craters up to 85 km across, made a basin's rays denser at the same scaled distance the larger it was; beyond Tycho's size they now scale with the crater, self-similar as a large crater's ejecta are. The wedges thinned. What remains is the rays' form: a ray drawn as a smooth band of fixed angular width, saturated where it is dense, reads as a streak at Tycho's scale but as a wedge at a basin's, where real rays are secondary craters in clusters and chains.
 - **The bright deposits.** The faculae were a threshold per cell on a noise field, binary cells; they also shared the lava's cover, so they were coloured as cryolava, which since F126 had kept clean ice's whiteness at maturity, and Ceres's cryolava floods showed white with stair-stepped margins. Now the faculae are drawn by share, the salts are not lava, and cryolava matures to the ground; the crater's 432 Myr old salts have faded, as they should over 150 Myr. The deposits still drawn by whole cells are listed in the audit (W8), with the rule.
 
 What the maps show:
@@ -1391,8 +1392,9 @@ What the maps show:
 
 Still to do:
 
+- **Rays drawn from their secondaries**, clusters and chains at the fragments' landing points rather than smooth bands, which a basin's rays need.
 - **The deposits still drawn by whole cells** (W8), each with its process: Venus's overturns and coronae, shields, Io's paterae, Enceladus's polar terrain, and young lava flows' margins.
 - **Ceres's domes**, perfect circles: their outlines from their feeding fissures and their flanks' collapse, with Venus's domes and coronae (M10).
 - **Ganymede's lanes and polar caps**, as above.
 
-Tests 203 (12 ignored). Two are new: a straight margin covers a cell by its share; rays end a quarter of the way round, whole near the crater and at the Moon's longest rays' length. Ceres's test holds its salted floors to partial cover at their margins. Clippy is clean and validate passes its 115 checks.
+Tests 204 (12 ignored). Three are new: a straight margin covers a cell by its share; rays end a quarter of the way round, whole near the crater and at the Moon's longest rays' length; a basin's rays are a large crater's scaled up. Ceres's test holds its salted floors to partial cover at their margins. Clippy is clean and validate passes its 115 checks.
