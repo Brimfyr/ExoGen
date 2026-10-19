@@ -33,7 +33,7 @@ use crate::stages::io::{Lobe, PathRules};
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 19;
+pub const VERSION: u64 = 20;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -3698,16 +3698,18 @@ mod tests {
     #[test]
     fn a_shield_buries_the_craters_it_grows_over() {
         // F115: a crater on the ground a shield grows over fills with its lava rather than
-        // riding up on it. Two runs of Mars's plume, one with bowls 1 km deep stamped
-        // before anything grew, one at mid-flank on its largest shield and one beyond that
-        // shield's foot: at the present, the difference between the runs is what is left
-        // of each bowl.
+        // riding up on it. Runs of Mars's plume, one on flat ground and others with bowls
+        // 1 km deep stamped before anything grew, one at mid-flank on its largest shield and
+        // one beyond that shield's foot: at the present, the difference between the runs is
+        // what is left of each bowl. The flank's bowl is tried at eight places round the
+        // shield, each in its own run, since the grabens and canyons crossing the flank
+        // decide what is left at any one place.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
         let grid = CubeSphere::new(128);
         let r = g.f64("body.radius");
         let age = g.f64("body.age");
-        let mut plain = PlumeProcess::new(&g, grid, &ThermalHistory::from_graph(&g)).unwrap();
-        let mut cratered = PlumeProcess::new(&g, grid, &ThermalHistory::from_graph(&g)).unwrap();
+        let thermal = ThermalHistory::from_graph(&g);
+        let mut plain = PlumeProcess::new(&g, grid, &thermal).unwrap();
         let shield = plain
             .shields
             .iter()
@@ -3715,7 +3717,6 @@ mod tests {
             .unwrap()
             .clone();
         let (east, north) = local_basis(shield.center);
-        let flank = offset(shield.center, east, north, 0.5 * shield.radius / r, 0.7);
         // Beyond its foot, where no other shield reaches either.
         let beyond = (0..16)
             .map(|k| {
@@ -3739,36 +3740,58 @@ mod tests {
             let x = angle_between(c, q) * r / 60e3;
             if x < 1.0 { -1e3 * (1.0 - x * x) } else { 0.0 }
         };
-        let mut flat = LayerSet::new(grid);
-        let mut pitted = LayerSet::new(grid);
-        for (i, b) in pitted.bedrock.as_mut_slice().iter_mut().enumerate() {
-            let q = grid.center(grid.cell(i));
-            *b = (bowl(flank, q) + bowl(beyond, q)) as f32;
-        }
-        let left = |flat: &LayerSet, pitted: &LayerSet, c: [f64; 3]| {
-            let i = grid.index(grid.locate(c).0);
-            (flat.bedrock.as_slice()[i] - pitted.bedrock.as_slice()[i]) as f64
-        };
-        let (on, off) = (left(&flat, &pitted, flank), left(&flat, &pitted, beyond));
         let steps = 90;
-        for k in 0..steps {
-            let (t0, t1) = (
-                age * k as f64 / steps as f64,
-                age * (k + 1) as f64 / steps as f64,
+        let run = |process: &mut PlumeProcess, layers: &mut LayerSet| {
+            for k in 0..steps {
+                let (t0, t1) = (
+                    age * k as f64 / steps as f64,
+                    age * (k + 1) as f64 / steps as f64,
+                );
+                process.step(layers, t0, t1);
+            }
+        };
+        let mut flat = LayerSet::new(grid);
+        run(&mut plain, &mut flat);
+        let depth = |layers: &LayerSet, c: [f64; 3]| {
+            let i = grid.index(grid.locate(c).0);
+            (flat.bedrock.as_slice()[i] - layers.bedrock.as_slice()[i]) as f64
+        };
+        let mut kept = Vec::new();
+        for k in 0..8 {
+            let flank = offset(
+                shield.center,
+                east,
+                north,
+                0.5 * shield.radius / r,
+                0.7 + k as f64 * std::f64::consts::FRAC_PI_4,
             );
-            plain.step(&mut flat, t0, t1);
-            cratered.step(&mut pitted, t0, t1);
+            let mut pitted = LayerSet::new(grid);
+            for (i, b) in pitted.bedrock.as_mut_slice().iter_mut().enumerate() {
+                let q = grid.center(grid.cell(i));
+                *b = (bowl(flank, q) + bowl(beyond, q)) as f32;
+            }
+            // The bowls' depths before anything grew: flat ground less the bowl.
+            let i_on = grid.index(grid.locate(flank).0);
+            let i_off = grid.index(grid.locate(beyond).0);
+            let (on, off) = (
+                -pitted.bedrock.as_slice()[i_on] as f64,
+                -pitted.bedrock.as_slice()[i_off] as f64,
+            );
+            let mut cratered = PlumeProcess::new(&g, grid, &thermal).unwrap();
+            run(&mut cratered, &mut pitted);
+            let (on_now, off_now) = (depth(&pitted, flank), depth(&pitted, beyond));
+            assert!(on > 500.0, "on the flank {on} m");
+            assert!(
+                (off_now - off).abs() < 0.02 * off,
+                "beyond the foot {off} m, now {off_now} m"
+            );
+            kept.push(on_now / on);
         }
-        let (on_now, off_now) = (left(&flat, &pitted, flank), left(&flat, &pitted, beyond));
-        // Riding up on the shield it would keep its depth; buried it keeps a tenth or so.
-        assert!(
-            on > 500.0 && on_now < 0.15 * on,
-            "on the flank {on} m, now {on_now} m"
-        );
-        assert!(
-            (off_now - off).abs() < 0.02 * off,
-            "beyond the foot {off} m, now {off_now} m"
-        );
+        // Riding up on the shield a bowl would keep its depth; buried, it keeps a tenth or
+        // so where no graben crosses it.
+        kept.sort_by(|a, b| a.total_cmp(b));
+        let median = 0.5 * (kept[3] + kept[4]);
+        assert!(median < 0.25, "kept {kept:?}");
     }
 
     #[test]

@@ -112,6 +112,8 @@ Direction: materials from processes: anorthosite from flotation in a magma ocean
 
 When: the earlier-phases revisit, with Phase 5's materials work.
 
+The crust's composition also decides how much of a mantle's magma reaches the surface (F124): an anorthositic crust, lighter than basalt, holds most of it down, as the Moon's does (Head and Wilson 1992), while Mercury's reduced, iron-poor magma ocean floated no such crust (Vander Kaaden and McCubbin 2015). The model gives every body one extrusive share, which leaves Mercury's smooth plains at 18.5 percent of its surface against the 27 they cover; with the crust from the magma ocean, the extrusive share should follow it.
+
 ### S8. The lanes' share along a sweep in radius (closed)
 
 Measured (same test as S4): the share renewed as lanes is 0.073 for Enceladus, 0.058 at 1.2 times the radius, 0.310 at 1.5 times and 0 at twice (S4). The dip between the first two needs a physical reason or a fix. The share is the renewal of the peak tidal flux times the part the polar focusing does not take, and both change with the shell's ratio to the radius.

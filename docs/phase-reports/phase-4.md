@@ -1282,3 +1282,30 @@ Still to do:
 - **The melt's share by the regime's name**, and the crust's thickness by class, which sets its share of the heat-producing elements.
 
 Tests 194 (12 ignored). One is new: the Moon's crust holds between half and seven tenths of its heat-producing elements, three quarters of its melt comes by 2 Gyr and none now, while Mars's and Venus's plumes melt today. Clippy is clean and validate passes its 117 checks.
+
+## The fifty-fifth milestone: the core's own heat
+
+Asked for by the user after the fifty-fourth: proceed with the Mercury fix. Since the fifty-third, Mercury's smooth plains had shrunk from 27 percent of its surface, the figure they really cover, to 19 and then 16: on its own mantle's heat it made about the Moon's melt per unit area, its core moving with the mantle as one temperature and taking up half the heat its mantle made.
+
+- **F124, a core keeps its own heat.** The core keeps its own temperature, left 300 K above the mantle's adiabat at their boundary by its formation, and loses heat into the mantle through the boundary layer at their interface (Stevenson, Spohn and Schubert 1983; Howard 1966's critical Rayleigh number).
+
+How it went:
+
+- **In the prototype first.** The two-temperature core reproduced, in Python, gave Mercury 281 m of lava for a 300 K superheat, 326 m for 500 K and 491 m for 1,000 K: the 447 m that gave its 27 percent would take some 850 K, nearly all of the 941 K that core formation's energy could give Mercury's core were none of it lost. The superheat is 300 K, a stated choice well inside what core formation could leave.
+- **The adiabat.** Measured against the mantle's temperature below its lid, a core 300 K hotter loses no heat into Venus's or Mars's mantles, whose adiabats climb 800 and 300 K to their cores; the superheat is measured from the adiabat at the boundary.
+- **Venus's friction, again.** With its core's heat in its young mantle, Venus's last overturn falls at 0.35 Ga for the friction of the fifty-fourth; 0.0112 gives 0.66 Ga, near where it was.
+- **A test made of one place.** The test that a shield buries the craters it grows over failed at its one place on Mars's largest shield, 23 percent of the bowl left where it allowed 15: the rise sits slightly differently, carried by a polar wander that follows its lithosphere, and a graben crosses the place. Tried at eight places round the shield, the last commit had left 6 to 41 percent, 13 at the median, and this one leaves 7 to 32, 17 at the median, the mean about the same; the test now takes the median of the eight, under a quarter, against the whole bowl a crater riding up on the shield would keep.
+
+What the maps show:
+
+- **Mercury:** its lava covers 18.5 percent of the surface, against 16.0 in the fifty-fourth and 27 on the real planet, its plains surfaces formed at 3.4 Ga at the median; more of its tan plains are back, most on its eastern half.
+- **Mars:** much as it was: its lava covers 35.3 percent, Tharsis keeps its times.
+- **Venus:** its last overturn at 0.66 Ga, the one before at 0.93 Ga; its rises grow from 0.61 to 0.33 Ga and its shields from 0.47 Ga.
+- **The Moon:** unchanged to the pixel; it has no core.
+
+Still to do:
+
+- **Mercury's plains**, the rest of them: the crust's composition from its magma ocean (audit S7), so that the extrusive share follows the crust's buoyancy, the Moon's anorthosite holding its magma down.
+- **The core's boundary under pressure**, for the large bodies; the inner core's growth, and contraction from the cooling itself.
+
+Tests 195 (12 ignored). One is new: Mercury's core, left hot by its formation, gives its mantle more than five times as much heat young as now and cools by over 200 K, and the Moon's gives none. Clippy is clean and validate passes its 117 checks.

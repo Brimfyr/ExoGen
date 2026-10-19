@@ -30,6 +30,13 @@
 //! stiff lid, where the mantle rising under the lid stops, so that as its lid thickens and it
 //! cools its melting ends; a body's plumes rise hotter than the mantle about them and go on
 //! melting where it no longer does.
+//!
+//! The core keeps its own temperature (F124), which its formation left hotter than the mantle
+//! above it, and loses heat into the mantle through the boundary layer at their interface, as
+//! in the parameterized histories of Stevenson, Spohn and Schubert (1983): the layer grows
+//! until its own Rayleigh number reaches the critical value and breaks away (Howard 1966), its
+//! viscosity the mantle's at its mean temperature, and it carries heat only while the core is
+//! hotter than the mantle's adiabat at their boundary.
 
 use crate::constants::*;
 use crate::params::derive::physics::radiogenic_per_kg;
@@ -104,6 +111,10 @@ pub struct MantleHistory {
     /// The body's surface gravity, m/s², and temperature, K, for the stiff lid's base.
     pub gravity: f64,
     pub surface_temperature: f64,
+    /// The core's temperature, K, and the heat it gives the mantle per unit of the body's
+    /// surface, W/m², at each step's end (F124).
+    pub core_temperature: Vec<f64>,
+    pub core_flux: Vec<f64>,
 }
 
 impl MantleHistory {
@@ -170,13 +181,34 @@ impl MantleHistory {
 /// 2000's form): a k (rho g alpha / (kappa eta))^(1/3) (R T² / E)^(4/3), the last factor the
 /// rheological temperature scale over which the viscosity changes by a factor e.
 fn stagnant_flux(t: f64, gravity: f64) -> f64 {
-    let eta = MANTLE_VISCOSITY_REF
-        * (MANTLE_ACTIVATION / GAS_CONSTANT * (1.0 / t - 1.0 / MANTLE_VISCOSITY_REF_K)).exp();
     let rheological = GAS_CONSTANT * t * t / MANTLE_ACTIVATION;
     STAGNANT_LID_PREFACTOR
         * K_ROCK
-        * (DENSITY_ROCK * gravity * MANTLE_EXPANSIVITY / (MANTLE_DIFFUSIVITY * eta)).cbrt()
+        * (DENSITY_ROCK * gravity * MANTLE_EXPANSIVITY / (MANTLE_DIFFUSIVITY * viscosity(t))).cbrt()
         * rheological.powf(4.0 / 3.0)
+}
+
+/// The mantle's viscosity at a temperature, Pa s: Arrhenian about its reference.
+fn viscosity(t: f64) -> f64 {
+    MANTLE_VISCOSITY_REF
+        * (MANTLE_ACTIVATION / GAS_CONSTANT * (1.0 / t - 1.0 / MANTLE_VISCOSITY_REF_K)).exp()
+}
+
+/// The heat the core gives the mantle across their boundary, W/m² of the boundary (F124):
+/// a boundary layer that grows until its Rayleigh number reaches the critical value carries
+/// k dT^(4/3) (rho g alpha / (kappa eta Ra_c))^(1/3), its viscosity the mantle's at its mean
+/// temperature; none while the core is no hotter than the mantle's adiabat there.
+fn core_flux(core: f64, base: f64, gravity: f64) -> f64 {
+    let contrast = core - base;
+    if contrast <= 0.0 {
+        return 0.0;
+    }
+    let eta = viscosity(0.5 * (core + base));
+    K_ROCK
+        * contrast.powf(4.0 / 3.0)
+        * (DENSITY_ROCK * gravity * MANTLE_EXPANSIVITY
+            / (MANTLE_DIFFUSIVITY * eta * CORE_BOUNDARY_RAYLEIGH))
+            .cbrt()
 }
 
 /// The dry peridotite solidus at a pressure, K (Hirschmann 2000's fit, P in GPa).
@@ -208,7 +240,17 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
     let core = inp.mass * inp.core_fraction;
     let core_radius = (3.0 * core / (4.0 * std::f64::consts::PI * DENSITY_IRON)).cbrt();
     let depth = (r - core_radius).max(1.0);
-    let capacity = (mantle * MANTLE_HEAT_CAPACITY + core * CORE_HEAT_CAPACITY) / area;
+    // The mantle's heat capacity per unit area; the core keeps its own temperature (F124).
+    let capacity = mantle * MANTLE_HEAT_CAPACITY / area;
+    let core_capacity = core * CORE_HEAT_CAPACITY;
+    let boundary = 4.0 * std::f64::consts::PI * core_radius * core_radius;
+    let core_gravity = if core_radius > 0.0 {
+        G * core / (core_radius * core_radius)
+    } else {
+        0.0
+    };
+    // The mantle's adiabat warms it by this factor from below its lid to the core.
+    let adiabat = 1.0 + MANTLE_EXPANSIVITY * inp.gravity * depth / MANTLE_HEAT_CAPACITY;
     let ts = inp.surface_temperature;
     let rho_c = DENSITY_ROCK * MANTLE_HEAT_CAPACITY;
     // The lid's diffusivity, its conductivity over the heat capacity its deficit counts, so
@@ -218,7 +260,7 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
     // temperature rising evenly from the surface's to the mantle's.
     let shell = |d: f64| (r.powi(3) - (r - d.min(depth)).powi(3)) / (3.0 * r * r);
     let deficit = |t: f64, d: f64| rho_c * shell(d) * (t - ts).max(0.0) / 2.0;
-    // The body's heat per unit area, J/m²: all of it at the mantle's temperature, less the
+    // The mantle's heat per unit area, J/m²: all of it at the mantle's temperature, less the
     // lid's deficit.
     let energy = |t: f64, d: f64| capacity * t - deficit(t, d);
     let tides = |t: f64| {
@@ -242,8 +284,13 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         crust_share,
         gravity: inp.gravity,
         surface_temperature: ts,
+        core_temperature: Vec::with_capacity(n),
+        core_flux: Vec::with_capacity(n),
     };
     let mut temp = MANTLE_START_K;
+    // The core starts hotter than the mantle's adiabat at their boundary by what its
+    // formation left it.
+    let mut core_temp = MANTLE_START_K * adiabat + CORE_SUPERHEAT_K;
     // The first lid grows from the surface as the body's magma ocean freezes.
     let mut lid = 0.0_f64;
     let mut formed = 0.0;
@@ -254,14 +301,21 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         // The crust's share of the radioactive heat leaves through the surface; the rest and
         // the tides heat the mantle.
         let radioactive = radiogenic_per_kg(t + 0.5 * dt) * mantle / area;
-        let heat = (1.0 - crust_share) * radioactive + tides(t + 0.5 * dt);
+        // The core's heat enters the mantle across its boundary (F124).
+        let from_core = if core_capacity > 0.0 {
+            core_flux(core_temp, temp * adiabat, core_gravity) * boundary / area
+        } else {
+            0.0
+        };
+        let heat = (1.0 - crust_share) * radioactive + tides(t + 0.5 * dt) + from_core;
         let q = stagnant_flux(temp, inp.gravity);
         let steady = (K_ROCK * (temp - ts) / q).min(0.99 * depth);
         // Grown as thick as a stagnant lid: by the time a half space would have, since the
         // lid under a cooling mantle only nears that thickness.
         let mature = std::f64::consts::PI * kappa * (t - formed) * GYR >= steady * steady;
         if mature && breaks(temp, depth, lid, q, friction) {
-            // The lid founders, and the whole mantle takes up its cold.
+            // The lid founders, and the whole mantle takes up its cold; the core answers
+            // through its boundary.
             temp -= deficit(temp, lid) / capacity;
             lid = 0.0;
             formed = t;
@@ -283,6 +337,9 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         // The surface loses the heat made less the heat the body keeps, and the crust's.
         let surface =
             heat - (energy(next, grown) - energy(temp, lid)) / step + crust_share * radioactive;
+        if core_capacity > 0.0 {
+            core_temp -= from_core * area * step / core_capacity;
+        }
         temp = next;
         lid = grown;
         t += dt;
@@ -291,6 +348,8 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         out.heat_flux.push(surface);
         out.temperature.push(temp);
         out.lid.push(lid);
+        out.core_temperature.push(core_temp);
+        out.core_flux.push(from_core);
     }
     out
 }
@@ -335,10 +394,12 @@ mod tests {
             for t in [0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, age] {
                 let k = h.times.partition_point(|&x| x < t).min(h.times.len() - 1);
                 println!(
-                    "  {t:>5.2} Gyr: mantle {:>6.1} mW/m² {:>6.0} K lid {:>5.0} km | pipeline {:>6.1} mW/m² {:>6.0} K",
+                    "  {t:>5.2} Gyr: mantle {:>6.1} mW/m² {:>6.0} K lid {:>5.0} km, core {:>6.0} K gives {:>5.1} mW/m² | pipeline {:>6.1} mW/m² {:>6.0} K",
                     1e3 * h.heat_flux_at(t),
                     h.temperature_at(t),
                     h.lid[k] / 1e3,
+                    h.core_temperature[k],
+                    1e3 * h.core_flux[k],
                     1e3 * th.at(t).heat_flux,
                     th.at(t).mantle_temperature
                 );
@@ -383,6 +444,24 @@ mod tests {
                 1e3 * h.heat_flux.last().unwrap()
             );
         }
+    }
+
+    #[test]
+    fn a_core_left_hot_by_its_formation_heats_its_mantle_from_below() {
+        // F124: Mercury's core, hotter than its mantle after its formation, gives the thin
+        // mantle above it most heat while young and cools by hundreds of kelvin; the Moon,
+        // with no core, gets none.
+        let (mercury, _) = history("Mercury");
+        let young = mercury.core_flux[mercury.times.partition_point(|&t| t < 0.1)];
+        let now = *mercury.core_flux.last().unwrap();
+        assert!(
+            young > 0.01 && young > 5.0 * now,
+            "young {young} now {now} W/m²"
+        );
+        let cooled = mercury.core_temperature[0] - mercury.core_temperature.last().unwrap();
+        assert!(cooled > 200.0, "Mercury's core cooled {cooled} K");
+        let (moon, _) = history("Moon");
+        assert!(moon.core_flux.iter().all(|&q| q == 0.0));
     }
 
     #[test]
