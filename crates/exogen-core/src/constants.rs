@@ -1465,11 +1465,6 @@ pub const OBLIQUE_BUTTERFLY_DEG: f64 = 15.0;
 pub const OBLIQUE_BUTTERFLY_MAX: f64 = 1.0;
 /// Secondaries strike at low angles along the radial from their primary.
 pub const SECONDARY_IMPACT_ANGLE: f64 = 0.5;
-/// Secondaries come in groups of this size; a group is a radial chain with this fraction,
-/// spaced along the radial by this fraction of the primary radius, otherwise a cluster.
-pub const SECONDARY_GROUP_SIZE: u32 = 8;
-pub const SECONDARY_CHAIN_FRACTION: f64 = 0.6;
-pub const SECONDARY_CHAIN_SPACING: f64 = 0.12;
 /// Multi-ring basins: rings at successive 1/sqrt(2) of the rim radius (Hartmann and Kuiper
 /// 1962), one more for each sqrt(2) of diameter above the onset, at most this many; the
 /// inner rings are lower by this factor each. Orientale has three inside its rim.
@@ -1703,10 +1698,28 @@ pub const RAY_LENGTH_LARGE_EXPONENT: f64 = 0.4;
 pub const SECONDARY_MAX_COEFF_KM: f64 = 0.07;
 pub const SECONDARY_MAX_EXPONENT: f64 = 0.87;
 pub const SECONDARY_SIZE_FALL: f64 = 0.5;
-/// A cluster is RAY_CLUSTER_WIDTH of those secondaries wide and RAY_CLUSTER_ASPECT times as
-/// long along the radial, a chain, opening downrange by RAY_CLUSTER_SPLAY of its width per
-/// length, the herringbone's V that points back at the crater (Oberbeck and Morrison
-/// 1973); it excavates the area of its footprint. Where the jets' excavated area per area
+/// The secondaries a crater throws (F129) follow Orientale's census: 2,728 secondaries of
+/// SECONDARY_CENSUS_FLOOR_KM and more mapped from its rim to six of its radii, the largest
+/// SECONDARY_CENSUS_LARGEST_KM, their cumulative counts a Weibull of exponent
+/// SECONDARY_CENSUS_SHAPE (Guo et al. 2018). Its largest is Croft's for Orientale's 930 km
+/// (26.8 km), and the census is carried to every crater in units of its own largest, a
+/// stated assumption of self-similarity. Below the census's floor the count steepens to
+/// the slope of Tycho's secondaries, 3.3 to 4.0 (Hirata and Nakamura 2006), here their
+/// middle. `cratering.secondary_fraction` scales the count from the census's
+/// SECONDARY_FRACTION_REFERENCE; a crater stamps at most SECONDARY_MAX_PER_CRATER, the
+/// smallest dropped past it, to bound the cost.
+pub const SECONDARY_CENSUS_COUNT: f64 = 2728.0;
+pub const SECONDARY_CENSUS_FLOOR_KM: f64 = 2.0;
+pub const SECONDARY_CENSUS_LARGEST_KM: f64 = 27.0;
+pub const SECONDARY_CENSUS_SHAPE: f64 = 1.32;
+pub const SECONDARY_SFD_SLOPE: f64 = 3.65;
+pub const SECONDARY_FRACTION_REFERENCE: f64 = 0.2;
+pub const SECONDARY_MAX_PER_CRATER: u32 = 50_000;
+/// A cluster is RAY_CLUSTER_WIDTH of the largest secondaries there wide and
+/// RAY_CLUSTER_ASPECT times as long along the radial, a chain, opening downrange by
+/// RAY_CLUSTER_SPLAY of its width per length, the herringbone's V that points back at the
+/// crater (Oberbeck and Morrison 1973); it excavates the area of its footprint, and the
+/// secondaries that land in it are the census's, most of them smaller (F129). Where the jets' excavated area per area
 /// passes RAY_CLUSTER_CAP their clusters overlap into a solid ray and the rest of it is
 /// drawn smooth; below RAY_CLUSTER_LEAST none shows. Stated choices.
 pub const RAY_CLUSTER_WIDTH: f64 = 3.0;
@@ -1756,12 +1769,7 @@ pub const RAY_SKIN_SLOPE: f64 = 4.02;
 /// cratering and age (Domingue and Verbiscer 1997: Ganymede 27, Europa near none). A
 /// younger surface's facets spread less, by its share of saturation (F54).
 pub const ICE_FACET_SLOPE_DEG: f64 = 35.0;
-/// Secondaries: count per 100 km of primary diameter at a secondary fraction of 0.2, size
-/// range as a fraction of the primary, distance range in primary radii, and the depth
-/// factor relative to a primary of the same size.
-pub const SECONDARIES_PER_100KM: f64 = 400.0;
-pub const SECONDARY_SIZE_FRACTION: (f64, f64) = (0.005, 0.04);
-pub const SECONDARY_DISTANCE_MULTIPLE: (f64, f64) = (2.5, 8.0);
+/// A secondary's depth relative to a primary of the same size.
 pub const SECONDARY_DEPTH_FACTOR: f64 = 0.5;
 /// Split between simulated and replayed craters, in loop cells; the smallest replayed
 /// crater in finishing cells; and the size bins per octave of the replay.

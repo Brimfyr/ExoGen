@@ -38,6 +38,7 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 
 use crate::constants::*;
+use crate::crater::curtain::{Cluster, largest_secondary, secondaries_above, secondary_size_at};
 use crate::crater::production::poisson;
 use crate::crater::{
     CraterRecord, CraterTexture, Curtain, EdgeShape, PopulationConfig, ProfileTable, Rays,
@@ -49,7 +50,7 @@ use crate::geom::{angle_between, azimuth_from, dot, local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
-use crate::rng::{ACCEPT_STREAM, Rng, hash_words};
+use crate::rng::{Rng, hash_words, mix64};
 use crate::thermal::ThermalHistory;
 use crate::units::UNIT_SECONDARY_FIELD;
 
@@ -361,7 +362,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 101;
+pub const FINISH_VERSION: u64 = 102;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1019,17 +1020,51 @@ pub fn finish(
     }
     let phase_clock = Instant::now();
     let population = sample_population(&grid, &layers.surface_age, present, &cfg);
+    // The secondaries the loop's craters and the finish's own throw (F129), each with the
+    // crater it came from, whose rays draw its fresh ground where it lies (F128).
     let secondaries = if std::env::var_os("EXOGEN_SKIP_SECONDARIES").is_some() {
         Vec::new()
     } else {
-        sample_secondaries(&loop_craters, &inputs, d_min, present)
+        let primaries: Vec<Primary> = loop_craters
+            .iter()
+            .map(|c| Primary {
+                id: c.id,
+                center: c.center,
+                diameter: c.diameter,
+                time_gyr: c.time_gyr,
+                azimuth: c.azimuth,
+                angle: c.angle,
+            })
+            .chain(
+                population
+                    .iter()
+                    .filter(|c| throws_visible(c.diameter, d_min))
+                    .map(|c| Primary {
+                        id: c.key,
+                        center: c.center,
+                        diameter: c.diameter,
+                        time_gyr: c.time_gyr,
+                        azimuth: c.azimuth,
+                        angle: c.angle,
+                    }),
+            )
+            .collect();
+        sample_secondaries(
+            &primaries,
+            &inputs,
+            d_min,
+            present,
+            grid.delta() * body_radius,
+        )
     };
-    // The rays draw the secondaries' fresh ground where they lie (F128).
-    let thrown = secondaries.clone();
+    let mut thrown: HashMap<u64, Vec<crate::crater::CraterSample>> = HashMap::new();
+    for (c, parent) in &secondaries {
+        thrown.entry(*parent).or_default().push(c.clone());
+    }
     let replay: Vec<(crate::crater::CraterSample, bool)> = population
         .into_iter()
         .map(|c| (c, false))
-        .chain(secondaries.into_iter().map(|c| (c, true)))
+        .chain(secondaries.into_iter().map(|(c, _)| (c, true)))
         .collect();
     // On an ice shell a crater relaxes over its own life by wavelength (F70): each
     // wavelength keeps the share the shell's viscosity lets it keep, and the share each
@@ -1839,12 +1874,11 @@ pub fn finish(
                     Event::Replay(j) => {
                         let (c, secondary) = &replay[*j];
                         // A secondary carries its parent's time: where the ground was
-                        // renewed from below since, it is gone with the parent.
+                        // renewed since, by ice from below, lava or a younger crater, it is
+                        // gone with the parent, as the population's craters are (F129).
                         if *secondary {
                             let k = grid.index(grid.locate(c.center).0);
-                            if layers.clean.as_slice()[k] > 0.0
-                                && layers.surface_age.as_slice()[k] as f64 > c.time_gyr + 1e-6
-                            {
+                            if layers.surface_age.as_slice()[k] as f64 > c.time_gyr + 1e-6 {
                                 return None;
                             }
                         }
@@ -2247,96 +2281,173 @@ fn ice_shell_history(
     }))
 }
 
-/// A launch azimuth drawn in proportion to an ejecta curtain's mass: candidates on one
-/// stream, each accepted on another by its mass against the largest.
-fn jet_azimuth(curtain: &Curtain, rng: &Rng, index: u64, slot: u64) -> f64 {
-    let top = curtain.max_mass().max(1e-12);
-    let mut phi = 0.0;
-    for attempt in 0..64u64 {
-        let draw = slot * 64 + attempt;
-        phi = 2.0 * std::f64::consts::PI * rng.uniform(index ^ 0x7E75_0000_0000_0000, draw);
-        if rng.uniform(index.wrapping_add(ACCEPT_STREAM), draw) * top <= curtain.mass(phi) {
-            break;
-        }
-    }
-    phi
+/// A crater that throws secondaries: its id, centre, diameter, time and impact.
+struct Primary {
+    id: u64,
+    center: [f64; 3],
+    diameter: f64,
+    time_gyr: f64,
+    azimuth: f64,
+    angle: f64,
 }
 
-/// Secondary craters of the loop craters: groups at a few primary radii, formed at the
-/// primary's time, sized as a small fraction of the primary. Each group lands along a jet
-/// of the primary's ejecta curtain, drawn by the jets' mass, on the jet's bent path
-/// (F91), so the secondaries lie in the rays.
+/// Whether a crater `diameter` m across throws secondaries of `d_min` m and more in any
+/// number to count: its largest secondary at least half that size (F129).
+fn throws_visible(diameter: f64, d_min: f64) -> bool {
+    largest_secondary(diameter, CONTINUOUS_EJECTA_MULTIPLE) >= 0.5 * d_min
+}
+
+/// The secondaries the craters `primaries` throw (F129), each with the crater it came from:
+/// as many of `d_min` m and more as Orientale's census gives for the crater's largest
+/// secondary, each sized from that count, landing in one of the clusters its rays'
+/// fragments make (F128) beyond its continuous blanket, among those that hold secondaries
+/// its size, chosen by the ground they excavate, and lying in that cluster's footprint, so
+/// that the larger lie nearer, along the jets, and a cluster that takes several holds them
+/// as a group. Each strikes low along its path, at the primary's time.
 fn sample_secondaries(
-    primaries: &[CraterRecord],
+    primaries: &[Primary],
     inputs: &impacts::CraterInputs,
     d_min: f64,
     present: f64,
-) -> Vec<crate::crater::CraterSample> {
+    cell: f64,
+) -> Vec<(crate::crater::CraterSample, u64)> {
     let rng = Rng::new(inputs.seed ^ 0x5EC0_7DA2);
-    let mut out = Vec::new();
-    let (f_lo, f_hi) = SECONDARY_SIZE_FRACTION;
-    let (r_lo, r_hi) = SECONDARY_DISTANCE_MULTIPLE;
-    let slope = 3.0f64;
-    for p in primaries {
-        if p.time_gyr > present {
-            continue;
-        }
-        let expected =
-            SECONDARIES_PER_100KM * (inputs.secondary_fraction / 0.2) * (p.diameter / 1.0e5);
-        let (count, _) = poisson(&rng, p.id, 0, expected);
-        if count == 0 {
-            continue;
-        }
-        let (east, north) = local_basis(p.center);
-        let radius = 0.5 * p.diameter;
-        let curtain = Curtain::new(p.id, p.azimuth, p.angle);
-        let groups = (count / SECONDARY_GROUP_SIZE).max(1);
-        let launches: Vec<f64> = (0..groups as u64)
-            .map(|g| jet_azimuth(&curtain, &rng, p.id, g))
-            .collect();
-        for j in 0..count as u64 {
-            let group = j % groups as u64;
-            let rank = (j / groups as u64) as f64;
-            let base = 8 + group * 4;
-            let dist0 = radius * (r_lo + (r_hi - r_lo) * rng.uniform(p.id, base));
-            let launch = launches[group as usize];
-            let path = |d: f64| curtain.path_azimuth(launch, (d / radius).max(1.0).ln());
-            let chain = rng.uniform(p.id, base + 2) < SECONDARY_CHAIN_FRACTION;
-            let draw = 1_000 + j * 4;
-            // A chain runs outward along the radial from the primary; a cluster scatters
-            // about its centre.
-            let (dist, phi) = if chain {
-                let spacing =
-                    radius * SECONDARY_CHAIN_SPACING * (0.7 + 0.6 * rng.uniform(p.id, draw));
-                let lateral = 0.03 * radius * (rng.uniform(p.id, draw + 1) - 0.5);
-                let d = dist0 + rank * spacing;
-                (d, path(d) + lateral / d.max(1.0))
-            } else {
-                let jitter_r = 0.3 * radius * (rng.uniform(p.id, draw) - 0.5);
-                let jitter_phi =
-                    0.5 * (rng.uniform(p.id, draw + 1) - 0.5) * radius / dist0.max(1.0);
-                let d = dist0 + jitter_r;
-                (d, path(d) + jitter_phi)
-            };
-            let center = offset(p.center, east, north, dist / inputs.body_radius, phi);
-            let u = rng.uniform(p.id, draw + 2);
-            let q = (f_hi / f_lo).powf(-slope);
-            let diameter = p.diameter * f_lo * (1.0 - u * (1.0 - q)).powf(-1.0 / slope);
-            if diameter < d_min {
-                continue;
+    let scale = inputs.secondary_fraction / SECONDARY_FRACTION_REFERENCE;
+    let body_radius = inputs.body_radius;
+    let per_crater: Vec<Vec<(crate::crater::CraterSample, u64)>> = primaries
+        .par_iter()
+        .map(|p| {
+            if p.time_gyr > present || !throws_visible(p.diameter, d_min) {
+                return Vec::new();
             }
-            out.push(crate::crater::CraterSample {
-                center,
-                diameter,
-                time_gyr: p.time_gyr,
-                azimuth: phi,
-                angle: SECONDARY_IMPACT_ANGLE,
-                ellipticity: 1.2,
-                key: (p.id << 16) | j,
-            });
-        }
+            let largest = largest_secondary(p.diameter, CONTINUOUS_EJECTA_MULTIPLE);
+            let expected = scale * secondaries_above(d_min, largest);
+            let (count, _) = poisson(&rng, p.id, 0, expected);
+            let count = count.min(SECONDARY_MAX_PER_CRATER);
+            if count == 0 {
+                return Vec::new();
+            }
+            // Past the cap the smallest are dropped: the sizes come from the top of the count.
+            let pool = expected.min(SECONDARY_MAX_PER_CRATER as f64) / scale.max(1e-12);
+            let radius = 0.5 * p.diameter;
+            let thrown = throw(p.id, p.diameter, p.azimuth, p.angle, inputs, cell);
+            // The clusters beyond the continuous blanket, those that hold the largest
+            // secondaries first, with the ground they excavate summed: the secondaries land
+            // in the clusters the rays show, not the solid ray past the cap, which would
+            // follow the curtain's strongest jet alone.
+            let mut sites: Vec<(f64, &Cluster)> = thrown
+                .clusters
+                .iter()
+                .filter(|c| c.r >= CONTINUOUS_EJECTA_MULTIPLE * radius)
+                .map(|c| (c.width / RAY_CLUSTER_WIDTH, c))
+                .collect();
+            if sites.is_empty() {
+                return Vec::new();
+            }
+            sites.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let cumulative: Vec<f64> = sites
+                .iter()
+                .scan(0.0, |sum, (_, c)| {
+                    *sum += c.amount;
+                    Some(*sum)
+                })
+                .collect();
+            let (east, north) = local_basis(p.center);
+            (0..count as u64)
+                .map(|j| {
+                    let draw = 16 + j * 8;
+                    let u = 1.0 - rng.uniform(p.id, draw);
+                    let diameter = secondary_size_at(u * pool, largest).max(d_min);
+                    // The clusters that hold secondaries this size, or the nearest if none.
+                    let k = sites.partition_point(|(own, _)| *own >= diameter).max(1);
+                    let pick = rng.uniform(p.id, draw + 1) * cumulative[k - 1];
+                    let c = sites[cumulative[..k].partition_point(|&a| a < pick).min(k - 1)].1;
+                    // Where in its footprint: along the radial and across it, opening
+                    // downrange, as the cluster lays its ground (F128).
+                    let at = offset(p.center, east, north, c.r / body_radius, c.phi);
+                    let (ce, cn) = local_basis(at);
+                    let down = azimuth_from(at, ce, cn, p.center) + std::f64::consts::PI;
+                    let (su, sv) = (c.length / 2.5, c.width / 2.5);
+                    let along = su * rng.normal(p.id, draw + 2);
+                    let across = sv
+                        * (1.0 + RAY_CLUSTER_SPLAY * (along / su).max(0.0))
+                        * rng.normal(p.id, draw + 4);
+                    let center = offset(
+                        at,
+                        ce,
+                        cn,
+                        along.hypot(across) / body_radius,
+                        down + across.atan2(along),
+                    );
+                    let (se, sn) = local_basis(center);
+                    (
+                        crate::crater::CraterSample {
+                            center,
+                            diameter,
+                            time_gyr: p.time_gyr,
+                            azimuth: azimuth_from(center, se, sn, p.center) + std::f64::consts::PI,
+                            angle: SECONDARY_IMPACT_ANGLE,
+                            ellipticity: 1.2,
+                            key: mix64(p.id ^ mix64(j + 1)),
+                        },
+                        p.id,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let throwers = per_crater.iter().filter(|v| !v.is_empty()).count();
+        let total: usize = per_crater.iter().map(Vec::len).sum();
+        eprintln!("secondaries: {total} from {throwers} craters");
     }
-    out
+    per_crater.into_iter().flatten().collect()
+}
+
+/// What a crater throws (F128, F129): its rays, the edge and halo of its ejecta, how far its
+/// rays reach and the clusters their fragments' secondaries make, the same for its rays as
+/// for the secondaries it stamps.
+struct Throw {
+    rays: Rays,
+    edge: EdgeShape,
+    halo: f64,
+    reach: f64,
+    clusters: Vec<Cluster>,
+}
+
+fn throw(
+    id: u64,
+    diameter: f64,
+    azimuth: f64,
+    angle: f64,
+    inputs: &impacts::CraterInputs,
+    cell: f64,
+) -> Throw {
+    let radius = 0.5 * diameter;
+    let dim = dimensions(diameter, &inputs.scaling);
+    let rays = Rays::new(Curtain::new(id, azimuth, angle), radius);
+    // The blanket's deposit runs out along each jet until it is too thin to show, the
+    // strongest jets furthest, rather than ending on the footprint's circle (F96): where a
+    // lag hides the rays beyond, as on Callisto, a common edge would draw a circle.
+    let edge = EdgeShape::new(id, dim.ejecta_radius, cell);
+    let thinnest = -(1.0 - RAY_VISIBLE).log2();
+    let halo = (EJECTA_RADIUS_MULTIPLE * radius)
+        .max(CONTINUOUS_EJECTA_MULTIPLE * radius * (edge.strongest_jet() / thinnest).cbrt());
+    // No ray reaches past a quarter of the way round (F127).
+    let reach = rays
+        .reach()
+        .min(std::f64::consts::FRAC_PI_2 * inputs.body_radius)
+        .max(halo);
+    let least = RAY_CLUSTER_DRAW_CELLS * cell;
+    let body_radius = inputs.body_radius;
+    let clusters = rays.clusters(id, reach, least, &|r| ray_coherence(r / body_radius));
+    Throw {
+        rays,
+        edge,
+        halo,
+        reach,
+        clusters,
+    }
 }
 
 /// Largest number of stamps in one wave and the largest share of the sphere their caps
@@ -2385,18 +2496,13 @@ fn ray_field(
     inputs: &impacts::CraterInputs,
     present: f64,
     skin: Option<&Field<f32>>,
-    secondaries: &[crate::crater::CraterSample],
+    thrown: &HashMap<u64, Vec<crate::crater::CraterSample>>,
 ) -> Field<f32> {
     let cell = grid.delta() * body_radius;
     let skin = skin.map(|s| s.as_slice());
     let mut rays = Field::new(*grid);
     let out = rays.as_mut_slice();
     let lifetime = inputs.ray_lifetime.max(1e-6);
-    // The secondaries the finish stamped, by the crater that threw them.
-    let mut thrown: HashMap<u64, Vec<&crate::crater::CraterSample>> = HashMap::new();
-    for s in secondaries {
-        thrown.entry(s.key >> 16).or_default().push(s);
-    }
     let systems: Vec<RaySystem> = craters
         .iter()
         .filter(|c| {
@@ -2513,31 +2619,23 @@ impl RaySystem {
         inputs: &impacts::CraterInputs,
         present: f64,
         cell: f64,
-        secondaries: &[&crate::crater::CraterSample],
+        secondaries: &[crate::crater::CraterSample],
     ) -> Self {
         let lifetime = inputs.ray_lifetime.max(1e-6);
         let age = present - c.time_gyr;
         let radius = 0.5 * c.diameter;
         let dim = dimensions(c.diameter, &inputs.scaling);
-        let rays = Rays::new(Curtain::new(c.id, c.azimuth, c.angle), radius);
-        // The blanket's deposit runs out along each jet until it is too thin to show, the
-        // strongest jets furthest, rather than ending on the footprint's circle (F96): where
-        // a lag hides the rays beyond, as on Callisto, a common edge would draw a circle.
-        let edge = EdgeShape::new(c.id, dim.ejecta_radius, cell);
-        let thinnest = -(1.0 - RAY_VISIBLE).log2();
-        let halo = (EJECTA_RADIUS_MULTIPLE * radius)
-            .max(CONTINUOUS_EJECTA_MULTIPLE * radius * (edge.strongest_jet() / thinnest).cbrt());
-        // No ray reaches past a quarter of the way round (F127).
-        let reach = rays
-            .reach()
-            .min(std::f64::consts::FRAC_PI_2 * inputs.body_radius)
-            .max(halo);
         // Its rays are the clusters its fragments' secondaries make, and the secondaries the
         // finish stamped are clusters of their own, their fresh ground where they lie, a
-        // crater's width round it and twice that downrange (F128).
+        // crater's width round it and twice that downrange (F128, F129).
+        let Throw {
+            rays,
+            edge,
+            halo,
+            reach,
+            mut clusters,
+        } = throw(c.id, c.diameter, c.azimuth, c.angle, inputs, cell);
         let least = RAY_CLUSTER_DRAW_CELLS * cell;
-        let body_radius = inputs.body_radius;
-        let mut clusters = rays.clusters(c.id, reach, least, &|r| ray_coherence(r / body_radius));
         let (east, north) = local_basis(c.center);
         for s in secondaries {
             let width = (2.0 * s.diameter).max(least);
@@ -3400,6 +3498,87 @@ mod tests {
         }
         // The Moon's longest rays, Tycho's 1,500 km, are whole.
         assert!(ray_coherence(1_500e3 / 1_737.4e3) > 0.99);
+    }
+
+    /// F129: a basin's secondaries are as many as Orientale's census gives for its largest,
+    /// lie in its rays' clusters beyond its continuous blanket, the larger nearer, and the
+    /// same seed gives the same ones.
+    #[test]
+    fn a_basin_s_secondaries_lie_in_its_rays() {
+        let g = preset_graph("Moon", "preview");
+        let inputs = impacts::CraterInputs::from_graph(&g);
+        let body = inputs.body_radius;
+        let cell = 2.0 * std::f64::consts::PI * body / (4.0 * 2048.0);
+        let d_min = FINISHING_MIN_CELLS * cell;
+        let basin = Primary {
+            id: 75,
+            center: [0.0, 0.0, 1.0],
+            diameter: 378e3,
+            time_gyr: 4.0,
+            azimuth: 0.3,
+            angle: 0.8,
+        };
+        let out = sample_secondaries(std::slice::from_ref(&basin), &inputs, d_min, 4.5, cell);
+        let again = sample_secondaries(std::slice::from_ref(&basin), &inputs, d_min, 4.5, cell);
+        assert_eq!(out.len(), again.len());
+        assert!(
+            out.iter()
+                .zip(&again)
+                .all(|(a, b)| a.0.center == b.0.center)
+        );
+        let largest = largest_secondary(basin.diameter, CONTINUOUS_EJECTA_MULTIPLE);
+        let expected = inputs.secondary_fraction / SECONDARY_FRACTION_REFERENCE
+            * secondaries_above(d_min, largest);
+        let n = out.len() as f64;
+        assert!(
+            (n - expected).abs() < 4.0 * expected.sqrt() + 1.0,
+            "{n} against {expected:.0}"
+        );
+        let radius = 0.5 * basin.diameter;
+        let thrown = throw(
+            basin.id,
+            basin.diameter,
+            basin.azimuth,
+            basin.angle,
+            &inputs,
+            cell,
+        );
+        let (east, north) = local_basis(basin.center);
+        let sites: Vec<([f64; 3], f64)> = thrown
+            .clusters
+            .iter()
+            .filter(|c| c.r >= CONTINUOUS_EJECTA_MULTIPLE * radius)
+            .map(|c| {
+                (
+                    offset(basin.center, east, north, c.r / body, c.phi),
+                    c.length,
+                )
+            })
+            .collect();
+        let mut by_size: Vec<(f64, f64)> = Vec::new();
+        for (s, parent) in &out {
+            assert_eq!(*parent, basin.id);
+            assert!(s.diameter >= d_min);
+            let r = angle_between(basin.center, s.center) * body;
+            assert!(r > 1.5 * radius, "a secondary {:.0} km out", r / 1e3);
+            let held = sites
+                .iter()
+                .any(|(at, length)| angle_between(*at, s.center) * body < 3.0 * length);
+            assert!(held, "a secondary {:.0} km out in no cluster", r / 1e3);
+            by_size.push((s.diameter, r));
+        }
+        by_size.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let median = |v: &[(f64, f64)]| {
+            let mut r: Vec<f64> = v.iter().map(|x| x.1).collect();
+            r.sort_by(f64::total_cmp);
+            r[r.len() / 2]
+        };
+        let tenth = by_size.len() / 10;
+        let (near, rest) = (median(&by_size[..tenth]), median(&by_size[tenth..]));
+        assert!(
+            near < rest,
+            "the largest at {near:.0} m, the rest at {rest:.0} m"
+        );
     }
 
     /// Enceladus's plume keeps its surface in fresh frost and buries the salts in its

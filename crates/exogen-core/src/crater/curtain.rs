@@ -26,7 +26,9 @@ use crate::constants::{
     RAY_CLUMPING, RAY_CLUSTER_ASPECT, RAY_CLUSTER_CAP, RAY_CLUSTER_LEAST, RAY_CLUSTER_MAX,
     RAY_CLUSTER_WIDTH, RAY_DENSITY_SLOPE, RAY_DOWNRANGE_SPEED, RAY_LENGTH_COEFF_KM,
     RAY_LENGTH_EXPONENT, RAY_LENGTH_LARGE_EXPONENT, RAY_LENGTH_MAX_RADIUS_KM, RAY_VISIBLE,
-    RAY_WARP, SECONDARY_MAX_COEFF_KM, SECONDARY_MAX_EXPONENT, SECONDARY_SIZE_FALL,
+    RAY_WARP, SECONDARY_CENSUS_COUNT, SECONDARY_CENSUS_FLOOR_KM, SECONDARY_CENSUS_LARGEST_KM,
+    SECONDARY_CENSUS_SHAPE, SECONDARY_MAX_COEFF_KM, SECONDARY_MAX_EXPONENT, SECONDARY_SFD_SLOPE,
+    SECONDARY_SIZE_FALL,
 };
 use crate::crater::production::poisson;
 use crate::crater::stamp::ejecta_modulation;
@@ -480,6 +482,48 @@ pub fn largest_secondary(diameter: f64, r_over_radius: f64) -> f64 {
             .powf(-SECONDARY_SIZE_FALL)
 }
 
+/// The expected number of secondaries at least `d`, m, across that a crater throws whose
+/// largest secondary is `largest`, m (F129): Orientale's census in units of its largest, a
+/// Weibull above the census's floor, steepening below it to the slope of Tycho's
+/// secondaries.
+pub fn secondaries_above(d: f64, largest: f64) -> f64 {
+    let (n0, scale, floor) = census();
+    let x = d / largest;
+    if x >= floor {
+        n0 * (-(x / scale).powf(SECONDARY_CENSUS_SHAPE)).exp()
+    } else {
+        SECONDARY_CENSUS_COUNT * (x / floor).powf(-SECONDARY_SFD_SLOPE)
+    }
+}
+
+/// The size, m, with `count` secondaries at least as large among those a crater throws
+/// whose largest secondary is `largest`, m: the inverse of `secondaries_above`, by which a
+/// uniform share of the count draws a secondary's size.
+pub fn secondary_size_at(count: f64, largest: f64) -> f64 {
+    let (n0, scale, floor) = census();
+    let count = count.max(1e-12);
+    let x = if count <= SECONDARY_CENSUS_COUNT {
+        scale
+            * (n0 / count)
+                .ln()
+                .max(0.0)
+                .powf(1.0 / SECONDARY_CENSUS_SHAPE)
+    } else {
+        floor * (count / SECONDARY_CENSUS_COUNT).powf(-1.0 / SECONDARY_SFD_SLOPE)
+    };
+    x * largest
+}
+
+/// Orientale's census as a Weibull in units of its largest secondary: the count it tends to
+/// below, its scale, both from one secondary at the largest and the census's count at its
+/// floor, and that floor.
+fn census() -> (f64, f64, f64) {
+    let k = SECONDARY_CENSUS_SHAPE;
+    let floor = SECONDARY_CENSUS_FLOOR_KM / SECONDARY_CENSUS_LARGEST_KM;
+    let scale = ((1.0 - floor.powf(k)) / SECONDARY_CENSUS_COUNT.ln()).powf(1.0 / k);
+    ((1.0 / scale).powf(k).exp(), scale, floor)
+}
+
 /// One cluster of secondaries a ray's fragments make (F128).
 #[derive(Clone, Copy, Debug)]
 pub struct Cluster {
@@ -652,6 +696,37 @@ mod tests {
             "far clusters cover {:.3} of their ring",
             far / ring
         );
+    }
+
+    /// F129: a crater's secondaries follow Orientale's census in units of its largest: 2,728
+    /// of 2 km and more, one of 27 km and some 400 of 10 km and more at Orientale's own; a
+    /// handful over 2.7 km for Tycho; and the draw inverts the count.
+    #[test]
+    fn the_secondaries_follow_orientales_census() {
+        let largest = SECONDARY_CENSUS_LARGEST_KM * 1e3;
+        let at = |km: f64| secondaries_above(km * 1e3, largest);
+        assert!(
+            (at(2.0) / SECONDARY_CENSUS_COUNT - 1.0).abs() < 1e-9,
+            "{}",
+            at(2.0)
+        );
+        assert!((at(27.0) - 1.0).abs() < 1e-9, "{}", at(27.0));
+        assert!(at(10.0) > 300.0 && at(10.0) < 500.0, "{}", at(10.0));
+        assert!((at(1.999_999) / at(2.000_001) - 1.0).abs() < 1e-4);
+        assert!(at(1.0) > 3.0 * at(2.0) && at(5.0) < at(4.0));
+        // Croft's largest is the census's at Orientale's 930 km.
+        let orientale = largest_secondary(930e3, CONTINUOUS_EJECTA_MULTIPLE);
+        assert!((orientale / largest - 1.0).abs() < 0.02, "{orientale}");
+        let tycho = secondaries_above(2.7e3, largest_secondary(85e3, CONTINUOUS_EJECTA_MULTIPLE));
+        assert!(tycho > 3.0 && tycho < 15.0, "{tycho}");
+        for count in [0.5, 1.0, 37.0, 900.0, 2728.0, 5000.0, 1e5] {
+            let d = secondary_size_at(count, largest);
+            let back = secondaries_above(d, largest);
+            assert!(
+                (back / count - 1.0).abs() < 1e-6,
+                "{count}: {d} gives {back}"
+            );
+        }
     }
 
     #[test]

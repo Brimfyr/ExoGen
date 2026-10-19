@@ -2756,7 +2756,7 @@ static NODES: &[NodeDef] = &[
         "",
         f(0.0, 1.0),
         Default::F64(0.2),
-        "Scales the number of secondary craters per primary.",
+        "Scales the number of secondary craters per primary from Orientale's census, 0.2 (F129).",
     ),
     expert_root(
         "cratering.oblique_fraction",

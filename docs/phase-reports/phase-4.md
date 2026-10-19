@@ -1428,3 +1428,31 @@ Still to do:
 - **The rays' cost**, 23 s on the Moon where it was 9.
 
 Tests 205 (12 ignored). One is new: a ray is the clusters of its secondaries, carrying what the fragments excavate and leaving the ground between them far out. The basin's test of the fifty-eighth now holds a basin's rays shorter in its own radii, Orientale's some 2,000 km. Clippy is clean and validate passes its 115 checks.
+
+## The sixtieth milestone: one population of secondaries
+
+Asked for by the user after the fifty-ninth: its clusters scale with the crater, so a large crater has large ones, as the basin at seed 75 does: was that right, or should they all be the same size? Larger craters throw larger blocks, so their secondaries are larger (Croft 1992), and the cost cap on a crater's clusters never engaged; what was off was that a cluster was drawn as one blur whatever its size, with the craters the finish stamped laid by a rule of their own. The user agreed to one population of secondaries, and gave notes on Ganymede's and Enceladus's grooves and Enceladus's tiger stripes to keep for later (audit T6 and T7).
+
+- **F129.** A crater's secondaries follow Orientale's census, carried to every crater in units of its largest secondary; each lands in one of the clusters its rays make, by the ground they excavate, the larger nearer; and a secondary lands only on ground older than it.
+
+How it went:
+
+- **What the count is.** Croft's relation gives the largest secondary a crater throws, but F128 had sized every cluster as if it held one that large. Filling each cluster with secondaries on that reading would give a 930 km basin some 4,400 secondaries of 10 km and more; a steep power law from Croft's largest would give it 37. Orientale's census, 2,728 secondaries of 2 km and more out to six radii (Guo et al. 2018), has some 400: a Weibull, shallow below 10 km and steep near its 27 km top, which is Croft's.
+- **Where they land.** Chosen by the ground the clusters excavate, an old 782 km basin at seed 75 threw its secondaries mostly to one side, the resultant of their directions 0.76, where most basins' were 0.05 to 0.5. Chosen instead by the ground the fragments excavate before the cap, they went nearly all into the curtain's strongest jet, 0.98: the curtain's mass is lognormal with a spread of 2.5, which the rays' saturation hides and a count does not. They follow the clusters the rays show, and an oblique basin's field is one-sided, as Orientale's lie in a swath to the northwest and to the south.
+- **Ground older than they are.** The replay dropped a secondary on ground renewed since its parent only where ice had come up from below (F9). At seed 75 the young basin's blanket carried older basins' secondaries; now lava, renewed ice and younger craters' floors and blankets all take them, as they take the population's craters.
+
+What the maps show:
+
+- **The Moon at seed 75:** its 378 km basin's secondaries lie along its rays, craters of 3 to 5 km in radial lines, their floors 1 to 1.6 percent of the ground from two to six of its radii and half that beyond; the older basins' secondaries are gone from its fresh blanket, where the old rule had left them; an old 782 km basin to its north throws a field to one side. In relief its secondaries are faint, shallow and small among the population's craters, and its bright clusters stay soft.
+- **The default Moon:** the old rule's secondaries, scattered out to eight radii from every crater, are gone, and the census's lie nearer their craters, along their rays; secondary floors 0.72 percent of the ground where they were 0.89; the albedo as it was, 0.125, a hundredth of the map changed by more than 0.005.
+- **Mars and Callisto:** far fewer secondary floors, 0.54 percent where they were 3.75 on Mars and 0.49 where they were 1.40 on Callisto. The old rule gave a basin Hellas's size some 9,200 secondaries of 11 to 92 km, the census some 2,600 smaller ones, and those on plains laid since are gone. Their albedo within 0.001.
+- **Ceres:** more, 1.85 percent where they were 0.51: its craters' largest secondaries are large against the smallest crater its grid shows, below the census's floor, where the count steepens. Its albedo 0.115 as it was.
+- **Mercury, Ganymede and Europa:** fewer or none, as before; their albedo within 0.001.
+
+Still to do:
+
+- **A cluster's grain.** Its ground is the secondaries in it, most finer than the grid; those near the grid's scale drawn as their own halos would give a large crater's clusters the grain of their secondaries rather than a blur.
+- **The census's small end**, a floor from an old basin; a young crater's own census would show how many small secondaries erosion took.
+- **Mars's two thresholds**, from the fifty-ninth: its rays, which cannot show, take 50 s.
+
+Tests 207 (12 ignored). Two are new: a crater's secondaries follow Orientale's census in units of its largest, inverting their own draw; a basin's secondaries are as many as the census gives, lie in its rays' clusters beyond its blanket, the larger nearer. Clippy is clean and validate passes its 115 checks.

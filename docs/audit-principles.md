@@ -283,6 +283,22 @@ Direction: the dichotomy as an outcome. The giant-impact tail of the late-accret
 
 When: the earlier-phases revisit, with Mars.
 
+### T6. Grooves as regular troughs
+
+The user's note (2026-10-19): Ganymede's and Enceladus's grooves are troughs too regular to read as faulted ground, and should be more broken up, undulating and organic. The same process should show on Miranda, as a check on the model. Miranda's coronae are belts of subparallel ridges and troughs that Pappalardo et al. (1997) read as tilt blocks from extension and normal faulting above an upwelling (Arden Corona, local extension near 70 percent; warm buoyant ice in Hammond and Barr's convection): the faulting that makes Ganymede's grooves, concentric about the upwelling where Ganymede's follow its lanes. So one process, and Miranda the second body GROOVE_RIFT_LID_SHARE needs.
+
+Direction: the troughs from the faulting itself, tilt blocks and normal faults whose throw and spacing vary along their strike, segments that end, step over and link, so that a groove undulates and breaks; a Miranda preset, its coronae from its upwellings, its grooves' spacing checked against the measured.
+
+When: with the icy moons' tectonics; the user has further notes on Enceladus.
+
+### T7. Tiger stripes as a set per region
+
+The user's note (2026-10-19): the height map draws Enceladus's polar terrain as prominent, fine fingerprint patterns, and each occurrence of the terrain carries its own set of four to nine stripes, where the real terrain is a network of interconnected, webbing canyons across all of it. Losing the signature four or five parallel fractures at the south pole is a trade the user accepts for natural terrain. The stripes are also coloured light blue, a false colour.
+
+Direction: the stripes as one network of fractures across the terrain the plume's heat renews, linking, branching and ending where the stress does; their relief at the canyons' scale rather than a fingerprint's; their colour their ice's.
+
+When: with T6 and the user's further notes.
+
 ## Calibrations on one body (principle 15)
 
 Each constant here was fitted so that one body comes out right. Each should become, or be shown to be, a constant of its process, with a check on what it gives a body between the references.
@@ -301,7 +317,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | LAVA_BATCH_SHARE | the Moon: neighbouring mare units hard to tell apart by albedo alone (Iqbal et al. 2019) inside the factor of 1.4 its major units span (Denevi et al. 2009) | each eruption's departure from its source, from the magma's own fractionation |
 | IO_PELE_CLASS_FRACTION | about six large plumes at a time on Io (Geissler et al. 2004) | the share of centres whose magma comes up gas-rich, from the depth and temperature of their sources |
 | IO_SHIELD_COLUMNS | Io's red-brown plains beginning near 30 degrees (Geissler et al. 1999; Williams et al. 2011) | the column that stops the plasma, from its ions' energies and the gas's stopping power |
-| GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing |
+| GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; check on a second body's measured spacing, Miranda's coronae (T6) |
 | CENTRAL_PEAK_HEIGHT | Copernicus | check how it scales with gravity |
 | RAY_LENGTH_COEFF_KM, RAY_LENGTH_EXPONENT, RAY_SKIN_DEPTH_M | Elliott et al. (2018)'s median lunar ray lengths, 6.59 R^1.27 km, for their 10 cm skin (F91) | the skin and fragment population per body: the length goes as the skin depth to about -1.16, which an icy surface's lag already sets |
 | CURTAIN_SPREAD, CURTAIN_SLOPE, CURTAIN_ORDERS | the Moon's rays: 10.7 a crater, 22 degrees wide at two radii (Elliott et al. 2018) | the target's relief at the rim, which makes the rays (Sabuwala et al. 2018: the count goes as the crater over the relief's wavelength) |
