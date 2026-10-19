@@ -1762,6 +1762,15 @@ pub const LAG_OPAQUE_KG_M2: f64 = 2_000.0;
 /// The bulk density of the lag, kg/m³, which makes its opaque mass the couple of metres of
 /// dust above (a stated choice).
 pub const LAG_BULK_DENSITY: f64 = 1_000.0;
+/// Impacts carry regolith from one terrain onto another (F126): an icy body's old crust and
+/// the ice its shell renewed each take this share of the other's regolith, by the other's
+/// share of the body. A stated choice from the lunar maria's: their soils hold highland
+/// material carried in by impacts, some 0.1 on average in their top metres and more near
+/// their shores (Liu et al. 2021, Icarus 358), over a fifth in the Apollo 11 and 12 soils
+/// (Huang et al. 2017), which this gives the maria, with the highlands five sixths of the
+/// Moon, at 0.25; Ganymede's narrow lanes and broken dark terrain all lie near a contact. Lava contacts mix sideways
+/// by F95 instead, and the basalts' colours are measured soils that hold their share.
+pub const REGOLITH_EXCHANGE: f64 = 0.3;
 pub const ICE_POLAR_TEMPERATURE_FLOOR_K: f64 = 40.0;
 /// Clean ice that an impact brings up is mixed back into the regolith by gardening over
 /// this time, Gyr, whatever the temperature: Callisto's bright craters are its young ones.

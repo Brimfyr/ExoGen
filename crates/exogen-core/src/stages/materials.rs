@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 24;
+pub const VERSION: u64 = 25;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -107,6 +107,7 @@ pub const END_MEMBERS: &[EndMember] = &[
         rock: None,
         roughness: 0.85,
     },
+    // Clean water ice: frozen from an ocean, renewed from below, or frost.
     EndMember {
         id: "water_ice",
         fresh: [0.80, 0.82, 0.86],
@@ -114,22 +115,19 @@ pub const END_MEMBERS: &[EndMember] = &[
         rock: None,
         roughness: 0.55,
     },
+    // An icy crust as it accreted, water ice with its body's rock (F126). A body's own
+    // resolves through the library, the intimate mixture of clean ice and carbonaceous
+    // rock at the rock's share of the crust; these colours are the mixture at 30 percent,
+    // for a library without a body.
     EndMember {
         id: "water_ice_dirty",
-        fresh: [0.36, 0.35, 0.34],
-        mature: [0.26, 0.25, 0.24],
+        fresh: [0.389, 0.386, 0.385],
+        mature: [0.340, 0.338, 0.340],
         rock: None,
         roughness: 0.70,
     },
-    // Ceres's crust: hydrated silicates, carbonates and clathrates with a third of ice,
-    // dark even when fresh (Haulani's ejecta are 1.6 times the surroundings).
-    EndMember {
-        id: "carbonaceous_ice",
-        fresh: [0.160, 0.155, 0.150],
-        mature: [0.095, 0.090, 0.085],
-        rock: None,
-        roughness: 0.80,
-    },
+    // Carbonaceous rock: hydrated silicates darkened by carbon, the stuff of a carbonaceous
+    // body, and what an icy crust's lag is made of once its ice has sublimed.
     EndMember {
         id: "carbonaceous",
         fresh: [0.120, 0.115, 0.110],
@@ -143,13 +141,6 @@ pub const END_MEMBERS: &[EndMember] = &[
         mature: [0.50, 0.50, 0.52],
         rock: None,
         roughness: 0.55,
-    },
-    EndMember {
-        id: "rock_ice_mixture",
-        fresh: [0.45, 0.44, 0.43],
-        mature: [0.30, 0.29, 0.28],
-        rock: None,
-        roughness: 0.75,
     },
     // What a tidally heated body's plumes lay over everything: sulfur and its frosts.
     EndMember {
@@ -188,15 +179,38 @@ pub const END_MEMBERS: &[EndMember] = &[
     },
 ];
 
+/// What an icy crust's lag is made of: its rock, left behind as its ice sublimes (F126).
+pub const LAG_MATERIAL: &str = "carbonaceous";
+
+/// The reflectance of an intimate mixture of two materials (F126): Hapke's mixing of their
+/// single-scattering albedos by their shares of the grains' cross-sections, each albedo
+/// from its reflectance through r = (1 - g) / (1 + g), g = (1 - w)^(1/2) (Hapke 1981). A
+/// little dark rock darkens bright ice far more than its share would: a third of it takes
+/// clean ice from 0.8 to under 0.4.
+pub fn intimate_mixture(a: f32, b: f32, share_b: f64) -> f32 {
+    let albedo = |r: f32| {
+        let g = (1.0 - r as f64) / (1.0 + r as f64);
+        1.0 - g * g
+    };
+    let w = (1.0 - share_b) * albedo(a) + share_b * albedo(b);
+    let g = (1.0 - w).max(0.0).sqrt();
+    ((1.0 - g) / (1.0 + g)) as f32
+}
+
 /// How a body's materials resolve (F125): its basalt takes the iron of its mantle, blending
 /// the iron-poor and the iron-rich end-members, and where impacts garden no fine regolith a
-/// material shows its rock colour fresh.
+/// material shows its rock colour fresh. Its dirty ice carries the rock its crust accreted,
+/// and where its lag is deeper than the surface layer its fresh exposures are lag (F126).
 #[derive(Clone, Copy, Debug)]
 pub struct Library {
     /// The mantle's FeO, mass fraction.
     pub feo: f64,
     /// Whether impacts garden a fine regolith: an airless body not renewed by plumes.
     pub gardened: bool,
+    /// The share of an icy crust's volume that is not ice (F126).
+    pub impurity: f64,
+    /// The share of the surface layer its lag has taken (F126).
+    pub lag_depth: f64,
 }
 
 impl Library {
@@ -205,6 +219,19 @@ impl Library {
             feo: graph.f64("body.mantle_feo"),
             gardened: graph.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE
                 && graph.str("materials.bedrock") != "sulfur_deposit",
+            impurity: graph.f64("body.crust_impurity"),
+            lag_depth: graph.f64("materials.lag_depth_share"),
+        }
+    }
+
+    /// The share of a material that is not ice and stays behind as lag when the ice
+    /// sublimes: the body's dirty ice its crust's rock (F126), otherwise as
+    /// `non_ice_fraction`.
+    pub fn non_ice(&self, id: &str) -> f64 {
+        if id == "water_ice_dirty" {
+            self.impurity.clamp(0.0, 1.0)
+        } else {
+            non_ice_fraction(id)
         }
     }
 
@@ -230,6 +257,29 @@ impl Library {
                 rock: Some(lerp3(rock(poor), rock(rich), w)),
                 roughness: poor.roughness + (rich.roughness - poor.roughness) * w,
             }
+        } else if id == "water_ice_dirty" {
+            let (ice, rock) = (end_member("water_ice")?, end_member(LAG_MATERIAL)?);
+            let f = self.impurity.clamp(0.0, 1.0);
+            let mix = |a: [f32; 3], b: [f32; 3]| {
+                [
+                    intimate_mixture(a[0], b[0], f),
+                    intimate_mixture(a[1], b[1], f),
+                    intimate_mixture(a[2], b[2], f),
+                ]
+            };
+            // What fresh craters and slopes bring up is lag where the lag has taken the
+            // layer they reach.
+            EndMember {
+                id: "water_ice_dirty",
+                fresh: lerp3(
+                    mix(ice.fresh, rock.fresh),
+                    rock.fresh,
+                    self.lag_depth.clamp(0.0, 1.0) as f32,
+                ),
+                mature: mix(ice.mature, rock.mature),
+                rock: None,
+                roughness: ice.roughness + (rock.roughness - ice.roughness) * f as f32,
+            }
         } else {
             *end_member(id)?
         };
@@ -245,20 +295,16 @@ impl Library {
 
 /// Ice end-members, whose excavated bright material darkens back to the lag it came from.
 pub fn is_ice(id: &str) -> bool {
-    id.starts_with("water_ice")
-        || id == "ammonia_water_ice"
-        || id == "rock_ice_mixture"
-        || id == "carbonaceous_ice"
+    id.starts_with("water_ice") || id == "ammonia_water_ice"
 }
 
 /// The share of an end-member that is not ice and stays behind as lag when the ice
-/// sublimes: clean ices a trace, dirty ice a third, a rock-ice mixture half, rock all.
+/// sublimes: clean ices a trace, dirty ice the 30 percent of its colours here (a body's
+/// own its crust's, `Library::non_ice`), rock all.
 pub fn non_ice_fraction(id: &str) -> f64 {
     match id {
         "water_ice" | "ammonia_water_ice" => 0.02,
         "water_ice_dirty" => 0.3,
-        "carbonaceous_ice" => 0.4,
-        "rock_ice_mixture" => 0.5,
         _ => 1.0,
     }
 }
@@ -439,12 +485,24 @@ pub fn surface_albedos(graph: &ParamGraph) -> SurfaceAlbedos {
         .map(|m| resolve_mix(&library, m))
         .unwrap_or_else(|| vec![(bedrock, 1.0)]);
     let ice = end_member("water_ice").unwrap();
+    let mature = mixture_colour(&regolith, 1.0);
     SurfaceAlbedos {
         fresh: luminance(bedrock.fresh),
-        mature: luminance(mixture_colour(&regolith, 1.0)),
+        mature: luminance(mature),
         clean_fresh: luminance(ice.fresh),
-        clean_mature: luminance(ice.mature),
+        clean_mature: luminance(renewed_ice_mature(graph, ice.mature, mature)),
     }
+}
+
+/// The renewed ice's colour at maturity (F126): clean ice with what impacts have carried
+/// onto it of the old crust's regolith, REGOLITH_EXCHANGE by the old crust's share of the
+/// body.
+fn renewed_ice_mature(graph: &ParamGraph, ice: [f32; 3], regolith: [f32; 3]) -> [f32; 3] {
+    let old = 1.0
+        - graph
+            .f64("tectonics.ice_resurfaced_fraction")
+            .clamp(0.0, 1.0);
+    lerp3(ice, regolith, (REGOLITH_EXCHANGE * old) as f32)
 }
 
 /// Linear-reflectance albedo of the surface.
@@ -549,7 +607,7 @@ pub fn albedo(
         let w = end_member("water_ice").unwrap();
         Pair {
             fresh: w.fresh,
-            mature: w.mature,
+            mature: renewed_ice_mature(graph, w.mature, base.mature),
         }
     };
     let ages_f = layers.surface_age.as_slice();
@@ -835,12 +893,93 @@ mod tests {
     }
 
     #[test]
+    fn an_icy_crust_keeps_the_rock_it_accreted() {
+        // F126: a third of dark rock takes clean ice from 0.8 to under 0.4 (Hapke's mixing);
+        // Callisto, Ganymede and Ceres keep the rock they accreted in their crusts, and
+        // their regoliths carry the lag their warm latitudes leave, Ceres's almost all
+        // lag; Europa's shell renews itself and shows clean ice; Ganymede's renewed lanes
+        // brighten it between Callisto and Europa, and the ice impacts carry from them
+        // brightens its old terrain past Callisto's; Ceres's lag runs deeper than the
+        // layer its craters expose, so its fresh ground is dark.
+        assert!((intimate_mixture(0.80, 0.09, 0.3) - 0.364).abs() < 0.005);
+        let body = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let mix = g.get("materials.regolith_mix").as_map().cloned().unwrap();
+            (
+                g.str("materials.bedrock").to_string(),
+                g.f64("body.crust_impurity"),
+                mix.get(LAG_MATERIAL).copied().unwrap_or(0.0),
+                g.f64("atmosphere.bond_albedo"),
+            )
+        };
+        let (bedrock, impurity, lag, callisto) = body("Callisto");
+        assert_eq!(bedrock, "water_ice_dirty");
+        assert!(
+            impurity > 0.2 && impurity < 0.35,
+            "Callisto impurity {impurity}"
+        );
+        assert!(lag > 0.4, "Callisto lag {lag}");
+        let (bedrock, _, lag, ganymede) = body("Ganymede");
+        assert_eq!(bedrock, "water_ice_dirty");
+        assert!(lag > 0.4, "Ganymede lag {lag}");
+        let lum = |c: [f32; 3]| (c[0] + c[1] + c[2]) / 3.0;
+        let regolith = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let library = Library::from_graph(&g);
+            mixture_luminance(&library, g.get("materials.regolith_mix").as_map().unwrap()).1
+        };
+        assert!(
+            regolith("Ganymede") > regolith("Callisto") + 0.05,
+            "old terrain {} against Callisto {}",
+            regolith("Ganymede"),
+            regolith("Callisto")
+        );
+        let (bedrock, _, lag, ceres) = body("Ceres");
+        assert_eq!(bedrock, "water_ice_dirty");
+        assert!(lag > 0.9 && ceres < 0.12, "Ceres lag {lag}, albedo {ceres}");
+        let (g, _) = crate::presets::preset("Ceres").unwrap().to_graph();
+        let fresh = lum(Library::from_graph(&g)
+            .member("water_ice_dirty")
+            .unwrap()
+            .fresh);
+        assert!(fresh < 0.2, "Ceres's fresh ground {fresh}");
+        let (bedrock, _, lag, europa) = body("Europa");
+        assert_eq!((bedrock.as_str(), lag), ("water_ice", 0.0));
+        assert!(
+            callisto < 0.3 && callisto < ganymede && ganymede < europa,
+            "{callisto} {ganymede} {europa}"
+        );
+        // The body's dirty ice is the mixture at its crust's rock.
+        let dirty = |impurity: f64| {
+            Library {
+                feo: 0.1,
+                gardened: true,
+                impurity,
+                lag_depth: 0.0,
+            }
+            .member("water_ice_dirty")
+            .unwrap()
+        };
+        assert!(lum(dirty(0.1).fresh) > lum(dirty(0.3).fresh));
+        assert!((lum(dirty(0.0).fresh) - lum(end_member("water_ice").unwrap().fresh)).abs() < 1e-3);
+    }
+
+    #[test]
     fn a_body_s_basalt_takes_its_mantle_s_iron() {
         // F125: iron-poor lavas are bright (Mercury's plains), iron-rich ones dark (the lunar
         // maria), and between them the basalt blends; where no regolith forms it shows its
         // rock, darker than its fresh regolith.
         let lum = |c: [f32; 3]| (c[0] + c[1] + c[2]) / 3.0;
-        let basalt = |feo: f64, gardened: bool| Library { feo, gardened }.member("basalt").unwrap();
+        let basalt = |feo: f64, gardened: bool| {
+            Library {
+                feo,
+                gardened,
+                impurity: 0.0,
+                lag_depth: 0.0,
+            }
+            .member("basalt")
+            .unwrap()
+        };
         let (poor, mid, rich) = (basalt(0.02, true), basalt(0.08, true), basalt(0.15, true));
         assert_eq!(poor.mature, end_member("basalt_iron_poor").unwrap().mature);
         assert_eq!(rich.mature, end_member("basalt_iron_rich").unwrap().mature);

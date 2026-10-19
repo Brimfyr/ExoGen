@@ -283,7 +283,8 @@ const NORMAL_CONVENTION: &[&str] = &["opengl", "directx"];
 const KM3_PER_YEAR: f64 = 1.0e9 / YEAR;
 
 /// The materials by what they are (F125): crust rocks, their body's own basalt (its iron
-/// from its mantle) and the two basalts it blends, ices, deposits and impact melt.
+/// from its mantle) and the two basalts it blends, ices (a body's dirty ice with the rock
+/// its crust accreted, F126), deposits and impact melt.
 const BEDROCK: &[&str] = &[
     "basalt",
     "basalt_iron_rich",
@@ -298,9 +299,7 @@ const BEDROCK: &[&str] = &[
     "carbonaceous",
     "water_ice",
     "water_ice_dirty",
-    "carbonaceous_ice",
     "ammonia_water_ice",
-    "rock_ice_mixture",
 ];
 const END_MEMBER_IDS: &[&str] = BEDROCK;
 const COLOUR_SPACE: &[&str] = &["linear_srgb", "acescg"];
@@ -829,6 +828,22 @@ static NODES: &[NodeDef] = &[
         d::body_rock_mass_fraction,
         "Silicate share of the mass.",
         "F8",
+    ),
+    derived(
+        "body.crust_impurity",
+        "body",
+        "Crust impurity",
+        "",
+        1.0,
+        f(0.0, 1.0),
+        &[
+            "body.core_mass_fraction",
+            "body.rock_mass_fraction",
+            "body.ice_mass_fraction",
+        ],
+        d::body_crust_impurity,
+        "The share of an icy crust's volume that is not ice, as it accreted: the body's rock and metal against its ice, from its own composition (F126). With grains of one size it is the share of their cross-sections, which an intimate mixture's reflectance weighs: Callisto 0.26, Ganymede 0.29, Ceres 0.38. All of a rocky crust.",
+        "F126",
     ),
     derived(
         "body.composition_class",
@@ -1506,11 +1521,20 @@ static NODES: &[NodeDef] = &[
         "",
         1.0,
         f(0.0, 1.0),
-        &["atmosphere.surface_pressure", "body.mantle_feo"],
-        &["materials.regolith_mix", "volcanism.plume_fallout_rate"],
+        &[
+            "atmosphere.surface_pressure",
+            "body.mantle_feo",
+            "body.crust_impurity",
+        ],
+        &[
+            "materials.regolith_mix",
+            "volcanism.plume_fallout_rate",
+            "materials.bedrock",
+            "tectonics.ice_resurfaced_fraction",
+        ],
         d::atmosphere_bond_albedo,
-        "Airless (under 10 Pa), the surface's own reflectance (F52): the regolith mixture at maturity, fresh over the share of the body a plume's fallout keeps under frost, read from the previous pass of the graph because the surface depends on the temperature it sets. Under an atmosphere a guess by pressure class until the climate stage computes the clouds and haze (Phase 5).",
-        "F52; provisional under an atmosphere, Phase 5",
+        "Airless (under 10 Pa), the surface's own reflectance (F52): the regolith mixture at maturity, on an icy crust with the share its shell renewed as clean ice (F126), frosted over the share of the body a plume's fallout keeps under frost, read from the previous pass of the graph because the surface depends on the temperature it sets. Under an atmosphere a guess by pressure class until the climate stage computes the clouds and haze (Phase 5).",
+        "F52, F126; provisional under an atmosphere, Phase 5",
     ),
     derived(
         "atmosphere.equilibrium_temperature",
@@ -2915,6 +2939,7 @@ static NODES: &[NodeDef] = &[
             "interior.tectonic_regime",
             "atmosphere.surface_pressure",
             "interior.tidal_flux",
+            "interior.ice_shell_thickness",
             "body.mantle_feo",
             "body.gravity",
             "body.radius",
@@ -2922,8 +2947,8 @@ static NODES: &[NodeDef] = &[
             "body.core_mass_fraction",
         ],
         d::materials_bedrock,
-        "What the crust is made of, by the processes that made it (F125): sulfur where a tidally heated body's plumes coat it, felsic where plates recycle it with water, anorthosite where the magma ocean floated plagioclase, a graphite-bearing crust where an iron-poor ocean floated graphite, otherwise the body's basalt. Pin to choose.",
-        "F125",
+        "What the crust is made of, by the processes that made it (F125): sulfur where a tidally heated body's plumes coat it, felsic where plates recycle it with water, anorthosite where the magma ocean floated plagioclase, a graphite-bearing crust where an iron-poor ocean floated graphite, otherwise the body's basalt. An icy crust is its dirty ice, the rock it accreted in it, unless its shell renews itself everywhere and shows the ocean's clean ice (F126). Pin to choose.",
+        "F125, F126",
     ),
     input(
         "materials.regolith_mix",
@@ -2942,10 +2967,15 @@ static NODES: &[NodeDef] = &[
             "body.radius",
             "body.mass",
             "body.core_mass_fraction",
+            "body.crust_impurity",
+            "orbit.insolation",
+            "atmosphere.surface_pressure",
+            "cratering.retention_age",
+            "tectonics.ice_resurfaced_fraction",
         ],
         d::materials_regolith_mix,
-        "Baseline surface mixture of end-members before deposits: on a rocky crust what its magma ocean floated and its basalt by their shares (F125), otherwise the bedrock. Set it to compose the surface.",
-        "F125",
+        "Baseline surface mixture of end-members before deposits: on a rocky crust what its magma ocean floated and its basalt by their shares (F125); on an airless icy crust the crust and the lag its warm latitudes leave, its rock, spread over the old crust by impact ejecta, by the share of the surface whose ice sublimes into a lag over its age, with the share of the renewed ice that impacts carry onto it (F126); otherwise the bedrock. Set it to compose the surface.",
+        "F125, F126",
     ),
     input(
         "materials.lava",
@@ -2959,10 +2989,11 @@ static NODES: &[NodeDef] = &[
             "interior.tectonic_regime",
             "atmosphere.surface_pressure",
             "interior.tidal_flux",
+            "volatiles.working_liquid",
         ],
         d::materials_lava,
-        "What floods and flows leave at the surface: on a rocky body its basalt, dark where its mantle is iron-rich (the lunar maria), bright where it is iron-poor (Mercury's plains) (F125); dirty ice for cryolava. Pin to choose.",
-        "F125",
+        "What floods and flows leave at the surface: on a rocky body its basalt, dark where its mantle is iron-rich (the lunar maria), bright where it is iron-poor (Mercury's plains) (F125); for cryolava the ice its liquid freezes to, clean water ice or ammonia-water ice, the rock having settled out of it (F126). Pin to choose.",
+        "F125, F126",
     ),
     input(
         "materials.deep_bedrock",
@@ -2985,6 +3016,25 @@ static NODES: &[NodeDef] = &[
         d::materials_deep_bedrock,
         "What large craters excavate from below the surface layer: the noritic lower crust under a flotation crust, the graphite flotation crust under a reduced body's lavas, otherwise the basalt (F125); clean ice under the lag of an ice shell, otherwise the bedrock. Pin to choose.",
         "F125; provisional, Phase 7",
+    ),
+    derived(
+        "materials.lag_depth_share",
+        "materials",
+        "Lag depth share",
+        "",
+        1.0,
+        f(0.0, 1.0),
+        &[
+            "materials.bedrock",
+            "body.crust_impurity",
+            "orbit.insolation",
+            "atmosphere.surface_pressure",
+            "cratering.retention_age",
+            "materials.deep_bedrock_depth",
+        ],
+        d::materials_lag_depth_share,
+        "The share of the surface layer an airless icy crust's lag has taken over its age (F126): a warm crust loses its ice to a depth that grows as the square root of its age, and where that is deeper than the layer craters and slopes expose, what they bring up is lag, so a body's dirty ice shows the lag's colour fresh by this share. Ceres 0.9, Callisto 0.03, none at Saturn and beyond.",
+        "F126",
     ),
     derived(
         "materials.deep_bedrock_depth",

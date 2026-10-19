@@ -14,7 +14,6 @@ description = "Reference body. Largest moon; dark cratered terrain over clean ic
 "body.density" = 1936.0
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
-"materials.regolith_mix" = { water_ice_dirty = 0.7, water_ice = 0.3 }
 # Two thirds of Ganymede is bright grooved terrain from the heating pulse of its passage
 # into the Laplace resonance (Showman and Malhotra 1997: the eccentricity pumped to a few
 # hundredths for up to a gigayear), about two gigayears ago by the bright terrain's crater

@@ -116,6 +116,8 @@ The crust's composition also decides how much of a mantle's magma reaches the su
 
 Partly closed in the fifty-sixth milestone (F125): a rocky crust's materials come from its processes, the list holds materials rather than bodies and units, and the crust's buoyancy decides how much magma erupts, Mercury's plains rising to 21.8 percent of its surface. Still open: the icy bodies' materials, and the presets that pin them (Callisto, Ceres, Ganymede).
 
+Closed in the fifty-seventh milestone (F126): an icy crust is the rock and ice the body accreted, its colour the intimate mixture at the crust's rock, clean where its shell renews itself, and its regolith carries the lag its warm latitudes leave; Callisto, Ceres and Ganymede pin nothing. Two stated choices carry it, the grain sizes in the mixture and the share of regolith impacts trade between terrains (REGOLITH_EXCHANGE, from the lunar maria's), and one switch remains, the same as the retention age's (S6): a shell renews its surface everywhere or keeps it, by the tidal flux and the shell's ratio to the radius.
+
 ### S8. The lanes' share along a sweep in radius (closed)
 
 Measured (same test as S4): the share renewed as lanes is 0.073 for Enceladus, 0.058 at 1.2 times the radius, 0.310 at 1.5 times and 0 at twice (S4). The dip between the first two needs a physical reason or a fix. The share is the renewal of the peak tidal flux times the part the polar focusing does not take, and both change with the shell's ratio to the radius.
@@ -136,7 +138,7 @@ When: the Io milestone.
 
 A crater on a target `is_ice` reads has a central pit from 8.5 transitions and a dome in it from 20 (F72); on any other, a peak ring and a multi-ring basin. A crust of rock and ice, Ceres's or Callisto's dirty ice, gets one or the other whole. The same switch picks the transition's ice factor (S7).
 
-Direction: the pit from the impact melt's volume against the crater's, the melt-drainage model Alzate and Barlow (2011) and Elder et al. (2012) favour; ice melts under a far lower shock pressure than rock (Pierazzo et al. 1997), so a target's ice share would pit its craters by degrees.
+Direction: the pit from the impact melt's volume against the crater's, the melt-drainage model Alzate and Barlow (2011) and Elder et al. (2012) favour; ice melts under a far lower shock pressure than rock (Pierazzo et al. 1997), so a target's ice share would pit its craters by degrees. Since F126 the crust's share of rock is a node of its own (body.crust_impurity), which such a model would read.
 
 When: the earlier-phases revisit, with S7.
 

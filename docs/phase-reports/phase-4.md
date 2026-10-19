@@ -1336,3 +1336,36 @@ Still to do:
 - **The crust's porosity and thickness**, and a body's carbon, which the buoyancy and the graphite crust take as given.
 
 Tests 199 (12 ignored). Four are new: the Moon floats anorthosite over norite and Mercury graphite while Mars and Venus show their basalt; a body's basalt takes its mantle's iron and shows its rock where no regolith forms; a light crust holds a dense magma down more while the lid is thin; retired material names load as their replacements. Clippy is clean and validate passes its 117 checks.
+
+## The fifty-seventh milestone: an icy crust's materials from its processes
+
+Asked for by the user after the fifty-sixth: audit S7's icy half, and the three presets that pinned their materials. Callisto's dark surface, Ceres's darker one and Ganymede's dark terrain came from pinned regolith mixes, the defaults gave a rock-ice body with an ocean and no air clean ice whatever it was made of, and the Bond albedo of an icy body was its regolith's whatever its lanes.
+
+- **F126, an icy crust's materials come from the processes that make it.** The crust carries the rock the body accreted, its share of the crust's volume from the composition; its colour is the intimate mixture of clean ice and carbonaceous rock at that share; a shell that renews itself everywhere shows clean ice; the regolith carries the lag the warm latitudes grow, spread over the body by ejecta; the Bond albedo counts the renewed share as clean ice.
+
+How it went:
+
+- **What tells Callisto from Ganymede.** The moment of inertia is fixed by class and every body but Ceres and Pluto has an ocean in the model, so nothing in the interior tells Callisto's crust from Ganymede's: both keep the rock they accreted, and Ganymede differs by the lanes its resonance renewed.
+- **The lag as its own field, in the prototype first.** A lag growing cell by cell at its latitude's temperature left Callisto dark below 40 degrees and frosted above, five times brighter, where the real moon is nearly even. The lag in the regolith, spread by ejecta, keeps the latitudes close: 0.23 at Callisto's equator and 0.31 at its poles, against the reference map's 0.30 and 0.27 to 0.37.
+- **How dark is dirty.** Hapke's mixing of the single-scattering albedos reproduces the library's dirty ice at 30 percent rock and Ceres's carbonaceous ice at 75, so one family at the crust's share replaces three fixed ices.
+- **What flows when a crater relaxes.** Rock stiffens ice by twelve decades of viscosity per unit share (from Ceres's crust, Fu et al. 2017); read from the bedrock it would have made Ganymede's crust ten thousand times stiffer. The relaxing ice is now the shell under the half-kilometre crust, the frozen ocean under a shell that floats on one: Ganymede relaxes as before, Callisto's largest craters somewhat more.
+- **Ceres, seen by the user.** The first renders gave Ceres bright crater walls and young ejecta, its mean 0.25 against 0.13, and bright poles, where the user expected one grey with bright spots: its crust, bare, is 0.34. A new lag regrowing on bared slopes darkened its walls up to some 60 degrees but needed a stated renewal time and left its poles bright. The lag law itself had the answer: Ceres's crust loses its ice kilometres down, deeper than the layer its craters expose, so what they bring up is lag. Ceres is now one grey at 0.12, from 0.116 at its equator to 0.131 at its poles, with its salts and domes the bright spots.
+- **Ganymede, seen by the user.** Its dark terrain came out as dark as Callisto, 0.20 at low latitudes against lanes of 0.55, a contrast of 2.75 where the real moon's is some 1.7: the real dark terrain is brighter than Callisto's surface, 0.29 in the reference map against Callisto's geometric albedo of 0.22. What sets them apart in the model is the lanes themselves: impacts on them, seventy percent of the moon, carry their ice onto the old crust, as impacts carry highland soil onto the lunar maria (Liu et al. 2021). With the share the lunar maria hold, the dark terrain is 0.30 and the lanes 0.56, a contrast of 1.84 at low latitudes and 1.59 at high.
+- **Ganymede's craters.** Its brighter surface leaves it 7 K colder, its shell 5 km thicker and its lanes 70 percent of it where they were 68; the test of its relaxed craters, whose median depth ratio was 0.0085, gave 0.0074, and 0.0072 with the final model. With the old Bond albedo pinned the craters came back to the digit, and of the 54 craters the two runs share the median changed by +0.0001: the median of some sixty craters moves with which craters the history leaves, and the test's floor is now 0.006, far from flattened against the real 0.012.
+
+What the maps show:
+
+- **Callisto:** its map 0.25 where it was 0.17, the median 0.23 against the real moon's geometric albedo of 0.22; darker at its equator, 0.23, than at its poles, 0.31, against the reference map's 0.30 and 0.27 to 0.37; its regolith 56 percent lag; its largest craters somewhat softer, the relief's spread 340 m where it was 372.
+- **Ganymede:** its old terrain 0.30 at low latitudes and its lanes 0.56, a contrast of 1.84 (1.59 at high latitudes), where the pinned regolith gave 1.54 and the first renders of this milestone 2.75; its map 0.49 where it was 0.56, against the reference map's 0.42; its Bond albedo 0.52, its surface 101 K where it was 109, its lanes 70 percent of it where they were 68.
+- **Ceres:** one grey, 0.12 where it was 0.13, from 0.116 at its equator to 0.131 at its poles, its salts and domes the bright spots; its Bond albedo 0.090.
+- **Europa and Enceladus:** the same to within a thousandth; Enceladus's crust is now its dirty ice, under its plume's frost.
+- **Triton:** 0.47 where it was 0.70, its crust its rock-bearing ice with the clean ice under it bright in its craters; the nitrogen frost that makes the real moon 0.76 is the climate's.
+- **Titan and Pluto:** their dirty ice mixed at their own rock, 0.36 where the fixed dirty ice gave 0.25 and 0.26.
+
+Still to do:
+
+- **Nitrogen and methane frosts**, which make Triton and Pluto bright: the climate's (Phase 5).
+- **Ganymede's lanes and polar caps**: the lanes clean ice a little brighter than the real ones, the caps the magnetosphere's; dust from outside is a candidate for the first.
+- **The central pits by the crust's rock** (S9).
+
+Tests 201 (12 ignored). Two are new: an icy crust keeps the rock it accreted, its regolith carrying its lag, Europa clean, Ganymede between Callisto and Europa with its old terrain brighter than Callisto's, and Ceres's fresh ground dark; a warm old dirty crust grows a lag where a cold or clean one keeps its ice, and Ceres's runs deeper than its craters dig. The retired names' test covers the dirty ices and their summed shares, and Ganymede's relaxation test has its floor at 0.006. Clippy is clean and validate passes its 115 checks, Triton's Bond albedo and temperature set aside with Pluto's.

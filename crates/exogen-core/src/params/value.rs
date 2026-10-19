@@ -237,17 +237,22 @@ impl ValueType {
             (ValueType::Enum(_), Value::Str(s)) => {
                 Value::Str(retired_name(&s).unwrap_or(&s).into())
             }
-            (ValueType::Map(_), Value::Map(m)) => Value::Map(
-                m.into_iter()
-                    .map(|(k, x)| (retired_name(&k).map_or(k, str::to_string), x))
-                    .collect(),
-            ),
+            // Two retired names may now be one material: their shares add.
+            (ValueType::Map(_), Value::Map(m)) => {
+                let mut out = std::collections::BTreeMap::new();
+                for (k, x) in m {
+                    *out.entry(retired_name(&k).map_or(k, str::to_string))
+                        .or_insert(0.0) += x;
+                }
+                Value::Map(out)
+            }
             (_, v) => v,
         }
     }
 }
 
-/// Material names retired in F125, read as what replaced them so that saved projects load.
+/// Material names retired in F125 and F126, read as what replaced them so that saved
+/// projects load: the dirty ices of fixed shares are now the body's own dirty ice.
 fn retired_name(name: &str) -> Option<&'static str> {
     Some(match name {
         "mercurian_regolith" => "graphite_bearing_crust",
@@ -255,6 +260,7 @@ fn retired_name(name: &str) -> Option<&'static str> {
         "mare_basalt" => "basalt_iron_rich",
         "smooth_plains" => "basalt_iron_poor",
         "sulfur_coated" => "sulfur_deposit",
+        "carbonaceous_ice" | "rock_ice_mixture" => "water_ice_dirty",
         _ => return None,
     })
 }
@@ -275,6 +281,19 @@ mod tests {
             panic!("not a map")
         };
         assert!(n.contains_key("basalt_iron_poor"));
+        // F126: the dirty ices of fixed shares are the body's own dirty ice, and two of
+        // them in one mix add their shares.
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("carbonaceous_ice".to_string(), 0.2);
+        m.insert("water_ice_dirty".to_string(), 0.3);
+        m.insert("carbonaceous".to_string(), 0.5);
+        let Value::Map(n) =
+            ValueType::Map(&["water_ice_dirty", "carbonaceous"]).normalise(Value::Map(m))
+        else {
+            panic!("not a map")
+        };
+        assert_eq!(n.len(), 2);
+        assert!((n["water_ice_dirty"] - 0.5).abs() < 1e-12);
     }
 
     #[test]

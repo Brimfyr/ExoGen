@@ -51,8 +51,10 @@ pub fn mean_surface_temperature(insolation: f64, bond_albedo: f64, cos_lat: f64)
         .max(ICE_POLAR_TEMPERATURE_FLOOR_K)
 }
 
-/// The non-ice share of the regolith mix, which is what the lag is made of.
+/// The non-ice share of the regolith mix, its lag with the rest: how much frost a
+/// gardened regolith hides.
 pub fn regolith_impurity(graph: &ParamGraph) -> f64 {
+    let library = crate::stages::materials::Library::from_graph(graph);
     match graph.get("materials.regolith_mix").as_map() {
         Some(mix) if !mix.is_empty() => {
             let total: f64 = mix.values().sum();
@@ -60,12 +62,81 @@ pub fn regolith_impurity(graph: &ParamGraph) -> f64 {
                 return 1.0;
             }
             mix.iter()
-                .map(|(id, share)| share * crate::stages::materials::non_ice_fraction(id))
+                .map(|(id, share)| share * library.non_ice(id))
                 .sum::<f64>()
                 / total
         }
-        _ => crate::stages::materials::non_ice_fraction(graph.str("materials.bedrock")),
+        _ => library.non_ice(graph.str("materials.bedrock")),
     }
+}
+
+/// The non-ice share of the crust the ice sublimes from, which is what its lag is made of
+/// (F126): the bedrock's, a body's dirty ice its crust's rock.
+pub fn crust_impurity(graph: &ParamGraph) -> f64 {
+    crate::stages::materials::Library::from_graph(graph).non_ice(graph.str("materials.bedrock"))
+}
+
+/// F126: the lag's thickness, in units of its opaque mass, after `exposure_gyr` at each of
+/// `bands` bands of equal area over a hemisphere, by the sine of the latitude: each at the
+/// temperature its own reflectance gives it, settled from the fresh crust, so that a dark
+/// lag warms its latitude and grows faster while a cold latitude keeps its ice (Spencer
+/// 1987's thermal segregation). `albedos` are the crust's fresh and irradiated reflectances
+/// and the lag's.
+fn lag_by_latitude(
+    insolation: f64,
+    impurity: f64,
+    exposure_gyr: f64,
+    albedos: (f64, f64, f64),
+    bands: usize,
+) -> Vec<f64> {
+    let (fresh, irradiated, lag_albedo) = albedos;
+    let gardened = 1.0 - (-exposure_gyr.max(0.0) / ICE_EJECTA_FADE_GYR).exp();
+    let crust = fresh + (irradiated - fresh) * gardened;
+    (0..bands)
+        .map(|i| {
+            let sin_lat = (i as f64 + 0.5) / bands as f64;
+            let cos_lat = (1.0 - sin_lat * sin_lat).sqrt();
+            let mut thickness = 0.0f64;
+            for _ in 0..8 {
+                let lag = 1.0 - (-thickness).exp();
+                let albedo = crust + (lag_albedo - crust) * lag;
+                let t = mean_surface_temperature(insolation, albedo, cos_lat);
+                thickness = lag_at(t, impurity, exposure_gyr).0;
+            }
+            thickness
+        })
+        .collect()
+}
+
+/// F126: the share of an old icy surface its lag covers, over the sphere (`lag_by_latitude`).
+pub fn lag_cover(
+    insolation: f64,
+    impurity: f64,
+    exposure_gyr: f64,
+    albedos: (f64, f64, f64),
+) -> f64 {
+    let bands = lag_by_latitude(insolation, impurity, exposure_gyr, albedos, 45);
+    bands.iter().map(|t| 1.0 - (-t).exp()).sum::<f64>() / bands.len() as f64
+}
+
+/// F126: the share of the surface layer, `layer` m thick, that the lag has taken over the
+/// sphere (`lag_by_latitude`): a warm crust loses its ice to a depth that grows as the
+/// square root of its age, and where that is deeper than the layer craters and slopes
+/// expose, what they bring up is lag.
+pub fn lag_depth_share(
+    insolation: f64,
+    impurity: f64,
+    exposure_gyr: f64,
+    albedos: (f64, f64, f64),
+    layer: f64,
+) -> f64 {
+    let bands = lag_by_latitude(insolation, impurity, exposure_gyr, albedos, 45);
+    let depth = |t: f64| t * LAG_OPAQUE_KG_M2 / LAG_BULK_DENSITY;
+    bands
+        .iter()
+        .map(|&t| (depth(t) / layer.max(1.0)).min(1.0))
+        .sum::<f64>()
+        / bands.len() as f64
 }
 
 /// Maturity of a cell of icy surface at an exposure: the lag its sublimation left,
@@ -101,7 +172,7 @@ pub fn maturity_timescale(graph: &ParamGraph) -> f64 {
         graph.f64("atmosphere.bond_albedo"),
         std::f64::consts::FRAC_PI_4,
     );
-    let impurity = regolith_impurity(graph);
+    let impurity = crust_impurity(graph);
     let target = 1.0 - (-1.0f64).exp();
     let (mut lo, mut hi) = (0.0, graph.f64("body.age").max(1e-3));
     if lag_maturity_at(t, impurity, hi) < target {
@@ -253,9 +324,8 @@ pub fn lag_fields(
 ) -> (Field<f32>, Field<f32>) {
     let grid = layers.grid;
     let insolation = graph.f64("orbit.insolation");
-    let body_albedo = graph.f64("atmosphere.bond_albedo");
     let albedos = crate::stages::materials::surface_albedos(graph);
-    let impurity = regolith_impurity(graph);
+    let impurity = crust_impurity(graph);
     let clean = crate::stages::materials::non_ice_fraction("water_ice");
     let clean_f = layers.clean.as_slice();
     // A plume's fallout buries the lag as fast as it falls.
@@ -277,15 +347,14 @@ pub fn lag_fields(
             // The surface sits at its own temperature, not the body's mean: a fresh bright
             // surface is cold and its lag grows slowly, a dark lag is warm and grows
             // faster, which is the thermal segregation that keeps Callisto's young craters
-            // bright for an age. The body's Bond albedo scales with the cell's reflectance
-            // against the mature surface's; the fresh state is the starting point and the
+            // bright for an age. The cell's reflectance is its Bond albedo, as the body's
+            // is its surface's (F126); the fresh state is the starting point and the
             // iteration settles on the state a fresh surface reaches.
             let a_fresh = albedos.fresh + (albedos.clean_fresh - albedos.fresh) * share;
             let a_mature = albedos.mature + (albedos.clean_mature - albedos.mature) * share;
-            let (mut m, mut thickness, mut bond) = (0.0, 0.0, body_albedo);
+            let (mut m, mut thickness, mut bond) = (0.0, 0.0, a_fresh);
             for _ in 0..6 {
-                let a_local = a_fresh + (a_mature - a_fresh) * m;
-                bond = (body_albedo * a_local / a_mature.max(1e-3)).clamp(0.0, 0.95);
+                bond = (a_fresh + (a_mature - a_fresh) * m).clamp(0.0, 0.95);
                 let t = mean_surface_temperature(insolation, bond, cos_lat);
                 (thickness, m) = lag_at(t, impurity, exposure);
             }
@@ -530,5 +599,27 @@ mod tests {
         let lat = |deg: f64| [deg.to_radians().cos(), 0.0, deg.to_radians().sin()];
         assert!(frost.at(lat(0.0)) < 0.05 && frost.at(lat(70.0)) > 0.3);
         assert!(frost.at(lat(70.0)) > frost.at(lat(45.0)));
+    }
+
+    #[test]
+    fn a_warm_old_dirty_crust_grows_a_lag_and_a_cold_or_clean_one_keeps_its_ice() {
+        // F126: Callisto's crust, a quarter rock, grows a lag over its warm latitudes in its
+        // age and keeps its ice at the cold ones; clean ice at the same sunlight stays
+        // bright; at Saturn's distance nothing sublimes; at Ceres's the lag covers all
+        // but the poles.
+        let dirty = (0.42, 0.37, 0.085);
+        let callisto = lag_cover(50.25, 0.26, 4.5, dirty);
+        assert!(callisto > 0.4 && callisto < 0.8, "Callisto {callisto}");
+        assert!(lag_cover(50.25, 0.02, 4.5, (0.83, 0.66, 0.085)) < 0.01);
+        assert!(lag_cover(14.8, 0.26, 4.5, dirty) < 0.01);
+        let ceres = lag_cover(177.7, 0.38, 4.5, (0.34, 0.30, 0.085));
+        assert!(ceres > 0.9, "Ceres {ceres}");
+        // A young surface has had no time to grow one.
+        assert!(lag_cover(50.25, 0.26, 0.01, dirty) < callisto / 2.0);
+        // Ceres's crust loses its ice deeper than the half-kilometre layer its craters
+        // expose, over most of the body; Callisto's to tens of metres.
+        let deep = |s: f64, f: f64, a| lag_depth_share(s, f, 4.5, a, 500.0);
+        assert!(deep(177.7, 0.38, (0.34, 0.30, 0.085)) > 0.8);
+        assert!(deep(50.25, 0.26, dirty) < 0.1);
     }
 }

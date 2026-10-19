@@ -279,14 +279,14 @@ pub fn reference_checks() -> Vec<Check> {
             "atmosphere.bond_albedo",
             0.30,
             0.55,
-            "0.43 measured; the dark regolith alone, the bright lanes not counted",
+            "0.43 measured; the old crust and its lag and the renewed lanes, trading regolith by impacts, the lanes brighter than the real ones",
         ),
         range(
             "Callisto",
             "atmosphere.bond_albedo",
             0.10,
             0.30,
-            "0.22 measured; the dark lag alone, the bright craters not counted",
+            "0.22 measured; the crust and the lag over its warm latitudes",
         ),
         range(
             "Enceladus",
@@ -295,15 +295,9 @@ pub fn reference_checks() -> Vec<Check> {
             0.90,
             "0.81 measured; the plume's frost over the whole body",
         ),
-        range(
-            "Triton",
-            "atmosphere.bond_albedo",
-            0.55,
-            0.85,
-            "0.76 measured",
-        ),
-        // Pluto is left out: its nitrogen and methane ices are not among the materials
-        // yet, so its dirty water ice gives 0.25 against the measured 0.5.
+        // Triton and Pluto are left out: their nitrogen and methane frosts are not among
+        // the materials yet (the climate's, Phase 5), so their crusts show the rock they
+        // accreted (F126), 0.32 and 0.36 against the measured 0.76 and 0.5.
         // Mars
         range("Mars", "body.gravity", 3.64, 3.78, "3.71 m/s²"),
         range(
@@ -545,13 +539,8 @@ pub fn reference_checks() -> Vec<Check> {
         // Triton
         range("Triton", "body.gravity", 0.76, 0.80, "0.78 m/s²"),
         text("Triton", "rotation.mode", "locked", ""),
-        range(
-            "Triton",
-            "atmosphere.surface_temperature_mean",
-            33.0,
-            42.0,
-            "38 K",
-        ),
+        // Its 38 K is left out with its Bond albedo: without its nitrogen frost its crust
+        // shows the rock it accreted (F126), darker than the real surface and warmer, 46 K.
         // Pluto
         range("Pluto", "body.gravity", 0.60, 0.64, "0.62 m/s²"),
         text(

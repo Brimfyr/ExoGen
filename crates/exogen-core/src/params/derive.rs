@@ -707,6 +707,19 @@ pub fn body_rock_mass_fraction(c: &Ctx) -> Value {
         .into()
 }
 
+/// F126: the share of an icy crust's volume that is not ice, as it accreted: the body's
+/// rock and metal against its ice. With grains of one size it is the share of their
+/// cross-sections, which an intimate mixture's reflectance weighs (Hapke 1981).
+pub fn body_crust_impurity(c: &Ctx) -> Value {
+    let rock = c.f64("body.core_mass_fraction") / DENSITY_IRON
+        + c.f64("body.rock_mass_fraction") / DENSITY_ROCK;
+    let ice = c.f64("body.ice_mass_fraction") / DENSITY_ICE;
+    if rock + ice <= 0.0 {
+        return 1.0.into();
+    }
+    (rock / (rock + ice)).into()
+}
+
 pub fn body_composition_class(c: &Ctx) -> Value {
     composition_class(
         c.f64("body.core_mass_fraction"),
@@ -1579,15 +1592,31 @@ pub fn atmosphere_bond_albedo(c: &Ctx) -> Value {
         }
         .into();
     }
-    // An airless surface is gardened, its basalt with the mantle's iron (F125).
-    let library = crate::stages::materials::Library {
+    // An airless surface is gardened, its basalt with the mantle's iron (F125) and its dirty
+    // ice with its crust's rock (F126).
+    use crate::stages::materials::{Library, end_member, is_ice, mixture_luminance};
+    let library = Library {
         feo: c.f64("body.mantle_feo"),
         gardened: true,
+        impurity: c.f64("body.crust_impurity"),
+        lag_depth: 0.0,
     };
-    let (fresh, mature) =
-        crate::stages::materials::mixture_luminance(&library, c.map("materials.regolith_mix"));
+    let mature = mixture_luminance(&library, c.map("materials.regolith_mix")).1;
+    let ice = end_member("water_ice").unwrap();
+    let lum = |x: [f32; 3]| (x[0] + x[1] + x[2]) as f64 / 3.0;
+    // F126: on an icy crust, the share its shell renewed in lanes or at a pole is clean ice,
+    // with what impacts have brought it of the old crust's regolith.
+    let mature = if is_ice(c.str("materials.bedrock")) {
+        let renewed = c.f64("tectonics.ice_resurfaced_fraction").clamp(0.0, 1.0);
+        let lanes =
+            lum(ice.mature) + (mature - lum(ice.mature)) * REGOLITH_EXCHANGE * (1.0 - renewed);
+        mature + (lanes - mature) * renewed
+    } else {
+        mature
+    };
+    // A plume's fallout is fresh frost.
     let frosted = crate::stages::cryo::mean_frost_share(c.f64("volcanism.plume_fallout_rate"));
-    (mature + (fresh - mature) * frosted).into()
+    (mature + (lum(ice.fresh) - mature) * frosted).into()
 }
 
 pub fn atmosphere_equilibrium_temperature(c: &Ctx) -> Value {
@@ -2180,6 +2209,16 @@ pub fn cratering_min_diameter(c: &Ctx) -> Value {
         .into()
 }
 
+/// Whether an ice shell renews its whole surface: a thin shell over an ocean, kept warm by
+/// the tides, renews itself everywhere; a thick one keeps its craters and renews only where
+/// it is thin.
+fn shell_renews_everywhere(c: &Ctx) -> bool {
+    c.str("interior.tectonic_regime") == "ice_shell_ocean"
+        && c.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX
+        && c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0)
+            < WHOLESALE_SHELL_RATIO
+}
+
 pub fn cratering_retention_age(c: &Ctx) -> Value {
     let age = c.f64("body.age");
     let regime = c.str("interior.tectonic_regime");
@@ -2189,12 +2228,7 @@ pub fn cratering_retention_age(c: &Ctx) -> Value {
         // The surface the lid's last overturn laid (F121).
         "episodic_lid" => c.f64("tectonics.resurfacing_event_age"),
         "ice_shell_ocean" => {
-            // A thin shell kept warm renews itself everywhere; a thick one keeps its
-            // craters and renews only where it is thin.
-            let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
-            if c.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX
-                && ratio < WHOLESALE_SHELL_RATIO
-            {
+            if shell_renews_everywhere(c) {
                 RETENTION_ICE_OCEAN_GYR
             } else {
                 age
@@ -2236,7 +2270,6 @@ pub fn surface_space_weathering_timescale(c: &Ctx) -> Value {
 pub fn materials_bedrock(c: &Ctx) -> Value {
     let class = c.str("body.composition_class");
     let regime = c.str("interior.tectonic_regime");
-    let airless = c.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE;
     // F125: a tidally heated body's plumes coat it with sulfur; plates recycle a crust with
     // water into a felsic one; otherwise what the magma ocean floated, or the basalt of the
     // body's own volcanism.
@@ -2257,14 +2290,15 @@ pub fn materials_bedrock(c: &Ctx) -> Value {
                 }
             }
         }
-        "rock_ice" => {
-            if regime == "ice_shell_ocean" && airless {
+        // F126: an icy crust is the rock and ice the body accreted, unless its shell renews
+        // itself everywhere and shows the ocean's clean ice.
+        _ => {
+            if shell_renews_everywhere(c) {
                 "water_ice"
             } else {
                 "water_ice_dirty"
             }
         }
-        _ => "water_ice",
     };
     bedrock.into()
 }
@@ -2289,16 +2323,67 @@ pub fn materials_regolith_mix(c: &Ctx) -> Value {
             return Value::Map(m);
         }
     }
-    m.insert(c.str("materials.bedrock").to_string(), 1.0);
+    // F126: an airless icy crust's regolith carries the lag its warm latitudes leave, its
+    // rock, which impact ejecta spread over the old crust: the crust and the lag by the
+    // share of the surface whose ice sublimes into a lag over the surface's age. Impacts
+    // also trade regolith between the old crust and the ice its shell renewed, the old
+    // crust taking REGOLITH_EXCHANGE of the renewed ice by its share of the body.
+    let bedrock = c.str("materials.bedrock");
+    if crate::stages::materials::is_ice(bedrock)
+        && c.f64("atmosphere.surface_pressure") < AIRLESS_PRESSURE
+    {
+        use crate::stages::materials::{LAG_MATERIAL, Library};
+        let library = Library {
+            feo: c.f64("body.mantle_feo"),
+            gardened: true,
+            impurity: c.f64("body.crust_impurity"),
+            lag_depth: 0.0,
+        };
+        if let (Some(crust), Some(lag)) = (library.member(bedrock), library.member(LAG_MATERIAL)) {
+            let lum = |x: [f32; 3]| (x[0] + x[1] + x[2]) as f64 / 3.0;
+            let cover = crate::stages::ice::lag_cover(
+                c.f64("orbit.insolation"),
+                library.non_ice(bedrock),
+                c.f64("cratering.retention_age"),
+                (lum(crust.fresh), lum(crust.mature), lum(lag.mature)),
+            );
+            let renewed = REGOLITH_EXCHANGE * c.f64("tectonics.ice_resurfaced_fraction");
+            let cover = if cover > 1e-4 { cover } else { 0.0 };
+            let renewed = if renewed > 1e-4 {
+                renewed.min(1.0)
+            } else {
+                0.0
+            };
+            if cover > 0.0 || renewed > 0.0 {
+                for (id, share) in [
+                    (bedrock, (1.0 - cover) * (1.0 - renewed)),
+                    (LAG_MATERIAL, cover * (1.0 - renewed)),
+                    ("water_ice", renewed),
+                ] {
+                    if share > 1e-6 {
+                        *m.entry(id.to_string()).or_insert(0.0) += share;
+                    }
+                }
+                return Value::Map(m);
+            }
+        }
+    }
+    m.insert(bedrock.to_string(), 1.0);
     Value::Map(m)
 }
 
 pub fn materials_lava(c: &Ctx) -> Value {
-    // F125: a rocky body's lavas are its basalt, the iron of its mantle in them.
+    // F125: a rocky body's lavas are its basalt, the iron of its mantle in them. F126:
+    // cryolava freezes to the ice of its liquid, the rock having settled out of it.
     let lava = match c.str("body.composition_class") {
         "rock" | "iron_rich" => "basalt",
-        "rock_ice" => "water_ice_dirty",
-        _ => "water_ice",
+        _ => {
+            if c.str("volatiles.working_liquid") == "ammonia_water" {
+                "ammonia_water_ice"
+            } else {
+                "water_ice"
+            }
+        }
     };
     lava.into()
 }
@@ -2331,6 +2416,34 @@ pub fn materials_deep_bedrock(c: &Ctx) -> Value {
         _ => c.str("materials.bedrock"),
     };
     deep.into()
+}
+
+/// F126: the share of the surface layer an airless icy crust's lag has taken over its age
+/// (`ice::lag_depth_share`): where it is deep, fresh craters and slopes bring up lag.
+pub fn materials_lag_depth_share(c: &Ctx) -> Value {
+    use crate::stages::materials::{LAG_MATERIAL, Library, is_ice};
+    let bedrock = c.str("materials.bedrock");
+    if !is_ice(bedrock) || c.f64("atmosphere.surface_pressure") >= AIRLESS_PRESSURE {
+        return 0.0.into();
+    }
+    let library = Library {
+        feo: 0.0,
+        gardened: true,
+        impurity: c.f64("body.crust_impurity"),
+        lag_depth: 0.0,
+    };
+    let (Some(crust), Some(lag)) = (library.member(bedrock), library.member(LAG_MATERIAL)) else {
+        return 0.0.into();
+    };
+    let lum = |x: [f32; 3]| (x[0] + x[1] + x[2]) as f64 / 3.0;
+    crate::stages::ice::lag_depth_share(
+        c.f64("orbit.insolation"),
+        library.non_ice(bedrock),
+        c.f64("cratering.retention_age"),
+        (lum(crust.fresh), lum(crust.mature), lum(lag.mature)),
+        c.f64("materials.deep_bedrock_depth"),
+    )
+    .into()
 }
 
 pub fn materials_deep_bedrock_depth(c: &Ctx) -> Value {
