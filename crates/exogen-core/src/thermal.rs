@@ -36,6 +36,8 @@ pub struct ThermalInputs {
     /// shell's share of the present tidal flux is then recomputed, not scaled.
     pub shell: Option<crate::stages::tidal::ShellTides>,
     pub core_tidal_flux_now: f64,
+    /// A rocky mantle whose lid breaks keeps its own heat's history (F121).
+    pub mantle: Option<crate::mantle::MantleHistory>,
     pub icy: bool,
     pub surface_temperature: f64,
     pub melting_point: f64,
@@ -160,6 +162,9 @@ impl ThermalInputs {
             uncompressed_density: graph.f64("body.uncompressed_density"),
             rock_mass: graph.f64("body.mass") * graph.f64("body.rock_mass_fraction"),
             secular_fraction: graph.f64("interior.secular_cooling_fraction"),
+            mantle: (regime == "episodic_lid").then(|| {
+                crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph))
+            }),
             tidal_flux_now: graph.f64("interior.tidal_flux"),
             eccentricity_now: graph.f64("orbit.eccentricity"),
             eccentricity_history: graph
@@ -197,6 +202,13 @@ impl ThermalHistory {
             ((inp.age_gyr / finest).ceil() as usize).clamp(THERMAL_SAMPLES, THERMAL_SAMPLES_MAX)
         } else {
             THERMAL_SAMPLES
+        };
+        // A lid that breaks surges with heat after each overturn, over tens of millions of
+        // years (F121).
+        let n = if inp.mantle.is_some() {
+            THERMAL_SAMPLES_MAX
+        } else {
+            n
         };
         let mut samples: Vec<ThermalState> = (0..=n)
             .map(|k| {
@@ -282,7 +294,11 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         }
         None => inp.tidal_flux_now * scale,
     };
-    let heat_flux = radiogenic + tidal;
+    // A rocky mantle whose lid breaks loses its heat as its history gives it (F121).
+    let heat_flux = match &inp.mantle {
+        Some(m) => m.heat_flux_at(t),
+        None => radiogenic + tidal,
+    };
     let mantle_temperature = if inp.icy {
         inp.melting_point
     } else {

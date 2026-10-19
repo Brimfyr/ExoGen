@@ -1102,10 +1102,68 @@ pub fn interior_secular_cooling_fraction(c: &Ctx) -> Value {
     secular_fraction(c.f64("body.radius")).into()
 }
 
+/// The heat flux of a mantle in equilibrium with its heat: radiogenic plus secular plus
+/// tidal.
+fn equilibrium_heat_flux(c: &Ctx) -> f64 {
+    c.f64("interior.radiogenic_flux") * (1.0 + c.f64("interior.secular_cooling_fraction"))
+        + c.f64("interior.tidal_flux")
+}
+
+/// The mantle's inputs from the graph context (F121).
+fn mantle_inputs(c: &Ctx) -> crate::mantle::MantleInputs {
+    crate::mantle::MantleInputs {
+        age_gyr: c.f64("body.age"),
+        radius: c.f64("body.radius"),
+        gravity: c.f64("body.gravity"),
+        mass: c.f64("body.mass"),
+        rock_fraction: c.f64("body.rock_mass_fraction"),
+        core_fraction: c.f64("body.core_mass_fraction"),
+        surface_temperature: c.f64("atmosphere.surface_temperature_mean"),
+        tidal_flux_now: c.f64("interior.tidal_flux"),
+        eccentricity_now: c.f64("orbit.eccentricity"),
+        eccentricity_history: c.curve("orbit.eccentricity_history").clone(),
+    }
+}
+
+/// The history of a rocky mantle whose lid may break (F121).
+pub fn mantle_history(c: &Ctx) -> crate::mantle::MantleHistory {
+    crate::mantle::evolve(&mantle_inputs(c))
+}
+
+/// Whether the plates' rule makes a mobile lid: surface water, enough heat, a large body.
+fn plates(c: &Ctx) -> bool {
+    c.str("volatiles.working_liquid") == "water"
+        && equilibrium_heat_flux(c) >= MOBILE_LID_MIN_FLUX
+        && c.f64("body.radius") >= MOBILE_LID_MIN_RADIUS
+}
+
+/// Whether a dry rocky lid has broken lately (F121): a rocky body with no plates, not
+/// heated past the Io regime, whose mantle broke its lid within EPISODIC_RECENT_SHARE of
+/// its life before the present.
+fn lid_breaks_lately(c: &Ctx) -> bool {
+    if is_icy(c.str("body.composition_class"))
+        || plates(c)
+        || c.f64("interior.tidal_flux") > IO_REGIME_TIDAL_FLUX
+    {
+        return false;
+    }
+    let age = c.f64("body.age");
+    mantle_history(c)
+        .last_overturn()
+        .is_some_and(|t| t > age * (1.0 - EPISODIC_RECENT_SHARE))
+}
+
 pub fn interior_surface_heat_flux(c: &Ctx) -> Value {
-    (c.f64("interior.radiogenic_flux") * (1.0 + c.f64("interior.secular_cooling_fraction"))
-        + c.f64("interior.tidal_flux"))
-    .into()
+    // A lid that breaks: the flux the mantle's history gives now (F121).
+    if lid_breaks_lately(c) {
+        return mantle_history(c)
+            .heat_flux
+            .last()
+            .copied()
+            .unwrap_or_else(|| equilibrium_heat_flux(c))
+            .into();
+    }
+    equilibrium_heat_flux(c).into()
 }
 
 /// The thermal evolution's inputs from the graph context, mirroring
@@ -1119,6 +1177,7 @@ fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
         uncompressed_density: c.f64("body.uncompressed_density"),
         rock_mass: c.f64("body.mass") * c.f64("body.rock_mass_fraction"),
         secular_fraction: c.f64("interior.secular_cooling_fraction"),
+        mantle: (regime == "episodic_lid").then(|| mantle_history(c)),
         tidal_flux_now: c.f64("interior.tidal_flux"),
         eccentricity_now: c.f64("orbit.eccentricity"),
         eccentricity_history: c.curve("orbit.eccentricity_history").clone(),
@@ -1363,21 +1422,16 @@ pub fn interior_has_subsurface_ocean(c: &Ctx) -> Value {
 }
 
 pub fn interior_tectonic_regime(c: &Ctx) -> Value {
-    let class = c.str("body.composition_class");
-    let q = c.f64("interior.surface_heat_flux");
-    let r = c.f64("body.radius");
-    let regime = if is_icy(class) {
+    let regime = if is_icy(c.str("body.composition_class")) {
         if c.bool("interior.has_subsurface_ocean") {
             "ice_shell_ocean"
         } else {
             "ice_shell_rock"
         }
-    } else if c.str("volatiles.working_liquid") == "water"
-        && q >= MOBILE_LID_MIN_FLUX
-        && r >= MOBILE_LID_MIN_RADIUS
-    {
+    } else if plates(c) {
         "mobile_lid"
-    } else if q >= EPISODIC_LID_MIN_FLUX && r >= EPISODIC_LID_MIN_RADIUS {
+    } else if lid_breaks_lately(c) {
+        // A dry rocky lid that its mantle has broken lately (F121).
         "episodic_lid"
     } else {
         "stagnant_lid"
@@ -1913,7 +1967,12 @@ pub fn tectonics_resurfacing_event_age(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "episodic_lid" {
         return 0.0.into();
     }
-    c.f64("cratering.retention_age").into()
+    // When the mantle last broke the lid (F121).
+    let age = c.f64("body.age");
+    mantle_history(c)
+        .last_overturn()
+        .map_or(0.0, |t| (age - t).max(0.0))
+        .into()
 }
 
 pub fn tectonics_tessera_fraction(c: &Ctx) -> Value {
@@ -1946,7 +2005,8 @@ pub fn tectonics_plume_count(c: &Ctx) -> Value {
     {
         return 0.0.into();
     }
-    (c.f64("interior.surface_heat_flux") / PLUME_FLUX_PER_PLUME)
+    let r = c.f64("body.radius");
+    (c.f64("interior.surface_heat_flux") * 4.0 * PI * r * r / PLUME_POWER_PER_PLUME)
         .floor()
         .clamp(0.0, 3.0)
         .into()
@@ -2027,7 +2087,8 @@ pub fn cratering_retention_age(c: &Ctx) -> Value {
     let p = c.f64("atmosphere.surface_pressure");
     let mut retention = match regime {
         "mobile_lid" => RETENTION_MOBILE_LID_GYR,
-        "episodic_lid" => RETENTION_EPISODIC_GYR,
+        // The surface the lid's last overturn laid (F121).
+        "episodic_lid" => c.f64("tectonics.resurfacing_event_age"),
         "ice_shell_ocean" => {
             // A thin shell kept warm renews itself everywhere; a thick one keeps its
             // craters and renews only where it is thin.

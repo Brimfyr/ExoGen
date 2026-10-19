@@ -1196,3 +1196,29 @@ Still to do:
 - **The shields' size from the magma they take**, rather than their own rule.
 
 Tests 191 (eight ignored, one of them a new diagnostic printing each rock body's melt per unit area). One is new: Mars's rise keeps Tharsis's window, Venus's rises grow between its overturn and the present, its shields start after it and grow at least twice as fast as Mars's, and the melt clock runs both ways. Clippy is clean and validate passes its 117 checks.
+
+## The fifty-second milestone: a mantle that stores its heat, and a lid that breaks
+
+Asked for by the user after the fifty-first: cyclical resurfacing for a planet like Venus, and how the model decides whether a planet goes on building up heat or dies like Mars. The model's mantle had no heat of its own, its heat flux its radioactive heat times a factor by its size, so every body cooled steadily, and its regime was named by cuts on its present heat flux and radius.
+
+- **F121, a rocky mantle stores its heat under a lid that can break.** Its temperature follows its heat less what it convects into its lid by the stagnant-lid scaling, the lid growing as it cools and giving up its own heat at the surface. The lid breaks when the convecting sublayer's stress along a cell as deep as the mantle exceeds its friction over its thickness: it founders into the mantle, which takes up its cold, and a new lid grows back as a cooling half space until it can break again. A dry rocky lid broken within the last half of its body's life is episodic, its surface as old as its last overturn.
+
+How it went:
+
+- **The mantle first, in a prototype.** Calibrating in Python across Mercury, Venus, the Moon and Mars showed the stagnant bodies' present heat flows hardly move with the viscosity, the mantle settling where it loses what it makes and a little more, and that the lid's own cooling as it thickens matters on the small bodies: the Moon's lid is most of its rock.
+- **The break.** The lid's friction against the sublayer's stress over the mantle's depth gives a heat flux the lid breaks above, lower for a deeper mantle and a hotter surface: Venus's mantle reaches it as it heats under its lid; Mars's, the Moon's and Mercury's never come near it. One effective friction, 0.010, far below the laboratory's as Moresi and Solomatov (1998) found a mobilizing lid needs, sets Venus's last overturn at 0.61 Ga, within its craters' half gigayear.
+- **The step.** The overturns' count first hung on the step, 17 to 22 as it shrank: a young lid's half-space flux sampled once a step at a kilometre's floor lost five times the heat it should. Averaged exactly over each step, 21 overturns and the last at 3.91 Gyr for any step from 2,000 to 40,000 over the body's life.
+- **Venus's plumes.** Its heat flow, 27 mW/m² where the equilibrium gave 69, would have cut its rises from three to one, the count being one per 20 mW/m². A plume carries a share of the mantle's heat, so the count now follows the heat it loses in all: one per 4 TW, Mars keeping its one, Venus its three.
+- **The stagnant bodies stay as they were.** Run on them, the stored heat gives Mars some 40 mW/m² early where the equilibrium gives 140, which would move everything built on its history at once, and the Moon only 10 mW/m², its rock 62 percent of its mass in the composition model beside a 30 percent core and 8 percent ice. They keep the equilibrium history, the mantle deciding only that their lids never break.
+
+What the maps show:
+
+- **Venus:** its last overturn 0.61 Ga; its rises, started 51 Myr after it on the surge of heat that followed, nine tenths grown, the largest shield on each begun 0.21 Ga and a third built, the smaller ones still to come within 0.15 Gyr; its tessera the surface of the overturn before, 1.29 Ga.
+- **Every other body:** unchanged, Mars and the Moon to the pixel.
+
+Still to do:
+
+- **The stagnant bodies on the stored heat**, once the composition model gives the Moon its rock (audit S2).
+- **The plates and Io** from the mantle too, and the melt efficiency from its temperature rather than the regime's name.
+
+Tests 192 (nine ignored, one of them a new diagnostic printing a preset's rises and shields). One is new: Venus's lid breaks again and again, last within the half gigayear its craters record, and Mars's, the Moon's and Mercury's never, their heat flows as measured; the melt clock's test now asks of Venus that its rises and their largest shields start between its overturn and the present. Clippy is clean and validate passes its 117 checks.

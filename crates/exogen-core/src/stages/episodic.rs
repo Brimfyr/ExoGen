@@ -29,7 +29,7 @@ use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::{LavaSmear, regional_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -223,6 +223,8 @@ pub struct EpisodicProcess {
     grid: CubeSphere,
     body_radius: f64,
     event_time: f64,
+    /// The surface age the tessera keep, Gyr since formation (F121).
+    tessera_age: f64,
     tessera_fraction: f64,
     done: bool,
     pub resurfacing: Option<Resurfacing>,
@@ -241,6 +243,15 @@ impl EpisodicProcess {
         let body_radius = graph.f64("body.radius");
         let age = graph.f64("body.age");
         let event_time = (age - graph.f64("tectonics.resurfacing_event_age")).max(0.0);
+        // The tessera keep the surface the overturn before the event laid (F121), or one
+        // TESSERA_AGE_LEAD_GYR older than the event where the mantle gives none before it.
+        let tessera_age = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph))
+            .overturns
+            .iter()
+            .rev()
+            .find(|&&t| t < event_time - 1e-6)
+            .copied()
+            .unwrap_or((event_time - TESSERA_AGE_LEAD_GYR).max(0.0));
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xE915_0D1C);
         let n_coronae = graph.f64("volcanism.corona_count").round() as u64;
         let mut coronae = Vec::new();
@@ -312,6 +323,7 @@ impl EpisodicProcess {
             grid,
             body_radius,
             event_time,
+            tessera_age,
             tessera_fraction: graph.f64("tectonics.tessera_fraction"),
             done: false,
             resurfacing: None,
@@ -352,7 +364,7 @@ impl EpisodicProcess {
             let filled = fill_depressions(&grid, &heights);
             let n = grid.cell_count();
             let mut fill = vec![0.0f32; n];
-            let tessera_age = (self.event_time - TESSERA_AGE_LEAD_GYR).max(0.0) as f32;
+            let tessera_age = self.tessera_age as f32;
             {
                 let bedrock = layers.bedrock.as_mut_slice();
                 let ages = layers.surface_age.as_mut_slice();

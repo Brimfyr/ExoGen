@@ -362,7 +362,10 @@ pub const RIDGE_DELAY_GYR: f64 = 0.2;
 pub const PLUME_VENT_BOOST: f64 = 20.0;
 pub const RIDGE_LOAD_WEIGHT: f64 = 0.5;
 /// Plume loading (PLAN.md 4.3). A stagnant lid at least this big raises one plume per
-/// this much surface heat flux, up to three (Mars: one, Tharsis); the rise spans this
+/// this much of the heat its mantle loses, W, up to three: a plume carries a share of the
+/// mantle's heat, so their number grows with what it loses in all rather than per square
+/// metre (F121; a stated choice keeping Mars's one, Tharsis, and Venus's three, which Venus
+/// had kept only by a heat flux of an equilibrium mantle twice its own); the rise spans this
 /// fraction of the radius and stands this fraction of the strength-limited relief
 /// (Tharsis: 5,000 km across, 7 km high). It grows as its plume's mantle melts beneath its
 /// lid (F120): its head rises once the mantle has made this much melt per unit area since
@@ -370,7 +373,7 @@ pub const RIDGE_LOAD_WEIGHT: f64 = 0.5;
 /// Tharsis grew from 4.2 to 3.0 Ga as the times the rise kept before did, 0.3 and 1.5 Gyr
 /// after Mars formed).
 pub const PLUME_MIN_RADIUS: f64 = 3.0e6;
-pub const PLUME_FLUX_PER_PLUME: f64 = 0.02;
+pub const PLUME_POWER_PER_PLUME: f64 = 4.0e12;
 pub const PLUME_RISE_DIAMETER_FRACTION: f64 = 1.5;
 /// A thin, hot episodic lid supports narrower rises (Beta Regio: 2,500 km on Venus).
 pub const PLUME_RISE_DIAMETER_FRACTION_EPISODIC: f64 = 0.4;
@@ -665,7 +668,8 @@ pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// The episodic lid (PLAN.md 4.3, Venus). The event fills every depression this far
 /// towards its spill point and lays this veneer everywhere else on the plains, m; the
 /// tessera are the highest-standing fraction of the surface by a height smoothed this
-/// many passes, keep a surface this much older than the event, Gyr, and carry a fabric
+/// many passes, keep the surface the overturn before the event laid (F121), or one this much
+/// older than the event where there was none, Gyr, and carry a fabric
 /// of this relief, m, at this wavelength, m. After the event, eruptions carry this share
 /// of the extrusive budget, the rest having gone into the event.
 pub const TESSERA_FRACTION: f64 = 0.08;
@@ -1053,11 +1057,36 @@ pub const MAGMA_HEAT_PER_M3_ICE: f64 = 920.0 * (3.34e5 + 2_100.0 * 100.0);
 /// Melting point of water ice and the ammonia–water eutectic, K.
 pub const T_MELT_WATER: f64 = 273.15;
 pub const T_EUTECTIC_AMMONIA_WATER: f64 = 176.0;
-/// Regime thresholds (F19). Provisional, Phase 3.
+/// Regime thresholds (F19). Provisional, Phase 3. A mobile lid needs surface water, this
+/// heat flux and this radius; whether a dry rocky lid breaks is the mantle's (F121).
 pub const MOBILE_LID_MIN_FLUX: f64 = 0.05;
 pub const MOBILE_LID_MIN_RADIUS: f64 = 4.0e6;
-pub const EPISODIC_LID_MIN_FLUX: f64 = 0.04;
-pub const EPISODIC_LID_MIN_RADIUS: f64 = 5.0e6;
+/// A rocky mantle that stores its heat under a lid that can break (F121, stages in
+/// mantle.rs). Its temperature as it starts, after accretion and the magma ocean's
+/// solidifying, K (a stated choice, where parameterized histories start their upper
+/// mantles); its viscosity at a reference temperature, Pa s (a stated choice within the
+/// upper mantle's 1e19 to 1e21), Arrhenian with dry olivine's activation energy in
+/// diffusion creep, J/mol (Karato and Wu 1993); the stagnant lid's flux prefactor (a stated
+/// choice within the 0.37 to 0.65 of published fits of the form, Solomatov and Moresi 2000
+/// among them); its expansivity, 1/K, diffusivity, m²/s, and the rock's and the core's heat
+/// capacities, J/kg/K. The lid breaks where the convecting sublayer's stress along a cell as
+/// long as the mantle is deep exceeds its friction over its thickness; its effective
+/// friction is far below the laboratory's, as a lid that mobilizes needs (Moresi and
+/// Solomatov 1998), and is a stated choice set so that Venus last overturned within the
+/// half gigayear its craters record. A lid that broke within this share of the body's life
+/// before the present makes an episodic lid. Steps over the body's life.
+pub const MANTLE_START_K: f64 = 1_750.0;
+pub const MANTLE_VISCOSITY_REF: f64 = 5e19;
+pub const MANTLE_VISCOSITY_REF_K: f64 = 1_600.0;
+pub const MANTLE_ACTIVATION: f64 = 3.0e5;
+pub const STAGNANT_LID_PREFACTOR: f64 = 0.5;
+pub const MANTLE_EXPANSIVITY: f64 = 3e-5;
+pub const MANTLE_DIFFUSIVITY: f64 = 1e-6;
+pub const MANTLE_HEAT_CAPACITY: f64 = 1_250.0;
+pub const CORE_HEAT_CAPACITY: f64 = 800.0;
+pub const LID_FRICTION: f64 = 0.010;
+pub const EPISODIC_RECENT_SHARE: f64 = 0.5;
+pub const MANTLE_STEPS: usize = 4_000;
 
 // ---------------------------------------------------------------- atmosphere and climate
 
@@ -1624,9 +1653,9 @@ pub const FINISHING_MIN_CELLS: f64 = 2.0;
 pub const BINS_PER_OCTAVE: u32 = 4;
 /// Largest basin radius as a fraction of the body radius (South Pole–Aitken is 0.72).
 pub const MAX_CRATER_RADIUS_FRACTION: f64 = 0.75;
-/// Crater retention ages by regime, Gyr, until the erosion stages exist. Provisional.
+/// Crater retention ages by regime, Gyr, until the erosion stages exist (an episodic lid's
+/// is the time since its last overturn, F121). Provisional.
 pub const RETENTION_MOBILE_LID_GYR: f64 = 0.1;
-pub const RETENTION_EPISODIC_GYR: f64 = 0.5;
 pub const RETENTION_THIN_ATMOSPHERE_GYR: f64 = 3.5;
 pub const RETENTION_ICE_OCEAN_GYR: f64 = 0.1;
 /// Tidal flux above which an ice shell over an ocean is treated as actively resurfacing

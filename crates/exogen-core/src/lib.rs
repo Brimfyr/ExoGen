@@ -13,6 +13,7 @@ pub mod export;
 pub mod fields;
 pub mod geom;
 pub mod grid;
+pub mod mantle;
 pub mod noise;
 pub mod params;
 pub mod presets;
