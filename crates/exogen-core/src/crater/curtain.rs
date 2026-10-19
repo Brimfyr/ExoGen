@@ -24,11 +24,11 @@
 use crate::constants::{
     CONTINUOUS_EJECTA_MULTIPLE, CURTAIN_EDGE_ORDER, CURTAIN_ORDERS, CURTAIN_SLOPE, CURTAIN_SPREAD,
     RAY_CLUMPING, RAY_CLUSTER_ASPECT, RAY_CLUSTER_CAP, RAY_CLUSTER_LEAST, RAY_CLUSTER_MAX,
-    RAY_CLUSTER_WIDTH, RAY_DENSITY_SLOPE, RAY_DOWNRANGE_SPEED, RAY_LENGTH_COEFF_KM,
-    RAY_LENGTH_EXPONENT, RAY_LENGTH_LARGE_EXPONENT, RAY_LENGTH_MAX_RADIUS_KM, RAY_VISIBLE,
-    RAY_WARP, SECONDARY_CENSUS_COUNT, SECONDARY_CENSUS_FLOOR_KM, SECONDARY_CENSUS_LARGEST_KM,
-    SECONDARY_CENSUS_SHAPE, SECONDARY_MAX_COEFF_KM, SECONDARY_MAX_EXPONENT, SECONDARY_SFD_SLOPE,
-    SECONDARY_SIZE_FALL,
+    RAY_CLUSTER_SPLAY, RAY_CLUSTER_WIDTH, RAY_DENSITY_SLOPE, RAY_DOWNRANGE_SPEED,
+    RAY_LENGTH_COEFF_KM, RAY_LENGTH_EXPONENT, RAY_LENGTH_LARGE_EXPONENT, RAY_LENGTH_MAX_RADIUS_KM,
+    RAY_VISIBLE, RAY_WARP, SECONDARY_CENSUS_COUNT, SECONDARY_CENSUS_FLOOR_KM,
+    SECONDARY_CENSUS_LARGEST_KM, SECONDARY_CENSUS_SHAPE, SECONDARY_MAX_COEFF_KM,
+    SECONDARY_MAX_EXPONENT, SECONDARY_SFD_SLOPE, SECONDARY_SIZE_FALL,
 };
 use crate::crater::production::poisson;
 use crate::crater::stamp::ejecta_modulation;
@@ -537,6 +537,65 @@ pub struct Cluster {
     pub amount: f64,
 }
 
+/// A part of a cluster's ground (F130): where it lies from the cluster's centre, m, along
+/// the radial outward and across it; its spread along and across, m; and the ground it
+/// excavates, m².
+#[derive(Clone, Copy, Debug)]
+pub struct Grain {
+    pub u: f64,
+    pub v: f64,
+    pub su: f64,
+    pub sv: f64,
+    pub amount: f64,
+}
+
+impl Cluster {
+    /// The cluster's ground laid as its grain (F130). A cluster is RAY_CLUSTER_WIDTH of its
+    /// largest secondaries across, and each lies among smaller ones by the same rule at its
+    /// own scale: the ground is laid as clusters a RAY_CLUSTER_WIDTH-th as wide, scattered
+    /// over the footprint as the cluster lays its ground and sharing it by their own
+    /// footprints, and each of those likewise, down to the narrowest drawn, `least`, m.
+    /// One too narrow to split is laid whole. The same `seed` gives the same grain.
+    pub fn grain(&self, least: f64, seed: u64) -> Vec<Grain> {
+        let rng = Rng::new(seed ^ 0x6A41_7C3B);
+        let mut out = Vec::new();
+        let mut stack = vec![(0.0, 0.0, self.width, self.length, self.amount)];
+        let mut draw = 0u64;
+        while let Some((u, v, w, l, amount)) = stack.pop() {
+            let (su, sv) = (l / 2.5, w / 2.5);
+            let ws = w / RAY_CLUSTER_WIDTH;
+            if ws < least {
+                out.push(Grain {
+                    u,
+                    v,
+                    su,
+                    sv,
+                    amount,
+                });
+                continue;
+            }
+            let ls = RAY_CLUSTER_ASPECT * ws;
+            let (n, next) = poisson(&rng, 0, draw, w * l / (ws * ls));
+            draw = next;
+            let mut parts = Vec::with_capacity(n.max(1) as usize);
+            let mut total = 0.0;
+            for _ in 0..n.max(1) {
+                let du = su * rng.normal(0, draw);
+                let dv =
+                    sv * (1.0 + RAY_CLUSTER_SPLAY * (du / su).max(0.0)) * rng.normal(0, draw + 2);
+                let size = 0.7 + 0.6 * rng.uniform(0, draw + 4);
+                draw += 5;
+                total += ws * ls * size * size;
+                parts.push((u + du, v + dv, ws * size, ls * size));
+            }
+            for (pu, pv, pw, pl) in parts {
+                stack.push((pu, pv, pw, pl, amount * pw * pl / total));
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,6 +755,55 @@ mod tests {
             "far clusters cover {:.3} of their ring",
             far / ring
         );
+    }
+
+    /// F130: a cluster's grain shares its ground among parts narrower than the narrowest
+    /// that would split, scattered over its footprint; the same seed gives the same grain;
+    /// one too narrow to split is laid whole.
+    #[test]
+    fn a_cluster_s_grain_shares_its_ground() {
+        let c = Cluster {
+            r: 1e6,
+            phi: 0.3,
+            width: 30e3,
+            length: 90e3,
+            amount: 27e8,
+        };
+        let least = 1.6e3;
+        let g = c.grain(least, 7);
+        let again = c.grain(least, 7);
+        assert_eq!(g.len(), again.len());
+        assert!(
+            g.iter()
+                .zip(&again)
+                .all(|(a, b)| a.u == b.u && a.amount == b.amount)
+        );
+        let total: f64 = g.iter().map(|p| p.amount).sum();
+        assert!(
+            (total / c.amount - 1.0).abs() < 1e-9,
+            "{total} of {}",
+            c.amount
+        );
+        assert!(g.len() > 20, "{} parts", g.len());
+        assert!(g.iter().all(|p| 2.5 * p.sv < RAY_CLUSTER_WIDTH * least));
+        let (su, sv) = (c.length / 2.5, c.width / 2.5);
+        let inside: f64 = g
+            .iter()
+            .filter(|p| {
+                p.u.abs() < 3.0 * su && p.v.abs() < 3.0 * sv * (1.0 + 3.0 * RAY_CLUSTER_SPLAY)
+            })
+            .map(|p| p.amount)
+            .sum();
+        assert!(inside > 0.95 * c.amount, "{:.3} inside", inside / c.amount);
+        let narrow = Cluster {
+            width: 4e3,
+            length: 12e3,
+            amount: 48e6,
+            ..c
+        };
+        let whole = narrow.grain(least, 7);
+        assert_eq!(whole.len(), 1);
+        assert_eq!(whole[0].amount, narrow.amount);
     }
 
     /// F129: a crater's secondaries follow Orientale's census in units of its largest: 2,728

@@ -1456,3 +1456,28 @@ Still to do:
 - **Mars's two thresholds**, from the fifty-ninth: its rays, which cannot show, take 50 s.
 
 Tests 207 (12 ignored). Two are new: a crater's secondaries follow Orientale's census in units of its largest, inverting their own draw; a basin's secondaries are as many as the census gives, lie in its rays' clusters beyond its blanket, the larger nearer. Clippy is clean and validate passes its 115 checks.
+
+## The sixty-first milestone: a cluster's grain
+
+Asked for by the user after the sixtieth ("Yes, go ahead with that"): the sixtieth left a basin's clusters soft, its secondaries mostly finer than the grid, and proposed giving a large crater's clusters the grain of their secondaries rather than a blur.
+
+- **F130.** A cluster's ground is laid as clusters of its own, a RAY_CLUSTER_WIDTH-th as wide, and each of those likewise, down to the narrowest drawn: the same rule at every scale, keeping the cluster's ground and place.
+
+How it went:
+
+- **The prototype first.** One crater's rays on flat ground at a map's pixel scale and contrast, its clusters laid as one Gaussian each and as their grain: the basin's soft blurs broke into flakes and streaks, a Tycho's rays hardly changed, its clusters near the grid's scale. Stopping the split at twice the narrowest drawn rather than at it changed little, so it stops at the floor the clusters already had.
+- **The cost.** A basin's cluster splits into some eighty parts at 8192 pixels. Laying a large crater's clusters in parallel, each cluster's cells read once and its parts reading only the cells in their reach, took the rays from 19 to 11 s on the Moon at seed 75.
+
+What the maps show:
+
+- **The Moon at seed 75:** its 378 km basin's rays flakes and streaks of bright ground with darker ground between, where they were soft smudges; its inner halo, where the jets excavate more than clusters carry, solid as before; 7 percent of the map changed by more than 0.005, its mean 0.121 as it was.
+- **The default Moon, Mercury, Callisto, Ganymede, Ceres and Europa:** as they were, at most half a percent of a map changed, their means within 0.001: their young craters' clusters lie within a few cells of the grid.
+- **The rays' time:** 11 s on the Moon where it was 19 to 23, 26 s on Mars where it was 50, 23 s on Ceres where it was 59.
+
+Still to do:
+
+- **The user's notes on the icy moons** (audit T6 and T7): grooves more broken and undulating, on Miranda too, and Enceladus's polar terrain as one network of canyons, without its false blue.
+- **The census's small end**, a floor from an old basin.
+- **Mars's two thresholds**, its rays drawn where they cannot show.
+
+Tests 208 (12 ignored). One is new: a cluster's grain shares its whole ground among parts narrower than the narrowest that would split, scattered over its footprint, and a cluster too narrow to split is laid whole. Clippy is clean and validate passes its 115 checks.

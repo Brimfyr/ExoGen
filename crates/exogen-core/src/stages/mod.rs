@@ -38,7 +38,9 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 
 use crate::constants::*;
-use crate::crater::curtain::{Cluster, largest_secondary, secondaries_above, secondary_size_at};
+use crate::crater::curtain::{
+    Cluster, Grain, largest_secondary, secondaries_above, secondary_size_at,
+};
 use crate::crater::production::poisson;
 use crate::crater::{
     CraterRecord, CraterTexture, Curtain, EdgeShape, PopulationConfig, ProfileTable, Rays,
@@ -362,7 +364,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 102;
+pub const FINISH_VERSION: u64 = 103;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2544,9 +2546,7 @@ fn ray_field(
         let (east, north) = local_basis(s.center);
         let theta_max = (s.reach / body_radius).min(std::f64::consts::PI) + grid.delta();
         let mut clustered = vec![0.0f32; grid.cell_count()];
-        with_stamper(grid, |stamper| {
-            s.lay_clusters(grid, stamper, |k, v| clustered[k] += v)
-        });
+        s.lay_clusters_par(grid, |k, v| clustered[k] += v);
         out.par_iter_mut().enumerate().for_each(|(k, o)| {
             let d = grid.center(grid.cell(k));
             let theta = angle_between(s.center, d);
@@ -2600,6 +2600,12 @@ struct RaySystem {
     /// The clusters its rays' secondaries make, and the secondaries the finish stamped
     /// (F128).
     clusters: Vec<crate::crater::curtain::Cluster>,
+    /// Where the stamped secondaries' own clusters begin among them, which are laid whole;
+    /// the crater's id, which seeds its clusters' grain; and the narrowest cluster drawn, m
+    /// (F130).
+    halos_from: usize,
+    seed: u64,
+    least: f64,
     center: [f64; 3],
     radius: f64,
     azimuth: f64,
@@ -2636,6 +2642,7 @@ impl RaySystem {
             mut clusters,
         } = throw(c.id, c.diameter, c.azimuth, c.angle, inputs, cell);
         let least = RAY_CLUSTER_DRAW_CELLS * cell;
+        let halos_from = clusters.len();
         let (east, north) = local_basis(c.center);
         for s in secondaries {
             let width = (2.0 * s.diameter).max(least);
@@ -2650,6 +2657,9 @@ impl RaySystem {
         Self {
             body_radius: inputs.body_radius,
             clusters,
+            halos_from,
+            seed: c.id,
+            least,
             center: c.center,
             radius,
             azimuth: c.azimuth,
@@ -2665,48 +2675,128 @@ impl RaySystem {
         }
     }
 
-    /// The area the clusters excavate per unit area, cell by cell, handed to `add` (F128):
-    /// each spread over its footprint, a Gaussian along the radial whose width opens
-    /// downrange by RAY_CLUSTER_SPLAY, laying its whole amount on the cells it covers.
+    /// The area the clusters excavate per unit area, cell by cell, handed to `add` (F128).
     fn lay_clusters(
         &self,
         grid: &CubeSphere,
         stamper: &mut Stamper,
         mut add: impl FnMut(usize, f32),
     ) {
+        let mut out = Vec::new();
+        for (i, c) in self.clusters.iter().enumerate() {
+            out.clear();
+            self.lay_cluster(grid, stamper, i, c, &mut out);
+            for &(k, v) in &out {
+                add(k, v);
+            }
+        }
+    }
+
+    /// As `lay_clusters`, a chunk of clusters at a time in parallel, for a system whose rays
+    /// cover much of the body.
+    fn lay_clusters_par(&self, grid: &CubeSphere, mut add: impl FnMut(usize, f32)) {
+        const CHUNK: usize = 128;
+        for (n, chunk) in self.clusters.chunks(CHUNK).enumerate() {
+            let parts: Vec<Vec<(usize, f32)>> = chunk
+                .par_iter()
+                .enumerate()
+                .map(|(j, c)| {
+                    with_stamper(grid, |stamper| {
+                        let mut out = Vec::new();
+                        self.lay_cluster(grid, stamper, n * CHUNK + j, c, &mut out);
+                        out
+                    })
+                })
+                .collect();
+            for part in parts {
+                for (k, v) in part {
+                    add(k, v);
+                }
+            }
+        }
+    }
+
+    /// The ground the `i`th cluster excavates per unit area, cell by cell, into `out` (F128,
+    /// F130): its grain, each part a Gaussian along the radial whose width opens downrange
+    /// by RAY_CLUSTER_SPLAY, laying its whole share on the cells it covers; a stamped
+    /// secondary's own cluster is laid whole.
+    fn lay_cluster(
+        &self,
+        grid: &CubeSphere,
+        stamper: &mut Stamper,
+        i: usize,
+        c: &Cluster,
+        out: &mut Vec<(usize, f32)>,
+    ) {
         let (east, north) = local_basis(self.center);
         let r2 = self.body_radius * self.body_radius;
+        let at = offset(self.center, east, north, c.r / self.body_radius, c.phi);
+        let (ce, cn) = local_basis(at);
+        let down = azimuth_from(at, ce, cn, self.center) + std::f64::consts::PI;
+        let grains = if i < self.halos_from {
+            c.grain(self.least, mix64(self.seed ^ mix64(i as u64 + 1)))
+        } else {
+            vec![Grain {
+                u: 0.0,
+                v: 0.0,
+                su: c.length / 2.5,
+                sv: c.width / 2.5,
+                amount: c.amount,
+            }]
+        };
+        let reach = grains
+            .iter()
+            .map(|g| g.u.hypot(g.v) + 3.0 * g.su.max(g.sv * (1.0 + 3.0 * RAY_CLUSTER_SPLAY)))
+            .fold(0.0, f64::max);
+        stamper.gather(grid, self.body_radius, at, reach);
+        // The cells in the cluster's frame, along the radial outward and across it, ordered
+        // along it, so that each part reads only the cells in its reach.
+        let mut cells: Vec<(f64, f64, usize, f64)> = stamper
+            .footprint
+            .iter()
+            .map(|&(idx, r, phi)| {
+                (
+                    r * (phi - down).cos(),
+                    r * (phi - down).sin(),
+                    idx,
+                    grid.cell_area(grid.cell(idx)),
+                )
+            })
+            .collect();
+        cells.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut weights: Vec<(usize, f64)> = Vec::new();
-        for c in &self.clusters {
-            let at = offset(self.center, east, north, c.r / self.body_radius, c.phi);
-            let (ce, cn) = local_basis(at);
-            let down = azimuth_from(at, ce, cn, self.center) + std::f64::consts::PI;
-            let (su, sv) = (c.length / 2.5, c.width / 2.5);
-            stamper.gather(
-                grid,
-                self.body_radius,
-                at,
-                3.0 * su.max(sv * (1.0 + 3.0 * RAY_CLUSTER_SPLAY)),
-            );
+        for g in &grains {
+            let lo = cells.partition_point(|x| x.0 < g.u - 3.0 * g.su);
+            let hi = cells.partition_point(|x| x.0 <= g.u + 3.0 * g.su);
             weights.clear();
             let mut sum = 0.0;
-            for &(idx, r, phi) in &stamper.footprint {
-                let (u, v) = (r * (phi - down).cos(), r * (phi - down).sin());
-                let spread = sv * (1.0 + RAY_CLUSTER_SPLAY * (u / su).max(0.0));
-                let k = (-0.5 * ((u / su).powi(2) + (v / spread).powi(2))).exp();
+            for &(u, v, idx, area) in &cells[lo..hi] {
+                let du = u - g.u;
+                let spread = g.sv * (1.0 + RAY_CLUSTER_SPLAY * (du / g.su).max(0.0));
+                let dv = v - g.v;
+                if dv.abs() > 4.3 * spread {
+                    continue;
+                }
+                let k = (-0.5 * ((du / g.su).powi(2) + (dv / spread).powi(2))).exp();
                 if k > 1e-4 {
-                    let w = k * grid.cell_area(grid.cell(idx));
                     weights.push((idx, k));
-                    sum += w;
+                    sum += k * area;
                 }
             }
             if sum <= 0.0 {
-                let k = grid.index(grid.locate(at).0);
-                add(k, (c.amount / (grid.cell_area(grid.cell(k)) * r2)) as f32);
+                let point = offset(
+                    at,
+                    ce,
+                    cn,
+                    g.u.hypot(g.v) / self.body_radius,
+                    down + g.v.atan2(g.u),
+                );
+                let k = grid.index(grid.locate(point).0);
+                out.push((k, (g.amount / (grid.cell_area(grid.cell(k)) * r2)) as f32));
                 continue;
             }
             for &(idx, k) in &weights {
-                add(idx, (c.amount * k / (sum * r2)) as f32);
+                out.push((idx, (g.amount * k / (sum * r2)) as f32));
             }
         }
     }
