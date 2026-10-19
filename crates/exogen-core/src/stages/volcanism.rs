@@ -62,17 +62,12 @@ pub fn flood_composition(time_gyr: f64, vent: [f64; 3], batch: f64) -> f32 {
         .clamp(-1.0, 1.0) as f32
 }
 
-/// The composition of lava risen everywhere at a time, each place's from the mantle under
-/// it (F120): `flood_composition` with no batch of its own, its fields built once for the
-/// many places an overturn's lava covers.
-pub fn regional_composition(time_gyr: f64) -> impl Fn([f64; 3]) -> f32 {
-    let drift = composition_drift(time_gyr) as f64;
-    let noise = GradientNoise::new(0x5A0C_E5ED);
-    move |d| {
-        let source = (noise.fbm(d, LAVA_SOURCE_ORDER, 2, 2.0, 0.5) / 0.6).clamp(-1.0, 1.0);
-        (LAVA_DRIFT_SHARE * drift + LAVA_SOURCE_SHARE * source + LAVA_BATCH_SHARE * 0.0)
-            .clamp(-1.0, 1.0) as f32
-    }
+/// The composition of the lava an overturn lays everywhere at once (F120): its time's
+/// drift, one lava over the whole plains; the mantle's source field read at every place had
+/// painted its noise across them (each basin's own lava, from the source under it, is for
+/// the plains' units to come, audit M10).
+pub fn overturn_composition(time_gyr: f64) -> f32 {
+    (LAVA_DRIFT_SHARE * composition_drift(time_gyr) as f64).clamp(-1.0, 1.0) as f32
 }
 
 /// A coarse cell a flood covered: the thickness added and what the surface was before.

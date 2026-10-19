@@ -26,10 +26,10 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::deform::Deformation;
 use crate::stages::plume::{Trough, TroughKind, radial_trace};
-use crate::stages::volcanism::{LavaSmear, regional_composition};
+use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -374,7 +374,7 @@ impl EpisodicProcess {
                 let cover = layers.cover.as_mut_slice();
                 let composition = layers.composition.as_mut_slice();
                 let lava_age = layers.lava_age.as_mut_slice();
-                let lava = regional_composition(self.event_time);
+                let lava = overturn_composition(self.event_time);
                 for k in 0..n {
                     let lift = plateau_lift(score[k], threshold);
                     if score[k] > threshold {
@@ -396,7 +396,7 @@ impl EpisodicProcess {
                     melt[k] = 0.0;
                     cover[k] = 1.0;
                     // Its lava rose everywhere, each place's from the mantle under it.
-                    composition[k] = lava(grid.center(grid.cell(k)));
+                    composition[k] = lava;
                     lava_age[k] = self.event_time as f32;
                 }
             }
@@ -465,7 +465,7 @@ pub fn resurfacing_compute(
     // The event's lava rose everywhere, each place's from the mantle under it: its
     // composition at this resolution, not the coarse cells' tint of the floods after it.
     let mut compositions = Vec::with_capacity(n);
-    let lava = regional_composition(rec.time_gyr);
+    let lava = overturn_composition(rec.time_gyr);
     let mut taken = Vec::with_capacity(n);
     for idx in 0..n {
         let d = grid.center(grid.cell(idx));
@@ -511,7 +511,7 @@ pub fn resurfacing_compute(
                 melt: 0.0,
                 cover: 1.0,
             });
-            compositions.push(lava(d));
+            compositions.push(lava);
         }
     }
     (

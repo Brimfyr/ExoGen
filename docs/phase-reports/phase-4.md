@@ -1222,3 +1222,5 @@ Still to do:
 - **The plates and Io** from the mantle too, and the melt efficiency from its temperature rather than the regime's name.
 
 Tests 192 (nine ignored, one of them a new diagnostic printing a preset's rises and shields). One is new: Venus's lid breaks again and again, last within the half gigayear its craters record, and Mars's, the Moon's and Mercury's never, their heat flows as measured; the melt clock's test now asks of Venus that its rises and their largest shields start between its overturn and the present. Clippy is clean and validate passes its 117 checks.
+
+Revised after the fifty-second, on the user's word that Venus's albedo outside its rises was a plain noise field. The fifty-first had given the overturn's lava the mantle's source composition at every place, a smooth field of two octaves, which painted itself across the plains in place of a lava's units; the overturn's lava is one lava now, its time's drift, and the plains are one tone again under the floods that came after. Each basin's own lava, from the source under it, waits for the plains' units of audit M10.
