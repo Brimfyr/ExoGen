@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 25;
+pub const VERSION: u64 = 26;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -564,9 +564,15 @@ pub fn albedo(
     let lava_member = library
         .member(graph.str("materials.lava"))
         .unwrap_or(bedrock);
+    // Ice a flow brings up sublimes into the crust's lag and is gardened into its regolith,
+    // as deep ice and melt are (F127): cryolava is bright fresh and matures to the ground.
     let lava = Pair {
         fresh: lava_member.fresh,
-        mature: lava_member.mature,
+        mature: if is_ice(lava_member.id) {
+            base.mature
+        } else {
+            lava_member.mature
+        },
     };
     let (deep, shallow): ([f32; 3], [f32; 3]) = match graph.str("volatiles.working_liquid") {
         "water" | "ammonia_water" => ([0.012, 0.035, 0.085], [0.06, 0.22, 0.26]),
@@ -623,9 +629,22 @@ pub fn albedo(
             (1.0 + LAVA_COMPOSITION_RANGE as f32 * comp_f[k]).max(0.1)
         }
     };
+    // The cover a salted unit or a crater floor holds is its salts, not lava: it is neither
+    // coloured nor mixed sideways as a flow (F127).
+    let lava_f: Vec<f32> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|k| {
+            let u = units[k];
+            if salted(u) || u == UNIT_CRATER_FLOOR || u == UNIT_DEEP_FLOOR {
+                0.0
+            } else {
+                cover_f[k]
+            }
+        })
+        .collect();
     let tinted: Vec<f32> = (0..grid.cell_count())
         .into_par_iter()
-        .map(|k| cover_f[k] * tint(k))
+        .map(|k| lava_f[k] * tint(k))
         .collect();
     let (mixed, mixed_tinted) = if gardened {
         // Each lava cell's gardening since its lava erupted, relative to the lunar maria's
@@ -654,7 +673,7 @@ pub fn albedo(
         let dose: Vec<Option<f32>> = (0..grid.cell_count())
             .into_par_iter()
             .map(|k| {
-                (cover_f[k] > 0.0).then(|| {
+                (lava_f[k] > 0.0).then(|| {
                     let erupted = if lava_age[k] > 0.0 {
                         lava_age[k]
                     } else {
@@ -668,7 +687,7 @@ pub fn albedo(
         let mixed = garden_mix(
             grid,
             grid.delta() * graph.f64("body.radius"),
-            cover_f,
+            &lava_f,
             &tinted,
             &dose,
         );
@@ -677,7 +696,7 @@ pub fn albedo(
         }
         mixed
     } else {
-        (cover_f.to_vec(), tinted.clone())
+        (lava_f.clone(), tinted.clone())
     };
     let r = rays.as_slice();
     let bedrock_f = layers.bedrock.as_slice();

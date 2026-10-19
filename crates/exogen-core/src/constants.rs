@@ -1695,6 +1695,16 @@ pub const RAY_WARP: f64 = 0.03;
 pub const RAY_CLUMPING: f64 = 0.7;
 /// The excavated share below which a ray is not drawn: 5% of its contrast, unseen.
 pub const RAY_VISIBLE: f64 = 0.05;
+/// Rays end where their fragments would fly faster than the body's circular orbital speed
+/// (F127). A fragment launched at 45 degrees lands an angle theta round a sphere at the
+/// speed whose square over g R is k = 2 tan(theta/2) / (1 + tan(theta/2)): the circular
+/// orbital speed a quarter of the way round, the escape speed at the antipode. Near the
+/// crater a spread of launch angles of plus or minus 10 degrees lands a jet's fragments
+/// within some tenth of their range; at k = 0.8 it spreads them over a third, and at k = 1
+/// from 70 to 110 degrees round, so they lay no ray. A ray fades from this k, a stated
+/// choice (about 60 degrees round, beyond the Moon's longest rays, Tycho's 1,500 to 2,000
+/// km), and is gone a quarter of the way round.
+pub const RAY_COHERENT_K: f64 = 0.75;
 /// The skin the secondaries must dig through to bring up fresh ground (F91): Elliott et
 /// al. (2018) take the Moon's space-weathered skin as 10 cm (estimates run from a few
 /// centimetres to a metre or two), and in their model the excavated share goes as the

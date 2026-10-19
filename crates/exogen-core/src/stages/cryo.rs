@@ -27,7 +27,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::*;
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// A polar plume's fallout of fresh ice.
 pub struct Fallout {
@@ -843,16 +843,23 @@ pub fn post_pass(
                 c.center,
                 FACULA_FLOOR_SHARE * dim.radius,
             );
-            for &(k, r, _) in &stamper.footprint {
+            // The salts lie where the patches rise above their level, drawn by the share
+            // of each cell they cover (F127).
+            let patch = |p: [f64; 3]| {
+                let taper = 1.0
+                    - crate::geom::angle_between(c.center, p) * body_radius
+                        / (FACULA_FLOOR_SHARE * dim.radius);
+                noise.fbm(p, patch_frequency, 2, 2.0, 0.5) + 0.6 * taper
+            };
+            for &(k, _, _) in &stamper.footprint {
                 let floor = units[k] == UNIT_CRATER_FLOOR || units[k] == UNIT_DEEP_FLOOR;
                 if !floor || (ages[k] as f64 - c.time_gyr).abs() > 1e-3 {
                     continue;
                 }
                 let d = grid.center(grid.cell(k));
-                let taper = 1.0 - r / (FACULA_FLOOR_SHARE * dim.radius);
-                let patch = noise.fbm(d, patch_frequency, 2, 2.0, 0.5) + 0.6 * taper;
-                if patch > 0.45 {
-                    cover[k] = cover[k].max(1.0);
+                let share = crate::fields::level_share(&patch, d, 0.45, grid.delta());
+                if share > 0.0 {
+                    cover[k] = cover[k].max(share as f32);
                 }
             }
         }

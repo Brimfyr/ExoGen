@@ -1369,3 +1369,30 @@ Still to do:
 - **The central pits by the crust's rock** (S9).
 
 Tests 201 (12 ignored). Two are new: an icy crust keeps the rock it accreted, its regolith carrying its lag, Europa clean, Ganymede between Callisto and Europa with its old terrain brighter than Callisto's, and Ceres's fresh ground dark; a warm old dirty crust grows a lag where a cold or clean one keeps its ice, and Ceres's runs deeper than its craters dig. The retired names' test covers the dirty ices and their summed shares, and Ganymede's relaxation test has its floor at 0.006. Clippy is clean and validate passes its 115 checks, Triton's Bond albedo and temperature set aside with Pluto's.
+
+## The fifty-eighth milestone: rays on a sphere, floors under the lag, deposits by share
+
+Asked for by the user after the fifty-seventh: an alternating pattern of light and dark ground on the floor of Ceres's largest young crater, its bright deposits pixelated as lava flows had been ("make sure this isn't repeated in the future"), and on the Moon at seed 75 a large young crater at the south pole whose rays reached the north pole, dominated most of the surface and converged into one point.
+
+- **F127.** Rays fade where their fragments would need nearly the circular orbital speed and end a quarter of the way round; the lag hides a crater's floor and blanket as it hides its rays; cryolava matures to the ground; salts are not coloured or mixed as lava; and deposits a field bounds are drawn by the share of each cell they cover.
+
+How it went:
+
+- **One cause for two findings.** The layers dumped from Ceres (EXOGEN_DUMP_LAYERS) showed its rays covering the whole body and meeting at a point: the antipode of its young 352 km crater, as the Moon's at seed 75 met at the antipode of its 378 km basin. Both are Elliott et al.'s lunar ray lengths, measured on craters up to 85 km, carried to basins and drawn on flat ground.
+- **Where rays end.** A sphere's ballistics: a 45-degree fragment lands a quarter of the way round at the circular orbital speed and at the antipode at escape speed, and near those speeds a spread of launch angles scatters a jet's fragments over the far hemisphere, so they lay no ray.
+- **The alternating floor.** The crater's floor took its full freshness inside the rim, where on Ceres the lag regrows in centuries, while its melt sheet kept the lag's maturity: the floor showed the melt as blobs. The floor and blanket now fade under the lag, as the rays do.
+- **The bright deposits.** The faculae were a threshold per cell on a noise field, binary cells; they also shared the lava's cover, so they were coloured as cryolava, which since F126 had kept clean ice's whiteness at maturity, and Ceres's cryolava floods showed white with stair-stepped margins. Now the faculae are drawn by share, the salts are not lava, and cryolava matures to the ground; the crater's 432 Myr old salts have faded, as they should over 150 Myr. The deposits still drawn by whole cells are listed in the audit (W8), with the rule.
+
+What the maps show:
+
+- **The Moon at seed 75:** its 378 km basin's rays end a quarter of the way round, the north free of them and nowhere a point where they meet; the default Moon as it was, its map 0.124 against 0.125.
+- **Ceres:** its young crater's floor one grey, its melt no longer showing through; its 432 Myr old salts faint and drawn by share, its cryolava floods matured to the ground; its rays end within 740 km, a quarter of the way round; its map 0.115 against 0.119.
+- **Mercury, Callisto, Ganymede and Europa:** as they were, within 0.002.
+
+Still to do:
+
+- **The deposits still drawn by whole cells** (W8), each with its process: Venus's overturns and coronae, shields, Io's paterae, Enceladus's polar terrain, and young lava flows' margins.
+- **Ceres's domes**, perfect circles: their outlines from their feeding fissures and their flanks' collapse, with Venus's domes and coronae (M10).
+- **Ganymede's lanes and polar caps**, as above.
+
+Tests 203 (12 ignored). Two are new: a straight margin covers a cell by its share; rays end a quarter of the way round, whole near the crater and at the Moon's longest rays' length. Ceres's test holds its salted floors to partial cover at their margins. Clippy is clean and validate passes its 115 checks.

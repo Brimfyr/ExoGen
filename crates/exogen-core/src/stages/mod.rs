@@ -361,7 +361,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 98;
+pub const FINISH_VERSION: u64 = 99;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2453,11 +2453,27 @@ fn ray_field(
     rays
 }
 
+/// The share of a crater's rays its fragments lay at `theta`, radians, round the body
+/// (F127): whole near the crater, fading from RAY_COHERENT_K of the circular orbital speed
+/// to none at a quarter of the way round, beyond which a jet's fragments scatter over the
+/// far hemisphere or escape.
+fn ray_coherence(theta: f64) -> f64 {
+    if theta >= std::f64::consts::FRAC_PI_2 {
+        return 0.0;
+    }
+    let t = (0.5 * theta).tan();
+    let k = 2.0 * t / (1.0 + t);
+    let x = ((1.0 - k) / (1.0 - RAY_COHERENT_K)).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
 /// One young crater's brightening (F91): full inside the rim; its continuous blanket,
 /// falling with the deposit's cover to half at its lobed edge and on past it, mottled;
 /// and beyond, its rays, the share of the ground its ejecta curtain's fragments
-/// excavated from under the weathered skin. All of it fades with the crater's age.
+/// excavated from under the weathered skin. All of it fades with the crater's age, and on
+/// ice the lag that hides its rays hides its floor and blanket as it grows (F127).
 struct RaySystem {
+    body_radius: f64,
     center: [f64; 3],
     radius: f64,
     azimuth: f64,
@@ -2485,8 +2501,13 @@ impl RaySystem {
         let thinnest = -(1.0 - RAY_VISIBLE).log2();
         let halo = (EJECTA_RADIUS_MULTIPLE * radius)
             .max(CONTINUOUS_EJECTA_MULTIPLE * radius * (edge.strongest_jet() / thinnest).cbrt());
-        let reach = rays.reach().max(halo);
+        // No ray reaches past a quarter of the way round (F127).
+        let reach = rays
+            .reach()
+            .min(std::f64::consts::FRAC_PI_2 * inputs.body_radius)
+            .max(halo);
         Self {
+            body_radius: inputs.body_radius,
             center: c.center,
             radius,
             azimuth: c.azimuth,
@@ -2506,7 +2527,7 @@ impl RaySystem {
     /// skin leaves the share `skin` of the area the rays' secondaries would excavate.
     fn value(&self, r: f64, phi: f64, skin: f64) -> f32 {
         if r <= self.radius {
-            return self.freshness as f32;
+            return (self.freshness * skin) as f32;
         }
         let edge = self.ejecta_edge * self.edge.factor_at(phi, r / self.radius);
         // The blanket is bright where its deposit covers the ground (F51), fading with the
@@ -2516,8 +2537,9 @@ impl RaySystem {
             * self.texture.as_ref().map_or(1.0, |t| {
                 1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / self.radius)
             }))
-        .clamp(0.0, 1.0);
-        let ray = self.rays.excavated(r, phi, skin);
+        .clamp(0.0, 1.0)
+            * skin;
+        let ray = self.rays.excavated(r, phi, skin) * ray_coherence(r / self.body_radius);
         ((1.0 - (1.0 - blanket) * (1.0 - ray)) * self.freshness) as f32
     }
 
@@ -3242,6 +3264,38 @@ mod tests {
             })
             .count();
         assert!(salted > 0, "no salted crater floors");
+        // The salts' margins are drawn by the share of each cell they cover (F127), not
+        // as whole cells.
+        let partial = units
+            .iter()
+            .zip(cover)
+            .filter(|(u, c)| {
+                (**u == crate::units::UNIT_CRATER_FLOOR || **u == crate::units::UNIT_DEEP_FLOOR)
+                    && **c > 0.02
+                    && **c < 0.98
+            })
+            .count();
+        assert!(
+            partial * 10 > salted,
+            "{partial} of {salted} salted floor cells partly covered"
+        );
+    }
+
+    /// A ray reaches no further than a quarter of the way round the body (F127): fading
+    /// from RAY_COHERENT_K of the circular orbital speed, it is gone where its fragments
+    /// would need that speed.
+    #[test]
+    fn rays_end_a_quarter_of_the_way_round() {
+        assert_eq!(ray_coherence(0.1), 1.0);
+        assert_eq!(ray_coherence(std::f64::consts::FRAC_PI_2), 0.0);
+        let mut last = 1.0;
+        for i in 0..=90 {
+            let c = ray_coherence(i as f64 * std::f64::consts::FRAC_PI_2 / 90.0);
+            assert!((0.0..=1.0).contains(&c) && c <= last + 1e-12, "{i}: {c}");
+            last = c;
+        }
+        // The Moon's longest rays, Tycho's 1,500 km, are whole.
+        assert!(ray_coherence(1_500e3 / 1_737.4e3) > 0.99);
     }
 
     /// Enceladus's plume keeps its surface in fresh frost and buries the salts in its

@@ -371,10 +371,49 @@ impl LayerSet {
     }
 }
 
+/// The share of a cell, `cell` radians wide about `d`, that the region where `field`
+/// exceeds `level` covers (F127): at the cell's scale its margin is a straight edge, so the
+/// share is the cell's beyond that edge, from the field's value at the centre and its
+/// gradient there. A deposit drawn by its share has its margin where its field puts it
+/// within the cell, smooth at any output resolution; a threshold per cell draws it as a
+/// staircase of whole cells. Every deposit a field bounds is drawn this way.
+pub fn level_share(field: &dyn Fn([f64; 3]) -> f64, d: [f64; 3], level: f64, cell: f64) -> f64 {
+    let v = field(d);
+    let (east, north) = crate::geom::local_basis(d);
+    let h = 0.5 * cell;
+    let at = |phi: f64| field(crate::geom::offset(d, east, north, h, phi));
+    let gx = (at(0.0) - at(std::f64::consts::PI)) / (2.0 * h);
+    let gy = (at(std::f64::consts::FRAC_PI_2) - at(-std::f64::consts::FRAC_PI_2)) / (2.0 * h);
+    let across = (gx * gx + gy * gy).sqrt() * cell;
+    if across < 1e-12 {
+        return if v > level { 1.0 } else { 0.0 };
+    }
+    (0.5 + (v - level) / across).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::grid::projection::test_field;
+
+    /// F127: a straight margin through a cell covers it by the share beyond the margin,
+    /// half where the margin crosses its centre, rising smoothly across it.
+    #[test]
+    fn a_margin_covers_a_cell_by_its_share() {
+        let cell = 0.01;
+        let field = |d: [f64; 3]| d[0];
+        let at = |a: f64| level_share(&field, [a.sin(), a.cos(), 0.0], 0.0, cell);
+        assert!((at(0.0) - 0.5).abs() < 1e-6);
+        assert!((at(0.25 * cell) - 0.75).abs() < 0.01);
+        assert_eq!(at(cell), 1.0);
+        assert_eq!(at(-cell), 0.0);
+        let mut last = 0.0;
+        for i in -10..=10 {
+            let s = at(i as f64 * 0.1 * cell);
+            assert!(s >= last, "{i}: {s}");
+            last = s;
+        }
+    }
 
     #[test]
     fn fill_level_matches_the_requested_volume_and_a_flat_sphere_is_exact() {
