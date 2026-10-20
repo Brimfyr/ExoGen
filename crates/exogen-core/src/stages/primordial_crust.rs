@@ -5,12 +5,17 @@
 //!
 //! Crustal thickness is a low-degree spherical-harmonic field with an optional hemispheric
 //! dichotomy term, or a two-level crust for mobile-lid bodies until plate tectonics
-//! exists. Elevation follows from Airy isostasy, with a seeded noise term scaled by the
-//! relief limit standing in for the finer structure that later processes produce.
+//! exists. Elevation follows from Airy isostasy, with a seeded self-affine relief from the
+//! scale of the body's hemispheres down to the grid, as rough at its largest as a cratered
+//! surface is at the scale of the largest crater the body holds (F137), standing in for
+//! the relief its history before the record left.
 
 use rayon::prelude::*;
 
-use crate::constants::{DENSITY_CRUST_ICE, DENSITY_CRUST_ROCK, ROUGHNESS_HURST};
+use crate::constants::{
+    DENSITY_CRUST_ICE, DENSITY_CRUST_ROCK, MAX_CRATER_RADIUS_FRACTION, ROUGHNESS_HURST,
+    ROUGHNESS_RMS_SHARE,
+};
 use crate::fields::{Field, LayerSet};
 use crate::grid::CubeSphere;
 use crate::noise::GradientNoise;
@@ -20,7 +25,7 @@ use crate::spharm::Harmonics;
 use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC, UNIT_PRIMORDIAL};
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 /// Two-level crust for mobile-lid bodies: thin oceanic crust and thick continental crust
 /// covering a fraction of the area, which gives the bimodal hypsometry that lets an ocean
@@ -40,7 +45,12 @@ pub struct PrimordialCrust {
     crust_mean: f64,
     crust_sigma: f64,
     continents: Option<Continents>,
+    /// The primordial relief's largest octave, rms m, and its features, lattice cells per
+    /// radian: the largest crater the body holds and its depth's share (F137).
     relief: f64,
+    relief_frequency: f64,
+    /// The strength's limit on the relief's whole rms, m.
+    relief_cap: f64,
     isostatic_factor: f64,
 }
 
@@ -57,7 +67,24 @@ impl PrimordialCrust {
         } else {
             (3300.0, DENSITY_CRUST_ROCK)
         };
-        let relief = 0.25 * graph.f64("interior.max_relief") * graph.f64("multiplier.relief");
+        // F137: the relief of a cratered surface at the scale of the largest crater the
+        // body holds, a share of its depth, as the history before the record left it;
+        // never more than a quarter of the relief the crust's strength supports.
+        let scaling = crate::crater::Scaling {
+            simple_complex: graph.f64("cratering.simple_complex_transition"),
+            peak_ring: graph.f64("cratering.peak_ring_onset"),
+            multi_ring: graph.f64("cratering.multiring_onset"),
+            gravity: graph.f64("body.gravity"),
+            icy: crate::stages::materials::is_ice(graph.str("materials.bedrock")),
+        };
+        let radius = graph.f64("body.radius");
+        let largest = crate::crater::hold_diameter(radius, scaling.icy)
+            .min(2.0 * MAX_CRATER_RADIUS_FRACTION * radius);
+        let relief = ROUGHNESS_RMS_SHARE
+            * crate::crater::dimensions(largest, &scaling).depth
+            * graph.f64("multiplier.relief");
+        let relief_frequency = radius / largest.max(1.0);
+        let relief_cap = 0.25 * graph.f64("interior.max_relief") * graph.f64("multiplier.relief");
         let continents = if graph.str("interior.tectonic_regime") == "mobile_lid" {
             Some(Continents {
                 oceanic_thickness: 8_000.0,
@@ -77,6 +104,8 @@ impl PrimordialCrust {
             crust_sigma: 0.12 * graph.f64("tectonics.initial_crust_thickness"),
             continents,
             relief,
+            relief_frequency,
+            relief_cap,
             isostatic_factor: (rho_mantle - rho_crust) / rho_mantle,
         }
     }
@@ -124,17 +153,41 @@ impl PrimordialCrust {
         };
         let mean_crust = crust.iter().map(|v| *v as f64).sum::<f64>() / crust.len() as f64;
 
+        // The relief under everything is self-affine, falling toward finer scales with the
+        // Hurst exponent of cratered terrain (F54), so that what floods and renews it meets
+        // rough ground at every scale and embays it; from the largest crater the body holds
+        // down to two cells of the grid (F137).
+        let gain = 2f64.powf(-ROUGHNESS_HURST);
+        let finest = grid.face_size() as f64 / std::f64::consts::PI;
+        let octaves = ((finest / self.relief_frequency).log2().ceil() as u32 + 1).max(1);
+        let raw: Vec<f64> = (0..grid.cell_count())
+            .into_par_iter()
+            .map(|k| {
+                self.noise.fbm(
+                    grid.center(grid.cell(k)),
+                    self.relief_frequency,
+                    octaves,
+                    2.0,
+                    gain,
+                )
+            })
+            .collect();
+        let raw_rms = (raw.iter().map(|v| v * v).sum::<f64>() / raw.len().max(1) as f64)
+            .sqrt()
+            .max(1e-12);
+        // The largest octave's rms is the relief's; the others fall by the gain.
+        let total = self.relief
+            * (0..octaves)
+                .map(|o| gain.powi(2 * o as i32))
+                .sum::<f64>()
+                .sqrt();
+        let scale = total.min(self.relief_cap) / raw_rms;
+
         let bedrock: Vec<f32> = (0..grid.cell_count())
             .into_par_iter()
             .map(|k| {
-                let d = grid.center(grid.cell(k));
                 let isostatic = (crust[k] as f64 - mean_crust) * self.isostatic_factor;
-                // The relief under everything is self-affine, falling toward finer scales
-                // with the Hurst exponent of cratered terrain (F54), so that what floods
-                // and renews it meets rough ground at every scale and embays it.
-                let detail =
-                    self.relief * self.noise.fbm(d, 3.0, 6, 2.0, 2f64.powf(-ROUGHNESS_HURST));
-                (isostatic + detail) as f32
+                (isostatic + scale * raw[k]) as f32
             })
             .collect();
 

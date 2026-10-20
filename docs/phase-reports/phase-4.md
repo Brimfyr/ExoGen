@@ -1664,3 +1664,31 @@ Still to do:
 - **Venus's coronae**; the largest craters' terraces.
 
 Tests 219 (12 ignored). One replaces the Mimas test: the moons keep the craters they were counted with, Mimas within 1.3 times at 5 to 50 km, Tethys, Dione and Miranda within 1.5, Rhea within 2 and without debris. Clippy is clean and validate passes its 123 checks.
+
+## The sixty-eighth milestone: the base relief from the largest crater a body holds
+
+Asked for by the user after the sixty-seventh's renders: "These results have revealed that there is a fine, rough underlying displacement in the terrain of the smaller icy moons, likely set by a noise field. This is fine in practice, as looking at the real height maps of the moons shows a similar appearance. But it looks too fine and lacks large scale variation. Is this because we use the same scale for all bodies? The base noise should scale with the size of the body."
+
+- **F137.** The primordial relief begins at the largest crater the body holds and falls toward the grid with the Hurst exponent of cratered terrain, its largest octave as rough as a cratered surface is at that crater's scale.
+
+How it went:
+
+- **What the noise was.** The primordial relief's wavelengths were fractions of the radius already, from a third of it down to a ninety-sixth, the same number of bumps on every body; its amplitude was a quarter of the relief the crust's strength supports, which on a small icy moon is enormous (148 km on Mimas, 122 on Miranda, 83 on Enceladus, against the Moon's 57). Mimas's relief spanned 36 km, and its finest octave was five times as steep as the Moon's: the grain the user saw. The large scales were missing because the noise began at a third of the radius.
+- **Measured against the real maps.** Band by band from twice the radius to a thirty-second of it, the real Mimas, Moon, Mars and Ceres carry their relief most at the largest scales; ours peaked at a quarter to a half of the radius.
+- **Where to begin and how strong.** The amplitude now comes from the largest crater the body holds: a third of its depth at its own scale, the share a cratered surface's relief has (F54). Beginning first at twice the radius gave Mimas and Mercury twice their maps' share beyond it; beginning at that crater's own size, the radius on ice and 1.5 radii on rock, brings Mimas to 0.40 against 0.32 and needs no constant.
+- **What it gives.** Mimas's spectrum matches its map's band for band within 0.06 and its ground between the craters, crowded with lumps of tens of km, undulates gently under them; Mars's within 0.1; the Moon's largest bands rise toward its map's, and its maria flood larger connected lowlands; Mercury carries too much at its largest scale (0.56 of its relief against 0.39). The total relief changes little on the cold bodies (Mimas 5.7 km rms, the Moon 3.9).
+- **What did not change.** Enceladus, Miranda, Ceres, Ganymede and Callisto: their shells relax every wavelength over a few tens of km to nothing, so the new large scales are erased again. On a shell floating on an ocean the relaxation should leave the isostatic share, the thicker ice floating higher; that goes with the thermal-orbital milestone's shell.
+
+What the maps show:
+
+- **Mimas, the calibration body:** broad highs and lows across its hemispheres under its craters, the mid-scale lumps gone, as its height map shows it.
+- **The Moon:** as it was, its maria in larger connected lowlands.
+- **Mars:** as it was, its relief's spectrum its map's.
+- **Mercury:** a little more relief at its largest scale than its map.
+
+Still to do:
+
+- **The relaxation of a floating shell** toward isostasy rather than flatness, which the warm icy moons' large scales want, with the thermal-orbital process (the next milestone).
+- **Mercury's largest scale.**
+
+Tests 219 (12 ignored). Clippy is clean and validate passes its 123 checks.
