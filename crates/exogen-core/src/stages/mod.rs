@@ -841,14 +841,14 @@ pub fn finish(
     // The lanes' and the coronae's floor where the loop's cells did not reach their
     // edges: what the loop renewed of each cell, resampled and smoothed over its cell so
     // that no facet of the coarse grid shows in a lane, and the rest taken here.
-    // The base relief's texture under the renewed terrains (F141): below the scale of
-    // each terrain's fabric, and, where the loop laid the floor, only the octaves below
-    // the loop's cells, which its grid could not hold.
+    // The base relief under the renewed terrains (F141): kept below the length each
+    // levels over, and, where the loop laid the floor, its octaves below the loop's
+    // cells, which that grid could not hold.
     let crust = primordial_crust::PrimordialCrust::new(graph, loop_output.grid);
     let loop_cell = loop_output.grid.delta() * body_radius;
     let fine_below_loop: Option<Vec<f32>> = (polar || !episode_maps.is_empty()).then(|| {
-        let folds = FABRIC_TEXTURE_SHARE * POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
-        crust.fine_relief(&grid, folds.min(2.0 * loop_cell), body_radius)
+        let folds = POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
+        crust.below_loop(&grid, folds, body_radius)
     });
     if !lanes.is_empty() || !ice_coronae.is_empty() {
         let core: Option<Vec<f32>> = loop_output.lane_core.as_ref().map(|c| {
@@ -860,7 +860,7 @@ pub fn finish(
             body_radius,
             core.as_deref(),
             &renewal,
-            Some((&crust, loop_cell)),
+            Some(&crust),
         );
     }
     renewal.apply(&mut layers);

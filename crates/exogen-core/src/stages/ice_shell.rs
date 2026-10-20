@@ -2348,11 +2348,18 @@ pub struct IceShellProcess {
     /// episodes' terrains renewed between them, by area: what is not old cratered ground,
     /// whatever craters it has taken since.
     pub renewed_fraction: f64,
-    /// The relief the body formed with, on the loop's grid (F141), and its bands shorter
-    /// than each length a renewal has asked for: the texture a renewed cell keeps under
-    /// the new terrain.
-    primordial: Option<Vec<f32>>,
-    fine_cache: Vec<(f64, Vec<f32>)>,
+    /// The relief the body formed with, on the loop's grid, with its low-passes (F141):
+    /// what a renewed cell keeps of it under the new terrain, below the length the terrain
+    /// levels over; and that below the polar zone's radius, once asked for.
+    primordial: Option<BaseRelief>,
+    polar_fine: Option<Vec<f32>>,
+}
+
+/// The relief the body formed with, on the loop's grid, and its low-passes over every
+/// length the pyramid holds (F141).
+struct BaseRelief {
+    relief: Vec<f32>,
+    levels: Vec<(f64, Vec<f32>)>,
 }
 
 impl IceShellProcess {
@@ -2914,39 +2921,36 @@ impl IceShellProcess {
             thinned_for: 0.0,
             renewed_fraction,
             primordial: None,
-            fine_cache: Vec::new(),
+            polar_fine: None,
         })
     }
 
-    /// The relief the body formed with (F141), whose texture the renewals keep.
+    /// The relief the body formed with (F141), which the renewals keep under the new
+    /// terrain, with its low-passes over every length the pyramid holds.
     pub fn set_primordial(&mut self, bedrock: &[f32]) {
-        self.primordial = Some(bedrock.to_vec());
-        self.fine_cache.clear();
-    }
-
-    /// The base relief's bands shorter than a length, m, on the loop's grid: the relief
-    /// less its low-pass over that length, kept per level of the pyramid the low-pass
-    /// reads.
-    fn fine_index(&mut self, length: f64) -> Option<usize> {
-        let p = self.primordial.as_ref()?;
         let cell = self.grid.delta() * self.body_radius;
-        let mut level_length = 4.0 * cell;
-        while level_length < length && level_length < self.body_radius * 8.0 {
-            level_length *= 2.0;
-        }
-        if let Some(i) = self.fine_cache.iter().position(|(l, _)| *l == level_length) {
-            return Some(i);
-        }
-        let low =
-            crate::stages::relaxation::low_pass(&field_from(self.grid, p), cell, level_length);
-        let fine: Vec<f32> = p.iter().zip(&low).map(|(a, b)| a - b).collect();
-        self.fine_cache.push((level_length, fine));
-        Some(self.fine_cache.len() - 1)
+        let levels = crate::stages::relaxation::low_passes(
+            &field_from(self.grid, bedrock),
+            cell,
+            8.0 * self.body_radius,
+        );
+        self.primordial = Some(BaseRelief {
+            relief: bedrock.to_vec(),
+            levels,
+        });
+        self.polar_fine = None;
     }
 
-    fn fine_relief(&mut self, length: f64) -> Option<Vec<f32>> {
-        let i = self.fine_index(length)?;
-        Some(self.fine_cache[i].1.clone())
+    /// What a cell keeps of the base relief under a terrain that levels the relief over
+    /// `length` m (F141): the relief less its low-pass over that length, the pyramid's
+    /// levels blended by the logarithm of the length.
+    fn base_below(&self, k: usize, length: f64) -> f32 {
+        match &self.primordial {
+            Some(base) => {
+                base.relief[k] - crate::stages::relaxation::blend_levels(&base.levels, length, k)
+            }
+            None => 0.0,
+        }
     }
 
     /// What the relaxation step takes from the shell: the thinned shell's equilibrium
@@ -2994,16 +2998,17 @@ impl IceShellProcess {
             self.thinned_for = self.thinned_for.max(t1 - t0.max(self.present_start));
         }
         // A renewed terrain keeps nothing up to its own scale while it is hot, the zone's
-        // radius, and takes the base relief's texture below the scale of its folds (F141).
+        // radius, but the base relief below that (F141).
         let length = self
             .smooth_length()
             .max(self.shell.radius_rad * self.body_radius);
-        let cell = self.grid.delta() * self.body_radius;
-        let fine = if self.renewing {
-            self.fine_index(FABRIC_TEXTURE_SHARE * POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell))
-        } else {
-            None
-        };
+        if self.renewing && self.polar_fine.is_none() && self.primordial.is_some() {
+            self.polar_fine = Some(
+                (0..grid.cell_count())
+                    .map(|k| self.base_below(k, length))
+                    .collect(),
+            );
+        }
         crate::stages::relaxation::Local {
             equilibrium: self.equilibrium.as_deref(),
             renew: self
@@ -3012,7 +3017,11 @@ impl IceShellProcess {
             halo: self
                 .renewing
                 .then_some((self.thinned_now.as_slice(), self.thinned_for)),
-            fine: fine.map(|i| self.fine_cache[i].1.as_slice()),
+            fine: if self.renewing {
+                self.polar_fine.as_deref()
+            } else {
+                None
+            },
         }
     }
 
@@ -3070,29 +3079,22 @@ impl IceShellProcess {
         if !due.is_empty() {
             due.sort_by(|&a, &b| self.lanes[a].time_gyr.total_cmp(&self.lanes[b].time_gyr));
             // Each lane's floor (F141): the relief smoothed over what the lane levels, its
-            // own width or the lanes' smoothing length, with the base relief's texture
-            // below the scale of its grooves under that.
+            // own width or the lanes' smoothing length, with the base relief below that
+            // length kept under it, so that only what impacts and older terrains added
+            // goes.
             let body_radius = self.body_radius;
             let longest = due
                 .iter()
                 .map(|&i| self.lanes[i].removal_length(body_radius))
                 .fold(0.0, f64::max);
             let levels = crate::stages::relaxation::low_passes(&layers.bedrock, cell, longest);
-            let fines: Vec<Option<Vec<f32>>> = due
-                .iter()
-                .map(|&i| {
-                    let scale = FABRIC_TEXTURE_SHARE * self.lanes[i].grooves_on(cell);
-                    self.fine_relief(scale)
-                })
-                .collect();
             let mut weight = vec![0.0f32; n];
             let mut target = vec![0.0f32; n];
             let mut held: Vec<Option<(f32, f32)>> = vec![None; n];
             with_stamper(&grid, |stamper| {
-                for (n_due, &i) in due.iter().enumerate() {
+                for &i in &due {
                     let lane = &self.lanes[i];
                     let length = lane.removal_length(body_radius);
-                    let fine = fines[n_due].as_deref();
                     for sm in lane.sample(&grid, body_radius, lane.reach(cell), stamper) {
                         let d = grid.center(grid.cell(sm.idx));
                         let c = lane.cover_at(&sm, d, body_radius, cell) as f32;
@@ -3100,7 +3102,7 @@ impl IceShellProcess {
                             weight[sm.idx] = c;
                             target[sm.idx] =
                                 crate::stages::relaxation::blend_levels(&levels, length, sm.idx)
-                                    + fine.map_or(0.0, |f| f[sm.idx]);
+                                    + self.base_below(sm.idx, length);
                         }
                         if c >= 0.5 {
                             held[sm.idx] = Some((lane.time_gyr as f32, lane.clean as f32));
@@ -3166,28 +3168,20 @@ impl IceShellProcess {
             let mut target = vec![0.0f32; n];
             let mut held: Vec<Option<(f32, f32)>> = vec![None; n];
             // Each corona's floor: the relief smoothed over its own length, with the base
-            // relief's texture below the scale of its faults under that (F141).
-            let fines: Vec<Option<Vec<f32>>> = due
-                .iter()
-                .map(|&i| {
-                    let scale = FABRIC_TEXTURE_SHARE * self.coronae[i].faults_on(cell);
-                    self.fine_relief(scale)
-                })
-                .collect();
+            // relief below that length kept under it (F141).
             with_stamper(&grid, |stamper| {
-                for (n_due, &i) in due.iter().enumerate() {
+                for &i in &due {
                     let c = &self.coronae[i];
                     let smoothed: Vec<f32> = crate::stages::relaxation::low_pass(
                         &layers.bedrock,
                         cell,
                         c.smooth_length(),
                     );
-                    let fine = fines[n_due].as_deref();
                     for (idx, w, core_share) in c.covers(&grid, body_radius, cell, stamper) {
                         let w = w as f32;
                         if w > weight[idx] {
                             weight[idx] = w;
-                            target[idx] = smoothed[idx] + fine.map_or(0.0, |f| f[idx]);
+                            target[idx] = smoothed[idx] + self.base_below(idx, c.smooth_length());
                         }
                         if w >= 0.5 {
                             // The core's ice is clean, renewed from below; the belt is the
@@ -3271,8 +3265,9 @@ pub struct Renewal {
     clean: Vec<f32>,
     lane_cover: Vec<f32>,
     lane_time: Vec<f32>,
-    /// The length the terrain that holds the cell levels the relief over, m, and the
-    /// scale of its fabric, m, below which the base relief keeps its texture (F141).
+    /// The length the terrain that holds the cell levels the relief over, m, below which
+    /// the base relief is kept, and the spacing of its fabric, m, below which that relief
+    /// is toned down (F141).
     lane_length: Vec<f32>,
     lane_fabric: Vec<f32>,
     pub keep: Vec<f32>,
@@ -3329,8 +3324,8 @@ impl Renewal {
     }
 
     /// A terrain's hold of the cells about it, a lane's or a corona's (F133), each a
-    /// floor of its own with its cover: levelled over `length` m, with the base relief's
-    /// texture below `fabric` m, the scale of its grooves or faults (F141).
+    /// floor of its own with its cover, levelled over `length` m, its fabric spaced
+    /// `fabric` m (F141).
     pub fn take_hits(
         &mut self,
         time_gyr: f64,
@@ -3453,17 +3448,16 @@ pub fn lane_smooth_length(body_radius: f64) -> f64 {
 /// the loop but the relief itself. A crater younger than the lane keeps its ground,
 /// floor and thick ejecta alike, and is left out of the mean; so does a cell
 /// something younger renewed. Each cell's floor is levelled over the length its terrain
-/// levels, a lane's width or a corona's, and under it the base relief keeps its texture
-/// (F141): its octaves below the scale of the terrain's fabric where the floor is laid
-/// here, and of those only the ones below the loop's cells, which the loop's grid could
-/// not hold, where the loop laid it (`texture`: the relief the body formed with, and the
-/// loop's cell, m).
+/// levels, a lane's width or a corona's, and under it the base relief below that length
+/// is kept (F141): all of it where the floor is laid here, and only its octaves below the
+/// loop's cells, which the loop's grid could not hold, where the loop laid it
+/// (`crust`: the relief the body formed with).
 pub fn lay_lane_floor(
     layers: &mut LayerSet,
     body_radius: f64,
     renewed: Option<&[f32]>,
     renewal: &Renewal,
-    texture: Option<(&crate::stages::primordial_crust::PrimordialCrust, f64)>,
+    crust: Option<&crate::stages::primordial_crust::PrimordialCrust>,
 ) {
     let grid = layers.grid;
     let n = grid.cell_count();
@@ -3507,41 +3501,37 @@ pub fn lay_lane_floor(
         .fold(lane_smooth_length(body_radius), f64::max);
     let sums = crate::stages::relaxation::low_passes(&field_from(grid, &relief), cell, longest);
     let shares = crate::stages::relaxation::low_passes(&field_from(grid, &counted), cell, longest);
-    // The textures, by the first octave below each terrain's fabric: all of them, and
-    // those below the loop's cells.
-    let mut textures: HashMap<u32, (Vec<f32>, Vec<f32>)> = HashMap::new();
-    for k in 0..n {
-        if weight[k] <= 0.0 && taken[k] <= 0.0 {
-            continue;
-        }
-        let (all, sub) = match texture {
-            Some((crust, loop_cell)) => {
-                let first = crust.first_octave(
-                    FABRIC_TEXTURE_SHARE * renewal.lane_fabric[k] as f64,
-                    body_radius,
-                );
-                let (all, sub) = textures.entry(first).or_insert_with(|| {
-                    let below_loop = first.max(crust.first_octave(2.0 * loop_cell, body_radius));
-                    (
-                        crust.fine_relief_from(&grid, first),
-                        crust.fine_relief_from(&grid, below_loop),
-                    )
-                });
-                (all[k], sub[k])
-            }
-            None => (0.0, 0.0),
-        };
-        if weight[k] > 0.0 {
+    let finest = crust.map_or(0, |c| c.finest_on(&grid));
+    let loop_finest = crust.map_or(0, |c| c.loop_finest());
+    let floors: Vec<(usize, f32)> = (0..n)
+        .into_par_iter()
+        .filter(|&k| weight[k] > 0.0 || taken[k] > 0.0)
+        .map(|k| {
             let length = floor_length(k);
-            let sum = crate::stages::relaxation::blend_levels(&sums, length, k);
-            let share = crate::stages::relaxation::blend_levels(&shares, length, k);
-            if share > 0.05 {
-                bedrock[k] += (sum / share + all - bedrock[k]) * weight[k];
+            let fabric = renewal.lane_fabric[k] as f64;
+            let d = grid.center(grid.cell(k));
+            let mut h = bedrock[k];
+            if weight[k] > 0.0 {
+                let sum = crate::stages::relaxation::blend_levels(&sums, length, k);
+                let share = crate::stages::relaxation::blend_levels(&shares, length, k);
+                if share > 0.05 {
+                    let below = crust.map_or(0.0, |c| {
+                        c.texture_at(d, length, fabric, body_radius, 0, finest)
+                    }) as f32;
+                    h += (sum / share + below - h) * weight[k];
+                }
             }
-        }
-        if taken[k] > 0.0 {
-            bedrock[k] += sub * taken[k];
-        }
+            if taken[k] > 0.0 {
+                let sub = crust.map_or(0.0, |c| {
+                    c.texture_at(d, length, fabric, body_radius, loop_finest + 1, finest)
+                }) as f32;
+                h += sub * taken[k];
+            }
+            (k, h)
+        })
+        .collect();
+    for (k, h) in floors {
+        bedrock[k] = h;
     }
 }
 

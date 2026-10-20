@@ -13,8 +13,8 @@
 use rayon::prelude::*;
 
 use crate::constants::{
-    DENSITY_CRUST_ICE, DENSITY_CRUST_ROCK, MAX_CRATER_RADIUS_FRACTION, ROUGHNESS_HURST,
-    ROUGHNESS_RMS_SHARE,
+    DENSITY_CRUST_ICE, DENSITY_CRUST_ROCK, FINE_TEXTURE_SHARE, MAX_CRATER_RADIUS_FRACTION,
+    ROUGHNESS_HURST, ROUGHNESS_RMS_SHARE,
 };
 use crate::fields::{Field, LayerSet};
 use crate::grid::CubeSphere;
@@ -52,9 +52,10 @@ pub struct PrimordialCrust {
     /// The strength's limit on the relief's whole rms, m.
     relief_cap: f64,
     isostatic_factor: f64,
-    /// The relief's scale on its normalized field, m, once the loop's grid has measured
-    /// it (F141).
-    relief_scale: std::sync::OnceLock<f64>,
+    /// The relief's scale on its normalized field, m, measured on the loop's grid when
+    /// the crust is made (F141): computed eagerly, never under a lock, since the texture
+    /// is read from inside the parallel passes.
+    relief_scale: f64,
 }
 
 impl PrimordialCrust {
@@ -97,7 +98,7 @@ impl PrimordialCrust {
         } else {
             None
         };
-        Self {
+        let mut crust = Self {
             grid,
             noise: GradientNoise::new(seed ^ 0x9E37_79B9),
             harmonics: Harmonics::random(&rng, 2, 8, 2.0),
@@ -110,8 +111,12 @@ impl PrimordialCrust {
             relief_frequency,
             relief_cap,
             isostatic_factor: (rho_mantle - rho_crust) / rho_mantle,
-            relief_scale: std::sync::OnceLock::new(),
-        }
+            relief_scale: 0.0,
+        };
+        let raw = crust.raw_relief();
+        let rms = (raw.iter().map(|v| v * v).sum::<f64>() / raw.len().max(1) as f64).sqrt();
+        crust.relief_scale = crust.relief_scale_for(rms);
+        crust
     }
 
     /// The relief's octaves on the loop's grid: from the largest crater the body holds
@@ -154,63 +159,120 @@ impl PrimordialCrust {
     }
 
     fn relief_scale(&self) -> f64 {
-        *self.relief_scale.get_or_init(|| {
-            let raw = self.raw_relief();
-            let rms = (raw.iter().map(|v| v * v).sum::<f64>() / raw.len().max(1) as f64).sqrt();
-            self.relief_scale_for(rms)
-        })
+        self.relief_scale
     }
 
-    /// The first of the relief's octaves shorter than `max_wavelength` m: octave o has the
-    /// wavelength R / (f 2^o), f the relief's frequency in lattice cells per radian.
-    pub fn first_octave(&self, max_wavelength: f64, body_radius: f64) -> u32 {
-        let x = body_radius / (self.relief_frequency * max_wavelength.max(1.0));
-        if x < 1.0 {
-            0
-        } else {
-            x.log2().floor() as u32 + 1
-        }
+    /// The relief's finest octave on the loop's grid, the last init laid.
+    pub fn loop_finest(&self) -> u32 {
+        self.relief_octaves(&self.grid) - 1
     }
 
-    /// The relief's octaves from `first` on, on any grid, down to two of its cells, each at
-    /// the amplitude the loop's grid gave it (F141): the texture the base relief has under
-    /// a terrain that renewed the ground, below the scale of the terrain's own fabric,
-    /// which the renewal's smoothing took with the craters.
-    pub fn fine_relief_from(&self, grid: &CubeSphere, first: u32) -> Vec<f32> {
+    /// The relief's finest octave a grid draws cleanly: the last whose wavelength is at
+    /// least two of its cells.
+    pub fn finest_on(&self, grid: &CubeSphere) -> u32 {
+        let finest = grid.face_size() as f64 / std::f64::consts::PI;
+        (finest / self.relief_frequency).log2().floor().max(0.0) as u32
+    }
+
+    /// The relief's octaves `first` to `last` at a point, m, each at the amplitude the
+    /// loop's grid gave it (F141), weighted by how far below `max_wavelength` m it lies:
+    /// in full at half that wavelength and below, nothing at it, between by the logarithm
+    /// of the wavelength, so that a terrain levelling over a length keeps the relief below
+    /// that length and two terrains of nearly the same length keep nearly the same; and
+    /// below `fabric` m, the spacing of the terrain's own grooves, faults or folds, toned
+    /// down to FINE_TEXTURE_SHARE over an octave, the fabric overprinting what is finer
+    /// than itself (0 for no fabric). Octave o has the wavelength R / (f 2^o), f the
+    /// relief's frequency in lattice cells per radian.
+    pub fn texture_at(
+        &self,
+        d: [f64; 3],
+        max_wavelength: f64,
+        fabric: f64,
+        body_radius: f64,
+        first: u32,
+        last: u32,
+    ) -> f64 {
         let gain = 2f64.powf(-ROUGHNESS_HURST);
         let norm: f64 = (0..self.relief_octaves(&self.grid))
             .map(|o| gain.powi(o as i32))
             .sum();
-        let last = self.relief_octaves(grid) as i64 - 1;
-        if last < first as i64 {
+        let scale = self.relief_scale() / norm.max(1e-12);
+        let mut sum = 0.0;
+        for o in first..=last {
+            let wavelength = body_radius / (self.relief_frequency * 2f64.powi(o as i32));
+            let mut weight = (max_wavelength / wavelength).log2().clamp(0.0, 1.0);
+            if weight <= 0.0 {
+                continue;
+            }
+            if fabric > 0.0 {
+                let kept = ((wavelength / fabric).log2() + 1.0).clamp(0.0, 1.0);
+                weight *= FINE_TEXTURE_SHARE + (1.0 - FINE_TEXTURE_SHARE) * kept;
+            }
+            sum += weight
+                * self
+                    .noise
+                    .octaves(d, self.relief_frequency, o, 1, 2.0, gain);
+        }
+        scale * sum
+    }
+
+    /// `texture_at` over a grid.
+    pub fn texture_field(
+        &self,
+        grid: &CubeSphere,
+        max_wavelength: f64,
+        fabric: f64,
+        body_radius: f64,
+        first: u32,
+        last: u32,
+    ) -> Vec<f32> {
+        if last < first {
             return vec![0.0; grid.cell_count()];
         }
-        let scale = self.relief_scale() / norm.max(1e-12);
-        let count = (last - first as i64 + 1) as u32;
         (0..grid.cell_count())
             .into_par_iter()
             .map(|k| {
-                (scale
-                    * self.noise.octaves(
-                        grid.center(grid.cell(k)),
-                        self.relief_frequency,
-                        first,
-                        count,
-                        2.0,
-                        gain,
-                    )) as f32
+                self.texture_at(
+                    grid.center(grid.cell(k)),
+                    max_wavelength,
+                    fabric,
+                    body_radius,
+                    first,
+                    last,
+                ) as f32
             })
             .collect()
     }
 
-    /// The relief's octaves shorter than `max_wavelength` m on any grid (F141).
+    /// The relief below `max_wavelength` m on a grid, down to two of its cells (F141).
     pub fn fine_relief(
         &self,
         grid: &CubeSphere,
         max_wavelength: f64,
         body_radius: f64,
     ) -> Vec<f32> {
-        self.fine_relief_from(grid, self.first_octave(max_wavelength, body_radius))
+        self.texture_field(
+            grid,
+            max_wavelength,
+            0.0,
+            body_radius,
+            0,
+            self.finest_on(grid),
+        )
+    }
+
+    /// The relief's octaves below the loop's cells on a finer grid (F141), under a
+    /// terrain whose fabric is spaced `fabric` m: what the loop's grid could not hold,
+    /// which the floors it laid lack.
+    pub fn below_loop(&self, grid: &CubeSphere, fabric: f64, body_radius: f64) -> Vec<f32> {
+        self.texture_field(
+            grid,
+            f64::INFINITY,
+            fabric,
+            body_radius,
+            self.loop_finest() + 1,
+            self.finest_on(grid),
+        )
     }
 
     /// Initial layered state at formation.
@@ -264,9 +326,7 @@ impl PrimordialCrust {
         let raw_rms = (raw.iter().map(|v| v * v).sum::<f64>() / raw.len().max(1) as f64)
             .sqrt()
             .max(1e-12);
-        let scale = *self
-            .relief_scale
-            .get_or_init(|| self.relief_scale_for(raw_rms));
+        let scale = self.relief_scale_for(raw_rms);
 
         let bedrock: Vec<f32> = (0..grid.cell_count())
             .into_par_iter()
@@ -309,8 +369,8 @@ mod tests {
     use super::*;
 
     /// F141: the relief's octaves regenerated on the loop's grid, all of them, are the
-    /// relief init laid over the isostatic crust; those shorter than a length carry
-    /// little beyond it; and on a finer grid they run on below the loop's cells.
+    /// relief init laid over the isostatic crust; those below a length carry little
+    /// beyond it; and on a finer grid they run on below the loop's cells.
     #[test]
     fn the_fine_relief_is_the_relief_laid() {
         let (mut g, _) = crate::presets::preset("Mimas").unwrap().to_graph();
@@ -320,7 +380,7 @@ mod tests {
         let bedrock = crust.init().bedrock;
         g.set("multiplier.relief", 0.0).unwrap();
         let flat = PrimordialCrust::new(&g, grid).init().bedrock;
-        let all = crust.fine_relief(&grid, f64::INFINITY, r);
+        let all = crust.texture_field(&grid, f64::INFINITY, 0.0, r, 0, crust.loop_finest());
         let rms = |v: &[f32]| {
             (v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
         };
@@ -334,25 +394,43 @@ mod tests {
             rms(&diff),
             rms(&all)
         );
-        // Shorter than a tenth of the radius: little left after a low-pass over twice that.
-        let short = crust.fine_relief(&grid, 0.1 * r, r);
+        // Below three tenths of the radius: little left after a low-pass over four times
+        // that.
+        let short = crust.fine_relief(&grid, 0.3 * r, r);
         let cell = grid.delta() * r;
         let mut field = crate::fields::Field::<f32>::new(grid);
         field.as_mut_slice().copy_from_slice(&short);
-        let low = crate::stages::relaxation::low_pass(&field, cell, 0.4 * r);
+        let low = crate::stages::relaxation::low_pass(&field, cell, 1.2 * r);
         assert!(
             rms(&low) < 0.25 * rms(&short),
             "{} of {}",
             rms(&low),
             rms(&short)
         );
-        // A grid twice as fine holds one more octave, with its share of the amplitude.
-        let fine = crust.fine_relief(&crate::grid::CubeSphere::new(64), 0.1 * r, r);
+        // A grid four times as fine holds more octaves, with their share of the
+        // amplitude, and the octaves below the loop's cells are that difference.
+        let fine_grid = crate::grid::CubeSphere::new(128);
+        let fine = crust.fine_relief(&fine_grid, 0.3 * r, r);
         assert!(
             rms(&fine) > rms(&short) && rms(&fine) < 1.5 * rms(&short),
             "{} vs {}",
             rms(&fine),
             rms(&short)
+        );
+        let below = crust.below_loop(&fine_grid, 0.0, r);
+        assert!(
+            rms(&below) > 0.0 && rms(&below) < rms(&short),
+            "{}",
+            rms(&below)
+        );
+        // Under a fabric spaced at the loop's finest octave, the octaves below it are
+        // toned down to the share, the first of them in part.
+        let toned = crust.below_loop(&fine_grid, 0.05 * r, r);
+        assert!(
+            rms(&toned) < 0.8 * rms(&below) && rms(&toned) > FINE_TEXTURE_SHARE * rms(&below),
+            "{} of {}",
+            rms(&toned),
+            rms(&below)
         );
     }
 }

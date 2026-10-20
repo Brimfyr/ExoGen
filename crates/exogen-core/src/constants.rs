@@ -2430,12 +2430,14 @@ pub const GROOVE_HEADING_FREQUENCY: f64 = 1.2;
 pub const GROOVE_HEADING_DRIFT: f64 = 1.0;
 pub const GROOVE_SMOOTH_LANE_SHARE: f64 = 0.2;
 /// Or the lane's own width, if that is more (F141): a lane levels what it stretches
-/// across, and keeps the base relief's texture below its grooves' scale.
+/// across, taking what impacts and older terrains added, and keeps the base relief
+/// below that length.
 pub const GROOVE_SMOOTH_LENGTH: f64 = 100e3;
-/// A renewed terrain keeps the base relief's octaves below this share of its fabric's
-/// spacing (F141): the ground between the grooves, the faults or the folds keeps relief
-/// finer than they are; the octave at their own scale would stand with them.
-pub const FABRIC_TEXTURE_SHARE: f64 = 0.5;
+/// A renewed terrain's fabric, its grooves, faults or folds, overprints the base relief
+/// finer than its own spacing: the terrain keeps this share of that relief's amplitude,
+/// in full at the spacing and falling to the share an octave below it (F141). A stated
+/// choice, for the smoother look of new ice between its grooves.
+pub const FINE_TEXTURE_SHARE: f64 = 0.4;
 /// The lanes' drop spreads over the lithosphere's flexural parameter at their time, so a
 /// lane narrower than it sinks little and none ends on a step.
 pub const GROOVE_LANE_DROP: f64 = 200.0;
