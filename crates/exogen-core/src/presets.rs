@@ -34,6 +34,7 @@ presets! {
     "Callisto" => "callisto.toml",
     "Titan" => "titan.toml",
     "Enceladus" => "enceladus.toml",
+    "Mimas" => "mimas.toml",
     "Miranda" => "miranda.toml",
     "Triton" => "triton.toml",
     "Pluto" => "pluto.toml",

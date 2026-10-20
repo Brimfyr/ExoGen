@@ -1,0 +1,32 @@
+version = "0.0.1"
+name = "Mimas"
+description = "Reference body. Small ice moon of Saturn; the most heavily cratered of its mid-sized moons, with the basin Herschel, over a young ocean its last resonance melted too lately to mark its surface."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 5.6834e26
+"parent.radius" = 5.8232e7
+"parent.semi_major_axis" = 1.43353e12
+"parent.eccentricity" = 0.0565
+# JPL's mean elements and satellite constants: a 185,539 km, e 0.0196, GM 2.5026 km³/s²
+# over a mean radius of 198.2 km.
+"orbit.semi_major_axis" = 1.85539e8
+"orbit.eccentricity" = 0.0196
+"body.radius" = 1.982e5
+"body.density" = 1149.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+# Mimas's eccentricity is free, and its own dissipation would damp it: Meyer and Wisdom
+# (2008) find it the remnant of a past resonance, the Mimas-Dione 3:1 e²-Mimas resonance
+# among them, which they place 0.70 Gyr ago for a Saturn Q of 18,000, with an equilibrium
+# eccentricity of 0.07 for a Mimas k2/Q of 3.0e-6, an equilibrium heating of 1.9 GW. Saturn
+# dissipates 8.4 times as fast as that Q gives (k2/Q 1.59e-4, Lainey et al. 2017): the
+# resonance 83 Myr ago, supplying 16 GW, 32.8 mW/m². Lainey et al. (2024) find an ocean
+# under 20 to 30 km of ice younger than 25 Myr, and Walker and Rhoden that its melting
+# began when the eccentricity stood at two to three times its present value. The episode is
+# stated from the capture to the present; the moon's own dissipation decides when it
+# escaped (F138).
+"orbit.resonance_age" = 0.0417
+"orbit.resonance_duration" = 0.0834
+"orbit.resonance_heating" = 0.0328
+"seed.master" = 25.0

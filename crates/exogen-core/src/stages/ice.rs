@@ -422,12 +422,14 @@ pub fn focusing_episodes(graph: &ParamGraph, shell: &ShellMap) -> Vec<FocusEpiso
         return Vec::new();
     }
     let age = graph.f64("body.age");
+    // Only while the shell has floated on its ocean (F140).
+    let floated_from = (age - graph.f64("interior.ocean_age")).max(0.0);
     let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xF0C0_5E15);
     let mut out = Vec::new();
     let mut k = 1u64;
     loop {
         let end = age - k as f64 * period;
-        if end <= FOCUSING_EPISODE_DURATION_GYR {
+        if end <= FOCUSING_EPISODE_DURATION_GYR + floated_from {
             break;
         }
         let center = rng.unit_direction(k, 0);

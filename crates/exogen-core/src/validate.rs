@@ -566,6 +566,36 @@ pub fn reference_checks() -> Vec<Check> {
             30e3,
             "18 to 25 km mean, Čadek et al. 2016, Beuthe et al. 2016",
         ),
+        // Mimas
+        range(
+            "Mimas",
+            "body.gravity",
+            0.061,
+            0.067,
+            "0.064 m/s², GM 2.5026 km³/s²",
+        ),
+        text("Mimas", "rotation.mode", "locked", ""),
+        text("Mimas", "body.composition_class", "ice_dominated", ""),
+        range(
+            "Mimas",
+            "cratering.record_start",
+            0.15,
+            0.55,
+            "after the last impact it could not hold; its craters date from 4.0 to 4.35 Ga (Bottke et al. 2024)",
+        ),
+        range(
+            "Mimas",
+            "interior.ice_shell_thickness",
+            20e3,
+            30e3,
+            "20 to 30 km over a young ocean, Lainey et al. 2024",
+        ),
+        text(
+            "Mimas",
+            "interior.tectonic_regime",
+            "ice_shell_ocean",
+            "an ocean younger than 25 Myr, Lainey et al. 2024",
+        ),
         // Miranda
         range(
             "Miranda",

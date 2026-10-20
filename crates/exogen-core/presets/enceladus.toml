@@ -10,6 +10,8 @@ description = "Reference body. Small ice moon; ancient cratered plains and a ren
 "parent.eccentricity" = 0.0565
 "orbit.semi_major_axis" = 2.3802e8
 "orbit.eccentricity" = 0.0047
+# The 2:1 resonance with Dione forces it (Meyer and Wisdom 2008; F138).
+"orbit.resonance_forced" = true
 "body.radius" = 2.521e5
 "body.density" = 1609.0
 "atmosphere.surface_pressure" = 0.0

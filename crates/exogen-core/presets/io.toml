@@ -10,6 +10,8 @@ description = "Reference body. Innermost Galilean moon; eccentricity pumped by t
 "parent.eccentricity" = 0.0489
 "orbit.semi_major_axis" = 4.217e8
 "orbit.eccentricity" = 0.0041
+# The Laplace resonance forces it (F138).
+"orbit.resonance_forced" = true
 "body.radius" = 1.8216e6
 "body.density" = 3528.0
 "atmosphere.surface_pressure" = 0.0

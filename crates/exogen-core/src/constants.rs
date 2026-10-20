@@ -1907,10 +1907,6 @@ pub const ICE_VISCOSITY_MELT: f64 = 1.0e14;
 pub const ICE_CREEP_ACTIVATION: f64 = 60e3;
 pub const ICE_VISCOSITY_FLOOR_K: f64 = 60.0;
 pub const RELAXATION_DEPTH_FRACTION: f64 = 0.16;
-/// The cold elastic lid holds loads shorter than this many times its thickness up
-/// without flow; longer ones ride on the ductile ice below (the flexural wavelength of a
-/// thin plate is a few times its thickness).
-pub const ELASTIC_SUPPORT_FACTOR: f64 = 4.0;
 /// Relaxation by wavelength (F70). A crater's profile is a sum of wavelengths and an ice
 /// shell relaxes each on its own timescale: the bowl, its longest, goes first and the
 /// floor domes up, while the rim and the wall's terraces, short loads the elastic lid
@@ -2594,6 +2590,11 @@ pub const GROOVE_DAMAGE_CLEAN: f64 = 0.6;
 /// a resonance episode (F50) gives a pulse, a steady flux the body's whole age.
 pub const ICE_RESURFACING_FLUX_FLOOR: f64 = 0.005;
 pub const ICE_RESURFACING_FLUX: f64 = 0.0045;
+/// F140: the renewal is the heat above the floor carried over the shell's life against
+/// ICE_RESURFACING_FLUX carried over this time, Gyr: calibrated, as ICE_RESURFACING_FLUX
+/// was, on Ganymede's two thirds renewed by its episode, so that a brief spike of heat
+/// renews little and a steady flux all it can.
+pub const LANE_RENEWAL_GYR: f64 = 0.56;
 /// A resonance episode (F50): captured, the eccentricity rises over this share of each
 /// half of the episode, holds at the forced value, and falls over the same share after
 /// the escape; a trapezoid with a plateau of three fifths.
@@ -2603,6 +2604,30 @@ pub const RESONANCE_RAMP_SHARE: f64 = 0.4;
 /// many samples over a body's life.
 pub const CYCLE_SAMPLES_PER_PERIOD: usize = 16;
 pub const THERMAL_SAMPLES_MAX: usize = 2048;
+/// The thermal-orbital history of an icy moon (F138). Its step, Gyr: fine enough for the
+/// shell to follow the melting a resonance drives and the eccentricity its decay after.
+pub const ORBITAL_STEP_GYR: f64 = 0.0005;
+/// The latent heat of fusion of water ice, J/kg.
+pub const ICE_LATENT_HEAT: f64 = 3.34e5;
+/// The thinnest shell the history keeps, m.
+pub const ORBITAL_SHELL_MIN: f64 = 100.0;
+/// The warm start's crust where a warm moon's heat would hold no floating shell, m: a
+/// stated choice, the H2O layer liquid after accretion under a thin crust, which freezes
+/// within some tens of millions of years when nothing heats it.
+pub const WARM_START_SHELL: f64 = 1_000.0;
+/// The largest eccentricity a resonance pumps a moon to, a safety cap: Nakajima et al.
+/// (2019) find Enceladus's reaching 0.18 before its orbit crosses Tethys's.
+pub const PUMPED_ECCENTRICITY_MAX: f64 = 0.2;
+/// The thermal diffusivity of a rocky interior, m²/s: k / (ρ c_p) for rock of about
+/// 2.5 W/m/K and 2.5 MJ/m³/K. An ocean must lie over a frozen porous interior for R² / κ
+/// before its pores thaw (F138): Mimas's 72 km take 0.16 Gyr.
+pub const CORE_THERMAL_DIFFUSIVITY: f64 = 1.0e-6;
+/// The search for a free moon's escape from its last resonance: the share by which its
+/// eccentricity may stand above its present value at the present, the escapes scanned back
+/// from the latest, and the bisections that narrow the last down.
+pub const ESCAPE_TOLERANCE: f64 = 5e-4;
+pub const ESCAPE_SCAN: usize = 32;
+pub const ESCAPE_ITERATIONS: usize = 20;
 /// Chaos (F45): on a shell over an ocean thin against the body, the share of the surface
 /// disrupted into chaos, up to this much, in proportion to the tidal flux over this flux,
 /// W/m² (a fit that gives Europa's 14 mW/m², F75, the whole share, refitted from 0.05

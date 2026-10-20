@@ -580,6 +580,40 @@ pub fn ice_coronae(graph: &ParamGraph, thermal: &ThermalHistory) -> Vec<Corona> 
     let age = graph.f64("body.age");
     let mid = (age - graph.f64("volcanism.corona_age")).clamp(0.0, age);
     let width = graph.f64("volcanism.corona_duration").max(0.0);
+    // Each corona forms at a time drawn from the tidal heat its lid carries above the floor
+    // that renews an icy surface (F44): the lesser of the tides and the heat the lid
+    // conducts, so that none falls while the ice is frozen through, or melting from below
+    // under a lid still thick, or freezing from a warm start, or after it froze again
+    // (F138). The heat's cumulative share against time.
+    let mut cumulative = Vec::with_capacity(thermal.samples.len());
+    let mut total = 0.0;
+    for w in thermal.samples.windows(2) {
+        let excess = |s: &crate::thermal::ThermalState| {
+            (s.tidal_flux.min(s.heat_flux) - ICE_RESURFACING_FLUX_FLOOR).max(0.0)
+        };
+        total += 0.5 * (excess(&w[0]) + excess(&w[1])) * (w[1].time_gyr - w[0].time_gyr);
+        cumulative.push((w[1].time_gyr, total));
+    }
+    let draw = |u: f64| -> f64 {
+        if total <= 0.0 {
+            return (mid + (u - 0.5) * width).clamp(0.0, age);
+        }
+        let target = u * total;
+        let k = cumulative
+            .partition_point(|p| p.1 < target)
+            .min(cumulative.len() - 1);
+        let (t1, c1) = cumulative[k];
+        let (t0, c0) = if k > 0 {
+            cumulative[k - 1]
+        } else {
+            (thermal.samples[0].time_gyr, 0.0)
+        };
+        if c1 > c0 {
+            t0 + (target - c0) / (c1 - c0) * (t1 - t0)
+        } else {
+            t1
+        }
+    };
     let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xC020_1CE0);
     let centres = place_upwellings(count, &rng);
     // The lid at each corona's own time, from the thermal relations at that time rather
@@ -596,7 +630,7 @@ pub fn ice_coronae(graph: &ParamGraph, thermal: &ThermalHistory) -> Vec<Corona> 
                 (0..count).filter(|&j| j != i).map(|j| centres[j]).collect()
             };
             let mut corona = Corona::new(k, centres[i], &others, body_radius);
-            let time = (mid + (rng.uniform(k, 10) - 0.5) * width).clamp(0.0, age);
+            let time = draw(rng.uniform(k, 10)).clamp(0.0, age);
             let state = crate::thermal::state_at(&inputs, time);
             let elastic = state.elastic.max(1e3);
             let convecting = Convection::ice(body_radius, ice_layer, state.lithosphere).is_some();

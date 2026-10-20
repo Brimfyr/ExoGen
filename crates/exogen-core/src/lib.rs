@@ -15,6 +15,7 @@ pub mod geom;
 pub mod grid;
 pub mod mantle;
 pub mod noise;
+pub mod orbital;
 pub mod params;
 pub mod presets;
 pub mod project;

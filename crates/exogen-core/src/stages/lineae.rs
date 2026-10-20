@@ -394,6 +394,9 @@ pub struct Cracks {
     pub density: f64,
     pub age: f64,
     pub retention: f64,
+    /// How long the shell has floated on its ocean, Gyr: cracks form only while it floats
+    /// (F140), a young ocean's few against the retention age's.
+    pub floated: f64,
     pub body_radius: f64,
     pub orbit_period_s: f64,
     /// Whether a plume vents from the fissures of the polar terrain.
@@ -461,6 +464,7 @@ impl Cracks {
             density,
             age: graph.f64("body.age"),
             retention: graph.f64("cratering.retention_age"),
+            floated: graph.f64("interior.ocean_age"),
             body_radius: graph.f64("body.radius"),
             orbit_period_s: graph.f64("orbit.period"),
             vent: graph.f64("volcanism.plume_fallout_rate") > 0.0,
@@ -578,7 +582,7 @@ impl Cracks {
         );
         let mean_length = (l_hi - l_lo) / (l_hi / l_lo).ln();
         let expected = self.total_length() / mean_length;
-        let window_start = (present - self.retention).max(0.0);
+        let window_start = (present - self.retention.min(self.floated)).max(0.0);
         let mut out: Vec<Linea> = Vec::new();
         let mut index = CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius);
         // Under a plume the vents of the thinned zone come first, in their cascade (F57),
@@ -1829,7 +1833,9 @@ mod tests {
     /// A crack's heading is carried from step to step in the plane tangent where it is:
     /// Europa's ridges and cycloids almost never turn back and forth step after step (a
     /// heading left tilted out of the plane zigzagged at every step). A cycloid's cusp
-    /// reverses its curvature once; a zigzag reverses it at every step.
+    /// reverses its curvature once; a zigzag reverses it at every step, by turns of much the
+    /// same size. A cusp beside an arc, its sharp turn more than twice the arc's, is not a
+    /// zigzag, however tightly the short arcs of a much-cusped cycloid curve.
     #[test]
     fn europa_s_cracks_do_not_zigzag() {
         let (g, _) = crate::presets::preset("Europa").unwrap().to_graph();
@@ -1852,7 +1858,15 @@ mod tests {
                 .collect();
             for t in turns.windows(3) {
                 *steps += 1;
-                if t[0] * t[1] < 0.0 && t[1] * t[2] < 0.0 && t.iter().all(|x| x.abs() > 0.5) {
+                let (lo, hi) = t.iter().fold((f64::INFINITY, 0.0f64), |(a, b), x| {
+                    (a.min(x.abs()), b.max(x.abs()))
+                });
+                let cusp = hi > 2.0 * lo;
+                if t[0] * t[1] < 0.0
+                    && t[1] * t[2] < 0.0
+                    && t.iter().all(|x| x.abs() > 0.5)
+                    && !cusp
+                {
                     *reversals += 1;
                     *worst = worst.max(t.iter().fold(f64::INFINITY, |m, x| m.min(x.abs())));
                 }
@@ -1864,10 +1878,10 @@ mod tests {
             (rr as f64) < 0.005 * rs as f64 && rw < 5.0,
             "ridges {rr} of {rs}, {rw:.1}"
         );
-        // A cycloid's arcs curve steadily and its cusps turn sharply one way; the few
-        // alternations sit at the cusps, small.
+        // A cycloid's arcs curve steadily and its cusps turn sharply one way; turns back and
+        // forth of much the same size are as rare along it as along a ridge.
         assert!(
-            (cr as f64) < 0.06 * cs as f64 && cw < 8.0,
+            (cr as f64) < 0.005 * cs as f64 && cw < 8.0,
             "cycloids {cr} of {cs}, {cw:.1}"
         );
     }

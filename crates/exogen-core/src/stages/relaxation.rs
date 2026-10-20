@@ -69,16 +69,28 @@ pub fn relaxation_time_gyr(wavelength: f64, shell: &Shell) -> f64 {
     tau_s / SECONDS_PER_GYR
 }
 
-/// The share of a load that rides on the ductile ice rather than the elastic lid: none
-/// below the lid's flexural wavelength, all well beyond it.
+/// The flexural wavelength of the elastic lid, m (F139): 2π (D / ρ g)^¼, its flexural
+/// rigidity D = E Tₑ³ / 12 (1 − ν²) (Turcotte and Schubert 2002, section 3.17). It goes
+/// as Tₑ^¾ g^-¼, so that a small moon's lid holds up loads many times its thickness:
+/// Mimas's 12 km lid 450 km, Enceladus's 12 km 370 km, Ganymede's 32 km 420 km.
+pub fn flexural_wavelength(shell: &Shell) -> f64 {
+    let te = shell.elastic.max(0.0);
+    let rigidity = ICE_YOUNG_MODULUS * te.powi(3) / (12.0 * (1.0 - ICE_POISSON * ICE_POISSON));
+    std::f64::consts::TAU * (rigidity / (DENSITY_CRUST_ICE * shell.gravity.max(1e-9))).powf(0.25)
+}
+
+/// The share of a load that rides on the ductile ice rather than the elastic lid (F139).
+/// A thin plate's degree of compensation is 1 / (1 + (λ_f / λ)⁴), half at the flexural
+/// wavelength; the share is taken as rising smoothly from none at two thirds of it to all
+/// at four thirds, so that the share the lid holds of a short load, small but never nil in
+/// the plate's law, is not worn away by the survivals of step after step.
 pub fn ductile_share(wavelength: f64, shell: &Shell) -> f64 {
-    let support = ELASTIC_SUPPORT_FACTOR * shell.elastic.max(0.0);
+    let support = 2.0 / 3.0 * flexural_wavelength(shell);
     if support <= 0.0 {
         return 1.0;
     }
-    let x = wavelength / support;
-    // Smooth from 0 at the flexural wavelength to 1 at twice it.
-    ((x - 1.0).clamp(0.0, 1.0)).powi(2) * (3.0 - 2.0 * (x - 1.0).clamp(0.0, 1.0))
+    let x = (wavelength / support - 1.0).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
 }
 
 /// The fraction of a wavelength's relief that survives a time on a shell.
@@ -544,27 +556,48 @@ mod tests {
 
     #[test]
     fn a_thinned_shell_relaxes_the_long_wavelengths_beside_a_terrain_first() {
-        // F66: under an Enceladus shell thinned to 0.45 of its 44 km for an episode of 10
-        // Myr, a 100 km load relaxes and a 12 km crater keeps its relief; the shell as it
-        // is relaxes neither.
+        // F66 with F139: under Enceladus's 22 km shell thinned to a fifth for an episode of
+        // 10 Myr, its lid's flexural wavelength falls from 370 to 110 km: a 300 km load
+        // relaxes and a 12 km crater keeps its relief; the shell as it is holds up most of
+        // the 300 km load and all of the crater.
         let shell = Shell {
-            thickness: 44e3,
-            elastic: 23e3,
-            surface_temperature: 75.0,
+            thickness: 22e3,
+            elastic: 11.6e3,
+            surface_temperature: 61.0,
             basal_temperature: 273.0,
             gravity: 0.113,
             viscosity_scale: 1.0,
         };
-        assert!(thinned_survival(100e3, 0.01, &shell, 0.45) < 0.05);
-        assert!(thinned_survival(12e3, 0.01, &shell, 0.45) > 0.99);
-        assert!((thinned_survival(100e3, 0.01, &shell, 1.0) - 1.0).abs() < 1e-9);
-        // A thinner shell, a larger body's, relaxes a crater of 25 km beside the terrain.
-        let thin = Shell {
-            thickness: 13.3e3,
-            elastic: 6.9e3,
-            ..shell
+        let flexural = flexural_wavelength(&shell);
+        assert!((330e3..410e3).contains(&flexural), "{flexural}");
+        assert!(thinned_survival(300e3, 0.01, &shell, 0.2) < 0.05);
+        assert!(thinned_survival(12e3, 0.01, &shell, 0.2) > 0.99);
+        assert!((thinned_survival(300e3, 0.01, &shell, 1.0) - 1.0).abs() < 1e-9);
+        assert!(survival(300e3, 0.01, &shell) > 0.6);
+        assert!(survival(12e3, 4.5, &shell) > 0.999);
+        // Thinned to a tenth, its lid of 1.2 km lets a crater of 60 km relax in part and one
+        // of 100 km wholly, as Enceladus's relaxed craters want lids of a kilometre or two
+        // (Bland et al. 2012).
+        assert!(thinned_survival(60e3, 0.01, &shell, 0.1) < 0.8);
+        assert!(thinned_survival(100e3, 0.01, &shell, 0.1) < 0.05);
+    }
+
+    /// F139: Mimas's lid over its young ocean, 12 km thick, holds Herschel up: its flexural
+    /// wavelength on a body of so little gravity is some 450 km.
+    #[test]
+    fn a_small_moon_s_lid_holds_its_largest_crater() {
+        let mimas = Shell {
+            thickness: 24e3,
+            elastic: 12.3e3,
+            surface_temperature: 69.0,
+            basal_temperature: 273.0,
+            gravity: 0.064,
+            viscosity_scale: 1.0,
         };
-        assert!(thinned_survival(25e3, 0.01, &thin, 0.3) < 0.05);
+        let flexural = flexural_wavelength(&mimas);
+        assert!((400e3..500e3).contains(&flexural), "{flexural}");
+        assert!(survival(130e3, 0.02, &mimas) > 0.95);
+        assert!(survival(260e3, 0.02, &mimas) > 0.85);
     }
 
     /// F134: a crater whose long bands relax and short bands hold, stepped many times with
@@ -644,8 +677,8 @@ mod tests {
 
     #[test]
     fn warm_shells_relax_long_wavelengths_first() {
-        // Ganymede today: a 100 km shell at 106 K. A 300 km load goes within a million
-        // years, a 20 km crater outlasts the solar system.
+        // Ganymede today: an 83 km shell at 106 K. A 300 km load would go within a million
+        // years were its lid not holding it, a 20 km crater outlasts the solar system.
         let ganymede = Shell {
             thickness: 83e3,
             elastic: 32e3,
@@ -656,7 +689,9 @@ mod tests {
         };
         assert!(relaxation_time_gyr(300e3, &ganymede) < 1e-3);
         assert!(relaxation_time_gyr(20e3, &ganymede) > 100.0);
-        // Europa's thin shell relaxes even 30 km craters within its surface age.
+        // A thin shell, an 8 km one on Europa, flows fast under even a 30 km crater, but its
+        // 3 km lid holds the crater up (F139): only loads beyond its 74 km flexural
+        // wavelength settle within the surface's age.
         let europa = Shell {
             thickness: 8e3,
             elastic: 3e3,
@@ -666,13 +701,16 @@ mod tests {
             viscosity_scale: 1.0,
         };
         assert!(relaxation_time_gyr(30e3, &europa) < 0.05);
-        assert!(survival_since(30e3, 4.0, 4.5, &|_| europa, 1.0) < 1e-3);
+        assert!(survival_since(30e3, 4.0, 4.5, &|_| europa, 1.0) > 0.95);
+        assert!(survival_since(300e3, 4.0, 4.5, &|_| europa, 1.0) < 0.05);
         assert!(survival_since(20e3, 0.0, 4.5, &|_| ganymede, 1.0) > 0.95);
-        // The elastic lid holds a 60 km crater on today's Ganymede however warm the base.
+        // The elastic lid holds a 60 km crater on today's Ganymede however warm the base,
+        // and lets a basin of 1000 km settle.
         assert!(survival_since(60e3, 0.0, 4.5, &|_| ganymede, 1.0) > 0.95);
-        assert!(survival_since(400e3, 4.0, 4.5, &|_| ganymede, 1.0) < 0.05);
-        // Where the shell is a fifth as thick the same crater goes.
-        assert!(survival_since(60e3, 0.0, 4.5, &|_| ganymede, 0.2) < 0.5);
+        assert!(survival_since(1000e3, 4.0, 4.5, &|_| ganymede, 1.0) < 0.05);
+        // Where the shell is a fifth as thick a 200 km load goes.
+        assert!(survival_since(200e3, 0.0, 4.5, &|_| ganymede, 0.2) < 0.5);
+        assert!(survival_since(200e3, 0.0, 4.5, &|_| ganymede, 1.0) > 0.9);
         // Relaxation keeps a small bump and flattens a broad one.
         let grid = CubeSphere::new(64);
         let r = 2.6e6;

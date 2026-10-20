@@ -31,11 +31,10 @@ pub struct ThermalInputs {
     pub tidal_flux_now: f64,
     pub eccentricity_now: f64,
     pub eccentricity_history: Curve,
-    /// An icy moon's shell, which dissipates the tides of each time at the thickness of
-    /// that time (F75), and the present tides of its porous interior, W/m² (F68); the
-    /// shell's share of the present tidal flux is then recomputed, not scaled.
-    pub shell: Option<crate::stages::tidal::ShellTides>,
-    pub core_tidal_flux_now: f64,
+    /// An icy moon locked to its planet: its interior and the history of its shell and
+    /// porous interior under its eccentricity history (F138), whose tides and conduction
+    /// are those of each time's state.
+    pub orbital: Option<(crate::orbital::OrbitalInputs, crate::orbital::ShellHistory)>,
     /// A dry rocky mantle keeps its own heat's history (F121, F122); whether it has plumes,
     /// which go on melting where it no longer does (F123).
     pub mantle: Option<crate::mantle::MantleHistory>,
@@ -165,6 +164,14 @@ impl ThermalInputs {
         } else {
             T_MELT_WATER
         };
+        let eccentricity_history = graph
+            .curve("orbit.eccentricity_history")
+            .cloned()
+            .unwrap_or_else(|| Curve::constant(graph.f64("orbit.eccentricity")));
+        let orbital = crate::orbital::OrbitalInputs::from_graph(graph).map(|o| {
+            let h = o.shell_history(&eccentricity_history);
+            (o, h)
+        });
         Self {
             age_gyr: graph.f64("body.age"),
             radius: graph.f64("body.radius"),
@@ -176,13 +183,8 @@ impl ThermalInputs {
             plumes: graph.f64("tectonics.plume_rise_count") >= 1.0,
             tidal_flux_now: graph.f64("interior.tidal_flux"),
             eccentricity_now: graph.f64("orbit.eccentricity"),
-            eccentricity_history: graph
-                .curve("orbit.eccentricity_history")
-                .cloned()
-                .unwrap_or_else(|| Curve::constant(graph.f64("orbit.eccentricity"))),
-            shell: crate::stages::tidal::ShellTides::from_graph(graph),
-            core_tidal_flux_now: graph.f64("interior.core_tidal_power")
-                / (4.0 * std::f64::consts::PI * graph.f64("body.radius").powi(2)),
+            eccentricity_history,
+            orbital,
             icy,
             surface_temperature: graph.f64("atmosphere.surface_temperature_mean"),
             melting_point,
@@ -300,25 +302,32 @@ pub fn ice_melt_gate(radius: f64, conductive: f64, surface: f64, melting: f64) -
 pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
     let area = 4.0 * std::f64::consts::PI * inp.radius * inp.radius;
     let radiogenic = radiogenic_per_kg(t) * inp.rock_mass / area * (1.0 + inp.secular_fraction);
-    // Tidal power scales with the square of the eccentricity (F13), at a fixed interior;
-    // an icy shell's own share is that of the shell the heat of the time leaves (F75).
-    let e = inp.eccentricity_history.eval(t).max(0.0);
-    let scale = if inp.eccentricity_now > 0.0 {
-        (e / inp.eccentricity_now).powi(2)
-    } else {
-        1.0
-    };
-    let tidal = match &inp.shell {
-        Some(shell) => {
-            let core = inp.core_tidal_flux_now * scale;
-            core + shell.equilibrium(radiogenic + core, e).heating
+    // Tidal power scales with the square of the eccentricity (F13), at a fixed interior; an
+    // icy moon's are those of its shell and porous interior as their history leaves them,
+    // and its surface conducts what its shell does (F138).
+    let (tidal, heat_flux) = match &inp.orbital {
+        Some((o, h)) => {
+            let s = h.at(t);
+            (
+                o.tidal_flux(&s, s.eccentricity),
+                o.surface_flux(&s, s.eccentricity, t),
+            )
         }
-        None => inp.tidal_flux_now * scale,
+        None => {
+            let e = inp.eccentricity_history.eval(t).max(0.0);
+            let scale = if inp.eccentricity_now > 0.0 {
+                (e / inp.eccentricity_now).powi(2)
+            } else {
+                1.0
+            };
+            let tidal = inp.tidal_flux_now * scale;
+            (tidal, radiogenic + tidal)
+        }
     };
     // A dry rocky mantle loses its heat as its history gives it (F121, F122).
     let heat_flux = match &inp.mantle {
         Some(m) => m.heat_flux_at(t),
-        None => radiogenic + tidal,
+        None => heat_flux,
     };
     let mantle_temperature = if inp.icy {
         inp.melting_point
@@ -617,7 +626,9 @@ mod tests {
     }
 
     /// Ganymede's resonance episode (F50) pulses its eccentricity and its tidal flux two
-    /// gigayears ago, and the lanes take their amount and their time from the pulse.
+    /// gigayears ago, and the lanes take their amount and their time from the pulse. The
+    /// resonance supplies the heat 0.0185 gives its shell, and the eccentricity rises toward
+    /// that as the supply does, decaying after the escape (F138).
     #[test]
     fn ganymede_resonance_episode_heats_the_shell_two_gigayears_ago() {
         let (g, _) = preset("Ganymede").unwrap().to_graph();
@@ -625,16 +636,19 @@ mod tests {
         let e = g.curve("orbit.eccentricity_history").unwrap();
         assert!((e.eval(0.0) - 0.0013).abs() < 1e-6);
         assert!((e.eval(age) - 0.0013).abs() < 1e-6);
-        assert!((e.eval(age - 2.0) - 0.0185).abs() < 1e-6);
-        // The plateau holds the forced value over the middle three fifths.
-        assert!((e.eval(age - 2.25) - 0.0185).abs() < 1e-6);
-        assert!(e.eval(age - 2.45) < 0.012 && e.eval(age - 2.45) > 0.0013);
+        let mid = e.eval(age - 2.2);
+        assert!((0.016..0.020).contains(&mid), "{mid}");
+        // Rising over the episode's first fifth, decaying over a few hundred Myr after.
+        assert!(e.eval(age - 2.65) < 0.012 && e.eval(age - 2.65) > 0.0013);
+        assert!(e.eval(age - 1.6) > 0.005 && e.eval(age - 1.2) < 0.002);
         let h = ThermalHistory::from_graph(&g);
         let peak = h.samples.iter().map(|s| s.tidal_flux).fold(0.0, f64::max);
         assert!(peak > 0.007 && peak < 0.009, "peak tidal flux {peak}");
         assert!(h.at(age).tidal_flux < 0.001);
         let fraction = g.f64("tectonics.ice_resurfaced_fraction");
         assert!((0.55..=0.75).contains(&fraction), "fraction {fraction}");
+        // The lanes trail the forcing, placed 2.2 Gyr ago for them: the shell thins behind
+        // the heat, and the eccentricity decays after the escape (F138).
         let t = g.f64("tectonics.ice_resurfacing_age");
         assert!((1.9..=2.1).contains(&t), "age {t}");
         let d = g.f64("tectonics.ice_resurfacing_duration");

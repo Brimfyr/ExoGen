@@ -10,6 +10,8 @@ description = "Reference body. Largest moon; dark cratered terrain over clean ic
 "parent.eccentricity" = 0.0489
 "orbit.semi_major_axis" = 1.0704e9
 "orbit.eccentricity" = 0.0013
+# The Laplace resonance forces it (F138).
+"orbit.resonance_forced" = true
 "body.radius" = 2.6341e6
 "body.density" = 1936.0
 "atmosphere.surface_pressure" = 0.0
@@ -21,8 +23,10 @@ description = "Reference body. Largest moon; dark cratered terrain over clean ic
 # of 0.01 to 0.07, heats the shell to 8 mW/m² in its own tides (F75), which renews two
 # thirds of the surface (F44, F50) and leaves the shell near 40 km, thick enough to keep
 # the dark terrain's 70 km craters while the 150 km ones relax to palimpsests; nothing
-# is pinned.
-"orbit.resonance_age" = 2.0
+# is pinned. The lanes trail the resonance by some 0.2 Gyr, the eccentricity rising as the
+# resonance's supply does and decaying after it lets go, and the shell thinning behind the
+# heat (F138), so the episode is placed 2.2 Gyr ago for terrain two gigayears old.
+"orbit.resonance_age" = 2.2
 "orbit.resonance_eccentricity" = 0.0185
 "orbit.resonance_duration" = 1.0
 "seed.master" = 22.0

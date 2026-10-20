@@ -10,6 +10,8 @@ description = "Reference body. Thin ice shell over a water ocean, cracked along 
 "parent.eccentricity" = 0.0489
 "orbit.semi_major_axis" = 6.711e8
 "orbit.eccentricity" = 0.0094
+# The Laplace resonance forces it (F138).
+"orbit.resonance_forced" = true
 "body.radius" = 1.5608e6
 "body.density" = 3013.0
 "atmosphere.surface_pressure" = 0.0
