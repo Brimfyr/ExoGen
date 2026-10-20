@@ -285,6 +285,17 @@ impl ThermalHistory {
     }
 }
 
+/// F133: how much of the heat an ice mantle loses can melt it, 0 to 1. Ice melts only
+/// where the conductive profile reaches its melting point inside the body; a lid that
+/// would reach past the centre leaves the body frozen through. The excess the profile
+/// would reach at the centre over the melting point is taken against one rheological
+/// temperature scale of ice, as the rocky mantle's melt is against its own (F123).
+pub fn ice_melt_gate(radius: f64, conductive: f64, surface: f64, melting: f64) -> f64 {
+    let excess = (melting - surface).max(0.0) * (radius / conductive.max(1.0) - 1.0);
+    let scale = GAS_CONSTANT * melting * melting / ICE_CREEP_ACTIVATION;
+    (excess / scale.max(1e-9)).clamp(0.0, 1.0)
+}
+
 /// The interior at `t` Gyr since formation from the present-day relations.
 pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
     let area = 4.0 * std::f64::consts::PI * inp.radius * inp.radius;
@@ -315,7 +326,7 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         MANTLE_T_BASE + MANTLE_T_SCALE * (heat_flux / EARTH_HEAT_FLUX).max(0.0).sqrt()
     };
     let dt = (mantle_temperature - inp.surface_temperature).max(1.0);
-    let lithosphere = if inp.icy {
+    let conductive = if inp.icy {
         conductive_thickness(
             ice_conductivity(0.5 * (mantle_temperature + inp.surface_temperature)),
             dt,
@@ -323,8 +334,8 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         )
     } else {
         conductive_thickness(K_ROCK, dt, MANTLE_FLUX_FRACTION * heat_flux)
-    }
-    .min(inp.radius);
+    };
+    let lithosphere = conductive.min(inp.radius);
     let iso = if inp.icy {
         ELASTIC_ISOTHERM_ICE
     } else {
@@ -337,7 +348,14 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         DENSITY_CRUST_ROCK
     };
     let relief_limit = relief_limit(inp.crust_strength, rho, inp.gravity);
-    let tidal_efficiency = MAGMA_EFFICIENCY_TIDAL_MAX * (tidal / MAGMA_TIDAL_FLUX_SCALE).min(1.0);
+    // The tidal boost is a silicate mantle's heat pipe (Io), its melt lighter than its lid;
+    // an ice mantle's melt is denser than the ice over it, and the heat its tides make leaves
+    // as the rest of its heat does (F133).
+    let tidal_efficiency = if inp.icy {
+        0.0
+    } else {
+        MAGMA_EFFICIENCY_TIDAL_MAX * (tidal / MAGMA_TIDAL_FLUX_SCALE).min(1.0)
+    };
     let efficiency = inp.magma_efficiency_base.max(tidal_efficiency.max(0.0));
     let heat_per_m3 = if inp.icy {
         MAGMA_HEAT_PER_M3_ICE
@@ -352,6 +370,16 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
             let crust = m.crust_share * radiogenic_per_kg(t) * inp.rock_mass / area;
             magma_rate((heat_flux - crust).max(0.0), area, efficiency, heat_per_m3)
                 * m.melt_gate_at(t, inp.plumes)
+        }
+        // An ice mantle melts only where its profile reaches the melting point (F133).
+        None if inp.icy => {
+            magma_rate(heat_flux, area, efficiency, heat_per_m3)
+                * ice_melt_gate(
+                    inp.radius,
+                    conductive,
+                    inp.surface_temperature,
+                    inp.melting_point,
+                )
         }
         None => magma_rate(heat_flux, area, efficiency, heat_per_m3),
     };
@@ -611,5 +639,29 @@ mod tests {
         assert!((1.9..=2.1).contains(&t), "age {t}");
         let d = g.f64("tectonics.ice_resurfacing_duration");
         assert!((0.3..=0.8).contains(&d), "duration {d}");
+    }
+
+    /// An ice body whose conductive profile reaches its melting point nowhere inside it
+    /// is frozen through and makes no ice magma (F133): Miranda today, but not while its
+    /// resonance heated it, and not Ceres or Pluto, whose profiles reach it at depth.
+    #[test]
+    fn a_body_frozen_through_makes_no_ice_magma() {
+        let (g, _) = preset("Miranda").unwrap().to_graph();
+        assert_eq!(g.f64("interior.magma_production_rate"), 0.0);
+        assert_eq!(g.f64("volcanism.cryodome_count"), 0.0);
+        let h = ThermalHistory::from_graph(&g);
+        let age = g.f64("body.age");
+        assert_eq!(h.at(age).magma_rate, 0.0);
+        assert!(h.at(age - 1.0).magma_rate > 0.0);
+        for name in ["Ceres", "Pluto"] {
+            let (g, _) = preset(name).unwrap().to_graph();
+            assert!(g.f64("interior.magma_production_rate") > 0.0, "{name}");
+            assert!(g.f64("volcanism.cryodome_count") > 0.0, "{name}");
+        }
+        // The gate opens over one rheological temperature scale of ice.
+        assert_eq!(ice_melt_gate(2.36e5, 2.0e6, 52.0, 273.15), 0.0);
+        assert_eq!(ice_melt_gate(4.7e5, 3.35e5, 168.0, 273.15), 1.0);
+        let half = ice_melt_gate(1.0e5, 1.0e5 / (1.0 + 5.0 / 221.15), 52.0, 273.15);
+        assert!(half > 0.3 && half < 0.7, "{half}");
     }
 }

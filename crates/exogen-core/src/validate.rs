@@ -297,7 +297,9 @@ pub fn reference_checks() -> Vec<Check> {
         ),
         // Triton and Pluto are left out: their nitrogen and methane frosts are not among
         // the materials yet (the climate's, Phase 5), so their crusts show the rock they
-        // accreted (F126), 0.32 and 0.36 against the measured 0.76 and 0.5.
+        // accreted (F126), 0.32 and 0.36 against the measured 0.76 and 0.5. Miranda is left
+        // out too: the darkening of the Uranian moons' ice by radiation and dust is not
+        // among them either, so its ice shows bright, 0.58 against the measured 0.20.
         // Mars
         range("Mars", "body.gravity", 3.64, 3.78, "3.71 m/s²"),
         range(
@@ -535,6 +537,23 @@ pub fn reference_checks() -> Vec<Check> {
             15e3,
             30e3,
             "18 to 25 km mean, Čadek et al. 2016, Beuthe et al. 2016",
+        ),
+        // Miranda
+        range(
+            "Miranda",
+            "body.gravity",
+            0.073,
+            0.081,
+            "0.077 m/s², GM 4.3 +- 0.2 km³/s²",
+        ),
+        text("Miranda", "rotation.mode", "locked", ""),
+        text("Miranda", "body.composition_class", "ice_dominated", ""),
+        range(
+            "Miranda",
+            "volcanism.corona_count",
+            3.0,
+            8.0,
+            "Arden, Elsinore and Inverness in the southern half Voyager 2 saw, each over 200 km",
         ),
         // Triton
         range("Triton", "body.gravity", 0.76, 0.80, "0.78 m/s²"),

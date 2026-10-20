@@ -1,0 +1,31 @@
+version = "0.0.1"
+name = "Miranda"
+description = "Reference body. Small ice moon of Uranus; ancient cratered terrain broken by coronae, belts of ridges and troughs over the upwellings a past resonance's tidal heating drove in its ice."
+
+[values]
+"orbit.primary" = "planet"
+"parent.mass" = 8.681e25
+"parent.radius" = 2.5559e7
+"parent.semi_major_axis" = 2.87097e12
+"parent.eccentricity" = 0.0472
+"orbit.semi_major_axis" = 1.29846e8
+"orbit.eccentricity" = 0.0014
+"body.radius" = 2.358e5
+# JPL's satellite constants: GM 4.3 +- 0.2 km³/s², 1,178 +- 53 kg/m³.
+"body.density" = 1178.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+# Miranda's coronae formed over upwellings in its ice while tides heated it (Hammond and
+# Barr 2014), at a heat flow of 31 to 112 mW/m² by the faults of Arden Corona
+# (Beddingfield et al. 2015). The heat came from the Ariel-Umbriel 5:3 resonance, which
+# excited Miranda's eccentricity chaotically for hundreds of millions of years, about a
+# gigayear ago for Uranus's Q of 15,000 to 20,000 (Cuk et al. 2020). Their runs with
+# Miranda's Q/k2 at 100, the dissipation the engine gives it, keep its eccentricity at
+# 0.02 or less. At 0.0165 its tides heat it to about 62 mW/m², the middle of the faults'
+# range and of the 34 to 84 mW/m² Arden's flexure gives (Hammond and Barr 2014). The
+# episode is centred a gigayear ago and lasts three hundred million years; nothing is
+# pinned.
+"orbit.resonance_age" = 1.0
+"orbit.resonance_eccentricity" = 0.0165
+"orbit.resonance_duration" = 0.3
+"seed.master" = 24.0

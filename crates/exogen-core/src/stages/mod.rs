@@ -11,6 +11,7 @@
 //! liquid, computes optical maturity and rays, and assigns materials. Both parts are cached
 //! by a hash of the parameters and seeds they depend on.
 
+pub mod corona;
 pub mod cryo;
 pub mod deform;
 pub mod episodic;
@@ -152,8 +153,10 @@ pub struct LoopOutput {
     /// The past episodes of focused heating (F53), and when the present one began.
     pub episodes: Vec<ice::FocusEpisode>,
     pub polar_start: f64,
-    /// The share of the surface the lanes and the polar terrains, present and past,
-    /// renewed between them, by area.
+    /// The coronae over an ice mantle's upwellings and when they formed (F133).
+    pub ice_coronae: Vec<corona::Corona>,
+    /// The share of the surface the lanes, the coronae and the polar terrains, present
+    /// and past, renewed between them, by area.
     pub renewed_fraction: f64,
     pub hash: u64,
 }
@@ -233,8 +236,10 @@ pub struct FinishOutput {
     pub polar_fraction: f64,
     /// The past episodes of focused heating whose terrains the surface carries (F53).
     pub episodes: Vec<ice::FocusEpisode>,
-    /// The share of the surface the lanes and the polar terrains, present and past,
-    /// renewed between them, by area, whatever craters they have taken since.
+    /// The coronae over an ice mantle's upwellings present at the epoch (F133).
+    pub ice_coronae: Vec<corona::Corona>,
+    /// The share of the surface the lanes, the coronae and the polar terrains, present
+    /// and past, renewed between them, by area, whatever craters they have taken since.
     pub renewed_fraction: f64,
     pub hash: u64,
 }
@@ -364,7 +369,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 105;
+pub const FINISH_VERSION: u64 = 106;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -601,7 +606,7 @@ pub fn run_coarse_loop(
             Vec::new(),
         ),
     };
-    let (lanes, lane_coverage, lane_core, episodes, polar_start, renewed_fraction) =
+    let (lanes, lane_coverage, lane_core, episodes, polar_start, ice_coronae, renewed_fraction) =
         match ice_shell_process {
             Some(p) => (
                 p.lanes,
@@ -609,9 +614,10 @@ pub fn run_coarse_loop(
                 p.lane_core.map(|v| ice_shell::field_from(grid, &v)),
                 p.episodes,
                 p.present_start,
+                p.coronae,
                 p.renewed_fraction,
             ),
-            None => (Vec::new(), 0.0, None, Vec::new(), 0.0, 0.0),
+            None => (Vec::new(), 0.0, None, Vec::new(), 0.0, Vec::new(), 0.0),
         };
     Ok(LoopOutput {
         grid,
@@ -640,6 +646,7 @@ pub fn run_coarse_loop(
         lane_core,
         episodes,
         polar_start,
+        ice_coronae,
         renewed_fraction,
         hash,
     })
@@ -738,6 +745,13 @@ pub fn finish(
         .filter(|l| l.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
+    // The coronae over an ice mantle's upwellings formed by the epoch (F133).
+    let ice_coronae: Vec<corona::Corona> = loop_output
+        .ice_coronae
+        .iter()
+        .filter(|c| c.time_gyr <= present + 1e-9)
+        .cloned()
+        .collect();
     let polar = shell_map.has_active_terrain() && present + 1e-9 >= loop_output.polar_start;
     let polar_time = (present - POLAR_RENEWAL_GYR).max(0.0);
     // The past episodes of focused heating (F53) that ended by this epoch: each terrain's
@@ -790,8 +804,9 @@ pub fn finish(
     {
         let lane_hits =
             ice_shell::lane_hits(&grid, body_radius, cell, &lanes, loose_before.as_deref());
+        let corona_hits = corona::corona_hits(&grid, body_radius, cell, &ice_coronae);
         // Each terrain with its time: a lane (0), a past episode's terrain (1), the
-        // present polar terrain (2).
+        // present polar terrain (2), a corona (3).
         let mut order: Vec<(f64, u8, usize)> = (0..lanes.len())
             .map(|i| (lanes[i].time_gyr, 0u8, i))
             .collect();
@@ -799,19 +814,21 @@ pub fn finish(
         if polar {
             order.push((polar_time, 2u8, 0));
         }
+        order.extend((0..ice_coronae.len()).map(|k| (ice_coronae[k].time_gyr, 3u8, k)));
         order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
         for (time, kind, i) in order {
             match kind {
                 0 => renewal.take_lane(&lanes[i], &lane_hits[i]),
                 1 => renewal.take_polar(&fossil_edges[i], time),
-                _ => renewal.take_polar(&polar_edge, time),
+                2 => renewal.take_polar(&polar_edge, time),
+                _ => renewal.take_hits(time, crate::units::UNIT_CORONA, &corona_hits[i]),
             }
         }
     }
-    // The lanes' floor where the loop's cells did not reach their edges: what the loop
-    // renewed of each cell, resampled and smoothed over its cell so that no facet of
-    // the coarse grid shows in a lane, and the rest taken here.
-    if !lanes.is_empty() {
+    // The lanes' and the coronae's floor where the loop's cells did not reach their
+    // edges: what the loop renewed of each cell, resampled and smoothed over its cell so
+    // that no facet of the coarse grid shows in a lane, and the rest taken here.
+    if !lanes.is_empty() || !ice_coronae.is_empty() {
         let core: Option<Vec<f32>> = loop_output.lane_core.as_ref().map(|c| {
             let fine = c.resample(grid);
             relaxation::low_pass(&fine, cell, loop_output.grid.delta() * body_radius)
@@ -1237,6 +1254,7 @@ pub fn finish(
         Mountain(usize),
         Linea(usize),
         Groove(usize),
+        IceCorona(usize),
         PolarTerrain,
         FossilTerrain(usize),
         Chaos(usize),
@@ -1255,6 +1273,7 @@ pub fn finish(
             + ring_systems.len()
             + lineae.len()
             + lanes.len()
+            + ice_coronae.len()
             + 1
             + chaos.len()
             + fabric.len()
@@ -1318,6 +1337,9 @@ pub fn finish(
     }
     for (k, l) in lanes.iter().enumerate() {
         events.push((l.time_gyr, 0, l.id ^ 0x6700_0000_0000, Event::Groove(k)));
+    }
+    for (k, c) in ice_coronae.iter().enumerate() {
+        events.push((c.time_gyr, 0, c.id ^ 0xC020_1CE0_0000, Event::IceCorona(k)));
     }
     if polar {
         events.push((polar_time, 0, 0x5027_0000_0000, Event::PolarTerrain));
@@ -1460,6 +1482,13 @@ pub fn finish(
                     (
                         l.center(),
                         l.cap_radius(body_radius, cell) + 2.0 * grid.delta(),
+                    )
+                }
+                Event::IceCorona(k) => {
+                    let c = &ice_coronae[*k];
+                    (
+                        c.center,
+                        c.cap_radius(body_radius, cell) + 2.0 * grid.delta(),
                     )
                 }
                 Event::PolarTerrain => (
@@ -1715,6 +1744,19 @@ pub fn finish(
                             renewed,
                             &base,
                             loose_cover.as_deref(),
+                            stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::IceCorona(k) => {
+                        let out = corona::corona_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &ice_coronae[*k],
+                            cell,
+                            renewed,
+                            &base,
                             stamper,
                         );
                         Some((out, None, None))
@@ -2248,6 +2290,7 @@ pub fn finish(
         grooved_fraction,
         polar_fraction,
         episodes,
+        ice_coronae,
         renewed_fraction: loop_output.renewed_fraction,
         hash,
     })

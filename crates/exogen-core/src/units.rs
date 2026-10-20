@@ -36,6 +36,8 @@ pub const UNIT_POLAR_TERRAIN: u16 = 22;
 /// The matrix of a chaos patch, and a cryovolcanic dome.
 pub const UNIT_CHAOS: u16 = 23;
 pub const UNIT_CRYODOME: u16 = 24;
+/// A corona's ground, broken over an upwelling under the lid (F133).
+pub const UNIT_CORONA: u16 = 25;
 
 /// Whether a unit is a crater's own ground: its floor or its continuous ejecta.
 pub fn is_crater_unit(unit: u16) -> bool {
@@ -78,11 +80,12 @@ pub fn unit_name(id: u16) -> &'static str {
         UNIT_POLAR_TERRAIN => "polar terrain",
         UNIT_CHAOS => "chaos",
         UNIT_CRYODOME => "cryovolcanic dome",
+        UNIT_CORONA => "corona",
         _ => "none",
     }
 }
 
 /// All known units with their names, for the sidecar legend.
 pub fn legend() -> Vec<(u16, &'static str)> {
-    (0..=UNIT_CRYODOME).map(|id| (id, unit_name(id))).collect()
+    (0..=UNIT_CORONA).map(|id| (id, unit_name(id))).collect()
 }

@@ -802,6 +802,18 @@ pub fn export(
                     age_gyr: out.epoch_time_gyr - c.time_gyr,
                 }
             })
+            // An ice mantle's coronae (F133): their outlines' mean diameter.
+            .chain(out.ice_coronae.iter().map(|c| {
+                let (lon, lat) = crate::grid::lon_lat_from_direction(c.center);
+                CoronaInfo {
+                    lat_deg: lat.to_degrees(),
+                    lon_deg: lon.to_degrees(),
+                    diameter_km: 2.0 * c.outline_radius() / 1e3,
+                    centre_relief_m: 0.0,
+                    rim_height_m: 0.0,
+                    age_gyr: out.epoch_time_gyr - c.time_gyr,
+                }
+            }))
             .collect(),
         domes: out
             .domes

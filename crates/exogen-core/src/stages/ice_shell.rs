@@ -35,7 +35,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 18;
+pub const VERSION: u64 = 19;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -127,18 +127,18 @@ pub struct LaneNoise {
 /// along the set, m; how far down the groove's trough the cell lies, 0 to 1; how present
 /// the groove's segment is there, 0 to 1; the groove's depth against the middling one;
 /// and its relief there in units of the middling amplitude.
-struct GrooveSet {
-    turns: f64,
-    stripe: f64,
-    frac: f64,
-    local: f64,
-    along: f64,
-    trough: f64,
-    gate: f64,
-    depth: f64,
-    shape: f64,
+pub(crate) struct GrooveSet {
+    pub(crate) turns: f64,
+    pub(crate) stripe: f64,
+    pub(crate) frac: f64,
+    pub(crate) local: f64,
+    pub(crate) along: f64,
+    pub(crate) trough: f64,
+    pub(crate) gate: f64,
+    pub(crate) depth: f64,
+    pub(crate) shape: f64,
     /// The level the set's troughs cut down from, in units of the middling amplitude (F132).
-    plateau: f64,
+    pub(crate) plateau: f64,
 }
 
 /// A fault's depth against the middling one of its population, from a uniform draw
@@ -157,6 +157,122 @@ fn fault_depth(u: f64) -> f64 {
 /// A groove's index among its set's, as a key for its own draws.
 fn stripe_key(stripe: f64) -> u64 {
     (stripe as i64 + (1 << 30)) as u64
+}
+
+/// One pulse's set of grooves at a cell (F61, F63): a wave across the faults' zone,
+/// struck `turn` rad from its own strike, whose spacing follows the set field and which
+/// sways and wanders so that the grooves fan and bend; each groove lives in segments
+/// along itself; and each has a depth of its own, drawn from the heavy tail faults have,
+/// so that most are shallow and a few are master troughs several times as deep, the extra
+/// depth going down and not up. `across` and `along` are m across the zone and along it;
+/// where the faults run round a closed line `period` m long (a corona's belt, F133), the
+/// slots along them are a whole number round it and close up without a seam. A `skew`
+/// makes each trough a tilt block's: its wall towards rising `across` short and steep, the
+/// scarp, the other long, the back slope (none for a lane's grooves).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fault_set(
+    across: f64,
+    along: f64,
+    d: [f64; 3],
+    body_radius: f64,
+    spacing: f64,
+    sets: f64,
+    level: f64,
+    pulse: usize,
+    turn: f64,
+    grooves: &GradientNoise,
+    draws: &Rng,
+    period: Option<f64>,
+    skew: f64,
+) -> GrooveSet {
+    let tau = 2.0 * std::f64::consts::PI;
+    let g = grooves;
+    let shift = 17.3 * pulse as f64;
+    let (sin, cos) = turn.sin_cos();
+    let (across, along) = (across * cos + along * sin, along * cos - across * sin);
+    let local = spacing * (1.0 + GROOVE_SPACING_VARIATION * sets);
+    let sway = GROOVE_SWAY
+        * g.fbm(
+            [d[0] + 9.2 + shift, d[1] + 0.4, d[2] - 6.1],
+            body_radius / (GROOVE_SWAY_SPACINGS * spacing),
+            2,
+            2.0,
+            0.5,
+        );
+    let wander = GROOVE_WANDER
+        * g.fbm(
+            [d[0] + 3.1, d[1] - 1.7 + shift, d[2] + 4.3],
+            body_radius / (GROOVE_WANDER_SPACINGS * spacing),
+            3,
+            2.0,
+            0.5,
+        );
+    let turns = across / local + (sway + wander) / tau;
+    // The grooves' segments (F132): each slot along a groove holds a segment with
+    // GROOVE_SEGMENT_PRESENCE, fewer the farther beyond the bounding fault, its line
+    // stepped across the groove's and its throw falling to its tips. Each segment
+    // cuts its own trough, a hollow one spacing across its line, into the plateau, so
+    // that two beside each other in a relay both show, and the ground between them
+    // and in their gaps stands at the plateau, with no seam where one gives way.
+    let presence = GROOVE_SEGMENT_PRESENCE * {
+        let x = (level / GROOVE_SEGMENT_LEVEL).clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let (slot, slots, along) = match period {
+        Some(p) if p > 0.0 => {
+            let n = (p / (GROOVE_SEGMENT_SPACINGS * spacing)).round().max(1.0);
+            (p / n, Some(n as i64), along.rem_euclid(p))
+        }
+        _ => (GROOVE_SEGMENT_SPACINGS * spacing, None, along),
+    };
+    let (s0, j0) = (turns.floor() as i64, (along / slot).floor() as i64);
+    let mut troughs = 0.0;
+    // The segment that holds the cell most: its stripe, where across its trough the
+    // cell lies, its taper, its depth and its hollow there.
+    let mut best = (0.0, s0, 0.0, 0.0, 1.0, 0.0);
+    for stripe in s0 - 1..=s0 + 1 {
+        for j in j0 - 1..=j0 + 1 {
+            // Round a closed line a slot's draws are its own whichever way it is reached.
+            let jk = slots.map_or(j, |n| j.rem_euclid(n));
+            let key = stripe_key(stripe as f64) ^ ((jk as u64) << 34) ^ ((pulse as u64) << 60);
+            let draw = |k: u64| draws.uniform(key, 60 + k);
+            if draw(0) >= presence {
+                continue;
+            }
+            let centre = (j as f64 + draw(1)) * slot;
+            let (short, long) = GROOVE_SEGMENT_LENGTH;
+            let half = 0.5 * slot * (short + (long - short) * draw(2));
+            let t = (along - centre) / half;
+            if t.abs() >= 1.0 {
+                continue;
+            }
+            let x = turns - (stripe as f64 + 0.75 + GROOVE_STEP * (2.0 * draw(3) - 1.0));
+            if x.abs() >= 0.5 {
+                continue;
+            }
+            let hollow = 0.5 + 0.5 * (tau * x + skew * (tau * x).sin()).cos();
+            let taper = 1.0 - t * t;
+            let depth = fault_depth(draw(4).max(1e-3));
+            troughs += (1.0 + depth) * hollow * taper;
+            if hollow * taper > best.0 {
+                best = (hollow * taper, stripe, x, taper, depth, hollow);
+            }
+        }
+    }
+    let plateau = presence * (1.0 + GROOVE_DEPTH_MEAN) / 3.0;
+    let (_, stripe, x, taper, depth, hollow) = best;
+    GrooveSet {
+        turns,
+        stripe: stripe as f64,
+        frac: (0.75 + x).rem_euclid(1.0),
+        local,
+        along,
+        trough: hollow,
+        gate: taper,
+        depth,
+        shape: plateau - troughs,
+        plateau,
+    }
 }
 
 impl LaneNoise {
@@ -740,12 +856,7 @@ impl Lane {
         }
     }
 
-    /// One pulse's set of grooves at a cell (F61, F63): a wave across the lane, struck
-    /// `turn` rad from the lane's own strike, whose spacing follows the set field and
-    /// which sways and wanders so that the grooves fan and bend; each groove lives in
-    /// segments along itself; and each has a depth of its own, drawn from the heavy tail
-    /// faults have, so that most are shallow and a few are master troughs several times
-    /// as deep, the extra depth going down and not up.
+    /// One pulse's set of grooves at a cell (F61, F63): see `fault_set`.
     #[allow(clippy::too_many_arguments)]
     fn set_at(
         &self,
@@ -759,88 +870,21 @@ impl Lane {
         turn: f64,
         noise: &LaneNoise,
     ) -> GrooveSet {
-        let tau = 2.0 * std::f64::consts::PI;
-        let g = &noise.grooves;
-        let shift = 17.3 * pulse as f64;
-        let (sin, cos) = turn.sin_cos();
-        let across = sm.across * cos + sm.along * sin;
-        let along = sm.along * cos - sm.across * sin;
-        let local = spacing * (1.0 + GROOVE_SPACING_VARIATION * sets);
-        let sway = GROOVE_SWAY
-            * g.fbm(
-                [d[0] + 9.2 + shift, d[1] + 0.4, d[2] - 6.1],
-                body_radius / (GROOVE_SWAY_SPACINGS * spacing),
-                2,
-                2.0,
-                0.5,
-            );
-        let wander = GROOVE_WANDER
-            * g.fbm(
-                [d[0] + 3.1, d[1] - 1.7 + shift, d[2] + 4.3],
-                body_radius / (GROOVE_WANDER_SPACINGS * spacing),
-                3,
-                2.0,
-                0.5,
-            );
-        let turns = across / local + (sway + wander) / tau;
-        // The grooves' segments (F132): each slot along a groove holds a segment with
-        // GROOVE_SEGMENT_PRESENCE, fewer the farther beyond the bounding fault, its line
-        // stepped across the groove's and its throw falling to its tips. Each segment
-        // cuts its own trough, a hollow one spacing across its line, into the plateau, so
-        // that two beside each other in a relay both show, and the ground between them
-        // and in their gaps stands at the plateau, with no seam where one gives way.
-        let presence = GROOVE_SEGMENT_PRESENCE * {
-            let x = (level / GROOVE_SEGMENT_LEVEL).clamp(0.0, 1.0);
-            x * x * (3.0 - 2.0 * x)
-        };
-        let slot = GROOVE_SEGMENT_SPACINGS * spacing;
-        let (s0, j0) = (turns.floor() as i64, (along / slot).floor() as i64);
-        let mut troughs = 0.0;
-        // The segment that holds the cell most: its stripe, where across its trough the
-        // cell lies, its taper, its depth and its hollow there.
-        let mut best = (0.0, s0, 0.0, 0.0, 1.0, 0.0);
-        let draws = &noise.draws;
-        for stripe in s0 - 1..=s0 + 1 {
-            for j in j0 - 1..=j0 + 1 {
-                let key = stripe_key(stripe as f64) ^ ((j as u64) << 34) ^ ((pulse as u64) << 60);
-                let draw = |k: u64| draws.uniform(key, 60 + k);
-                if draw(0) >= presence {
-                    continue;
-                }
-                let centre = (j as f64 + draw(1)) * slot;
-                let (short, long) = GROOVE_SEGMENT_LENGTH;
-                let half = 0.5 * slot * (short + (long - short) * draw(2));
-                let t = (along - centre) / half;
-                if t.abs() >= 1.0 {
-                    continue;
-                }
-                let x = turns - (stripe as f64 + 0.75 + GROOVE_STEP * (2.0 * draw(3) - 1.0));
-                if x.abs() >= 0.5 {
-                    continue;
-                }
-                let hollow = 0.5 + 0.5 * (tau * x).cos();
-                let taper = 1.0 - t * t;
-                let depth = fault_depth(draw(4).max(1e-3));
-                troughs += (1.0 + depth) * hollow * taper;
-                if hollow * taper > best.0 {
-                    best = (hollow * taper, stripe, x, taper, depth, hollow);
-                }
-            }
-        }
-        let plateau = presence * (1.0 + GROOVE_DEPTH_MEAN) / 3.0;
-        let (_, stripe, x, taper, depth, hollow) = best;
-        GrooveSet {
-            turns,
-            stripe: stripe as f64,
-            frac: (0.75 + x).rem_euclid(1.0),
-            local,
-            along,
-            trough: hollow,
-            gate: taper,
-            depth,
-            shape: plateau - troughs,
-            plateau,
-        }
+        fault_set(
+            sm.across,
+            sm.along,
+            d,
+            body_radius,
+            spacing,
+            sets,
+            level,
+            pulse,
+            turn,
+            &noise.grooves,
+            &noise.draws,
+            None,
+            0.0,
+        )
     }
 
     /// A chain of pits along a fracture (F64), 0 to 1 at a cell `axis` m off the
@@ -2303,6 +2347,9 @@ pub struct IceShellProcess {
     pub lanes: Vec<Lane>,
     /// The share of the surface the lanes cover.
     pub lane_coverage: f64,
+    /// The coronae over the upwellings of an ice mantle's convection (F133), each with its
+    /// own time within the heating episode.
+    pub coronae: Vec<crate::stages::corona::Corona>,
     /// The equilibrium surface of the thinned shell, which relaxation is not to take for
     /// a load.
     equilibrium: Option<Vec<f32>>,
@@ -2879,6 +2926,18 @@ impl IceShellProcess {
         } else {
             0.0
         };
+        // The coronae over an ice mantle's upwellings (F133), and the cells they hold.
+        let coronae = crate::stages::corona::ice_coronae(graph, &thermal);
+        let corona_cell = grid.delta() * body_radius;
+        with_stamper(&grid, |stamper| {
+            for c in &coronae {
+                for (idx, cover) in c.covers(&grid, body_radius, corona_cell, stamper) {
+                    if cover >= 0.5 {
+                        covered[idx] = true;
+                    }
+                }
+            }
+        });
         let renewed_fraction = (0..n)
             .filter(|&k| {
                 covered[k] || active[k] >= 0.5 || episode_weights.iter().any(|w| w[k] >= 0.5)
@@ -2893,6 +2952,7 @@ impl IceShellProcess {
             mean_shell,
             lanes,
             lane_coverage,
+            coronae,
             equilibrium: None,
             polar_floor: None,
             lane_core: None,
@@ -3084,6 +3144,73 @@ impl IceShellProcess {
                 }
             }
         }
+        // The coronae whose time falls in this step (F133), youngest last: each renews the
+        // relief inside its outline, smoothed over its own length, by its cover of each
+        // cell, as a lane does, and holds the cells wholly inside it.
+        let mut due: Vec<usize> = (0..self.coronae.len())
+            .filter(|&i| {
+                let t = self.coronae[i].time_gyr;
+                t > t0 && t <= t1
+            })
+            .collect();
+        if !due.is_empty() {
+            due.sort_by(|&a, &b| {
+                self.coronae[a]
+                    .time_gyr
+                    .total_cmp(&self.coronae[b].time_gyr)
+            });
+            let body_radius = self.body_radius;
+            let mut weight = vec![0.0f32; n];
+            let mut target = vec![0.0f32; n];
+            let mut held: Vec<Option<(f32, f32)>> = vec![None; n];
+            with_stamper(&grid, |stamper| {
+                for &i in &due {
+                    let c = &self.coronae[i];
+                    let smoothed: Vec<f32> = crate::stages::relaxation::low_pass(
+                        &layers.bedrock,
+                        cell,
+                        c.smooth_length(),
+                    );
+                    for (idx, w) in c.covers(&grid, body_radius, cell, stamper) {
+                        let w = w as f32;
+                        if w > weight[idx] {
+                            weight[idx] = w;
+                            target[idx] = smoothed[idx];
+                        }
+                        if w >= 0.5 {
+                            held[idx] = Some((c.time_gyr as f32, c.clean as f32));
+                        }
+                    }
+                }
+            });
+            let inside: Vec<bool> = weight.iter().map(|&w| w >= 0.5).collect();
+            let core = eroded(&grid, &inside);
+            let renewed = self.lane_core.get_or_insert_with(|| vec![0.0; n]);
+            let bedrock = layers.bedrock.as_mut_slice();
+            let ages = layers.surface_age.as_mut_slice();
+            let units = layers.unit_id.as_mut_slice();
+            let deep = layers.deep.as_mut_slice();
+            let melt = layers.melt.as_mut_slice();
+            let cover = layers.cover.as_mut_slice();
+            let clean = layers.clean.as_mut_slice();
+            for k in 0..n {
+                let w = weight[k];
+                if w > 0.0 {
+                    bedrock[k] += (target[k] - bedrock[k]) * w;
+                    renewed[k] = renewed[k].max(w);
+                }
+                if core[k]
+                    && let Some((t, cl)) = held[k]
+                {
+                    ages[k] = t;
+                    units[k] = UNIT_CORONA;
+                    deep[k] = 0.0;
+                    melt[k] = 0.0;
+                    cover[k] = 0.0;
+                    clean[k] = cl;
+                }
+            }
+        }
     }
 
     /// After the step's events: the terrain that renewed at this step takes the floor the
@@ -3137,10 +3264,10 @@ pub struct Renewal {
 /// fractures show beyond its edge.
 #[derive(Clone, Copy, Debug)]
 pub struct LaneHit {
-    k: u32,
-    cover: f32,
-    tone: f32,
-    fracture: f32,
+    pub(crate) k: u32,
+    pub(crate) cover: f32,
+    pub(crate) tone: f32,
+    pub(crate) fracture: f32,
 }
 
 impl Renewal {
@@ -3172,11 +3299,17 @@ impl Renewal {
 
     /// A lane's hold of the cells about it.
     pub fn take_lane(&mut self, lane: &Lane, hits: &[LaneHit]) {
-        let time = lane.time_gyr as f32;
+        self.take_hits(lane.time_gyr, UNIT_GROOVED, hits);
+    }
+
+    /// A terrain's hold of the cells about it, a lane's or a corona's (F133), each a
+    /// floor of its own with its cover.
+    pub fn take_hits(&mut self, time_gyr: f64, unit: u16, hits: &[LaneHit]) {
+        let time = time_gyr as f32;
         for h in hits {
             let k = h.k as usize;
             if h.cover > 0.0 {
-                self.take(k, h.cover, h.cover, h.tone, time, UNIT_GROOVED);
+                self.take(k, h.cover, h.cover, h.tone, time, unit);
                 // The lane that holds the cell for its floor: the latest of those that
                 // take more than half of it, else the one that takes most.
                 if h.cover >= 0.5 || (self.lane_cover[k] < 0.5 && h.cover > self.lane_cover[k]) {
@@ -3224,7 +3357,7 @@ impl Renewal {
                     melt[k] = 0.0;
                     cover[k] = 0.0;
                 }
-            } else if units[k] == UNIT_GROOVED || units[k] == UNIT_POLAR_TERRAIN {
+            } else if matches!(units[k], UNIT_GROOVED | UNIT_POLAR_TERRAIN | UNIT_CORONA) {
                 units[k] = UNIT_PRIMORDIAL;
             }
         }

@@ -1527,9 +1527,14 @@ pub fn interior_magma_production_rate(c: &Ctx) -> Value {
         "ice_shell_ocean" | "ice_shell_rock" => MAGMA_EFFICIENCY_ICE,
         _ => MAGMA_EFFICIENCY_STAGNANT,
     };
-    let tidal = (MAGMA_EFFICIENCY_TIDAL_MAX
-        * (c.f64("interior.tidal_flux") / MAGMA_TIDAL_FLUX_SCALE).min(1.0))
-    .max(0.0);
+    // The tidal boost is a silicate mantle's heat pipe (Io), its melt lighter than its
+    // lid; an ice mantle's melt is denser than the ice over it (F133).
+    let tidal = if icy {
+        0.0
+    } else {
+        (MAGMA_EFFICIENCY_TIDAL_MAX * (c.f64("interior.tidal_flux") / MAGMA_TIDAL_FLUX_SCALE).min(1.0))
+            .max(0.0)
+    };
     let efficiency = base.max(tidal);
     let heat = if icy {
         MAGMA_HEAT_PER_M3_ICE
@@ -1556,13 +1561,25 @@ pub fn interior_magma_production_rate(c: &Ctx) -> Value {
         ) * gate)
             .into();
     }
-    magma_rate(
+    let rate = magma_rate(
         c.f64("interior.surface_heat_flux"),
         4.0 * PI * r * r,
         efficiency,
         heat,
-    )
-    .into()
+    );
+    if !icy {
+        return rate.into();
+    }
+    // An ice mantle melts only where its conductive profile reaches the melting point
+    // inside the body (F133).
+    let t_s = c.f64("atmosphere.surface_temperature_mean");
+    let t_m = c.f64("interior.mantle_temperature");
+    let conductive = conductive_thickness(
+        ice_conductivity(0.5 * (t_m + t_s)),
+        (t_m - t_s).max(1.0),
+        c.f64("interior.surface_heat_flux"),
+    );
+    (rate * crate::thermal::ice_melt_gate(r, conductive, t_s, t_m)).into()
 }
 
 // ------------------------------------------------------------------ atmosphere
@@ -2103,11 +2120,62 @@ pub fn tectonics_tessera_fraction(c: &Ctx) -> Value {
 }
 
 pub fn volcanism_corona_count(c: &Ctx) -> Value {
-    if c.str("interior.tectonic_regime") != "episodic_lid" {
-        return 0.0.into();
+    if c.str("interior.tectonic_regime") == "episodic_lid" {
+        let r = c.f64("body.radius");
+        return (CORONAE_PER_AREA * 4.0 * PI * r * r).round().into();
     }
-    let r = c.f64("body.radius");
-    (CORONAE_PER_AREA * 4.0 * PI * r * r).round().into()
+    // One over each upwelling of an ice mantle's convection, where the lid breaks (F133).
+    match ice_corona_episode(c) {
+        Some(e) if e.strength > CORONA_STRENGTH_FLOOR => {
+            e.convection.upwellings.round().max(1.0).into()
+        }
+        _ => 0.0.into(),
+    }
+}
+
+/// F133: the convection a tidal heating episode drives in an ice mantle on rock, at the
+/// episode's thinnest lid.
+fn ice_corona_episode(c: &Ctx) -> Option<crate::stages::corona::IceEpisode> {
+    if c.str("interior.tectonic_regime") != "ice_shell_rock" {
+        return None;
+    }
+    let history = crate::thermal::ThermalHistory::new(&thermal_inputs(c));
+    crate::stages::corona::IceEpisode::new(
+        &history,
+        c.f64("body.radius"),
+        c.f64("body.ice_layer_thickness"),
+        c.f64("body.gravity"),
+    )
+}
+
+pub fn volcanism_corona_strength(c: &Ctx) -> Value {
+    ice_corona_episode(c)
+        .map_or(0.0, |e| e.strength)
+        .into()
+}
+
+/// The coronae of an ice mantle take their time from the tidal heating as the lanes do
+/// (F44, F133).
+fn ice_corona_window(c: &Ctx) -> Option<(f64, f64)> {
+    if c.str("interior.tectonic_regime") != "ice_shell_rock"
+        || c.f64("volcanism.corona_count") <= 0.0
+    {
+        return None;
+    }
+    resurfacing_episode(c)
+}
+
+pub fn volcanism_corona_age(c: &Ctx) -> Value {
+    let age = c.f64("body.age");
+    ice_corona_window(c)
+        .map_or(0.0, |(mean, _)| (age - mean).max(0.0))
+        .into()
+}
+
+pub fn volcanism_corona_duration(c: &Ctx) -> Value {
+    ice_corona_window(c)
+        .map_or(0.0, |(_, width)| width)
+        .into()
 }
 
 pub fn volcanism_dome_count(c: &Ctx) -> Value {

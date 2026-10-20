@@ -1532,3 +1532,35 @@ Still to do:
 - **Enceladus's tiger stripes** as one network of canyons (audit T7).
 
 Tests 209 (12 ignored). One is new: a groove comes and goes along a line, its segments stepped within the limit and its relief without a seam, dying out by the bounding fault. The covered fractures' test samples a band of lines beyond the fault rather than one, the fractures there being segments that step across. Clippy is clean and validate passes its 115 checks.
+
+## The sixty-fourth milestone: coronae over an ice mantle's upwellings
+
+Asked for by the user after the sixty-third, which answered their question whether Miranda's coronae, named as Venus's are, should be driven by Ganymede's lanes: "Do Miranda's coronae first, then move Venus' into the same process."
+
+- **F133.** A Miranda preset; its coronae over the upwellings of the convection a tidal heating episode drives in an ice mantle on rock, as many as the convecting layer's cells, each a polygon of its cell, its outer belt the grooves' fault segments concentric with its outline and its core crossed by two sets; and an ice mantle frozen through makes no ice magma.
+
+How it went:
+
+- **Miranda's preset.** Its density is JPL's (1,178 kg/m³). The resonance is the Ariel-Umbriel 5:3 crossing Ćuk et al. (2020) find excited its eccentricity chaotically for hundreds of millions of years, a gigayear ago for Uranus's Q of 15,000 to 20,000; their runs with Miranda's Q/k2 at 100, the engine's own dissipation, keep it at 0.02 or less. At 0.0165 its tides heat it to about 62 mW/m², the middle of the 31 to 112 mW/m² its faults give (Beddingfield et al. 2015) and of the 34 to 84 Arden's flexure gives (Hammond and Barr 2014). The Bond albedo is left out of validation: the Uranian moons' darkening is not among the materials yet, so its ice shows 0.56 against the measured 0.20.
+- **Upwellings, not lanes.** The coronae come of the convection the episode drives in its ice: the same tidal flux above the floor that drives Ganymede's lanes (F44), on a body with no ocean, where the ice under the lid convects. The first criterion I gave the user, the lid against the cells' spacing alone, would also have given Pluto and Ceres large coronae from their early radiogenic heat, which a lid over steady or waning convection does not show: a stagnant lid stays stagnant, and it is an episode's onset that breaks it.
+- **How many and how large.** Miranda's ice, 145 km deep under a 14 km lid at the episode's peak, holds five cells of the convection: five coronae, 244 to 336 km across against Inverness's 234, Arden's 318 and Elsinore's 323. Four formed while the heating held and have faults 4.9 to 5.3 km apart, Arden's 5 km; one formed as the heating waned, on a thicker lid, and has them 10 km apart, as Elsinore's are "relatively widely spaced".
+- **A short episode between the history's samples.** The thermal history is sampled every 47 million years, so a corona's lid came from samples straddling the episode's ramp: one read a lid 57 km thick where the relations of its time give 12. Each corona takes its lid from the thermal relations at its own time.
+- **Frozen through.** Miranda's conductive profile today would reach its melting point some 2,000 km down, eight times its radius, yet its ice magma came of its heat flux whatever the lid, and made 187 domes; ice now melts only where its profile reaches the melting point inside the body.
+- **No heat pipe in ice.** The first render buried most of Miranda under cryolava: the tidal boost to the magma share, Io's heat pipe, 0.9 of the heat at 1 W/m², gave the episode's 62 mW/m² of tides 5.6 percent of the heat as ice magma, 1.9 km of it over the whole body, flooding 40 percent of the surface and the coronae's faults with it. An ice mantle's melt is denser than the ice over it, and its tides take no boost; the episode's floods are now five, a thousandth of the surface.
+- **The coronae's interiors.** The loop renewed a corona's ground over the lanes' smoothing length, 12 km on Miranda, so the old craters' bowls stood on in its core as broad soft swells; a corona stretches and breaks its whole interior, and keeps of the old relief only what is longer than half its radius. Its core's two sets ran straight and ruled a grid; they turn across the core now, as the stress turns with the cell's shape.
+- **The relief, Miranda's check.** The faults' spacing passes its check on a second body: 4.9 to 5.3 km against Arden's 5 km. Their relief under the lanes' law, a share of the spacing calibrated on Ganymede, did not: a few hundred metres where Arden's ridges and troughs stand up to 2 km, which read faintly beside the old craters. A corona's upwelling stretches its lid far longer than its faults take to rotate, so its blocks tilt until their faults lock, from Arden's 50 degrees to the 30 at which friction locks a normal fault: 1.7 km on Miranda's blocks, each trough a tilt block's with its scarp facing out. The lanes keep their law; one law for both, from the strain the faults take up, stays open with Enceladus's grooves' relief.
+- **A corona under a younger crater.** The corona that formed first stands beside a 259 km crater 0.43 Gyr old, whose ejecta bury most of its belt; it keeps its surface's age beneath them, as distal ejecta leave the ground they cover (F100).
+
+What the maps show:
+
+- **Miranda:** five coronae 244 to 336 km across, rounded polygons of their convection cells in the old cratered terrain, 45 percent of the surface, each an outer belt of ridges and troughs concentric with its outline, the tilt blocks' scarps facing out, round a core crossed by two bending sets of faults; four have faults about 5 km apart standing 1.7 km from crest to trough, the fifth, broken as the heating waned, has them 10 km apart and lies mostly under the ejecta of a younger 259 km crater; their ground a gigayear old, lightly cratered and brighter than the old terrain; five small cryolava floods and no domes.
+- **Ganymede:** as it was, bit for bit.
+- **Enceladus:** as it was.
+
+Still to do:
+
+- **Venus's coronae** onto the same process: upwellings under its lid, their outlines from their cells, their fabric the same faulting (the next milestone).
+- **One law for the faults' relief**: a corona's blocks tilt to lock-up, a lane's grooves keep a share of their spacing calibrated on Ganymede; both want the strain their faults take up (audit T6), with Enceladus's grooves' relief.
+- **Enceladus's tiger stripes** as one network of canyons (audit T7).
+
+Tests 214 (12 ignored). Five are new: a corona's cell is bounded by the bisectors; Miranda's episode breaks its lid over a few upwellings, its coronae 200 to 400 km across with faults 3 to 15 km apart; no coronae on a body without an episode or over an ocean; a corona's belt follows its outline; a body frozen through makes no ice magma. Clippy is clean and validate passes its 119 checks.

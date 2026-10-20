@@ -719,6 +719,68 @@ pub const CORONA_MOAT_FRACTION: f64 = 0.3;
 pub const CORONA_RIM_WOBBLE: f64 = 0.3;
 pub const CORONA_FRACTURE_RELIEF: f64 = 0.15;
 pub const CORONA_FRACTURE_SPACING: f64 = 0.08;
+/// Coronae over the upwellings of a convecting layer under a lid (F133). The layer turns
+/// over in cells whose rising and sinking limbs are each about as wide as the layer is
+/// deep (aspect ratio one, the cell convection prefers at its onset), so that upwellings
+/// stand this many times twice the layer's depth apart at its mid-depth, the spacing
+/// widening to the lid's base as the radius does; as many as hexagonal cells of that
+/// spacing fit on the sphere there (a stated choice: Hammond and Barr 2014's convection
+/// in Miranda's ice gives about the few plumes its coronae need).
+pub const CORONA_CELL_ASPECT: f64 = 1.0;
+/// The lid takes an upwelling's stretching in faults of its own where it bends over a
+/// shorter length than the upwelling is wide, its flexural parameter against the distance
+/// from the upwelling to its cell's edge, and spreads it as a broad swell where it bends
+/// over more: the share falls as one over one plus their ratio to this power (a stated
+/// choice), and the coronae are not drawn where their strength is under this floor.
+pub const CORONA_FLEXURE_POWER: f64 = 4.0;
+pub const CORONA_STRENGTH_FLOOR: f64 = 0.01;
+/// A corona's outline: where the flow under the lid turns from stretching it in area to
+/// shortening it. For a cell whose flow rises at its centre and sinks at its edge with a
+/// speed that rises and falls as half a sine across it, the divergence changes sign this
+/// share of the way out (the root of tan x = -x, over pi).
+pub const CORONA_OUTLINE_SHARE: f64 = 0.646;
+/// The outer belt of faults concentric with the outline takes this share of the corona's
+/// radius (Elsinore Corona's belt is 80 km wide about a centre some 160 km in), the core
+/// within it its crossing sets, the two changing over this share of the outline's radius;
+/// the core's sets cross at this angle, rad, and their segments stand at this level, less
+/// often than the belt's (stated choices: a lid stretched every way over the upwelling's
+/// centre breaks in more than one set, as the crossing ridges inside Inverness and Arden).
+pub const CORONA_BELT_SHARE: f64 = 0.5;
+pub const CORONA_CORE_BLEND: f64 = 0.15;
+pub const CORONA_CROSS_ANGLE: f64 = 1.2;
+pub const CORONA_CORE_LEVEL: f64 = 0.45;
+/// The core's sets turn across it by up to this many radians over this share of the
+/// outline's radius, as the stress over the upwelling turns with the cell's shape, so that
+/// they bend and cross at changing angles rather than ruling a grid.
+pub const CORONA_CORE_TURN: f64 = 0.5;
+pub const CORONA_CORE_TURN_SCALE: f64 = 0.5;
+/// A corona stretches and breaks the old ground across it: what the loop keeps of the old
+/// relief inside it is what is longer than this share of its outline's radius (a stated
+/// choice, about its belt's width), so that no ghost of an old crater's bowl survives
+/// the extension.
+pub const CORONA_SMOOTH_SHARE: f64 = 0.5;
+/// A cell's corners are rounded with this sharpness, a soft maximum of the shares of the
+/// way to each bisector, and its outline wanders by this share of the outline's radius
+/// over lengths of this share, so that a corona is a polygon worn round and not a ruled
+/// one (Miranda's are "polygonal to ovoidal").
+pub const CORONA_CORNER_SHARPNESS: f64 = 12.0;
+pub const CORONA_OUTLINE_WANDER: f64 = 0.06;
+pub const CORONA_OUTLINE_WANDER_SCALE: f64 = 0.4;
+/// The lid is thinnest over the upwelling: the heat the flow brings up is this share above
+/// the mean at the cell's centre and as much below at its edge, as half a cosine across
+/// it, so that the faults' spacing, as the lid's thickness, widens outward (a stated
+/// choice; Inverness Corona's ridges are spaced the wider the farther out, Hammond and
+/// Barr 2014).
+pub const CORONA_FLUX_CONTRAST: f64 = 0.4;
+/// A corona's faults break at this dip, degrees (Arden Corona's, reconstructed by
+/// Pappalardo et al. 1997), and their blocks rotate until the faults lock at this one, the
+/// dip at which friction of about 0.6 locks a normal fault (Christie-Blick et al.), ice's
+/// friction as rock's; the 20 degrees between tilt the blocks and set the relief (F133).
+pub const CORONA_FAULT_DIP_DEG: f64 = 50.0;
+pub const CORONA_LOCKUP_DIP_DEG: f64 = 30.0;
+/// The upwellings are placed each the farthest from those already placed of this many
+/// tries: spread, but no lattice.
+pub const CORONA_PLACEMENT_TRIES: u64 = 10;
 pub const DOMES_PER_AREA: f64 = 3.3e-13;
 /// Novae: radial fracture systems round a share of the coronae, which with the rises'
 /// graben give Venus its spidery fracture belts. Fractures per nova, their length as a
@@ -1057,8 +1119,9 @@ pub const IO_PLUME_RED: [f32; 3] = [0.55, 0.20, 0.08];
 pub const IO_MOUNTAIN_ROCK: [f32; 3] = [0.32, 0.28, 0.22];
 pub const IO_MOUNTAIN_BARE_SLOPE_DEG: (f64, f64) = (5.0, 15.0);
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a
-/// tidal boost that reaches 0.9 at 1 W/m². Latent plus sensible heat per m³ of magma.
-/// Provisional, Phase 3.
+/// tidal boost that reaches 0.9 at 1 W/m², a silicate mantle's heat pipe (an ice mantle's
+/// melt is denser than its lid and takes no boost, F133). Latent plus sensible heat per m³
+/// of magma. Provisional, Phase 3.
 pub const MAGMA_EFFICIENCY_MOBILE: f64 = 0.15;
 pub const MAGMA_EFFICIENCY_EPISODIC: f64 = 0.05;
 pub const MAGMA_EFFICIENCY_STAGNANT: f64 = 0.01;
