@@ -52,6 +52,9 @@ pub struct PrimordialCrust {
     /// The strength's limit on the relief's whole rms, m.
     relief_cap: f64,
     isostatic_factor: f64,
+    /// The relief's scale on its normalized field, m, once the loop's grid has measured
+    /// it (F141).
+    relief_scale: std::sync::OnceLock<f64>,
 }
 
 impl PrimordialCrust {
@@ -107,7 +110,107 @@ impl PrimordialCrust {
             relief_frequency,
             relief_cap,
             isostatic_factor: (rho_mantle - rho_crust) / rho_mantle,
+            relief_scale: std::sync::OnceLock::new(),
         }
+    }
+
+    /// The relief's octaves on the loop's grid: from the largest crater the body holds
+    /// down to two of its cells, or the octave past that (F137).
+    fn relief_octaves(&self, grid: &CubeSphere) -> u32 {
+        let finest = grid.face_size() as f64 / std::f64::consts::PI;
+        ((finest / self.relief_frequency).log2().ceil() as u32 + 1).max(1)
+    }
+
+    /// The relief's normalized field on the loop's grid, as `fbm` sums it.
+    fn raw_relief(&self) -> Vec<f64> {
+        let grid = self.grid;
+        let gain = 2f64.powf(-ROUGHNESS_HURST);
+        let octaves = self.relief_octaves(&grid);
+        (0..grid.cell_count())
+            .into_par_iter()
+            .map(|k| {
+                self.noise.fbm(
+                    grid.center(grid.cell(k)),
+                    self.relief_frequency,
+                    octaves,
+                    2.0,
+                    gain,
+                )
+            })
+            .collect()
+    }
+
+    /// The scale on the normalized field, m: the largest octave's rms is the relief's and
+    /// the others fall by the gain, the whole no more than the strength's limit, over the
+    /// field's rms on the loop's grid.
+    fn relief_scale_for(&self, raw_rms: f64) -> f64 {
+        let gain = 2f64.powf(-ROUGHNESS_HURST);
+        let total = self.relief
+            * (0..self.relief_octaves(&self.grid))
+                .map(|o| gain.powi(2 * o as i32))
+                .sum::<f64>()
+                .sqrt();
+        total.min(self.relief_cap) / raw_rms.max(1e-12)
+    }
+
+    fn relief_scale(&self) -> f64 {
+        *self.relief_scale.get_or_init(|| {
+            let raw = self.raw_relief();
+            let rms = (raw.iter().map(|v| v * v).sum::<f64>() / raw.len().max(1) as f64).sqrt();
+            self.relief_scale_for(rms)
+        })
+    }
+
+    /// The first of the relief's octaves shorter than `max_wavelength` m: octave o has the
+    /// wavelength R / (f 2^o), f the relief's frequency in lattice cells per radian.
+    pub fn first_octave(&self, max_wavelength: f64, body_radius: f64) -> u32 {
+        let x = body_radius / (self.relief_frequency * max_wavelength.max(1.0));
+        if x < 1.0 {
+            0
+        } else {
+            x.log2().floor() as u32 + 1
+        }
+    }
+
+    /// The relief's octaves from `first` on, on any grid, down to two of its cells, each at
+    /// the amplitude the loop's grid gave it (F141): the texture the base relief has under
+    /// a terrain that renewed the ground, below the scale of the terrain's own fabric,
+    /// which the renewal's smoothing took with the craters.
+    pub fn fine_relief_from(&self, grid: &CubeSphere, first: u32) -> Vec<f32> {
+        let gain = 2f64.powf(-ROUGHNESS_HURST);
+        let norm: f64 = (0..self.relief_octaves(&self.grid))
+            .map(|o| gain.powi(o as i32))
+            .sum();
+        let last = self.relief_octaves(grid) as i64 - 1;
+        if last < first as i64 {
+            return vec![0.0; grid.cell_count()];
+        }
+        let scale = self.relief_scale() / norm.max(1e-12);
+        let count = (last - first as i64 + 1) as u32;
+        (0..grid.cell_count())
+            .into_par_iter()
+            .map(|k| {
+                (scale
+                    * self.noise.octaves(
+                        grid.center(grid.cell(k)),
+                        self.relief_frequency,
+                        first,
+                        count,
+                        2.0,
+                        gain,
+                    )) as f32
+            })
+            .collect()
+    }
+
+    /// The relief's octaves shorter than `max_wavelength` m on any grid (F141).
+    pub fn fine_relief(
+        &self,
+        grid: &CubeSphere,
+        max_wavelength: f64,
+        body_radius: f64,
+    ) -> Vec<f32> {
+        self.fine_relief_from(grid, self.first_octave(max_wavelength, body_radius))
     }
 
     /// Initial layered state at formation.
@@ -157,31 +260,13 @@ impl PrimordialCrust {
         // Hurst exponent of cratered terrain (F54), so that what floods and renews it meets
         // rough ground at every scale and embays it; from the largest crater the body holds
         // down to two cells of the grid (F137).
-        let gain = 2f64.powf(-ROUGHNESS_HURST);
-        let finest = grid.face_size() as f64 / std::f64::consts::PI;
-        let octaves = ((finest / self.relief_frequency).log2().ceil() as u32 + 1).max(1);
-        let raw: Vec<f64> = (0..grid.cell_count())
-            .into_par_iter()
-            .map(|k| {
-                self.noise.fbm(
-                    grid.center(grid.cell(k)),
-                    self.relief_frequency,
-                    octaves,
-                    2.0,
-                    gain,
-                )
-            })
-            .collect();
+        let raw = self.raw_relief();
         let raw_rms = (raw.iter().map(|v| v * v).sum::<f64>() / raw.len().max(1) as f64)
             .sqrt()
             .max(1e-12);
-        // The largest octave's rms is the relief's; the others fall by the gain.
-        let total = self.relief
-            * (0..octaves)
-                .map(|o| gain.powi(2 * o as i32))
-                .sum::<f64>()
-                .sqrt();
-        let scale = total.min(self.relief_cap) / raw_rms;
+        let scale = *self
+            .relief_scale
+            .get_or_init(|| self.relief_scale_for(raw_rms));
 
         let bedrock: Vec<f32> = (0..grid.cell_count())
             .into_par_iter()
@@ -216,5 +301,58 @@ impl PrimordialCrust {
         layers.unit_id = Field::new(grid);
         layers.unit_id.as_mut_slice().copy_from_slice(&units);
         layers
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// F141: the relief's octaves regenerated on the loop's grid, all of them, are the
+    /// relief init laid over the isostatic crust; those shorter than a length carry
+    /// little beyond it; and on a finer grid they run on below the loop's cells.
+    #[test]
+    fn the_fine_relief_is_the_relief_laid() {
+        let (mut g, _) = crate::presets::preset("Mimas").unwrap().to_graph();
+        let grid = crate::grid::CubeSphere::new(32);
+        let r = g.f64("body.radius");
+        let crust = PrimordialCrust::new(&g, grid);
+        let bedrock = crust.init().bedrock;
+        g.set("multiplier.relief", 0.0).unwrap();
+        let flat = PrimordialCrust::new(&g, grid).init().bedrock;
+        let all = crust.fine_relief(&grid, f64::INFINITY, r);
+        let rms = |v: &[f32]| {
+            (v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+        };
+        let diff: Vec<f32> = (0..all.len())
+            .map(|k| bedrock.as_slice()[k] - flat.as_slice()[k] - all[k])
+            .collect();
+        assert!(rms(&all) > 100.0, "{}", rms(&all));
+        assert!(
+            rms(&diff) < 1e-3 * rms(&all),
+            "{} of {}",
+            rms(&diff),
+            rms(&all)
+        );
+        // Shorter than a tenth of the radius: little left after a low-pass over twice that.
+        let short = crust.fine_relief(&grid, 0.1 * r, r);
+        let cell = grid.delta() * r;
+        let mut field = crate::fields::Field::<f32>::new(grid);
+        field.as_mut_slice().copy_from_slice(&short);
+        let low = crate::stages::relaxation::low_pass(&field, cell, 0.4 * r);
+        assert!(
+            rms(&low) < 0.25 * rms(&short),
+            "{} of {}",
+            rms(&low),
+            rms(&short)
+        );
+        // A grid twice as fine holds one more octave, with its share of the amplitude.
+        let fine = crust.fine_relief(&crate::grid::CubeSphere::new(64), 0.1 * r, r);
+        assert!(
+            rms(&fine) > rms(&short) && rms(&fine) < 1.5 * rms(&short),
+            "{} vs {}",
+            rms(&fine),
+            rms(&short)
+        );
     }
 }

@@ -369,7 +369,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 109;
+pub const FINISH_VERSION: u64 = 110;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -419,6 +419,10 @@ pub fn run_coarse_loop(
     // The relief the ice shell holds, band by band, from step to step (F134).
     let mut relax_bands = relaxation::Bands::default();
     let mut ice_shell_process = ice_shell::IceShellProcess::new(graph, grid);
+    // The renewals keep the base relief's texture under the new terrain (F141).
+    if let Some(p) = &mut ice_shell_process {
+        p.set_primordial(layers.bedrock.as_slice());
+    }
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -821,22 +825,43 @@ pub fn finish(
         order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
         for (time, kind, i) in order {
             match kind {
-                0 => renewal.take_lane(&lanes[i], &lane_hits[i]),
+                0 => renewal.take_lane(&lanes[i], &lane_hits[i], body_radius, cell),
                 1 => renewal.take_polar(&fossil_edges[i], time),
                 2 => renewal.take_polar(&polar_edge, time),
-                _ => renewal.take_hits(time, crate::units::UNIT_CORONA, &corona_hits[i]),
+                _ => renewal.take_hits(
+                    time,
+                    crate::units::UNIT_CORONA,
+                    &corona_hits[i],
+                    ice_coronae[i].smooth_length(),
+                    ice_coronae[i].faults_on(cell),
+                ),
             }
         }
     }
     // The lanes' and the coronae's floor where the loop's cells did not reach their
     // edges: what the loop renewed of each cell, resampled and smoothed over its cell so
     // that no facet of the coarse grid shows in a lane, and the rest taken here.
+    // The base relief's texture under the renewed terrains (F141): below the scale of
+    // each terrain's fabric, and, where the loop laid the floor, only the octaves below
+    // the loop's cells, which its grid could not hold.
+    let crust = primordial_crust::PrimordialCrust::new(graph, loop_output.grid);
+    let loop_cell = loop_output.grid.delta() * body_radius;
+    let fine_below_loop: Option<Vec<f32>> = (polar || !episode_maps.is_empty()).then(|| {
+        let folds = FABRIC_TEXTURE_SHARE * POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
+        crust.fine_relief(&grid, folds.min(2.0 * loop_cell), body_radius)
+    });
     if !lanes.is_empty() || !ice_coronae.is_empty() {
         let core: Option<Vec<f32>> = loop_output.lane_core.as_ref().map(|c| {
             let fine = c.resample(grid);
-            relaxation::low_pass(&fine, cell, loop_output.grid.delta() * body_radius)
+            relaxation::low_pass(&fine, cell, loop_cell)
         });
-        ice_shell::lay_lane_floor(&mut layers, body_radius, core.as_deref(), &renewal);
+        ice_shell::lay_lane_floor(
+            &mut layers,
+            body_radius,
+            core.as_deref(),
+            &renewal,
+            Some((&crust, loop_cell)),
+        );
     }
     renewal.apply(&mut layers);
     let renewed: &[f32] = &renewal.time;
@@ -1776,6 +1801,7 @@ pub fn finish(
                             halo,
                             renewed,
                             &base,
+                            fine_below_loop.as_deref(),
                             stamper,
                         );
                         Some((out, None, None))
@@ -1799,6 +1825,7 @@ pub fn finish(
                             halo,
                             renewed,
                             &base,
+                            fine_below_loop.as_deref(),
                             stamper,
                         );
                         Some((out, None, None))

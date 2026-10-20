@@ -2179,10 +2179,6 @@ pub const FOCUSING_EPISODE_DURATION_GYR: f64 = 0.01;
 /// Thermal diffusivity of ice, m²/s.
 pub const ICE_THERMAL_DIFFUSIVITY: f64 = 1.2e-6;
 pub const POLAR_RENEWAL_GYR: f64 = 0.002;
-/// A renewed polar terrain keeps no relief shorter than this share of the radius while
-/// its episode lasts: in the thinned, hot zone every wavelength up to the zone's scale
-/// relaxes in a geological instant, so no ghost of an older crater survives there.
-pub const POLAR_RENEWAL_LENGTH_SHARE: f64 = 0.2;
 /// A renewed terrain takes the old relief inside and across a ramp at its edge
 /// (POLAR_MARGIN_RAMP, F60); beside it the old ground relaxes under the episode's thinned
 /// shell by the law of F39 (F66). The terrain's fabric runs out into the old ground and
@@ -2401,20 +2397,17 @@ pub const GROOVE_EDGE_RELAY_SPACINGS: f64 = 3.0;
 pub const GROOVE_EDGE_REVERT: f64 = 0.6;
 pub const GROOVE_EDGE_STEP_LIMIT: f64 = 0.3;
 pub const GROOVE_EDGE_REACH: f64 = 0.6;
-/// A lane's ends (F61). Every end stops at a cut. Where a lane enters an older one that
-/// crosses it at more than this angle, the older lane takes up its extension with this
-/// probability, provided the lane has run this many of its widths: the cut runs along
-/// the older lane's strike, a cell and this share of that lane's half width inside its
-/// edge. A lane of a set ends on its parent's cut. An end that has run its length looks
-/// on to this multiple of it for either; finding none, it dies out in the old ground at
-/// a fault of its own across the lane, at this angle to it, degrees, as the transfer
-/// faults that end a rift segment are oblique to it.
+/// A lane's ends (F61, F142). Where a lane enters an older one that crosses it at more
+/// than this angle, the older lane takes up its extension with this probability,
+/// provided the lane has run this many of its widths: the end stops at a cut along the
+/// older lane's strike, a cell and this share of that lane's half width inside its edge.
+/// A lane of a set ends on its parent's cut. An end that has run its length looks on to
+/// this multiple of it for one; finding none, it dies out in the old ground as a wedge.
 pub const GROOVE_JUNCTION_ANGLE_DEG: f64 = 30.0;
 pub const GROOVE_JUNCTION_STOP: f64 = 0.7;
 pub const GROOVE_JUNCTION_INSET: f64 = 0.25;
 pub const GROOVE_JUNCTION_MIN_WIDTHS: f64 = 1.5;
 pub const GROOVE_JUNCTION_REACH: f64 = 3.0;
-pub const GROOVE_END_OBLIQUITY_DEG: (f64, f64) = (55.0, 90.0);
 pub const GROOVE_BELT_FREQUENCY: f64 = 1.2;
 pub const GROOVE_BELT_POWER: f64 = 2.0;
 pub const GROOVE_NEIGHBOUR_SHARE: f64 = 0.85;
@@ -2436,7 +2429,13 @@ pub const GROOVE_SET_RECENT: usize = 24;
 pub const GROOVE_HEADING_FREQUENCY: f64 = 1.2;
 pub const GROOVE_HEADING_DRIFT: f64 = 1.0;
 pub const GROOVE_SMOOTH_LANE_SHARE: f64 = 0.2;
+/// Or the lane's own width, if that is more (F141): a lane levels what it stretches
+/// across, and keeps the base relief's texture below its grooves' scale.
 pub const GROOVE_SMOOTH_LENGTH: f64 = 100e3;
+/// A renewed terrain keeps the base relief's octaves below this share of its fabric's
+/// spacing (F141): the ground between the grooves, the faults or the folds keeps relief
+/// finer than they are; the octave at their own scale would stand with them.
+pub const FABRIC_TEXTURE_SHARE: f64 = 0.5;
 /// The lanes' drop spreads over the lithosphere's flexural parameter at their time, so a
 /// lane narrower than it sinks little and none ends on a step.
 pub const GROOVE_LANE_DROP: f64 = 200.0;
@@ -2509,13 +2508,15 @@ pub const GROOVE_MIN_CELLS: f64 = 3.0;
 pub const GROOVE_SET_LENGTH: f64 = 300e3;
 /// A lane's centre line is traced along the tidal field where the shell cracks and along
 /// a great circle where nothing steers it, in points this share of the radius apart (or
-/// the half width, if less). At an end where the bounding faults die out its width
-/// closes as a wedge over this many widths, or this share of its half length if that is
-/// less, (the distance to the end over that) to this power.
+/// the half width, if less). At an end in the old ground its bounding faults converge
+/// and its grooves fade (F142): its width closes as a wedge over this many widths, or
+/// this share of its half length if that is less, (the distance to the end over that) to
+/// this power, linear as a fault's displacement falls to its tip; Ganymede's lanes pinch
+/// out in long points.
 pub const GROOVE_LANE_POINT_SPACING_RAD: f64 = 0.02;
-pub const GROOVE_END_TAPER_WIDTHS: f64 = 2.0;
+pub const GROOVE_END_TAPER_WIDTHS: f64 = 3.0;
 pub const GROOVE_END_TAPER_SHARE: f64 = 0.6;
-pub const GROOVE_LANE_TAPER_POWER: f64 = 0.8;
+pub const GROOVE_LANE_TAPER_POWER: f64 = 1.0;
 /// A lane's edge is drawn over this many cells: the resolution's own ramp, so that the cut
 /// through the old, rough terrain is not a staircase of cells.
 pub const GROOVE_EDGE_CELLS: f64 = 2.5;

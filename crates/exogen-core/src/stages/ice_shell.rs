@@ -35,15 +35,16 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 20;
+pub const VERSION: u64 = 21;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
 /// turns (Enceladus's sulci), and along the strike of the extension where nothing else
 /// steers it (Ganymede's). Its two edges are its bounding faults: each a trace of fault
 /// segments that wanders as a fault trace does and steps where one segment relays to
-/// the next. An end stops at a cut: along an older lane's strike where the lane met one
-/// that took up its extension, else at a fault of its own across the lane.
+/// the next. An end stops at a cut along an older lane's strike where the lane met one
+/// that took up its extension; an end that has run its length dies out in the old
+/// ground, its bounding faults converging and its grooves fading (F142).
 #[derive(Clone, Debug)]
 pub struct Lane {
     /// The centre line: points `spacing` apart, from one end to the other.
@@ -72,20 +73,13 @@ pub struct Lane {
     pub id: u64,
 }
 
-/// The trace of a fault across a lane's end: its seed, and the half width its wander
-/// scales with.
-pub type FaultTrace = (u64, f64);
-
-/// Where a lane's end stops (F61): the great circle it is cut off along, as that
-/// circle's pole on the lane's own side; how far from the end the cut reaches, m; and,
-/// where the cut is a fault of its own across the lane (an end in the old ground, not
-/// one inside an older lane), the seed of that fault's trace and the half width its
-/// wander scales with, which the lanes of a set share so that they end on one front.
+/// Where a lane's end stops inside an older lane (F61): the great circle it is cut off
+/// along, as that circle's pole on the lane's own side, and how far from the end the cut
+/// reaches, m.
 #[derive(Clone, Copy, Debug)]
 pub struct LaneStop {
     pub pole: [f64; 3],
     pub reach: f64,
-    pub trace: Option<FaultTrace>,
 }
 
 /// A cell near a lane: its signed distance across the centre line, m, its signed
@@ -112,12 +106,10 @@ pub struct LaneFabric {
 }
 
 /// A lane's fields of unresolved variation: where its groove sets change, how its
-/// grooves wander and die out, the roughness under them, and the wander of the fault
-/// across each end that has one.
+/// grooves wander and die out, and the roughness under them.
 pub struct LaneNoise {
     grooves: GradientNoise,
     rough: GradientNoise,
-    cuts: [Option<GradientNoise>; 2],
     /// The draws that belong to one groove or one pit: its depth, its place, its size.
     draws: Rng,
 }
@@ -277,15 +269,9 @@ pub(crate) fn fault_set(
 
 impl LaneNoise {
     pub fn new(lane: &Lane) -> Self {
-        let cut = |end: usize| {
-            lane.stops[end]
-                .and_then(|s| s.trace)
-                .map(|(seed, _)| GradientNoise::new(seed ^ 0x6700_C077))
-        };
         Self {
             grooves: GradientNoise::new(lane.id ^ 0x6700_0000),
             rough: GradientNoise::new(lane.id ^ 0x6700_0C4A),
-            cuts: [cut(0), cut(1)],
             draws: Rng::new(lane.id ^ 0x6700_D0A5),
         }
     }
@@ -540,44 +526,22 @@ impl Lane {
     }
 
     /// Where a cell stands against the cut its end of the lane stops at: the signed
-    /// distance to the cut, m, positive on the lane's side, and whether the cut is a
-    /// fault of its own across the lane, which wanders as a fault trace does; nothing
-    /// where the end has no cut or the cell is out of its reach.
-    fn cut_at(
-        &self,
-        d: [f64; 3],
-        along: f64,
-        body_radius: f64,
-        noise: &LaneNoise,
-    ) -> Option<(f64, bool)> {
+    /// distance to the cut, m, positive on the lane's side; nothing where the end has no
+    /// cut or the cell is out of its reach.
+    fn cut_at(&self, d: [f64; 3], along: f64, body_radius: f64) -> Option<f64> {
         let end = (along >= 0.0) as usize;
         let stop = self.stops[end]?;
         if self.half_length - along.abs() > stop.reach {
             return None;
         }
-        let mut dist = dot(d, stop.pole).clamp(-1.0, 1.0).asin() * body_radius;
-        if let (Some((_, scale)), Some(field)) = (stop.trace, &noise.cuts[end]) {
-            let base = (GROOVE_EDGE_WANDER_WIDTHS * 2.0 * scale).max(1.0);
-            dist += GROOVE_EDGE_WANDER
-                * scale
-                * field.fbm(d, body_radius / base, 4, 2.0, 2f64.powf(-GROOVE_EDGE_HURST))
-                / 0.35;
-        }
-        Some((dist, stop.trace.is_some()))
+        Some(dot(d, stop.pole).clamp(-1.0, 1.0).asin() * body_radius)
     }
 
     /// The lane's cover of a cell, 0 to 1: the ramp across its border zone at its
     /// bounding faults, cut off where an end stops.
-    pub fn cover_at(
-        &self,
-        sm: &LaneSample,
-        d: [f64; 3],
-        body_radius: f64,
-        cell: f64,
-        noise: &LaneNoise,
-    ) -> f64 {
-        let stop = match self.cut_at(d, sm.along, body_radius, noise) {
-            Some((dist, _)) => (dist / self.border(cell) + 0.5).clamp(0.0, 1.0),
+    pub fn cover_at(&self, sm: &LaneSample, d: [f64; 3], body_radius: f64, cell: f64) -> f64 {
+        let stop = match self.cut_at(d, sm.along, body_radius) {
+            Some(dist) => (dist / self.border(cell) + 0.5).clamp(0.0, 1.0),
             None => 1.0,
         };
         stop * self.coverage_at(sm.across, sm.along, cell)
@@ -593,6 +557,12 @@ impl Lane {
     /// draws.
     pub fn grooves_on(&self, cell: f64) -> f64 {
         self.groove_spacing.max(GROOVE_MIN_CELLS * cell)
+    }
+
+    /// The length the lane levels the relief it renews over, m (F141): its own width,
+    /// which its stretching reworks, or the lanes' smoothing length if that is more.
+    pub fn removal_length(&self, body_radius: f64) -> f64 {
+        lane_smooth_length(body_radius).max(2.0 * self.half_width)
     }
 
     /// How far past its edges the lane reaches on a grid of a cell, m: the damage zone
@@ -646,28 +616,19 @@ impl Lane {
         let edge = self.edge_at(sm.along, side);
         let past = sm.along.abs() - self.half_length;
         // The distance in from the bounding fault, negative beyond it and beyond an end.
-        let mut inward = if past > 0.0 {
+        let inward = if past > 0.0 {
             -(sm.across.abs() - edge).max(0.0).hypot(past)
         } else {
             edge - sm.across.abs()
         };
-        // The cut the end stops at. A fault across the lane is an edge like the other
-        // two, with its throw and its damage zone; a cut inside an older lane leaves
-        // everything beyond it to that lane.
+        // The cut the end stops at, inside an older lane, leaves everything beyond it to
+        // that lane.
         let (mut stop, mut beyond) = (1.0, 1.0);
-        if let Some((dist, fault)) = self.cut_at(d, sm.along, body_radius, noise) {
+        if let Some(dist) = self.cut_at(d, sm.along, body_radius) {
             stop = (dist / self.border(cell) + 0.5).clamp(0.0, 1.0);
-            if fault {
-                inward = if dist >= 0.0 && inward >= 0.0 {
-                    inward.min(dist)
-                } else {
-                    -(-inward).max(0.0).hypot((-dist).max(0.0))
-                };
-            } else {
-                beyond = stop;
-                if stop <= 0.0 {
-                    return LaneFabric::default();
-                }
+            beyond = stop;
+            if stop <= 0.0 {
+                return LaneFabric::default();
             }
         }
         if inward <= -damage {
@@ -2387,6 +2348,11 @@ pub struct IceShellProcess {
     /// episodes' terrains renewed between them, by area: what is not old cratered ground,
     /// whatever craters it has taken since.
     pub renewed_fraction: f64,
+    /// The relief the body formed with, on the loop's grid (F141), and its bands shorter
+    /// than each length a renewal has asked for: the texture a renewed cell keeps under
+    /// the new terrain.
+    primordial: Option<Vec<f32>>,
+    fine_cache: Vec<(f64, Vec<f32>)>,
 }
 
 impl IceShellProcess {
@@ -2677,13 +2643,13 @@ impl IceShellProcess {
                         let axis = normalize(cross(start, heading));
                         Lane::great_circle(axis, start, long, spacing, body_radius)
                     });
-                    // The ends (F61). Each way from where the lane began it runs its
-                    // length and stops at a cut. Where it enters an older lane that
-                    // crosses it, that lane more often than not takes up its extension:
-                    // the cut runs along the older lane's strike, a little inside it. A
-                    // lane of a set ends where its parent does, on the same cut. An end
-                    // that has run its length looks farther for either; finding none,
-                    // it dies out in the old ground at a fault of its own across it.
+                    // The ends (F61, F142). Each way from where the lane began it runs
+                    // its length. Where it enters an older lane that crosses it, that
+                    // lane more often than not takes up its extension: the end stops at
+                    // a cut along the older lane's strike, a little inside it. A lane of
+                    // a set ends where its parent does, on the same cut. An end that has
+                    // run its length looks farther for one; finding none, it dies out in
+                    // the old ground, its faults converging and its grooves fading.
                     let nucleus = points
                         .iter()
                         .enumerate()
@@ -2716,15 +2682,14 @@ impl IceShellProcess {
                         if own != 0 {
                             passed.push(own);
                         }
-                        // The step the cut crosses the centre line at, the cut's pole,
-                        // and the trace of a fault of its own.
-                        let mut found: Option<(usize, [f64; 3], Option<FaultTrace>)> = None;
+                        // The step the cut crosses the centre line at and the cut's pole.
+                        let mut found: Option<(usize, [f64; 3])> = None;
                         for step in 1..=avail {
                             let p = at(step);
                             if let Some(s) = inherited.iter().find(|s| {
                                 dot(points[nucleus], s.pole) > 0.0 && dot(p, s.pole) <= 0.0
                             }) {
-                                found = Some((step, s.pole, s.trace));
+                                found = Some((step, s.pole));
                                 break;
                             }
                             let j = oldest[grid.index(grid.locate(p).0)];
@@ -2746,38 +2711,19 @@ impl IceShellProcess {
                                 let sin = (1.0 - cos * cos).sqrt().max(0.3);
                                 let inset = (cell + GROOVE_JUNCTION_INSET * other.half_width) / sin;
                                 let cut = (step + (inset / spacing).round() as usize).min(avail);
-                                found = Some((cut, normalize(cross(at(cut), strike)), None));
+                                found = Some((cut, normalize(cross(at(cut), strike))));
                                 break;
                             }
                             passed.push(j);
                         }
-                        let (cut, pole, trace) = found.unwrap_or_else(|| {
-                            let cut = run.min(avail);
-                            let q = at(cut);
-                            let heading = ahead(cut);
-                            let normal = normalize(cross(q, heading));
-                            let (o_lo, o_hi) = GROOVE_END_OBLIQUITY_DEG;
-                            let turn = (o_lo + (o_hi - o_lo) * rng.uniform(k, 120 + e as u64))
-                                .to_radians()
-                                * if rng.uniform(k, 122 + e as u64) < 0.5 {
-                                    -1.0
-                                } else {
-                                    1.0
-                                };
-                            let (sin, cos) = turn.sin_cos();
-                            let strike = [
-                                heading[0] * cos + normal[0] * sin,
-                                heading[1] * cos + normal[1] * sin,
-                                heading[2] * cos + normal[2] * sin,
-                            ];
-                            (
-                                cut,
-                                normalize(cross(q, strike)),
-                                Some((k ^ ((e as u64 + 1) << 50), half_width)),
-                            )
-                        });
+                        let Some((cut, pole)) = found else {
+                            // No older lane in reach: the end dies out in the old ground
+                            // where its run ends, with no cut.
+                            ends[e] = (nucleus as i64 + sign * run.min(avail) as i64) as usize;
+                            continue;
+                        };
                         // The centre line runs on past the cut until the lane's far
-                        // corner, and the cut's own wander, have passed it.
+                        // corner has passed it.
                         let q = at(cut);
                         let cos = dot(ahead(cut), normalize(cross(pole, q))).abs().min(0.95);
                         let sin = (1.0 - cos * cos).sqrt();
@@ -2792,7 +2738,6 @@ impl IceShellProcess {
                         stops[e] = Some(LaneStop {
                             pole,
                             reach: 2.0 * beyond + 2.0 * half_width,
-                            trace,
                         });
                         let steps = (cut + (beyond / spacing).ceil() as usize).min(avail);
                         ends[e] = (nucleus as i64 + sign * steps as i64) as usize;
@@ -2859,10 +2804,9 @@ impl IceShellProcess {
                         })
                         .collect();
                     let index = lanes.len() as u32 + 1;
-                    let noise = LaneNoise::new(&lane);
                     for sm in lane.sample(&grid, body_radius, 2.0 * cell, stamper) {
                         let d = grid.center(grid.cell(sm.idx));
-                        if lane.cover_at(&sm, d, body_radius, cell, &noise) >= 0.5 {
+                        if lane.cover_at(&sm, d, body_radius, cell) >= 0.5 {
                             if !covered[sm.idx] {
                                 covered[sm.idx] = true;
                                 area += areas[sm.idx];
@@ -2931,7 +2875,7 @@ impl IceShellProcess {
         let corona_cell = grid.delta() * body_radius;
         with_stamper(&grid, |stamper| {
             for c in &coronae {
-                for (idx, cover) in c.covers(&grid, body_radius, corona_cell, stamper) {
+                for (idx, cover, _) in c.covers(&grid, body_radius, corona_cell, stamper) {
                     if cover >= 0.5 {
                         covered[idx] = true;
                     }
@@ -2969,7 +2913,40 @@ impl IceShellProcess {
             thinned_now: vec![1.0; n],
             thinned_for: 0.0,
             renewed_fraction,
+            primordial: None,
+            fine_cache: Vec::new(),
         })
+    }
+
+    /// The relief the body formed with (F141), whose texture the renewals keep.
+    pub fn set_primordial(&mut self, bedrock: &[f32]) {
+        self.primordial = Some(bedrock.to_vec());
+        self.fine_cache.clear();
+    }
+
+    /// The base relief's bands shorter than a length, m, on the loop's grid: the relief
+    /// less its low-pass over that length, kept per level of the pyramid the low-pass
+    /// reads.
+    fn fine_index(&mut self, length: f64) -> Option<usize> {
+        let p = self.primordial.as_ref()?;
+        let cell = self.grid.delta() * self.body_radius;
+        let mut level_length = 4.0 * cell;
+        while level_length < length && level_length < self.body_radius * 8.0 {
+            level_length *= 2.0;
+        }
+        if let Some(i) = self.fine_cache.iter().position(|(l, _)| *l == level_length) {
+            return Some(i);
+        }
+        let low =
+            crate::stages::relaxation::low_pass(&field_from(self.grid, p), cell, level_length);
+        let fine: Vec<f32> = p.iter().zip(&low).map(|(a, b)| a - b).collect();
+        self.fine_cache.push((level_length, fine));
+        Some(self.fine_cache.len() - 1)
+    }
+
+    fn fine_relief(&mut self, length: f64) -> Option<Vec<f32>> {
+        let i = self.fine_index(length)?;
+        Some(self.fine_cache[i].1.clone())
     }
 
     /// What the relaxation step takes from the shell: the thinned shell's equilibrium
@@ -3016,19 +2993,26 @@ impl IceShellProcess {
             }
             self.thinned_for = self.thinned_for.max(t1 - t0.max(self.present_start));
         }
+        // A renewed terrain keeps nothing up to its own scale while it is hot, the zone's
+        // radius, and takes the base relief's texture below the scale of its folds (F141).
+        let length = self
+            .smooth_length()
+            .max(self.shell.radius_rad * self.body_radius);
+        let cell = self.grid.delta() * self.body_radius;
+        let fine = if self.renewing {
+            self.fine_index(FABRIC_TEXTURE_SHARE * POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell))
+        } else {
+            None
+        };
         crate::stages::relaxation::Local {
             equilibrium: self.equilibrium.as_deref(),
-            // A renewed terrain keeps nothing up to its own scale while it is hot.
-            renew: self.renewing.then(|| {
-                (
-                    self.active_now.as_slice(),
-                    self.smooth_length()
-                        .max(POLAR_RENEWAL_LENGTH_SHARE * self.body_radius),
-                )
-            }),
+            renew: self
+                .renewing
+                .then_some((self.active_now.as_slice(), length)),
             halo: self
                 .renewing
                 .then_some((self.thinned_now.as_slice(), self.thinned_for)),
+            fine: fine.map(|i| self.fine_cache[i].1.as_slice()),
         }
     }
 
@@ -3085,20 +3069,38 @@ impl IceShellProcess {
             .collect();
         if !due.is_empty() {
             due.sort_by(|&a, &b| self.lanes[a].time_gyr.total_cmp(&self.lanes[b].time_gyr));
-            let smoothed: Vec<f32> =
-                crate::stages::relaxation::low_pass(&layers.bedrock, cell, self.smooth_length());
+            // Each lane's floor (F141): the relief smoothed over what the lane levels, its
+            // own width or the lanes' smoothing length, with the base relief's texture
+            // below the scale of its grooves under that.
             let body_radius = self.body_radius;
+            let longest = due
+                .iter()
+                .map(|&i| self.lanes[i].removal_length(body_radius))
+                .fold(0.0, f64::max);
+            let levels = crate::stages::relaxation::low_passes(&layers.bedrock, cell, longest);
+            let fines: Vec<Option<Vec<f32>>> = due
+                .iter()
+                .map(|&i| {
+                    let scale = FABRIC_TEXTURE_SHARE * self.lanes[i].grooves_on(cell);
+                    self.fine_relief(scale)
+                })
+                .collect();
             let mut weight = vec![0.0f32; n];
+            let mut target = vec![0.0f32; n];
             let mut held: Vec<Option<(f32, f32)>> = vec![None; n];
             with_stamper(&grid, |stamper| {
-                for &i in &due {
+                for (n_due, &i) in due.iter().enumerate() {
                     let lane = &self.lanes[i];
-                    let noise = LaneNoise::new(lane);
+                    let length = lane.removal_length(body_radius);
+                    let fine = fines[n_due].as_deref();
                     for sm in lane.sample(&grid, body_radius, lane.reach(cell), stamper) {
                         let d = grid.center(grid.cell(sm.idx));
-                        let c = lane.cover_at(&sm, d, body_radius, cell, &noise) as f32;
+                        let c = lane.cover_at(&sm, d, body_radius, cell) as f32;
                         if c > weight[sm.idx] {
                             weight[sm.idx] = c;
+                            target[sm.idx] =
+                                crate::stages::relaxation::blend_levels(&levels, length, sm.idx)
+                                    + fine.map_or(0.0, |f| f[sm.idx]);
                         }
                         if c >= 0.5 {
                             held[sm.idx] = Some((lane.time_gyr as f32, lane.clean as f32));
@@ -3128,7 +3130,7 @@ impl IceShellProcess {
             for k in 0..n {
                 let w = weight[k];
                 if w > 0.0 {
-                    bedrock[k] += (smoothed[k] - bedrock[k]) * w;
+                    bedrock[k] += (target[k] - bedrock[k]) * w;
                     renewed[k] = renewed[k].max(w);
                 }
                 bedrock[k] -= (GROOVE_LANE_DROP * ramp[k] as f64) as f32;
@@ -3163,22 +3165,34 @@ impl IceShellProcess {
             let mut weight = vec![0.0f32; n];
             let mut target = vec![0.0f32; n];
             let mut held: Vec<Option<(f32, f32)>> = vec![None; n];
+            // Each corona's floor: the relief smoothed over its own length, with the base
+            // relief's texture below the scale of its faults under that (F141).
+            let fines: Vec<Option<Vec<f32>>> = due
+                .iter()
+                .map(|&i| {
+                    let scale = FABRIC_TEXTURE_SHARE * self.coronae[i].faults_on(cell);
+                    self.fine_relief(scale)
+                })
+                .collect();
             with_stamper(&grid, |stamper| {
-                for &i in &due {
+                for (n_due, &i) in due.iter().enumerate() {
                     let c = &self.coronae[i];
                     let smoothed: Vec<f32> = crate::stages::relaxation::low_pass(
                         &layers.bedrock,
                         cell,
                         c.smooth_length(),
                     );
-                    for (idx, w) in c.covers(&grid, body_radius, cell, stamper) {
+                    let fine = fines[n_due].as_deref();
+                    for (idx, w, core_share) in c.covers(&grid, body_radius, cell, stamper) {
                         let w = w as f32;
                         if w > weight[idx] {
                             weight[idx] = w;
-                            target[idx] = smoothed[idx];
+                            target[idx] = smoothed[idx] + fine.map_or(0.0, |f| f[idx]);
                         }
                         if w >= 0.5 {
-                            held[idx] = Some((c.time_gyr as f32, c.clean as f32));
+                            // The core's ice is clean, renewed from below; the belt is the
+                            // old crust broken into blocks (F143).
+                            held[idx] = Some((c.time_gyr as f32, (c.clean * core_share) as f32));
                         }
                     }
                 }
@@ -3257,6 +3271,10 @@ pub struct Renewal {
     clean: Vec<f32>,
     lane_cover: Vec<f32>,
     lane_time: Vec<f32>,
+    /// The length the terrain that holds the cell levels the relief over, m, and the
+    /// scale of its fabric, m, below which the base relief keeps its texture (F141).
+    lane_length: Vec<f32>,
+    lane_fabric: Vec<f32>,
     pub keep: Vec<f32>,
 }
 
@@ -3278,6 +3296,8 @@ impl Renewal {
             clean: vec![0.0; cells],
             lane_cover: vec![0.0; cells],
             lane_time: vec![f32::NEG_INFINITY; cells],
+            lane_length: vec![0.0; cells],
+            lane_fabric: vec![0.0; cells],
             keep: vec![1.0; cells],
         }
     }
@@ -3298,13 +3318,27 @@ impl Renewal {
     }
 
     /// A lane's hold of the cells about it.
-    pub fn take_lane(&mut self, lane: &Lane, hits: &[LaneHit]) {
-        self.take_hits(lane.time_gyr, UNIT_GROOVED, hits);
+    pub fn take_lane(&mut self, lane: &Lane, hits: &[LaneHit], body_radius: f64, cell: f64) {
+        self.take_hits(
+            lane.time_gyr,
+            UNIT_GROOVED,
+            hits,
+            lane.removal_length(body_radius),
+            lane.grooves_on(cell),
+        );
     }
 
     /// A terrain's hold of the cells about it, a lane's or a corona's (F133), each a
-    /// floor of its own with its cover.
-    pub fn take_hits(&mut self, time_gyr: f64, unit: u16, hits: &[LaneHit]) {
+    /// floor of its own with its cover: levelled over `length` m, with the base relief's
+    /// texture below `fabric` m, the scale of its grooves or faults (F141).
+    pub fn take_hits(
+        &mut self,
+        time_gyr: f64,
+        unit: u16,
+        hits: &[LaneHit],
+        length: f64,
+        fabric: f64,
+    ) {
         let time = time_gyr as f32;
         for h in hits {
             let k = h.k as usize;
@@ -3314,6 +3348,8 @@ impl Renewal {
                 // take more than half of it, else the one that takes most.
                 if h.cover >= 0.5 || (self.lane_cover[k] < 0.5 && h.cover > self.lane_cover[k]) {
                     self.lane_time[k] = time;
+                    self.lane_length[k] = length as f32;
+                    self.lane_fabric[k] = fabric as f32;
                 }
                 self.lane_cover[k] = self.lane_cover[k].max(h.cover);
             }
@@ -3416,12 +3452,18 @@ pub fn lane_smooth_length(body_radius: f64) -> f64 {
 /// the floor stands on what surrounds it and no step is laid; nothing is kept from
 /// the loop but the relief itself. A crater younger than the lane keeps its ground,
 /// floor and thick ejecta alike, and is left out of the mean; so does a cell
-/// something younger renewed.
+/// something younger renewed. Each cell's floor is levelled over the length its terrain
+/// levels, a lane's width or a corona's, and under it the base relief keeps its texture
+/// (F141): its octaves below the scale of the terrain's fabric where the floor is laid
+/// here, and of those only the ones below the loop's cells, which the loop's grid could
+/// not hold, where the loop laid it (`texture`: the relief the body formed with, and the
+/// loop's cell, m).
 pub fn lay_lane_floor(
     layers: &mut LayerSet,
     body_radius: f64,
     renewed: Option<&[f32]>,
     renewal: &Renewal,
+    texture: Option<(&crate::stages::primordial_crust::PrimordialCrust, f64)>,
 ) {
     let grid = layers.grid;
     let n = grid.cell_count();
@@ -3429,6 +3471,7 @@ pub fn lay_lane_floor(
     let units = layers.unit_id.as_slice();
     let ages = layers.surface_age.as_slice();
     let mut weight = vec![0.0f32; n];
+    let mut taken = vec![0.0f32; n];
     let mut counted = vec![1.0f32; n];
     let mut any = false;
     for k in 0..n {
@@ -3448,19 +3491,56 @@ pub fn lay_lane_floor(
         // its relief by the lane's cover; less than that where the loop left little.
         let q = renewed.map_or(0.0, |r| r[k]).clamp(0.0, 1.0);
         weight[k] = ((c - q) / (1.0 - q).max(GROOVE_FLOOR_RESIDUE as f32)).clamp(0.0, 1.0);
-        any |= weight[k] > 0.0;
+        taken[k] = q * (1.0 - weight[k]);
+        any |= weight[k] > 0.0 || taken[k] > 0.0;
     }
     if !any {
         return;
     }
     let bedrock = layers.bedrock.as_mut_slice();
     let relief: Vec<f32> = (0..n).map(|k| bedrock[k] * counted[k]).collect();
-    let length = lane_smooth_length(body_radius);
-    let sum = crate::stages::relaxation::low_pass(&field_from(grid, &relief), cell, length);
-    let share = crate::stages::relaxation::low_pass(&field_from(grid, &counted), cell, length);
+    let floor_length =
+        |k: usize| (renewal.lane_length[k] as f64).max(lane_smooth_length(body_radius));
+    let longest = (0..n)
+        .filter(|&k| weight[k] > 0.0)
+        .map(floor_length)
+        .fold(lane_smooth_length(body_radius), f64::max);
+    let sums = crate::stages::relaxation::low_passes(&field_from(grid, &relief), cell, longest);
+    let shares = crate::stages::relaxation::low_passes(&field_from(grid, &counted), cell, longest);
+    // The textures, by the first octave below each terrain's fabric: all of them, and
+    // those below the loop's cells.
+    let mut textures: HashMap<u32, (Vec<f32>, Vec<f32>)> = HashMap::new();
     for k in 0..n {
-        if weight[k] > 0.0 && share[k] > 0.05 {
-            bedrock[k] += (sum[k] / share[k] - bedrock[k]) * weight[k];
+        if weight[k] <= 0.0 && taken[k] <= 0.0 {
+            continue;
+        }
+        let (all, sub) = match texture {
+            Some((crust, loop_cell)) => {
+                let first = crust.first_octave(
+                    FABRIC_TEXTURE_SHARE * renewal.lane_fabric[k] as f64,
+                    body_radius,
+                );
+                let (all, sub) = textures.entry(first).or_insert_with(|| {
+                    let below_loop = first.max(crust.first_octave(2.0 * loop_cell, body_radius));
+                    (
+                        crust.fine_relief_from(&grid, first),
+                        crust.fine_relief_from(&grid, below_loop),
+                    )
+                });
+                (all[k], sub[k])
+            }
+            None => (0.0, 0.0),
+        };
+        if weight[k] > 0.0 {
+            let length = floor_length(k);
+            let sum = crate::stages::relaxation::blend_levels(&sums, length, k);
+            let share = crate::stages::relaxation::blend_levels(&shares, length, k);
+            if share > 0.05 {
+                bedrock[k] += (sum / share + all - bedrock[k]) * weight[k];
+            }
+        }
+        if taken[k] > 0.0 {
+            bedrock[k] += sub * taken[k];
         }
     }
 }
@@ -3561,7 +3641,8 @@ pub fn groove_compute(
 /// relief before anything was stamped), wholly inside and less across its edge and its
 /// halo, so that an older crater beside it is softened and one inside it is gone. A cell
 /// something younger renewed is left alone; a younger crater cuts and buries the fabric
-/// when its own turn comes.
+/// when its own turn comes. Under the floor the base relief keeps the octaves below the
+/// loop's cells (`fine`, F141), which the loop's floor could not hold.
 #[allow(clippy::too_many_arguments)]
 pub fn polar_compute(
     layers: &LayerSet,
@@ -3576,6 +3657,7 @@ pub fn polar_compute(
     halo: f64,
     renewed: &[f32],
     base: &[f32],
+    fine: Option<&[f32]>,
     stamper: &mut Stamper,
 ) -> StampOutput {
     let Some(pole) = shell.pole else {
@@ -3794,8 +3876,9 @@ pub fn polar_compute(
                 folds * (1.0 - belt_w * arc * (2.0 * inside).min(1.0)) + rough + belt + ridge;
             let weight = margin_coverage(dist);
             let h = bedrock[k] as f64;
+            let floor = base[k] as f64 + fine.map_or(0.0, |f| f[k] as f64);
             (weight > 0.0 || relief.abs() >= 0.5)
-                .then(|| write(k, h + (base[k] as f64 - h) * weight + relief))
+                .then(|| write(k, h + (floor - h) * weight + relief))
         })
         .collect();
     cells.sort_by_key(|c| c.idx);
@@ -3921,20 +4004,19 @@ mod tests {
         let stop = LaneStop {
             pole: [a.sin(), -(a.cos()), 0.0],
             reach: 600e3,
-            trace: None,
         };
         let (lane, r) = (equator_lane([None, Some(stop)]).0, r);
         let noise = LaneNoise::new(&lane);
         let cell = 4e3;
         let (d, sm) = on_equator_lane(r, 0.0, 700e3);
-        assert!(lane.cover_at(&sm, d, r, cell, &noise) > 0.999);
+        assert!(lane.cover_at(&sm, d, r, cell) > 0.999);
         let (d, sm) = on_equator_lane(r, 0.0, 900e3);
-        assert!(lane.cover_at(&sm, d, r, cell, &noise) < 1e-6);
+        assert!(lane.cover_at(&sm, d, r, cell) < 1e-6);
         let f = lane.fabric_at(&sm, d, r, cell, 0.0, &noise);
         assert!(f.cover == 0.0 && f.outer == 0.0 && f.fracture == 0.0);
         // Far from the stop the cut does not reach.
         let (d, sm) = on_equator_lane(r, 0.0, -700e3);
-        assert!(lane.cover_at(&sm, d, r, cell, &noise) > 0.999);
+        assert!(lane.cover_at(&sm, d, r, cell) > 0.999);
         assert!(lane.edge_at(790e3, 1) > 0.39 * lane.half_width);
         assert!(lane.half_width_at(-990e3) < 0.2 * lane.half_width);
     }
@@ -4108,7 +4190,7 @@ mod tests {
         let young = cell_at(0, 16, 16);
         layers.unit_id.as_mut_slice()[young] = UNIT_CRATER_FLOOR;
         layers.surface_age.as_mut_slice()[young] = 3.0;
-        lay_lane_floor(&mut layers, 252e3, None, &renewal);
+        lay_lane_floor(&mut layers, 252e3, None, &renewal, None);
         let h = layers.bedrock.as_slice();
         let inside = cell_at(0, 8, 8);
         let outside = cell_at(3, 16, 16);
@@ -4119,39 +4201,36 @@ mod tests {
         let mut again = LayerSet::new(grid);
         again.bedrock.as_mut_slice().copy_from_slice(&before);
         let taken = vec![1.0f32; n];
-        lay_lane_floor(&mut again, 252e3, Some(&taken), &renewal);
+        lay_lane_floor(&mut again, 252e3, Some(&taken), &renewal, None);
         assert_eq!(again.bedrock.as_slice()[inside], before[inside]);
     }
 
-    /// Every lane end stops at a cut (F61): a good share against an older lane that
-    /// crosses it, the rest on a fault of the lane's own or its set's, and a set's lanes
-    /// share their fronts, so the fronts are far fewer than the ends.
+    /// A lane's ends (F61, F142): a good share stop at a cut against an older lane that
+    /// crosses them, the rest die out in the old ground, tapering to a point.
     #[test]
-    fn lane_ends_stop_at_cuts() {
+    fn lane_ends_stop_at_older_lanes_or_die_out() {
         let (g, _) = crate::presets::preset("Ganymede").unwrap().to_graph();
         let p = IceShellProcess::new(&g, CubeSphere::new(64)).unwrap();
-        let ends: Vec<&LaneStop> = p
+        let ends = 2 * p.lanes.len();
+        let cuts = p
             .lanes
             .iter()
             .flat_map(|l| l.stops.iter().flatten())
-            .collect();
-        assert!(ends.len() + 8 >= 2 * p.lanes.len(), "{} ends", ends.len());
-        let junctions = ends.iter().filter(|s| s.trace.is_none()).count();
-        let fronts: std::collections::HashSet<u64> =
-            ends.iter().filter_map(|s| s.trace.map(|t| t.0)).collect();
-        let share = junctions as f64 / ends.len() as f64;
+            .count();
+        let share = cuts as f64 / ends.max(1) as f64;
         eprintln!(
-            "ganymede: {} lanes, {} ends: {share:.2} stop against an older lane, the rest on {} fault fronts",
-            p.lanes.len(),
-            ends.len(),
-            fronts.len()
+            "ganymede: {} lanes, {ends} ends: {share:.2} stop against an older lane, the rest taper",
+            p.lanes.len()
         );
-        assert!(share > 0.3, "{share}");
-        assert!(
-            fronts.len() * 3 < ends.len() - junctions,
-            "{} fronts",
-            fronts.len()
-        );
+        assert!(share > 0.25 && share < 0.9, "{share}");
+        // A tapering end closes to nothing; a cut end keeps its width to the cut.
+        let lane = p
+            .lanes
+            .iter()
+            .find(|l| l.stops[1].is_none())
+            .expect("a lane with a free end");
+        assert!(lane.half_width_at(lane.half_length) < 0.05 * lane.half_width);
+        assert!(lane.half_width_at(0.0) > 0.5 * lane.half_width);
     }
 
     /// A lane takes the lid where and when it opens (F61). On Enceladus the lid of the
@@ -4283,7 +4362,8 @@ mod tests {
         }
         assert_eq!(outside_counts[0], 0);
         assert!(inside_counts[0] > 0);
-        assert!(outside_counts[1] > 0 && outside_counts[2] > 3 * outside_counts[1]);
+        // A few, then more than twice as many (12 and 34 with the ends tapering, F142).
+        assert!(outside_counts[1] > 0 && outside_counts[2] > 2 * outside_counts[1]);
         // The fully heated one is a world in between: lanes of both kinds.
         assert!(
             inside_counts[3] > 0 && outside_counts[3] > inside_counts[3],

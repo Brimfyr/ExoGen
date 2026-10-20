@@ -136,6 +136,36 @@ impl GradientNoise {
         sum / norm
     }
 
+    /// The sum of octaves `first` to `first + count` of the field `fbm` sums, with their
+    /// amplitudes and offsets and without the normalization: `fbm` is the sum of all its
+    /// octaves over the sum of their amplitudes, so an octave's share of it is its
+    /// amplitude over that sum.
+    pub fn octaves(
+        &self,
+        d: [f64; 3],
+        frequency: f64,
+        first: u32,
+        count: u32,
+        lacunarity: f64,
+        gain: f64,
+    ) -> f64 {
+        let mut sum = 0.0;
+        let mut amp = gain.powi(first as i32);
+        let mut freq = frequency * lacunarity.powi(first as i32);
+        for o in first..first + count {
+            let off = 17.0 * o as f64;
+            sum += amp
+                * self.sample([
+                    d[0] * freq + off,
+                    d[1] * freq + 0.5 * off,
+                    d[2] * freq + 0.25 * off,
+                ]);
+            amp *= gain;
+            freq *= lacunarity;
+        }
+        sum
+    }
+
     /// Ridged multifractal variant, in [0, 1], with sharp crests.
     pub fn ridged(
         &self,

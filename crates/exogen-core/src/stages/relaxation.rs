@@ -191,6 +191,23 @@ pub fn low_passes(field: &Field<f32>, cell: f64, max_length: f64) -> Vec<(f64, V
         .collect()
 }
 
+/// A cell's value low-passed over `length`, from `low_passes`' levels: between the two
+/// levels that bracket the length, by its logarithm, so that two lengths near each other
+/// give near the same floor and no seam runs between terrains of different widths (F141).
+pub fn blend_levels(levels: &[(f64, Vec<f32>)], length: f64, k: usize) -> f32 {
+    let i = levels.iter().position(|(l, _)| *l >= length);
+    match i {
+        None => levels.last().map_or(0.0, |(_, v)| v[k]),
+        Some(0) => levels[0].1[k],
+        Some(i) => {
+            let (l0, v0) = (&levels[i - 1].0, &levels[i - 1].1);
+            let (l1, v1) = (&levels[i].0, &levels[i].1);
+            let t = ((length / l0).ln() / (l1 / l0).ln()).clamp(0.0, 1.0) as f32;
+            v0[k] + (v1[k] - v0[k]) * t
+        }
+    }
+}
+
 /// How many levels a pyramid `depth` deep holds on a grid: the halving stops once a face
 /// is odd or down to four cells.
 fn pyramid_depth(grid: &CubeSphere, depth: usize) -> usize {
@@ -387,6 +404,10 @@ pub struct Local<'a> {
     /// wavelengths shorter than the renewal length under that thinner shell (F66), each
     /// by its own survival.
     pub halo: Option<(&'a [f32], f64)>,
+    /// The base relief's bands shorter than the renewal length (F141), which a renewed
+    /// cell takes in the measure it gave up what stood there: the texture under the new
+    /// terrain, where the low-pass alone left a blur of the old craters.
+    pub fine: Option<&'a [f32]>,
 }
 
 /// The step, on the bands the surface holds (F134). Returns the relaxed surface, which is
@@ -512,6 +533,16 @@ fn relax_deviation(
         let (level, keep) = kept(k);
         if l < level { keep * beside(l, k) } else { 1.0 }
     });
+    // What a renewed cell gave up of the short bands it takes back from the base relief
+    // (F141): laid now, it relaxes from now on like anything new.
+    if let (Some(fine), Some((weights, _))) = (local.fine, local.renew) {
+        for (k, h) in height.as_mut_slice().iter_mut().enumerate() {
+            let w = weights[k].clamp(0.0, 1.0);
+            if w > 0.0 {
+                *h += fine[k] * w;
+            }
+        }
+    }
     // The whole relaxed surface, for the renewed terrain's floor: defined everywhere, so
     // that a floor laid at a finer resolution, where the terrain reaches past the loop's
     // cells, has something continuous to lay.

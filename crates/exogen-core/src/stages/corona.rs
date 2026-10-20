@@ -329,7 +329,7 @@ impl Corona {
     }
 
     /// The spacing of its faults on a grid of a cell, m: no finer than the grid draws.
-    fn faults_on(&self, cell: f64) -> f64 {
+    pub fn faults_on(&self, cell: f64) -> f64 {
         self.spacing.max(GROOVE_MIN_CELLS * cell)
     }
 
@@ -360,7 +360,7 @@ impl Corona {
         body_radius: f64,
         cell: f64,
         stamper: &mut Stamper,
-    ) -> Vec<(usize, f64)> {
+    ) -> Vec<(usize, f64, f64)> {
         let noise = CoronaNoise::new(self);
         stamper.gather(
             grid,
@@ -372,10 +372,23 @@ impl Corona {
         cells
             .into_par_iter()
             .filter_map(|idx| {
-                let c = self.cover_with(grid.center(grid.cell(idx)), body_radius, cell, &noise);
-                (c > 0.0).then_some((idx, c))
+                let d = grid.center(grid.cell(idx));
+                let c = self.cover_with(d, body_radius, cell, &noise);
+                (c > 0.0).then(|| {
+                    let (rho, _) = self.position(d, body_radius, &noise);
+                    (idx, c, self.core_share(rho))
+                })
             })
             .collect()
+    }
+
+    /// How much of a cell at a share `rho` of the way out to the cell's edge is the
+    /// corona's core rather than its belt (F143): the core within the belt's inner edge,
+    /// blending across it.
+    pub fn core_share(&self, rho: f64) -> f64 {
+        let s = CORONA_OUTLINE_SHARE;
+        let core_edge = s * (1.0 - CORONA_BELT_SHARE);
+        1.0 - smoothstep((rho - core_edge) / (CORONA_CORE_BLEND * s) + 0.5)
     }
 
     /// What the corona makes of a cell (F133), as a lane's fabric: its cover; inside its
@@ -383,7 +396,8 @@ impl Corona {
     /// outline and a core crossed by two sets, with the footwalls of its outward-facing
     /// bounding faults up; beyond the outline their hanging walls down and the belt's
     /// faults running on as open fractures, fewer and shorter the farther out; the tone of
-    /// its ice, darker in the troughs, and the clean ice the fractures show.
+    /// its ice, the core's clean and darker in the troughs, the belt's the old crust's
+    /// with clean ice on its scarps (F143), and the clean ice the fractures show.
     pub fn fabric_at(
         &self,
         d: [f64; 3],
@@ -428,7 +442,7 @@ impl Corona {
         let along = (phi + pi) / tau * period;
         let out = (-inward / damage).clamp(0.0, 1.0);
         let core_edge = s * (1.0 - CORONA_BELT_SHARE);
-        let belt = smoothstep((rho - core_edge) / (CORONA_CORE_BLEND * s) + 0.5);
+        let belt = 1.0 - self.core_share(rho);
         let level =
             (GROOVE_SEGMENT_LEVEL - (GROOVE_SEGMENT_LEVEL + GROOVE_DAMAGE_LEVEL_DROP) * out) * belt;
         let base = fault_set(
@@ -530,11 +544,20 @@ impl Corona {
         let grooves = strength * amplitude * thin(rho) * shape + rough;
         let set_tone = 1.0 - GROOVE_TONE_SETS * (0.5 + 0.5 * (tones / 0.5).clamp(-1.0, 1.0));
         let lag = GROOVE_TONE_TROUGH * strength * lag.clamp(0.0, 1.0);
+        // The core is ice renewed from below, clean; the belt is the old crust broken into
+        // tilt blocks, which keeps its tone and shows clean ice only on its faults' scarps,
+        // as a fracture's walls do (F143).
+        let core_tone = self.clean * set_tone * (1.0 - lag);
+        let scarps = GROOVE_DAMAGE_CLEAN
+            * self.clean
+            * self.strength
+            * base.gate
+            * base.trough.clamp(0.0, 1.0);
         LaneFabric {
             cover,
             relief: grooves + up,
             outer: (1.0 - out) * (down - fracture_depth * open),
-            tone: self.clean * set_tone * (1.0 - lag),
+            tone: core_tone * (1.0 - belt) + scarps * belt,
             fracture: GROOVE_DAMAGE_CLEAN * self.clean * self.strength * (1.0 - out) * open,
         }
     }

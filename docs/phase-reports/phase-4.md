@@ -1733,3 +1733,33 @@ Still to do:
 - **Venus's coronae**; the largest craters' terraces.
 
 Tests 222 (13 ignored), among them two of the thermal-orbital history (Enceladus keeps its ocean and wet core; Miranda melts in its resonance and freezes again) and one of Mimas's lid holding Herschel. Clippy is clean and validate passes its 129 checks, six of them Mimas's.
+
+## The seventieth milestone: the renewed ground's texture, the lanes' ends and the coronae's tones
+
+Asked for by the user after the sixty-ninth's renders: "The coronae, young lanes, and Enceladus' terrain all smooth over the underlying terrain, which is fine and accurate on paper, but if you look at the heightmaps, this smoothing process creates massive blurs where this terrain is... I think we could taper the end points of the lanes so they end in a tapered 'flame' shape... right now it just looks like a gaussian blur, which doesn't look good... Perhaps preserving some or all of the base noise field, which allows craters to smooth out, but keeps the micro detail intact?... Miranda's coronae have the blur issue as well, but also they appear lighter than the surrounding terrain, when it is described on the real Miranda as being darker. This geological map of Inverness corona shows it split into two main colours, the outer corona material, and the inner corona material, with the outer being darker and the inner being lighter."
+
+- **F141.** A renewed terrain levels the relief over its own scale and keeps the base relief's texture below its fabric's.
+- **F142.** A lane's end in the old ground tapers to a point; only an end inside an older lane is cut square.
+- **F143.** A corona's belt keeps the old crust's tone with bright scarps; its core is clean renewed ice.
+
+How it went:
+
+- **Mimas's young terrain is Ganymede's lanes.** The same process, F44's grooved lanes, on a moon whose ocean is 33 Myr old (F140): 45 lanes over a tenth of it, which Lainey et al. 2024's Mimas does not have (open, with the lanes from strain).
+- **Why every end was square.** A lane's end that met no older lane was cut off at a fault of its own across the lane, with a wandering trace; the taper for an end without a cut therefore almost never ran. The fault across the end is gone: such an end dies out as a linear wedge over three widths, its grooves fading with the bounding faults' throw. On Ganymede 0.4 of the ends stop against an older lane, square, as its junctions are; the rest pinch out in points.
+- **What the blur was.** The floor under a lane, a corona or a polar terrain was a plain low-pass of the relief at a smoothing length (10 km on Mimas's lanes, 100 km on Ganymede's, half a corona's radius, a fifth of the radius under the polar terrain): every crater near that length survived as a soft dimple, and every texture went with the craters. The user's suggestion was the right one, and it needed two pieces: level the relief over what the terrain reworks, its own width (a lane), its radius (the polar zone), so that no crater inside it keeps a ghost; and give the ground back the base relief's octaves (F137) below the scale of the terrain's own fabric, which the fabric did not rework, regenerated from the same field at the resolution that draws it. The first try kept every octave below the smoothing length and buried Mimas's grooves under 340 m of texture; the texture is now below half the fabric's spacing, the ground between the grooves. The second try took each lane's floor from its own pyramid level and showed sawtooth seams where overlapping lanes of a set, a level apart, crossed; the levels are blended by the logarithm of the length.
+- **The coronae's two materials.** The belt is the old crust broken into tilt blocks and keeps its tone, with clean ice only on its faults' scarps; the core is renewed ice, clean. Miranda's coronae are now bright-cored with faint bright rings about them in the albedo, over plains of their own tone. A belt darker than the plains, as Inverness's and Arden's are, needs the Uranian moons' dark component, which the materials do not have yet (audit M3b).
+
+What the maps show:
+
+- **Mimas:** its lanes are grooved ground with a fine grain, their floors following the regional relief, with no crater ghosts; the grooves on so thin a lid are faint (108 m at 1.8 km).
+- **Ganymede:** its lanes as they were, 0.69 of it, now pinching out in points where they die in the dark terrain.
+- **Enceladus:** its polar terrain a plain at its depression with its folds and a grain, the ghosts of its old craters gone.
+- **Miranda:** its coronae with their faults' relief over a textured floor, the cores bright and the belts the plains' tone.
+
+Still to do:
+
+- **The coronae's dark belts** (audit M3b), with the Uranian ice's dark component (Phase 5 materials).
+- **The lanes from strain**, which would spare Mimas its young lanes (F140).
+- **Mercury's largest scale**, Ganymede's and Callisto's large craters, Pluto's oldest terrains, Enceladus's plains (M3).
+
+Tests 223 (13 ignored), among them one of the base relief's octaves regenerated at any resolution, one of the lanes' ends and the lanes' floor completed on the resolved grid. Clippy is clean and validate passes its 129 checks.
