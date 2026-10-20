@@ -10,8 +10,8 @@ use crate::constants::*;
 use crate::crater::production::{expected_count_above, poisson};
 use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
-    CraterRecord, FluxHistory, ProductionFunction, ProfileTable, Scaling, StampParams, Stamper,
-    dimensions, ellipticity_for, impact_angle, stamp,
+    Bombardment, BombardmentParams, CraterRecord, ProfileTable, Scaling, StampParams, Stamper,
+    dimensions, ellipticity_for, hold_diameter, impact_angle, stamp,
 };
 use crate::fields::LayerSet;
 use crate::grid::CubeSphere;
@@ -22,16 +22,15 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 24;
+pub const VERSION: u64 = 25;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
 pub struct CraterInputs {
-    pub pf: ProductionFunction,
-    /// Flux history in time since formation, with the record starting at solidification.
-    pub flux: FluxHistory,
+    /// The populations striking the body, each with its production and its history in time
+    /// since formation, the record starting at `cratering.record_start` (F135).
+    pub bombardment: Bombardment,
     pub scaling: Scaling,
-    pub flux_scale: f64,
     pub body_radius: f64,
     pub age: f64,
     pub oblique_fraction: f64,
@@ -92,17 +91,20 @@ pub fn target_is_lava(layers: &LayerSet, grid: &CubeSphere, center: [f64; 3]) ->
     crate::stages::volcanism::is_lava_unit(layers.unit_id.as_slice()[idx])
 }
 
+/// The populations striking the body (F135), from the graph.
+pub fn bombardment(graph: &ParamGraph) -> Bombardment {
+    BombardmentParams::from_nodes(
+        |id| graph.f64(id),
+        graph.str("cratering.production_function"),
+        graph.f64("cratering.record_start"),
+    )
+    .build()
+}
+
 impl CraterInputs {
     pub fn from_graph(graph: &ParamGraph) -> Self {
-        let pf = ProductionFunction::by_name(graph.str("cratering.production_function"));
         Self {
-            pf,
-            flux: FluxHistory {
-                steady: pf.chronology.2,
-                early_ratio: graph.f64("cratering.early_flux_ratio"),
-                early_decay: graph.f64("cratering.early_flux_decay"),
-                record_start: graph.f64("surface.solidification_time"),
-            },
+            bombardment: bombardment(graph),
             scaling: Scaling {
                 simple_complex: graph.f64("cratering.simple_complex_transition"),
                 peak_ring: graph.f64("cratering.peak_ring_onset"),
@@ -110,8 +112,6 @@ impl CraterInputs {
                 gravity: graph.f64("body.gravity"),
                 icy: crate::stages::materials::is_ice(graph.str("materials.bedrock")),
             },
-            flux_scale: graph.f64("cratering.flux_relative_to_moon")
-                * graph.f64("multiplier.crater_density"),
             body_radius: graph.f64("body.radius"),
             age: graph.f64("body.age"),
             oblique_fraction: graph.f64("cratering.oblique_fraction"),
@@ -171,7 +171,10 @@ impl ImpactProcess {
     pub fn new(graph: &ParamGraph, grid: CubeSphere) -> Self {
         let inputs = CraterInputs::from_graph(graph);
         let d_loop = graph.f64("cratering.loop_threshold");
-        let d_max = 2.0 * MAX_CRATER_RADIUS_FRACTION * inputs.body_radius;
+        // The largest crater the body holds (F135), any larger impact having come before its
+        // record, or the largest the stamp draws.
+        let d_max = hold_diameter(inputs.body_radius, inputs.scaling.icy)
+            .min(2.0 * MAX_CRATER_RADIUS_FRACTION * inputs.body_radius);
         Self {
             rng: Rng::new(inputs.seed ^ 0x1D2A_9F0B),
             stamper: Stamper::new(&grid),
@@ -221,11 +224,11 @@ impl ImpactProcess {
     }
 
     /// Craters formed between two times, in order of formation, not yet emplaced: drawn
-    /// per fixed time bin with the bin as the random index, so the population does not
-    /// depend on the step length.
+    /// per fixed time bin and population with the bin as the random index, so the
+    /// population does not depend on the step length.
     pub fn sample(&self, t_start: f64, t_end: f64) -> Vec<CraterRecord> {
         let inp = &self.inputs;
-        if inp.flux_scale <= 0.0 || self.d_max <= self.d_loop {
+        if inp.bombardment.sources.is_empty() || self.d_max <= self.d_loop {
             return Vec::new();
         }
         // Craters that the regime would have removed by the present are not emplaced.
@@ -236,50 +239,56 @@ impl ImpactProcess {
                 continue;
             }
             let b0 = b0.max(cutoff);
-            let expected = expected_count_above(
-                &inp.pf,
-                &inp.flux,
-                inp.flux_scale,
-                inp.body_radius,
-                self.d_loop,
-                b0,
-                b1,
-            );
-            let (count, _) = poisson(&self.rng, bin, 0, expected);
-            for j in 0..count as u64 {
-                let draw = 16 + j * 8;
-                let u_d = self.rng.uniform(bin, draw);
-                let center = self.rng.unit_direction(bin, draw + 1);
-                let time_gyr = inp
-                    .flux
-                    .time_at_fraction(b0, b1, self.rng.uniform(bin, draw + 3));
-                // From the early, basin-forming population or the steady asteroid flux,
-                // by their shares at the time.
-                let early = self.rng.uniform(bin, draw + 6) < inp.flux.early_share(time_gyr);
-                let diameter = if early {
-                    inp.pf
-                        .sample_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
-                } else {
-                    inp.pf
-                        .sample_steady_diameter_above(u_d, self.d_loop / 1e3, self.d_max / 1e3)
-                } * 1e3;
-                let angle = impact_angle(self.rng.uniform(bin, draw + 4));
-                let azimuth = self.rng.uniform(bin, draw + 5) * 2.0 * std::f64::consts::PI;
-                let ellipticity = ellipticity_for(angle, inp.oblique_fraction);
-                batch.push(CraterRecord {
-                    center,
-                    diameter,
-                    time_gyr,
-                    azimuth,
-                    angle,
-                    ellipticity,
-                    class: inp.scaling.classify(diameter),
-                    from_loop: true,
-                    relief: 0.0,
-                    visible: true,
-                    on_lava: false,
-                    id: (bin << 32) | j,
-                });
+            for source in &inp.bombardment.sources {
+                // Each population draws from its own stream, the rocky leftovers' as before.
+                let stream = u64::from(source.pf.icy.is_some());
+                let index = bin | (stream << 40);
+                let expected = expected_count_above(
+                    &source.pf,
+                    &source.flux,
+                    source.scale,
+                    inp.body_radius,
+                    self.d_loop,
+                    b0,
+                    b1,
+                );
+                let (count, _) = poisson(&self.rng, index, 0, expected);
+                for j in 0..count as u64 {
+                    let draw = 16 + j * 8;
+                    let u_d = self.rng.uniform(index, draw);
+                    let center = self.rng.unit_direction(index, draw + 1);
+                    let time_gyr =
+                        source
+                            .flux
+                            .time_at_fraction(b0, b1, self.rng.uniform(index, draw + 3));
+                    // From the early, basin-forming population or the steady flux, by their
+                    // shares at the time.
+                    let early =
+                        self.rng.uniform(index, draw + 6) < source.flux.early_share(time_gyr);
+                    let (lo, hi) = (self.d_loop / 1e3, self.d_max / 1e3);
+                    let diameter = if early {
+                        source.pf.sample_diameter_above(u_d, lo, hi)
+                    } else {
+                        source.pf.sample_steady_diameter_above(u_d, lo, hi)
+                    } * 1e3;
+                    let angle = impact_angle(self.rng.uniform(index, draw + 4));
+                    let azimuth = self.rng.uniform(index, draw + 5) * 2.0 * std::f64::consts::PI;
+                    let ellipticity = ellipticity_for(angle, inp.oblique_fraction);
+                    batch.push(CraterRecord {
+                        center,
+                        diameter,
+                        time_gyr,
+                        azimuth,
+                        angle,
+                        ellipticity,
+                        class: inp.scaling.classify(diameter),
+                        from_loop: true,
+                        relief: 0.0,
+                        visible: true,
+                        on_lava: false,
+                        id: (bin << 32) | (stream << 28) | j,
+                    });
+                }
             }
         }
         batch.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
@@ -394,57 +403,170 @@ mod tests {
                 .count();
         }
         let inp = CraterInputs::from_graph(&g);
-        let frac_expected =
-            inp.pf.cumulative_1gyr(2.0 * d_loop / 1e3) / inp.pf.cumulative_1gyr(d_loop / 1e3);
+        let b = &inp.bombardment;
+        let frac_expected = b.cumulative_1gyr(2.0 * d_loop / 1e3) / b.cumulative_1gyr(d_loop / 1e3);
         let frac = above_twice as f64 / total as f64;
         assert!(
             (frac - frac_expected).abs() < 0.2 * frac_expected + 3.0 / (total as f64).sqrt(),
             "share above twice the threshold {frac} expected {frac_expected} from {total} craters"
         );
-        let young_expected = seeds as f64
-            * expected_count_above(
-                &inp.pf,
-                &inp.flux,
-                inp.flux_scale,
-                inp.body_radius,
-                d_loop,
-                age - 1.0,
-                age,
-            );
+        let young_expected =
+            seeds as f64 * b.expected_count_above(inp.body_radius, d_loop, age - 1.0, age);
         assert!(
             (young as f64 - young_expected).abs()
                 < 0.25 * young_expected + 3.0 * young_expected.sqrt(),
             "young craters {young} expected {young_expected}"
         );
-        let giant_expected = seeds as f64
-            * expected_count_above(
-                &inp.pf,
-                &inp.flux,
-                inp.flux_scale,
-                inp.body_radius,
-                700_000.0,
-                age - 1.0,
-                age,
-            );
+        let giant_expected =
+            seeds as f64 * b.expected_count_above(inp.body_radius, 700_000.0, age - 1.0, age);
         assert!(
             (young_giant as f64) <= 2.0 * giant_expected + 4.0,
             "young giant basins {young_giant} expected {giant_expected}"
         );
         // Sanity: the whole-age basin count of a Moon-like body is Moon-like.
-        let basins = seeds as f64
-            * expected_count_above(
-                &inp.pf,
-                &inp.flux,
-                inp.flux_scale,
-                inp.body_radius,
-                300_000.0,
-                0.0,
-                age,
-            );
+        let basins = seeds as f64 * b.expected_count_above(inp.body_radius, 300_000.0, 0.0, age);
         assert!(
             (basins / seeds as f64 - 43.0).abs() < 12.0,
             "basins above 300 km per Moon: {}",
             basins / seeds as f64
+        );
+    }
+
+    /// Mimas, from Enceladus's preset with Mimas's radius, density and orbit.
+    fn mimas() -> crate::params::ParamGraph {
+        let (mut g, _) = preset("Enceladus").unwrap().to_graph();
+        g.set("body.radius", 1.982e5).unwrap();
+        g.set("body.density", 1149.0).unwrap();
+        g.set("orbit.semi_major_axis", 1.8552e8).unwrap();
+        g.set("orbit.eccentricity", 0.0196).unwrap();
+        g
+    }
+
+    /// The comets the outer system's moons meet (F135): their speeds and numbers per unit
+    /// area today against Nesvorny et al. 2023's, whose rates are Jupiter's 1 km impactor
+    /// every 230 years times each moon's share.
+    #[test]
+    fn the_outer_moons_meet_their_comets_at_their_speeds_and_rates() {
+        let jupiter_per_year = 1.0 / 230.0;
+        for (name, speed_kms, share) in [
+            ("Io", 31.6, 1.1e-4),
+            ("Europa", 25.4, 5.9e-5),
+            ("Ganymede", 20.3, 9.7e-5),
+            ("Callisto", 16.0, 5.7e-5),
+            ("Enceladus", 23.3, 1.5e-6),
+            ("Miranda", 12.7, 3.5e-6),
+        ] {
+            let (g, _) = preset(name).unwrap().to_graph();
+            let speed = g.f64("cratering.impact_velocity") / 1e3;
+            assert!(
+                (speed / speed_kms - 1.0).abs() < 0.1,
+                "{name}: impact speed {speed:.1} km/s, Nesvorny et al. 2023 {speed_kms}"
+            );
+            let r = g.f64("body.radius") / 1e3;
+            let rate = jupiter_per_year * share / (4.0 * std::f64::consts::PI * r * r) * 1e9;
+            let flux = g.f64("cratering.icy_flux");
+            assert!(
+                (flux / rate).ln().abs() < 1.5f64.ln(),
+                "{name}: comets of 1 km {flux:.2e} per km² per Gyr, Nesvorny et al. 2023 {rate:.2e}"
+            );
+            assert_eq!(g.f64("cratering.flux_relative_to_moon"), 0.0, "{name}");
+        }
+    }
+
+    /// Mimas, the least altered of the small moons, keeps the craters it was counted with
+    /// (Kirchoff and Schenk's counts as Wong et al. 2023 give them: 1.38e-3 per km² of 10 km
+    /// and 2.85e-4 of 20 km), from a record that starts after the last impact it could not
+    /// hold, near when its plains date from (4.16 to 4.21 Ga).
+    #[test]
+    fn mimas_keeps_the_craters_it_was_counted_with() {
+        let g = mimas();
+        let inp = CraterInputs::from_graph(&g);
+        let age = g.f64("body.age");
+        let start = g.f64("cratering.record_start");
+        assert!(start > g.f64("surface.solidification_time"));
+        let formed_ga = age - start;
+        assert!(
+            (4.0..=4.3).contains(&formed_ga),
+            "record from {formed_ga:.2} Ga"
+        );
+        for (d, observed) in [(10.0, 1.38e-3), (20.0, 2.85e-4)] {
+            let n = inp.bombardment.density_above(d, start, age);
+            assert!(
+                (n / observed).ln().abs() < 2f64.ln(),
+                "N({d} km) {n:.2e} per km², counted {observed:.2e}"
+            );
+        }
+    }
+
+    /// A small ice moon holds no crater wider than itself (F135): its record starts at the
+    /// last such impact's median time, when ln 2 are still to come, and the loop draws none;
+    /// the large moons keep their record from when their crust solidified, the Moon from
+    /// within a few tens of millions of years of it.
+    #[test]
+    fn a_small_ice_moon_holds_no_crater_wider_than_itself() {
+        let mut small = vec![("Mimas".to_string(), mimas())];
+        for name in ["Enceladus", "Miranda"] {
+            small.push((name.to_string(), preset(name).unwrap().to_graph().0));
+        }
+        for (name, g) in &small {
+            let process = ImpactProcess::new(g, CubeSphere::new(16));
+            let r = g.f64("body.radius");
+            assert!((process.d_max / r - 1.0).abs() < 1e-9, "{name}");
+            let start = g.f64("cratering.record_start");
+            assert!(start > g.f64("surface.solidification_time"), "{name}");
+            let after = process.inputs.bombardment.expected_count_above(
+                r,
+                process.d_max,
+                start,
+                g.f64("body.age"),
+            );
+            assert!(
+                (after - std::f64::consts::LN_2).abs() < 0.01,
+                "{name}: {after} impacts it could not hold"
+            );
+        }
+        for name in ["Mercury", "Ganymede", "Callisto"] {
+            let (g, _) = preset(name).unwrap().to_graph();
+            assert_eq!(
+                g.f64("cratering.record_start"),
+                g.f64("surface.solidification_time"),
+                "{name}"
+            );
+        }
+        let (g, _) = preset("Moon").unwrap().to_graph();
+        let late = g.f64("cratering.record_start") - g.f64("surface.solidification_time");
+        assert!(
+            (0.0..0.05).contains(&late),
+            "the Moon's record {late} Gyr after solidifying"
+        );
+    }
+
+    /// Around a red dwarf the leftovers clear on its short orbital times (F135): a planet
+    /// where the Earth's insolation falls two thirds as strongly, as TRAPPIST-1e, meets them
+    /// fast and keeps a record of the late flux alone.
+    #[test]
+    fn around_a_red_dwarf_the_early_bombardment_is_brief() {
+        let (mut g, _) = preset("Earth").unwrap().to_graph();
+        g.set("star.mass", 0.09).unwrap();
+        g.set("star.luminosity", 5.5e-4).unwrap();
+        g.set("orbit.star_distance", 0.0289 * crate::constants::AU)
+            .unwrap();
+        g.set("body.radius", 5.85e6).unwrap();
+        let x = g.f64("cratering.snow_line_position");
+        assert!((0.4..0.5).contains(&x), "place against the snow line {x}");
+        let speed = g.f64("cratering.impact_velocity") / 1e3;
+        // Kral et al. 2018: 15 to 110 km/s on TRAPPIST-1's planets.
+        assert!((15.0..60.0).contains(&speed), "impact speed {speed} km/s");
+        assert!(g.f64("cratering.early_flux_decay") < 0.005);
+        let start = g.f64("cratering.record_start");
+        assert_eq!(start, g.f64("surface.solidification_time"));
+        let age = g.f64("body.age");
+        let b = CraterInputs::from_graph(&g).bombardment;
+        let equivalent = b.equivalent_gyr(start, age);
+        assert!(
+            equivalent < 1.05 * (age - start),
+            "{equivalent} Gyr of steady flux over {} Gyr",
+            age - start
         );
     }
 }

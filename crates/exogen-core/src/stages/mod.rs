@@ -369,7 +369,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 107;
+pub const FINISH_VERSION: u64 = 108;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1017,9 +1017,7 @@ pub fn finish(
         .f64("cratering.min_diameter")
         .max(FINISHING_MIN_CELLS * cell);
     let cfg = PopulationConfig {
-        pf: inputs.pf,
-        flux: inputs.flux,
-        flux_scale: inputs.flux_scale,
+        bombardment: inputs.bombardment.clone(),
         body_radius,
         d_min,
         d_max: loop_output.loop_threshold,
@@ -1178,9 +1176,7 @@ pub fn finish(
                     // (F97).
                     let survives = |w: f64| {
                         let d_km = w / 1e3;
-                        let later = inputs.flux_scale
-                            * inputs.pf.cumulative_1gyr(d_km)
-                            * inputs.flux.equivalent_gyr(time, present);
+                        let later = inputs.bombardment.density_above(d_km, time, present);
                         let equilibrium = inputs.saturation_fraction
                             * crate::crater::production::geometric_saturation(d_km);
                         (-later / equilibrium.max(1e-30)).exp()
@@ -1535,7 +1531,7 @@ pub fn finish(
                         // minus its coarse-cell-smoothed version.
                         let fresh = ProfileTable::new(dim, 0.0);
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(c.time_gyr, present)
                             * 1e3;
                         let degraded = ProfileTable::new(dim, kappa_t);
                         let smooth =
@@ -1662,7 +1658,9 @@ pub fn finish(
                     Event::Canyon(k) => {
                         let c = &canyons[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(c.end_gyr.min(present), present)
+                            * inputs
+                                .bombardment
+                                .equivalent_gyr(c.end_gyr.min(present), present)
                             * 1e3;
                         let out = plume::trough_compute(
                             &layers,
@@ -1699,7 +1697,7 @@ pub fn finish(
                     Event::Corona(k) => {
                         let c = &coronae[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(c.time_gyr, present)
                             * 1e3;
                         let out = episodic::corona_compute(
                             &layers,
@@ -1786,7 +1784,7 @@ pub fn finish(
                         // Gardening since the episode spreads and lowers its structures,
                         // as it degrades the craters of the time.
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(episodes[*k].end, present)
+                            * inputs.bombardment.equivalent_gyr(episodes[*k].end, present)
                             * 1e3;
                         let out = ice_shell::polar_compute(
                             &layers,
@@ -1835,7 +1833,7 @@ pub fn finish(
                     Event::Linea(k) => {
                         let l = &lineae[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(l.time_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(l.time_gyr, present)
                             * 1e3;
                         let out = lineae::linea_compute(
                             &layers,
@@ -1852,7 +1850,7 @@ pub fn finish(
                     Event::Ring(k) => {
                         let r = &ring_systems[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(r.time_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(r.time_gyr, present)
                             * 1e3;
                         let out = rings::system_compute(
                             &layers,
@@ -1866,7 +1864,7 @@ pub fn finish(
                     Event::Graben(k) => {
                         let g = &graben[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(g.start_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(g.start_gyr, present)
                             * 1e3;
                         let out = plume::trough_compute(
                             &layers,
@@ -1886,7 +1884,7 @@ pub fn finish(
                     Event::Ridge(k) => {
                         let r = &ridges[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(r.time_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(r.time_gyr, present)
                             * 1e3;
                         let out = ridges::ridge_compute(
                             &layers,
@@ -1903,7 +1901,7 @@ pub fn finish(
                         // degraded width minus the coarse-smoothed one.
                         let s = &scarps[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(s.time_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(s.time_gyr, present)
                             * 1e3;
                         let fine = (4.0 * kappa_t).sqrt();
                         let coarse = (4.0 * kappa_t + 2.0 * smooth_sigma * smooth_sigma).sqrt();
@@ -1933,7 +1931,7 @@ pub fn finish(
                         // Degradation by the gardening that followed the crater: the
                         // diffusivity at the present flux times the equivalent flux since.
                         let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.flux.equivalent_gyr(c.time_gyr, present)
+                            * inputs.bombardment.equivalent_gyr(c.time_gyr, present)
                             * 1e3;
                         let table = ProfileTable::new(dim, kappa_t);
                         if table.is_erased() {

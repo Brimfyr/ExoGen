@@ -1532,8 +1532,9 @@ pub fn interior_magma_production_rate(c: &Ctx) -> Value {
     let tidal = if icy {
         0.0
     } else {
-        (MAGMA_EFFICIENCY_TIDAL_MAX * (c.f64("interior.tidal_flux") / MAGMA_TIDAL_FLUX_SCALE).min(1.0))
-            .max(0.0)
+        (MAGMA_EFFICIENCY_TIDAL_MAX
+            * (c.f64("interior.tidal_flux") / MAGMA_TIDAL_FLUX_SCALE).min(1.0))
+        .max(0.0)
     };
     let efficiency = base.max(tidal);
     let heat = if icy {
@@ -1884,29 +1885,49 @@ pub fn tectonics_initial_crust_thickness(c: &Ctx) -> Value {
 
 // ------------------------------------------------------------------ cratering (scaling subset)
 
-fn outer_system(c: &Ctx) -> bool {
-    c.f64("orbit.star_distance") / AU > OUTER_SYSTEM_AU
+/// F135: a body's place against its star's snow line, its distance over the distance
+/// where its blackbody temperature is the snow line's, from its insolation: 1 AU is 0.372
+/// of the Sun's.
+fn snow_line_position(c: &Ctx) -> f64 {
+    c.f64("cratering.snow_line_position")
 }
 
+pub fn cratering_snow_line_position(c: &Ctx) -> Value {
+    (SNOW_LINE_WET_K / formation_temperature(c).max(1.0))
+        .powi(2)
+        .into()
+}
+
+fn ramp(x: f64, (a, b): (f64, f64)) -> f64 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The rocky leftovers' production function by place against the snow line (F135): the
+/// lunar one inside ROCKY_MARS_X, the Mars one beyond.
 pub fn cratering_production_function(c: &Ctx) -> Value {
-    let d = c.f64("orbit.star_distance") / AU;
-    if outer_system(c) {
-        "outer_system"
-    } else if d > 1.2 {
-        "neukum_mars"
-    } else {
+    if snow_line_position(c) < ROCKY_MARS_X {
         "neukum_lunar"
+    } else {
+        "neukum_mars"
     }
     .into()
 }
 
+/// F135: the density of the impactors that make the body's craters today, each population's
+/// by its share of the craters of 1 km.
 pub fn cratering_impactor_density(c: &Ctx) -> Value {
-    if outer_system(c) {
-        IMPACTOR_DENSITY_OUTER
-    } else {
-        IMPACTOR_DENSITY_INNER
+    let rocky =
+        c.f64("cratering.flux_relative_to_moon") * production_function(c).cumulative_1gyr(1.0);
+    let icy = crate::crater::IcyCraters {
+        per_gyr: c.f64("cratering.icy_flux"),
+        crater_1km: c.f64("cratering.icy_crater_1km"),
     }
-    .into()
+    .cumulative(1.0);
+    if rocky + icy <= 0.0 {
+        return IMPACTOR_DENSITY_INNER.into();
+    }
+    ((rocky * IMPACTOR_DENSITY_INNER + icy * IMPACTOR_DENSITY_OUTER) / (rocky + icy)).into()
 }
 
 pub fn cratering_target_density(c: &Ctx) -> Value {
@@ -1918,38 +1939,128 @@ pub fn cratering_target_density(c: &Ctx) -> Value {
     .into()
 }
 
-pub fn cratering_impact_velocity(c: &Ctx) -> Value {
+/// F29, F135: the impactors' speed far from the body or its planet, a share of the orbital
+/// speed about the star that is the larger the farther inside the snow line.
+fn encounter_speed(c: &Ctx) -> f64 {
     let d = c.f64("orbit.star_distance");
     let v_orb = orbital_speed(c.f64("star.mass") * M_SUN, d);
-    let factor = (VINF_FACTOR_INNER * (AU / d).sqrt()).max(VINF_FACTOR_MIN);
-    let v_inf = factor * v_orb;
+    let x = snow_line_position(c).max(1e-6);
+    (VINF_FACTOR_INNER * (VINF_REFERENCE_X / x).sqrt()).max(VINF_FACTOR_MIN) * v_orb
+}
+
+pub fn cratering_impact_velocity(c: &Ctx) -> Value {
+    let v_inf = encounter_speed(c);
     let v_esc = c.f64("body.escape_velocity");
     let v2 = if c.str("orbit.primary") == "planet" {
-        let v_esc_parent = (2.0 * G * c.f64("parent.mass") / c.f64("orbit.semi_major_axis")).sqrt();
-        v_inf * v_inf + v_esc_parent * v_esc_parent + v_esc * v_esc
+        // A moon meets the impactors its planet focused, at its own orbital speed besides
+        // (Zahnle et al. 2003): three times the square of that speed.
+        let v_moon2 = G * c.f64("parent.mass") / c.f64("orbit.semi_major_axis");
+        v_inf * v_inf + 3.0 * v_moon2 + v_esc * v_esc
     } else {
         v_inf * v_inf + v_esc * v_esc
     };
     v2.sqrt().into()
 }
 
+/// F135: the rocky leftovers' flux per unit area relative to the Moon's, by place against
+/// the snow line, times the late flux's multiplier.
 pub fn cratering_flux_relative_to_moon(c: &Ctx) -> Value {
-    let d = c.f64("orbit.star_distance") / AU;
-    let flux = if outer_system(c) {
-        if c.str("orbit.primary") == "planet" {
-            let v_orb = orbital_speed(c.f64("star.mass") * M_SUN, c.f64("orbit.star_distance"));
-            let v_inf = VINF_FACTOR_MIN * v_orb;
-            let v_esc_parent2 = 2.0 * G * c.f64("parent.mass") / c.f64("orbit.semi_major_axis");
-            0.1 * (1.0 + v_esc_parent2 / (v_inf * v_inf))
-        } else {
-            0.1
-        }
-    } else if d > 1.2 {
-        2.0
+    let x = snow_line_position(c);
+    let belt = 1.0 + (ROCKY_BELT_FLUX - 1.0) * ramp(x, ROCKY_BELT_RAMP);
+    let fade = 1.0 - ramp(x, ROCKY_OUTER_FADE);
+    (belt * fade * c.f64("cratering.late_flux_multiplier")).into()
+}
+
+/// F135: the outer system's impactors at or above 1 km per km² per Gyr at the body today,
+/// focused by its planet (or by itself), from the snow line out, times the late flux's
+/// multiplier.
+pub fn cratering_icy_flux(c: &Ctx) -> Value {
+    let x = snow_line_position(c);
+    let share = ramp(x, ICY_SNOW_RAMP);
+    if share <= 0.0 {
+        return 0.0.into();
+    }
+    let (x0, rise) = ICY_FLUX_RISE;
+    let unfocused = ICY_FLUX * (x / x0).max(1.0).powf(rise);
+    let v_inf = encounter_speed(c).max(1.0);
+    let v_esc2 = if c.str("orbit.primary") == "planet" {
+        2.0 * G * c.f64("parent.mass") / c.f64("orbit.semi_major_axis")
     } else {
-        1.0
+        c.f64("body.escape_velocity").powi(2)
     };
-    flux.into()
+    (unfocused * (1.0 + v_esc2 / (v_inf * v_inf)) * share * c.f64("cratering.late_flux_multiplier"))
+        .into()
+}
+
+/// F135: the crater a 1 km impactor of the outer system makes on the body, km.
+pub fn cratering_icy_crater_1km(c: &Ctx) -> Value {
+    crate::crater::IcyCraters::new(
+        1.0,
+        c.f64("body.gravity"),
+        c.f64("cratering.impact_velocity"),
+        IMPACTOR_DENSITY_OUTER / c.f64("cratering.target_density").max(1.0),
+        c.f64("cratering.simple_complex_transition"),
+    )
+    .crater_1km
+    .into()
+}
+
+/// F135: around another star, the early bombardment's timescale against the Sun's and its
+/// amount per unit area against the Sun's.
+fn early_scalings(c: &Ctx) -> (f64, f64) {
+    let l = c.f64("star.luminosity").max(1e-9);
+    let m = c.f64("star.mass").max(1e-6);
+    let (a, b) = EARLY_TIME_EXPONENTS;
+    (l.powf(a) * m.powf(b), m / l)
+}
+
+pub fn cratering_icy_early_total(c: &Ctx) -> Value {
+    let (_, solids) = early_scalings(c);
+    (ICY_EARLY_TOTAL * solids / c.f64("cratering.late_flux_multiplier").max(1e-6)).into()
+}
+
+pub fn cratering_icy_early_timescale(c: &Ctx) -> Value {
+    (ICY_EARLY_TAU_GYR * early_scalings(c).0).into()
+}
+
+/// F135: the body's bombardment from the graph, its record starting at `record_start`.
+fn bombardment_from(c: &Ctx, record_start: f64) -> crate::crater::Bombardment {
+    crate::crater::BombardmentParams::from_nodes(
+        |id| c.f64(id),
+        c.str("cratering.production_function"),
+        record_start,
+    )
+    .build()
+}
+
+/// F135: when the surface begins its crater record: when it solidifies, or after the last
+/// impact too large for the body to hold, which shattered and resurfaced it, whichever is
+/// later. The last such impact is taken at its median time: impacts come at random, so
+/// none comes after a time with the chance exp(-n), n the number still expected, and the
+/// chance is one half where ln 2 are still to come.
+pub fn cratering_record_start(c: &Ctx) -> Value {
+    let start = c.f64("surface.solidification_time");
+    let age = c.f64("body.age");
+    let radius = c.f64("body.radius");
+    let icy = crate::stages::materials::is_ice(c.str("materials.bedrock"));
+    let hold = crate::crater::hold_diameter(radius, icy) / 1e3;
+    let area = 4.0 * PI * radius * radius / 1e6;
+    let b = bombardment_from(c, 0.0);
+    let after = |t: f64| b.density_above(hold, t, age) * area;
+    let median = std::f64::consts::LN_2;
+    if after(start) < median {
+        return start.into();
+    }
+    let (mut lo, mut hi) = (start, age);
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if after(mid) > median {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (0.5 * (lo + hi)).into()
 }
 
 pub fn cratering_simple_complex_transition(c: &Ctx) -> Value {
@@ -1970,8 +2081,13 @@ pub fn cratering_multiring_onset(c: &Ctx) -> Value {
     (MULTIRING_MULTIPLE * c.f64("cratering.simple_complex_transition")).into()
 }
 
+/// F135: the gardening diffusivity, the Moon's scaled by gravity and by the body's present
+/// production of craters of 1 km against the Moon's, the small impacts that do the gardening
+/// coming as often as those.
 pub fn cratering_diffusivity(c: &Ctx) -> Value {
-    let mut k = DIFFUSIVITY_LUNAR * (c.f64("body.gravity") / GRAVITY_MOON).sqrt();
+    let flux = bombardment_from(c, 0.0).cumulative_1gyr(1.0)
+        / crate::crater::ProductionFunction::lunar().cumulative_1gyr(1.0);
+    let mut k = DIFFUSIVITY_LUNAR * (c.f64("body.gravity") / GRAVITY_MOON).sqrt() * flux;
     if c.f64("atmosphere.surface_pressure") > DIFFUSIVITY_ATMOSPHERE_PRESSURE {
         k *= DIFFUSIVITY_ATMOSPHERE_MULTIPLE;
     }
@@ -1992,31 +2108,43 @@ fn production_function(c: &Ctx) -> crate::crater::ProductionFunction {
     crate::crater::ProductionFunction::by_name(c.str("cratering.production_function"))
 }
 
-/// F31: the early rate at formation relative to the steady rate, from the chronology.
+/// F31, F135: the rocky leftovers' early rate at formation relative to the steady rate,
+/// from the chronology, as much more per unit area as another star's disc leaves and
+/// over as much less time as its orbits take, against a steady flux the late multiplier
+/// scales.
 pub fn cratering_early_flux_ratio(c: &Ctx) -> Value {
-    crate::crater::production::early_flux_ratio(production_function(c).chronology).into()
+    let (time, solids) = early_scalings(c);
+    (crate::crater::production::early_flux_ratio(production_function(c).chronology) * solids
+        / time.max(1e-9)
+        / c.f64("cratering.late_flux_multiplier").max(1e-6))
+    .into()
 }
 
-/// F31: e-folding time of the early bombardment, from the chronology.
+/// F31, F135: e-folding time of the rocky leftovers' early bombardment, from the
+/// chronology, on another star's orbital times.
 pub fn cratering_early_flux_decay(c: &Ctx) -> Value {
-    (1.0 / production_function(c).chronology.1).into()
+    (early_scalings(c).0 / production_function(c).chronology.1).into()
 }
 
 pub fn cratering_flux_history(c: &Ctx) -> Value {
-    // Production rate over the body's life relative to the present rate.
+    // The production of craters of 1 km over the body's life relative to the present,
+    // every population's (F135).
     let age = c.f64("body.age");
-    let flux = crate::crater::FluxHistory {
-        steady: production_function(c).chronology.2,
-        early_ratio: c.f64("cratering.early_flux_ratio"),
-        early_decay: c.f64("cratering.early_flux_decay"),
-        record_start: c.f64("surface.solidification_time"),
+    let b = bombardment_from(c, c.f64("cratering.record_start"));
+    let rate = |t: f64| -> f64 {
+        b.sources
+            .iter()
+            .map(|s| {
+                s.scale * s.pf.cumulative_1gyr(1.0) * s.flux.rate1(t) / s.flux.steady.max(1e-30)
+            })
+            .sum()
     };
-    let now = flux.rate1(age).max(1e-30);
+    let now = rate(age).max(1e-30);
     let n = 48;
     let points = (0..=n)
         .map(|k| {
             let t = age * k as f64 / n as f64;
-            (t, flux.rate1(t) / now)
+            (t, rate(t) / now)
         })
         .collect();
     Curve::new(points).into()
@@ -2149,9 +2277,7 @@ fn ice_corona_episode(c: &Ctx) -> Option<crate::stages::corona::IceEpisode> {
 }
 
 pub fn volcanism_corona_strength(c: &Ctx) -> Value {
-    ice_corona_episode(c)
-        .map_or(0.0, |e| e.strength)
-        .into()
+    ice_corona_episode(c).map_or(0.0, |e| e.strength).into()
 }
 
 /// The coronae of an ice mantle take their time from the tidal heating as the lanes do
@@ -2173,9 +2299,7 @@ pub fn volcanism_corona_age(c: &Ctx) -> Value {
 }
 
 pub fn volcanism_corona_duration(c: &Ctx) -> Value {
-    ice_corona_window(c)
-        .map_or(0.0, |(_, width)| width)
-        .into()
+    ice_corona_window(c).map_or(0.0, |(_, width)| width).into()
 }
 
 pub fn volcanism_dome_count(c: &Ctx) -> Value {

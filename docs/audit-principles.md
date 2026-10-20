@@ -138,6 +138,8 @@ When: the Io milestone.
 
 A crater on a target `is_ice` reads has a central pit from 8.5 transitions and a dome in it from 20 (F72); on any other, a peak ring and a multi-ring basin. A crust of rock and ice, Ceres's or Callisto's dirty ice, gets one or the other whole. The same switch picks the transition's ice factor (S7).
 
+Since F135 the same switch picks the largest crater a body holds, as wide as its radius on ice, as wide as itself on rock, and so when a body of rock and ice begins its record.
+
 Direction: the pit from the impact melt's volume against the crater's, the melt-drainage model Alzate and Barlow (2011) and Elder et al. (2012) favour; ice melts under a far lower shock pressure than rock (Pierazzo et al. 1997), so a target's ice share would pit its craters by degrees. Since F126 the crust's share of rock is a node of its own (body.crust_impurity), which such a model would read.
 
 When: the earlier-phases revisit, with S7.
@@ -329,12 +331,17 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | RAY_LENGTH_COEFF_KM, RAY_LENGTH_EXPONENT, RAY_SKIN_DEPTH_M | Elliott et al. (2018)'s median lunar ray lengths, 6.59 R^1.27 km, for their 10 cm skin (F91) | the skin and fragment population per body: the length goes as the skin depth to about -1.16, which an icy surface's lag already sets |
 | CURTAIN_SPREAD, CURTAIN_SLOPE, CURTAIN_ORDERS | the Moon's rays: 10.7 a crater, 22 degrees wide at two radii (Elliott et al. 2018) | the target's relief at the rim, which makes the rays (Sabuwala et al. 2018: the count goes as the crater over the relief's wavelength) |
 | TERRACE_FULL_COLLAPSE | a stated choice: a lunar crater's wall terraced in full from about 60 km (F92) | check the share of the wall terraced along a sweep of lunar and Mercurian craters |
-| POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core, 10 to 30 GW: 28.5 GW, which with its shell's own 0.6 GW (F75) holds its shell at 22.7 km (refitted from 15 GW when the shell's share went from the class k₂/Q's 15 GW to F75's) | a constant of the dissipation per unit of porosity; check it against a second porous body, Mimas's heating |
+| POROUS_DISSIPATION | Choblet et al. 2017's model of Enceladus's core, 10 to 30 GW: 28.5 GW, which with its shell's own 0.6 GW (F75) holds its shell at 22.7 km (refitted from 15 GW when the shell's share went from the class k₂/Q's 15 GW to F75's) | a constant of the dissipation per unit of porosity; fails its check on Mimas (F135): its eccentricity of 0.0196 gives it 228 GW, a shell 1.7 km thick over an ocean and a surface renewed every 0.1 Gyr, where Lainey et al. 2024 find a shell 20 to 30 km thick over a young ocean under an old surface |
 | RING_STRAIN | the strain of Tyre's and Callanish's inner graben (Singer et al. 2023) | check against the graben depths of Valhalla and Ganymede's furrows once measured |
 | PIT_DIAMETER_SHARE, PIT_GROWTH, PIT_DEPTH_SHARE, DOME_PIT_SHARE, DOME_RISE | Ganymede's pits and domes (Alzate and Barlow 2011; Bray et al. 2012; Schenk 1993) | check against Callisto's dome craters and Ceres's pits (Occator, Dantu) |
 | MANTLE_SPREAD | a stated choice: the length over which a mantle evens the ground, twice its thickness | check against the rim profiles of Enceladus's muted craters (Kirchoff and Schenk 2009) |
 | FLOW_NARROWING_SLOPE | Tharsis: a 5 degree flank narrows a flow to about a third of its width on the plains (Peters et al. 2021: the narrowest flows on Olympus Mons's flanks) | a flow's width from its lava's yield strength and its effusion rate on the slope (Hulme 1974) |
 | FLOW_STEEP_SLOPE | a stated choice: a degree, above the plains' slopes, so that the plains' floods and Io's flows keep the steering they had | the slope at which gravity's push across a front outweighs the bumps it rides over; check against flow paths on a shield's flanks |
+| ICY_FLUX, ICY_FLUX_RISE | Nesvorný et al. 2023's comet rates on the moons of Jupiter, Saturn and Uranus, each over its planet's focusing (F135) | fitted on three planets; within a factor of 1.3 on six moons; check against Triton's and Pluto's craters, beyond the planets it was fitted on |
+| ICY_EARLY_TOTAL | Wong et al. 2023's comets of 1 km over the history of Mimas and Enceladus, over Nesvorný et al.'s rates (F135) | passes on Mimas, its counts at 10 and 20 km within 7 percent; check Iapetus's oldest plains and Callisto's |
+| ROCKY_BELT_FLUX, ROCKY_BELT_RAMP, ROCKY_OUTER_FADE | Mars about twice the Moon (Ivanov 2001); the giant planets' moons struck by comets, not asteroids (Zahnle et al. 2003) | checked on Ceres (F135): 13 craters over 100 km against the 16 counted; Mars, its basins from the Mars production function continued past its range, takes two impacts wider than itself after its crust solidifies and starts its record at 3.95 Ga |
+| ICE_HOLD_RADIUS_FRACTION, ROCK_HOLD_RADIUS_FRACTION | the largest craters icy moons keep (Odysseus 0.84 R) and Rheasilvia on Vesta (1.93 R) | the hold from the energy that disrupts a body against its gravity and strength (Movshovitz et al. 2015) |
+| EARLY_TIME_EXPONENTS | stated choices: the orbital period at the snow line, the disc's solids over the area within it (F135) | no body to check; around a red dwarf the snow line where its planets formed is set by its far brighter youth, not by its luminosity today |
 
 Constants marked provisional for Phases 5 and 7 (atmosphere, albedo, imagery) are left to those phases.
 
@@ -365,6 +372,8 @@ Enceladus's cratered plains hold craters relaxed by 40 to 90 percent, which need
 Direction: the heat history that relaxed the real craters. An eccentricity cycle in the resonance with Dione is not it: Enceladus does not oscillate about its tidal equilibrium in the model of Ojakangas and Stevenson (Meyer and Wisdom 2008), and its shell's own tides are a small share of its heat (F75). Episodes of focused heating whose thinning reaches the cratered plains between the terrains, or a past resonance that raised its eccentricity for a time (Meyer and Wisdom 2008 find a temporary capture into the 4:2 resonance with Dione), remain.
 
 When: with the earlier-phases revisit's thermal histories, or sooner if the Europa milestone revisits the orbital histories.
+
+In the sixty-sixth milestone (F135) the outer system's own comets strike the icy moons, and Mimas, the least altered of the small moons, keeps its counts at 10 and 20 km within 7 percent; Enceladus's oldest plains, from its record's start at 4.25 Ga, keep 1.5 to 3.7 times its counts at 5 to 20 km (Kirchoff and Schenk's counts as Wong et al. 2023 give them), and their craters stand sharp. Its plains are younger than its record, 4.10 Ga by Wong et al.'s isochrons, and relaxed: the heat history this entry wants would give both. Miranda's cratered terrain, mantled and subdued on Voyager's images, likewise keeps more and sharper craters than its map.
 
 ### M4. Enceladus's old fractures
 

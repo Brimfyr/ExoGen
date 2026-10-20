@@ -155,6 +155,13 @@ pub fn reference_checks() -> Vec<Check> {
             0.35,
             "record from 4.2 Gyr",
         ),
+        range(
+            "Moon",
+            "cratering.record_start",
+            0.25,
+            0.35,
+            "no impact it could not hold after its crust solidified (F135)",
+        ),
         range("Mercury", "cratering.retention_age", 4.0, 5.0, ""),
         range(
             "Mercury",
@@ -490,6 +497,13 @@ pub fn reference_checks() -> Vec<Check> {
             2.2,
             "bright terrain about 2 Gyr old (Zahnle et al. 2003)",
         ),
+        range(
+            "Ganymede",
+            "cratering.impact_velocity",
+            18_300.0,
+            22_300.0,
+            "20.3 km/s, Nesvorny et al. 2023",
+        ),
         // Callisto
         range("Callisto", "body.gravity", 1.21, 1.26, "1.24 m/s²"),
         text("Callisto", "rotation.mode", "locked", ""),
@@ -515,6 +529,20 @@ pub fn reference_checks() -> Vec<Check> {
         ),
         // Enceladus
         range("Enceladus", "body.gravity", 0.108, 0.118, "0.113 m/s²"),
+        range(
+            "Enceladus",
+            "cratering.impact_velocity",
+            21_000.0,
+            25_600.0,
+            "23.3 km/s, Nesvorny et al. 2023",
+        ),
+        range(
+            "Enceladus",
+            "cratering.record_start",
+            0.1,
+            0.3,
+            "after the last impact it could not hold; its plains' craters date from 4.1 to 4.3 Ga (Wong et al. 2023)",
+        ),
         text("Enceladus", "rotation.mode", "locked", ""),
         text("Enceladus", "body.composition_class", "ice_dominated", ""),
         range(

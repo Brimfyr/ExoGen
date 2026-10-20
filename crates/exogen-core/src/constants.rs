@@ -2763,11 +2763,75 @@ pub const RAY_FADING_MAX_GYR: f64 = 1.5;
 /// Impactor densities by region, kg/m³.
 pub const IMPACTOR_DENSITY_INNER: f64 = 2_700.0;
 pub const IMPACTOR_DENSITY_OUTER: f64 = 600.0;
-/// Heliocentric distance beyond which the outer-system impactor population applies, AU.
-pub const OUTER_SYSTEM_AU: f64 = 4.0;
-/// Impact velocity model (F29): v_inf = max(0.5 (1 AU / d)^0.5, 0.4) x local orbital speed.
+/// Impact velocity model (F29, F135): v_inf = max(0.5 (x_1AU / x)^0.5, 0.4) x the local
+/// orbital speed about the star, x the place against the star's snow line and x_1AU the
+/// Earth's against the Sun's (1 AU over 2.69 AU), so that around the Sun it is 0.5 (1 AU /
+/// d)^0.5 as before; a moon adds three times the square of its orbital speed about its
+/// planet, the planet's focusing and its own motion (Zahnle et al. 2003), and its own
+/// escape speed.
 pub const VINF_FACTOR_INNER: f64 = 0.5;
 pub const VINF_FACTOR_MIN: f64 = 0.4;
+pub const VINF_REFERENCE_X: f64 = 0.372;
+/// The bombardment of any star (F135). A body's place against its star's snow line, x,
+/// its distance over the distance where its blackbody temperature is SNOW_LINE_WET_K (2.69
+/// AU for the Sun), sets which population strikes it and how hard. The rocky leftovers of
+/// the inner system, whose craters the Moon's record gives (Neukum et al. 2001), strike at
+/// the Moon's rate inside ROCKY_BELT_RAMP.0 and at ROCKY_BELT_FLUX times it from
+/// ROCKY_BELT_RAMP.1 through the belt (Mars about twice the Moon, Ivanov 2001), fading out
+/// beyond it over ROCKY_OUTER_FADE (the giant planets' moons are struck by comets, Zahnle
+/// et al. 2003); the Mars production function takes over from ROCKY_MARS_X (1.2 AU for
+/// the Sun).
+pub const ROCKY_BELT_FLUX: f64 = 2.0;
+pub const ROCKY_BELT_RAMP: (f64, f64) = (0.40, 0.57);
+pub const ROCKY_OUTER_FADE: (f64, f64) = (1.2, 1.6);
+pub const ROCKY_MARS_X: f64 = 0.447;
+/// The outer system's planetesimals, scattered from beyond the giant planets, strike from
+/// the snow line out, their share ramping in over ICY_SNOW_RAMP (inside it the Moon's
+/// record counts its comets already). Unfocused, ICY_FLUX impactors at or above 1 km per
+/// km² per Gyr strike inside ICY_FLUX_RISE.0, more as x to the ICY_FLUX_RISE.1 beyond it,
+/// nearer the scattered disc: the rates of Nesvorny et al. 2023 for the moons of Jupiter,
+/// Saturn and Uranus, each divided by its planet's focusing, come to 5.3, 4.0 and 16.5
+/// times 1e-16 per km² per year, Jupiter's 1 km impactors arriving every 230 years.
+pub const ICY_FLUX: f64 = 4.7e-7;
+pub const ICY_FLUX_RISE: (f64, f64) = (3.56, 2.0);
+pub const ICY_SNOW_RAMP: (f64, f64) = (1.0, 1.5);
+/// The outer system's impactors (F135): cumulative slopes below and above this size, km
+/// (Nesvorny et al. 2023's, from the Jupiter Trojans, and Wong et al. 2023's -2 below;
+/// the dynamically hot scattered disc's -4.5 above, Wong et al. 2023); and the crater
+/// scaling for icy satellites, D_i = 0.143 D^1.09 g^0.28 (rho_i / rho_t)^-0.43 v^-0.56
+/// D_sc^0.19 in km, m/s² and km/s (Zahnle et al. 2003, as Wong et al. 2023 use it). The
+/// slope runs on below 1 km: Singer et al. 2019 found few craters under 13 km on Pluto and
+/// Charon, a deficit of comets under 1 to 2 km, but the moons of Saturn and Uranus keep
+/// the steep slope down to craters of 2 km (Kirchoff and Schenk's counts), and Wong et al.
+/// 2023 date them either way (stated choice).
+pub const ICY_IMPACTOR_BREAK: f64 = 100.0;
+pub const ICY_IMPACTOR_SLOPES: (f64, f64) = (2.1, 4.5);
+pub const ICY_CRATER_SCALING: (f64, f64) = (0.143, 1.09);
+/// Their flux declines as a stretched exponential from formation, exp(-(t / tau)^beta) of
+/// it still to come (Wong et al. 2023's fit for Saturn's impacts), totalling
+/// ICY_EARLY_TOTAL Gyr of the steady flux: the impactors over 1 km the scattered disc
+/// delivers to Mimas and Enceladus over the solar system's age (Wong et al. 2023: 26e-3
+/// and 18e-3 per km²) over today's rate (Nesvorny et al. 2023), about 550 times its 4.5
+/// Gyr, as the Neukum chronology gives the Moon's leftovers about 500.
+pub const ICY_EARLY_BETA: f64 = 0.317;
+pub const ICY_EARLY_TAU_GYR: f64 = 1.596e-3;
+pub const ICY_EARLY_TOTAL: f64 = 2475.0;
+/// Around another star the leftovers clear on its own orbital times (F135): the early
+/// bombardment's timescales go as the orbital period at the snow line, (L/Lsun)^0.75
+/// (M/Msun)^-0.5, and its amount per unit area as the disc's solids, which go as the star's
+/// mass, over the area within the snow line, (M/Msun) / (L/Lsun) (stated choices). The
+/// steady flux after it depends on belts and giant planets the engine does not model, and
+/// is `cratering.late_flux_multiplier` times the Solar System's at the same place.
+pub const EARLY_TIME_EXPONENTS: (f64, f64) = (0.75, -0.5);
+/// The largest crater a body holds, its radius as a share of the body's: an icy body's as
+/// wide as the body's radius (Odysseus 0.84 R on Tethys, Turgis 0.79 R on Iapetus, Herschel
+/// 0.70 R on Mimas), a rocky body's as wide as the body (Vesta kept Rheasilvia, 1.93 R,
+/// and older craters beside it, Schenk et al. 2012). A larger impact shatters and
+/// resurfaces the body, and its crater record starts after the last one (F135; Movshovitz
+/// et al. 2015). The loop draws a rocky body's craters only to MAX_CRATER_RADIUS_FRACTION,
+/// the stamp's limit.
+pub const ICE_HOLD_RADIUS_FRACTION: f64 = 0.5;
+pub const ROCK_HOLD_RADIUS_FRACTION: f64 = 1.0;
 /// Neukum chronology function coefficients: N(>=1 km) = A (exp(B T) - 1) + C T per km².
 pub const NEUKUM_A: f64 = 5.44e-14;
 pub const NEUKUM_B: f64 = 6.93;

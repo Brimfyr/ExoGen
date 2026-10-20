@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 26;
+pub const VERSION: u64 = 27;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -649,16 +649,7 @@ pub fn albedo(
     let (mixed, mixed_tinted) = if gardened {
         // Each lava cell's gardening since its lava erupted, relative to the lunar maria's
         // at the reference age (F95).
-        let flux = crate::crater::FluxHistory {
-            steady: crate::crater::ProductionFunction::by_name(
-                graph.str("cratering.production_function"),
-            )
-            .chronology
-            .2,
-            early_ratio: graph.f64("cratering.early_flux_ratio"),
-            early_decay: graph.f64("cratering.early_flux_decay"),
-            record_start: graph.f64("surface.solidification_time"),
-        };
+        let flux = crate::stages::impacts::bombardment(graph);
         let lunar = crate::crater::FluxHistory::from_chronology(
             crate::crater::ProductionFunction::lunar().chronology,
             0.0,

@@ -342,7 +342,8 @@ impl Bands {
         for (k, cell) in h.iter_mut().enumerate() {
             let mut v = 0.0f32;
             for (l, band) in self.bands.iter_mut().enumerate() {
-                let f = factors[l.min(factors.len() - 1)] * if l + 1 < count { own(l, k) } else { 1.0 };
+                let f =
+                    factors[l.min(factors.len() - 1)] * if l + 1 < count { own(l, k) } else { 1.0 };
                 band[k] *= f;
                 v += band[k];
             }
@@ -577,7 +578,11 @@ mod tests {
         let radius = 0.12;
         let crater = Field::from_fn(grid, |_, d| {
             let r = crate::geom::angle_between(center, d) / radius;
-            let bowl = if r < 1.0 { -1000.0 * (1.0 - r * r) } else { 0.0 };
+            let bowl = if r < 1.0 {
+                -1000.0 * (1.0 - r * r)
+            } else {
+                0.0
+            };
             let rim = 300.0 * (-((r - 1.0) / 0.12).powi(2)).exp();
             (bowl + rim) as f32
         });
@@ -604,7 +609,10 @@ mod tests {
             .zip(&many)
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f32, f32::max);
-        assert!(worst < 1e-2, "kept bands changed by {worst} m over 60 steps");
+        assert!(
+            worst < 1e-2,
+            "kept bands changed by {worst} m over 60 steps"
+        );
         // Far outside the crater, beyond two radii, nothing.
         let far = |h: &[f32]| -> f32 {
             (0..grid.cell_count())
@@ -614,7 +622,11 @@ mod tests {
                 .map(|k| h[k].abs())
                 .fold(0.0f32, f32::max)
         };
-        assert!(far(&many) < 30.0, "ripples of {} m beyond the crater", far(&many));
+        assert!(
+            far(&many) < 30.0,
+            "ripples of {} m beyond the crater",
+            far(&many)
+        );
         // The old way, split afresh at every step: the kept relief wears down.
         let fresh = run(60, true);
         let lost = once
@@ -674,7 +686,14 @@ mod tests {
             }
         });
         let before: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
-        relax(&mut Bands::default(), &mut h, r, 0.05, &ganymede, &Local::default());
+        relax(
+            &mut Bands::default(),
+            &mut h,
+            r,
+            0.05,
+            &ganymede,
+            &Local::default(),
+        );
         let after: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
         assert!(after < 0.5 * before, "{after} vs {before}");
     }

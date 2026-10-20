@@ -19,14 +19,14 @@ use crate::constants::{
     TEXTURE_FADE_RADII, TEXTURE_MIN_CELLS, TEXTURE_RADIAL_CELLS,
 };
 use crate::constants::{
-    EJECTA_COVERAGE_TAPER, EJECTA_EDGE_RAGGEDNESS, EJECTA_EXPONENT, EJECTA_FULL_COVER,
-    EJECTA_JET_ONSET, EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_POND_CELLS, MELT_POND_THRESHOLD,
-    OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
-};
-use crate::constants::{
     CRATER_FINE_START, FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD,
     PIT_RIM_PRESENCE, PIT_WANDER, PLANAR_TEXTURE_RADII, RIM_HEIGHT_VARIATION, RIM_SHARE_BAND,
     ROUGHNESS_HURST,
+};
+use crate::constants::{
+    EJECTA_COVERAGE_TAPER, EJECTA_EDGE_RAGGEDNESS, EJECTA_EXPONENT, EJECTA_FULL_COVER,
+    EJECTA_JET_ONSET, EJECTA_PURE_RADII, MELT_EDGE_WIDTH, MELT_POND_CELLS, MELT_POND_THRESHOLD,
+    OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
 };
 use crate::constants::{
     PIKE_COMPLEX_DEPTH, TERRACE_FULL_COLLAPSE, TERRACE_INWARD_SPREAD, TERRACE_REFERENCE_TRANSITION,
@@ -850,7 +850,10 @@ impl FineOctaves {
     #[inline]
     fn sample(&self, u: f64, v: f64, channel: f64) -> f64 {
         let gain = 2f64.powf(-ROUGHNESS_HURST);
-        self.weight * self.noise.fbm([u, v, channel], self.frequency, self.octaves, 2.0, gain)
+        self.weight
+            * self
+                .noise
+                .fbm([u, v, channel], self.frequency, self.octaves, 2.0, gain)
     }
 }
 

@@ -180,7 +180,10 @@ impl CoronaNoise {
 /// trough, which is the middling fault's trough below its plateau (one and the mean
 /// depth, F132).
 pub fn relief_share() -> f64 {
-    (CORONA_FAULT_DIP_DEG - CORONA_LOCKUP_DIP_DEG).to_radians().sin() / (1.0 + GROOVE_DEPTH_MEAN)
+    (CORONA_FAULT_DIP_DEG - CORONA_LOCKUP_DIP_DEG)
+        .to_radians()
+        .sin()
+        / (1.0 + GROOVE_DEPTH_MEAN)
 }
 
 fn smoothstep(x: f64) -> f64 {
@@ -698,10 +701,12 @@ pub fn corona_compute(
         .collect();
     cells.sort_by_key(|c| c.idx);
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
-        let (lo, hi) = cells.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), w| {
-            let dh = w.bedrock - bedrock[w.idx as usize];
-            (lo.min(dh), hi.max(dh))
-        });
+        let (lo, hi) = cells
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), w| {
+                let dh = w.bedrock - bedrock[w.idx as usize];
+                (lo.min(dh), hi.max(dh))
+            });
         eprintln!(
             "corona {} at {:.3} Gyr: {} cells written, change {lo:.0} to {hi:.0} m",
             corona.id,
@@ -795,7 +800,14 @@ mod tests {
     /// Bodies with no tidal heating episode, or with an ocean under the ice, have none.
     #[test]
     fn no_coronae_without_an_episode_or_over_an_ocean() {
-        for name in ["Ganymede", "Europa", "Enceladus", "Callisto", "Ceres", "Pluto"] {
+        for name in [
+            "Ganymede",
+            "Europa",
+            "Enceladus",
+            "Callisto",
+            "Ceres",
+            "Pluto",
+        ] {
             let (g, _) = crate::presets::preset(name).unwrap().to_graph();
             assert_eq!(g.f64("volcanism.corona_count"), 0.0, "{name}");
         }

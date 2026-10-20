@@ -45,13 +45,14 @@ pub fn apply(
     }
     let d_km = d_min / 1e3;
     let n_eq = EMPIRICAL_SATURATION_FRACTION * geometric_saturation(d_km);
-    let per_gyr = inputs.pf.cumulative_1gyr(d_km) * inputs.flux_scale;
     // The share of saturation a surface of an age has reached at the anchor scale.
     let share_at = |age: f64| -> f64 {
         if n_eq <= 0.0 {
             return 0.0;
         }
-        let n_prod = per_gyr * inputs.flux.equivalent_gyr(age.min(present), present);
+        let n_prod = inputs
+            .bombardment
+            .density_above(d_km, age.min(present), present);
         survivors(n_prod, n_eq) / n_eq
     };
     let bins = 256usize;
