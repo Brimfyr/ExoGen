@@ -24,8 +24,9 @@ use crate::constants::{
     OUTER_RING_HEIGHT_FRACTION, RING_CRENULATION, RING_PRESENCE, RING_WIDTH_FRACTION,
 };
 use crate::constants::{
-    FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD, PIT_RIM_PRESENCE,
-    PIT_WANDER, PLANAR_TEXTURE_RADII, RIM_HEIGHT_VARIATION, RIM_SHARE_BAND,
+    CRATER_FINE_START, FLOOR_TEXTURE_CELLS, PEAK_MAX_MASSIFS, PEAK_SIGMA_FRACTION, PEAK_SPREAD,
+    PIT_RIM_PRESENCE, PIT_WANDER, PLANAR_TEXTURE_RADII, RIM_HEIGHT_VARIATION, RIM_SHARE_BAND,
+    ROUGHNESS_HURST,
 };
 use crate::constants::{
     PIKE_COMPLEX_DEPTH, TERRACE_FULL_COLLAPSE, TERRACE_INWARD_SPREAD, TERRACE_REFERENCE_TRANSITION,
@@ -38,6 +39,7 @@ use crate::constants::{
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, cross, dot, local_basis, normalize};
 use crate::grid::CubeSphere;
+use crate::noise::GradientNoise;
 use crate::rng::Rng;
 use rayon::prelude::*;
 
@@ -465,7 +467,7 @@ pub fn stamp_compute(
     }
     let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
-        .then(|| CraterTexture::new(p.seed, dim));
+        .then(|| CraterTexture::new(p.seed, dim, grid.delta() * body_radius));
     // The wall as it collapsed (F67), where the grid draws it.
     let terraces = (p.terraced && p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
         .then(|| Terraces::new(p.seed, dim))
@@ -786,7 +788,7 @@ impl TextureLattice {
         let u = turns * self.period as f64;
         let v = log_x * self.n_r;
         let (iu, iv) = (u.floor(), v.floor());
-        let smooth = |t: f64| t * t * (3.0 - 2.0 * t);
+        let smooth = fade;
         let (su, sv) = (smooth(u - iu), smooth(v - iv));
         let cu0 = (iu as i64).rem_euclid(self.period as i64) as usize;
         let cu1 = (cu0 + 1) % self.period;
@@ -799,6 +801,56 @@ impl TextureLattice {
         );
         let lerp = |a: f32, b: f32, t: f64| a as f64 + (b as f64 - a as f64) * t;
         lerp(a, b, su) + (lerp(c, d, su) - lerp(a, b, su)) * sv
+    }
+}
+
+/// The weight a lattice gives a point between its nodes (F134): the quintic fade, whose
+/// slope and curvature both run on smoothly across a node, so that the lattice's lines
+/// leave no crease in the shaded relief. The cubic fade's curvature jumps there, and on
+/// a crater's polar lattice the jumps drew concentric rings and spokes, as large as the
+/// crater's cells.
+#[inline]
+fn fade(t: f64) -> f64 {
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
+
+/// The octaves of a crater's texture below its lattices', down to what the grid draws
+/// (F134): roughness that goes on, each octave weaker by the ground's Hurst exponent,
+/// from a CRATER_FINE_START-th of the radius to two cells, so that a large crater's
+/// hummocks and floor are rough at every scale the ground about them is, and not only at
+/// fractions of the crater's own radius. On the crater's tangent plane, in its radii.
+struct FineOctaves {
+    noise: GradientNoise,
+    frequency: f64,
+    octaves: u32,
+    /// The octaves' weight against the lattices' two (1 and a half).
+    weight: f64,
+}
+
+impl FineOctaves {
+    fn new(seed: u64, dim: &Dimensions, cell: f64) -> Option<Self> {
+        let first = dim.radius / CRATER_FINE_START;
+        let reach = first / (2.0 * cell.max(1e-3));
+        if reach <= 1.0 {
+            return None;
+        }
+        let octaves = reach.log2().ceil().clamp(1.0, 10.0) as u32;
+        let gain = 2f64.powf(-ROUGHNESS_HURST);
+        let weight = 0.25 * (1.0 - gain.powi(octaves as i32)) / (1.0 - gain);
+        Some(Self {
+            noise: GradientNoise::new(seed ^ 0xF1AE_0C7A),
+            frequency: CRATER_FINE_START,
+            octaves,
+            weight,
+        })
+    }
+
+    /// The octaves' sum at a point on the tangent plane, in crater radii, and a channel
+    /// that keeps the floor's and the ejecta's apart.
+    #[inline]
+    fn sample(&self, u: f64, v: f64, channel: f64) -> f64 {
+        let gain = 2f64.powf(-ROUGHNESS_HURST);
+        self.weight * self.noise.fbm([u, v, channel], self.frequency, self.octaves, 2.0, gain)
     }
 }
 
@@ -830,7 +882,7 @@ impl PlanarLattice {
         let fu = ((u / self.half + 1.0) * 0.5 * last).clamp(0.0, last - 1e-6);
         let fv = ((v / self.half + 1.0) * 0.5 * last).clamp(0.0, last - 1e-6);
         let (iu, iv) = (fu.floor(), fv.floor());
-        let smooth = |t: f64| t * t * (3.0 - 2.0 * t);
+        let smooth = fade;
         let (su, sv) = (smooth(fu - iu), smooth(fv - iv));
         let (i, j) = (iu as usize, iv as usize);
         let at = |i: usize, j: usize| self.values[j * self.size + i] as f64;
@@ -848,10 +900,12 @@ pub struct CraterTexture {
     sculpture: Option<[TextureLattice; 2]>,
     floor: Option<[PlanarLattice; 2]>,
     ponds: Option<PlanarLattice>,
+    fine: Option<FineOctaves>,
 }
 
 impl CraterTexture {
-    pub fn new(seed: u64, dim: &Dimensions) -> Self {
+    /// A crater's texture on a grid of `cell` m (F134: its octaves go down to the grid).
+    pub fn new(seed: u64, dim: &Dimensions, cell: f64) -> Self {
         let rng = Rng::new(seed ^ 0x7E57_A11E);
         // The lattice covers the whole interior: the floor texture runs from the centre
         // out, and a lattice that began at the floor radius would clamp every floor cell
@@ -891,6 +945,19 @@ impl CraterTexture {
             sculpture,
             floor,
             ponds,
+            fine: FineOctaves::new(seed, dim, cell),
+        }
+    }
+
+    /// The fine octaves at an azimuth and a radius in crater radii, and their weight.
+    #[inline]
+    fn fine_at(&self, phi: f64, x: f64, channel: f64) -> (f64, f64) {
+        match &self.fine {
+            Some(f) => {
+                let (s, c) = phi.sin_cos();
+                (f.sample(x * c, x * s, channel), f.weight)
+            }
+            None => (0.0, 0.0),
         }
     }
 
@@ -900,7 +967,8 @@ impl CraterTexture {
         match &self.floor {
             Some(f) => {
                 let (s, c) = phi.sin_cos();
-                (f[0].sample(x * c, x * s) + 0.5 * f[1].sample(x * c, x * s)) / 1.5
+                let (fine, w) = self.fine_at(phi, x, 0.73);
+                (f[0].sample(x * c, x * s) + 0.5 * f[1].sample(x * c, x * s) + fine) / (1.5 + w)
             }
             None => 0.0,
         }
@@ -913,11 +981,13 @@ impl CraterTexture {
         (phi.rem_euclid(tau) / tau, x.max(1e-3).ln())
     }
 
-    /// Two-octave noise in -1 to 1 at an azimuth and a radius in crater radii.
+    /// Noise in -1 to 1 at an azimuth and a radius in crater radii: the lattice's two
+    /// octaves and the fine ones below them.
     #[inline]
     pub fn noise(&self, phi: f64, x: f64) -> f64 {
         let (t, l) = Self::coords(phi, x);
-        self.noise_at(t, l)
+        let (fine, w) = self.fine_at(phi, x, 0.31);
+        (1.5 * self.noise_at(t, l) + fine) / (1.5 + w)
     }
 
     #[inline]
@@ -958,7 +1028,7 @@ impl CraterTexture {
                 return v;
             }
             let (t, l) = Self::coords(phi, x);
-            let mut f = 1.0 + EJECTA_TEXTURE * taper * self.noise_at(t, l);
+            let mut f = 1.0 + EJECTA_TEXTURE * taper * self.noise(phi, x);
             if let Some(s) = &self.sculpture {
                 let n = (s[0].sample(t, l) + 0.5 * s[1].sample(t, l)) / 1.5;
                 f *= 1.0 + BASIN_SCULPTURE * taper * n;
@@ -1779,7 +1849,7 @@ pub fn restore_compute(
     }
     let shape = RimShape::new(p.seed, dim, stamper.footprint.len() >= TEXTURE_MIN_CELLS);
     let texture = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
-        .then(|| CraterTexture::new(p.seed, dim));
+        .then(|| CraterTexture::new(p.seed, dim, grid.delta() * body_radius));
     let terraces = (p.seed != 0 && stamper.footprint.len() >= TEXTURE_MIN_CELLS)
         .then(|| Terraces::new(p.seed, dim))
         .flatten();
@@ -2284,7 +2354,7 @@ mod tests {
             icy: false,
         };
         let dim = dimensions(90_000.0, &s);
-        let tex = CraterTexture::new(0x5EED, &dim);
+        let tex = CraterTexture::new(0x5EED, &dim, 1e9);
         let mut same = 0;
         let n = 64;
         for b in 0..n {

@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 23;
+pub const VERSION: u64 = 24;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]

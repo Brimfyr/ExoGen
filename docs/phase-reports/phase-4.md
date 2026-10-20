@@ -1564,3 +1564,30 @@ Still to do:
 - **Enceladus's tiger stripes** as one network of canyons (audit T7).
 
 Tests 214 (12 ignored). Five are new: a corona's cell is bounded by the bisectors; Miranda's episode breaks its lid over a few upwellings, its coronae 200 to 400 km across with faults 3 to 15 km apart; no coronae on a body without an episode or over an ocean; a corona's belt follows its outline; a body frozen through makes no ice magma. Clippy is clean and validate passes its 119 checks.
+
+## The sixty-fifth milestone: relaxation keeps its bands, and large craters are rough down to the grid
+
+Asked for by the user after the sixty-fourth: "Another problem with the large craters, which look like Herschel, is the smoothed floor which looks to be an excessively large-scale smoothing, and perfectly concentric ridges which expand out like ripples, clearly apparent in our flatter coronae terrain on Miranda near the crater. These 'ripples' are also jagged and pixelated at a larger scale than the surrounding terrain." With it the user asked why Enceladus and Miranda carry Mimas's crater population; that is the next milestone, a bombardment for any star calibrated on the Solar System's records ("fix A first then go ahead with B").
+
+- **F134.** The loop's relaxation keeps the relief's bands from step to step and splits only what each step adds; a crater's texture fades by the quintic and goes on in octaves down to the grid.
+
+How it went:
+
+- **The ripples around relaxed craters.** The loop split the whole surface into the pyramid's overlapping bands at every step and scaled each, so the relaxation compounded: a test crater stepped sixty times lost 569 m of the relief its short bands should have kept and rang 40 m beyond two and a half radii. Kept from step to step, the bands change by nothing after the first step and the ringing is gone (0.4 m). On Enceladus, whose shell relaxes its large craters through its whole history, the two or three jagged rings about each large crater's rim go.
+- **The smoothed floors and the bands in the ejecta.** A crater's texture scaled with its radius in two octaves, so a crater of 250 km had floor lumps of 13 km and hummocks of 15 to 50 km with nothing finer, and the lattices' cubic fade drew the polar lattice's rings and spokes in the shaded relief. With the quintic fade and octaves down to the grid, the floor and the ejecta of a large crater are rough at every scale.
+- **What the ripples on Miranda were.** Beside its young 259 km crater the user saw dashed concentric ridges in a corona's flat ground. A profile across them shows scarps of 0.5 to 0.8 km every 10 km on ground 3.41 Gyr old: the outer belt of the corona that formed first, its fault segments half buried by the crater's ejecta, its outline running parallel to the crater's rim there. They stay; the crater, wider than Miranda's radius, is not one the moon could hold, and the next milestone takes such impacts as what they are.
+- **What did not change.** The Moon's old basins look as they did. The terraces of the very largest craters still break into long straight-scarped blocks.
+
+What the maps show:
+
+- **Enceladus:** its large craters' rims without the rings that spread from them, their floors and ejecta rough at every scale; its crater population still Mimas's, the next milestone's.
+- **Miranda:** its young 259 km crater's floor and ejecta rough at every scale where they were smooth lumps and concentric bands.
+- **The Moon:** as it was.
+
+Still to do:
+
+- **The bombardment of any star**, calibrated on the Solar System's records (the next milestone): the outer system's own impactors and their decline, crater sizes from each body's gravity and impact speed, and the impacts a small body cannot hold resetting its surface.
+- **The largest craters' terraces**, long straight-scarped blocks.
+- **Venus's coronae** onto the corona process.
+
+Tests 215 (12 ignored). One is new: a relaxed crater neither rings nor wears away. Clippy is clean and validate passes its 119 checks.

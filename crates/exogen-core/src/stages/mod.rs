@@ -369,7 +369,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 106;
+pub const FINISH_VERSION: u64 = 107;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -416,6 +416,8 @@ pub fn run_coarse_loop(
         .as_ref()
         .map(|_| volcanism::FloodProcess::for_io(graph, grid, &thermal));
     let ice_shell = ice_shell_history(graph, &thermal);
+    // The relief the ice shell holds, band by band, from step to step (F134).
+    let mut relax_bands = relaxation::Bands::default();
     let mut ice_shell_process = ice_shell::IceShellProcess::new(graph, grid);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
@@ -437,6 +439,7 @@ pub fn run_coarse_loop(
                 .as_mut()
                 .map_or(relaxation::Local::default(), |p| p.relaxation(t0, t1));
             let floor = relaxation::relax(
+                &mut relax_bands,
                 &mut layers.bedrock,
                 graph.f64("body.radius"),
                 dt,
@@ -2712,7 +2715,7 @@ impl RaySystem {
             ejecta_edge: CONTINUOUS_EJECTA_MULTIPLE * radius,
             halo,
             texture: (c.diameter >= RAY_TEXTURE_MIN_CELLS * cell)
-                .then(|| CraterTexture::new(c.id, &dim)),
+                .then(|| CraterTexture::new(c.id, &dim, cell)),
             rays,
             reach,
         }

@@ -14,6 +14,15 @@
 //! the shell as the thermal history has it then, so the ancient craters of a shell that
 //! was once thin are the flat ones; the finish restores the resolved rims on the flattened
 //! forms, and relaxes the replayed craters by the same law over their own lives.
+//!
+//! The bands are kept from step to step (F134). The pyramid's bands overlap in wavelength,
+//! so splitting the whole surface afresh at every step and scaling each band compounds:
+//! a wavelength shared between a band that survives and one that relaxes loses its share
+//! of the second every step, so that after many steps relief well below the shortest
+//! relaxing wavelength is gone too, and the repeated filter rings outward from every edge
+//! in concentric ripples. Each step instead splits only what changed since the last, adds
+//! it to the bands the relief already holds, and scales those, so that every part of the
+//! relief decays in the bands it had when it came, by the product of their survivals.
 
 use crate::constants::*;
 
@@ -170,6 +179,18 @@ pub fn low_passes(field: &Field<f32>, cell: f64, max_length: f64) -> Vec<(f64, V
         .collect()
 }
 
+/// How many levels a pyramid `depth` deep holds on a grid: the halving stops once a face
+/// is odd or down to four cells.
+fn pyramid_depth(grid: &CubeSphere, depth: usize) -> usize {
+    let mut f = grid.face_size();
+    let mut n = 0;
+    while n < depth && f.is_multiple_of(2) && f >= 8 {
+        f /= 2;
+        n += 1;
+    }
+    n
+}
+
 /// Passes of the smoothing kernel before each halving and after each expansion.
 const PYRAMID_BLUR_PASSES: usize = 2;
 
@@ -262,6 +283,75 @@ pub(crate) fn halve(field: &Field<f32>) -> Option<Field<f32>> {
     Some(out)
 }
 
+/// The relief a relaxing surface holds, band by band (F134): the bands of everything the
+/// surface has taken in, each scaled by the survivals of the steps since, and the surface
+/// as the last step left it, against which the next step finds what changed.
+#[derive(Default, Clone)]
+pub struct Bands {
+    bands: Vec<Vec<f32>>,
+    last: Option<Vec<f32>>,
+}
+
+impl Bands {
+    /// Take in what changed in `height` since the last step, split into the pyramid's
+    /// `levels` bands and the long remainder, and added to the bands held.
+    fn absorb(&mut self, height: &Field<f32>, levels: usize) {
+        let grid = height.grid();
+        let n = grid.cell_count();
+        let mut delta = Field::<f32>::new(grid);
+        match &self.last {
+            Some(last) if last.len() == n => {
+                for ((d, h), l) in delta
+                    .as_mut_slice()
+                    .iter_mut()
+                    .zip(height.as_slice())
+                    .zip(last)
+                {
+                    *d = h - l;
+                }
+            }
+            _ => delta.as_mut_slice().copy_from_slice(height.as_slice()),
+        }
+        let lows = pyramid(&delta, levels);
+        let count = lows.len() + 1;
+        if self.bands.len() != count || self.bands.iter().any(|b| b.len() != n) {
+            self.bands = vec![vec![0.0; n]; count];
+        }
+        for (k, &d) in delta.as_slice().iter().enumerate() {
+            let mut prev = d;
+            for (l, low) in lows.iter().enumerate() {
+                let v = low.as_slice()[k];
+                self.bands[l][k] += prev - v;
+                prev = v;
+            }
+            self.bands[count - 1][k] += prev;
+        }
+    }
+
+    /// Scale the bands held by each band's factor, times a cell's own for the bands that
+    /// have one (`own(l, k)`), and write their sum back to `height`, which the next step
+    /// measures its change from.
+    fn decay(
+        &mut self,
+        height: &mut Field<f32>,
+        factors: &[f32],
+        own: impl Fn(usize, usize) -> f32,
+    ) {
+        let count = self.bands.len();
+        let h = height.as_mut_slice();
+        for (k, cell) in h.iter_mut().enumerate() {
+            let mut v = 0.0f32;
+            for (l, band) in self.bands.iter_mut().enumerate() {
+                let f = factors[l.min(factors.len() - 1)] * if l + 1 < count { own(l, k) } else { 1.0 };
+                band[k] *= f;
+                v += band[k];
+            }
+            *cell = v;
+        }
+        self.last = Some(h.to_vec());
+    }
+}
+
 /// Relax a height field over a step: each wavelength band, from twice the cell up to
 /// the whole body, keeps the share of its relief the shell's viscosity lets it keep.
 /// What varies across the shell for one relaxation step: the equilibrium surface the
@@ -286,9 +376,10 @@ pub struct Local<'a> {
     pub halo: Option<(&'a [f32], f64)>,
 }
 
-/// The step. Returns the relaxed surface, which is the renewed terrain's floor where it
-/// is renewed, when there is such a terrain.
+/// The step, on the bands the surface holds (F134). Returns the relaxed surface, which is
+/// the renewed terrain's floor where it is renewed, when there is such a terrain.
 pub fn relax(
+    bands: &mut Bands,
     height: &mut Field<f32>,
     body_radius: f64,
     dt_gyr: f64,
@@ -302,7 +393,7 @@ pub fn relax(
             *h -= e;
         }
     }
-    let result = relax_deviation(height, cell, dt_gyr, shell, local);
+    let result = relax_deviation(bands, height, cell, dt_gyr, shell, local);
     if let Some(eq) = local.equilibrium {
         for (h, e) in height.as_mut_slice().iter_mut().zip(eq) {
             *h += e;
@@ -319,6 +410,7 @@ pub fn relax(
 }
 
 fn relax_deviation(
+    held: &mut Bands,
     height: &mut Field<f32>,
     cell: f64,
     dt_gyr: f64,
@@ -326,13 +418,13 @@ fn relax_deviation(
     local: &Local,
 ) -> Option<Vec<f32>> {
     let grid = height.grid();
-    let levels = ((grid.face_size() as f64).log2().floor() as usize)
+    let depth = ((grid.face_size() as f64).log2().floor() as usize)
         .saturating_sub(2)
         .max(1);
-    let lows = pyramid(height, levels);
-    let levels = lows.len().max(1);
+    let levels = pyramid_depth(&grid, depth).max(1);
     // Survival per band, from the finest the pyramid resolves to the longest. Nothing to
-    // do when even the longest wavelength keeps everything and nothing is renewed.
+    // do when even the longest wavelength keeps everything and nothing is renewed: what
+    // changed waits in the surface for the next step that relaxes.
     let wavelengths: Vec<f64> = (0..=levels)
         .map(|l| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64))
         .collect();
@@ -398,26 +490,19 @@ fn relax_deviation(
             _ => 1.0,
         }
     };
-    let h = height.as_mut_slice();
-    // Bands: h - low_0, low_0 - low_1, ..., low_{L-1}; the last is the global shape. A
-    // renewed cell gives up the bands shorter than its renewal length by its weight and
-    // relaxes the rest like its neighbours, so that it never stands apart from them.
-    for (k, cell) in h.iter_mut().enumerate() {
+    // Bands: h - low_0, low_0 - low_1, ..., low_{L-1}; the last is the global shape, held
+    // from step to step. A renewed cell gives up the bands shorter than its renewal length
+    // by its weight and relaxes the rest like its neighbours, so that it never stands apart
+    // from them.
+    held.absorb(height, depth);
+    held.decay(height, &factors, |l, k| {
         let (level, keep) = kept(k);
-        let mut v = 0.0f32;
-        let mut prev = *cell;
-        for (l, low) in lows.iter().enumerate() {
-            let band = prev - low.as_slice()[k];
-            v += band * factors[l] * if l < level { keep * beside(l, k) } else { 1.0 };
-            prev = low.as_slice()[k];
-        }
-        v += prev * factors[levels];
-        *cell = v;
-    }
+        if l < level { keep * beside(l, k) } else { 1.0 }
+    });
     // The whole relaxed surface, for the renewed terrain's floor: defined everywhere, so
     // that a floor laid at a finer resolution, where the terrain reaches past the loop's
     // cells, has something continuous to lay.
-    renew_level.map(|_| h.to_vec())
+    renew_level.map(|_| height.as_slice().to_vec())
 }
 
 #[cfg(test)]
@@ -481,6 +566,70 @@ mod tests {
         assert!(thinned_survival(25e3, 0.01, &thin, 0.3) < 0.05);
     }
 
+    /// F134: a crater whose long bands relax and short bands hold, stepped many times with
+    /// the same survivals, is relaxed once and then left alone: the bands it keeps do not
+    /// wear away step by step, and no ripples spread out from its rim. Split afresh at every
+    /// step, as the bands were, the same relief wears down and rings.
+    #[test]
+    fn a_relaxed_crater_neither_rings_nor_wears_away() {
+        let grid = CubeSphere::new(128);
+        let center = [1.0f64, 0.0, 0.0];
+        let radius = 0.12;
+        let crater = Field::from_fn(grid, |_, d| {
+            let r = crate::geom::angle_between(center, d) / radius;
+            let bowl = if r < 1.0 { -1000.0 * (1.0 - r * r) } else { 0.0 };
+            let rim = 300.0 * (-((r - 1.0) / 0.12).powi(2)).exp();
+            (bowl + rim) as f32
+        });
+        let depth = ((grid.face_size() as f64).log2().floor() as usize).saturating_sub(2);
+        let count = pyramid_depth(&grid, depth) + 1;
+        // The three finest bands hold, the rest go at once.
+        let factors: Vec<f32> = (0..count).map(|l| if l < 3 { 1.0 } else { 0.0 }).collect();
+        let run = |steps: usize, fresh: bool| -> Vec<f32> {
+            let mut h = crater.clone();
+            let mut held = Bands::default();
+            for _ in 0..steps {
+                if fresh {
+                    held = Bands::default();
+                }
+                held.absorb(&h, depth);
+                held.decay(&mut h, &factors, |_, _| 1.0);
+            }
+            h.as_slice().to_vec()
+        };
+        let once = run(1, false);
+        let many = run(60, false);
+        let worst = once
+            .iter()
+            .zip(&many)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-2, "kept bands changed by {worst} m over 60 steps");
+        // Far outside the crater, beyond two radii, nothing.
+        let far = |h: &[f32]| -> f32 {
+            (0..grid.cell_count())
+                .filter(|&k| {
+                    crate::geom::angle_between(center, grid.center(grid.cell(k))) > 2.5 * radius
+                })
+                .map(|k| h[k].abs())
+                .fold(0.0f32, f32::max)
+        };
+        assert!(far(&many) < 30.0, "ripples of {} m beyond the crater", far(&many));
+        // The old way, split afresh at every step: the kept relief wears down.
+        let fresh = run(60, true);
+        let lost = once
+            .iter()
+            .zip(&fresh)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!(
+            "kept bands changed {worst} m; beyond the crater {} m held, {} m split afresh; lost {lost} m",
+            far(&many),
+            far(&fresh)
+        );
+        assert!(lost > 10.0 * worst.max(1.0), "split afresh: {lost} m");
+    }
+
     #[test]
     fn warm_shells_relax_long_wavelengths_first() {
         // Ganymede today: a 100 km shell at 106 K. A 300 km load goes within a million
@@ -525,7 +674,7 @@ mod tests {
             }
         });
         let before: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
-        relax(&mut h, r, 0.05, &ganymede, &Local::default());
+        relax(&mut Bands::default(), &mut h, r, 0.05, &ganymede, &Local::default());
         let after: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
         assert!(after < 0.5 * before, "{after} vs {before}");
     }

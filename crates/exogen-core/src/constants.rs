@@ -1655,6 +1655,11 @@ pub const TERRACE_TOE: f64 = 0.5;
 pub const EJECTA_TEXTURE: f64 = 0.5;
 pub const BASIN_SCULPTURE: f64 = 0.25;
 pub const FLOOR_TEXTURE: f64 = 0.04;
+/// A crater's texture goes on below its lattices in octaves from this many cycles per
+/// crater radius, about the hummocks' finest lattice cells, down to two cells of the grid,
+/// each weaker by the ground's Hurst exponent (F134): a large crater is rough at every
+/// scale the ground about it is.
+pub const CRATER_FINE_START: f64 = 16.0;
 /// Texture lattice: cells around the azimuth and per e-fold of radius, per octave; the
 /// basin sculpture lattice is stretched radially. Craters with fewer footprint cells than
 /// this are stamped without texture.
