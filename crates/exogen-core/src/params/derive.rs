@@ -1919,10 +1919,11 @@ pub fn cratering_production_function(c: &Ctx) -> Value {
 pub fn cratering_impactor_density(c: &Ctx) -> Value {
     let rocky =
         c.f64("cratering.flux_relative_to_moon") * production_function(c).cumulative_1gyr(1.0);
-    let icy = crate::crater::IcyCraters {
-        per_gyr: c.f64("cratering.icy_flux"),
-        crater_1km: c.f64("cratering.icy_crater_1km"),
-    }
+    let icy = crate::crater::ImpactorCraters::new(
+        c.f64("cratering.icy_flux"),
+        crate::crater::ImpactorSizes::Comets,
+        &crater_target(c, c.f64("cratering.impact_velocity")),
+    )
     .cumulative(1.0);
     if rocky + icy <= 0.0 {
         return IMPACTOR_DENSITY_INNER.into();
@@ -1992,17 +1993,48 @@ pub fn cratering_icy_flux(c: &Ctx) -> Value {
         .into()
 }
 
-/// F135: the crater a 1 km impactor of the outer system makes on the body, km.
+/// F136: what a crater forms in on the body, struck at `speed`, m/s: its gravity, the
+/// strength of its bedrock, cold ice's or rock's, its density and its transition.
+fn crater_target(c: &Ctx, speed: f64) -> crate::crater::Target {
+    crate::crater::Target {
+        gravity: c.f64("body.gravity"),
+        speed,
+        strength: if crate::stages::materials::is_ice(c.str("materials.bedrock")) {
+            TARGET_STRENGTH_ICE
+        } else {
+            TARGET_STRENGTH_ROCK
+        },
+        density: c.f64("cratering.target_density"),
+        simple_complex: c.f64("cratering.simple_complex_transition"),
+    }
+}
+
+/// F135, F136: the crater a 1 km impactor of the outer system makes on the body, km.
 pub fn cratering_icy_crater_1km(c: &Ctx) -> Value {
-    crate::crater::IcyCraters::new(
-        1.0,
-        c.f64("body.gravity"),
-        c.f64("cratering.impact_velocity"),
-        IMPACTOR_DENSITY_OUTER / c.f64("cratering.target_density").max(1.0),
-        c.f64("cratering.simple_complex_transition"),
-    )
-    .crater_1km
-    .into()
+    (crater_target(c, c.f64("cratering.impact_velocity")).crater(1e3) / 1e3).into()
+}
+
+/// F136: the speed a moon's debris strikes it at, m/s: DEBRIS_ECCENTRICITY times its
+/// orbital speed about its planet; nothing for a body that circles its star.
+pub fn cratering_debris_velocity(c: &Ctx) -> Value {
+    if c.str("orbit.primary") != "planet" {
+        return 0.0.into();
+    }
+    (DEBRIS_ECCENTRICITY * (G * c.f64("parent.mass") / c.f64("orbit.semi_major_axis")).sqrt())
+        .into()
+}
+
+/// F136: the fragments at or above DEBRIS_BREAK_KM per km² that strike a moon after the last
+/// impact it could not hold, as the square of the comets' impact speed (stated choice);
+/// none where the record starts when the crust solidifies, or on a body that circles its
+/// star, whose debris disperses.
+pub fn cratering_debris_fragments(c: &Ctx) -> Value {
+    let reset = c.f64("cratering.record_start") > c.f64("surface.solidification_time") + 1e-9;
+    if c.str("orbit.primary") != "planet" || !reset {
+        return 0.0.into();
+    }
+    (DEBRIS_FRAGMENTS * (c.f64("cratering.impact_velocity") / DEBRIS_REFERENCE_SPEED).powi(2))
+        .into()
 }
 
 /// F135: around another star, the early bombardment's timescale against the Sun's and its
@@ -2023,12 +2055,15 @@ pub fn cratering_icy_early_timescale(c: &Ctx) -> Value {
     (ICY_EARLY_TAU_GYR * early_scalings(c).0).into()
 }
 
-/// F135: the body's bombardment from the graph, its record starting at `record_start`.
-fn bombardment_from(c: &Ctx, record_start: f64) -> crate::crater::Bombardment {
+/// F135, F136: the body's bombardment from the graph, its record starting at
+/// `record_start`, with a moon's debris or without.
+fn bombardment_from(c: &Ctx, record_start: f64, with_debris: bool) -> crate::crater::Bombardment {
     crate::crater::BombardmentParams::from_nodes(
         |id| c.f64(id),
         c.str("cratering.production_function"),
+        crate::stages::materials::is_ice(c.str("materials.bedrock")),
         record_start,
+        with_debris,
     )
     .build()
 }
@@ -2045,7 +2080,7 @@ pub fn cratering_record_start(c: &Ctx) -> Value {
     let icy = crate::stages::materials::is_ice(c.str("materials.bedrock"));
     let hold = crate::crater::hold_diameter(radius, icy) / 1e3;
     let area = 4.0 * PI * radius * radius / 1e6;
-    let b = bombardment_from(c, 0.0);
+    let b = bombardment_from(c, 0.0, false);
     let after = |t: f64| b.density_above(hold, t, age) * area;
     let median = std::f64::consts::LN_2;
     if after(start) < median {
@@ -2085,7 +2120,7 @@ pub fn cratering_multiring_onset(c: &Ctx) -> Value {
 /// production of craters of 1 km against the Moon's, the small impacts that do the gardening
 /// coming as often as those.
 pub fn cratering_diffusivity(c: &Ctx) -> Value {
-    let flux = bombardment_from(c, 0.0).cumulative_1gyr(1.0)
+    let flux = bombardment_from(c, 0.0, false).steady_1gyr(1.0)
         / crate::crater::ProductionFunction::lunar().cumulative_1gyr(1.0);
     let mut k = DIFFUSIVITY_LUNAR * (c.f64("body.gravity") / GRAVITY_MOON).sqrt() * flux;
     if c.f64("atmosphere.surface_pressure") > DIFFUSIVITY_ATMOSPHERE_PRESSURE {
@@ -2130,7 +2165,7 @@ pub fn cratering_flux_history(c: &Ctx) -> Value {
     // The production of craters of 1 km over the body's life relative to the present,
     // every population's (F135).
     let age = c.f64("body.age");
-    let b = bombardment_from(c, c.f64("cratering.record_start"));
+    let b = bombardment_from(c, c.f64("cratering.record_start"), true);
     let rate = |t: f64| -> f64 {
         b.sources
             .iter()

@@ -2795,18 +2795,68 @@ pub const ROCKY_MARS_X: f64 = 0.447;
 pub const ICY_FLUX: f64 = 4.7e-7;
 pub const ICY_FLUX_RISE: (f64, f64) = (3.56, 2.0);
 pub const ICY_SNOW_RAMP: (f64, f64) = (1.0, 1.5);
-/// The outer system's impactors (F135): cumulative slopes below and above this size, km
-/// (Nesvorny et al. 2023's, from the Jupiter Trojans, and Wong et al. 2023's -2 below;
-/// the dynamically hot scattered disc's -4.5 above, Wong et al. 2023); and the crater
-/// scaling for icy satellites, D_i = 0.143 D^1.09 g^0.28 (rho_i / rho_t)^-0.43 v^-0.56
-/// D_sc^0.19 in km, m/s² and km/s (Zahnle et al. 2003, as Wong et al. 2023 use it). The
-/// slope runs on below 1 km: Singer et al. 2019 found few craters under 13 km on Pluto and
-/// Charon, a deficit of comets under 1 to 2 km, but the moons of Saturn and Uranus keep
-/// the steep slope down to craters of 2 km (Kirchoff and Schenk's counts), and Wong et al.
-/// 2023 date them either way (stated choice).
-pub const ICY_IMPACTOR_BREAK: f64 = 100.0;
-pub const ICY_IMPACTOR_SLOPES: (f64, f64) = (2.1, 4.5);
-pub const ICY_CRATER_SCALING: (f64, f64) = (0.143, 1.09);
+/// The outer system's impactors (F136): the size distribution of the destabilized Kuiper
+/// belt after its collisional history, log10 of the number at or above a size over those
+/// at or above 1 km, at log10 sizes in km (Bottke et al. 2024, Fig. 1, read off the curve:
+/// the distribution their craters on Iapetus and Phoebe require, to 32 km, joined to their
+/// model's beyond, to 300 km). Its cumulative slope is about 2 at tens of metres, 1.2 from
+/// 0.1 to 0.6 km, as steep as 2.5 in the bump of collision fragments from 2 to 6 km, 1.7 to 2
+/// from 10 to 60 km and 5 from 130 to 300 km; below the table it goes on at the 2.7 of the
+/// smallest, weakest bodies (Bottke et al. 2024), above it at the 2.5 of the largest
+/// (Bottke et al. 2023).
+pub const ICY_IMPACTOR_SFD: [(f64, f64); 21] = [
+    (-2.0, 3.46),
+    (-1.75, 2.65),
+    (-1.5, 2.06),
+    (-1.25, 1.60),
+    (-1.0, 1.24),
+    (-0.75, 0.93),
+    (-0.5, 0.64),
+    (-0.25, 0.32),
+    (0.0, 0.0),
+    (0.25, -0.63),
+    (0.5, -1.26),
+    (0.75, -1.88),
+    (1.0, -2.39),
+    (1.25, -2.79),
+    (1.5, -3.22),
+    (1.75, -3.655),
+    (1.875, -3.885),
+    (2.0, -4.195),
+    (2.125, -4.584),
+    (2.25, -5.19),
+    (2.477, -6.30),
+];
+pub const ICY_IMPACTOR_END_SLOPES: (f64, f64) = (2.7, 2.5);
+/// A crater from its impactor, in any target (F136): the transient crater's diameter
+/// D_tc = k d [g d / (2 v²) + (Y / (rho v²))^((2 + mu) / 2)]^(-mu / (2 + mu)), for an
+/// impactor of diameter d striking at v a target of gravity g, strength Y and density rho,
+/// impactor and target alike in density (Holsapple and Housen 2007, as Bottke et al. 2024
+/// write it), the final crater following by McKinnon and Schenk's collapse
+/// (TRANSIENT_COMPLEX). k and mu are cold ice's (Holsapple 2022, as Bottke et al. 2024
+/// adopt them for the large moons), and Y cold ice's 35 MPa, or for rock the 7.6 MPa of
+/// Holsapple 1993's soft rock (stated choice): under its strength a small icy moon's craters
+/// are 15 to 20 times their comets, a large moon's 16 to 25.
+pub const CRATER_PI_SCALING: (f64, f64) = (1.1, 0.55);
+pub const TARGET_STRENGTH_ICE: f64 = 3.5e7;
+pub const TARGET_STRENGTH_ROCK: f64 = 7.6e6;
+/// A moon whose crater record starts after an impact it could not hold is struck at once by
+/// that impact's debris (F136): fragments in orbit about the planet, striking at
+/// DEBRIS_ECCENTRICITY times the moon's orbital speed, their numbers falling as cumulative
+/// power laws of slopes DEBRIS_SLOPES below and above DEBRIS_BREAK_KM, shallow for the small
+/// and steep for the large as Bottke et al. 2024 find the craters beyond the comets' on
+/// Mimas, Tethys and Dione. DEBRIS_FRAGMENTS at or above the break strike each km² of a moon
+/// whose comets strike at DEBRIS_REFERENCE_SPEED (Mimas, the calibration), and as the square
+/// of the comets' impact speed elsewhere (stated choice, with no derivation behind it:
+/// Miranda, struck at 12 km/s, then keeps nearly the comets' own counts, as Bottke et al.
+/// find it does). They fall within DEBRIS_DECAY_GYR, the debris of a shattered moon being
+/// swept up within thousands of years.
+pub const DEBRIS_ECCENTRICITY: f64 = 0.3;
+pub const DEBRIS_BREAK_KM: f64 = 2.0;
+pub const DEBRIS_SLOPES: (f64, f64) = (2.0, 6.0);
+pub const DEBRIS_FRAGMENTS: f64 = 3.5e-4;
+pub const DEBRIS_REFERENCE_SPEED: f64 = 25.1e3;
+pub const DEBRIS_DECAY_GYR: f64 = 0.001;
 /// Their flux declines as a stretched exponential from formation, exp(-(t / tau)^beta) of
 /// it still to come (Wong et al. 2023's fit for Saturn's impacts), totalling
 /// ICY_EARLY_TOTAL Gyr of the steady flux: the impactors over 1 km the scattered disc

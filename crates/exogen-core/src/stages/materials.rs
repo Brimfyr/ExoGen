@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 27;
+pub const VERSION: u64 = 28;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {

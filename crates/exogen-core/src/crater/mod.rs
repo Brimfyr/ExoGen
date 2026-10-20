@@ -13,8 +13,9 @@ pub use morphology::{
     CraterClass, Dimensions, ProfileTable, Scaling, dimensions, ellipticity_for, impact_angle,
 };
 pub use production::{
-    Bombardment, BombardmentParams, CraterSample, Early, FluxHistory, IcyCraters, PopulationConfig,
-    ProductionFunction, Source, hold_diameter, sample_population,
+    Bombardment, BombardmentParams, CraterSample, Early, FluxHistory, ImpactorCraters,
+    ImpactorSizes, PopulationConfig, ProductionFunction, Source, Target, hold_diameter,
+    sample_population,
 };
 pub use stamp::{
     CellWrite, CraterTexture, EdgeShape, RestoreParams, StampOutput, StampParams, Stamper,

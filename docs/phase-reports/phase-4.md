@@ -1631,3 +1631,36 @@ Still to do:
 - **Venus's coronae** onto the corona process; **the largest craters' terraces**.
 
 Tests 219 (12 ignored). Four are new: the outer moons meet their comets at Nesvorný et al.'s speeds and rates; Mimas keeps the craters it was counted with; a small ice moon holds no crater wider than itself while the large moons keep their record from solidifying; around a red dwarf the early bombardment is brief. rustfmt also reformatted the corona, relaxation and stamp modules of the last two milestones. Clippy is clean and validate passes its 123 checks.
+
+## The sixty-seventh milestone: the comets' sizes from their history, craters under strength, and a shattered moon's debris
+
+Asked for by the user after the sixty-sixth ("All improvements across the board. Yes, do heat histories and large-crater size distribution"), choosing among the options I gave: Bottke et al. 2024's comets with the debris their counts imply ("Bottke + debris"), and, when the debris turned out to spoil Miranda, its amount scaled by the impact speed's square ("Scale by impact speed"). The heat histories, chosen as a thermal-orbital process for every moon, are the milestone after next.
+
+- **F136.** The comets follow the destabilized Kuiper belt's size distribution after its collisional history, and make their craters by pi-scaling with the target's strength; a moon whose record starts after an impact it could not hold is struck at once by that impact's debris.
+
+How it went:
+
+- **What the counts say.** I had told the user that Mimas carries about four craters of 50 km; the published counts (Kirchoff and Schenk's, replotted in Bottke et al. 2024's Fig. 7, which I read off the figure) give 7 to 10, so the sixty-sixth milestone's excess there was about twice, not four times. Miranda's counts (their Fig. 9) hold as many large craters as the production did; its sparse look on the map is its mantled, subdued terrain. Enceladus's plains hold eight times fewer craters of 30 km than the production, being younger.
+- **The comets' sizes.** Bottke et al. 2024 model the destabilized Kuiper belt's collisional history and the craters it makes on the giant planets' moons. I read their size distribution off their Fig. 1, the curve their craters on Iapetus and Phoebe require joined to their model beyond 32 km: shallow from 0.1 to 1 km, a steep bump of collision fragments from 2 to 6 km, shallower again to 60 km, steep beyond 130 km.
+- **Craters under strength.** With their scaling for cold ice, pi-scaling with a strength of 35 MPa, a small icy moon's craters are 15 to 20 times their comets where Zahnle et al. 2003's scaling made them 23 to 28. Bottke et al. use a weaker ice on the small moons; one set serves every icy body here, and gives the large moons the 16 to 25 times they find.
+- **Nothing fitted, the large craters right.** With the fluxes, histories and hold rule of the sixty-sixth unchanged, a prototype gave Mimas, Tethys and Dione their counts from 20 km up within 1.4 times and Tethys's to 400 km, and Rhea, whose record starts with its crust, 0.6 of its counts at every size. Their craters under 20 km fell short, as Bottke et al.'s model's do, by up to 2.7 times on Mimas at 3.5 km; they put the excess down to debris in orbit about Saturn from the impacts that reset the moons.
+- **The debris.** Fitted on Mimas, fragments striking at 0.3 times its orbital speed, steep above 2 km and shallow below, fill the gap: Mimas within 13 percent from 3.5 to 50 km, Tethys within 1.15 times and Dione within 1.4 with nothing refitted. Laid on every moon whose record an unholdable impact reset, they gave Miranda 2.6 times its craters of 2 km, where the comets alone match its counts from 2 to 20 km as Bottke et al. find; I found nothing in the engine's physics that would spare Miranda and not Saturn's moons, standard ejecta scaling making the mass an impact of a given crater throws out of a moon independent of its speed. At the user's choice the debris scales with the square of the comets' impact speed, a stated choice: Miranda then keeps its counts within 1.45 times at 2 km and 1.15 above.
+- **The gardening.** The diffusivity, which follows each body's present production of 1 km craters, falls with the comets' shallow slope under 1 km: Enceladus's from 4.6 times the Moon's to an eighth of it, Ganymede's from 3.8 times to a sixth.
+- **What did not change.** The Moon's height map is the same to the bit, its 916 loop craters and 81,295 finished ones the same; so are Mars's and Mercury's populations, which the comets do not reach.
+
+What the maps show:
+
+- **Mimas, a calibration body with its tides off:** the two basins of about 110 km gone, one of about 90 km and several of 50 to 70 km left beside the dense craters of every size to 30 km, as its map is.
+- **Miranda:** its crater of about 140 km gone, its loop craters down from 639 to 402 and its old terrain mostly small craters, closer to Voyager's.
+- **Enceladus:** fewer craters of every size (loop craters 720 to 587, finished ones 96,000 to 42,000) and a few large ones still on its plains, which are younger than its record (the milestone after next).
+- **Ganymede, Callisto and Ceres:** as they were at the sizes the maps show.
+- **Pluto:** far fewer craters than the Moon's population gave it; to check against Singer et al.'s counts on its oldest terrains.
+
+Still to do:
+
+- **The base relief's spectrum** (the next milestone, asked for by the user after this one's renders): the primordial relief takes a quarter of the relief the crust's strength supports, 148 km on Mimas, at wavelengths from a third of the radius down, so a small moon is far too rough at mid scales and has no relief at the scale of its hemispheres.
+- **The thermal-orbital process** for every moon: eccentricities damped by each moon's own dissipation or forced by resonance, the porous core heating only while its pores hold water, the shell's response; Mimas's preset; Enceladus's younger, relaxed plains (audit M3).
+- **Ganymede's and Callisto's large craters**, twice their ancient terrains' counts at 30 to 200 km; Pluto's oldest terrains.
+- **Venus's coronae**; the largest craters' terraces.
+
+Tests 219 (12 ignored). One replaces the Mimas test: the moons keep the craters they were counted with, Mimas within 1.3 times at 5 to 50 km, Tethys, Dione and Miranda within 1.5, Rhea within 2 and without debris. Clippy is clean and validate passes its 123 checks.

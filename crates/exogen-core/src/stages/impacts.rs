@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 25;
+pub const VERSION: u64 = 26;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -91,12 +91,14 @@ pub fn target_is_lava(layers: &LayerSet, grid: &CubeSphere, center: [f64; 3]) ->
     crate::stages::volcanism::is_lava_unit(layers.unit_id.as_slice()[idx])
 }
 
-/// The populations striking the body (F135), from the graph.
+/// The populations striking the body (F135, F136), from the graph.
 pub fn bombardment(graph: &ParamGraph) -> Bombardment {
     BombardmentParams::from_nodes(
         |id| graph.f64(id),
         graph.str("cratering.production_function"),
+        crate::stages::materials::is_ice(graph.str("materials.bedrock")),
         graph.f64("cratering.record_start"),
+        true,
     )
     .build()
 }
@@ -241,7 +243,11 @@ impl ImpactProcess {
             let b0 = b0.max(cutoff);
             for source in &inp.bombardment.sources {
                 // Each population draws from its own stream, the rocky leftovers' as before.
-                let stream = u64::from(source.pf.icy.is_some());
+                let stream = match source.pf.impactors.map(|i| i.sizes) {
+                    None => 0u64,
+                    Some(crate::crater::ImpactorSizes::Comets) => 1,
+                    Some(crate::crater::ImpactorSizes::Debris) => 2,
+                };
                 let index = bin | (stream << 40);
                 let expected = expected_count_above(
                     &source.pf,
@@ -434,11 +440,16 @@ mod tests {
 
     /// Mimas, from Enceladus's preset with Mimas's radius, density and orbit.
     fn mimas() -> crate::params::ParamGraph {
+        saturnian(1.982e5, 1149.0, 1.8552e8, 0.0196)
+    }
+
+    /// A moon of Saturn, from Enceladus's preset with its own radius, density and orbit.
+    fn saturnian(radius: f64, density: f64, a: f64, e: f64) -> crate::params::ParamGraph {
         let (mut g, _) = preset("Enceladus").unwrap().to_graph();
-        g.set("body.radius", 1.982e5).unwrap();
-        g.set("body.density", 1149.0).unwrap();
-        g.set("orbit.semi_major_axis", 1.8552e8).unwrap();
-        g.set("orbit.eccentricity", 0.0196).unwrap();
+        g.set("body.radius", radius).unwrap();
+        g.set("body.density", density).unwrap();
+        g.set("orbit.semi_major_axis", a).unwrap();
+        g.set("orbit.eccentricity", e).unwrap();
         g
     }
 
@@ -473,29 +484,83 @@ mod tests {
         }
     }
 
-    /// Mimas, the least altered of the small moons, keeps the craters it was counted with
-    /// (Kirchoff and Schenk's counts as Wong et al. 2023 give them: 1.38e-3 per km² of 10 km
-    /// and 2.85e-4 of 20 km), from a record that starts after the last impact it could not
-    /// hold, near when its plains date from (4.16 to 4.21 Ga).
+    /// The moons keep the craters they were counted with (F136): Kirchoff and Schenk's counts
+    /// as Bottke et al. 2024 replot them (Fig. 7 for Saturn's moons, Fig. 9 for Miranda),
+    /// read off the figures, per km² from the record's start. Mimas, the least altered of
+    /// the small moons, calibrates the debris its last unholdable impact rains on it, which
+    /// makes its craters under 20 km; Tethys, Dione and Miranda check it; Rhea, whose record
+    /// starts with its crust, takes no debris, and keeps the comets' craters at 0.6 of its
+    /// counts.
     #[test]
-    fn mimas_keeps_the_craters_it_was_counted_with() {
-        let g = mimas();
-        let inp = CraterInputs::from_graph(&g);
-        let age = g.f64("body.age");
-        let start = g.f64("cratering.record_start");
-        assert!(start > g.f64("surface.solidification_time"));
-        let formed_ga = age - start;
-        assert!(
-            (4.0..=4.3).contains(&formed_ga),
-            "record from {formed_ga:.2} Ga"
-        );
-        for (d, observed) in [(10.0, 1.38e-3), (20.0, 2.85e-4)] {
-            let n = inp.bombardment.density_above(d, start, age);
-            assert!(
-                (n / observed).ln().abs() < 2f64.ln(),
-                "N({d} km) {n:.2e} per km², counted {observed:.2e}"
-            );
+    fn the_moons_keep_the_craters_they_were_counted_with() {
+        let (miranda, _) = preset("Miranda").unwrap().to_graph();
+        let cases = [
+            (
+                "Mimas",
+                mimas(),
+                vec![
+                    (5.0, 4.47e-3),
+                    (10.0, 1.37e-3),
+                    (20.0, 2.79e-4),
+                    (50.0, 2.3e-5),
+                ],
+                1.3,
+            ),
+            (
+                "Tethys",
+                saturnian(5.311e5, 984.0, 2.94619e8, 0.0001),
+                vec![
+                    (10.0, 7.4e-4),
+                    (20.0, 1.6e-4),
+                    (50.0, 1.45e-5),
+                    (100.0, 3.9e-6),
+                ],
+                1.5,
+            ),
+            (
+                "Dione",
+                saturnian(5.614e5, 1478.0, 3.77396e8, 0.0022),
+                vec![
+                    (10.0, 6.9e-4),
+                    (20.0, 1.29e-4),
+                    (50.0, 1.17e-5),
+                    (100.0, 2.3e-6),
+                ],
+                1.5,
+            ),
+            (
+                "Miranda",
+                miranda,
+                vec![(5.0, 1.75e-3), (10.0, 7.16e-4), (20.0, 1.74e-4)],
+                1.5,
+            ),
+            (
+                "Rhea",
+                saturnian(7.638e5, 1236.0, 5.27108e8, 0.001),
+                vec![(10.0, 6.0e-4), (20.0, 1.48e-4), (50.0, 1.86e-5)],
+                2.0,
+            ),
+        ];
+        for (name, g, counts, within) in cases {
+            let inp = CraterInputs::from_graph(&g);
+            let age = g.f64("body.age");
+            let start = g.f64("cratering.record_start");
+            for (d, counted) in counts {
+                let n = inp.bombardment.density_above(d, start, age);
+                assert!(
+                    (n / counted).ln().abs() < f64::ln(within),
+                    "{name}: N({d} km) {n:.2e} per km², counted {counted:.2e}"
+                );
+            }
+            let debris = g.f64("cratering.debris_fragments");
+            assert_eq!(debris > 0.0, name != "Rhea", "{name}: debris {debris}");
         }
+        let g = mimas();
+        let formed_ga = g.f64("body.age") - g.f64("cratering.record_start");
+        assert!(
+            (4.0..=4.35).contains(&formed_ga),
+            "Mimas's record from {formed_ga:.2} Ga"
+        );
     }
 
     /// A small ice moon holds no crater wider than itself (F135): its record starts at the

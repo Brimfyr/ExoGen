@@ -13,10 +13,11 @@
 //! A body is struck by two populations (F135): the rocky leftovers of the inner system,
 //! whose craters follow the Neukum production function and decline with the Neukum
 //! chronology, and the icy planetesimals scattered from beyond the giant planets, whose
-//! numbers fall as a broken power law of their size, whose craters follow each body's own
+//! numbers by size follow their collisional history, whose craters follow each body's own
 //! scaling, and whose flux declines as a stretched exponential from formation and leaks on
-//! at a steady rate. A `Bombardment` holds a body's sources, each with its own production
-//! and history.
+//! at a steady rate (F136). A moon shattered by an impact it could not hold is struck
+//! besides by that impact's debris. A `Bombardment` holds a body's sources, each with its
+//! own production and history.
 //!
 //! Saturation follows the standard picture: new craters obliterate old ones, so a surface
 //! approaches an equilibrium density that is a fixed fraction of geometric saturation. Per
@@ -34,81 +35,169 @@ use crate::grid::CubeSphere;
 use crate::rng::Rng;
 
 /// A production function: polynomial size distribution plus chronology coefficients, or
-/// the craters an outer-system impactor population makes on the body (F135).
+/// the craters a population of impactors makes on the body (F135, F136).
 #[derive(Clone, Copy, Debug)]
 pub struct ProductionFunction {
     pub coeffs: &'static [f64; 12],
     /// N(>= 1 km) = a (exp(b T) - 1) + c T per km², T in Gyr.
     pub chronology: (f64, f64, f64),
-    /// The outer system's impactors and the craters they make, in place of the polynomial.
-    pub icy: Option<IcyCraters>,
+    /// A population of impactors and the craters they make, in place of the polynomial.
+    pub impactors: Option<ImpactorCraters>,
 }
 
-/// The craters an outer-system impactor population makes on a body (F135). The impactors'
-/// numbers fall as a broken power law of their size: cumulative slopes ICY_IMPACTOR_SLOPES
-/// below and above ICY_IMPACTOR_BREAK km (the Jupiter Trojans' and the scattered disc's,
-/// Nesvorny et al. 2023, and the large objects' steep end, Wong et al. 2023). Each makes a
-/// crater by the scaling for icy satellites (Zahnle et al. 2003, as Wong et al. 2023 use
-/// it), with the body's gravity, the impact speed and the transition diameter.
+/// How a population's members are spread in size (F136).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ImpactorSizes {
+    /// The destabilized Kuiper belt's comets (ICY_IMPACTOR_SFD), counted against those at
+    /// or above 1 km.
+    Comets,
+    /// A shattered moon's fragments (DEBRIS_SLOPES), counted against those at or above
+    /// DEBRIS_BREAK_KM.
+    Debris,
+}
+
+impl ImpactorSizes {
+    /// Members at or above a size, km, per one at or above the reference size, and the
+    /// cumulative slope there.
+    pub fn share(&self, d_km: f64) -> (f64, f64) {
+        let x = d_km.max(1e-12).log10();
+        match self {
+            ImpactorSizes::Comets => {
+                let t = &ICY_IMPACTOR_SFD;
+                let (head, tail) = ICY_IMPACTOR_END_SLOPES;
+                let n = t.len();
+                if x <= t[0].0 {
+                    return (10f64.powf(t[0].1 - head * (x - t[0].0)), head);
+                }
+                if x >= t[n - 1].0 {
+                    return (10f64.powf(t[n - 1].1 - tail * (x - t[n - 1].0)), tail);
+                }
+                let k = t.partition_point(|p| p.0 <= x).clamp(1, n - 1);
+                let (a, b) = (t[k - 1], t[k]);
+                let slope = -(b.1 - a.1) / (b.0 - a.0);
+                (10f64.powf(a.1 - slope * (x - a.0)), slope)
+            }
+            ImpactorSizes::Debris => {
+                let (small, large) = DEBRIS_SLOPES;
+                let r = d_km.max(1e-12) / DEBRIS_BREAK_KM;
+                if r < 1.0 {
+                    (r.powf(-small), small)
+                } else {
+                    (r.powf(-large), large)
+                }
+            }
+        }
+    }
+}
+
+/// What a crater forms in, and how fast it is struck (F136).
 #[derive(Clone, Copy, Debug)]
-pub struct IcyCraters {
-    /// Impactors at or above 1 km per km² per Gyr of the steady flux.
-    pub per_gyr: f64,
-    /// The crater a 1 km impactor makes on the body, km.
-    pub crater_1km: f64,
+pub struct Target {
+    /// m/s².
+    pub gravity: f64,
+    /// m/s.
+    pub speed: f64,
+    /// Pa.
+    pub strength: f64,
+    /// kg/m³.
+    pub density: f64,
+    /// The simple-to-complex transition, m.
+    pub simple_complex: f64,
 }
 
-impl IcyCraters {
-    /// From the body: gravity, m/s², the impact speed, m/s, the impactor's density over the
-    /// target's, and the simple-to-complex transition, m. The scaling, D_i = 0.143 D^1.09
-    /// g^0.28 (rho_i / rho_t)^-0.43 v^-0.56 D_sc^0.19 in km, m/s² and km/s, inverted.
-    pub fn new(
-        per_gyr: f64,
-        gravity: f64,
-        speed: f64,
-        density_ratio: f64,
-        transition: f64,
-    ) -> Self {
-        let (k, e) = ICY_CRATER_SCALING;
-        let impactor_of_1km = k
-            * gravity.max(1e-3).powf(0.28)
-            * density_ratio.max(1e-3).powf(-0.43)
-            * (speed / 1e3).max(0.1).powf(-0.56)
-            * (transition / 1e3).max(0.01).powf(0.19);
+impl Target {
+    /// The transient crater an impactor of diameter `d` m makes, m (CRATER_PI_SCALING).
+    pub fn transient(&self, d: f64) -> f64 {
+        let (k, mu) = CRATER_PI_SCALING;
+        let v2 = self.speed.max(1.0).powi(2);
+        let gravity = self.gravity * d / (2.0 * v2);
+        let strength = (self.strength / (self.density.max(1.0) * v2)).powf(0.5 * (2.0 + mu));
+        k * d * (gravity + strength).powf(-mu / (2.0 + mu))
+    }
+
+    /// The final crater an impactor of diameter `d` m makes, m: the transient cavity's
+    /// collapse, the inverse of `morphology::transient_diameter`.
+    pub fn crater(&self, d: f64) -> f64 {
+        let (k, p) = TRANSIENT_COMPLEX;
+        let tr = self.transient(d) / 1e3;
+        let d_sc = self.simple_complex.max(1.0) / 1e3;
+        let tr_sc = d_sc * k.powf(-1.0 / p);
+        let km = if tr < tr_sc {
+            tr * k.powf(1.0 / p)
+        } else {
+            k * tr.powf(p) * d_sc.powf(1.0 - p)
+        };
+        km * 1e3
+    }
+}
+
+/// The craters a population of impactors makes on a body (F135, F136): how many of its
+/// members strike, by size, and the crater each makes there.
+#[derive(Clone, Copy, Debug)]
+pub struct ImpactorCraters {
+    /// Comets: those at or above 1 km per km² per Gyr of the steady flux. Debris: the
+    /// fragments at or above the break per km² over the whole rain.
+    pub per_gyr: f64,
+    pub sizes: ImpactorSizes,
+    /// The crater an impactor of 1 km makes, km.
+    pub crater_1km: f64,
+    /// log10 of the impactor, km, that makes a crater of log10 diameter
+    /// `MAP_START + k * MAP_STEP`, km.
+    map: [f64; MAP_POINTS],
+}
+
+const MAP_START: f64 = -3.0;
+const MAP_STEP: f64 = 0.125;
+const MAP_POINTS: usize = 65;
+
+impl ImpactorCraters {
+    pub fn new(per_gyr: f64, sizes: ImpactorSizes, target: &Target) -> Self {
+        let mut map = [0.0; MAP_POINTS];
+        for (k, m) in map.iter_mut().enumerate() {
+            let crater = 10f64.powf(MAP_START + MAP_STEP * k as f64) * 1e3;
+            let (mut lo, mut hi) = (1e-4f64.ln(), 1e8f64.ln());
+            for _ in 0..80 {
+                let mid = 0.5 * (lo + hi);
+                if target.crater(mid.exp()) < crater {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            *m = (0.5 * (lo + hi)).exp().log10() - 3.0;
+        }
         Self {
             per_gyr,
-            crater_1km: (1.0 / impactor_of_1km).powf(1.0 / e),
+            sizes,
+            crater_1km: target.crater(1e3) / 1e3,
+            map,
         }
+    }
+
+    /// The map's segment for a crater and the position along it.
+    fn segment(d_km: f64) -> (usize, f64) {
+        let x = (d_km.max(1e-12).log10() - MAP_START) / MAP_STEP;
+        let i = x.floor().clamp(0.0, (MAP_POINTS - 2) as f64) as usize;
+        (i, x - i as f64)
     }
 
     /// The impactor that makes a crater, km.
     pub fn impactor(&self, d_km: f64) -> f64 {
-        (d_km.max(0.0) / self.crater_1km).powf(ICY_CRATER_SCALING.1)
+        let (i, f) = Self::segment(d_km);
+        10f64.powf(self.map[i] + f * (self.map[i + 1] - self.map[i]))
     }
 
-    /// Impactors at or above a size, km, per one at or above 1 km, and the cumulative slope
-    /// there.
-    pub fn impactor_share(d: f64) -> (f64, f64) {
-        let (below, above) = ICY_IMPACTOR_SLOPES;
-        let d = d.max(1e-6);
-        if d <= ICY_IMPACTOR_BREAK {
-            (d.powf(-below), below)
-        } else {
-            (
-                ICY_IMPACTOR_BREAK.powf(-below) * (d / ICY_IMPACTOR_BREAK).powf(-above),
-                above,
-            )
-        }
-    }
-
-    /// Craters at or above a diameter, km, per km² per Gyr of the steady flux.
+    /// Craters at or above a diameter, km, per km² per Gyr of the steady flux (comets) or
+    /// over the whole rain (debris).
     pub fn cumulative(&self, d_km: f64) -> f64 {
-        self.per_gyr * Self::impactor_share(self.impactor(d_km)).0
+        self.per_gyr * self.sizes.share(self.impactor(d_km)).0
     }
 
     /// d log N / d log D at a diameter.
     pub fn log_slope(&self, d_km: f64) -> f64 {
-        -Self::impactor_share(self.impactor(d_km)).1 * ICY_CRATER_SCALING.1
+        let (i, _) = Self::segment(d_km);
+        let grows = (self.map[i + 1] - self.map[i]) / MAP_STEP;
+        -self.sizes.share(self.impactor(d_km)).1 * grows
     }
 }
 
@@ -117,7 +206,7 @@ impl ProductionFunction {
         Self {
             coeffs: &NPF_LUNAR,
             chronology: (NEUKUM_A, NEUKUM_B, NEUKUM_C),
-            icy: None,
+            impactors: None,
         }
     }
 
@@ -125,17 +214,17 @@ impl ProductionFunction {
         Self {
             coeffs: &NPF_MARS,
             chronology: MARS_CHRONOLOGY,
-            icy: None,
+            impactors: None,
         }
     }
 
-    /// The outer system's impactors on a body (F135); the chronology is unused, the source's
-    /// history being the stretched exponential's.
-    pub fn outer(icy: IcyCraters) -> Self {
+    /// A population of impactors on a body (F135, F136); the chronology is unused, the
+    /// source's history being its own.
+    pub fn from_impactors(impactors: ImpactorCraters) -> Self {
         Self {
             coeffs: &NPF_LUNAR,
-            chronology: (0.0, 1.0, icy.per_gyr),
-            icy: Some(icy),
+            chronology: (0.0, 1.0, impactors.per_gyr),
+            impactors: Some(impactors),
         }
     }
 
@@ -149,8 +238,8 @@ impl ProductionFunction {
     /// Cumulative density N(>= D) per km² for a 1 Gyr surface, D in km. Outside the fitted
     /// range the polynomial is continued with the slope at the range edge.
     pub fn cumulative_1gyr(&self, d_km: f64) -> f64 {
-        if let Some(icy) = &self.icy {
-            return icy.cumulative(d_km);
+        if let Some(imp) = &self.impactors {
+            return imp.cumulative(d_km);
         }
         let (lo, hi) = (NPF_RANGE_KM.0, NPF_RANGE_KM.1);
         let x = d_km.clamp(lo, hi).log10();
@@ -167,8 +256,8 @@ impl ProductionFunction {
 
     /// d log N / d log D at a diameter.
     pub fn log_slope(&self, d_km: f64) -> f64 {
-        if let Some(icy) = &self.icy {
-            return icy.log_slope(d_km);
+        if let Some(imp) = &self.impactors {
+            return imp.log_slope(d_km);
         }
         let x = d_km.clamp(NPF_RANGE_KM.0, NPF_RANGE_KM.1).log10();
         let mut s = 0.0;
@@ -195,7 +284,7 @@ impl ProductionFunction {
     pub fn cumulative_steady_1gyr(&self, d_km: f64) -> f64 {
         let n = self.cumulative_1gyr(d_km);
         // The outer system's steady leak keeps the scattered disc's own distribution.
-        if self.icy.is_none() && d_km > STEADY_FLUX_KNEE_KM {
+        if self.impactors.is_none() && d_km > STEADY_FLUX_KNEE_KM {
             n * (d_km / STEADY_FLUX_KNEE_KM).powf(-STEADY_FLUX_EXTRA_SLOPE)
         } else {
             n
@@ -205,7 +294,7 @@ impl ProductionFunction {
     /// A diameter from the steady flux's production, km, capped at the largest crater a
     /// stray body makes.
     pub fn sample_steady_diameter_above(&self, u: f64, d_min_km: f64, d_max_km: f64) -> f64 {
-        let d_max_km = if self.icy.is_some() {
+        let d_max_km = if self.impactors.is_some() {
             d_max_km
         } else {
             d_max_km.min(STEADY_FLUX_MAX_KM).max(d_min_km)
@@ -248,6 +337,9 @@ impl ProductionFunction {
 pub struct FluxHistory {
     /// Steady rate of craters >= 1 km per km² per Gyr at the reference flux.
     pub steady: f64,
+    /// The weight of the steady flux: 1 for a population that leaks on after its early
+    /// decline, 0 for a moon's debris, which comes all at once (F136).
+    pub late: f64,
     /// The early component, declining from formation.
     pub early: Early,
     /// Time since formation when the surface begins retaining craters, Gyr.
@@ -264,6 +356,9 @@ pub enum Early {
     /// which the share exp(-(t / tau)^beta) is still to come t Gyr after formation (a
     /// stretched exponential, Wong et al. 2023).
     Stretched { total: f64, beta: f64, tau: f64 },
+    /// A shattered moon's debris: `total` units from `start`, falling off over `tau` Gyr
+    /// (F136).
+    Burst { total: f64, start: f64, tau: f64 },
 }
 
 impl Early {
@@ -280,6 +375,17 @@ impl Early {
                 let x = (t / scale.max(1e-12)).powf(beta);
                 total * beta * x * (-x).exp() / t
             }
+            Early::Burst {
+                total,
+                start,
+                tau: scale,
+            } => {
+                if tau < start {
+                    0.0
+                } else {
+                    total * (-(tau - start) / scale.max(1e-12)).exp() / scale.max(1e-12)
+                }
+            }
         }
     }
 
@@ -293,6 +399,10 @@ impl Early {
                 let left = |t: f64| (-(t.max(0.0) / tau.max(1e-12)).powf(beta)).exp();
                 total * (left(a) - left(b))
             }
+            Early::Burst { total, start, tau } => {
+                let left = |t: f64| (-(t - start).max(0.0) / tau.max(1e-12)).exp();
+                total * (left(a) - left(b))
+            }
         }
     }
 }
@@ -304,6 +414,7 @@ impl FluxHistory {
         let (_, b, c) = chronology;
         Self {
             steady: c,
+            late: 1.0,
             early: Early::Exponential {
                 ratio: early_flux_ratio(chronology),
                 decay: 1.0 / b,
@@ -317,20 +428,23 @@ impl FluxHistory {
         if tau < self.record_start {
             return 0.0;
         }
-        self.steady * (1.0 + self.early.rate(tau))
+        self.steady * (self.late + self.early.rate(tau))
     }
 
     /// Share of the flux at a time that is the early, basin-forming component.
     pub fn early_share(&self, tau: f64) -> f64 {
         let e = self.early.rate(tau);
-        e / (1.0 + e)
+        if self.late + e <= 0.0 {
+            return 1.0;
+        }
+        e / (self.late + e)
     }
 
     /// N(>= 1 km) per km² formed between `tau0` and `tau1` Gyr since formation.
     pub fn n1_between(&self, tau0: f64, tau1: f64) -> f64 {
         let a = tau0.max(self.record_start);
         let b = tau1.max(a);
-        self.steady * ((b - a) + self.early.between(a, b))
+        self.steady * (self.late * (b - a) + self.early.between(a, b))
     }
 
     /// Gyr of steady flux equivalent to the production between `tau0` and `tau1`.
@@ -476,11 +590,21 @@ impl Bombardment {
         }
     }
 
-    /// Craters at or above a diameter, km, per km² per Gyr of every source's steady flux.
+    /// Craters at or above a diameter, km, per km² per Gyr of every source's steady flux,
+    /// or over a moon's whole debris rain: the shape of the production by size.
     pub fn cumulative_1gyr(&self, d_km: f64) -> f64 {
         self.sources
             .iter()
             .map(|s| s.scale * s.pf.cumulative_1gyr(d_km))
+            .sum()
+    }
+
+    /// Craters at or above a diameter, km, per km² per Gyr of the steady flux the sources
+    /// leak on with: the production today, a moon's debris long gone (F136).
+    pub fn steady_1gyr(&self, d_km: f64) -> f64 {
+        self.sources
+            .iter()
+            .map(|s| s.scale * s.flux.late * s.pf.cumulative_1gyr(d_km))
             .sum()
     }
 
@@ -495,7 +619,7 @@ impl Bombardment {
     /// Gyr of steady flux equivalent to the production between two times, each source
     /// weighted by its craters of 1 km: the clock of the gardening the small craters do.
     pub fn equivalent_gyr(&self, tau0: f64, tau1: f64) -> f64 {
-        let steady = self.cumulative_1gyr(1.0);
+        let steady = self.steady_1gyr(1.0);
         if steady <= 0.0 {
             return 0.0;
         }
@@ -549,39 +673,73 @@ impl Bombardment {
     }
 }
 
-/// The scalars a body's bombardment is built from (F135), as the parameter graph derives
-/// them: the rocky leftovers' production, flux relative to the Moon's and early decline,
-/// and the outer system's craters, early total and timescale; when the record starts; the
-/// density multiplier.
+/// The scalars a body's bombardment is built from (F135, F136), as the parameter graph
+/// derives them: the rocky leftovers' production, flux relative to the Moon's and early
+/// decline; the outer system's comets, their early total and timescale; a shattered moon's
+/// debris; when the record starts; the density multiplier.
 #[derive(Clone, Copy, Debug)]
 pub struct BombardmentParams {
     pub rocky: ProductionFunction,
     pub rocky_scale: f64,
     pub rocky_ratio: f64,
     pub rocky_decay: f64,
-    pub icy: Option<IcyCraters>,
-    pub icy_total: f64,
-    pub icy_tau: f64,
+    pub comets: Option<ImpactorCraters>,
+    pub comet_total: f64,
+    pub comet_tau: f64,
+    pub debris: Option<ImpactorCraters>,
     pub record_start: f64,
     pub density: f64,
 }
 
 impl BombardmentParams {
-    /// From the graph's nodes, read by `f64`, with the rocky leftovers' production function
-    /// by name and the record's start.
-    pub fn from_nodes(f64_of: impl Fn(&str) -> f64, production: &str, record_start: f64) -> Self {
-        let icy = f64_of("cratering.icy_flux");
+    /// From the graph's nodes, read by `f64_of`: the rocky leftovers' production function
+    /// by name, whether the bedrock is ice, when the record starts, and whether a moon's
+    /// debris is counted (not when the record's start is being found, which it follows).
+    pub fn from_nodes(
+        f64_of: impl Fn(&str) -> f64,
+        production: &str,
+        icy_bedrock: bool,
+        record_start: f64,
+        with_debris: bool,
+    ) -> Self {
+        let target = |speed: f64| Target {
+            gravity: f64_of("body.gravity"),
+            speed,
+            strength: if icy_bedrock {
+                TARGET_STRENGTH_ICE
+            } else {
+                TARGET_STRENGTH_ROCK
+            },
+            density: f64_of("cratering.target_density"),
+            simple_complex: f64_of("cratering.simple_complex_transition"),
+        };
+        let comets = f64_of("cratering.icy_flux");
+        let fragments = if with_debris {
+            f64_of("cratering.debris_fragments")
+        } else {
+            0.0
+        };
         Self {
             rocky: ProductionFunction::by_name(production),
             rocky_scale: f64_of("cratering.flux_relative_to_moon"),
             rocky_ratio: f64_of("cratering.early_flux_ratio"),
             rocky_decay: f64_of("cratering.early_flux_decay"),
-            icy: (icy > 0.0).then(|| IcyCraters {
-                per_gyr: icy,
-                crater_1km: f64_of("cratering.icy_crater_1km"),
+            comets: (comets > 0.0).then(|| {
+                ImpactorCraters::new(
+                    comets,
+                    ImpactorSizes::Comets,
+                    &target(f64_of("cratering.impact_velocity")),
+                )
             }),
-            icy_total: f64_of("cratering.icy_early_total"),
-            icy_tau: f64_of("cratering.icy_early_timescale"),
+            comet_total: f64_of("cratering.icy_early_total"),
+            comet_tau: f64_of("cratering.icy_early_timescale"),
+            debris: (fragments > 0.0).then(|| {
+                ImpactorCraters::new(
+                    fragments,
+                    ImpactorSizes::Debris,
+                    &target(f64_of("cratering.debris_velocity")),
+                )
+            }),
             record_start,
             density: f64_of("multiplier.crater_density"),
         }
@@ -594,6 +752,7 @@ impl BombardmentParams {
                 pf: self.rocky,
                 flux: FluxHistory {
                     steady: self.rocky.chronology.2,
+                    late: 1.0,
                     early: Early::Exponential {
                         ratio: self.rocky_ratio,
                         decay: self.rocky_decay,
@@ -603,16 +762,33 @@ impl BombardmentParams {
                 scale: self.rocky_scale * self.density,
             });
         }
-        if let Some(icy) = self.icy.filter(|i| i.per_gyr > 0.0) {
-            let pf = ProductionFunction::outer(icy);
+        if let Some(comets) = self.comets.filter(|c| c.per_gyr > 0.0) {
+            let pf = ProductionFunction::from_impactors(comets);
             sources.push(Source {
                 pf,
                 flux: FluxHistory {
                     steady: pf.cumulative_1gyr(1.0),
+                    late: 1.0,
                     early: Early::Stretched {
-                        total: self.icy_total,
+                        total: self.comet_total,
                         beta: ICY_EARLY_BETA,
-                        tau: self.icy_tau,
+                        tau: self.comet_tau,
+                    },
+                    record_start: self.record_start,
+                },
+                scale: self.density,
+            });
+        }
+        if let Some(debris) = self.debris.filter(|d| d.per_gyr > 0.0) {
+            sources.push(Source {
+                pf: ProductionFunction::from_impactors(debris),
+                flux: FluxHistory {
+                    steady: 1.0,
+                    late: 0.0,
+                    early: Early::Burst {
+                        total: 1.0,
+                        start: self.record_start,
+                        tau: DEBRIS_DECAY_GYR,
                     },
                     record_start: self.record_start,
                 },
