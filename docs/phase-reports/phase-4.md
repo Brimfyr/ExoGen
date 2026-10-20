@@ -1506,3 +1506,29 @@ Still to do:
 - **The terrain features next:** the icy moons' grooves and tiger stripes (audit T6, T7), then Venus's coronae and the other shapes.
 
 Tests 208 (12 ignored). Venus's test holds the tessera's contact to partial cover, and Ceres's test the domes' edges, beside the faculae. Clippy is clean and validate passes its 115 checks.
+
+## The sixty-third milestone: a groove is a chain of fault segments
+
+Asked for by the user after the sixty-second, with the notes on the icy moons (audit T6): "the groove lanes look fine on Ganymede's full map, but scaled to Enceladus or Miranda they look unnatural because they are just straight lines without much variation. Instead of being full lines along the entire crack, they should come and go, as smaller individual lines, so they don't always follow the same path (e.g. if you follow one line, it may appear to end and the next line is a few meters to the left with a considerable gap). Also, they end off abruptly, with just a straight edge." The user also asked whether Miranda's grooves, in coronae named as Venus's are, should be driven by Ganymede's lanes.
+
+- **F132.** A groove is a chain of fault segments that come and go along it, each stepped across the groove's line and tapering to its tips, cutting its own trough into a plateau; the grooves die out before the lane's bounding faults.
+
+How it went:
+
+- **Why the grooves were lines.** A groove was one period of a wave across the lane, as long as the lane, its segments a noise gate set so that a groove seldom broke, and nothing stepped it across.
+- **Segments without seams.** Each segment cuts a hollow a spacing across into a plateau, so that overlapping segments in a relay both show and their gaps stand at the plateau; choosing the strongest segment at each cell instead would have left a seam where one gave way to the next.
+- **Gaps that show.** At first a slot held a segment nine times in ten, stepped by up to three tenths of a spacing; the gaps hardly showed, and the user had asked for a considerable gap, so three in four, stepped by up to four tenths.
+- **Miranda.** Its coronae are not lanes. The descriptor is the same as Venus's because both are oval, but so is their origin: both stand over an upwelling under a lid (Venus's over mantle plumes and diapirs, Miranda's over ice diapirs and the convection tidal heating drove; Pappalardo et al. 1997, Hammond and Barr). The grooves inside Miranda's are tilt blocks of the faulting that makes Ganymede's. So a corona takes its outline and its stress field from the upwelling, as on Venus, and its fabric from these faults, laid along that field: the next milestones.
+
+What the maps show:
+
+- **Ganymede:** its lanes' grooves are segments that start and stop, staggered and stepped, tapering to their tips and dying out before the lanes' edges, where they were ruled lines the lanes' length; its map 0.495 where it was 0.493, the troughs' dark lag a little less where the segments leave gaps.
+- **Enceladus:** its grooved lanes' grooves come and go in segments with staggered tips where they ran the lanes' length and stopped on a line; still faint, their relief tens of metres, and its map, under the plume's frost, as it was.
+
+Still to do:
+
+- **Miranda and the coronae**: a Miranda preset, and coronae as upwellings under an icy lid as under Venus's rock, their fabric this faulting along the upwelling's stress.
+- **Enceladus's grooves' relief**, tens of metres where its sulci's ridges stand 1 to 1.5 km: the groove spacing and relief, calibrated on Ganymede, checked on a second body (audit T6).
+- **Enceladus's tiger stripes** as one network of canyons (audit T7).
+
+Tests 209 (12 ignored). One is new: a groove comes and goes along a line, its segments stepped within the limit and its relief without a seam, dying out by the bounding fault. The covered fractures' test samples a band of lines beyond the fault rather than one, the fractures there being segments that step across. Clippy is clean and validate passes its 115 checks.

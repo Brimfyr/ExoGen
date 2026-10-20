@@ -35,7 +35,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 17;
+pub const VERSION: u64 = 18;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -137,6 +137,8 @@ struct GrooveSet {
     gate: f64,
     depth: f64,
     shape: f64,
+    /// The level the set's troughs cut down from, in units of the middling amplitude (F132).
+    plateau: f64,
 }
 
 /// A fault's depth against the middling one of its population, from a uniform draw
@@ -579,7 +581,8 @@ impl Lane {
         // segment does, and across its own width cuts whatever stood there before, so
         // that the sets overlap groove by groove and never interfere as two waves would.
         let base = self.set_at(sm, d, body_radius, spacing, sets, level, 0, 0.0, noise);
-        let mut shape = base.gate * base.shape;
+        // The set's own segments and plateau (F132).
+        let mut shape = base.shape;
         let mut lag = base.gate * base.trough * base.trough * base.depth.min(2.0);
         // The set that stands at the cell, and how fully.
         let mut top = (base.turns, 1.0);
@@ -602,7 +605,8 @@ impl Lane {
             }
             let set = self.set_at(sm, d, body_radius, spacing, sets, level, pulse, turn, noise);
             // The groove's own footprint: its segment along it, and its width across.
-            let own = patch * set.gate * (0.5 - 0.5 * (tau * set.frac).cos());
+            // Across its own trough, where its segment stands (F132).
+            let own = patch * set.gate * set.trough;
             shape += (set.shape - shape) * own;
             lag += (set.trough * set.trough * set.depth.min(2.0) - lag) * own;
             top = if own > 0.5 {
@@ -611,6 +615,13 @@ impl Lane {
                 (top.0, top.1 * (1.0 - 2.0 * own))
             };
         }
+        // The grooves die out over the last stretch in from the bounding faults, which they
+        // do not cross, leaving the plateau they cut (F132).
+        let margin = {
+            let x = (inward / (GROOVE_MARGIN_SPACINGS * spacing)).clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+        shape = base.plateau + margin * (shape - base.plateau);
         let rough_octaves = ((GROOVE_ROUGH_SPACINGS * spacing) / (2.0 * cell.max(1.0)))
             .log2()
             .ceil()
@@ -658,6 +669,7 @@ impl Lane {
             let x = (level + run).clamp(0.0, 1.0);
             GROOVE_FINE_RELIEF
                 * amplitude
+                * margin
                 * top.1
                 * x
                 * x
@@ -771,44 +783,63 @@ impl Lane {
                 0.5,
             );
         let turns = across / local + (sway + wander) / tau;
-        let stripe = turns.floor();
-        let frac = turns - stripe;
-        let wave = (tau * frac).sin();
-        let gate = {
-            let run = g.fbm(
-                [
-                    stripe * 12.9898 + 0.37 + shift,
-                    along / (GROOVE_SEGMENT_SPACINGS * spacing),
-                    0.11,
-                ],
-                1.0,
-                2,
-                2.0,
-                0.5,
-            );
-            let x = (level + run).clamp(0.0, 1.0);
+        // The grooves' segments (F132): each slot along a groove holds a segment with
+        // GROOVE_SEGMENT_PRESENCE, fewer the farther beyond the bounding fault, its line
+        // stepped across the groove's and its throw falling to its tips. Each segment
+        // cuts its own trough, a hollow one spacing across its line, into the plateau, so
+        // that two beside each other in a relay both show, and the ground between them
+        // and in their gaps stands at the plateau, with no seam where one gives way.
+        let presence = GROOVE_SEGMENT_PRESENCE * {
+            let x = (level / GROOVE_SEGMENT_LEVEL).clamp(0.0, 1.0);
             x * x * (3.0 - 2.0 * x)
         };
-        let u = noise
-            .draws
-            .uniform(stripe_key(stripe), 40 + pulse as u64)
-            .max(1e-3);
-        let depth = fault_depth(u);
-        let shape = if depth >= 1.0 {
-            wave.max(0.0) + depth * wave.min(0.0)
-        } else {
-            depth * wave
-        };
+        let slot = GROOVE_SEGMENT_SPACINGS * spacing;
+        let (s0, j0) = (turns.floor() as i64, (along / slot).floor() as i64);
+        let mut troughs = 0.0;
+        // The segment that holds the cell most: its stripe, where across its trough the
+        // cell lies, its taper, its depth and its hollow there.
+        let mut best = (0.0, s0, 0.0, 0.0, 1.0, 0.0);
+        let draws = &noise.draws;
+        for stripe in s0 - 1..=s0 + 1 {
+            for j in j0 - 1..=j0 + 1 {
+                let key = stripe_key(stripe as f64) ^ ((j as u64) << 34) ^ ((pulse as u64) << 60);
+                let draw = |k: u64| draws.uniform(key, 60 + k);
+                if draw(0) >= presence {
+                    continue;
+                }
+                let centre = (j as f64 + draw(1)) * slot;
+                let (short, long) = GROOVE_SEGMENT_LENGTH;
+                let half = 0.5 * slot * (short + (long - short) * draw(2));
+                let t = (along - centre) / half;
+                if t.abs() >= 1.0 {
+                    continue;
+                }
+                let x = turns - (stripe as f64 + 0.75 + GROOVE_STEP * (2.0 * draw(3) - 1.0));
+                if x.abs() >= 0.5 {
+                    continue;
+                }
+                let hollow = 0.5 + 0.5 * (tau * x).cos();
+                let taper = 1.0 - t * t;
+                let depth = fault_depth(draw(4).max(1e-3));
+                troughs += (1.0 + depth) * hollow * taper;
+                if hollow * taper > best.0 {
+                    best = (hollow * taper, stripe, x, taper, depth, hollow);
+                }
+            }
+        }
+        let plateau = presence * (1.0 + GROOVE_DEPTH_MEAN) / 3.0;
+        let (_, stripe, x, taper, depth, hollow) = best;
         GrooveSet {
             turns,
-            stripe,
-            frac,
+            stripe: stripe as f64,
+            frac: (0.75 + x).rem_euclid(1.0),
             local,
             along,
-            trough: 0.5 - 0.5 * wave,
-            gate,
+            trough: hollow,
+            gate: taper,
             depth,
-            shape,
+            shape: plateau - troughs,
+            plateau,
         }
     }
 
@@ -3804,6 +3835,85 @@ mod tests {
         );
     }
 
+    /// F132: a groove is a chain of fault segments. Along one line it comes and goes, its
+    /// segments stepped across within GROOVE_STEP of a spacing, so that where one ends the
+    /// next takes up beside it; the troughs meet the plateau and each other with no seam;
+    /// and the grooves die out toward the bounding faults.
+    #[test]
+    fn a_groove_comes_and_goes() {
+        let (lane, r) = equator_lane([None, None]);
+        let noise = LaneNoise::new(&lane);
+        let spacing = lane.grooves_on(1e3);
+        let n = 800;
+        let (mut held, mut jump) = (0usize, 0.0f64);
+        let mut steps: Vec<f64> = Vec::new();
+        let mut last: Option<f64> = None;
+        for i in 0..n {
+            let (d, sm) = on_equator_lane(r, 0.0, -400e3 + 1e3 * i as f64);
+            let set = lane.set_at(
+                &sm,
+                d,
+                r,
+                spacing,
+                0.0,
+                GROOVE_SEGMENT_LEVEL,
+                0,
+                0.0,
+                &noise,
+            );
+            if set.gate > 0.1 {
+                held += 1;
+            }
+            if set.gate > 0.5 {
+                let x = if set.frac >= 0.25 {
+                    set.frac - 0.75
+                } else {
+                    set.frac + 0.25
+                };
+                steps.push(set.turns - x - set.stripe - 0.75);
+            }
+            if let Some(prev) = last {
+                jump = jump.max((set.shape - prev).abs());
+            }
+            last = Some(set.shape);
+        }
+        let share = held as f64 / n as f64;
+        assert!(
+            share > 0.3 && share < 0.97,
+            "a segment holds {share:.2} of the line"
+        );
+        assert!(
+            jump < 0.5,
+            "a jump of {jump:.2} between neighbours a seventh of a spacing apart"
+        );
+        let (lo, hi) = steps
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(a, b), &s| (a.min(s), b.max(s)));
+        assert!(
+            lo >= -GROOVE_STEP - 1e-9 && hi <= GROOVE_STEP + 1e-9 && hi - lo > 0.2,
+            "steps from {lo:.2} to {hi:.2}"
+        );
+        // The grooves' relief half a spacing in from the bounding fault, against the middle.
+        let rms = |across: f64| {
+            let (mut sum, mut m) = (0.0, 0usize);
+            for i in 0..400 {
+                let (d, sm) = on_equator_lane(r, across, -400e3 + 2e3 * i as f64);
+                let f = lane.fabric_at(&sm, d, r, 1e3, 0.0, &noise);
+                if f.cover > 0.99 {
+                    sum += f.relief * f.relief;
+                    m += 1;
+                }
+            }
+            (sum / m.max(1) as f64).sqrt()
+        };
+        let edge = lane.edge_at(0.0, 1);
+        let (near, middle) = (rms(edge - 0.5 * spacing), rms(0.0));
+        assert!(
+            near < 0.7 * middle,
+            "{near:.0} m by the fault against {middle:.0} m"
+        );
+    }
+
     /// Terrains are composed in the order they formed (F60): a younger one's ice lies
     /// over an older one's by its cover, the latest to take more than half a cell holds
     /// it, and one that only touches a cell takes its share of the old fine relief.
@@ -4127,10 +4237,13 @@ mod tests {
         // In the damage zone, thin cover fills its share of the open fractures and makes
         // no pits a grid of 250 m can draw: the walls show less by that share.
         let edge = lane.edge_at(0.0, 1);
+        // Over a band of lines, since the fractures beyond the fault are segments that
+        // come and go and step across (F132).
         let shown = |loose: f64| -> f64 {
-            (0..2000)
+            (0..2000 * 11)
                 .map(|i| {
-                    let (d, sm) = on_equator_lane(r, edge + 6.4e3, -200e3 + 200.0 * i as f64);
+                    let across = edge + 5.9e3 + 100.0 * (i % 11) as f64;
+                    let (d, sm) = on_equator_lane(r, across, -200e3 + 200.0 * (i / 11) as f64);
                     lane.fabric_at(&sm, d, r, 250.0, loose, &noise).fracture
                 })
                 .sum()

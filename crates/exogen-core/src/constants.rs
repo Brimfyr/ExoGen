@@ -2473,6 +2473,22 @@ pub const GROOVE_WANDER: f64 = 2.0;
 pub const GROOVE_WANDER_SPACINGS: f64 = 3.5;
 pub const GROOVE_SEGMENT_SPACINGS: f64 = 9.0;
 pub const GROOVE_SEGMENT_LEVEL: f64 = 0.7;
+/// A groove is a chain of fault segments (F132), not a line the length of its lane. Each
+/// slot of GROOVE_SEGMENT_SPACINGS along it holds a segment with this share, its length
+/// this range of the slot's, its throw falling to its tips as one less the square of the
+/// distance along it, and its line stepped across the groove's by up to GROOVE_STEP of a
+/// spacing, so that where one segment ends the next takes up beside it, after a gap or
+/// alongside it in a relay: the en echelon steps oblique extension makes, which Uruk
+/// Sulcus's youngest grooves show (Pappalardo et al. 1998, right-lateral transtension).
+/// The troughs cut a plateau at the mean of what they take, so the lane keeps its level,
+/// GROOVE_DEPTH_MEAN being the mean of `fault_depth`. The grooves die out over
+/// GROOVE_MARGIN_SPACINGS in from the lane's bounding faults, which the grooves inside do
+/// not cross. Stated choices.
+pub const GROOVE_SEGMENT_PRESENCE: f64 = 0.75;
+pub const GROOVE_SEGMENT_LENGTH: (f64, f64) = (0.5, 1.5);
+pub const GROOVE_STEP: f64 = 0.4;
+pub const GROOVE_DEPTH_MEAN: f64 = 1.156;
+pub const GROOVE_MARGIN_SPACINGS: f64 = 1.0;
 pub const GROOVE_ROUGH_SHARE: f64 = 0.3;
 pub const GROOVE_ROUGH_SPACINGS: f64 = 3.0;
 /// A smooth lane is smooth at a distance: its grooves have this share of a grooved

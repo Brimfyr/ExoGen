@@ -291,7 +291,9 @@ The user's note (2026-10-19): Ganymede's and Enceladus's grooves are troughs too
 
 Direction: the troughs from the faulting itself, tilt blocks and normal faults whose throw and spacing vary along their strike, segments that end, step over and link, so that a groove undulates and breaks; a Miranda preset, its coronae from its upwellings, its grooves' spacing checked against the measured.
 
-When: with the icy moons' tectonics; the user has further notes on Enceladus.
+When: with the icy moons' tectonics.
+
+Closed in part by F132, the sixty-third milestone: a groove is a chain of fault segments that come and go, step across where one gives way to the next and taper to their tips, dying out before the lane's bounding faults. Still open: Miranda, whose coronae come from upwellings (the user asked whether they should be driven by Ganymede's lanes: they should not; the outline and stress field are a corona's, as on Venus, the fabric this faulting), and the grooves' relief on Enceladus, tens of metres where its sulci's ridges stand up to 1 to 1.5 km, a check on GROOVE_RIFT_LID_SHARE and GROOVE_RELIEF_SHARE on a second body.
 
 ### T7. Tiger stripes as a set per region
 
