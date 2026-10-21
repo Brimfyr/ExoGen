@@ -571,6 +571,25 @@ impl Compression {
         self.grown = grown;
         self.epochs = epochs;
         self.read = true;
+        if std::env::var_os("EXOGEN_DEBUG_FIELD").is_some() {
+            let mut decided: Vec<f64> = self.squeeze.iter().map(|q| q.decided).collect();
+            let mut diff: Vec<f64> = self
+                .squeeze
+                .iter()
+                .map(|q| (q.stress + q.least) / 1e6)
+                .collect();
+            decided.sort_by(f64::total_cmp);
+            diff.sort_by(f64::total_cmp);
+            let q = |v: &[f64], f: f64| v[((v.len() - 1) as f64 * f) as usize];
+            eprintln!(
+                "field at {t:.2} Gyr ({epochs} epochs): decided p50 {:.2} p90 {:.2}; differential MPa p50 {:.1} p90 {:.1} p99 {:.1}",
+                q(&decided, 0.5),
+                q(&decided, 0.9),
+                q(&diff, 0.5),
+                q(&diff, 0.9),
+                q(&diff, 0.99)
+            );
+        }
     }
 
     /// The reading at the cell that holds a point.

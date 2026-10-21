@@ -31,10 +31,11 @@ use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::stress::{FieldHistory, Squeeze, shrinking};
+use crate::stages::tectonics::Systems;
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// A wrinkle ridge, kept for the sidecar and for stamping at the finishing resolution.
 #[derive(Clone, Debug)]
@@ -178,11 +179,12 @@ pub fn squeeze_plains(
 
 /// Lay out the ridges of the plains at the end of the loop from the time of the last flood
 /// at each cell and the lid's squeeze on it (F156, F157). Seeds stand as the plains are
-/// squeezed; each ridge strikes across the field's compression as far as the field decides
-/// it and runs its own way with some inertia where it does not, meandering about its
-/// course, and stops where the plains end or are no longer squeezed. The floods' loads in
-/// the field squeeze a filled basin most about its margin and turn its ridges along it, as
-/// the lava's thickness once stood for.
+/// squeezed; half run beside a ridge drawn before near where they start, the thrusts' ridges
+/// among them (`existing`), en-echelon along a span of it, as the maria's ridges stand in
+/// systems (F160); the rest strike across the field's compression as far as the field
+/// decides it and run their own way with some inertia where it does not, meandering about
+/// their course; each stops where the plains end or are no longer squeezed, or, running its
+/// own way, where it meets a ridge drawn before at least as long.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_ridges(
     grid: &CubeSphere,
@@ -191,6 +193,7 @@ pub fn plan_ridges(
     last_time: &[f32],
     squeezed: &[f64],
     squeeze: &[Squeeze],
+    existing: &[RidgeRecord],
     age_gyr: f64,
     seed: u64,
 ) -> Vec<RidgeRecord> {
@@ -219,11 +222,20 @@ pub fn plan_ridges(
     let target_length = RIDGE_LENGTH_PER_AREA * lava_area;
     let spacing = 0.5 * cell_m;
     let (l_min, l_max) = RIDGE_LENGTH;
+    let reach = |height: f64| 3.0 * RIDGE_ARCH_WIDTH * (height / RIDGE_HEIGHT).max(RIDGE_MIN_SIZE);
+    let mut systems = Systems::new(SYSTEM_INDEX_WIDTH, body_radius);
+    for r in existing {
+        systems.add(r.points.clone(), r.spacing, r.length, reach(r.height));
+    }
+    let on_plains = |p: [f64; 3]| {
+        let idx = grid.index(grid.locate(p).0);
+        is_lava_unit(units[idx]) && squeezed[idx] > 0.0
+    };
     let mut out = Vec::new();
     let mut laid = 0.0;
     let mut j = 0u64;
     while laid < target_length && j < 200_000 {
-        let draw = 8 * j;
+        let draw = 16 * j;
         // Lengths from the thrusts' power law (F155, F159), most of them short.
         let length = crate::stages::tectonics::sample_length(rng.uniform(0, draw), l_min, l_max);
         let u = rng.uniform(0, draw + 1) * total_weight;
@@ -252,57 +264,78 @@ pub fn plan_ridges(
         if rng.uniform(0, draw + 5) < 0.5 {
             heading = [-heading[0], -heading[1], -heading[2]];
         }
-        let steps = (length / spacing).ceil().max(2.0) as usize;
-        let mut points = vec![p0];
-        let mut p = p0;
-        let wobble_phase = 2.0 * std::f64::consts::PI * rng.uniform(0, draw + 6);
-        let second_phase = 2.0 * std::f64::consts::PI * rng.uniform(0, draw + 7);
-        for i in 1..=steps {
-            let idx = grid.index(grid.locate(p).0);
-            if !is_lava_unit(units[idx]) || squeezed[idx] <= 0.0 {
-                break;
+        // Half beside a ridge drawn before near where it starts (F160), as far as the
+        // squeezed plains reach along it.
+        let beside = systems.beside(
+            p0,
+            length,
+            rng.uniform(0, draw + 8),
+            rng.uniform(0, draw + 9),
+            rng.uniform(0, draw + 10),
+            rng.uniform(0, draw + 11),
+        );
+        let (points, trace_spacing) = if let Some((trace, host_spacing)) = beside {
+            let kept: Vec<[f64; 3]> = trace.into_iter().take_while(|&q| on_plains(q)).collect();
+            (kept, host_spacing)
+        } else {
+            let steps = (length / spacing).ceil().max(2.0) as usize;
+            let mut points = vec![p0];
+            let mut p = p0;
+            let wobble_phase = 2.0 * std::f64::consts::PI * rng.uniform(0, draw + 6);
+            let second_phase = 2.0 * std::f64::consts::PI * rng.uniform(0, draw + 7);
+            // Running its own way, it stops where it meets a ridge drawn before at least as long.
+            let half = SYSTEM_ARREST_SHARE * reach(ridge_height(length, 0.5));
+            for i in 1..=steps {
+                let idx = grid.index(grid.locate(p).0);
+                if !is_lava_unit(units[idx])
+                    || squeezed[idx] <= 0.0
+                    || (i > 1 && systems.meets(p, half, length))
+                {
+                    break;
+                }
+                // Toward the field's strike, as far as it decides it, with inertia.
+                let q = squeeze[idx];
+                let strike = if dot(q.strike, heading) < 0.0 {
+                    [-q.strike[0], -q.strike[1], -q.strike[2]]
+                } else {
+                    q.strike
+                };
+                let ff = q.decided * THRUST_FIELD_FOLLOWING;
+                let h = [
+                    (1.0 - ff) * heading[0] + ff * strike[0],
+                    (1.0 - ff) * heading[1] + ff * strike[1],
+                    (1.0 - ff) * heading[2] + ff * strike[2],
+                ];
+                let radial = dot(h, p);
+                heading = normalize([
+                    h[0] - radial * p[0],
+                    h[1] - radial * p[1],
+                    h[2] - radial * p[2],
+                ]);
+                // Its meander about that course: the step's direction wobbles slowly, in two
+                // harmonics, which the pull of the field does not take back.
+                let s = i as f64 * spacing / RIDGE_WOBBLE_LENGTH;
+                let (ratio, share) = RIDGE_WOBBLE_HARMONIC;
+                let wobble = RIDGE_WOBBLE_DEG.to_radians()
+                    * ((2.0 * std::f64::consts::PI * s + wobble_phase).sin()
+                        + share * (2.0 * std::f64::consts::PI * ratio * s + second_phase).sin());
+                let side = normalize(cross(p, heading));
+                let (c, w) = (wobble.cos(), wobble.sin());
+                let step = spacing / body_radius;
+                p = normalize([
+                    p[0] + step * (c * heading[0] + w * side[0]),
+                    p[1] + step * (c * heading[1] + w * side[1]),
+                    p[2] + step * (c * heading[2] + w * side[2]),
+                ]);
+                points.push(p);
             }
-            // Toward the field's strike, as far as it decides it, with inertia.
-            let q = squeeze[idx];
-            let strike = if dot(q.strike, heading) < 0.0 {
-                [-q.strike[0], -q.strike[1], -q.strike[2]]
-            } else {
-                q.strike
-            };
-            let ff = q.decided * THRUST_FIELD_FOLLOWING;
-            let h = [
-                (1.0 - ff) * heading[0] + ff * strike[0],
-                (1.0 - ff) * heading[1] + ff * strike[1],
-                (1.0 - ff) * heading[2] + ff * strike[2],
-            ];
-            let radial = dot(h, p);
-            heading = normalize([
-                h[0] - radial * p[0],
-                h[1] - radial * p[1],
-                h[2] - radial * p[2],
-            ]);
-            // Its meander about that course: the step's direction wobbles slowly, in two
-            // harmonics, which the pull of the field does not take back.
-            let s = i as f64 * spacing / RIDGE_WOBBLE_LENGTH;
-            let (ratio, share) = RIDGE_WOBBLE_HARMONIC;
-            let wobble = RIDGE_WOBBLE_DEG.to_radians()
-                * ((2.0 * std::f64::consts::PI * s + wobble_phase).sin()
-                    + share * (2.0 * std::f64::consts::PI * ratio * s + second_phase).sin());
-            let side = normalize(cross(p, heading));
-            let (c, w) = (wobble.cos(), wobble.sin());
-            let step = spacing / body_radius;
-            p = normalize([
-                p[0] + step * (c * heading[0] + w * side[0]),
-                p[1] + step * (c * heading[1] + w * side[1]),
-                p[2] + step * (c * heading[2] + w * side[2]),
-            ]);
-            points.push(p);
-        }
+            (points, spacing)
+        };
         j += 1;
         if points.len() < 4 {
             continue;
         }
-        let actual = (points.len() - 1) as f64 * spacing;
+        let actual = (points.len() - 1) as f64 * trace_spacing;
         // The ridge stands some time after the last flow it crosses.
         let last = points
             .iter()
@@ -318,9 +351,10 @@ pub fn plan_ridges(
         let crest =
             RIDGE_CREST_HEIGHT * height / RIDGE_HEIGHT * (0.6 + 0.8 * rng.uniform(0, draw + 3));
         laid += actual;
+        systems.add(points.clone(), trace_spacing, actual, reach(height));
         out.push(RidgeRecord {
             points,
-            spacing,
+            spacing: trace_spacing,
             length: actual,
             height,
             crest,
@@ -484,6 +518,7 @@ mod tests {
             &last_time,
             &squeezed,
             &squeeze,
+            &[],
             4.5,
             11,
         );
@@ -608,6 +643,7 @@ mod tests {
             &last_time,
             &squeezed,
             &squeeze,
+            &[],
             4.5,
             7,
         );

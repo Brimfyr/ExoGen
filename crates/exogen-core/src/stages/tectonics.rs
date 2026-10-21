@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use crate::constants::*;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
-use crate::geom::{azimuth_from, cross, dot, local_basis, normalize, offset};
+use crate::geom::{angle_between, azimuth_from, cross, dot, local_basis, normalize, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
@@ -33,7 +33,7 @@ use crate::stages::stress::{Compression, FieldHistory, Squeeze, shrinking};
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// A scarp that was emplaced, kept for the sidecar and for re-stamping its face at the
 /// finishing resolution.
@@ -118,7 +118,8 @@ pub(crate) fn sample_length(u: f64, l_min: f64, l_max: f64) -> f64 {
 /// It stops where the lid is no longer squeezed past its strength: where the uniform
 /// compression's excess over the strength, `drive`, Pa, and the field's compression there
 /// sum to nothing, or where the field's least compressive stress outpulls the uniform
-/// compression, `squeeze`, and the lid would slip sideways instead (F157).
+/// compression, `squeeze`, and the lid would slip sideways instead (F157), or where `stop`
+/// says it has met a thrust drawn before (F160).
 #[allow(clippy::too_many_arguments)]
 fn thrust_trace(
     start: [f64; 3],
@@ -131,6 +132,7 @@ fn thrust_trace(
     field: &dyn Fn([f64; 3]) -> Squeeze,
     drive: f64,
     squeeze: f64,
+    stop: Option<&dyn Fn([f64; 3]) -> bool>,
 ) -> Vec<[f64; 3]> {
     let n = (length / spacing).ceil().max(2.0) as usize;
     let mut points = Vec::with_capacity(n + 1);
@@ -142,7 +144,9 @@ fn thrust_trace(
     let mut base = tangent(p, heading);
     for i in 0..=n {
         let here = field(p);
-        if i > 0 && (drive + here.stress <= 0.0 || here.least > squeeze) {
+        if i > 0
+            && (drive + here.stress <= 0.0 || here.least > squeeze || stop.is_some_and(|f| f(p)))
+        {
             break;
         }
         points.push(p);
@@ -273,6 +277,157 @@ pub fn scarp_compute(
     }
 }
 
+/// A thrust or a ridge drawn before (F160): its trace, its trace's spacing, its length and
+/// its reach, the width over which it changes the ground, m.
+pub(crate) struct Drawn {
+    pub points: Vec<[f64; 3]>,
+    pub spacing: f64,
+    pub length: f64,
+    pub reach: f64,
+}
+
+/// A drawn trace's point as the systems index it: where, the half-width it holds off others,
+/// its trace's length, and which trace and which point of it.
+type Indexed = ([f64; 3], f64, f64, u32, u32);
+
+/// Where the thrusts or the ridges drawn so far run (F160), as the faults' generator keeps
+/// them (F112, F147): their traces, for the half that run beside one drawn before near where
+/// they start, en-echelon along a span of it, as thrusts gather in systems and the maria's
+/// ridges in rings broken by gaps; and their points on a coarse grid, for the arrest of the
+/// rest, which stop where they meet one drawn before at least as long, whose own slip took up
+/// the squeeze they would have run on.
+pub(crate) struct Systems {
+    coarse: CubeSphere,
+    body_radius: f64,
+    /// By coarse cell: each point, the half-width it holds off others, its trace's length,
+    /// and which trace and which point of it.
+    index: HashMap<usize, Vec<Indexed>>,
+    pub drawn: Vec<Drawn>,
+}
+
+impl Systems {
+    /// On a coarse grid with cells as wide as `widest`, m, the most a thrust and another can
+    /// stand apart and still meet.
+    pub fn new(widest: f64, body_radius: f64) -> Self {
+        let face = ((std::f64::consts::TAU * body_radius / (4.0 * widest.max(1.0))).round() as u32)
+            .clamp(8, 256);
+        Self {
+            coarse: CubeSphere::new(face),
+            body_radius,
+            index: HashMap::new(),
+            drawn: Vec::new(),
+        }
+    }
+
+    /// Note one drawn.
+    pub fn add(&mut self, points: Vec<[f64; 3]>, spacing: f64, length: f64, reach: f64) {
+        let half = SYSTEM_ARREST_SHARE * reach;
+        let which = self.drawn.len() as u32;
+        for (k, &p) in points.iter().enumerate() {
+            let c = self.coarse.index(self.coarse.locate(p).0);
+            self.index
+                .entry(c)
+                .or_default()
+                .push((p, half, length, which, k as u32));
+        }
+        self.drawn.push(Drawn {
+            points,
+            spacing,
+            length,
+            reach,
+        });
+    }
+
+    /// Whether a point of one `length` long, holding off others by `half`, meets one drawn
+    /// before at least as long.
+    pub fn meets(&self, p: [f64; 3], half: f64, length: f64) -> bool {
+        let (c, _, _) = self.coarse.locate(p);
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                let k = self.coarse.index(self.coarse.neighbor(c, di, dj));
+                if let Some(points) = self.index.get(&k)
+                    && points.iter().any(|&(q, h, l, _, _)| {
+                        l >= length && angle_between(p, q) * self.body_radius < half + h
+                    })
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// A trace beside one drawn before near `start`, or none: whether to run beside one
+    /// (`join` below RIFT_CLUSTER_PROBABILITY), which of those whose traces pass within a
+    /// coarse cell or so of the start, by length (`pick`), on which side (`side`) and how
+    /// far, SYSTEM_SPACING of its reach (`gap`), along a span as long as `length` about its
+    /// point nearest the start; walked at the host's spacing, which it returns with the
+    /// trace.
+    pub fn beside(
+        &self,
+        start: [f64; 3],
+        length: f64,
+        join: f64,
+        pick: f64,
+        side: f64,
+        gap: f64,
+    ) -> Option<(Vec<[f64; 3]>, f64)> {
+        if join >= RIFT_CLUSTER_PROBABILITY {
+            return None;
+        }
+        // Each nearby trace, with its point nearest the start.
+        let (c, _, _) = self.coarse.locate(start);
+        let mut near: Vec<(u32, u32, f64)> = Vec::new();
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                let k = self.coarse.index(self.coarse.neighbor(c, di, dj));
+                if let Some(points) = self.index.get(&k) {
+                    for &(q, _, _, which, at) in points {
+                        let d = angle_between(start, q);
+                        match near.iter_mut().find(|e| e.0 == which) {
+                            Some(e) if d < e.2 => *e = (which, at, d),
+                            Some(_) => {}
+                            None => near.push((which, at, d)),
+                        }
+                    }
+                }
+            }
+        }
+        if near.is_empty() {
+            return None;
+        }
+        near.sort_by_key(|e| e.0);
+        let total: f64 = near.iter().map(|e| self.drawn[e.0 as usize].length).sum();
+        let mut target = pick * total;
+        let mut chosen = near[near.len() - 1];
+        for e in &near {
+            let l = self.drawn[e.0 as usize].length;
+            if target < l {
+                chosen = *e;
+                break;
+            }
+            target -= l;
+        }
+        let host = &self.drawn[chosen.0 as usize];
+        let n = host.points.len();
+        if n < 3 {
+            return None;
+        }
+        let span = ((length / host.spacing).round() as usize).clamp(2, n);
+        let i0 = (chosen.1 as usize).saturating_sub(span / 2).min(n - span);
+        let (lo, hi) = SYSTEM_SPACING;
+        let distance = host.reach * (lo + (hi - lo) * gap);
+        let sign = if side < 0.5 { -1.0 } else { 1.0 };
+        let trace = crate::stages::plume::offset_trace(
+            &host.points[i0..i0 + span],
+            sign * distance,
+            self.body_radius,
+            host.spacing,
+        );
+        (trace.len() >= 3).then_some((trace, host.spacing))
+    }
+}
+
 /// Contraction scarps forming through the coarse loop.
 pub struct ContractionProcess {
     grid: CubeSphere,
@@ -297,6 +452,8 @@ pub struct ContractionProcess {
     pub records: Vec<ScarpRecord>,
     /// The thrusts beneath the plains, which fold them into ridges (F155).
     pub ridges: Vec<RidgeRecord>,
+    /// The thrusts drawn so far, for their systems (F160).
+    systems: Systems,
 }
 
 /// The longest thrust a strain makes: deeper faulting under higher stress and the linking
@@ -348,6 +505,7 @@ impl ContractionProcess {
             high: vec![0.0; cells],
             records: Vec::new(),
             ridges: Vec::new(),
+            systems: Systems::new(SYSTEM_INDEX_WIDTH, body_radius),
         })
     }
 
@@ -415,7 +573,7 @@ impl ContractionProcess {
         let half_cell = 0.5 * grid.delta();
         let mut j = 0u64;
         while budget > 0.0 && j < 200_000 {
-            let draw = 16 + j * 12;
+            let draw = 16 + j * 16;
             j += 1;
             // Where it starts: as the overstress grew, anywhere in its cell.
             let u = self.rng.uniform(step_index, draw + 1) * sum;
@@ -429,8 +587,6 @@ impl ContractionProcess {
                 half_cell * self.rng.uniform(step_index, draw + 9).sqrt(),
                 2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 2),
             );
-            // The longest thrust grows with the strain the place takes up by the present:
-            // what it has borne and the shrinking still to come.
             let reach = longest_thrust(
                 2.0 * (self.high[i] + to_come) / self.stiffness,
                 self.body_radius,
@@ -441,49 +597,70 @@ impl ContractionProcess {
                 continue;
             }
             let length = sample_length(self.rng.uniform(step_index, draw), self.l_min, reach);
-            let carried = length >= self.stamp_min;
-            let spacing = (0.5 * self.stamp_min / SCARP_LOOP_MIN_CELLS).min(length / 8.0);
-            // Its strike: across the most compressive stress as far as the field decides
-            // it, its own way otherwise.
-            let here = self.compression.reading(start);
-            let phi = 2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 3);
-            let free = [
-                east[0] * phi.cos() + north[0] * phi.sin(),
-                east[1] * phi.cos() + north[1] * phi.sin(),
-                east[2] * phi.cos() + north[2] * phi.sin(),
-            ];
-            let strike = if dot(here.strike, free) < 0.0 {
-                [-here.strike[0], -here.strike[1], -here.strike[2]]
-            } else {
-                here.strike
-            };
-            let a = here.decided;
-            let heading = [
-                a * strike[0] + (1.0 - a) * free[0],
-                a * strike[1] + (1.0 - a) * free[1],
-                a * strike[2] + (1.0 - a) * free[2],
-            ];
-            let turn =
-                SCARP_TURN_DEG.to_radians() * (2.0 * self.rng.uniform(step_index, draw + 4) - 1.0);
             let time_gyr = t0 + (t1 - t0) * self.rng.uniform(step_index, draw + 5);
-            let mut phases = [0.0; SCARP_LOBE_HARMONICS];
-            for (k, phase) in phases.iter_mut().enumerate() {
-                *phase =
-                    2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 6 + k as u64);
-            }
-            let compression = &self.compression;
-            let points = thrust_trace(
+            // Half beside a thrust drawn before near where it starts, en-echelon along a
+            // span of it, so that systems grow where the lid is squeezed (F160).
+            let beside = self.systems.beside(
                 start,
-                heading,
-                turn,
-                phases,
                 length,
-                spacing,
-                self.body_radius,
-                &|p| compression.reading(p),
-                drive,
-                shrink,
+                self.rng.uniform(step_index, draw + 10),
+                self.rng.uniform(step_index, draw + 11),
+                self.rng.uniform(step_index, draw + 13),
+                self.rng.uniform(step_index, draw + 14),
             );
+            let (points, spacing) = match beside {
+                Some(found) => found,
+                None => {
+                    let spacing = (0.5 * self.stamp_min / SCARP_LOOP_MIN_CELLS).min(length / 8.0);
+                    // Its strike: across the most compressive stress as far as the field
+                    // decides it, its own way otherwise.
+                    let here = self.compression.reading(start);
+                    let phi = 2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 3);
+                    let free = [
+                        east[0] * phi.cos() + north[0] * phi.sin(),
+                        east[1] * phi.cos() + north[1] * phi.sin(),
+                        east[2] * phi.cos() + north[2] * phi.sin(),
+                    ];
+                    let strike = if dot(here.strike, free) < 0.0 {
+                        [-here.strike[0], -here.strike[1], -here.strike[2]]
+                    } else {
+                        here.strike
+                    };
+                    let a = here.decided;
+                    let heading = [
+                        a * strike[0] + (1.0 - a) * free[0],
+                        a * strike[1] + (1.0 - a) * free[1],
+                        a * strike[2] + (1.0 - a) * free[2],
+                    ];
+                    let turn = SCARP_TURN_DEG.to_radians()
+                        * (2.0 * self.rng.uniform(step_index, draw + 4) - 1.0);
+                    let mut phases = [0.0; SCARP_LOBE_HARMONICS];
+                    for (k, phase) in phases.iter_mut().enumerate() {
+                        *phase = 2.0
+                            * std::f64::consts::PI
+                            * self.rng.uniform(step_index, draw + 6 + k as u64);
+                    }
+                    // It stops where it meets a thrust drawn before at least as long.
+                    let half = SYSTEM_ARREST_SHARE * influence_width(scarp_height(length));
+                    let systems = &self.systems;
+                    let stop = |p: [f64; 3]| systems.meets(p, half, length);
+                    let compression = &self.compression;
+                    let points = thrust_trace(
+                        start,
+                        heading,
+                        turn,
+                        phases,
+                        length,
+                        spacing,
+                        self.body_radius,
+                        &|p| compression.reading(p),
+                        drive,
+                        shrink,
+                        Some(&stop),
+                    );
+                    (points, spacing)
+                }
+            };
             // What it takes up, as far as it ran.
             let actual = (points.len() - 1) as f64 * spacing;
             let height = scarp_height(actual.max(1.0));
@@ -491,6 +668,8 @@ impl ContractionProcess {
             if actual < self.l_min || points.len() < 3 {
                 continue;
             }
+            self.systems
+                .add(points.clone(), spacing, actual, influence_width(height));
             out.push(ScarpRecord {
                 points,
                 spacing,
@@ -498,7 +677,7 @@ impl ContractionProcess {
                 height,
                 time_gyr,
                 id: (step_index << 32) | (j - 1),
-                carried: carried && actual >= self.stamp_min,
+                carried: actual >= self.stamp_min,
             });
         }
         self.carry = budget.min(0.0);
@@ -609,6 +788,7 @@ mod tests {
             &|_| Squeeze::default(),
             1e9,
             1e9,
+            None,
         );
         let rec = ScarpRecord {
             points,
@@ -692,6 +872,7 @@ mod tests {
             &field,
             0.0,
             0.0,
+            None,
         );
         // It stopped short of its length, at the squeeze's end.
         let last = *points.last().unwrap();
@@ -707,6 +888,52 @@ mod tests {
             "{}",
             dot(step, local_basis(a).0)
         );
+    }
+
+    /// Thrusts in systems (F160): one beside a thrust drawn before runs along a span of it
+    /// about where it starts, as far off as the host's reach sets, and none joins a thrust
+    /// that is not near; one running its own way meets a host at least as long within their
+    /// reaches, and not a shorter one, nor one farther off.
+    #[test]
+    fn thrusts_gather_beside_their_hosts_and_stop_at_longer_ones() {
+        let r = 2.44e6;
+        let mut systems = Systems::new(SYSTEM_INDEX_WIDTH, r);
+        let spacing = 5e3;
+        let along = |d: f64, off: f64| {
+            let (a, b) = (d / r, off / r);
+            [a.cos() * b.cos(), a.sin() * b.cos(), b.sin()]
+        };
+        // A host along the equator, 600 km long, reaching 40 km.
+        let host: Vec<[f64; 3]> = (0..=120).map(|k| along(k as f64 * spacing, 0.0)).collect();
+        systems.add(host, spacing, 600e3, 40e3);
+        let start = along(300e3, 0.0);
+        let (trace, sp) = systems
+            .beside(start, 200e3, 0.0, 0.5, 0.9, 0.5)
+            .expect("a neighbour");
+        assert_eq!(sp, spacing);
+        let (lo, hi) = SYSTEM_SPACING;
+        let expected = 40e3 * (lo + (hi - lo) * 0.5);
+        for p in &trace {
+            let off = p[2].asin() * r;
+            assert!(
+                (off - expected).abs() < 0.1 * expected,
+                "{off} vs {expected}"
+            );
+        }
+        let mid = trace[trace.len() / 2];
+        assert!(angle_between(mid, along(300e3, expected)) * r < 30e3);
+        assert!((trace.len() - 1) as f64 * spacing > 150e3);
+        // Not when the draw says to run its own way, nor beside nothing near.
+        assert!(systems.beside(start, 200e3, 0.9, 0.5, 0.9, 0.5).is_none());
+        assert!(
+            systems
+                .beside([0.0, 0.0, 1.0], 200e3, 0.0, 0.5, 0.9, 0.5)
+                .is_none()
+        );
+        // The arrest: within a quarter of their reaches of a host at least as long.
+        assert!(systems.meets(along(300e3, 12e3), 5e3, 100e3));
+        assert!(!systems.meets(along(300e3, 12e3), 5e3, 800e3));
+        assert!(!systems.meets(along(300e3, 60e3), 5e3, 100e3));
     }
 
     #[test]

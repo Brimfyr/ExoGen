@@ -1950,3 +1950,27 @@ What the maps show:
 Still to do: the ridges' and thrusts' systems and Mercury's direction (M27); the drives the field does not hold, Venus's climate first (M26); the rises' faults on the field of their time; the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25).
 
 Tests 246 (21 ignored), among them the plate's Laplacian finding a harmonic's degree on every cell; a disc of lava bending the plate as the axisymmetric plate does, and a load on a cube's corner bending it alike every way; a disc on the Moon's shell bending it as the shallow shell's Hankel solution does; and a filled basin squeezing its plains, its ridges within it, and opening graben round its margin, none before the record began. Clippy is clean and validate passes its 134 checks.
+
+## The seventy-seventh milestone: thrusts and ridges in systems
+
+M27's second half, approved after the seventy-sixth: the thrusts and the plains' ridges drawn as the faults' generator draws the lid's faults, in systems.
+
+- **F160.** Half the thrusts and the plains' ridges start beside one drawn before near where they start, en-echelon along a span of it at 0.6 to 1.6 of its reach; the rest run their own way and stop where they meet one drawn before at least as long. The plains' ridges join the thrusts' ridges as well as their own.
+
+How it went:
+
+- **Systems where the squeeze is.** The lid's faults chose their hosts by length from anywhere, as their strain was alike everywhere; a thrust's squeeze is not, so a newcomer chose its host among those near where it starts, and runs along the host's span nearest it, or a system would have grown where the lid was no longer squeezed.
+- **Mercury's field.** Looking at Mercury's scarps for their systems showed them running alike by region, before the systems as after: since the seventy-sixth, the loads of Mercury's plains and its relief on the thinner lid of their times decide most of their strikes, where before its field was too weak to decide any. It is the field's physics, the scarps following their plains' loads and margins; the north and south real Mercury's large thrusts favour at low latitudes still wants its despinning (M27).
+- **The shield's trench.** A dark ring round a shield's foot in a high-passed crop was the filter's, the blur carrying the shield's height past its foot; the ground's height round the shield falls from its flank to the plains without a dip. A shield that size would in fact sit in a moat, which the model's ground does not yet bend into (M19).
+
+What the maps show:
+
+- **Mercury:** 9,600 scarps against 6,800, shorter for their arrest, in clusters of parallel scarps; at 2048 pixels most are near the pixel, the long ones as before.
+- **Mars:** in the lava basin east of Tharsis a set of long sinuous ridges stands among fainter ones, running round Tharsis, where the ridges were even dashes; 2,900 scarps against 2,600.
+- **The Moon:** its central mare's ridges in groups of arcs with quiet ground between them, where a whorl of arcs filled it; eight scarps.
+- **Venus:** 53,000 ridges against 56,000, 87 percent of their midpoints below its mean height against 84, the 93 measured nearer.
+- **Cost:** none to speak of, the loops and the finish within a few seconds of the seventy-sixth's.
+
+Still to do: Mercury's thrusts' direction (M27); the ground's flexure under its loads, a moat about a shield (M19); the drives the field does not hold, Venus's climate first (M26); the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25).
+
+Tests 247 (21 ignored), among them a thrust beside its host running along a span of it about where it starts, as far off as the host's reach sets, none joining a thrust that is not near, and one running its own way meeting a host at least as long within their reaches but not a shorter one nor one farther off. Clippy is clean and validate passes its 134 checks.

@@ -563,6 +563,16 @@ pub const FIELD_REREAD_GROWTH: f64 = 0.02;
 /// on the rocky bodies, a fraction of the lengths the field varies over.
 pub const THRUST_FIELD_FOLLOWING: f64 = 0.35;
 pub const COMPRESSION_FACE: u32 = 64;
+/// Thrusts and ridges in systems (F160): a neighbour stands beside its host at this range
+/// of the host's reach, the width over which it changes the ground (a stated choice: the
+/// Tharsis plateau's ridges some 30 km apart, Watters 1991; lobate scarps in arrays tens of
+/// kilometres apart); one that runs its own way stops where it comes within this share of
+/// its reach and the other's of one drawn before at least as long; and the coarse grid the
+/// drawn are indexed on has cells this wide, m, more than two such shares of the widest
+/// reach.
+pub const SYSTEM_SPACING: (f64, f64) = (0.6, 1.6);
+pub const SYSTEM_ARREST_SHARE: f64 = 0.25;
+pub const SYSTEM_INDEX_WIDTH: f64 = 120e3;
 /// The volcanic loads' plate (F157): cells across the lid's flexural parameter on the grid
 /// it is solved on, within this range of faces, and the conjugate gradients' tolerance on
 /// the residual against the load and their most iterations.

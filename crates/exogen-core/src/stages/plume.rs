@@ -2474,7 +2474,7 @@ pub fn interior_faults(troughs: &[&Trough], cell: f64, body_radius: f64, seed: u
 /// between them, as a fault beside another follows its course and not each of its relay
 /// steps; walked again at `spacing`, without what would run back on itself round the inside
 /// of a turn.
-fn offset_trace(
+pub(crate) fn offset_trace(
     points: &[[f64; 3]],
     lateral: f64,
     body_radius: f64,
