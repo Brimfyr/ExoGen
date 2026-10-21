@@ -29,7 +29,7 @@ use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 7;
+pub const VERSION: u64 = 8;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -201,6 +201,7 @@ impl EpisodicProcess {
         graph: &ParamGraph,
         grid: CubeSphere,
         rises: &[crate::stages::plume::Rise],
+        limbs: &crate::stages::stress::Limbs,
     ) -> Option<Self> {
         if graph.str("interior.tectonic_regime") != "episodic_lid" {
             return None;
@@ -220,7 +221,7 @@ impl EpisodicProcess {
             .unwrap_or((event_time - TESSERA_AGE_LEAD_GYR).max(0.0));
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xE915_0D1C);
         // The coronae over the mantle's diapirs (F145).
-        let coronae = crate::stages::corona::rock_coronae(graph, &mantle, rises);
+        let coronae = crate::stages::corona::rock_coronae(graph, &mantle, rises, limbs);
         let n_domes = graph.f64("volcanism.dome_count").round() as u64;
         let mut domes = Vec::new();
         for k in 0..n_domes {

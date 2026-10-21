@@ -29,6 +29,7 @@ pub mod ridges;
 pub mod rings;
 pub mod roughness;
 pub mod strain;
+pub mod stress;
 pub mod tectonics;
 pub mod tidal;
 pub mod volcanism;
@@ -404,17 +405,31 @@ pub fn run_coarse_loop(
     let mut layers = crust.init();
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
-    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal);
+    // The ground before the rises, low-passed over the lid's flexural wavelength, for the
+    // stress its potential energy puts on the lid (F150).
+    let relief = {
+        let elastic = graph.f64("interior.elastic_thickness");
+        let wavelength =
+            stress::StressField::flexural_wavelength(elastic, graph.f64("body.gravity"));
+        let cell = grid.delta() * graph.f64("body.radius");
+        stress::Relief {
+            grid,
+            height: relaxation::low_pass(&layers.bedrock, cell, wavelength),
+        }
+    };
+    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal, Some(relief));
     let mut floods = volcanism::FloodProcess::new(
         graph,
         grid,
         &thermal,
         plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
     );
+    let no_limbs = stress::Limbs::default();
     let mut episodic = episodic::EpisodicProcess::new(
         graph,
         grid,
         plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
+        plume.as_ref().map_or(&no_limbs, |p| &p.limbs),
     );
     let mut io = io::IoProcess::new(graph, grid);
     // Io's lava erupts as floods, from its paterae (F117).

@@ -291,7 +291,7 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
     };
     // A fault breaks when the lid has stretched by as much as the faults before it took up,
     // so that the older ones are drawn first and stop the younger.
-    let timing = |_u: f64, share: f64| strain.extension_time(share);
+    let timing = |_u: f64, share: f64, _draw: u64| strain.extension_time(share);
     let window = |t: f64, _carried: bool| (t, t);
     let drawn = |t: &Trough| {
         let mut index = index.borrow_mut();

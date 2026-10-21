@@ -2329,8 +2329,12 @@ pub fn volcanism_corona_count(c: &Ctx) -> Value {
     ) {
         let mantle = mantle_history(c);
         let thermal = crate::thermal::ThermalHistory::new(&thermal_inputs(c));
+        // The plumes and the upwelling limbs between them, as the loop makes them (F150,
+        // F151).
         let rises = crate::stages::plume::place_rises(c, &thermal).unwrap_or_default();
-        return (crate::stages::corona::rock_coronae(c, &mantle, &rises).len() as f64).into();
+        let limbs = crate::stages::stress::Limbs::between(&rises, c.f64("body.radius"));
+        return (crate::stages::corona::rock_coronae(c, &mantle, &rises, &limbs).len() as f64)
+            .into();
     }
     // One over each upwelling of an ice mantle's convection, where the lid breaks (F133).
     match ice_corona_episode(c) {

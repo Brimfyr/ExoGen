@@ -364,6 +364,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | lid compliance (density over stiffness against rock's) | Charon's chasmata, at most 0.016 of their length deep (F147), between the stiffness alone and the frictional stress at a depth | a fault's slip per length from its stress drop and the rock's stiffness, checked on Pluto's and the Moon's graben |
 | ICE_HP_FREEZING_CHANGE | between ice III's 2.6 percent at 350 MPa and ice II's 6 to 8 (F147) | each high-pressure ice's density against the water's at the ocean floor's pressure and temperature |
 | LID_LAYER_MEDIAN_SHARE, LID_LAYER_SPREAD | a lid's faults cut to half the deepest at the median, by 0.5 in the logarithm (F149): Charon's chasmata 10 to 50 km wide, Serenity the widest; Pluto's fossae a few km to 20 | the depths faults nucleate at and grow to within the brittle layer, from the layer's strength with depth |
+| RISE_MEMBRANE_SHARE | a rise's crest tension the membrane stress of its uplift on the sphere, E h / R (F150; Turcotte et al. 1981) | the thin shell solved for the rise's load and support (the direction of the canyons' audit row) |
+| UPWELLING_LIMB_REACH, UPWELLING_LIMB_TENSION, UPWELLING_LIMB_WIDTH | Venus's three rises joined by rifts along their upwelling limbs (F150): plumes within four radii together on one upwelling, pulled apart by 0.8 of the lesser crest's tension over a rise radius | the mantle's convection pattern, its upwelling sheets and the traction they put on the lid |
+| the GPE margin's plane strain over the flexural wavelength | a stated choice (F150): a plateau's margin spreads down its slope, the stress along the contour Poisson's share of the stress across it | the membrane stress of the relief solved on the shell (Banerdt 1986) |
 | FAULT_FLANK_SHARE, GRABEN_TERRACE_TILT_DEG, GRABEN_HALF_SHARE, GRABEN_THROW_ROUGHNESS | stated choices (F149): a footwall a tenth of its throw up, terraces back-tilted 3 degrees (Charon's blocks 5 to 6), two graben in five half-graben, the throw rough by 0.2 along the fault | the footwall's flexure from the elastic lid; the blocks' rotation from the faults' dips and the extension; the floor's tilt from the master fault's share |
 | GROOVE_END_TAPER_WIDTHS, GROOVE_LANE_TAPER_POWER | a lane's end in the old ground closes linearly over three widths (F142), as a fault's displacement falls to its tip; Ganymede's lanes pinch out in long points | the taper from the rift's own mechanics, the strain falling along the lane's last reach |
 | DEBRIS_FRAGMENTS, DEBRIS_BREAK_KM, DEBRIS_SLOPES, DEBRIS_ECCENTRICITY | Mimas's craters beyond the comets' (F136) | checked on Tethys and Dione, within 1.4 times; the scaling with the square of the impact speed, which spares Miranda, is a stated choice with no derivation: standard ejecta scaling makes the mass an impact of a given crater throws out of the moon independent of its speed |
@@ -471,7 +474,7 @@ Closed in part by F104, the thirty-seventh milestone: the body turns until its a
 
 Venus's plains are cut by belts of ridges and fractures and by rift zones (chasmata) that join its highlands and coronae into a network, the bright web of the radar maps; coronae string along the rifts. ExoGen's Venus has none: 506 coronae stand alone as thin rings, the tesserae are plateaus of noise, and the plains between are smooth under their wrinkle ridges.
 
-Closed in part by F145 and F146, the seventy-first milestone: the coronae come of the mantle's diapirs, melt pockets under a lid their heads thin, gathered about the rises' upwellings, their profiles the lid's flexure under their loads. Still open: the rifts, along which 68 percent of Venus's coronae lie (Stofan et al. 1992) and the lid is thin (Smrekar et al. 2023); once they exist their thinning of the lid will string the coronae along them, by the same rule. The novae are still a random share of the coronae, and Mercury takes three faint domes in its last half gigayear where its mantle model still melts.
+Closed in part by F145 and F146, the seventy-first milestone: the coronae come of the mantle's diapirs, melt pockets under a lid their heads thin, gathered about the rises' upwellings, their profiles the lid's flexure under their loads. Closed further by F150 and F151, the seventy-third: the rifts join the rises along the upwelling limbs between them, 23,000 km of them, and the coronae are drawn along the limbs and the rift zones, two in five on the limbs. Still open: the share on the rifts themselves (M25); the deformation belts of ridges and the wrinkle ridges in the lows, which the same field's compression will place (M72c); the novae still a random share of the coronae; Mercury's three faint domes.
 
 Direction: the lid's stress from the mantle's convection, rifting where it pulls apart and folding where it pushes, coronae where plume heads meet it, as annuli of fractures and ridges round a dome or sag, and tesserae as the oldest crust deformed in the belts.
 
@@ -594,6 +597,14 @@ Closed in part by F149 (the seventy-second milestone, revised): a graben's walls
 Direction: the fault fabric from the throw's partition on a listric master fault over the lid's ductile base, with rollover and tilted blocks, as Mars's canyons and Noctis Labyrinthus need; the relief's own stress, stretching the highs and compressing the lows (Bilotti and Suppe 1999), to give the strain a direction.
 
 When: the next milestone, with Venus's rifts and Mars's canyons.
+
+### M25. Venus's coronae on its rifts
+
+Two thirds of Venus's coronae lie along its chasmata (Stofan et al. 1992). With the limbs drawing the diapirs (F151), two in five lie on the limbs and a fourteenth within 150 km of a rift. Two things hold the share down. The rifts are a few lines in a belt a rise wide, so a corona on the limb is seldom at a rift; and a diapir makes no corona where the mantle about it melts (F145), while the real coronae crowd the hot upwelling region, the BAT, where the model's mantle is hottest. Thinning the lid over the rifts, the measured state (Smrekar et al. 2023), made it worse under the melting rule, and drawing the diapirs toward the rift zones moved them into the hot ground about the rises, where the loop's count fell by three quarters.
+
+Direction: the melting rule itself, which should give a corona where a rift focuses the upwelling's melt rather than none where the region melts; and the limbs' own heat in the mantle, which would place the diapirs' births along them without a draw.
+
+When: with the corona process's next revision.
 
 ### M24. The lid's faults are not in the loop's history
 

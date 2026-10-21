@@ -32,6 +32,7 @@ use crate::params::{ParamGraph, Reads};
 use crate::rng::Rng;
 use crate::stages::ice_shell::{LaneFabric, LaneHit, fault_set, flexural_parameter};
 use crate::stages::plume::Rise;
+use crate::stages::stress::Limbs;
 use crate::thermal::ThermalHistory;
 
 /// A convecting layer under a lid at a time (F133).
@@ -811,6 +812,9 @@ pub fn ice_coronae(graph: &ParamGraph, thermal: &ThermalHistory) -> Vec<Corona> 
 struct RockLid<'a> {
     mantle: &'a MantleHistory,
     rises: &'a [Rise],
+    /// The upwelling limbs between the plumes, along which the diapirs are drawn as toward
+    /// the plumes (F151).
+    limbs: &'a Limbs,
     body_radius: f64,
     gravity: f64,
     /// The mantle's depth, m, the width of a large upwelling's convection cell.
@@ -858,17 +862,20 @@ impl RockLid<'_> {
     }
 
     /// The weight a place gets as a diapir's birthplace at `t`: more within the convection
-    /// cells of the large upwellings, toward which the diapirs are drawn.
+    /// cells of the large upwellings and along the limbs between them, toward which the
+    /// diapirs are drawn (F151).
     fn draw_weight(&self, d: [f64; 3], t: f64) -> f64 {
+        let limb = self.limbs.pull(self.rises, d, t, self.body_radius).0;
         1.0 + CORONA_UPWELLING_DRAW
-            * self
-                .rises
-                .iter()
-                .map(|r| {
-                    let x = angle_between(d, r.center) * self.body_radius / self.depth;
-                    ramp(r, t) * (-x * x).exp()
-                })
-                .sum::<f64>()
+            * (limb
+                + self
+                    .rises
+                    .iter()
+                    .map(|r| {
+                        let x = angle_between(d, r.center) * self.body_radius / self.depth;
+                        ramp(r, t) * (-x * x).exp()
+                    })
+                    .sum::<f64>())
     }
 }
 
@@ -887,7 +894,12 @@ fn ramp(r: &Rise, t: f64) -> f64 {
 /// intrudes and erupts loads the lid, which bends under that and under the head's own lift
 /// while the head stays warm, and the corona stands where the bending breaks the lid in an
 /// annulus.
-pub fn rock_coronae<P: Reads>(graph: &P, mantle: &MantleHistory, rises: &[Rise]) -> Vec<Corona> {
+pub fn rock_coronae<P: Reads>(
+    graph: &P,
+    mantle: &MantleHistory,
+    rises: &[Rise],
+    limbs: &Limbs,
+) -> Vec<Corona> {
     let regime = graph.text("interior.tectonic_regime");
     if !matches!(regime, "stagnant_lid" | "episodic_lid") || mantle.times.is_empty() {
         return Vec::new();
@@ -934,6 +946,7 @@ pub fn rock_coronae<P: Reads>(graph: &P, mantle: &MantleHistory, rises: &[Rise])
     let lid = RockLid {
         mantle,
         rises,
+        limbs,
         body_radius,
         gravity,
         depth: crate::mantle::mantle_depth(
@@ -1401,7 +1414,7 @@ mod tests {
             let thermal = crate::thermal::ThermalHistory::from_graph(&g);
             let rises = crate::stages::plume::place_rises(&g, &thermal).unwrap_or_default();
             let t0 = std::time::Instant::now();
-            let coronae = rock_coronae(&g, &mantle, &rises);
+            let coronae = rock_coronae(&g, &mantle, &rises, &Limbs::default());
             let r = g.f64("body.radius");
             let age = g.f64("body.age");
             println!(
@@ -1512,7 +1525,10 @@ mod tests {
             let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
             let thermal = crate::thermal::ThermalHistory::from_graph(&g);
             let rises = crate::stages::plume::place_rises(&g, &thermal).unwrap_or_default();
-            (rock_coronae(&g, &mantle, &rises), g.f64("body.age"))
+            (
+                rock_coronae(&g, &mantle, &rises, &Limbs::default()),
+                g.f64("body.age"),
+            )
         };
         let (venus, age) = coronae("Venus");
         assert!((400..1200).contains(&venus.len()), "{}", venus.len());
@@ -1538,13 +1554,42 @@ mod tests {
 
     /// F146: a corona's head lifts its pocket while it is fed and the lift fades after; the
     /// lava it erupted floods its floor no higher than its rim's crest.
+    /// Venus's diapirs are drawn along the upwelling limbs between its plumes as toward the
+    /// plumes (F151), so a good share of its coronae lie on the limbs, where its rifts run;
+    /// their number stays Venus's.
+    #[test]
+    fn venus_s_coronae_gather_along_its_limbs() {
+        let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&g);
+        let r = g.f64("body.radius");
+        let age = g.f64("body.age");
+        let p = crate::stages::plume::PlumeProcess::new(&g, CubeSphere::new(256), &thermal, None)
+            .unwrap();
+        let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
+        let coronae = rock_coronae(&g, &mantle, &p.rises, &p.limbs);
+        assert!(
+            coronae.len() >= 400 && coronae.len() <= 1100,
+            "{}",
+            coronae.len()
+        );
+        let on_limb = coronae
+            .iter()
+            .filter(|c| p.limbs.pull(&p.rises, c.center, age, r).0 > 0.5)
+            .count();
+        assert!(
+            on_limb as f64 >= 0.25 * coronae.len() as f64,
+            "{on_limb} of {} on the limbs",
+            coronae.len()
+        );
+    }
+
     #[test]
     fn a_rock_corona_stands_on_its_loads() {
         let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
         let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
         let thermal = crate::thermal::ThermalHistory::from_graph(&g);
         let rises = crate::stages::plume::place_rises(&g, &thermal).unwrap_or_default();
-        let coronae = rock_coronae(&g, &mantle, &rises);
+        let coronae = rock_coronae(&g, &mantle, &rises, &Limbs::default());
         let mut lifted = 0;
         for c in &coronae {
             let h = c.head.as_ref().unwrap();

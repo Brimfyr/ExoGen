@@ -530,6 +530,21 @@ pub const RIFT_LOOP_WIDTH_CELLS: f64 = 2.0;
 /// as the gigayear it was carved over before; set again on its own mantle's history, F122).
 pub const RIFT_CARVING_MELT: f64 = 2_400.0;
 pub const RIFT_MAX_FAULTS: u64 = 20_000;
+/// The lid's stress field (F150). A rise's tension at its crest is this share of the
+/// membrane stress of its uplift on the sphere, E h / R (Turcotte et al. 1981: Tharsis's
+/// membrane stresses of hundreds of MPa; a stated share). Two plumes closer than this many
+/// of their radii together sit on one upwelling, which pulls the lid apart across the
+/// great circle between them by this share of the lesser crest's tension, over this many
+/// rise radii to either side (stated choices: Venus's Beta, Atla and Themis joined by
+/// Devana, Hecate and Parga Chasmata, rifts 150 to 250 km wide in belts of fractures
+/// hundreds of km across; Stofan et al. 1992). The lid under a rift is thinned by this
+/// share within the rift's width (a stated choice: the elastic lid at Venus's coronae, 11
+/// km against some 30 regionally, Smrekar et al. 2023, most of them along the chasmata).
+pub const RISE_MEMBRANE_SHARE: f64 = 1.0;
+pub const UPWELLING_LIMB_REACH: f64 = 4.0;
+pub const UPWELLING_LIMB_TENSION: f64 = 0.8;
+pub const UPWELLING_LIMB_WIDTH: f64 = 1.0;
+pub const RIFT_LID_THINNING: f64 = 0.5;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
 /// Trough traces wander by this much over this length; their walls take this fraction

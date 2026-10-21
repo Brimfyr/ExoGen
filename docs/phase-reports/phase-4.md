@@ -1846,3 +1846,27 @@ What the maps show: Charon's chasmata in belts of narrow troughs with stepped wa
 Still to do: the terraces' places from the throw's partition on a listric master fault (audit M23, T1); the belts' tilted-block fabric between the chasmata; the lid's faults in the loop's history (M24).
 
 Tests 232 (17 ignored), among them a graben dropping the old ground as its floor with its walls scarps at the angle of repose, raised rims, a terrace along it and only its faces new ground. Clippy is clean and validate passes its 134 checks.
+
+## The seventy-third milestone: the lid's stress field and Venus's rifts
+
+The first stage of M72b, in the order the user set after the seventy-second: the relief's stress and Venus's rifts, with the coronae strung along them.
+
+- **F150.** One stress field in pascals on every rock lid: the rises' stresses scaled by the membrane stress of their uplift, the upwelling between neighbouring plumes pulling the lid apart along the great circle joining them, and the potential energy of the relief, a high in tension and a low in compression, each spreading down its margin. Every fault starts where the field passes the brittle layer's yield and runs as long as it does; a lid-wide population spends the limbs' extension, so rifts run from rise to rise.
+- **F151.** The diapirs are drawn along the limbs as toward the plumes, so Venus's coronae gather along its rift belts.
+
+How it went:
+
+- **Magnitudes.** The rises' field was dimensionless, in units of each crest's tension, with faults starting at a twentieth of it; to add the relief's stress in pascals the crest needed a value. The dome's bending gives a few MPa, far below the 23 MPa that breaks Venus's layer; the membrane stress of the uplift on the sphere, E h / R, gives 50 MPa on Venus and 250 on Mars, which with the yield reproduces the old reach of the rise's faults, about a radius and a half, with no new choice beyond the share of 1.
+- **What joins the rises.** The plumes' far fields fall as the inverse square of the distance and are a few MPa between rises four radii apart, and the relief's stress between them is nothing; no honest magnitude joins Venus's rises by the plumes alone. The rises sit on the mantle's upwellings, and Venus's three rifts join its three rises along the BAT upwelling; so two plumes close enough sit on one upwelling limb, which pulls the lid apart across it. At half the lesser crest's tension the limb sat just under the yield at its midpoint and the rifts stopped at the rises' feet, where the domes' bending squeezes the lid; at 0.8 they cross, and the longest runs 3,600 km.
+- **The stubs.** A sixth of Venus's faults were a single step long: neighbours drawn beside a short host whose course, moved aside by more than the host's turns, collapsed to a step; they start on their own now. A guard that drew a fault's start again where the field barely passed the yield changed nothing and was dropped.
+- **The coronae.** Drawn toward the limbs, two in five of Venus's coronae lie on them, and a third within 150 km of the limbs' fracture belts, but a fourteenth within 150 km of a rift against the real two thirds along chasmata. Thinning the lid over the rifts, as measured, made it worse: a thinner lid puts the mantle at its base above the solidus, and the melting rule then makes no corona. Drawing the diapirs toward the rift zones raised the share near rifts in the derivation and collapsed the loop's count to 167, the births moved into the hot ground about the rises, so it was dropped; the derivation and the loop agree again. The shortfall is the melting rule's and the limbs' lack of heat (audit M25), not this stage's to fix.
+- **Mars.** Its one plume has no limb, and its population is as it was in count and reach; by the draws its long canyons now cluster at the other end of its rise's axis, and one trough follows the dichotomy's margin south-east of Tharsis, where the relief's stress turns the rise's far field along the contour: the physics, kept.
+
+What the maps show:
+
+- **Venus:** rifts running from one rise to the next along its two limbs, en echelon, 26 km wide at the median and up to 105, in belts of thousands of graben; coronae along the belts and about the rises.
+- **Mars:** its canyons regrouped along its rise's axis; the dichotomy-margin trough.
+
+Still to do: the chasma fabric from a listric master fault's throw partition (M23) with Valles Marineris and Noctis Labyrinthus; compression on the same field, Mercury's scarps and the wrinkle ridges in the lows (M72c); the coronae's share on the rifts (M25); the lid's faults in the loop's history (M24); the icy lids' faults on the same field, which the relief's stress hardly moves at their gravity.
+
+Tests 235 (18 ignored), among them the relief's field, a high in tension spreading down its margin and a low in compression, Venus's rifts running from rise to rise along its limbs with no fault a step long, and Venus's coronae gathering along its limbs at their number. Clippy is clean and validate passes its 134 checks.
