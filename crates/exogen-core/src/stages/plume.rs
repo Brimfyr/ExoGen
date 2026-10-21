@@ -31,10 +31,11 @@ use crate::params::Reads;
 use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::stages::stress::{Limbs, Relief, StressField};
+use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 25;
+pub const VERSION: u64 = 26;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -769,6 +770,133 @@ pub fn shield_flows(
         .collect()
 }
 
+/// The share of a shield's lava that runs past its foot, and the share of that its rift
+/// zone's eruptions bring (F163). Its eruptions are F101's: fissures round its summit
+/// caldera, on its rift zone low on the flank and anywhere on the upper flanks, by their
+/// shares, with their vents' places and their run-outs; each a flow field whose area, its
+/// run-out squared, is its volume, spread evenly along its run as its breakouts are drawn by
+/// the lengths of the lobes laid, so that what lies past the foot is the run less the vent's
+/// way to the foot, over the run (a stated choice). `along` is the way from the summit to
+/// the foot along the rift zone, in the shield's radii; elsewhere the foot is a radius away.
+pub fn overflow_share(along: f64) -> (f64, f64) {
+    let n = 48;
+    let at = |i: usize| (i as f64 + 0.5) / n as f64;
+    // A class's mean volume and mean volume past the foot, from its vents' distances from
+    // the summit and the way to its foot, in radii, and its run-outs' range.
+    let class = |vents: &[f64], foot: f64, (lo, hi): (f64, f64)| {
+        let (mut all, mut past) = (0.0, 0.0);
+        for &rho in vents {
+            for j in 0..n {
+                let run = lo * (hi / lo).powf(at(j));
+                let volume = run * run;
+                all += volume;
+                past += volume * ((run - (foot - rho)) / run).max(0.0);
+            }
+        }
+        let count = (vents.len() * n) as f64;
+        (all / count, past / count)
+    };
+    let (c_lo, c_hi) = CALDERA_RADIUS;
+    let (m_lo, m_hi) = SHIELD_RIM_VENTS;
+    let summit: Vec<f64> = (0..n * n)
+        .map(|k| c_lo * (c_hi / c_lo).powf(at(k / n)) * (m_lo + (m_hi - m_lo) * at(k % n)))
+        .collect();
+    let (r_lo, r_hi) = SHIELD_RIFT_VENTS;
+    let rift: Vec<f64> = (0..n)
+        .map(|i| along * (r_lo + (r_hi - r_lo) * at(i)))
+        .collect();
+    let (f_lo, f_hi) = SHIELD_FLANK_VENTS;
+    let flank: Vec<f64> = (0..n).map(|i| f_lo + (f_hi - f_lo) * at(i)).collect();
+    let shares = [
+        SHIELD_SUMMIT_VENT_SHARE,
+        (1.0 - SHIELD_SUMMIT_VENT_SHARE) * SHIELD_RIFT_VENT_SHARE,
+        (1.0 - SHIELD_SUMMIT_VENT_SHARE) * (1.0 - SHIELD_RIFT_VENT_SHARE),
+    ];
+    let classes = [
+        class(&summit, 1.0, SHIELD_FISSURE_FLOW_LENGTH),
+        class(&rift, along, SHIELD_RIFT_FLOW_LENGTH),
+        class(&flank, 1.0, SHIELD_FISSURE_FLOW_LENGTH),
+    ];
+    let all: f64 = shares.iter().zip(&classes).map(|(s, c)| s * c.0).sum();
+    let past: f64 = shares.iter().zip(&classes).map(|(s, c)| s * c.1).sum();
+    let rift_share = if past > 0.0 {
+        shares[1] * classes[1].1 / past
+    } else {
+        1.0
+    };
+    (past / all.max(f64::MIN_POSITIVE), rift_share)
+}
+
+/// Where a shield's lava past its foot starts to run on down (F163): an eruption whose flow
+/// carries lava beyond the foot, its rift zone's if `rift`, drawn as F101 draws them and
+/// kept by the lava it carries there, and a point along its run beyond the foot, over which
+/// that lava lies evenly; never on another edifice, whose flanks the lava would not climb.
+/// The azimuth from the summit, rad from east towards north, and the distance, m; the foot
+/// off the rift zone's end where no draw is kept.
+fn past_the_foot(
+    shields: &[Shield],
+    si: usize,
+    rift: bool,
+    body_radius: f64,
+    rng: &Rng,
+    index: u64,
+) -> (f64, f64) {
+    let shield = &shields[si];
+    let (east, north) = local_basis(shield.center);
+    let (vents, (l_lo, l_hi)) = if rift {
+        (SHIELD_RIFT_VENTS, SHIELD_RIFT_FLOW_LENGTH)
+    } else {
+        (SHIELD_FLANK_VENTS, SHIELD_FISSURE_FLOW_LENGTH)
+    };
+    // The most lava a flow can carry past the foot: its run squared, all of it beyond.
+    let most = (l_hi * shield.radius).powi(2);
+    for attempt in 0..64u64 {
+        let k = 8 * attempt;
+        let phi = if rift {
+            shield.rift
+                + if rng.uniform(index, k) < 0.5 {
+                    0.0
+                } else {
+                    std::f64::consts::PI
+                }
+                + SHIELD_RIFT_SPREAD * (2.0 * rng.uniform(index, k + 1) - 1.0)
+        } else {
+            std::f64::consts::TAU * rng.uniform(index, k + 1)
+        };
+        let foot = shield.radius_toward(phi);
+        let vent = foot * (vents.0 + (vents.1 - vents.0) * rng.uniform(index, k + 2));
+        let run = shield.radius * l_lo * (l_hi / l_lo).powf(rng.uniform(index, k + 3));
+        let beyond = vent + run - foot;
+        if beyond <= 0.0 || rng.uniform(index, k + 4) * most > run * beyond {
+            continue;
+        }
+        let distance = foot + beyond * rng.uniform(index, k + 5);
+        let at = offset(shield.center, east, north, distance / body_radius, phi);
+        let climbs = shields.iter().enumerate().any(|(oi, o)| {
+            let (r, a) = o.polar(at, body_radius);
+            oi != si && o.reach_share(r, a) < 1.0
+        });
+        if !climbs {
+            return (phi, distance);
+        }
+    }
+    (shield.rift, shield.radius_toward(shield.rift))
+}
+
+/// The way from a shield's summit to its foot along its rift zone, in its radii (F163): the
+/// mean over its rift eruptions' spread either side of the summit.
+fn rift_reach(shield: &Shield) -> f64 {
+    let n = 8;
+    let mut sum = 0.0;
+    for side in [0.0, std::f64::consts::PI] {
+        for i in 0..n {
+            let u = (i as f64 + 0.5) / n as f64;
+            sum += shield.radius_toward(shield.rift + side + SHIELD_RIFT_SPREAD * (2.0 * u - 1.0));
+        }
+    }
+    sum / (2 * n) as f64 / shield.radius
+}
+
 /// Height of a shield's edifice at a point, fully grown, with or without the calderas
 /// cut into the summit. The loop builds the edifice without them, since they are too
 /// small for its grid; the finishing pass cuts them.
@@ -1202,6 +1330,11 @@ pub struct PlumeProcess {
     carved: Vec<f32>,
     /// The share of that the shields' lava has filled since, m.
     filled: Vec<f32>,
+    /// The share of each shield's lava that runs past its foot and the share of that its
+    /// rift zone brings (F163), and the lava each has sent past its foot but not yet
+    /// erupted, m³.
+    overflow: Vec<(f64, f64)>,
+    foot: Vec<f64>,
     stamper: Stamper,
 }
 
@@ -1590,6 +1723,11 @@ impl PlumeProcess {
             }
         }
         let limbs = field.limbs.clone();
+        let overflow: Vec<(f64, f64)> = shields
+            .iter()
+            .map(|s| overflow_share(rift_reach(s)))
+            .collect();
+        let foot = vec![0.0; shields.len()];
         Some(Self {
             grid,
             body_radius,
@@ -1604,6 +1742,8 @@ impl PlumeProcess {
             shield_built: vec![0.0; grid.cell_count()],
             carved: vec![0.0; grid.cell_count()],
             filled: vec![0.0; grid.cell_count()],
+            overflow,
+            foot,
             stamper: Stamper::new(&grid),
         })
     }
@@ -1654,6 +1794,53 @@ impl PlumeProcess {
         out
     }
 
+    /// The eruptions that carry the lava the shields' flows sent past their feet in a step
+    /// (F163): F101's eruptions run out beyond the foot by their share, nearly all off the
+    /// ends of the rift zone, and their lava runs on down from where their flows bring it
+    /// past the foot as a flood's does, ponding in the moat the loads bend the ground into
+    /// and spilling past it. Each is a flood's size, poured out at a shield's rates, its lava
+    /// the shield's own; what is too little for one waits for the next step.
+    pub fn foot_eruptions(&mut self, t0: f64, t1: f64) -> Vec<FloodEvent> {
+        let grid = self.grid;
+        let body_radius = self.body_radius;
+        let (lo, hi) = VOLCANISM_EVENT_VOLUME;
+        let (e_lo, e_hi) = SHIELD_EFFUSION_RATE;
+        let key = crate::rng::hash_words(&[t0.to_bits(), t1.to_bits()]);
+        let mut out = Vec::new();
+        for (si, shield) in self.shields.iter().enumerate() {
+            let rng = Rng::new(shield.id ^ 0xF007_E5A7_0000_0000);
+            let (east, north) = local_basis(shield.center);
+            let mut j = 0u64;
+            while self.foot[si] >= lo && j < 100_000 {
+                let draw = 8 * j;
+                let volume = (lo * (hi / lo).powf(rng.uniform(key, draw))).min(self.foot[si]);
+                let rift = rng.uniform(key, draw + 1) < self.overflow[si].1;
+                let (phi, distance) = past_the_foot(
+                    &self.shields,
+                    si,
+                    rift,
+                    body_radius,
+                    &rng,
+                    crate::rng::hash_words(&[key, j, 0xF00D]),
+                );
+                let at = offset(shield.center, east, north, distance / body_radius, phi);
+                let time_gyr = t0 + (t1 - t0) * rng.uniform(key, draw + 4);
+                let id = crate::rng::hash_words(&[shield.id, key, j, 0xF007]);
+                out.push(FloodEvent {
+                    vent: grid.index(grid.locate(at).0),
+                    volume,
+                    time_gyr,
+                    id,
+                    effusion: e_lo * (e_hi / e_lo).powf(rng.uniform(key, draw + 5)),
+                    composition: Some(shield_composition(shield, time_gyr, Some(id >> 33))),
+                });
+                self.foot[si] -= volume;
+                j += 1;
+            }
+        }
+        out
+    }
+
     /// Dome uplift, shield growth and canyon carving between two times.
     pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64) {
         let grid = self.grid;
@@ -1677,11 +1864,14 @@ impl PlumeProcess {
         // Shields: flows pile up, renewing the surface where they add more than a veneer,
         // and burying what they flow over (F115).
         let t_mid = 0.5 * (t0 + t1);
-        for shield in &self.shields {
+        for (si, shield) in self.shields.iter().enumerate() {
             let dp = shield_progress(t1, shield) - shield_progress(t0, shield);
             if dp <= 0.0 {
                 continue;
             }
+            // The lava the edifice grows by, m³, and so what its flows sent past its foot
+            // (F163).
+            let mut grown = 0.0;
             self.stamper
                 .gather(&grid, body_radius, shield.center, shield.extent());
             let bedrock = layers.bedrock.as_mut_slice();
@@ -1729,6 +1919,7 @@ impl PlumeProcess {
                 self.filled[idx] += fill;
                 bedrock[idx] += (dh - drowned) as f32 + fill;
                 self.shield_built[idx] += dh as f32;
+                grown += dh * grid.cell_area(grid.cell(idx)) * body_radius * body_radius;
                 if dh > SHIELD_RENEWAL_THICKNESS {
                     ages[idx] = renewed as f32;
                     units[idx] = UNIT_LAVA;
@@ -1737,6 +1928,8 @@ impl PlumeProcess {
                     cover[idx] = 1.0;
                 }
             }
+            let share = self.overflow[si].0;
+            self.foot[si] += grown * share / (1.0 - share).max(1e-9);
         }
         if std::env::var_os("EXOGEN_DEBUG").is_some()
             && let (Some(rise), Some(shield)) = (self.rises.first(), self.shields.first())
@@ -3701,6 +3894,91 @@ mod tests {
             }
         }
         assert!(most >= 4, "the most collapses on a summit was {most}");
+    }
+
+    /// A shield's flows carry a share of its lava past its foot (F163), nearly all of it
+    /// from its rift zone, as F101 draws them: the summit's fissures never reach the foot,
+    /// and the farther the rift zone runs to its foot the less passes it.
+    #[test]
+    fn a_shield_s_rift_flows_carry_its_lava_past_its_foot() {
+        let (share, rift) = overflow_share(1.0);
+        assert!((0.3..0.5).contains(&share), "{share}");
+        assert!(rift > 0.99, "{rift}");
+        let (longer, _) = overflow_share(1.2);
+        assert!(longer < 0.9 * share, "{longer} {share}");
+    }
+
+    /// A shield erupts what its flows send past its foot (F163): through Mars's history the
+    /// eruptions past its shields' feet carry their shares of what the edifices hold, each
+    /// within its step, starting beyond a shield's foot within a flow's run, nearly all off
+    /// the ends of its rift zone, on no edifice, and with the shield's own lava.
+    #[test]
+    fn a_shield_erupts_what_its_flows_send_past_its_foot() {
+        use std::f64::consts::{PI, TAU};
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let grid = CubeSphere::new(128);
+        let r = g.f64("body.radius");
+        let age = g.f64("body.age");
+        let cell = grid.delta() * r;
+        let thermal = ThermalHistory::from_graph(&g);
+        let mut p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+        let mut layers = LayerSet::new(grid);
+        let steps = 90;
+        let mut eruptions = Vec::new();
+        for k in 0..steps {
+            let (t0, t1) = (
+                age * k as f64 / steps as f64,
+                age * (k + 1) as f64 / steps as f64,
+            );
+            p.step(&mut layers, t0, t1);
+            for e in p.foot_eruptions(t0, t1) {
+                assert!(e.time_gyr >= t0 && e.time_gyr <= t1);
+                assert!(e.composition.is_some());
+                eruptions.push(e);
+            }
+        }
+        assert!(eruptions.len() > 100, "{}", eruptions.len());
+        let held: f64 = p
+            .shield_built()
+            .iter()
+            .enumerate()
+            .map(|(k, &h)| h as f64 * grid.cell_area(grid.cell(k)) * r * r)
+            .sum();
+        let sent = eruptions.iter().map(|e| e.volume).sum::<f64>() + p.foot.iter().sum::<f64>();
+        let ratios: Vec<f64> = p.overflow.iter().map(|o| o.0 / (1.0 - o.0)).collect();
+        let lo = ratios.iter().cloned().fold(f64::MAX, f64::min);
+        let hi = ratios.iter().cloned().fold(0.0, f64::max);
+        assert!(
+            sent / held > 0.99 * lo && sent / held < 1.01 * hi,
+            "{} of {held:.3e} m3, shares {lo} to {hi}",
+            sent / held
+        );
+        // Each beyond a shield's foot within a flow's run, all but a few off the ends of its
+        // rift zone, and none on an edifice.
+        let mut off_rift = 0;
+        for e in &eruptions {
+            let d = grid.center(grid.cell(e.vent));
+            for s in &p.shields {
+                let (rr, phi) = s.polar(d, r);
+                assert!(rr > s.radius_toward(phi) - cell, "on an edifice: {rr}");
+            }
+            let from = p.shields.iter().any(|s| {
+                let (rr, phi) = s.polar(d, r);
+                let foot = s.radius_toward(phi);
+                let off = |axis: f64| (phi - axis + 3.0 * PI).rem_euclid(TAU) - PI;
+                let tolerance = SHIELD_RIFT_SPREAD + cell / rr;
+                rr < foot + SHIELD_RIFT_FLOW_LENGTH.1 * s.radius + cell
+                    && (off(s.rift).abs() <= tolerance || off(s.rift + PI).abs() <= tolerance)
+            });
+            if !from {
+                off_rift += 1;
+            }
+        }
+        assert!(
+            off_rift * 50 < eruptions.len(),
+            "{off_rift} of {}",
+            eruptions.len()
+        );
     }
 
     #[test]

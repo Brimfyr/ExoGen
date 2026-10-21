@@ -492,6 +492,12 @@ pub const SHIELD_FLOW_COVER: f64 = 3.0;
 pub const SHIELD_ERUPTIONS_MAX: usize = 120;
 pub const SHIELD_FLOW_REACH: f64 = 1.4;
 pub const SHIELD_BATCH_SPREAD: f64 = 0.3;
+/// How fast a shield's eruptions pour out, m³/s, log-uniform (F163): Elysium Mons's young
+/// flows erupted at 99 to 4,452 m³/s by their dimensions and the Tharsis Montes' at rates of
+/// the same order (Pasckert, Hiesinger and Reiss 2009), far below a flood basalt's
+/// FLOOD_EFFUSION_RATE, so that the lava a shield sends past its foot comes as compound flow
+/// fields, as its flanks' flows do.
+pub const SHIELD_EFFUSION_RATE: (f64, f64) = (100.0, 4.5e3);
 /// Rifting on a rise: the uplift stretches the lithosphere, and the extension across
 /// the rift zone comes to a few times the uplift (Valles Marineris some 30 km on
 /// Tharsis's 8 km, Andrews-Hanna 2012; Devana Chasma 10 to 20 km on Beta Regio's 4 km).

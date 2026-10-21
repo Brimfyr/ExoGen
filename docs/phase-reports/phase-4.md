@@ -1998,3 +1998,26 @@ What the maps show:
 Still to do: the edifice's foot, its lava running into its moat and ponding there (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25).
 
 Tests 249 (21 ignored), among them a shield on a plate filling the sag beneath it, its summit where it built itself, the ground about it sunk into a moat with a bulge beyond while a flood with no edifice sinks with the ground; and Mars's largest shield standing in a moat in the loop, its summit still near the height it built. Clippy is clean and validate passes its 134 checks.
+
+## The seventy-ninth milestone: the shields' lava at their feet
+
+M19's remainder, approved after the seventy-eighth: the lava a shield's flows carry past its foot, ponding in the moat.
+
+- **F163.** A shield's eruptions, as F101 draws them, carry some two fifths of its lava past its foot, nearly all of it from its rift zone. Each step that share of what its edifice grows by starts from along the flows' runs beyond its foot, off the ends of its rift zone, and runs on down as a flood's lava does, ponding in the moat and spilling past it, the shield's own lava poured out at a shield's rates.
+- **The finish's waves.** Each event joins the first wave after every wave that holds an earlier event it overlaps, judged on a coarse grid of buckets, where a wave used to close at the first event that overlapped it.
+
+How it went:
+
+- **The share past the foot.** The rift zone's flows, 0.2 to 1.0 of a radius long from vents 0.4 to 1.0 of the way to the foot, carry more than half their lava past it, and the summit's and flanks' fissures almost none: 41 percent of a round shield's lava, less along an elongated one's rift zone. Mars's shields send 5.4 million km³ past their feet, some two thirds of what their edifices hold.
+- **A pile at the vents.** Erupted at the foot itself, every eruption off a rift zone's end crossed the same few coarse cells and left its flow's sheet on each, and the largest shield stood between two piles more than 9 km high. The lava past the foot lies along the flows' runs beyond it, so each eruption now starts from a point along such a run, drawn by the lava the run carries there, and never on another edifice, whose flanks the lava would not climb.
+- **The finish slowed sixfold.** The 2,858 eruptions past Mars's feet each covered a moat's lake, and each closed the finish's wave of parallel events wherever it came, so Mars's event sequence took 929 s where it had taken 149. Now an event joins the first wave after the events it overlaps, whatever comes between, and Mars's sequence takes 149 s again. The Moon's maps and sidecar come out byte-identical, so every overlapping pair keeps its order.
+- **Shields lumped into fewer eruptions** would have cut the cost as well, but the many eruptions are what build the aprons: their sheets stack along the rift zones' ends where one large eruption would only pond.
+
+What the maps show:
+
+- **Mars:** the largest shield's moat is filled, the ground from its foot to two radii at 2.7 to 3.0 km, 0.25 to 0.55 km below the ground at 2.5 radii, where the moat had been 2.3 km deep. Between it and its neighbours to the west its lava, hemmed in by their edifices, stands as an apron up to 7.1 km. The smaller shields' moats are 0.5 to 2.1 km deep where they had been 0.4 to 3.7, and each shield stands in a halo of its own lava with lobate margins. The new loads move the field: 3,148 thrusts where there were 3,455, and 28,814 ridges where there were 28,402.
+- **Venus:** 561 eruptions past its shields' feet, 1.0 million km³, fill their shallow moats by 0.1 to 0.4 km and lay lobate fields about them, burying the near ends of the rifts and graben beside them.
+
+Still to do: the shields' melt as one budget (M28); the root's load (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
+
+Tests 251 (21 ignored), among them a shield's rift flows carrying 41 percent of its lava past its foot and its summit's fissures none; a shield erupting what its flows send past its foot, within each step, from along the flows' runs off its rift zone's ends, on no edifice and with its own lava; and Mars's largest shield's moat holding its lava, the ground past its foot within a kilometre of the ground beyond, in place of the moat test of the seventy-eighth. The suite runs in 517 s where it took 812, the finish's waves no longer broken at every overlap. Clippy is clean and validate passes its 134 checks.

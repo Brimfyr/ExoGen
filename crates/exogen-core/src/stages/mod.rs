@@ -52,7 +52,7 @@ use crate::crater::{
     ejecta_modulation, restore_compute, sample_population, stamp_compute, with_stamper,
 };
 use crate::fields::{Field, LayerSet};
-use crate::geom::{angle_between, azimuth_from, dot, local_basis, offset};
+use crate::geom::{angle_between, azimuth_from, local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::params::derive::physics::volatile;
@@ -376,7 +376,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 118;
+pub const FINISH_VERSION: u64 = 119;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -544,6 +544,7 @@ pub fn run_coarse_loop(
                             time_gyr: t1 - e.age_yr * 1e-9,
                             id: ((s as u64) << 32) | n as u64,
                             effusion: e.effusion,
+                            composition: None,
                         },
                     );
                 }
@@ -562,9 +563,24 @@ pub fn run_coarse_loop(
         let scarps = contraction
             .as_mut()
             .map_or_else(Vec::new, |c| c.sample(t0, t1, &history));
-        let eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
+        let mut eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
             f.sample(&layers, boost.as_deref(), &rise_vents, t0, t1)
         });
+        // The lava the shields' flows sent past their feet, ponding beyond them (F163).
+        if floods.is_some()
+            && let Some(p) = &mut plume
+        {
+            let foot = p.foot_eruptions(t0, t1);
+            if std::env::var_os("EXOGEN_DEBUG").is_some() && !foot.is_empty() {
+                let volume: f64 = foot.iter().map(|e| e.volume).sum();
+                eprintln!(
+                    "shields' feet {t0:.3} to {t1:.3}: {} eruptions, {:.4e} km3",
+                    foot.len(),
+                    volume / 1e9
+                );
+            }
+            eruptions.extend(foot);
+        }
         let mut order: Vec<(f64, u8, usize)> =
             Vec::with_capacity(craters.len() + scarps.len() + eruptions.len());
         order.extend(craters.iter().enumerate().map(|(i, c)| (c.time_gyr, 0, i)));
@@ -1690,6 +1706,8 @@ pub fn finish(
 
     let mut done = 0usize;
     let mut next_report = 0usize;
+    // The craters' records by their events' order, whatever wave each came in.
+    let mut stamped: Vec<(usize, CraterRecord)> = Vec::new();
     for wave in &waves {
         // Stamps in a wave have disjoint footprints: compute them in parallel against the
         // state before the wave, then apply them in order.
@@ -2189,13 +2207,16 @@ pub fn finish(
                 })
             })
             .collect();
-        for (out, record, taken) in outputs.into_iter().flatten() {
+        for (&ei, output) in wave.iter().zip(outputs) {
+            let Some((out, record, taken)) = output else {
+                continue;
+            };
             if let Some((t, stats)) = &taken {
                 smear.note(t, &out, *stats);
             }
             out.apply(&mut layers);
             if let Some(r) = record {
-                records.push(r);
+                stamped.push((ei, r));
             }
         }
         done += wave.len();
@@ -2210,6 +2231,11 @@ pub fn finish(
             });
             next_report = done + 10_000;
         }
+    }
+    stamped.sort_by_key(|&(ei, _)| ei);
+    records.extend(stamped.into_iter().map(|(_, r)| r));
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!("finish: {} events in {} waves", events.len(), waves.len());
     }
     // Io's floods leave no generic lava (F117): a margin cell that took a flood's coarse
     // lava in the resampling and that no pass reached keeps the plains.
@@ -2671,31 +2697,49 @@ const RAY_BATCH: usize = 64;
 /// parallel instead of being gathered: its footprint would hold too much.
 const RAY_GATHER_MAX_CELLS: f64 = 5.0e5;
 
-/// Group consecutive stamps into waves of non-overlapping footprints. Stamps in one wave
-/// touch disjoint cells, so they can be computed in parallel and applied in any order,
-/// while every overlapping pair keeps its order because a stamp never joins a wave that
-/// holds an earlier stamp it overlaps.
+/// The coarse grid of buckets the waves judge overlap on: a stamp's cap reaches the
+/// buckets whose centres lie within its radius and a bucket and a half of its centre, so
+/// that two caps that overlap always reach a bucket in common.
+const WAVE_BUCKET_FACE: u32 = 128;
+
+/// Group the stamps into waves of non-overlapping footprints. Stamps in one wave touch
+/// disjoint cells, so they can be computed in parallel and applied in any order, and each
+/// stamp joins the first wave with room after every wave that holds an earlier stamp it
+/// overlaps, so that every overlapping pair keeps its order while a stamp never waits for
+/// one it does not touch. Overlap is judged on a coarse grid of buckets, each holding the
+/// latest wave of the stamps whose caps reach it: a stamp may wait for one beside it in a
+/// bucket it shares, never less than its own overlaps ask.
 fn build_waves(caps: &[([f64; 3], f64)]) -> Vec<Vec<usize>> {
-    let mut waves = Vec::new();
-    let mut current: Vec<usize> = Vec::new();
-    let mut area = 0.0;
+    let buckets = CubeSphere::new(WAVE_BUCKET_FACE);
+    let margin = 1.5 * buckets.delta();
+    let mut latest: Vec<Option<usize>> = vec![None; buckets.cell_count()];
+    let mut stamper = Stamper::new(&buckets);
+    let mut waves: Vec<Vec<usize>> = Vec::new();
+    let mut areas: Vec<f64> = Vec::new();
     for (i, &(c, rho)) in caps.iter().enumerate() {
+        stamper.gather(&buckets, 1.0, c, rho + margin);
+        let mut w = stamper
+            .footprint
+            .iter()
+            .filter_map(|&(b, _, _)| latest[b])
+            .max()
+            .map_or(0, |last| last + 1);
         let share = 0.5 * (1.0 - rho.min(std::f64::consts::PI).cos());
-        let close = current.len() >= WAVE_MAX_STAMPS
-            || area + share > WAVE_MAX_AREA
-            || current.iter().any(|&j| {
-                let (cj, rj) = caps[j];
-                dot(c, cj) > (rho + rj).min(std::f64::consts::PI).cos()
-            });
-        if close && !current.is_empty() {
-            waves.push(std::mem::take(&mut current));
-            area = 0.0;
+        while w < waves.len()
+            && (waves[w].len() >= WAVE_MAX_STAMPS
+                || (!waves[w].is_empty() && areas[w] + share > WAVE_MAX_AREA))
+        {
+            w += 1;
         }
-        current.push(i);
-        area += share;
-    }
-    if !current.is_empty() {
-        waves.push(current);
+        if w == waves.len() {
+            waves.push(Vec::new());
+            areas.push(0.0);
+        }
+        waves[w].push(i);
+        areas[w] += share;
+        for &(b, _, _) in &stamper.footprint {
+            latest[b] = Some(latest[b].map_or(w, |last| last.max(w)));
+        }
     }
     waves
 }
@@ -3149,6 +3193,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::geom::dot;
     use crate::presets::preset;
 
     fn preset_graph(name: &str, quality: &str) -> ParamGraph {
@@ -3702,40 +3747,62 @@ mod tests {
         );
     }
 
-    /// The ground bends under its loads (F162): Mars's largest shield stands in a moat, the
-    /// ground just past its foot lower than farther off, its summit still near the height it
-    /// built, and the loop keeps how far the ground sank for the finish.
+    /// The ground bends under its loads (F162) and a shield's lava ponds past its foot
+    /// (F163): Mars's largest shield's moat holds the lava its flows sent past its foot,
+    /// which lies far thicker there than farther off, so that the ground just past its foot
+    /// stands little below the ground beyond; its summit is still near the height it built;
+    /// and the loop keeps how far the ground sank for the finish.
     #[test]
-    fn mars_s_largest_shield_stands_in_a_moat() {
+    fn mars_s_largest_shield_s_moat_holds_its_lava() {
         let g = preset_graph("Mars", "preview");
         let mars = run_coarse_loop(&g, &NoProgress).unwrap();
         assert!(!mars.flexure.is_empty());
         let r = g.f64("body.radius");
         let grid = mars.grid;
         let height = mars.keyframes.last().unwrap().layers.bedrock.as_slice();
+        // The lava the floods laid on each coarse cell.
+        let mut lava = vec![0.0f64; grid.cell_count()];
+        for f in &mars.floods {
+            for (&idx, c) in &f.cells() {
+                lava[idx as usize] += c.thickness as f64;
+            }
+        }
         let shield = mars
             .shields
             .iter()
             .max_by(|a, b| a.radius.total_cmp(&b.radius))
             .expect("a shield");
         let (east, north) = local_basis(shield.center);
-        // The mean ground round the shield at a distance from its summit.
-        let ring = |d: f64| {
+        // The mean of a field round the shield at a distance from its summit.
+        let ring = |field: &dyn Fn(usize) -> f64, d: f64| {
             let mut sum = 0.0;
             for k in 0..72 {
                 let phi = std::f64::consts::TAU * k as f64 / 72.0;
                 let p = offset(shield.center, east, north, d / r, phi);
-                sum += height[grid.index(grid.locate(p).0)] as f64;
+                sum += field(grid.index(grid.locate(p).0));
             }
             sum / 72.0
         };
-        let moat = ring(1.15 * shield.radius);
-        let beyond = ring(2.0 * shield.radius);
-        assert!(moat < beyond - 300.0, "{moat} {beyond}");
+        let ground = |k: usize| height[k] as f64;
+        let laid = |k: usize| lava[k];
+        let moat = ring(&ground, 1.15 * shield.radius);
+        let beyond = ring(&ground, 2.0 * shield.radius);
+        let near = [1.1, 1.3, 1.5]
+            .iter()
+            .map(|&f| ring(&laid, f * shield.radius))
+            .sum::<f64>()
+            / 3.0;
+        let far = [2.5, 3.0, 3.5]
+            .iter()
+            .map(|&f| ring(&laid, f * shield.radius))
+            .sum::<f64>()
+            / 3.0;
+        assert!(near > far + 1_500.0, "{near} {far}");
+        assert!(moat > beyond - 1_000.0, "{moat} {beyond}");
         assert!(
-            ring(0.0) - beyond > 0.8 * shield.height,
+            ring(&ground, 0.0) - beyond > 0.8 * shield.height,
             "{} {}",
-            ring(0.0),
+            ring(&ground, 0.0),
             beyond
         );
     }

@@ -373,7 +373,8 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | PLATE_CELLS_PER_PARAMETER, PLATE_FACE_RANGE, LOAD_EPOCH_GYR, LOAD_MIN_INCREMENT | numerical choices (F157): two cells across the plate's flexural parameter, faces 16 to 128, the field read every 0.3 Gyr, a load once 10 m of lava lies anywhere | checks: the shell against the Hankel transform's solutions within a few percent; Venus's thin lids under-resolved at 128 |
 | the loads' graben within the faulted layer (F158) | a stated choice: the loads' stretch is small and none of its faults rift | the throw's partition between graben and rifts from the strain the loads open |
 | SYSTEM_SPACING, SYSTEM_ARREST_SHARE, SYSTEM_INDEX_WIDTH | stated choices (F160): a neighbour 0.6 to 1.6 of its host's reach aside (the Tharsis plateau's ridges some 30 km apart, Watters 1991), an arrest within a quarter of the reaches, an index of 120 km cells | the spacing from the stress shadow a thrust casts over its faulted layer, as the cracks' spacing from theirs (CRACK_DENSITY_FACTOR) |
-| the edifice's root left out of its load (F162) | a stated choice: the lava filling a shield's sag is not counted as load, as counting it would deepen the sag again each epoch | the root's load with the lid's strength bounding the sag, as the edifice's foot ponds its lava in the moat (M19) |
+| the edifice's root left out of its load (F162) | a stated choice: the lava filling a shield's sag is not counted as load, as counting it would deepen the sag again each epoch | the root's load with the lid's strength bounding the sag (M19) |
+| a flow's lava spread evenly along its run (F163) | a stated choice: the share of a shield's lava past its foot, 0.41 for a round edifice, from F101's vents and run-outs, each flow's area spread evenly along its run as its breakouts are drawn by the lengths of the lobes laid | the lava along a flow from its cooling and the slope it runs down |
 | RIDGE_REFERENCE_LENGTH, RIDGE_MIN_SIZE | stated choices (F159): a ridge 100 km long stands RIDGE_HEIGHT, its arch and crest no narrower than a quarter of theirs | the ridge's fold from the thrust beneath it and the layered plains' thickness |
 | GRABEN_BLOCK_LAYERS, GRABEN_INTERIOR_SHARE | a wide trough's floor in blocks a quarter of its faulted layer wide, taking 0.3 of its throw (F152): Mandjet's tilted blocks 5 to 10 km on a layer of 20 to 40 km, Beyer et al. 2017; the bounding faults carry most of a graben's throw | the blocks' width and rotation from the domino kinematics of the extension over a listric master (Gibbs 1983) |
 | GROOVE_END_TAPER_WIDTHS, GROOVE_LANE_TAPER_POWER | a lane's end in the old ground closes linearly over three widths (F142), as a fault's displacement falls to its tip; Ganymede's lanes pinch out in long points | the taper from the rift's own mechanics, the strain falling along the lane's last reach |
@@ -562,7 +563,7 @@ Direction: the regional stress from those sources, and the axis from them where 
 
 When: with the rise's flexure and the dichotomy, the revisit plan's fifth item.
 
-### M19. A volcano's load in the stress field, and its lava at its foot (closed in part by F161, F162)
+### M19. A volcano's load in the stress field, and its lava at its foot (closed in part by F161, F162, F163)
 
 A large volcano is a load on the lithosphere: beneath and about it the ground is compressed, and in the flexural arch beyond, stretched, so regional graben end at or curve round the great shields and concentric graben ring the loads (Comer, Solomon and Head 1985; McGovern and Solomon 1993; at Alba Patera the volcano's own stress shaped the graben, Cailleau et al. 2003). The model's stress field (F105, F114) is the rise's alone: a fault younger than a shield draws over it as it would over the plains, its floor the dropped flank (F116 has made such faults few on Mars, the faults forming as the dome rises, before the shields). And a shield's outline is its own rule: its lava buries what it grows over (F115), but lava reaching a depression at the edifice's foot, a crater the flank has half buried, would run in and pond across it, which the outline does not do.
 
@@ -571,6 +572,8 @@ The ground does not bend under its loads either: the floods' loads stress the li
 Direction: each shield's load in the stress field by the lithosphere's flexure at its time, with the rise's; the edifice's foot from where its lava goes, ponding in the depressions it reaches; and the plate's deflection under every load (F157's) laid into the ground, a moat about a shield and the maria sunk under their fill.
 
 Closed in part in the seventy-eighth milestone (F161, F162): the shields' loads join the floods' in the field, and every load's deflection is laid into the ground, the edifices filling the sag beneath them so that each stands in a moat with a bulge beyond, and the maria sink under their fill. Still open: the edifice's foot, whose lava would run into its moat and the depressions about it and pond there, as Olympus Mons's aureole and lava plains fill its moat; and the root, the lava that fills a shield's sag, left out of its load.
+
+Closed further in the seventy-ninth milestone (F163): the lava a shield's flows carry past its foot, some two fifths of its lava, starts from along their runs beyond it and runs on down as a flood's does, ponding in the moat, which it mostly fills on Mars, and spilling past it. Still open: the root, the lava that fills a shield's sag, left out of its load.
 
 When: with the rise's flexure, the revisit plan's fifth item.
 
@@ -645,6 +648,12 @@ Closed in part in the seventy-seventh milestone (F160): the thrusts and the plai
 A rise's wide troughs are carried by the coarse loop as they grow (F105, F116), so its floods pond in them and its relaxation works on them; the lid's faults (F147) were drawn by the finish alone, among the craters at their times, as the narrow graben are. The loop's floods and relaxation did not see them: on Charon a later flood's lobes piled up at a chasma's end in jagged fronts instead of ponding along it, as Vulcan Planitia's plains embay its chasmata, and old chasmata on the warmer lids kept walls the loop would have relaxed.
 
 Closed in the seventy-fourth milestone (F153): the strain process carries the lid's faults the loop's grid resolves, carving each within the step it forms, and the finish lays its own version over the loop's, as for a rise's canyons.
+
+### M28. The shields' melt is not one budget
+
+A rise's shields take a share of the floods' eruptions as the dome's growth wanes (F108, F119), and that share leaves the lava's budget whatever the shields do with it. Their edifices grow by their own clock (F120), fastest as they start, when their rise's capture is still nothing, and the lava past their feet follows the edifices (F163). The two do not meet: Mars's shields take 6.6 × 10⁷ km³ of its floods' budget, while their edifices hold 8.3 × 10⁶ km³ and the lava they send past their feet 5.4 × 10⁶ km³; Venus's take 2.7 × 10⁵ km³, while their edifices hold 1.9 × 10⁶ km³ and their feet's lava 1.0 × 10⁶ km³, more than twice its floods' whole budget after the overturn, 1.2 × 10⁶ km³.
+
+Direction: a shield's growth from the supply it takes, its edifice by what it holds and the rest past its foot, so that the melt is one budget and the edifices grow as the supply comes.
 
 ## Validation (principle 15)
 

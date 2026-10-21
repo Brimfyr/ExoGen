@@ -119,6 +119,9 @@ pub struct FloodEvent {
     pub id: u64,
     /// How fast it pours out, m³/s (F117).
     pub effusion: f64,
+    /// A volcano's own lava keeps its composition (F163); none for a flood, whose batch is
+    /// its own.
+    pub composition: Option<f32>,
 }
 
 /// What a flood did to one coarse cell over all its ponds: the thickness added, the last
@@ -620,6 +623,7 @@ impl FloodProcess {
                 time_gyr,
                 id: (step_index << 32) | j,
                 effusion: e_lo * (e_hi / e_lo).powf(self.rng.uniform(step_index, draw + 3)),
+                composition: None,
             });
             budget -= volume;
             j += 1;
@@ -629,7 +633,14 @@ impl FloodProcess {
 
     /// Erupt one event onto the surface as it is now, and record it.
     pub fn apply(&mut self, layers: &mut LayerSet, ev: FloodEvent) {
-        let mut rec = self.erupt(layers, ev.vent, ev.volume, ev.time_gyr, ev.id);
+        let mut rec = self.erupt(
+            layers,
+            ev.vent,
+            ev.volume,
+            ev.time_gyr,
+            ev.id,
+            ev.composition,
+        );
         rec.effusion = ev.effusion;
         if !rec.ponds.is_empty() {
             self.records.push(rec);
@@ -682,7 +693,7 @@ impl FloodProcess {
     /// sheet on the way, and fills a lake of its own, and so on (audit W7: one lake taking
     /// in the ground beyond its pass stood level over it, a cliff where it stopped). A lake
     /// whose spill reaches back to an earlier one rises with it as one. A basin fed many
-    /// times fills as one lake.
+    /// times fills as one lake. A volcano's lava keeps its `composition` (F163).
     fn erupt(
         &mut self,
         layers: &mut LayerSet,
@@ -690,6 +701,7 @@ impl FloodProcess {
         volume: f64,
         time_gyr: f64,
         id: u64,
+        composition: Option<f32>,
     ) -> FloodRecord {
         let grid = self.grid;
         let vent_dir = grid.center(grid.cell(vent));
@@ -894,6 +906,8 @@ impl FloodProcess {
             }
         }
         // Lay the runs' lava, each over what the ones before it left.
+        let drift = composition
+            .unwrap_or_else(|| flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C)));
         let mut ponds = Vec::new();
         let mut placed = 0.0;
         {
@@ -902,9 +916,8 @@ impl FloodProcess {
             let units = layers.unit_id.as_mut_slice();
             let melt = layers.melt.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
-            let composition = layers.composition.as_mut_slice();
+            let lava_composition = layers.composition.as_mut_slice();
             let lava_age = layers.lava_age.as_mut_slice();
-            let drift = flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C));
             let mut laid: HashMap<usize, (f64, u16, f32, f32)> = HashMap::new();
             for run in &runs {
                 let mut recorded = Vec::new();
@@ -917,9 +930,12 @@ impl FloodProcess {
                     // added is the height left after that.
                     let added = (1.0 - LAVA_SUBSIDENCE) * t;
                     placed += t * self.areas[idx];
-                    let e =
-                        laid.entry(idx)
-                            .or_insert((0.0, units[idx], ages[idx], composition[idx]));
+                    let e = laid.entry(idx).or_insert((
+                        0.0,
+                        units[idx],
+                        ages[idx],
+                        lava_composition[idx],
+                    ));
                     e.0 += t;
                     recorded.push(FloodCell {
                         idx: idx as u32,
@@ -935,7 +951,7 @@ impl FloodProcess {
                     units[idx] = UNIT_LAVA;
                     melt[idx] = 0.0;
                     cover[idx] = (e.0 / LAVA_COVER_DEPTH).min(1.0) as f32;
-                    composition[idx] = drift;
+                    lava_composition[idx] = drift;
                     lava_age[idx] = time_gyr as f32;
                 }
                 if !recorded.is_empty() {
@@ -953,7 +969,7 @@ impl FloodProcess {
             time_gyr,
             area: 0.0,
             ponds,
-            composition: flood_composition(time_gyr, vent_dir, self.rng.normal(id, 0xBA7C)),
+            composition: drift,
             id,
             effusion: FLOOD_EFFUSION_RATE.0,
         };
@@ -2306,7 +2322,7 @@ mod tests {
         }
         layers.bedrock.as_mut_slice()[pit] = -1_000.0;
         let volume = 0.5 * 1_000.0 * p.areas[pit];
-        let rec = p.erupt(&mut layers, vent, volume, 1.0, 1);
+        let rec = p.erupt(&mut layers, vent, volume, 1.0, 1, None);
         let covered = rec.cells();
         // The way down: a sheet a flow thick on each cell from the vent to the pit, and on
         // the cells beside it the flow need not climb to; the pit holds the rest as a lake.
@@ -2393,7 +2409,7 @@ mod tests {
             (pass, capacity)
         };
         let volume = capacity + 1_000.0 * p.areas[a];
-        let rec = p.erupt(&mut layers, a, volume, 2.0, 2);
+        let rec = p.erupt(&mut layers, a, volume, 2.0, 2, None);
         let covered = rec.cells();
         assert!(covered.contains_key(&(a as u32)) && covered.contains_key(&(b as u32)));
         let h = layers.bedrock.as_slice();
@@ -2431,7 +2447,7 @@ mod tests {
             let vent = grid.index(grid.locate(rng.unit_direction(e, 0)).0);
             let before = layers.bedrock.as_slice().to_vec();
             let volume = 1e11 * 100f64.powf(rng.uniform(e, 1));
-            let rec = p.erupt(&mut layers, vent, volume, 1.0, e);
+            let rec = p.erupt(&mut layers, vent, volume, 1.0, e, None);
             if rec.ponds.len() > 1 {
                 spilled += 1;
             }
