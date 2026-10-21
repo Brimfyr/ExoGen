@@ -419,6 +419,11 @@ impl FloodProcess {
     }
 
     /// Take the resurfacing event's fill into the thickness and last-flow records.
+    /// The density of the lava a rocky body's floods lay, kg/m³ (F125); none for cryolava.
+    pub fn magma_density(&self) -> Option<f64> {
+        self.buoyancy.map(|b| b.0)
+    }
+
     pub fn note_resurfacing(&mut self, fill: &[f32], time_gyr: f64) {
         for (k, &f) in fill.iter().enumerate() {
             if f > 0.0 {

@@ -29,11 +29,11 @@ use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::ridges::RidgeRecord;
-use crate::stages::stress::{Compression, FieldSource, Squeeze};
+use crate::stages::stress::{Compression, FieldHistory, Squeeze, shrinking};
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 /// A scarp that was emplaced, kept for the sidecar and for re-stamping its face at the
 /// finishing resolution.
@@ -104,7 +104,7 @@ pub fn scarp_profile(d: f64, height: f64, blur: f64) -> f64 {
 }
 
 /// A length from the truncated power law N(>L) ∝ L^-a between the limits.
-fn sample_length(u: f64, l_min: f64, l_max: f64) -> f64 {
+pub(crate) fn sample_length(u: f64, l_min: f64, l_max: f64) -> f64 {
     let a = SCARP_LENGTH_EXPONENT;
     let lo = l_min.powf(-a);
     let hi = l_max.powf(-a);
@@ -117,7 +117,8 @@ fn sample_length(u: f64, l_min: f64, l_max: f64) -> f64 {
 /// few harmonics of heading wobble at the given `phases` scallop it as lobate scarps are.
 /// It stops where the lid is no longer squeezed past its strength: where the uniform
 /// compression's excess over the strength, `drive`, Pa, and the field's compression there
-/// sum to nothing.
+/// sum to nothing, or where the field's least compressive stress outpulls the uniform
+/// compression, `squeeze`, and the lid would slip sideways instead (F157).
 #[allow(clippy::too_many_arguments)]
 fn thrust_trace(
     start: [f64; 3],
@@ -129,6 +130,7 @@ fn thrust_trace(
     body_radius: f64,
     field: &dyn Fn([f64; 3]) -> Squeeze,
     drive: f64,
+    squeeze: f64,
 ) -> Vec<[f64; 3]> {
     let n = (length / spacing).ceil().max(2.0) as usize;
     let mut points = Vec::with_capacity(n + 1);
@@ -140,7 +142,7 @@ fn thrust_trace(
     let mut base = tangent(p, heading);
     for i in 0..=n {
         let here = field(p);
-        if i > 0 && drive + here.stress <= 0.0 {
+        if i > 0 && (drive + here.stress <= 0.0 || here.least > squeeze) {
             break;
         }
         points.push(p);
@@ -277,6 +279,9 @@ pub struct ContractionProcess {
     body_radius: f64,
     thermal: ThermalHistory,
     age: f64,
+    /// When the surface began to keep a record, Gyr: the thrusts before it are gone with
+    /// it, as the lid's faults are (F147), though the lid failed and bore them.
+    record_start: f64,
     rng: Rng,
     stamper: Stamper,
     /// Shortening area still to be taken up, carried between steps.
@@ -289,8 +294,6 @@ pub struct ContractionProcess {
     compression: Compression,
     stiffness: f64,
     high: Vec<f64>,
-    /// The longest thrust each coarse cell's strain makes, m.
-    reach: Vec<f64>,
     pub records: Vec<ScarpRecord>,
     /// The thrusts beneath the plains, which fold them into ridges (F155).
     pub ridges: Vec<RidgeRecord>,
@@ -306,40 +309,35 @@ fn longest_thrust(strain: f64, body_radius: f64) -> f64 {
 }
 
 impl ContractionProcess {
-    /// None for regimes that do not express contraction as scarps, and where the lid holds
-    /// its squeeze within its strength. `source` is the lid's field (F150, F154).
+    /// None for regimes that do not express contraction as scarps: a whole rock lid, not
+    /// Io's, whose surface its eruptions lay afresh. `history` is the lid's field through
+    /// the loop (F150, F154, F157).
     pub fn new(
         graph: &ParamGraph,
         grid: CubeSphere,
         thermal: &ThermalHistory,
-        source: FieldSource,
+        history: &FieldHistory,
     ) -> Option<Self> {
-        if graph.str("interior.tectonic_regime") != "stagnant_lid" {
+        if graph.str("interior.tectonic_regime") != "stagnant_lid"
+            || crate::stages::io::is_io_regime(graph)
+        {
             return None;
         }
         let body_radius = graph.f64("body.radius");
         let age = graph.f64("body.age");
         let cell = 2.0 * std::f64::consts::PI * body_radius / (4.0 * grid.face_size() as f64);
         let stiffness = ROCK_YOUNG_MODULUS / (1.0 - ROCK_POISSON);
-        let mut compression = Compression::new(source, COMPRESSION_FACE);
-        // The longest thrust grows with the strain the place takes up by the present.
-        compression.at(age);
-        let drive = crate::stages::stress::shrinking(thermal, body_radius, age)
-            - compression.yield_compression;
-        let reach: Vec<f64> = compression
-            .squeeze
-            .iter()
-            .map(|q| longest_thrust(2.0 * (drive + q.stress).max(0.0) / stiffness, body_radius))
-            .collect();
-        if reach.iter().all(|&l| l <= SCARP_MIN_LENGTH) {
-            return None;
-        }
+        let compression = Compression::new(history, COMPRESSION_FACE);
         let cells = compression.grid.cell_count();
         Some(Self {
             grid,
             body_radius,
             thermal: thermal.clone(),
             age,
+            record_start: graph
+                .f64("cratering.record_start")
+                .max(age - graph.f64("cratering.retention_age"))
+                .clamp(0.0, age),
             rng: Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x5CA2_9F11),
             stamper: Stamper::new(&grid),
             carry: 0.0,
@@ -348,7 +346,6 @@ impl ContractionProcess {
             compression,
             stiffness,
             high: vec![0.0; cells],
-            reach,
             records: Vec::new(),
             ridges: Vec::new(),
         })
@@ -357,39 +354,58 @@ impl ContractionProcess {
     /// The uniform compression's excess over the lid's strength at a time, Pa: what the
     /// body's shrinking puts on the lid alike every way, over its stiffness.
     fn drive(&self, t: f64) -> f64 {
-        crate::stages::stress::shrinking(&self.thermal, self.body_radius, t)
-            - self.compression.yield_compression
+        shrinking(&self.thermal, self.body_radius, t) - self.compression.yield_compression
     }
 
     /// Scarps formed between two times, in order of formation, not yet emplaced. The
     /// budget is spent on the whole population; those the loop grid can carry are marked
     /// so, and the rest are left to the finish.
-    pub fn sample(&mut self, t0: f64, t1: f64) -> Vec<ScarpRecord> {
+    pub fn sample(&mut self, t0: f64, t1: f64, history: &FieldHistory) -> Vec<ScarpRecord> {
         let mut out = Vec::new();
         for (bin, b0, b1) in crate::stages::time_bins(self.age, t0, t1) {
-            self.sample_bin(bin, b0, b1, &mut out);
+            self.sample_bin(bin, b0, b1, history, &mut out);
         }
         out.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
         out
     }
 
     /// The scarps of one time bin, drawn with the bin as the random index.
-    fn sample_bin(&mut self, bin: u64, t0: f64, t1: f64, out: &mut Vec<ScarpRecord>) {
+    fn sample_bin(
+        &mut self,
+        bin: u64,
+        t0: f64,
+        t1: f64,
+        history: &FieldHistory,
+        out: &mut Vec<ScarpRecord>,
+    ) {
         let step_index = bin;
         // Where the lid's overstress grew in the bin, and the shortening it asks.
-        self.compression.at(t1);
+        self.compression.at(t1, history);
         let drive = self.drive(t1);
+        let shrink = drive + self.compression.yield_compression;
+        // The shrinking still to come, which every place's strain will take up as well.
+        let to_come = (self.drive(self.age) - drive).max(0.0);
         let mut weights = Vec::with_capacity(self.high.len());
         let mut sum = 0.0;
         let mut budget = self.carry;
         for (i, q) in self.compression.squeeze.iter().enumerate() {
-            let over = (drive + q.stress).max(0.0);
+            // A thrust where both horizontal stresses press harder than the overburden.
+            let over = if q.least <= shrink {
+                (drive + q.stress).max(0.0)
+            } else {
+                0.0
+            };
             let grown = (over - self.high[i]).max(0.0);
             self.high[i] = self.high[i].max(over);
             let w = grown * self.compression.area[i];
             budget += 2.0 * w / self.stiffness;
             sum += w;
             weights.push(sum);
+        }
+        if t1 <= self.record_start {
+            // The lid failed and bore them, but the surface keeps nothing of them.
+            self.carry = 0.0;
+            return;
         }
         if sum <= 0.0 {
             self.carry = budget.min(0.0);
@@ -413,7 +429,12 @@ impl ContractionProcess {
                 half_cell * self.rng.uniform(step_index, draw + 9).sqrt(),
                 2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 2),
             );
-            let reach = self.reach[i];
+            // The longest thrust grows with the strain the place takes up by the present:
+            // what it has borne and the shrinking still to come.
+            let reach = longest_thrust(
+                2.0 * (self.high[i] + to_come) / self.stiffness,
+                self.body_radius,
+            );
             if reach <= self.l_min {
                 // Its strain goes into faults too short to draw, as the shortest drawn.
                 budget -= self.l_min * scarp_shortening(scarp_height(self.l_min));
@@ -461,6 +482,7 @@ impl ContractionProcess {
                 self.body_radius,
                 &|p| compression.reading(p),
                 drive,
+                shrink,
             );
             // What it takes up, as far as it ran.
             let actual = (points.len() - 1) as f64 * spacing;
@@ -494,8 +516,10 @@ impl ContractionProcess {
         if 2 * on_lava > rec.points.len() {
             // A thrust beneath layered lava folds it into a ridge as the plains' own are,
             // its slip taken up in the fold (F155).
-            let height = RIDGE_HEIGHT * (0.6 + 0.8 * self.rng.uniform(rec.id, 0xA1));
-            let crest = RIDGE_CREST_HEIGHT * (0.6 + 0.8 * self.rng.uniform(rec.id, 0xA2));
+            let height =
+                crate::stages::ridges::ridge_height(rec.length, self.rng.uniform(rec.id, 0xA1));
+            let crest = RIDGE_CREST_HEIGHT * height / RIDGE_HEIGHT
+                * (0.6 + 0.8 * self.rng.uniform(rec.id, 0xA2));
             self.ridges.push(RidgeRecord {
                 points: rec.points,
                 spacing: rec.spacing,
@@ -523,8 +547,8 @@ impl ContractionProcess {
     }
 
     /// Sample and emplace a step's scarps.
-    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, _step_index: u64) {
-        for rec in self.sample(t0, t1) {
+    pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, history: &FieldHistory) {
+        for rec in self.sample(t0, t1, history) {
             self.apply(layers, rec);
         }
     }
@@ -583,6 +607,7 @@ mod tests {
             spacing,
             body_radius,
             &|_| Squeeze::default(),
+            1e9,
             1e9,
         );
         let rec = ScarpRecord {
@@ -647,6 +672,7 @@ mod tests {
             },
             strike: local_basis(p).0,
             decided: 1.0,
+            least: -2e6,
         };
         let start = [1.0, 0.0, 0.0];
         let (east, north) = local_basis(start);
@@ -664,6 +690,7 @@ mod tests {
             spacing,
             body_radius,
             &field,
+            0.0,
             0.0,
         );
         // It stopped short of its length, at the squeeze's end.

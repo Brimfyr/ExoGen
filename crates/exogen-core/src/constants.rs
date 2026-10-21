@@ -360,10 +360,9 @@ pub const LAVA_SUBSIDENCE: f64 = 0.05;
 /// Wrinkle ridges on plains (PLAN.md 4.4): ridge length per plains area, 1/m (lunar
 /// maria carry about a kilometre of ridge per forty square kilometres); the range of
 /// one ridge's length, m; arch height and width, crest height and width, m; how far the
-/// crest wanders within the arch and over what length; the floor of the seed weight
-/// relative to the mean thickness gradient; how strongly a trace follows the contours;
-/// the heading wobble about its course (F156); and the delay after the last flow before
-/// the ridges stand.
+/// crest wanders within the arch and over what length; the heading wobble about its
+/// course (F156); and the delay after the last flow before the ridges stand. Where and
+/// which way they stand is the lid's field's (F156, F157).
 pub const RIDGE_LENGTH_PER_AREA: f64 = 1.0 / 40e3;
 pub const RIDGE_LENGTH: (f64, f64) = (20e3, 300e3);
 pub const RIDGE_HEIGHT: f64 = 200.0;
@@ -372,8 +371,6 @@ pub const RIDGE_CREST_HEIGHT: f64 = 80.0;
 pub const RIDGE_CREST_WIDTH: f64 = 1.2e3;
 pub const RIDGE_CREST_WANDER: f64 = 0.6;
 pub const RIDGE_CREST_WANDER_LENGTH: f64 = 25e3;
-pub const RIDGE_SEED_FLOOR: f64 = 0.3;
-pub const RIDGE_CONTOUR_FOLLOWING: f64 = 0.35;
 pub const RIDGE_WOBBLE_DEG: f64 = 25.0;
 pub const RIDGE_WOBBLE_LENGTH: f64 = 60e3;
 /// A ridge's meander about its course (F156): a second harmonic of the wobble at this
@@ -381,11 +378,12 @@ pub const RIDGE_WOBBLE_LENGTH: f64 = 60e3;
 /// repeat (a stated choice).
 pub const RIDGE_WOBBLE_HARMONIC: (f64, f64) = (2.7, 0.5);
 pub const RIDGE_DELAY_GYR: f64 = 0.2;
-/// The plains' own drive past the lid's strength, as a share of it (F156): their
-/// subsidence as they cool and compact squeezes them this far past it where nothing else
-/// does (a stated choice, against Venus's ridged plains, 93 per cent of them below its mean
-/// radius, Bilotti and Suppe 1999).
-pub const RIDGE_DRIVE_SHARE: f64 = 0.03;
+/// A ridge's size (F159): its height RIDGE_HEIGHT at this length, growing with its length
+/// as a thrust's displacement does (the scarps' exponent; a stated reference: lunar mare
+/// ridges stand some 100 to 300 m over lengths of tens to hundreds of kilometres), its arch
+/// and crest widening with its height, down to this share of their widths.
+pub const RIDGE_REFERENCE_LENGTH: f64 = 100e3;
+pub const RIDGE_MIN_SIZE: f64 = 0.25;
 /// Extra weight of a vent on a volcanic rise, per unit of dome height over the rise's
 /// full height.
 pub const PLUME_VENT_BOOST: f64 = 20.0;
@@ -552,17 +550,31 @@ pub const RIFT_MAX_FAULTS: u64 = 20_000;
 pub const RISE_MEMBRANE_SHARE: f64 = 1.0;
 /// A thrust's strike against the scatter of the lid's strength (F154): the field decides
 /// it as its differential stress passes this share of the lid's strength in compression,
-/// below which a thrust follows the lid's own weaknesses, its craters' rims and old faults,
-/// in a field alike every way (a stated choice); and how far a rise grows before the
-/// compression the loop reads is read again.
+/// or of the mean squeeze where that is greater (F157), below which a thrust follows the
+/// lid's own weaknesses, its craters' rims and old faults, in a field alike every way (a
+/// stated choice); and how far a rise grows before the compression the loop reads is read
+/// again.
 pub const THRUST_STRIKE_SCATTER: f64 = 0.1;
 pub const FIELD_REREAD_GROWTH: f64 = 0.02;
 /// How strongly a thrust's trace turns toward the field's strike per step, where the field
-/// decides it (F155; a stated choice, as the ridges follow their contours), and the face of
+/// decides it (F155; a stated choice, as strongly as the ridges followed the lava's
+/// contours before the field held the floods' loads, F157), and the face of
 /// the coarse grid the loop reads the lid's compression on: cells some 60 to 150 km across
 /// on the rocky bodies, a fraction of the lengths the field varies over.
 pub const THRUST_FIELD_FOLLOWING: f64 = 0.35;
 pub const COMPRESSION_FACE: u32 = 64;
+/// The volcanic loads' plate (F157): cells across the lid's flexural parameter on the grid
+/// it is solved on, within this range of faces, and the conjugate gradients' tolerance on
+/// the residual against the load and their most iterations.
+pub const PLATE_CELLS_PER_PARAMETER: f64 = 2.0;
+pub const PLATE_FACE_RANGE: (u32, u32) = (16, 128);
+pub const PLATE_SOLVE_TOLERANCE: f64 = 1e-7;
+pub const PLATE_SOLVE_MAX_ITERATIONS: usize = 4000;
+/// How often the loop reads the lid's field anew, Gyr (F157), besides at a renewal and at
+/// the end, and the least lava laid anywhere since the last load for the field to take up
+/// a new one, m; less is carried to the next epoch.
+pub const LOAD_EPOCH_GYR: f64 = 0.3;
+pub const LOAD_MIN_INCREMENT: f64 = 10.0;
 pub const UPWELLING_LIMB_REACH: f64 = 4.0;
 pub const UPWELLING_LIMB_TENSION: f64 = 0.8;
 pub const UPWELLING_LIMB_WIDTH: f64 = 1.0;

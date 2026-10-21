@@ -1921,3 +1921,32 @@ What the maps show:
 Still to do: the floods' load and the relief at their time in the field (M26); Mercury's thrusts' direction and their systems (M27); the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25); the icy lids' faults on the same field.
 
 Tests 241 (20 ignored), among them a thrust striking along a low's margin where the field decides its strike and hardly decided in the low's middle; a thrust's trace turning across the squeeze and stopping where it ends; the plains' ridges standing where the lid squeezes them and striking across its compression; and Mars's thrusts running round Tharsis while Venus's ridges keep to its lows. Clippy is clean and validate passes its 134 checks.
+
+## The seventy-sixth milestone: the floods' loads on the lid's shell
+
+M26, approved after the seventy-fifth: the relief and the floods' loads read through the loop at their times, on the lid of their time, so that the maria's ridges and the graben about their margins come of their own load and the plains' stated drive goes.
+
+- **F157.** The loop reads the field at epochs: the relief as the ground stands, on the lid as thick as it is then, and each load of lava since the last bending the lid of its time as a shallow spherical shell, its membrane stiffening it and adding its stress to the bending's, solved on a cube-sphere grid fine enough for its flexural parameter. Thrusts break in Anderson's regime only, from the record's start; the strike is decided against the squeeze itself where it passes the strength; the ridges read the field alone, the lava's thickness and the stated share gone, the plains at their strength at least.
+- **F158.** The extension the loads add past the yield opens graben beyond the filled basins' margins, from the faults' generator, each as the stretch at its start grew.
+- **F159.** The ridges take the thrusts' laws: lengths from their power law, heights growing with length, arches and crests with height.
+
+How it went:
+
+- **A plate on the sphere.** The plate needed a Laplacian on the cube-sphere. The two-point one, symmetric and simple, was hundreds of percent off at the face edges, where the grid kinks and a smooth field's gradient leaks into it; a load across a cube's edge would have drawn a seam of false stress. The curvature stencils the stresses needed already fit a quadratic at every cell, and their trace is a consistent Laplacian; the plate's bending energy turns it into a symmetric operator conjugate gradients can solve. A load on a cube's corner bends the plate alike every way round it.
+- **Checked against the exact solution.** The center of a basin three flexural parameters wide came out squeezed by 48 MPa, three times my estimate; the Hankel transform's solution of the axisymmetric plate gives 47. The estimate was wrong and the solver right, and the assertion that the middle of a broad basin stands nearly unbent went.
+- **The flat plate's spokes.** Read by the plate, a mare's ridges came out as spokes radiating from its middle, nothing like the maria's rings: near a load's margin the flat plate squeezes most round it, the strike-slip paradox of the flat plate's mascons (Freed, Melosh and Solomon 2001). Their resolution is the shell's membrane, and the Hankel transform of the shallow shell showed it before any of it was built: the membrane squeezes the basin most outward, its ridges ring it, and the lid beyond is pulled both ways. On the Moon the membrane's stress is as large as the bending's.
+- **A thousand lunar scarps.** With the field read from the start, the Moon's first lid, 4 km thick under the primordial relief, broke into a thousand scarps up to 600 km long at once. The surface keeps no record from then; the thrusts now count from the record's start as the lid's faults do, and the Moon has eleven, the longest 36 km.
+- **The drive that stayed.** Removing the plains' stated share outright, as the audit asked, left Venus without a ridge: its lavas were laid on the thin lid after its overturn and stress it by tens of MPa against a strength of 110. A test of the share at zero had seemed to show the loads alone would do; it had left the drive at the strength. The share is gone and that floor stays, a stated choice with nothing fitted, standing for the drives the field does not hold.
+- **The fingerprint.** Turned alike by the shell, a mare's ridges, all 200 m high whatever their length, filled it with parallel arcs. As folds over thrusts they now take the thrusts' laws, and a few long high ones stand out of many short low ones.
+
+What the maps show:
+
+- **The Moon:** its maria's ridges ring them, a few long ones standing out of many faint, where they wandered along the lava's contours; 187 graben about the maria, a median 82 km beyond their margins and 3 km wide, below the pixel at 2048 as the real rilles are; eleven scarps by one mare's margin, the longest 36 km, where it had none.
+- **Mars:** its lava basin's ridges still run round Tharsis, fewer and of varied sizes where they were combed; 2,600 scarps against 3,400, the longest 770 km; some 300 graben about its plains.
+- **Venus:** 56,000 ridges against 71,000, 84 percent of their midpoints below its mean height against 83; its plains' loads, laid on the thin lid after its overturn, open 22 graben.
+- **Mercury:** 6,800 scarps against 7,200, the longest 940 km; 142 graben about its smooth plains.
+- **Cost:** the loop reads the field at some sixteen epochs and lays a dozen loads, each solved on its own grid: 4 s more on the Moon (13 s), 5 on Mercury, 11 on Mars, 4 on Venus; the finish as before, the Moon's event sequence 58 s with its graben or without.
+
+Still to do: the ridges' and thrusts' systems and Mercury's direction (M27); the drives the field does not hold, Venus's climate first (M26); the rises' faults on the field of their time; the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25).
+
+Tests 246 (21 ignored), among them the plate's Laplacian finding a harmonic's degree on every cell; a disc of lava bending the plate as the axisymmetric plate does, and a load on a cube's corner bending it alike every way; a disc on the Moon's shell bending it as the shallow shell's Hankel solution does; and a filled basin squeezing its plains, its ridges within it, and opening graben round its margin, none before the record began. Clippy is clean and validate passes its 134 checks.

@@ -11,12 +11,18 @@
 //! what breaks the brittle layer, and runs as long as it does. A thrust reads the same
 //! field from its other side (F154): it strikes across the most compressive stress, and it
 //! forms where the field's compression, added to what the body's shrinking puts on the lid
-//! alike every way, passes what breaks the layer in compression.
+//! alike every way, passes what breaks the layer in compression. Through the loop the field
+//! is read at epochs (F157): the relief as the ground stands then, carried by the lid as
+//! thick as it is then, and the stresses of the loads the floods have laid, each bending the
+//! lid of its own time.
+
+use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::geom::{angle_between, cross, dot, local_basis, normalize};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
+use crate::stages::load::LoadStress;
 use crate::stages::plume::{Axial, FieldAt, Rise, dome, rise_progress, total_stress};
 
 /// The upwelling limbs between neighbouring plumes: pairs of rises, by index, closer than
@@ -98,6 +104,31 @@ pub struct Relief {
     pub height: Vec<f32>,
 }
 
+impl Relief {
+    /// The relief at an epoch (F157): the ground as it stands less the rises' domes, which
+    /// the field holds itself, low-passed over the flexural wavelength of a lid `elastic` m
+    /// thick.
+    pub fn read(
+        bedrock: &crate::fields::Field<f32>,
+        domes: Option<&[f32]>,
+        cell: f64,
+        elastic: f64,
+        gravity: f64,
+    ) -> Self {
+        let mut ground = bedrock.clone();
+        if let Some(d) = domes {
+            for (g, h) in ground.as_mut_slice().iter_mut().zip(d) {
+                *g -= h;
+            }
+        }
+        let wavelength = StressField::flexural_wavelength(elastic, gravity);
+        Self {
+            grid: ground.grid(),
+            height: crate::stages::relaxation::low_pass(&ground, cell, wavelength),
+        }
+    }
+}
+
 /// The lid's stress field on a body.
 pub struct StressField<'a> {
     pub rises: &'a [Rise],
@@ -108,6 +139,8 @@ pub struct StressField<'a> {
     /// The limb's pull at full growth, Pa, and the stress along it, a share of that.
     limb_tension: f64,
     relief: Option<&'a Relief>,
+    /// The stresses the loads laid by then put on the lid (F157).
+    loads: Vec<&'a LoadStress>,
     body_radius: f64,
     gravity: f64,
     /// The lid's elastic thickness, m, which carries the relief's force, and the length its
@@ -129,6 +162,11 @@ pub struct Squeeze {
     /// The field's most compressive stress, Pa, compression positive: negative where the
     /// field stands in tension every way.
     pub stress: f64,
+    /// The field's least compressive stress, Pa, tension positive as the field's stresses
+    /// are: a thrust breaks only where this too, with the shrinking's squeeze, presses
+    /// harder than the overburden, which is then the least of the three, as Anderson's
+    /// thrusts need; where it pulls the lid would slip sideways instead (F157).
+    pub least: f64,
     /// The strike a thrust takes there: across the most compressive direction.
     pub strike: [f64; 3],
     /// How far the field decides that strike, 0 to 1: its differential stress against the
@@ -146,6 +184,7 @@ impl<'a> StressField<'a> {
         gravity: f64,
         elastic: f64,
         relief: Option<&'a Relief>,
+        loads: Vec<&'a LoadStress>,
     ) -> Self {
         let crest = rises
             .iter()
@@ -172,6 +211,7 @@ impl<'a> StressField<'a> {
             limbs,
             limb_tension,
             relief,
+            loads,
             body_radius,
             gravity,
             elastic: elastic.max(1e3),
@@ -294,6 +334,13 @@ impl<'a> StressField<'a> {
             s.0 += iso;
             s.1 += iso;
         }
+        // The loads' bending, as each left the lid (F157).
+        for load in &self.loads {
+            let (a, b, c) = load.at(p, east, north);
+            s.0 += a;
+            s.1 += b;
+            s.2 += c;
+        }
         s
     }
 
@@ -350,7 +397,9 @@ impl<'a> StressField<'a> {
     /// The compression a thrust reads at a point and time (F154): the most compressive
     /// stress, the strike across it, and how far the field decides that strike, its
     /// differential stress against THRUST_STRIKE_SCATTER of the lid's strength in
-    /// compression.
+    /// compression or of the mean squeeze, whichever is greater (F157): a weakness lowers a
+    /// plane's strength by a share of the stress that presses it shut, so a squeeze nearly
+    /// alike every way decides little however strong.
     pub fn squeeze(&self, p: [f64; 3], t: f64) -> Squeeze {
         let (s1, s2, strike, _, _) = self.at(p, t);
         // The normal faults' strike runs along the most compressive direction; a thrust's
@@ -362,9 +411,11 @@ impl<'a> StressField<'a> {
             normalize(across)
         };
         let differential = (s1 - s2).max(0.0);
-        let scatter = THRUST_STRIKE_SCATTER * self.yield_compression;
+        let mean = (-0.5 * (s1 + s2)).max(self.yield_compression);
+        let scatter = THRUST_STRIKE_SCATTER * mean;
         Squeeze {
             stress: -s2,
+            least: s1,
             strike,
             decided: differential / (differential + scatter.max(1.0)),
         }
@@ -377,30 +428,61 @@ pub fn shrinking(thermal: &crate::thermal::ThermalHistory, body_radius: f64, t: 
     ROCK_YOUNG_MODULUS / (1.0 - ROCK_POISSON) * thermal.at(t).contraction / body_radius
 }
 
-/// What the lid's field is built from, owned, so that a process can read the field through
-/// the loop (F154): the rises with their axes, the relief and the lid.
+/// One reading of the ground through the loop (F157): its time, the lid's elastic thickness
+/// then, the relief as the field reads it then, and the stress of the load laid since the
+/// epoch before, bending the lid of its time.
 #[derive(Clone, Debug)]
-pub struct FieldSource {
-    pub rises: Vec<Rise>,
-    pub relief: Option<Relief>,
-    pub body_radius: f64,
-    pub gravity: f64,
+pub struct FieldEpoch {
+    pub time: f64,
     pub elastic: f64,
+    pub relief: Relief,
+    pub load: Option<LoadStress>,
 }
 
-impl FieldSource {
-    pub fn new(graph: &ParamGraph, rises: Vec<Rise>, relief: Option<Relief>) -> Self {
+/// What the lid's field is built from through the loop (F154, F157): the rises with their
+/// axes and the epochs at which the loop read the ground.
+#[derive(Clone, Debug)]
+pub struct FieldHistory {
+    pub rises: Vec<Rise>,
+    pub body_radius: f64,
+    pub gravity: f64,
+    pub epochs: Vec<FieldEpoch>,
+}
+
+impl FieldHistory {
+    pub fn new(graph: &ParamGraph, rises: Vec<Rise>) -> Self {
         Self {
             rises,
-            relief,
             body_radius: graph.f64("body.radius"),
             gravity: graph.f64("body.gravity"),
-            elastic: graph.f64("interior.elastic_thickness"),
+            epochs: Vec::new(),
         }
     }
 
-    /// The field, each rise growing along its axis (F114).
-    pub fn field(&self) -> StressField<'_> {
+    pub fn push(&mut self, epoch: FieldEpoch) {
+        self.epochs.push(epoch);
+    }
+
+    /// How many epochs the loop had read by a time.
+    pub fn read_by(&self, t: f64) -> usize {
+        self.epochs.partition_point(|e| e.time <= t)
+    }
+
+    /// The field at a time: the ground and the lid of the last epoch read by then, or of the
+    /// first, and the stresses of every load laid by then; each rise growing along its axis
+    /// (F114).
+    pub fn field(&self, t: f64) -> StressField<'_> {
+        self.field_with(t, true)
+    }
+
+    /// The field at a time without the loads' stresses, for what the loads alone add.
+    pub fn field_unloaded(&self, t: f64) -> StressField<'_> {
+        self.field_with(t, false)
+    }
+
+    fn field_with(&self, t: f64, loaded: bool) -> StressField<'_> {
+        let k = self.read_by(t);
+        let current = self.epochs.get(k.saturating_sub(1));
         let axes = self
             .rises
             .iter()
@@ -414,68 +496,80 @@ impl FieldSource {
             axes,
             self.body_radius,
             self.gravity,
-            self.elastic,
-            self.relief.as_ref(),
+            current.map_or(1e3, |e| e.elastic),
+            current.map(|e| &e.relief),
+            if loaded {
+                self.epochs[..k]
+                    .iter()
+                    .filter_map(|e| e.load.as_ref())
+                    .collect()
+            } else {
+                Vec::new()
+            },
         )
+    }
+
+    /// Whether any load has been laid.
+    pub fn loaded(&self) -> bool {
+        self.epochs.iter().any(|e| e.load.is_some())
     }
 }
 
 /// The lid's compression on a coarse grid through the loop (F154): each cell's reading at
-/// the time last asked for, read again only as the rises grow, since the relief's part of
-/// the field stands still.
+/// the time last asked for, read again as the rises grow and as the loop reads the ground
+/// anew (F157).
 pub struct Compression {
-    pub source: FieldSource,
     pub grid: CubeSphere,
     /// Each cell's area, m².
     pub area: Vec<f64>,
     pub squeeze: Vec<Squeeze>,
     pub yield_compression: f64,
-    /// The rises' growth when the cells were last read, and whether they have been.
+    /// The rises' growth and the epochs read when the cells were last read, and whether
+    /// they have been.
     grown: Vec<f64>,
+    epochs: usize,
     read: bool,
 }
 
 impl Compression {
-    pub fn new(source: FieldSource, face: u32) -> Self {
+    pub fn new(history: &FieldHistory, face: u32) -> Self {
         let grid = CubeSphere::new(face);
-        let r = source.body_radius;
+        let r = history.body_radius;
         let area = (0..grid.cell_count())
             .map(|i| grid.cell_area(grid.cell(i)) * r * r)
             .collect();
-        let yield_compression = source.field().yield_compression;
+        let yield_compression = history.field(0.0).yield_compression;
         Self {
-            source,
             grid,
             area,
             squeeze: vec![Squeeze::default(); grid.cell_count()],
             yield_compression,
             grown: Vec::new(),
+            epochs: 0,
             read: false,
         }
     }
 
-    /// Read the cells at a time, unless no rise has grown by FIELD_REREAD_GROWTH since
-    /// they were last read.
-    pub fn at(&mut self, t: f64) {
-        let grown: Vec<f64> = self
-            .source
-            .rises
-            .iter()
-            .map(|r| rise_progress(r, t))
-            .collect();
+    /// Read the cells at a time, unless no rise has grown by FIELD_REREAD_GROWTH and the
+    /// loop has read no new epoch since they were last read.
+    pub fn at(&mut self, t: f64, history: &FieldHistory) {
+        let grown: Vec<f64> = history.rises.iter().map(|r| rise_progress(r, t)).collect();
         let moved = grown
             .iter()
             .zip(&self.grown)
             .any(|(a, b)| (a - b).abs() > FIELD_REREAD_GROWTH);
-        if self.read && !moved {
+        let epochs = history.read_by(t);
+        if self.read && !moved && epochs == self.epochs {
             return;
         }
-        let field = self.source.field();
+        let field = history.field(t);
         let grid = self.grid;
         self.squeeze = (0..grid.cell_count())
+            .into_par_iter()
             .map(|i| field.squeeze(grid.center(grid.cell(i)), t))
             .collect();
         self.grown = grown;
+        self.epochs = epochs;
         self.read = true;
     }
 
@@ -509,7 +603,7 @@ mod tests {
             .map(|i| cap(grid.center(grid.cell(i))) as f32)
             .collect();
         let relief = Relief { grid, height };
-        let field = StressField::new(&[], Vec::new(), r, g, te, Some(&relief));
+        let field = StressField::new(&[], Vec::new(), r, g, te, Some(&relief), Vec::new());
         let at = |lat: f64, lon: f64| {
             let (la, lo) = (lat.to_radians(), lon.to_radians());
             [la.cos() * lo.cos(), la.cos() * lo.sin(), la.sin()]
@@ -575,7 +669,8 @@ mod tests {
                     stress: RISE_AXIAL_STRESS,
                 })
                 .collect();
-            let field = StressField::new(&rises, axes, r, gravity, elastic, Some(&relief));
+            let field =
+                StressField::new(&rises, axes, r, gravity, elastic, Some(&relief), Vec::new());
             let k = ((1.0 + ROCK_FRICTION.powi(2)).sqrt() + ROCK_FRICTION).powi(2);
             let yc = (k - 1.0) * DENSITY_CRUST_ROCK * gravity * FAULT_LAYER_DEPTH;
             println!(
@@ -639,7 +734,7 @@ mod tests {
             .map(|i| cap(grid.center(grid.cell(i))) as f32)
             .collect();
         let relief = Relief { grid, height };
-        let field = StressField::new(&[], Vec::new(), r, g, te, Some(&relief));
+        let field = StressField::new(&[], Vec::new(), r, g, te, Some(&relief), Vec::new());
         let at = |lat: f64, lon: f64| {
             let (la, lo) = (lat.to_radians(), lon.to_radians());
             [la.cos() * lo.cos(), la.cos() * lo.sin(), la.sin()]

@@ -21,6 +21,7 @@ pub mod ice_shell;
 pub mod impacts;
 pub mod io;
 pub mod lineae;
+pub mod load;
 pub mod materials;
 pub mod plume;
 pub mod primordial_crust;
@@ -372,7 +373,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 115;
+pub const FINISH_VERSION: u64 = 116;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -416,15 +417,25 @@ pub fn run_coarse_loop(
             height: relaxation::low_pass(&layers.bedrock, cell, wavelength),
         }
     };
-    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal, Some(relief.clone()));
-    // The thrusts read the same field from its other side (F154, F155).
-    let field_source = stress::FieldSource::new(
+    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal, Some(relief));
+    // The lid's field through the loop (F154, F157), which the thrusts read from its other
+    // side (F155): the ground and the lid read at epochs, and the lava laid since each load
+    // bending the lid of its time.
+    let body_radius = graph.f64("body.radius");
+    let gravity = graph.f64("body.gravity");
+    let cell = grid.delta() * body_radius;
+    let mut history = stress::FieldHistory::new(
         graph,
         plume.as_ref().map(|p| p.rises.clone()).unwrap_or_default(),
-        Some(relief),
     );
-    let mut contraction =
-        tectonics::ContractionProcess::new(graph, grid, &thermal, field_source.clone());
+    let first_lid = thermal.at(0.0).elastic;
+    history.push(stress::FieldEpoch {
+        time: 0.0,
+        elastic: first_lid,
+        relief: stress::Relief::read(&layers.bedrock, None, cell, first_lid, gravity),
+        load: None,
+    });
+    let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal, &history);
     // The lid's own faults, the wide ones carved through the loop (F147, F153).
     let mut strain = strain::StrainProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(
@@ -459,6 +470,10 @@ pub fn run_coarse_loop(
         time_gyr: 0.0,
         layers: layers.clone(),
     });
+    // The lava laid by the last load the field holds, per coarse cell, and when the field is
+    // read next (F157).
+    let mut laid = vec![0.0f32; grid.cell_count()];
+    let mut next_epoch = LOAD_EPOCH_GYR;
 
     for s in 1..=steps {
         if sink.cancelled() {
@@ -496,6 +511,7 @@ pub fn run_coarse_loop(
         if let Some(s) = &mut strain {
             s.step(&mut layers, grid, graph.f64("body.radius"), t0, t1);
         }
+        let mut renewed = false;
         if let Some(e) = &mut episodic
             && let Some(fill) = e.step(
                 &mut layers,
@@ -506,6 +522,7 @@ pub fn run_coarse_loop(
             && let Some(f) = &mut floods
         {
             f.note_resurfacing(&fill, e.event_time());
+            renewed = true;
         }
         if let Some(i) = &mut io {
             let lay = s % keep_every == 0 || s == steps;
@@ -540,7 +557,7 @@ pub fn run_coarse_loop(
         let craters = impacts.sample(t0, t1);
         let scarps = contraction
             .as_mut()
-            .map_or_else(Vec::new, |c| c.sample(t0, t1));
+            .map_or_else(Vec::new, |c| c.sample(t0, t1, &history));
         let eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
             f.sample(&layers, boost.as_deref(), &rise_vents, t0, t1)
         });
@@ -583,6 +600,44 @@ pub fn run_coarse_loop(
                     .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
                 eprintln!("step {s}: bedrock {lo:.0} to {hi:.0} m");
             }
+        }
+        // The lid's field read anew (F157): every LOAD_EPOCH_GYR, at a renewal and at the
+        // end, the ground as it stands and the lid as thick as it is then, and the rock lava
+        // laid since the last load, once there is enough of it, bending that lid.
+        if t1 >= next_epoch - 1e-9 || renewed || s == steps {
+            while next_epoch <= t1 + 1e-9 {
+                next_epoch += LOAD_EPOCH_GYR;
+            }
+            let elastic = thermal.at(t1).elastic;
+            let relief = stress::Relief::read(
+                &layers.bedrock,
+                plume.as_ref().map(|p| p.load.as_slice()),
+                cell,
+                elastic,
+                gravity,
+            );
+            let mut load = None;
+            if let Some(f) = &floods
+                && let Some(density) = f.magma_density()
+            {
+                let increment: Vec<f32> = f
+                    .thickness
+                    .iter()
+                    .zip(&laid)
+                    .map(|(t, l)| (t - l).max(0.0))
+                    .collect();
+                let most = increment.iter().fold(0.0f32, |m, &v| m.max(v));
+                if most as f64 >= LOAD_MIN_INCREMENT {
+                    load = load::lay(grid, &increment, body_radius, gravity, elastic, density);
+                    laid.copy_from_slice(&f.thickness);
+                }
+            }
+            history.push(stress::FieldEpoch {
+                time: t1,
+                elastic,
+                relief,
+                load,
+            });
         }
         if s % keep_every == 0 || s == steps {
             keyframes.push(Keyframe {
@@ -628,18 +683,31 @@ pub fn run_coarse_loop(
         canyons.extend(s.canyons);
         graben.extend(s.graben);
     }
+    // The graben the floods' loads open beyond their margins (F158); EXOGEN_SKIP_LOAD_GRABEN
+    // leaves them out, a debug switch for timing them.
+    if std::env::var_os("EXOGEN_SKIP_LOAD_GRABEN").is_none() {
+        graben.extend(load::graben(
+            &history,
+            grid,
+            graph.f64("seed.tectonics") as u64,
+            age,
+            graph
+                .f64("cratering.record_start")
+                .max(age - graph.f64("cratering.retention_age"))
+                .clamp(0.0, age),
+        ));
+    }
     let (floods, mut ridges, provinces) = match floods {
         Some(f) => {
             // The plains' ridges stand where the lid squeezes them, read when each place's
             // would stand, and follow the lava's thickness where the field leaves them free
             // (F156).
             let (squeezed, squeeze) =
-                ridges::plains_squeeze(graph, &thermal, &field_source, grid, &f.last_time);
+                ridges::plains_squeeze(graph, &thermal, &history, grid, &f.last_time);
             let ridges = ridges::plan_ridges(
                 &grid,
                 graph.f64("body.radius"),
                 layers.unit_id.as_slice(),
-                &f.thickness,
                 &f.last_time,
                 &squeezed,
                 &squeeze,
@@ -3063,6 +3131,91 @@ mod tests {
         g
     }
 
+    /// Prints each body's elastic lid through time and the loads its floods lay: the lava's
+    /// thickness over the plains, when it was laid, and the flexural parameter then.
+    #[test]
+    #[ignore = "diagnostic: the lid through time and the floods' loads"]
+    fn print_loads() {
+        let names =
+            std::env::var("EXOGEN_BODY").unwrap_or_else(|_| "Moon,Mercury,Mars,Venus".into());
+        let quality = std::env::var("EXOGEN_QUALITY").unwrap_or_else(|_| "preview".into());
+        for name in names.split(',') {
+            let g = preset_graph(name, &quality);
+            let out = run_coarse_loop(&g, &NoProgress).unwrap();
+            let thermal = &out.thermal;
+            let age = g.f64("body.age");
+            let gravity = g.f64("body.gravity");
+            let lids: Vec<String> = [0.1, 0.25, 0.5, 0.75, 1.0]
+                .iter()
+                .map(|f| {
+                    format!(
+                        "{:.2} Gyr {:.0} km",
+                        f * age,
+                        thermal.at(f * age).elastic / 1e3
+                    )
+                })
+                .collect();
+            println!("{name}: elastic lid {}", lids.join(", "));
+            let n = out.grid.cell_count();
+            let mut thickness = vec![0.0f64; n];
+            let mut weighted_time = vec![0.0f64; n];
+            let mut volume_time = (0.0, 0.0);
+            for rec in &out.floods {
+                for (idx, c) in rec.cells() {
+                    thickness[idx as usize] += c.thickness as f64;
+                    weighted_time[idx as usize] += c.thickness as f64 * rec.time_gyr;
+                }
+                volume_time.0 += rec.volume * rec.time_gyr;
+                volume_time.1 += rec.volume;
+            }
+            let mut lava: Vec<f64> = thickness.iter().copied().filter(|&t| t > 1.0).collect();
+            lava.sort_by(f64::total_cmp);
+            let q = |v: &[f64], f: f64| {
+                if v.is_empty() {
+                    0.0
+                } else {
+                    v[((v.len() - 1) as f64 * f) as usize]
+                }
+            };
+            let mean_time = volume_time.0 / volume_time.1.max(1.0);
+            let te = thermal.at(mean_time).elastic;
+            let rigidity = ROCK_YOUNG_MODULUS * te.powi(3) / (12.0 * (1.0 - ROCK_POISSON.powi(2)));
+            let l = (rigidity / (DENSITY_ROCK * gravity)).powf(0.25);
+            println!(
+                "  lava over {:.2} of cells: thickness m p50 {:.0} p90 {:.0} p99 {:.0} max {:.0}; volume-weighted time {:.2} Gyr, lid then {:.0} km, flexural parameter (D / rho_m g)^1/4 {:.0} km; loop cell {:.0} km",
+                lava.len() as f64 / n as f64,
+                q(&lava, 0.5),
+                q(&lava, 0.9),
+                q(&lava, 0.99),
+                q(&lava, 1.0),
+                mean_time,
+                te / 1e3,
+                l / 1e3,
+                out.grid.delta() * g.f64("body.radius") / 1e3
+            );
+            if let Some(r) = &out.resurfacing {
+                let mut fill: Vec<f64> = r
+                    .fill
+                    .iter()
+                    .map(|&f| f as f64)
+                    .filter(|&f| f > 1.0)
+                    .collect();
+                fill.sort_by(f64::total_cmp);
+                let te = thermal.at(r.time_gyr).elastic;
+                println!(
+                    "  resurfacing at {:.2} Gyr over {:.2} of cells: fill m p10 {:.0} p50 {:.0} p90 {:.0} max {:.0}; lid then {:.1} km",
+                    r.time_gyr,
+                    fill.len() as f64 / n as f64,
+                    q(&fill, 0.1),
+                    q(&fill, 0.5),
+                    q(&fill, 0.9),
+                    q(&fill, 1.0),
+                    te / 1e3
+                );
+            }
+        }
+    }
+
     /// Prints the thrusts and ridges a body's loop lays (F155, F156): their numbers and
     /// lengths, the share of the ridges' length below the mean height, and, about a rise,
     /// the share running round it.
@@ -3112,6 +3265,19 @@ mod tests {
                 taken,
                 taken / (4.0 * std::f64::consts::PI * r * r)
             );
+            let mut times: Vec<f64> = out.scarps.iter().map(|s| s.time_gyr).collect();
+            times.sort_by(f64::total_cmp);
+            let lids: Vec<String> = [0.0, 0.05, 0.1, 0.2, 0.4, 0.7, 1.0]
+                .iter()
+                .map(|&t| format!("{t} Gyr {:.0} km", out.thermal.at(t).elastic / 1e3))
+                .collect();
+            println!(
+                "  scarp times Gyr p10 {:.2} p50 {:.2} p90 {:.2}; lid {}",
+                q(&times, 0.1),
+                q(&times, 0.5),
+                q(&times, 0.9),
+                lids.join(", ")
+            );
             let thrust = |id: u64| id >= 1 << 32;
             for (label, pick) in [("plains ridges", false), ("thrust ridges", true)] {
                 let rs: Vec<&ridges::RidgeRecord> =
@@ -3160,6 +3326,51 @@ mod tests {
                     below / all.max(1.0),
                     near / all.max(1.0),
                     round / near.max(1.0)
+                );
+            }
+            // The graben the loads opened (F158): how many, how long, when, and how far
+            // from the lava they lie.
+            let load_graben: Vec<&plume::Trough> = out
+                .graben
+                .iter()
+                .filter(|g| (60_000_000_000..61_000_000_000).contains(&g.id))
+                .collect();
+            if !load_graben.is_empty() {
+                let mut lengths: Vec<f64> = load_graben.iter().map(|g| g.length / 1e3).collect();
+                lengths.sort_by(f64::total_cmp);
+                let mut times: Vec<f64> = load_graben.iter().map(|g| g.start_gyr).collect();
+                times.sort_by(f64::total_cmp);
+                let units = layers.unit_id.as_slice();
+                let lava_cells: Vec<[f64; 3]> = (0..grid.cell_count())
+                    .step_by(7)
+                    .filter(|&k| volcanism::is_lava_unit(units[k]))
+                    .map(|k| grid.center(grid.cell(k)))
+                    .collect();
+                let mut near: Vec<f64> = load_graben
+                    .iter()
+                    .map(|g| {
+                        let m = g.points[g.points.len() / 2];
+                        lava_cells
+                            .iter()
+                            .map(|&c| angle_between(c, m) * r / 1e3)
+                            .fold(f64::INFINITY, f64::min)
+                    })
+                    .collect();
+                near.sort_by(f64::total_cmp);
+                println!(
+                    "  load graben: {} , length km p50 {:.0} max {:.0}; width km p50 {:.1}; formed Gyr p10 {:.2} p50 {:.2}; midpoint from lava km p50 {:.0} p90 {:.0}",
+                    load_graben.len(),
+                    q(&lengths, 0.5),
+                    q(&lengths, 1.0),
+                    {
+                        let mut w: Vec<f64> = load_graben.iter().map(|g| g.width / 1e3).collect();
+                        w.sort_by(f64::total_cmp);
+                        q(&w, 0.5)
+                    },
+                    q(&times, 0.1),
+                    q(&times, 0.5),
+                    q(&near, 0.5),
+                    q(&near, 0.9)
                 );
             }
             // The plains below the mean height, for comparison.
