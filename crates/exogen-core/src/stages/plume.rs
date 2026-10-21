@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 26;
+pub const VERSION: u64 = 27;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -65,9 +65,16 @@ pub struct Shield {
     pub rift: f64,
     /// Its edifice's axis along the rift over its axis across (F101).
     pub elongation: f64,
-    /// The time over which it grows by a factor e of what it has still to grow, Gyr: its
-    /// magma comes as fast as its mantle melts as it starts (F120).
-    pub growth_gyr: f64,
+    /// The lava its rise's eruptions have brought it by the end of each step, m³, from its
+    /// start, when none (F164): what its edifice grows by and its flows carry past its foot.
+    pub supplied: Vec<(f64, f64)>,
+    /// Its edifice's volume fully grown, m³, and the area it covers, m².
+    pub volume: f64,
+    pub area: f64,
+    /// The share of its lava its flows carry past its foot, and the share of that its rift
+    /// zone's eruptions bring (F163).
+    pub overflow: f64,
+    pub rift_overflow: f64,
     pub id: u64,
 }
 
@@ -447,13 +454,31 @@ pub fn trough_progress(trough: &Trough, t: f64) -> f64 {
     smooth(t, trough.start_gyr, trough.end_gyr)
 }
 
-/// Shield growth: most of it early, a tail to the present.
-pub fn shield_progress(t: f64, shield: &Shield) -> f64 {
-    if t <= shield.start_gyr {
-        0.0
-    } else {
-        1.0 - (-(t - shield.start_gyr) / shield.growth_gyr.max(1e-6)).exp()
+/// The lava a shield's rise had brought it by a time, m³ (F164), between the ends of the
+/// steps that brought it.
+pub fn shield_supplied(t: f64, shield: &Shield) -> f64 {
+    let s = &shield.supplied;
+    match s.iter().position(|&(time, _)| time >= t) {
+        None => s.last().map_or(0.0, |&(_, v)| v),
+        Some(0) => 0.0,
+        Some(k) => {
+            let (t0, v0) = s[k - 1];
+            let (t1, v1) = s[k];
+            v0 + (v1 - v0) * ((t - t0) / (t1 - t0).max(1e-12)).clamp(0.0, 1.0)
+        }
     }
+}
+
+/// The lava laid on a shield's edifice by a time, m³ (F164): its supply less what its flows
+/// carry past its foot. A grown edifice's lava goes on renewing its flanks.
+pub fn shield_laid(t: f64, shield: &Shield) -> f64 {
+    (1.0 - shield.overflow) * shield_supplied(t, shield)
+}
+
+/// A shield's growth by a time, 0 to 1 (F164): the lava laid on it over its edifice's
+/// volume, which it fills and then stands at.
+pub fn shield_progress(t: f64, shield: &Shield) -> f64 {
+    (shield_laid(t, shield) / shield.volume.max(1.0)).min(1.0)
 }
 
 /// The share of a rise's dikes its shields' loads gather by a time (F119), and so the share
@@ -598,38 +623,84 @@ pub fn shield_composition(shield: &Shield, time_gyr: f64, eruption: Option<u64>)
     crate::stages::volcanism::flood_composition(time_gyr, shield.center, batch)
 }
 
+/// The time by which a shield's edifice had been laid this much lava, m³ (F164): its start
+/// for none, its last step's end for more than its supply brought.
+fn laid_time(shield: &Shield, laid: f64) -> f64 {
+    let keep = 1.0 - shield.overflow;
+    let s = &shield.supplied;
+    for k in 1..s.len() {
+        let (t0, v0) = (s[k - 1].0, keep * s[k - 1].1);
+        let (t1, v1) = (s[k].0, keep * s[k].1);
+        if v1 >= laid {
+            return if v1 > v0 {
+                t0 + (t1 - t0) * ((laid - v0) / (v1 - v0)).clamp(0.0, 1.0)
+            } else {
+                t0
+            };
+        }
+    }
+    s.last().map_or(shield.start_gyr, |&(t, _)| t)
+}
+
 /// The time by which a shield had grown to a share of its edifice.
 fn progress_time(shield: &Shield, progress: f64) -> f64 {
-    shield.start_gyr - shield.growth_gyr * (1.0 - progress).ln()
+    laid_time(shield, progress * shield.volume)
 }
 
-/// The edifice's mean height over its area as a share of its summit's.
-fn shield_mean_shape() -> f64 {
-    let n = 256;
-    (0..n)
-        .map(|i| {
-            let x = (i as f64 + 0.5) / n as f64;
-            2.0 * x * shield_shape(x) / n as f64
-        })
-        .sum()
-}
-
-/// The growth of a shield, shares of its edifice, over which the eruptions that can
-/// show on it came (F101): since the edifice last grew on average by SHIELD_FLOW_COVER
-/// sheets of flows, which lie over the rest; none before it starts.
+/// The lava laid on a shield, m³, over which the eruptions that can show on it came (F101,
+/// F164): since its edifice was last laid SHIELD_FLOW_COVER sheets of flows on average,
+/// which lie over the rest, whether they built it or renewed its grown flanks; none before
+/// it starts.
 fn shield_span(shield: &Shield, present: f64) -> Option<(f64, f64)> {
-    let now = shield_progress(present, shield);
+    let now = shield_laid(present, shield);
     if now <= 0.0 {
         return None;
     }
-    let laid = SHIELD_FLOW_COVER * FLOOD_SHEET_THICKNESS / (shield.height * shield_mean_shape());
-    Some(((now - laid).max(0.0), now))
+    let cover = SHIELD_FLOW_COVER * FLOOD_SHEET_THICKNESS * shield.area;
+    Some(((now - cover).max(0.0), now))
 }
 
 /// The times of the eruptions that can show on a shield (F101).
 pub fn shield_window(shield: &Shield, present: f64) -> Option<(f64, f64)> {
-    shield_span(shield, present)
-        .map(|(from, _)| (progress_time(shield, from).min(present), present))
+    shield_span(shield, present).map(|(from, _)| (laid_time(shield, from).min(present), present))
+}
+
+/// A shield's edifice fully grown (F164): its volume, m³, and the area it covers, m², summed
+/// over its outline.
+fn edifice_size(shield: &Shield) -> (f64, f64) {
+    let (na, nr) = (128, 128);
+    let (mut volume, mut area) = (0.0, 0.0);
+    for i in 0..na {
+        let phi = std::f64::consts::TAU * (i as f64 + 0.5) / na as f64;
+        let dr = shield.radius_toward(phi) / nr as f64;
+        for j in 0..nr {
+            let r = (j as f64 + 0.5) * dr;
+            let ring = r * dr * std::f64::consts::TAU / na as f64;
+            volume += shield.height * shield_shape(shield.reach_share(r, phi)) * ring;
+            area += ring;
+        }
+    }
+    (volume, area)
+}
+
+impl Shield {
+    /// The shield with its edifice's size and its flows' shares, and a supply that grows
+    /// its edifice by a factor e of what it has still to grow each `growth_gyr` from its
+    /// start to `present`, as a time's own clock would (for tests).
+    #[cfg(test)]
+    pub(crate) fn with_clock(mut self, growth_gyr: f64, present: f64) -> Self {
+        (self.volume, self.area) = edifice_size(&self);
+        (self.overflow, self.rift_overflow) = overflow_share(rift_reach(&self));
+        let n = 1000;
+        self.supplied = (0..=n)
+            .map(|k| {
+                let t = self.start_gyr + (present - self.start_gyr) * k as f64 / n as f64;
+                let p = 1.0 - (-(t - self.start_gyr) / growth_gyr).exp();
+                (t, p * self.volume / (1.0 - self.overflow))
+            })
+            .collect();
+        self
+    }
 }
 
 /// The eruptions that show on a shield (F101). Its lava comes out at circumferential
@@ -758,8 +829,7 @@ pub fn shield_flows(
         .enumerate()
         .map(|(j, (lobes, summit))| {
             // Eruptions come as the supply does, evenly through the growth.
-            let time =
-                progress_time(shield, from + (now - from) * (j as f64 + 0.5) / n).min(present);
+            let time = laid_time(shield, from + (now - from) * (j as f64 + 0.5) / n).min(present);
             ShieldFlow {
                 lobes,
                 time_gyr: time,
@@ -1330,11 +1400,11 @@ pub struct PlumeProcess {
     carved: Vec<f32>,
     /// The share of that the shields' lava has filled since, m.
     filled: Vec<f32>,
-    /// The share of each shield's lava that runs past its foot and the share of that its
-    /// rift zone brings (F163), and the lava each has sent past its foot but not yet
-    /// erupted, m³.
-    overflow: Vec<(f64, f64)>,
+    /// The lava each shield has sent past its foot but not yet erupted, m³ (F163).
     foot: Vec<f64>,
+    /// The volcanoes' dike swarms (F116): each swarm's key, its volcano's id and the share of
+    /// the volcano's growth it comes at, timed once the supply is scheduled (F164).
+    volcano_swarms: Vec<(u64, u64, f64)>,
     stamper: Stamper,
 }
 
@@ -1442,7 +1512,7 @@ impl PlumeProcess {
                 let (se, sn) = local_basis(center);
                 let rift = azimuth_from(center, se, sn, rise.center);
                 let start_gyr = shield_start(rise, before / total.max(f64::MIN_POSITIVE));
-                shields.push(Shield {
+                let mut shield = Shield {
                     center,
                     radius,
                     height,
@@ -1450,9 +1520,16 @@ impl PlumeProcess {
                     calderas,
                     rift,
                     elongation: 1.0 + (SHIELD_ELONGATION_MAX - 1.0) * rng.uniform(draw, 15),
-                    growth_gyr: SHIELD_GROWTH_MELT / clock.rate(start_gyr.min(age)).max(1e-9),
+                    supplied: Vec::new(),
+                    volume: 0.0,
+                    area: 0.0,
+                    overflow: 0.0,
+                    rift_overflow: 0.0,
                     id: sid,
-                });
+                };
+                (shield.volume, shield.area) = edifice_size(&shield);
+                (shield.overflow, shield.rift_overflow) = overflow_share(rift_reach(&shield));
+                shields.push(shield);
                 before += volume(k as usize);
                 sid += 1;
             }
@@ -1478,6 +1555,7 @@ impl PlumeProcess {
         let yield_tension = field.yield_tension;
         let mut canyons = Vec::new();
         let mut graben = Vec::new();
+        let mut volcano_swarms: Vec<(u64, u64, f64)> = Vec::new();
         for (ri, rise) in rises.iter().enumerate() {
             let (east, north) = local_basis(rise.center);
             // Where faults start: as often as the ground about the rise is in tension beyond
@@ -1609,10 +1687,12 @@ impl PlumeProcess {
                 volcano,
             } in &sources
             {
+                // A volcano's swarm comes at a share of its growth, which its supply decides:
+                // timed once that is scheduled (F164).
                 let time = match volcano {
                     Some(v) if v.start_gyr < age => {
-                        let grown = shield_progress(age, v);
-                        progress_time(v, rng.uniform(key, 1) * grown).min(age)
+                        volcano_swarms.push((key, v.id, rng.uniform(key, 1)));
+                        v.start_gyr
                     }
                     _ => time_cdf.sample(rng.uniform(key, 1)),
                 };
@@ -1723,10 +1803,6 @@ impl PlumeProcess {
             }
         }
         let limbs = field.limbs.clone();
-        let overflow: Vec<(f64, f64)> = shields
-            .iter()
-            .map(|s| overflow_share(rift_reach(s)))
-            .collect();
         let foot = vec![0.0; shields.len()];
         Some(Self {
             grid,
@@ -1742,10 +1818,142 @@ impl PlumeProcess {
             shield_built: vec![0.0; grid.cell_count()],
             carved: vec![0.0; grid.cell_count()],
             filled: vec![0.0; grid.cell_count()],
-            overflow,
             foot,
+            volcano_swarms,
             stamper: Stamper::new(&grid),
         })
+    }
+
+    /// The lava each rise's shields take of its eruptions, step by step, and so how each
+    /// shield grows (F164). A rise's shields gather the share of its eruptions that what the
+    /// rise adds to the floods' vent weights, by its fertile mantle and its dome, takes of
+    /// their whole, by the share its started shields hold (F108, F119), of the extrusive
+    /// budget each step brings; the started shields share it by their edifices' volumes,
+    /// each for the share of the step it had started by. Read against the ground the loop
+    /// begins on. Returns what the shields take each step, which the floods lose, so that
+    /// the melt is one budget; and times the volcanoes' dike swarms, which come at shares of
+    /// their growth (F116).
+    pub fn schedule(
+        &mut self,
+        floods: &crate::stages::volcanism::FloodProcess,
+        layers: &LayerSet,
+        steps: usize,
+        dt: f64,
+    ) -> Vec<f64> {
+        let n = self.shields.len();
+        let owner: Vec<usize> = self
+            .shields
+            .iter()
+            .map(|s| rise_of(&self.rises, s.center))
+            .collect();
+        let mut cumulative = vec![0.0f64; n];
+        for s in &mut self.shields {
+            s.supplied = vec![(s.start_gyr, 0.0)];
+        }
+        let mut taken = Vec::with_capacity(steps);
+        for k in 1..=steps {
+            let (t0, t1) = (dt * (k - 1) as f64, dt * k as f64);
+            let vents = self.rise_vents(t0, t1);
+            let boost = self.boost_at(t1);
+            let shares = floods.capture_shares(layers, Some(&boost), &vents);
+            let budget = floods.step_budget(t0, t1);
+            let mut took = 0.0;
+            for (r, share) in shares.iter().enumerate() {
+                let supply = budget * share;
+                let started: Vec<(usize, f64)> = (0..n)
+                    .filter(|&i| owner[i] == r && self.shields[i].start_gyr < t1)
+                    .map(|i| {
+                        let s = &self.shields[i];
+                        let part = ((t1 - s.start_gyr.max(t0)) / dt).clamp(0.0, 1.0);
+                        (i, s.volume * part)
+                    })
+                    .collect();
+                let whole: f64 = started.iter().map(|&(_, w)| w).sum();
+                if supply <= 0.0 || whole <= 0.0 {
+                    continue;
+                }
+                for (i, w) in started {
+                    cumulative[i] += supply * w / whole;
+                }
+                took += supply;
+            }
+            for (i, s) in self.shields.iter_mut().enumerate() {
+                if s.start_gyr < t1 {
+                    s.supplied.push((t1, cumulative[i]));
+                }
+            }
+            taken.push(took);
+        }
+        self.time_swarms();
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            let present = self.present;
+            for s in &self.shields {
+                let grown = shield_progress(present, s);
+                eprintln!(
+                    "shield {}: edifice {:.3e} km3, brought {:.3e} km3, built {:.3}{}",
+                    s.id,
+                    s.volume / 1e9,
+                    shield_supplied(present, s) / 1e9,
+                    grown,
+                    if grown >= 1.0 {
+                        format!(", full at {:.2} Gyr", progress_time(s, 1.0))
+                    } else {
+                        String::new()
+                    }
+                );
+            }
+        }
+        taken
+    }
+
+    /// The vent weights' multiplier at a time (F108), the domes as they stand then: what
+    /// `vent_boost` reads from the uplift the loop has laid by then.
+    fn boost_at(&mut self, t: f64) -> Vec<f64> {
+        let grid = self.grid;
+        let body_radius = self.body_radius;
+        let mut load = vec![0.0f64; grid.cell_count()];
+        for rise in &self.rises {
+            let p = rise_progress(rise, t);
+            if p <= 0.0 {
+                continue;
+            }
+            self.stamper
+                .gather(&grid, body_radius, rise.center, rise.radius);
+            for &(idx, r, _) in &self.stamper.footprint {
+                load[idx] += rise.height * p * dome(r / rise.radius);
+            }
+        }
+        load.iter()
+            .map(|&l| 1.0 + PLUME_VENT_BOOST * (l / self.rise_height).clamp(0.0, 1.0))
+            .collect()
+    }
+
+    /// The times of the volcanoes' dike swarms (F116, F164): each at its share of its
+    /// volcano's growth to the present, at the volcano's start where it never grew.
+    fn time_swarms(&mut self) {
+        let present = self.present;
+        let times: HashMap<u64, f64> = self
+            .volcano_swarms
+            .iter()
+            .map(|&(key, id, share)| {
+                let v = &self.shields[id as usize];
+                let grown = shield_progress(present, v);
+                let time = if grown > 0.0 {
+                    progress_time(v, share * grown)
+                } else {
+                    v.start_gyr
+                };
+                (key, time.min(present))
+            })
+            .collect();
+        for t in self.canyons.iter_mut().chain(self.graben.iter_mut()) {
+            if t.id >> 48 == 0x0D1C
+                && let Some(&time) = times.get(&((t.id & 0xFFFF_FFFF_FFFF) >> 8))
+            {
+                t.start_gyr = time;
+                t.end_gyr = time;
+            }
+        }
     }
 
     /// Multiplier on the vent weights: eruptions favour the rise.
@@ -1814,7 +2022,7 @@ impl PlumeProcess {
             while self.foot[si] >= lo && j < 100_000 {
                 let draw = 8 * j;
                 let volume = (lo * (hi / lo).powf(rng.uniform(key, draw))).min(self.foot[si]);
-                let rift = rng.uniform(key, draw + 1) < self.overflow[si].1;
+                let rift = rng.uniform(key, draw + 1) < shield.rift_overflow;
                 let (phi, distance) = past_the_foot(
                     &self.shields,
                     si,
@@ -1866,12 +2074,12 @@ impl PlumeProcess {
         let t_mid = 0.5 * (t0 + t1);
         for (si, shield) in self.shields.iter().enumerate() {
             let dp = shield_progress(t1, shield) - shield_progress(t0, shield);
+            // What its flows carry past its foot as it grows (F163); a full edifice lifts no
+            // more, and the magma its rise still brings it intrudes beneath it (F164).
+            self.foot[si] += shield.overflow / (1.0 - shield.overflow) * shield.volume * dp;
             if dp <= 0.0 {
                 continue;
             }
-            // The lava the edifice grows by, m³, and so what its flows sent past its foot
-            // (F163).
-            let mut grown = 0.0;
             self.stamper
                 .gather(&grid, body_radius, shield.center, shield.extent());
             let bedrock = layers.bedrock.as_mut_slice();
@@ -1919,7 +2127,6 @@ impl PlumeProcess {
                 self.filled[idx] += fill;
                 bedrock[idx] += (dh - drowned) as f32 + fill;
                 self.shield_built[idx] += dh as f32;
-                grown += dh * grid.cell_area(grid.cell(idx)) * body_radius * body_radius;
                 if dh > SHIELD_RENEWAL_THICKNESS {
                     ages[idx] = renewed as f32;
                     units[idx] = UNIT_LAVA;
@@ -1928,8 +2135,6 @@ impl PlumeProcess {
                     cover[idx] = 1.0;
                 }
             }
-            let share = self.overflow[si].0;
-            self.foot[si] += grown * share / (1.0 - share).max(1e-9);
         }
         if std::env::var_os("EXOGEN_DEBUG").is_some()
             && let (Some(rise), Some(shield)) = (self.rises.first(), self.shields.first())
@@ -3722,6 +3927,7 @@ pub fn shield_compute(
     let edifice = |e: [f64; 3]| shield_height(shield, e, body_radius, false, 0.0);
     // The edifice's lava under the eruptions that show, as it was when they began.
     let older = shield_window(shield, present).map(|w| shield_composition(shield, w.0, None));
+    let built = shield_progress(present, shield);
     stamper.gather(
         grid,
         body_radius,
@@ -3735,6 +3941,7 @@ pub fn shield_compute(
         let fine = shield_height(shield, d, body_radius, true, 0.0);
         let coarse = shield_height(shield, d, body_radius, false, 0.0);
         let mut stack = 0.0;
+        // The calderas sink by the share of its height the edifice built (F164).
         // The topmost eruption that holds the cell, else the topmost that touches it, and
         // the share of the cell the eruptions cover together (F131).
         let (mut whole, mut touched): (Option<usize>, Option<usize>) = (None, None);
@@ -3754,7 +3961,7 @@ pub fn shield_compute(
         let top = whole.or(touched);
         let mut write = CellWrite {
             idx: idx as u32,
-            bedrock: (bedrock[idx] as f64 + (fine - coarse) + stack) as f32,
+            bedrock: (bedrock[idx] as f64 + (fine - coarse) * built + stack) as f32,
             surface: false,
             age: 0.0,
             unit: 0,
@@ -3849,9 +4056,14 @@ mod tests {
             }],
             rift: 0.0,
             elongation: 1.0,
-            growth_gyr: 1.0,
+            supplied: Vec::new(),
+            volume: 0.0,
+            area: 0.0,
+            overflow: 0.0,
+            rift_overflow: 0.0,
             id: 1,
-        };
+        }
+        .with_clock(1.0, 4.5);
         let r = 3.39e6;
         let summit = shield_height(&shield, [1.0, 0.0, 0.0], r, true, 0.0);
         assert!((summit - 17.5e3).abs() < 1.0, "{summit}");
@@ -3896,6 +4108,73 @@ mod tests {
         assert!(most >= 4, "the most collapses on a summit was {most}");
     }
 
+    /// A preset's plume with its shields' supply scheduled from its floods over `steps`
+    /// steps (F164), against flat ground.
+    fn scheduled(g: &crate::params::ParamGraph, grid: CubeSphere, steps: usize) -> PlumeProcess {
+        let thermal = ThermalHistory::from_graph(g);
+        let mut p = PlumeProcess::new(g, grid, &thermal, None).unwrap();
+        let floods =
+            crate::stages::volcanism::FloodProcess::new(g, grid, &thermal, &p.rises).unwrap();
+        p.schedule(
+            &floods,
+            &LayerSet::new(grid),
+            steps,
+            g.f64("body.age") / steps as f64,
+        );
+        p
+    }
+
+    /// The shields' melt is one budget (F164): each step a rise's shields take no more than
+    /// the step's budget brings, nothing before the first starts, and their supplies add up
+    /// to what they take; Mars's edifices fill from it by 3 Gyr and the rest, more than
+    /// thrice what they hold, intrudes; Venus's stay partly built on its small budget.
+    #[test]
+    fn a_rise_s_shields_grow_from_what_they_take_of_its_eruptions() {
+        let grid = CubeSphere::new(64);
+        let run = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let thermal = ThermalHistory::from_graph(&g);
+            let mut p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+            let floods =
+                crate::stages::volcanism::FloodProcess::new(&g, grid, &thermal, &p.rises).unwrap();
+            let age = g.f64("body.age");
+            let steps = 90;
+            let dt = age / steps as f64;
+            let taken = p.schedule(&floods, &LayerSet::new(grid), steps, dt);
+            for (k, &t) in taken.iter().enumerate() {
+                let budget = floods.step_budget(dt * k as f64, dt * (k + 1) as f64);
+                assert!(t >= 0.0 && t <= budget * (1.0 + 1e-9), "{t} of {budget}");
+            }
+            let total: f64 = taken.iter().sum();
+            let brought: f64 = p.shields.iter().map(|s| shield_supplied(age, s)).sum();
+            assert!(
+                (total - brought).abs() <= 1e-6 * total.max(1.0),
+                "{total} {brought}"
+            );
+            for s in &p.shields {
+                assert_eq!(shield_supplied(s.start_gyr, s), 0.0);
+            }
+            (age, p)
+        };
+        let (age, mars) = run("Mars");
+        for s in &mars.shields {
+            assert!(
+                shield_progress(age, s) >= 1.0,
+                "{}",
+                shield_progress(age, s)
+            );
+            assert!(progress_time(s, 1.0) < 3.0, "{}", progress_time(s, 1.0));
+        }
+        let brought: f64 = mars.shields.iter().map(|s| shield_supplied(age, s)).sum();
+        let held: f64 = mars.shields.iter().map(|s| s.volume).sum();
+        assert!(brought > 3.0 * held, "{brought:.3e} {held:.3e}");
+        let (age, venus) = run("Venus");
+        for s in &venus.shields {
+            let p = shield_progress(age, s);
+            assert!(p > 0.0 && p < 0.5, "{p}");
+        }
+    }
+
     /// A shield's flows carry a share of its lava past its foot (F163), nearly all of it
     /// from its rift zone, as F101 draws them: the summit's fissures never reach the foot,
     /// and the farther the rift zone runs to its foot the less passes it.
@@ -3908,10 +4187,12 @@ mod tests {
         assert!(longer < 0.9 * share, "{longer} {share}");
     }
 
-    /// A shield erupts what its flows send past its foot (F163): through Mars's history the
-    /// eruptions past its shields' feet carry their shares of what the edifices hold, each
-    /// within its step, starting beyond a shield's foot within a flow's run, nearly all off
-    /// the ends of its rift zone, on no edifice, and with the shield's own lava.
+    /// A shield erupts what its flows send past its foot (F163, F164): through Mars's
+    /// history the eruptions past its shields' feet carry their shares of what the edifices
+    /// grew by, and the supply a full edifice could not take intrudes; each within its step,
+    /// starting beyond a shield's foot within a flow's run, nearly all off the ends of its
+    /// rift zone, on no edifice, and with the shield's own lava; the edifices hold what the
+    /// grid laid of them.
     #[test]
     fn a_shield_erupts_what_its_flows_send_past_its_foot() {
         use std::f64::consts::{PI, TAU};
@@ -3920,10 +4201,9 @@ mod tests {
         let r = g.f64("body.radius");
         let age = g.f64("body.age");
         let cell = grid.delta() * r;
-        let thermal = ThermalHistory::from_graph(&g);
-        let mut p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
-        let mut layers = LayerSet::new(grid);
         let steps = 90;
+        let mut p = scheduled(&g, grid, steps);
+        let mut layers = LayerSet::new(grid);
         let mut eruptions = Vec::new();
         for k in 0..steps {
             let (t0, t1) = (
@@ -3945,13 +4225,29 @@ mod tests {
             .map(|(k, &h)| h as f64 * grid.cell_area(grid.cell(k)) * r * r)
             .sum();
         let sent = eruptions.iter().map(|e| e.volume).sum::<f64>() + p.foot.iter().sum::<f64>();
-        let ratios: Vec<f64> = p.overflow.iter().map(|o| o.0 / (1.0 - o.0)).collect();
-        let lo = ratios.iter().cloned().fold(f64::MAX, f64::min);
-        let hi = ratios.iter().cloned().fold(0.0, f64::max);
+        let built: f64 = p
+            .shields
+            .iter()
+            .map(|s| s.volume * shield_progress(age, s))
+            .sum();
+        let brought: f64 = p.shields.iter().map(|s| shield_supplied(age, s)).sum();
+        let shares: f64 = p
+            .shields
+            .iter()
+            .map(|s| s.overflow / (1.0 - s.overflow) * s.volume * shield_progress(age, s))
+            .sum();
         assert!(
-            sent / held > 0.99 * lo && sent / held < 1.01 * hi,
-            "{} of {held:.3e} m3, shares {lo} to {hi}",
-            sent / held
+            (sent - shares).abs() < 1e-6 * shares,
+            "{sent:.4e} sent, {shares:.4e} the flows' shares"
+        );
+        // Mars's rise brings its shields far more than they hold: the rest intrudes.
+        assert!(
+            brought > 2.0 * (built + sent),
+            "{brought:.4e} {built:.4e} {sent:.4e}"
+        );
+        assert!(
+            (held - built).abs() < 0.05 * built,
+            "{held:.4e} {built:.4e}"
         );
         // Each beyond a shield's foot within a flow's run, all but a few off the ends of its
         // rift zone, and none on an edifice.
@@ -3997,9 +4293,14 @@ mod tests {
             calderas: summit_collapses(&Rng::new(3), 0, 300e3, 20e3),
             rift: 0.7,
             elongation: 1.3,
-            growth_gyr: 1.0,
+            supplied: Vec::new(),
+            volume: 0.0,
+            area: 0.0,
+            overflow: 0.0,
+            rift_overflow: 0.0,
             id: 5,
-        };
+        }
+        .with_clock(1.0, 4.5);
         let height: Vec<f32> = (0..grid.cell_count())
             .map(|k| {
                 shield_height(&shield, grid.center(grid.cell(k)), body_radius, false, 0.0) as f32
@@ -5104,11 +5405,12 @@ mod tests {
         }
         for s in &p.shields {
             println!(
-                "shield {} on rise {}: start {:.3}, grows over {:.3} Gyr, radius {:.0} km",
+                "shield {} on rise {}: start {:.3}, edifice {:.3e} km3, past its foot {:.2}, radius {:.0} km",
                 s.id,
                 rise_of(&p.rises, s.center),
                 s.start_gyr,
-                s.growth_gyr,
+                s.volume / 1e9,
+                s.overflow,
                 s.radius / 1e3
             );
         }
@@ -5158,12 +5460,6 @@ mod tests {
         }
         for s in &venus.shields {
             assert!(s.start_gyr > overturn, "{}", s.start_gyr);
-            assert!(
-                s.growth_gyr < mars.shields[0].growth_gyr,
-                "{} vs {}",
-                s.growth_gyr,
-                mars.shields[0].growth_gyr
-            );
         }
         // The melt clock runs both ways, and on past the present.
         let r = g.f64("body.radius");
@@ -5390,9 +5686,14 @@ mod tests {
             calderas: Vec::new(),
             rift: 0.0,
             elongation: 1.0,
-            growth_gyr: 1.0,
+            supplied: Vec::new(),
+            volume: 0.0,
+            area: 0.0,
+            overflow: 0.0,
+            rift_overflow: 0.0,
             id: 3,
-        };
+        }
+        .with_clock(1.0, 4.5);
         let shields = std::slice::from_ref(&shield);
         let r = 3.39e6;
         let (east, north) = local_basis(shield.center);
@@ -5422,8 +5723,7 @@ mod tests {
         let grid = CubeSphere::new(128);
         let r = g.f64("body.radius");
         let age = g.f64("body.age");
-        let thermal = ThermalHistory::from_graph(&g);
-        let mut plain = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+        let mut plain = scheduled(&g, grid, 90);
         let shield = plain
             .shields
             .iter()
@@ -5491,7 +5791,7 @@ mod tests {
                 -pitted.bedrock.as_slice()[i_on] as f64,
                 -pitted.bedrock.as_slice()[i_off] as f64,
             );
-            let mut cratered = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+            let mut cratered = scheduled(&g, grid, 90);
             run(&mut cratered, &mut pitted);
             let (on_now, off_now) = (depth(&pitted, flank), depth(&pitted, beyond));
             assert!(on > 500.0, "on the flank {on} m");
@@ -5563,9 +5863,14 @@ mod tests {
             calderas: Vec::new(),
             rift: 0.0,
             elongation: 1.3,
-            growth_gyr: 1.0,
+            supplied: Vec::new(),
+            volume: 0.0,
+            area: 0.0,
+            overflow: 0.0,
+            rift_overflow: 0.0,
             id: 2,
-        };
+        }
+        .with_clock(1.0, 4.5);
         let pi = std::f64::consts::PI;
         let along = shield.radius_toward(0.0) + shield.radius_toward(pi);
         let across = shield.radius_toward(0.5 * pi) + shield.radius_toward(1.5 * pi);

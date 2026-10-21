@@ -374,6 +374,8 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | the loads' graben within the faulted layer (F158) | a stated choice: the loads' stretch is small and none of its faults rift | the throw's partition between graben and rifts from the strain the loads open |
 | SYSTEM_SPACING, SYSTEM_ARREST_SHARE, SYSTEM_INDEX_WIDTH | stated choices (F160): a neighbour 0.6 to 1.6 of its host's reach aside (the Tharsis plateau's ridges some 30 km apart, Watters 1991), an arrest within a quarter of the reaches, an index of 120 km cells | the spacing from the stress shadow a thrust casts over its faulted layer, as the cracks' spacing from theirs (CRACK_DENSITY_FACTOR) |
 | the edifice's root left out of its load (F162) | a stated choice: the lava filling a shield's sag is not counted as load, as counting it would deepen the sag again each epoch | the root's load with the lid's strength bounding the sag (M19) |
+| the shields' supply read against the ground the loop begins on (F164) | a stated choice: the share each rise's shields take of a step's budget is read from the vent weights over the first ground, so that the schedule is known before the loop | the share read from the ground as each step finds it, the shields growing in the loop |
+| a full edifice's surplus intrudes, its flanks renewed at the pace of its supply (F164) | stated choices: the magma a full edifice cannot lift intrudes beneath it, and eruptions too small to count keep its flanks young | the share of a full volcano's magma that erupts on its flanks and past its foot, and its intrusions' load (M19) |
 | a flow's lava spread evenly along its run (F163) | a stated choice: the share of a shield's lava past its foot, 0.41 for a round edifice, from F101's vents and run-outs, each flow's area spread evenly along its run as its breakouts are drawn by the lengths of the lobes laid | the lava along a flow from its cooling and the slope it runs down |
 | RIDGE_REFERENCE_LENGTH, RIDGE_MIN_SIZE | stated choices (F159): a ridge 100 km long stands RIDGE_HEIGHT, its arch and crest no narrower than a quarter of theirs | the ridge's fold from the thrust beneath it and the layered plains' thickness |
 | GRABEN_BLOCK_LAYERS, GRABEN_INTERIOR_SHARE | a wide trough's floor in blocks a quarter of its faulted layer wide, taking 0.3 of its throw (F152): Mandjet's tilted blocks 5 to 10 km on a layer of 20 to 40 km, Beyer et al. 2017; the bounding faults carry most of a graben's throw | the blocks' width and rotation from the domino kinematics of the extension over a listric master (Gibbs 1983) |
@@ -649,11 +651,19 @@ A rise's wide troughs are carried by the coarse loop as they grow (F105, F116), 
 
 Closed in the seventy-fourth milestone (F153): the strain process carries the lid's faults the loop's grid resolves, carving each within the step it forms, and the finish lays its own version over the loop's, as for a rise's canyons.
 
-### M28. The shields' melt is not one budget
+### M28. The shields' melt is not one budget (closed by F164)
 
 A rise's shields take a share of the floods' eruptions as the dome's growth wanes (F108, F119), and that share leaves the lava's budget whatever the shields do with it. Their edifices grow by their own clock (F120), fastest as they start, when their rise's capture is still nothing, and the lava past their feet follows the edifices (F163). The two do not meet: Mars's shields take 6.6 × 10⁷ km³ of its floods' budget, while their edifices hold 8.3 × 10⁶ km³ and the lava they send past their feet 5.4 × 10⁶ km³; Venus's take 2.7 × 10⁵ km³, while their edifices hold 1.9 × 10⁶ km³ and their feet's lava 1.0 × 10⁶ km³, more than twice its floods' whole budget after the overturn, 1.2 × 10⁶ km³.
 
 Direction: a shield's growth from the supply it takes, its edifice by what it holds and the rest past its foot, so that the melt is one budget and the edifices grow as the supply comes.
+
+Closed in the eightieth milestone (F164): a shield grows from the lava its rise's eruptions bring it, scheduled before the loop, and the floods lose what the shields take; an edifice holds what its flows lay on it until it is full, its flows carrying their share past its foot, and the magma a full edifice cannot lift intrudes beneath it. Mars's edifices fill by 2.9 to 2.6 Ga and 5.7 × 10⁷ km³ intrudes; Venus's shields stand 6 to 15 percent built on its small budget (M29).
+
+### M29. Venus's shields are as large as its supply lets them
+
+Since F164 a shield grows from the lava its rise brings it, and Venus's shields take 3.4 × 10⁵ km³ after the overturn: 6 to 15 percent of their edifices, 0.4 to 1.6 km high, where Venus's large volcanoes stand one to several kilometres over their plains. Its budget after the overturn is a stated share, 2 percent of the extrusive budget (EPISODIC_POST_EVENT_FRACTION, "the rest having gone into the event"), 0.0024 km³/yr, and its shields take their share only once its rises' growth turns (F119), the floods taking all of it until then. The crater record bounds the plains' share: only 2.5 percent of Venus's craters are embayed by lava (Strom, Schaber and Dawson 1994), and the model's Venus has 5.5 percent of its surface formed after the overturn, its craters with it; a larger budget spent as floods would pass it.
+
+Direction: Venus's eruptions after the overturn from its mantle's history rather than a share, gathered at its rises' volcanoes as the Beta-Atla-Themis region's are, so that the plains stay within the crater record while the shields take most of the lava.
 
 ## Validation (principle 15)
 

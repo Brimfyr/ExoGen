@@ -376,7 +376,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 119;
+pub const FINISH_VERSION: u64 = 120;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -467,6 +467,12 @@ pub fn run_coarse_loop(
     if let Some(p) = &mut ice_shell_process {
         p.set_primordial(layers.bedrock.as_slice());
     }
+    // The shields grow from the lava their rises' eruptions bring them, scheduled against
+    // the ground the loop begins on; the floods lose what they take (F164).
+    let taken: Vec<f64> = match (&mut plume, &floods) {
+        (Some(p), Some(f)) => p.schedule(f, &layers, steps, dt),
+        _ => Vec::new(),
+    };
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -564,7 +570,14 @@ pub fn run_coarse_loop(
             .as_mut()
             .map_or_else(Vec::new, |c| c.sample(t0, t1, &history));
         let mut eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
-            f.sample(&layers, boost.as_deref(), &rise_vents, t0, t1)
+            f.sample(
+                &layers,
+                boost.as_deref(),
+                &rise_vents,
+                t0,
+                t1,
+                taken.get(s - 1).copied(),
+            )
         });
         // The lava the shields' flows sent past their feet, ponding beyond them (F163).
         if floods.is_some()

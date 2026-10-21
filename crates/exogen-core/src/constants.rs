@@ -413,11 +413,8 @@ pub const ROCK_YOUNG_MODULUS: f64 = 1.0e11;
 pub const ROCK_POISSON: f64 = 0.25;
 /// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
 /// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise
-/// they sit (fraction of its radius), the melt per unit area over which a shield grows
-/// by a factor e of what it has still to grow, its magma coming as fast as its mantle
-/// melts (F120: Mars's melt in a gigayear as its shields start, so that they grow as they
-/// did over a gigayear, set again on its own mantle's history in F122; each starts as its
-/// rise's stretching wanes, F119), and the
+/// they sit (fraction of its radius; each starts as its rise's stretching wanes, F119,
+/// and grows from the lava its rise's eruptions bring it, F164), and the
 /// thickness of flows that renews a flank's surface; its edifice longer along its rift
 /// zone, whose fissures feed it more lava there, by up to this axis ratio, the area kept
 /// (a stated choice: the Tharsis Montes stretch along the line of their rift aprons,
@@ -436,7 +433,6 @@ pub const SHIELD_SLOPE_DEG: f64 = 5.0;
 pub const SHIELD_FLANK_EXPONENT: f64 = 1.6;
 pub const SHIELD_FLANK_POWER: f64 = 0.9;
 pub const SHIELD_PLACEMENT: (f64, f64) = (0.1, 0.6);
-pub const SHIELD_GROWTH_MELT: f64 = 2_350.0;
 pub const SHIELD_RENEWAL_THICKNESS: f64 = 5.0;
 /// A shield's lava buries the ground it grows over (F115), the relief measured against the
 /// mean of that ground in this many rings about the edifice's centre, as a deposit buries

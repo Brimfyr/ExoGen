@@ -232,17 +232,24 @@ mod tests {
         let coarse = CubeSphere::new(32);
         let body_radius = 3.39e6;
         let center = [1.0, 0.0, 0.0];
-        let shields = vec![Shield {
-            center,
-            radius: 300e3,
-            height: 20e3,
-            start_gyr: 1.0,
-            calderas: Vec::new(),
-            rift: 0.0,
-            elongation: 1.0,
-            growth_gyr: 1.0,
-            id: 7,
-        }];
+        let shields = vec![
+            Shield {
+                center,
+                radius: 300e3,
+                height: 20e3,
+                start_gyr: 1.0,
+                calderas: Vec::new(),
+                rift: 0.0,
+                elongation: 1.0,
+                supplied: Vec::new(),
+                volume: 0.0,
+                area: 0.0,
+                overflow: 0.0,
+                rift_overflow: 0.0,
+                id: 7,
+            }
+            .with_clock(1.0, 4.5),
+        ];
         let present = 4.5;
         let steps = 90;
         let deform = Deformation::new(
@@ -259,7 +266,7 @@ mod tests {
         // came after is the rest of the exponential approach to the full height.
         let t = 2.0;
         let t1 = (present / steps as f64) * (t * steps as f64 / present).ceil();
-        let tau = shields[0].growth_gyr;
+        let tau = 1.0;
         let expect = 20e3 * ((-(t1 - 1.0) / tau).exp() - (-(present - 1.0) / tau).exp());
         let got = deform.since_flood(center, t);
         assert!((got - expect).abs() < 1.0, "{got} vs {expect}");

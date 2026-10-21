@@ -488,7 +488,7 @@ impl FloodProcess {
         layers: &LayerSet,
         boost: Option<&[f64]>,
         rises: &[RiseVent],
-    ) -> (Vec<f64>, f64) {
+    ) -> (Vec<f64>, f64, Vec<f64>) {
         let crust = layers.crust_thickness.as_slice();
         let bedrock = layers.bedrock.as_slice();
         let n = bedrock.len();
@@ -510,6 +510,7 @@ impl FloodProcess {
             .map(|k| base[k] * self.province_weight[k] * lift(k))
             .collect();
         let mut w = full.clone();
+        let mut cuts = vec![0.0f64; rises.len()];
         for (r, rise) in rises.iter().enumerate() {
             let Some(own) = self.rise_province.get(r) else {
                 continue;
@@ -526,7 +527,9 @@ impl FloodProcess {
             for k in 0..n {
                 let without = (self.province_weight[k] - own[k] as f64)
                     * (lift(k) - PLUME_VENT_BOOST * dome[k]).max(1.0);
-                w[k] -= rise.capture * (full[k] - base[k] * without).max(0.0);
+                let cut = rise.capture * (full[k] - base[k] * without).max(0.0);
+                w[k] -= cut;
+                cuts[r] += cut;
             }
         }
         let whole: f64 = full.iter().sum();
@@ -539,11 +542,35 @@ impl FloodProcess {
             })
             .collect();
         let kept = if whole > 0.0 { acc / whole } else { 1.0 };
-        (cumulative, kept)
+        let shares = cuts
+            .iter()
+            .map(|&c| if whole > 0.0 { c / whole } else { 0.0 })
+            .collect();
+        (cumulative, kept, shares)
+    }
+
+    /// Each rise's shields' share of the floods' whole vent weight (F108, F164): what the
+    /// rise adds by its fertile mantle and its dome, by the share its started shields take.
+    pub fn capture_shares(
+        &self,
+        layers: &LayerSet,
+        boost: Option<&[f64]>,
+        rises: &[RiseVent],
+    ) -> Vec<f64> {
+        self.vent_weights(layers, boost, rises).2
+    }
+
+    /// The extrusive budget a step brings, m³, over the bins its eruptions are drawn in.
+    pub fn step_budget(&self, t0: f64, t1: f64) -> f64 {
+        crate::stages::time_bins(self.age, t0, t1)
+            .iter()
+            .map(|&(_, b0, b1)| self.budget(b0, b1))
+            .sum()
     }
 
     /// Eruptions between two times, in order of formation, not yet emplaced. Vents are
-    /// drawn against the surface as it is at the start of the step.
+    /// drawn against the surface as it is at the start of the step. `taken`, m³, is the lava
+    /// the shields take of the step's budget when they grow from it (F164).
     pub fn sample(
         &mut self,
         layers: &LayerSet,
@@ -551,33 +578,35 @@ impl FloodProcess {
         rises: &[RiseVent],
         t0: f64,
         t1: f64,
+        taken: Option<f64>,
     ) -> Vec<FloodEvent> {
         let bins = crate::stages::time_bins(self.age, t0, t1);
-        // What the shields take is theirs, not the floods' (F108).
         let kept = if rises.iter().any(|r| r.capture > 0.0) {
             Some(self.vent_weights(layers, boost, rises))
         } else {
             None
         };
-        let share = kept.as_ref().map_or(1.0, |k| k.1);
+        // What the shields take is theirs, not the floods' (F108): the lava scheduled for
+        // them when they grow from it (F164), else the share of the weights they take.
+        let full: f64 = bins.iter().map(|&(_, b0, b1)| self.budget(b0, b1)).sum();
+        let share = match taken {
+            Some(v) if full > 0.0 => ((full - v) / full).clamp(0.0, 1.0),
+            Some(_) => 1.0,
+            None => kept.as_ref().map_or(1.0, |k| k.1),
+        };
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
-            let full: f64 = bins.iter().map(|&(_, b0, b1)| self.budget(b0, b1)).sum();
             eprintln!(
                 "floods {t0:.3} to {t1:.3}: budget {:.4e} km3, the shields take {:.4}",
                 full / 1e9,
                 1.0 - share
             );
         }
-        let step_budget: f64 = bins
-            .iter()
-            .map(|&(_, b0, b1)| self.budget(b0, b1))
-            .sum::<f64>()
-            * share;
+        let step_budget = full * share;
         if step_budget + self.carry < VOLCANISM_EVENT_VOLUME.0 {
             self.carry += step_budget;
             return Vec::new();
         }
-        let (cumulative, share) = kept.unwrap_or_else(|| self.vent_weights(layers, boost, rises));
+        let (cumulative, _, _) = kept.unwrap_or_else(|| self.vent_weights(layers, boost, rises));
         let total = *cumulative.last().unwrap_or(&0.0);
         if total <= 0.0 {
             return Vec::new();
@@ -649,7 +678,7 @@ impl FloodProcess {
 
     /// Sample and emplace a step's eruptions.
     pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, _step_index: u64) {
-        for ev in self.sample(layers, None, &[], t0, t1) {
+        for ev in self.sample(layers, None, &[], t0, t1, None) {
             self.apply(layers, ev);
         }
     }
@@ -2518,7 +2547,7 @@ mod tests {
                 dome: dome_cells.clone(),
                 capture,
             };
-            let (cumulative, kept) = p.vent_weights(&layers, Some(&boost), &[rise]);
+            let (cumulative, kept, _) = p.vent_weights(&layers, Some(&boost), &[rise]);
             (per_cell(cumulative), kept)
         };
         let ((before, whole), (after, kept)) = (weights(0.0), weights(0.6));

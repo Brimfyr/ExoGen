@@ -2021,3 +2021,25 @@ What the maps show:
 Still to do: the shields' melt as one budget (M28); the root's load (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
 
 Tests 251 (21 ignored), among them a shield's rift flows carrying 41 percent of its lava past its foot and its summit's fissures none; a shield erupting what its flows send past its foot, within each step, from along the flows' runs off its rift zone's ends, on no edifice and with its own lava; and Mars's largest shield's moat holding its lava, the ground past its foot within a kilometre of the ground beyond, in place of the moat test of the seventy-eighth. The suite runs in 517 s where it took 812, the finish's waves no longer broken at every overlap. Clippy is clean and validate passes its 134 checks.
+
+## The eightieth milestone: the shields' melt as one budget
+
+M28, approved after the seventy-ninth: a shield grows from the lava its rise brings it, and the floods lose what the shields take.
+
+- **F164.** Before the loop, step by step, each rise's started shields take their share of the extrusive budget, read from the vent weights over the first ground, and share it by their edifices' volumes. An edifice holds what its flows lay on it until it is full, its flows carrying their share past its foot; the magma a full edifice cannot lift intrudes beneath it. Its dike swarms come at shares of that growth, and its calderas sink by the share of its height it built.
+
+How it went:
+
+- **Mars's budget checks out.** Greeley and Schneid (1991) put Mars's volcanic deposits since the Early Hesperian at 6.45 × 10⁷ km³ and its Amazonian rate at 0.012 to 0.014 km³/yr; the model's shields took 6.6 × 10⁷ km³ since then, and its late rate is 0.012 to 0.016. That lava is real, and it was vanishing.
+- **Erupted past the feet, it piled up.** The first version sent everything a full edifice could not hold past its foot: 6.3 × 10⁷ km³ in 29,856 eruptions, each spending itself in flow sheets near where it started, stacked aprons 10 to 20 km high and, where one shield was hemmed in by its neighbours and its eruptions fell back on one cell, a spike 270 km high. The user chose: the magma a full edifice cannot lift intrudes beneath it.
+- **Venus's shields starve.** Its budget after the overturn is a stated 2 percent share, and its shields take their share only once its rises' growth turns: they stand 6 to 15 percent built. The user chose to keep that and open audit M29.
+
+What the maps show:
+
+- **Mars:** the shields fill by 1.6 to 1.9 Gyr, the largest by 2.9 Ga, as Olympus Mons's main stage had ended by 2.54 Ga (Isherwood et al. 2013), and 5.7 × 10⁷ km³ intrudes beneath them; the lava past their feet, 5.6 × 10⁶ km³, is much as before, the largest shield's moat now about a kilometre deep where it last filled to half that. The floods keep 7.4 × 10⁷ km³ of the budget. Mars's event sequence takes 148 s.
+- **Venus:** its shields are low swells 0.4 to 1.6 km high where they stood 6 to 10.5 km, their calderas shallow with them, and the lava past their feet falls from 1.0 × 10⁶ to 1.4 × 10⁵ km³.
+- **The Moon:** byte-identical.
+
+Still to do: Venus's shields' supply (M29); the root's load (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
+
+Tests 252 (21 ignored), among them a rise's shields growing from what they take of its eruptions: each step no more than its budget brings, nothing before the first shield starts, the supplies adding up to what they take, Mars's edifices full by 3 Gyr with more than thrice what they hold brought to them, and Venus's partly built. The foot test now checks the flows' shares of what the edifices grew by, the rest intruding; the plume's tests schedule their shields' supply. Clippy is clean and validate passes its 134 checks.

@@ -767,7 +767,8 @@ pub fn export(
                     lat_deg: lat.to_degrees(),
                     lon_deg: lon.to_degrees(),
                     diameter_km: 2.0 * sh.radius / 1e3,
-                    height_m: sh.height,
+                    height_m: sh.height
+                        * crate::stages::plume::shield_progress(out.epoch_time_gyr, sh),
                     calderas: sh.calderas.len(),
                     age_gyr: out.epoch_time_gyr - sh.start_gyr,
                 }
