@@ -1,0 +1,22 @@
+version = "0.0.1"
+name = "Charon"
+description = "Reference body. Pluto's large moon, locked face to face with it; its northern terrain broken by chasmata kilometres deep as its frozen ocean expanded, its south a smooth plain."
+
+[values]
+# Pluto as its primary: GM 869.3 km³/s² (Brozović and Jacobson 2024), radius 1,188.3 km,
+# on its heliocentric orbit.
+"orbit.primary" = "planet"
+"parent.mass" = 1.3025e22
+"parent.radius" = 1.1883e6
+"parent.semi_major_axis" = 5.9064e12
+"parent.eccentricity" = 0.2488
+# Brozović and Jacobson (2024): a 19,595.764 km, e 1.61e-4, period 6.387 d; GM 106.1 km³/s²
+# over Nimmo et al. (2017)'s mean radius of 606.0 km, a density of 1,705 kg/m³ (JPL's
+# satellite table lists Pluto's 1,853 for it).
+"orbit.semi_major_axis" = 1.9595764e7
+"orbit.eccentricity" = 0.000161
+"body.radius" = 6.06e5
+"body.density" = 1705.0
+"atmosphere.surface_pressure" = 0.0
+"atmosphere.composition" = {}
+"seed.master" = 26.0

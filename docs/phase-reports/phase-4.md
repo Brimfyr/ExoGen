@@ -1791,3 +1791,39 @@ Still to do:
 - **Mercury's late melting**, which gives it its three domes, with its thermal history.
 
 Tests 227 (14 ignored), among them the plate's flexure against isostasy, Venus's coronae against their statistics with none on Mars or the Moon, and a corona's loads. Clippy is clean and validate passes its 131 checks.
+
+## The seventy-second milestone: the lid's strain and the faults it opens, with Charon
+
+Asked for by the user after the seventy-first: the rifts and graben from the fault fabric, driven by strain, with a Charon preset, and free to change Mars if that brings it in line with Venus, so long as the bodies stay consistent with each other. Staged in three: the strain from a body's change of radius and the faults it opens on every icy lid (this milestone); the relief's own stress, Venus's linked rifts with its coronae strung along them, and Mars's canyons and Noctis Labyrinthus on the same rules; then compression on the same field, Mercury's scarps and the wrinkle ridges.
+
+- **F147.** One strain per body, its change of radius: an icy body's ocean freezing as ice I, and as a denser ice where it lies deep enough, and every body's interior cooling. The lid bears it elastically between the stresses that break it in tension and in compression, and its faults take up the rest; the extension since the record began opens graben that cut the lid's brittle layer, drawn by the generator the rises' faults now share, each stopped only by an older fault at least as long.
+- **F148.** A wide trough keeps its floor where its trace turns, and a graben in ice rises from its tips as fast as it throws.
+- **Charon** has a preset: Pluto its primary, Brozović and Jacobson 2024's orbit and mass, Nimmo et al. 2017's radius.
+
+How it went:
+
+- **The research.** Charon's lid stretched by at least 1 percent of its area as its ocean froze (Beyer et al. 2017), in a belt of chasmata round its northern terrain: Serenity 40 to 50 km wide and more than 5 km deep, Mandjet at least 450 km long, 30 km wide and 5 to 7 km deep, Argo some 9 km deep; its 25 largest scarps 93 km long at the median; tilted blocks of 5 to 6 degrees between. Restricted faults run two to ten times as long as they are high (Nicol et al. 1996; Soliva and Benedicto 2005). Mars's graben, Venus's rifts and the slip per length of faults on several bodies were gathered for the next stage.
+- **The shared generator.** The rises' fault population was factored into one generator that any strain can feed; Mars and Venus came out bit for bit as before the change.
+- **Graben as wide as a lid lets them be.** Mars's rule, by which a fault whose throw would pass its layer cuts deeper as a rift thirty times as wide as its throw, gave Mimas chasmata 305 km wide: a lid's faults stay graben, as nothing below the lid's brittle layer can break. Low gravity puts the depth at which the faults close beyond Mimas's and Miranda's centres, so the layer is held within the lid's elastic part and within a fifth of the radius, past which no thin shell is stretched alike through its thickness: Ithaca Chasma, the widest graben known against its body, is 0.19 of Tethys's radius across.
+- **What melts and refreezes.** Summing the radius's every growth gave Miranda's melting and refreezing at its resonance its fill of faults though its radius ended where it began. The lid now bears its strain elastically and its faults move the strain at which it stands unstressed: a shell melted and refrozen to where it was breaks nothing new, unless what it lost in shortening went beyond what it bears. The same history will give the next stages their compression.
+- **Long faults.** Charon's first chasmata were pods: every fault started at twice its width, and every older fault stopped every younger one, so none passed 230 km among faults running every way. The faults now start at four times as long as they reach down, and a fault is stopped only by an older one at least as long, which took up the stress it would have run on; a longer one cuts across. A fault's time comes from the extension spent before it, so the older are drawn first.
+- **The troughs' seams.** At each turn of a chasma's trace the bands of its frames spread apart and left bars across its floor, and where they overlapped, stripes from frame to frame: unseen in Mars's graben a few kilometres wide, plain across Charon's 46 km. The frames now fan out by their own turn and share each cell; a fan on every frame made Miranda's wide graben take minutes to draw, each cell weighed against some seventy frames. Each frame also gathered every cell within the trough's reach to keep the few its band holds; it now walks only its band's strip, which draws Charon's chasmata in 10 s instead of 96, bit for bit the same. And a fault beside another copied its host's every relay step some 200 km aside, its points jumping apart round the outside of each step and folding back inside it, a third of Charon's chasmata broken: it now follows the host's course smoothed over twice the distance between them. A graben's ends rose from its tips at rock's rate, which in ice spread them over half its length into a lens.
+- **The slip per length.** Ice's stiffness alone, ten times rock's compliance, cut Charon's chasmata to their width's full depth, 9 km at the median, where Mandjet's throw is at most 0.016 of its length; density over stiffness, four times rock's, gives some 4 km at the median and up to 12.
+- **Deep oceans and young surfaces.** Below 209.9 MPa an ocean freezes as ice II or III, denser than its water: only Pluto's reaches it, and its extension ends at 2.8 Gyr. The lid's record starts with the craters', so Europa, whose surface keeps 100 Myr, opens three graben where it had opened 2,186.
+
+What the maps show:
+
+- **Charon:** 58 chasmata 220 km long at the median and up to 890, gathered in sets, 46 km wide and 4.1 km deep at the median, from 0.14 to 0.47 Gyr; flat floors between walls, not yet Serenity's stepped walls and tilted blocks (audit M23).
+- **Pluto:** some 1,400 graben across all of it, its ocean freezing through in its thermal history where Pluto's own survives (audit M22).
+- **Miranda:** 29 graben from its refreezing at 3.7 Gyr, up to 54 km wide; **Mimas:** a dozen from its young ocean's refreezing in its last 10 Myr, where Mimas shows none (audit M22).
+- **Ganymede, Callisto and Titan:** some 700 to 800 graben each, faint at their scale beside the lanes (audit M21); **Europa:** three young graben.
+- **Mars and Venus:** their graben beside others now follow their hosts' courses and their troughs keep their floors across their turns, so their troughs and the floods about them shift a little: a fifth of Mars's surface by more than 100 m, Olympus's summit by 150 m, the same maps to the eye.
+
+Still to do:
+
+- **The chasmata's fabric** (audit M23): their walls stepped in fault terraces, their floors broken into tilted blocks, the belts given a direction by the relief's stress; with Venus's rifts and Mars's canyons and Noctis, the next stage.
+- **One extension budget** for a lid's faults, lanes and bands (audit M21), and **compression** on the same history.
+- **Pluto's and Mimas's oceans** in their thermal histories (audit M22).
+- **The lid's faults in the loop's history** (audit M24): drawn by the finish alone, so the loop's floods and relaxation do not see them.
+
+Tests 231 (17 ignored), among them Charon's lid stretching as its ocean freezes and breaking into chasmata against Beyer et al.'s measures, a shell melted and refrozen to where it was breaking nothing new, rock lids opening none, and a wide trough keeping its floor where its trace turns. Clippy is clean and validate passes its 134 checks.

@@ -575,6 +575,45 @@ pub const FAULT_LAYER_DEPTH: f64 = 1.2e3;
 pub const FAULT_LAYER_SPREAD: f64 = 0.5;
 pub const FAULT_LAYER_RANGE: (f64, f64) = (0.4e3, 4e3);
 pub const GRABEN_DEPTH_PER_WIDTH: f64 = 0.2;
+/// The dip at which a graben's bounding faults meet at its faulted layer's base, degrees
+/// (Golombek 1979; Plescia 1991's 60°).
+pub const GRABEN_DIP_DEG: f64 = 60.0;
+/// An icy body grows as its ice freezes: water expands by this share of its volume as it
+/// turns to ice I (1,000 against 917 kg/m³; Beyer et al. 2017 take 8.5 percent) (F147).
+pub const ICE_FREEZING_EXPANSION: f64 = 0.09;
+/// Water freezes as ice I down to where the pressure reaches ice I's limit, Pa (the triple
+/// point of ice I, ice III and the melt, 209.9 MPa at 251 K; Wagner, Saul and Pruss 1994),
+/// and below it as high-pressure ice, denser than the water it freezes from by this share
+/// of its volume (a stated choice between ice III's 2.6 percent at 350 MPa and ice II's 6
+/// to 8; a deep ocean freezing to ice II shrinks the body, Hammond, Barr and Parmentier
+/// 2016) (F147).
+pub const ICE_I_PRESSURE_LIMIT: f64 = 209.9e6;
+pub const ICE_HP_FREEZING_CHANGE: f64 = -0.05;
+/// A strain through the whole lid breaks it down to where the overburden reaches this
+/// pressure, Pa, the base of the brittle layer its faults cut, where a graben's faults,
+/// dipping at 60°, meet (a stated choice: Charon's Serenity Chasma, 40 to 50 km wide,
+/// Beyer et al. 2017, over ice at 0.29 m/s²); the faults run from this many graben widths
+/// long, four times as long as their faults reach down, as faults that have reached their
+/// layer's base lengthen rather than deepen (restricted faults run two to ten times as long
+/// as they are high, Nicol et al. 1996, Soliva and Benedicto 2005; a stated choice within
+/// that), up to this many radii, half a great circle (a stated choice: Tethys's Ithaca
+/// Chasma runs 2,000 km on a 531 km radius) (F147).
+pub const FAULT_LAYER_PRESSURE: f64 = 11e6;
+pub const LID_FAULT_MIN_WIDTHS: f64 = 4.0;
+pub const LID_FAULT_MAX_LENGTH: f64 = std::f64::consts::PI;
+/// The friction on faults in ice (Beeman et al. 1988) and in rock below 200 MPa of normal
+/// stress (Byerlee 1978): a lid breaks in tension at `1 - 1/K` and in compression at
+/// `K - 1` times its faulted layer's pressure, `K = (sqrt(1 + mu²) + mu)²` (F147).
+pub const ICE_FRICTION: f64 = 0.69;
+pub const ROCK_FRICTION: f64 = 0.85;
+/// The brittle layer's depth varies from fault to fault by this spread in its logarithm,
+/// less than the surface layer's, a lithology's (a stated choice) (F147).
+pub const LID_LAYER_SPREAD: f64 = 0.2;
+/// The faulted layer lies within this share of the body's radius: deeper, the lid is no
+/// thin shell stretched alike through its thickness, and its graben would span much of the
+/// body (a stated choice: Tethys's Ithaca Chasma, the widest graben known against its body,
+/// is 0.19 of its radius across, where this allows 0.23) (F147).
+pub const LID_LAYER_RADIUS_SHARE: f64 = 0.2;
 pub const SEGMENT_LENGTH_WIDTHS: (f64, f64) = (2.0, 10.0);
 pub const SEGMENT_STEER: f64 = 0.6;
 pub const SEGMENT_STRIKE_SPREAD_DEG: f64 = 4.0;
@@ -1987,7 +2026,7 @@ pub const RELAX_FEATURE_WAVELENGTH: f64 = 0.25;
 /// an annulus of graben above this one (Melosh 1982, in Singer et al. 2023).
 pub const RING_DRAG: f64 = 0.1;
 pub const RING_CAVITY_DEPTH: f64 = 0.5;
-pub const RING_FRICTION: f64 = 0.69;
+pub const RING_FRICTION: f64 = ICE_FRICTION;
 pub const RING_FAILURE: f64 = 2.0;
 /// The lithosphere through a basin's collapse is the ice colder than this share of its
 /// melting point, which keeps its strength while the warmer ice under it flows in: 240 K

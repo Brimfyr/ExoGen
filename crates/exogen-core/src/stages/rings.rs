@@ -207,6 +207,7 @@ pub fn ring_system(
                                 width: arc_width,
                                 depth: arc_depth,
                                 flank: if depth > 0.0 { RING_FLANK } else { 0.0 },
+                                tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
                                 start_gyr: basin.time_gyr,
                                 end_gyr: basin.time_gyr,
                                 id: basin.seed

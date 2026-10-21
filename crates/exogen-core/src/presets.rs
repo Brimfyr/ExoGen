@@ -38,6 +38,7 @@ presets! {
     "Miranda" => "miranda.toml",
     "Triton" => "triton.toml",
     "Pluto" => "pluto.toml",
+    "Charon" => "charon.toml",
     "Ceres" => "ceres.toml",
 }
 

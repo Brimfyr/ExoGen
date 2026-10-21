@@ -648,6 +648,22 @@ pub fn reference_checks() -> Vec<Check> {
             48.0,
             "about 40 K at Bond albedo 0.5",
         ),
+        // Charon
+        range(
+            "Charon",
+            "body.gravity",
+            0.28,
+            0.30,
+            "0.289 m/s² (GM 106.1 km³/s², Brozović and Jacobson 2024)",
+        ),
+        text("Charon", "rotation.mode", "locked", ""),
+        range(
+            "Charon",
+            "body.ice_mass_fraction",
+            0.35,
+            0.50,
+            "rock and metal some 3/5 of the mass (McKinnon et al. 2017)",
+        ),
         // Ceres
         range("Ceres", "body.gravity", 0.27, 0.29, "0.28 m/s²"),
         text("Ceres", "rotation.mode", "free", ""),

@@ -28,6 +28,7 @@ pub mod relaxation;
 pub mod ridges;
 pub mod rings;
 pub mod roughness;
+pub mod strain;
 pub mod tectonics;
 pub mod tidal;
 pub mod volcanism;
@@ -370,7 +371,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 111;
+pub const FINISH_VERSION: u64 = 112;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -590,8 +591,10 @@ pub fn run_coarse_loop(
         Some(p) => (p.rises, p.shields, p.canyons, p.graben, Some(p.load)),
         None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
     };
-    // The novae's fractures are stamped as the graben are.
+    // The novae's fractures are stamped as the graben are, and so are the faults the lid's
+    // growth opens (F147).
     graben.extend(novae);
+    graben.extend(strain::lid_faults(graph, grid, &thermal));
     let (floods, ridges, provinces) = match floods {
         Some(f) => {
             // The ridges follow the lava thickness and, around a rise, its load.

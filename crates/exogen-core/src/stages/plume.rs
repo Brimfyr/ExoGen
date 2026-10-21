@@ -33,7 +33,7 @@ use crate::stages::io::{Lobe, PathRules};
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 21;
+pub const VERSION: u64 = 22;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -162,6 +162,9 @@ pub struct Trough {
     /// The share of the depth the flanks stand raised by, the faults' footwalls rebounding
     /// (F69's ring graben); none for the rifts and canyons.
     pub flank: f64,
+    /// The throw per length a graben's faults rise at from their tips (F112): twice what
+    /// their segments throw for their length, ten times as much in ice as in rock (F147).
+    pub tip_rate: f64,
     /// Formation, or for the canyon the start and end of its growth.
     pub start_gyr: f64,
     pub end_gyr: f64,
@@ -214,7 +217,7 @@ pub fn trough_throw(trough: &Trough, s: f64) -> f64 {
     }
     // Confined to its layer, a graben keeps its throw along its length, rising from each
     // tip as fast as twice its throw per length allows.
-    let tip = (trough.depth / (2.0 * SEGMENT_THROW_PER_LENGTH))
+    let tip = (trough.depth / trough.tip_rate.max(1e-9))
         .min(0.5 * trough.length)
         .max(1.0);
     let d = s.min(trough.length - s).max(0.0);
@@ -875,6 +878,278 @@ pub fn place_rises<P: Reads>(graph: &P, thermal: &ThermalHistory) -> Option<Vec<
     Some(rises)
 }
 
+/// A fault's trace, evenly spaced points, and the distances along it where each segment
+/// after the first begins.
+pub(crate) type FaultTrace = (Vec<[f64; 3]>, Vec<f64>);
+
+/// How a population of normal faults is drawn where they form (F111, F147): their lengths'
+/// range, their trough's depth per length and its cap, the compliance of the lid that
+/// scales a fault's slip per length against rock's, how its faulted layer is drawn, and
+/// the cell of the loop's grid.
+pub(crate) struct FaultRules {
+    pub l_min: f64,
+    pub l_max: f64,
+    pub depth_per_length: f64,
+    pub depth_cap: f64,
+    /// The lid's slip per length against rock's: a fault's displacement grows with its
+    /// length as the stress on it over the stiffness of the rock it cuts (Cowie and Scholz
+    /// 1992), its stress as the weight of the layer per depth, so as density over stiffness,
+    /// some four times rock's in ice (F147).
+    pub compliance: f64,
+    pub layer: FaultLayer,
+    pub cell: f64,
+    pub body_radius: f64,
+}
+
+/// How deep a fault population's faulted layer lies, and how wide its graben stand.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FaultLayer {
+    /// The layer near the surface a rise's bending breaks (F111): graben widths and layer
+    /// depths drawn apart, log-normal about Tharsis's.
+    Surface,
+    /// The layer a strain through the whole lid breaks (F147): log-normal about a depth that
+    /// changes with the lid through time, the graben as wide as their faults, dipping at 60°,
+    /// meet at its base.
+    Lid(f64),
+}
+
+impl FaultLayer {
+    /// A fault's graben width and faulted layer, m; `bound` is the deepest a lid's faults
+    /// reach at the fault's time.
+    pub(crate) fn draw(&self, rng: &Rng, draw: u64, bound: f64) -> (f64, f64) {
+        match *self {
+            FaultLayer::Surface => {
+                let layer_width = (GRABEN_WIDTH
+                    * (GRABEN_WIDTH_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 0)).exp())
+                .clamp(GRABEN_WIDTH_RANGE.0, GRABEN_WIDTH_RANGE.1);
+                let layer = (FAULT_LAYER_DEPTH
+                    * (FAULT_LAYER_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 2)).exp())
+                .clamp(FAULT_LAYER_RANGE.0, FAULT_LAYER_RANGE.1);
+                (layer_width, layer)
+            }
+            FaultLayer::Lid(median) => {
+                let layer = (median
+                    * (LID_LAYER_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 2)).exp())
+                .min(bound);
+                (2.0 * layer / GRABEN_DIP_DEG.to_radians().tan(), layer)
+            }
+        }
+    }
+}
+
+/// A population of normal-fault troughs that takes up `budget` m² of extension, heave times
+/// length (F111, F112, F147): lengths from a power law, each a graben over its faulted
+/// layer or a rift where its throw would exceed it, half of them beside a fault already
+/// drawn, en-echelon. `fresh` starts and runs a fault on its own (its draw, length, trace
+/// spacing and width), `timing` gives a fault its time from a uniform draw and the share of
+/// the budget spent before it, `window` the times a trough the loop carries is carved over,
+/// `layer_at` the deepest a lid's faults reach at a time, and `drawn` hears of each fault
+/// as it is drawn; `keys` are the draws' and ids' bases.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn populate(
+    rules: &FaultRules,
+    budget: f64,
+    rng: &Rng,
+    keys: (u64, u64),
+    fresh: &dyn Fn(u64, f64, f64, f64) -> FaultTrace,
+    timing: &dyn Fn(f64, f64) -> f64,
+    window: &dyn Fn(f64, bool) -> (f64, f64),
+    layer_at: &dyn Fn(f64) -> f64,
+    drawn: Option<&dyn Fn(&Trough)>,
+) -> Vec<Trough> {
+    let (l_min, l_max) = (rules.l_min, rules.l_max);
+    let body_radius = rules.body_radius;
+    let spacing = 0.5 * rules.cell;
+    let mut faults: Vec<Trough> = Vec::new();
+    let mut spent = 0.0;
+    let mut k = 0u64;
+    while spent < budget && k < RIFT_MAX_FAULTS {
+        let draw = keys.0 + k * 16;
+        k += 1;
+        // Length from the truncated power law by inverse transform.
+        let u = rng.uniform(draw, 1).clamp(1e-9, 1.0 - 1e-9);
+        let ratio = (l_min / l_max).powf(RIFT_LENGTH_SLOPE);
+        let mut length = l_min * (1.0 - u * (1.0 - ratio)).powf(-1.0 / RIFT_LENGTH_SLOPE);
+        let scatter = (RIFT_DEPTH_SCATTER * rng.normal(draw, 2)).exp();
+        // The faulted layer near the surface: a graben is as wide as the layer
+        // sets it, and a fault whose throw over its whole length would exceed the
+        // layer cuts deeper, a rift as wide as its throw (F111).
+        // The fault's time first: the layer it breaks is the lid's then.
+        let time = timing(rng.uniform(draw, 8), spent / budget);
+        let (layer_width, layer) = rules.layer.draw(rng, draw, layer_at(time));
+        let zone_depth = |length: f64| {
+            (rules.depth_per_length * length * scatter).clamp(RIFT_MIN_DEPTH, rules.depth_cap)
+        };
+        // A rift as wide as its throw allows (F111); a strain through the whole lid's faults
+        // stand as wide as its brittle layer sets them (F147).
+        let class_width = |length: f64| {
+            let d = zone_depth(length);
+            if d >= layer && matches!(rules.layer, FaultLayer::Surface) {
+                (RIFT_WIDTH_PER_DEPTH * d).max(RIFT_MIN_WIDTH)
+            } else {
+                layer_width
+            }
+        };
+        let width = class_width(length);
+        // Beside an existing fault, chosen by length, or on its own.
+        let host = if !faults.is_empty() && rng.uniform(draw, 3) < RIFT_CLUSTER_PROBABILITY {
+            let total: f64 = faults.iter().map(|f| f.length).sum();
+            let mut pick = rng.uniform(draw, 4) * total;
+            let mut chosen = faults.len() - 1;
+            for (i, f) in faults.iter().enumerate() {
+                if pick < f.length {
+                    chosen = i;
+                    break;
+                }
+                pick -= f.length;
+            }
+            Some(chosen)
+        } else {
+            None
+        };
+        let (points, breaks) = match host {
+            Some(h) => {
+                let hf = &faults[h];
+                let n_points = hf.points.len();
+                let span = ((length / hf.spacing).round() as usize).clamp(2, n_points);
+                let i0 = ((n_points - span) as f64 * rng.uniform(draw, 5)) as usize;
+                let side = if rng.uniform(draw, 6) < 0.5 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                // Graben in a set stand apart by a few thicknesses of their faulted
+                // layer, wall to wall (F112); chasmata by a width or a few.
+                let distance = if hf.kind == TroughKind::Graben {
+                    // The log-normal's tail is cut at two deviations (a stated choice): a
+                    // fault far beyond its neighbour's stress shadow does not run beside it.
+                    let spread = GRABEN_SPACING_SPREAD
+                        * rng.normal(draw ^ 0x5BAC_0000_0000, 0).clamp(-2.0, 2.0);
+                    let gap = layer * (GRABEN_SPACING_LAYERS * spread.exp()).max(0.25);
+                    0.5 * (hf.width + width) + gap
+                } else {
+                    let (g_lo, g_hi) = RIFT_CLUSTER_OFFSET;
+                    let gap = g_lo + (g_hi - g_lo) * rng.uniform(draw, 7).powi(2);
+                    gap * hf.width.max(width)
+                };
+                let trace = offset_trace(
+                    &hf.points[i0..i0 + span],
+                    side * distance,
+                    body_radius,
+                    hf.spacing,
+                );
+                length = (trace.len().max(2) - 1) as f64 * hf.spacing;
+                // The neighbour follows its host's segments along the span it runs
+                // beside, stretched or shortened as its course is round the host's turns.
+                let (s0, s1) = (i0 as f64 * hf.spacing, (i0 + span) as f64 * hf.spacing);
+                let scale = length / (s1 - s0).max(1.0);
+                let breaks: Vec<f64> = hf
+                    .segments
+                    .iter()
+                    .map(|g| g.end)
+                    .filter(|&e| e > s0 && e < s1)
+                    .map(|e| (e - s0) * scale)
+                    .collect();
+                (trace, breaks)
+            }
+            None => {
+                let (trace, breaks) = fresh(draw, length, spacing, width);
+                length = (trace.len().max(2) - 1) as f64 * spacing;
+                let breaks = breaks.into_iter().filter(|&b| b < length).collect();
+                (trace, breaks)
+            }
+        };
+        // A fault that died out early slipped as its own length allows; it is a
+        // rift if that throw exceeds the faulted layer, else a graben whose
+        // segments each throw as their own length allows (F111).
+        let zone = zone_depth(length);
+        // A strain through the whole lid's faults stay within its brittle layer (F147).
+        let rift = zone >= layer && matches!(rules.layer, FaultLayer::Surface);
+        let width = if rift {
+            (RIFT_WIDTH_PER_DEPTH * zone).max(RIFT_MIN_WIDTH)
+        } else {
+            layer_width
+        };
+        let mut bounds = vec![0.0];
+        bounds.extend(breaks);
+        bounds.push(length);
+        // A rift's segments are half-graben whose master fault's side flips now
+        // and then from one to the next.
+        let mut polarity = if rng.uniform(draw ^ 0x5E67_0000_0000, 1) < 0.5 {
+            -1.0
+        } else {
+            1.0
+        };
+        let segments: Vec<Segment> = bounds
+            .windows(2)
+            .enumerate()
+            .map(|(j, w)| {
+                // A graben confined to its layer throws as far as its segments'
+                // length allows, linked or not, along its whole length (F112), within
+                // its layer and its width, each segment a little more or less.
+                let throw = if rift {
+                    zone
+                } else {
+                    let cap = layer.min(GRABEN_DEPTH_PER_WIDTH * width);
+                    let mean_segment = length / (bounds.len() - 1).max(1) as f64;
+                    let plateau =
+                        (SEGMENT_THROW_PER_LENGTH * rules.compliance * mean_segment * scatter)
+                            .clamp(RIFT_MIN_DEPTH, cap);
+                    let own = (SEGMENT_THROW_SCATTER
+                        * rng.normal(draw ^ 0x5E67_0000_0000, 2 * j as u64))
+                    .exp();
+                    (plateau * own).clamp(RIFT_MIN_DEPTH, cap)
+                };
+                if j > 0
+                    && rng.uniform(draw ^ 0x5E67_0000_0000, 2 * j as u64 + 1) < RIFT_POLARITY_FLIP
+                {
+                    polarity = -polarity;
+                }
+                Segment {
+                    start: w[0],
+                    end: w[1],
+                    throw,
+                    polarity: if rift { polarity } else { 0.0 },
+                }
+            })
+            .collect();
+        let depth = segments.iter().map(|g| g.throw).fold(0.0, f64::max);
+        let carried = width >= RIFT_LOOP_WIDTH_CELLS * rules.cell;
+        let (start_gyr, end_gyr) = window(time, carried);
+        // The extension a fault takes up: its heave along its length, each segment's
+        // mean throw over it.
+        let mean = 1.0 - SEGMENT_LINK_DEFICIT * (1.0 - std::f64::consts::FRAC_PI_4);
+        spent += RIFT_HEAVE_PER_DEPTH
+            * mean
+            * segments
+                .iter()
+                .map(|g| g.throw * (g.end - g.start))
+                .sum::<f64>();
+        faults.push(Trough {
+            points,
+            spacing,
+            length,
+            width,
+            depth,
+            flank: 0.0,
+            tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH * rules.compliance,
+            start_gyr,
+            end_gyr,
+            id: keys.1 + k,
+            kind: if rift {
+                TroughKind::Rift
+            } else {
+                TroughKind::Graben
+            },
+            segments,
+        });
+        if let (Some(f), Some(last)) = (drawn, faults.last()) {
+            f(last);
+        }
+    }
+    faults
+}
+
 /// The dome, canyon and shields through the coarse loop.
 pub struct PlumeProcess {
     grid: CubeSphere,
@@ -1043,183 +1318,44 @@ impl PlumeProcess {
                 6.0 * x * (1.0 - x)
             });
             let depth_cap = (CANYON_DEPTH_FRACTION * rise.height).max(RIFT_MIN_DEPTH);
-            let spacing = 0.5 * cell;
-            let mut faults: Vec<Trough> = Vec::new();
-            let mut spent = 0.0;
-            let mut k = 0u64;
-            while spent < budget && k < RIFT_MAX_FAULTS {
-                let draw = 5_000 + ri as u64 * 1_000_000 + k * 16;
-                k += 1;
-                // Length from the truncated power law by inverse transform.
-                let u = rng.uniform(draw, 1).clamp(1e-9, 1.0 - 1e-9);
-                let ratio = (l_min / l_max).powf(RIFT_LENGTH_SLOPE);
-                let mut length = l_min * (1.0 - u * (1.0 - ratio)).powf(-1.0 / RIFT_LENGTH_SLOPE);
-                let scatter = (RIFT_DEPTH_SCATTER * rng.normal(draw, 2)).exp();
-                // The faulted layer near the surface: a graben is as wide as the layer
-                // sets it, and a fault whose throw over its whole length would exceed the
-                // layer cuts deeper, a rift as wide as its throw (F111).
-                let layer_width = (GRABEN_WIDTH
-                    * (GRABEN_WIDTH_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 0)).exp())
-                .clamp(GRABEN_WIDTH_RANGE.0, GRABEN_WIDTH_RANGE.1);
-                let layer = (FAULT_LAYER_DEPTH
-                    * (FAULT_LAYER_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 2)).exp())
-                .clamp(FAULT_LAYER_RANGE.0, FAULT_LAYER_RANGE.1);
-                let zone_depth = |length: f64| {
-                    (RIFT_DEPTH_PER_LENGTH * length * scatter).clamp(RIFT_MIN_DEPTH, depth_cap)
-                };
-                let class_width = |length: f64| {
-                    let d = zone_depth(length);
-                    if d >= layer {
-                        (RIFT_WIDTH_PER_DEPTH * d).max(RIFT_MIN_WIDTH)
-                    } else {
-                        layer_width
-                    }
-                };
-                let width = class_width(length);
-                // Beside an existing fault, chosen by length, or on its own.
-                let host = if !faults.is_empty() && rng.uniform(draw, 3) < RIFT_CLUSTER_PROBABILITY
-                {
-                    let total: f64 = faults.iter().map(|f| f.length).sum();
-                    let mut pick = rng.uniform(draw, 4) * total;
-                    let mut chosen = faults.len() - 1;
-                    for (i, f) in faults.iter().enumerate() {
-                        if pick < f.length {
-                            chosen = i;
-                            break;
-                        }
-                        pick -= f.length;
-                    }
-                    Some(chosen)
-                } else {
-                    None
-                };
-                let (points, breaks) = match host {
-                    Some(h) => {
-                        let hf = &faults[h];
-                        let n_points = hf.points.len();
-                        let span = ((length / hf.spacing).round() as usize).clamp(2, n_points);
-                        let i0 = ((n_points - span) as f64 * rng.uniform(draw, 5)) as usize;
-                        let side = if rng.uniform(draw, 6) < 0.5 {
-                            -1.0
-                        } else {
-                            1.0
-                        };
-                        // Graben in a set stand apart by a few thicknesses of their faulted
-                        // layer, wall to wall (F112); chasmata by a width or a few.
-                        let distance = if hf.kind == TroughKind::Graben {
-                            let spread =
-                                GRABEN_SPACING_SPREAD * rng.normal(draw ^ 0x5BAC_0000_0000, 0);
-                            let gap = layer * (GRABEN_SPACING_LAYERS * spread.exp()).max(0.25);
-                            0.5 * (hf.width + width) + gap
-                        } else {
-                            let (g_lo, g_hi) = RIFT_CLUSTER_OFFSET;
-                            let gap = g_lo + (g_hi - g_lo) * rng.uniform(draw, 7).powi(2);
-                            gap * hf.width.max(width)
-                        };
-                        length = span as f64 * hf.spacing;
-                        // The neighbour follows its host's segments along the span it runs
-                        // beside.
-                        let (s0, s1) = (i0 as f64 * hf.spacing, (i0 + span) as f64 * hf.spacing);
-                        let breaks: Vec<f64> = hf
-                            .segments
-                            .iter()
-                            .map(|g| g.end)
-                            .filter(|&e| e > s0 && e < s1)
-                            .map(|e| e - s0)
-                            .collect();
-                        (
-                            offset_trace(&hf.points[i0..i0 + span], side * distance, body_radius),
-                            breaks,
-                        )
-                    }
-                    None => {
-                        // A fault starts where the ground is in tension, as often as the
-                        // tension is strong, and runs as the stress field leads it (F105),
-                        // in segments (F111).
-                        let (x, a) = starts.sample(
-                            rng.uniform(draw, 20),
-                            rng.uniform(draw, 22),
-                            rng.uniform(draw, 23),
-                        );
-                        // The axis lies at `a` from the direction outward at the start.
-                        let phi = axes[ri].0 - a;
-                        let start =
-                            offset(rise.center, east, north, x * rise.radius / body_radius, phi);
-                        let (trace, breaks) = stress_trace(
-                            rise,
-                            start,
-                            length,
-                            spacing,
-                            body_radius,
-                            &rng,
-                            draw,
-                            width,
-                            None,
-                            RIFT_MIN_TENSION,
-                            Some(axes[ri].1),
-                        );
-                        length = (trace.len().max(2) - 1) as f64 * spacing;
-                        let breaks = breaks.into_iter().filter(|&b| b < length).collect();
-                        (trace, breaks)
-                    }
-                };
-                // A fault that died out early slipped as its own length allows; it is a
-                // rift if that throw exceeds the faulted layer, else a graben whose
-                // segments each throw as their own length allows (F111).
-                let zone = zone_depth(length);
-                let rift = zone >= layer;
-                let width = if rift {
-                    (RIFT_WIDTH_PER_DEPTH * zone).max(RIFT_MIN_WIDTH)
-                } else {
-                    layer_width
-                };
-                let mut bounds = vec![0.0];
-                bounds.extend(breaks);
-                bounds.push(length);
-                // A rift's segments are half-graben whose master fault's side flips now
-                // and then from one to the next.
-                let mut polarity = if rng.uniform(draw ^ 0x5E67_0000_0000, 1) < 0.5 {
-                    -1.0
-                } else {
-                    1.0
-                };
-                let segments: Vec<Segment> = bounds
-                    .windows(2)
-                    .enumerate()
-                    .map(|(j, w)| {
-                        // A graben confined to its layer throws as far as its segments'
-                        // length allows, linked or not, along its whole length (F112), within
-                        // its layer and its width, each segment a little more or less.
-                        let throw = if rift {
-                            zone
-                        } else {
-                            let cap = layer.min(GRABEN_DEPTH_PER_WIDTH * width);
-                            let mean_segment = length / (bounds.len() - 1).max(1) as f64;
-                            let plateau = (SEGMENT_THROW_PER_LENGTH * mean_segment * scatter)
-                                .clamp(RIFT_MIN_DEPTH, cap);
-                            let own = (SEGMENT_THROW_SCATTER
-                                * rng.normal(draw ^ 0x5E67_0000_0000, 2 * j as u64))
-                            .exp();
-                            (plateau * own).clamp(RIFT_MIN_DEPTH, cap)
-                        };
-                        if j > 0
-                            && rng.uniform(draw ^ 0x5E67_0000_0000, 2 * j as u64 + 1)
-                                < RIFT_POLARITY_FLIP
-                        {
-                            polarity = -polarity;
-                        }
-                        Segment {
-                            start: w[0],
-                            end: w[1],
-                            throw,
-                            polarity: if rift { polarity } else { 0.0 },
-                        }
-                    })
-                    .collect();
-                let depth = segments.iter().map(|g| g.throw).fold(0.0, f64::max);
-                let time = time_cdf.sample(rng.uniform(draw, 8));
-                let carried = width >= RIFT_LOOP_WIDTH_CELLS * cell;
-                let (start_gyr, end_gyr) = if carried {
+            let rules = FaultRules {
+                l_min,
+                l_max,
+                depth_per_length: RIFT_DEPTH_PER_LENGTH,
+                depth_cap,
+                compliance: 1.0,
+                layer: FaultLayer::Surface,
+                cell,
+                body_radius,
+            };
+            let fresh = |draw: u64, length: f64, spacing: f64, width: f64| {
+                // A fault starts where the ground is in tension, as often as the tension is
+                // strong, and runs as the stress field leads it (F105), in segments (F111).
+                let (x, a) = starts.sample(
+                    rng.uniform(draw, 20),
+                    rng.uniform(draw, 22),
+                    rng.uniform(draw, 23),
+                );
+                // The axis lies at `a` from the direction outward at the start.
+                let phi = axes[ri].0 - a;
+                let start = offset(rise.center, east, north, x * rise.radius / body_radius, phi);
+                stress_trace(
+                    rise,
+                    start,
+                    length,
+                    spacing,
+                    body_radius,
+                    &rng,
+                    draw,
+                    width,
+                    None,
+                    RIFT_MIN_TENSION,
+                    Some(axes[ri].1),
+                )
+            };
+            let timing = |u: f64, _spent: f64| time_cdf.sample(u);
+            let window = |time: f64, carried: bool| {
+                if carried {
                     // Carved over the melt its mantle makes about its time (F120).
                     let m = clock.at(time);
                     (
@@ -1228,34 +1364,20 @@ impl PlumeProcess {
                     )
                 } else {
                     (time, time)
-                };
-                // The extension a fault takes up: its heave along its length, each segment's
-                // mean throw over it.
-                let mean = 1.0 - SEGMENT_LINK_DEFICIT * (1.0 - std::f64::consts::FRAC_PI_4);
-                spent += RIFT_HEAVE_PER_DEPTH
-                    * mean
-                    * segments
-                        .iter()
-                        .map(|g| g.throw * (g.end - g.start))
-                        .sum::<f64>();
-                faults.push(Trough {
-                    points,
-                    spacing,
-                    length,
-                    width,
-                    depth,
-                    flank: 0.0,
-                    start_gyr,
-                    end_gyr,
-                    id: 1_000 + ri as u64 * 1_000_000 + k,
-                    kind: if rift {
-                        TroughKind::Rift
-                    } else {
-                        TroughKind::Graben
-                    },
-                    segments,
-                });
-            }
+                }
+            };
+            let mut faults = populate(
+                &rules,
+                budget,
+                &rng,
+                (5_000 + ri as u64 * 1_000_000, 1_000 + ri as u64 * 1_000_000),
+                &fresh,
+                &timing,
+                &window,
+                &|_| 0.0,
+                None,
+            );
+            let spacing = 0.5 * cell;
             // Radiating dike swarms (F113): the plume's head and each volcano on the rise
             // send dikes out laterally through the crust, each on its own heading within
             // its swarm's fan and on along the stress trajectories as far as its magma
@@ -1382,6 +1504,7 @@ impl PlumeProcess {
                         width,
                         depth: segments.iter().map(|g| g.throw).fold(0.0, f64::max),
                         flank: 0.0,
+                        tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
                         start_gyr: time,
                         end_gyr: time,
                         id: 0x0D1C_0000_0000_0000 | draw,
@@ -1816,10 +1939,6 @@ pub(crate) fn stress_trace(
     min_tension: f64,
     axial: Option<Axial>,
 ) -> (Vec<[f64; 3]>, Vec<f64>) {
-    let n = (length / spacing).ceil().max(2.0) as usize;
-    let key = draw ^ 0x5E61_0000_0000;
-    let (l_lo, l_hi) = SEGMENT_LENGTH_WIDTHS;
-    let segment = |j: u64| width * l_lo * (l_hi / l_lo).powf(rng.uniform(key, 4 * j));
     // The total stress at a point, its principal values and the strike across the most
     // tensile direction there, and the frame's outward direction.
     let field = |p: [f64; 3]| {
@@ -1832,6 +1951,47 @@ pub(crate) fn stress_trace(
         ];
         (s1, s2, strike, out, round)
     };
+    trace_in(
+        &field,
+        start,
+        length,
+        spacing,
+        body_radius,
+        rng,
+        draw,
+        width,
+        first,
+        min_tension,
+        None,
+    )
+}
+
+/// The stress a fault reads at a point: its most and least tensile principal values, the
+/// strike across the most tensile direction, and two unit vectors of the tangent plane
+/// there, the first outward from the field's source where it has one.
+pub(crate) type FieldAt = (f64, f64, [f64; 3], [f64; 3], [f64; 3]);
+
+/// A fault's course through a stress field (F105, F111), as `stress_trace` describes it,
+/// for any field; it also stops where `stop` says it meets something it cannot cross (an
+/// older fault, F147).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_in(
+    field: &dyn Fn([f64; 3]) -> FieldAt,
+    start: [f64; 3],
+    length: f64,
+    spacing: f64,
+    body_radius: f64,
+    rng: &Rng,
+    draw: u64,
+    width: f64,
+    first: Option<[f64; 3]>,
+    min_tension: f64,
+    stop: Option<&dyn Fn([f64; 3]) -> bool>,
+) -> (Vec<[f64; 3]>, Vec<f64>) {
+    let n = (length / spacing).ceil().max(2.0) as usize;
+    let key = draw ^ 0x5E61_0000_0000;
+    let (l_lo, l_hi) = SEGMENT_LENGTH_WIDTHS;
+    let segment = |j: u64| width * l_lo * (l_hi / l_lo).powf(rng.uniform(key, 4 * j));
     let tangent = |v: [f64; 3], p: [f64; 3]| {
         let radial = dot(v, p);
         normalize([
@@ -1882,6 +2042,9 @@ pub(crate) fn stress_trace(
     let mut link_heading = heading;
     let mut p = start;
     for i in 0..=n {
+        if i >= 2 && stop.is_some_and(|f| f(p)) {
+            break;
+        }
         points.push(p);
         let (s1, s2, strike, _, _) = field(p);
         if i >= 2 && s1 < min_tension {
@@ -1942,30 +2105,102 @@ pub(crate) fn stress_trace(
     (points, breaks)
 }
 
-/// A trace shifted sideways by a distance: each point moved along the local normal.
-fn offset_trace(points: &[[f64; 3]], lateral: f64, body_radius: f64) -> Vec<[f64; 3]> {
+/// A trace beside another, `lateral` m to its side (F112, F148): the host's points moved
+/// along great circles across its course, the course smoothed over twice the distance
+/// between them, as a fault beside another follows its course and not each of its relay
+/// steps; walked again at `spacing`, without what would run back on itself round the inside
+/// of a turn.
+fn offset_trace(
+    points: &[[f64; 3]],
+    lateral: f64,
+    body_radius: f64,
+    spacing: f64,
+) -> Vec<[f64; 3]> {
     let n = points.len();
-    (0..n)
+    if n < 2 {
+        return points.to_vec();
+    }
+    let tangents: Vec<[f64; 3]> = (0..n)
         .map(|k| {
             let p = points[k];
             let prev = points[k.saturating_sub(1)];
             let next = points[(k + 1).min(n - 1)];
             let chord = [next[0] - prev[0], next[1] - prev[1], next[2] - prev[2]];
             let radial = dot(chord, p);
-            let t = normalize([
+            normalize([
                 chord[0] - radial * p[0],
                 chord[1] - radial * p[1],
                 chord[2] - radial * p[2],
-            ]);
-            let normal = normalize(cross(p, t));
-            let s = lateral / body_radius;
-            normalize([
-                p[0] + s * normal[0],
-                p[1] + s * normal[1],
-                p[2] + s * normal[2],
             ])
         })
-        .collect()
+        .collect();
+    let mut sums = vec![[0.0; 3]; n + 1];
+    for k in 0..n {
+        let normal = normalize(cross(points[k], tangents[k]));
+        for c in 0..3 {
+            sums[k + 1][c] = sums[k][c] + normal[c];
+        }
+    }
+    let reach = ((2.0 * lateral.abs() / spacing.max(1.0)).round() as usize).max(1);
+    let (sin, cos) = (lateral / body_radius).sin_cos();
+    let shifted: Vec<[f64; 3]> = (0..n)
+        .map(|k| {
+            let p = points[k];
+            let (lo, hi) = (k.saturating_sub(reach), (k + reach + 1).min(n));
+            let sum = [
+                sums[hi][0] - sums[lo][0],
+                sums[hi][1] - sums[lo][1],
+                sums[hi][2] - sums[lo][2],
+            ];
+            let radial = dot(sum, p);
+            let across = normalize([
+                sum[0] - radial * p[0],
+                sum[1] - radial * p[1],
+                sum[2] - radial * p[2],
+            ]);
+            normalize([
+                cos * p[0] + sin * across[0],
+                cos * p[1] + sin * across[1],
+                cos * p[2] + sin * across[2],
+            ])
+        })
+        .collect();
+    // What runs back against the host's course folds round the inside of a turn.
+    let mut kept = vec![shifted[0]];
+    for k in 1..n {
+        let last = kept[kept.len() - 1];
+        let step = [
+            shifted[k][0] - last[0],
+            shifted[k][1] - last[1],
+            shifted[k][2] - last[2],
+        ];
+        if dot(step, tangents[k]) > 0.0 {
+            kept.push(shifted[k]);
+        }
+    }
+    let step = spacing / body_radius;
+    let mut out = vec![kept[0]];
+    // The arc from the last point laid to the start of the current piece.
+    let mut since = 0.0;
+    for w in kept.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let piece = angle_between(a, b);
+        let mut at = step - since;
+        while at <= piece {
+            let f = at / piece.max(1e-300);
+            out.push(normalize([
+                a[0] + f * (b[0] - a[0]),
+                a[1] + f * (b[1] - a[1]),
+                a[2] + f * (b[2] - a[2]),
+            ]));
+            at += step;
+        }
+        since = piece - (at - step);
+    }
+    if out.len() < 2 {
+        out.push(kept[kept.len() - 1]);
+    }
+    out
 }
 
 /// A trace running outward from `start`, away from `center`, with a slow wobble.
@@ -2079,6 +2314,9 @@ struct Frame {
     pulse: f64,
     /// The side its floor tilts down toward, -1 to 1 (F111).
     polarity: f64,
+    /// How far its band reaches along the trace for each metre off it, where the trace turns
+    /// (F148): the tangent of its turn against the frames beside it.
+    fan: f64,
 }
 
 /// A trough's dimensions at a growth fraction, m.
@@ -2163,7 +2401,26 @@ impl TroughFrames {
                 narrow,
                 pulse,
                 polarity: trough_polarity(trough, along_trace),
+                fan: 0.0,
             });
+        }
+        // Where the trace turns, the frames' bands spread apart off it: each reaches out by
+        // the turn it makes against the frames beside it, so that the wedge between them is
+        // covered, and along a straight trace not at all.
+        let turns: Vec<f64> = (0..frames.len())
+            .map(|k| {
+                let angle = |j: usize| angle_between(frames[k].t, frames[j].t);
+                let before = if k > 0 { angle(k - 1) } else { 0.0 };
+                let after = if k + 1 < frames.len() {
+                    angle(k + 1)
+                } else {
+                    0.0
+                };
+                before.max(after).min(std::f64::consts::FRAC_PI_4).tan()
+            })
+            .collect();
+        for (f, fan) in frames.iter_mut().zip(turns) {
+            f.fan = fan;
         }
         // The walls retreat in landslides where they stand high enough (F106): along each
         // wall, alcoves sized by the wall's height there, one after another.
@@ -2359,8 +2616,8 @@ impl TroughFrames {
         Self::size(trough, progress, wall_floor, cell).search
     }
 
-    /// The depth a frame gives a point, with the point's distance along strike, or
-    /// nothing when the point is outside the frame's band.
+    /// The depth a frame gives a point, with the weight the frame has there, falling to
+    /// nothing at its band's edge, or nothing when the point is outside the band.
     fn depth_from(
         &self,
         d: [f64; 3],
@@ -2370,12 +2627,17 @@ impl TroughFrames {
         f: &Frame,
     ) -> Option<(f64, f64)> {
         let along = dot(d, f.t) * body_radius;
-        if along.abs() > size.half_band {
+        let off = dot(d, f.normal) * body_radius;
+        // Where the trace turns, at a link between segments most sharply, the frames fan
+        // out: a point off the trace falls in the band of a frame on either side of the
+        // turn, else a wide trough is cut across where none reaches.
+        let reach = size.half_band + f.fan * off.abs();
+        if along.abs() >= reach {
             return None;
         }
         // A fault's trace wanders off its segments' great circles, rough at every scale
         // (F112).
-        let across = dot(d, f.normal) * body_radius - self.meander(f.along + along);
+        let across = off - self.meander(f.along + along);
         let scallop = if self.graben {
             // A graben's walls are rough fault traces, each standing in or out on its own,
             // so the graben pinches and swells (F112).
@@ -2422,12 +2684,16 @@ impl TroughFrames {
         }
         let u = f.taper * u;
         let u = if u > 0.0 { (u - debris).max(0.0) } else { u };
-        Some((along.abs(), u))
+        // The frames that reach a point share it, each by how near the point is to its own
+        // line across the trace, so that where the trace turns the depth passes from one
+        // to the next without a seam; along a straight trace they agree.
+        let weight = (1.0 - along.abs() / reach).powi(2);
+        Some((weight, u))
     }
 }
 
 /// Depth of a trough at each cell it touches, at a growth fraction, with scalloped
-/// walls and a tapered floor: nearest trace point along strike.
+/// walls and a tapered floor: the frames about the nearest trace point, blended.
 pub fn trough_depths(
     grid: &CubeSphere,
     body_radius: f64,
@@ -2440,20 +2706,30 @@ pub fn trough_depths(
     let cell = grid.delta() * body_radius;
     let frames = TroughFrames::new(trough);
     let size = TroughFrames::size(trough, progress, wall_floor, cell);
-    let mut best: HashMap<usize, (f64, f64)> = HashMap::new();
+    let mut shares: HashMap<usize, (f64, f64)> = HashMap::new();
     for f in &frames.frames {
-        stamper.gather(grid, body_radius, f.p, size.search);
+        // Only the strip the frame's band reaches across the trough, with two cells to spare
+        // so that the walk across it stays connected; the band's own test is exact.
+        let keep = |d: [f64; 3]| {
+            let along = dot(d, f.t) * body_radius;
+            let off = dot(d, f.normal) * body_radius;
+            along.abs() < size.half_band + f.fan * off.abs() + 2.0 * cell
+        };
+        stamper.gather_within(grid, body_radius, f.p, size.search, keep);
         for &(idx, _, _) in &stamper.footprint {
             let d = grid.center(grid.cell(idx));
-            if let Some((along, u)) = frames.depth_from(d, body_radius, &size, blur, f) {
-                let entry = best.entry(idx).or_insert((f64::INFINITY, 0.0));
-                if along < entry.0 {
-                    *entry = (along, u);
-                }
+            if let Some((weight, u)) = frames.depth_from(d, body_radius, &size, blur, f) {
+                let entry = shares.entry(idx).or_insert((0.0, 0.0));
+                entry.0 += weight;
+                entry.1 += weight * u;
             }
         }
     }
-    let mut out: Vec<(usize, f64)> = best.into_iter().map(|(i, (_, u))| (i, u)).collect();
+    let mut out: Vec<(usize, f64)> = shares
+        .into_iter()
+        .filter(|(_, (w, _))| *w > 0.0)
+        .map(|(i, (w, wu))| (i, wu / w))
+        .collect();
     out.sort_by_key(|e| e.0);
     out
 }
@@ -2474,19 +2750,18 @@ pub fn trough_depth_at(
 ) -> f64 {
     let size = TroughFrames::size(trough, progress, wall_floor, cell);
     let cos_reach = ((size.search + 0.5 * cell) / body_radius).cos();
-    let mut best = (f64::INFINITY, 0.0);
+    let (mut weights, mut sum) = (0.0, 0.0);
     let (lo, hi) = frame_range;
     for f in &frames.frames[lo.min(frames.frames.len())..hi.min(frames.frames.len())] {
         if dot(f.p, d) < cos_reach {
             continue;
         }
-        if let Some((along, u)) = frames.depth_from(d, body_radius, &size, blur, f)
-            && along < best.0
-        {
-            best = (along, u);
+        if let Some((weight, u)) = frames.depth_from(d, body_radius, &size, blur, f) {
+            weights += weight;
+            sum += weight * u;
         }
     }
-    best.1
+    if weights > 0.0 { sum / weights } else { 0.0 }
 }
 
 /// The shields' lava laid on a point since a time, m (F103): each shield's growth there
@@ -2943,6 +3218,83 @@ mod tests {
         assert!(flows.windows(2).all(|w| w[1].time_gyr > w[0].time_gyr));
     }
 
+    /// A wide trough keeps its floor where its trace turns: the frames on either side of the
+    /// turn fan out over the ground between them and share it, so that the outer side is
+    /// neither cut across nor striped (F148).
+    #[test]
+    fn a_wide_trough_keeps_its_floor_where_its_trace_turns() {
+        let r = 600e3;
+        let (spacing, width, depth) = (1e3, 40e3, 500.0);
+        let half = 150e3;
+        let n = (half / spacing) as usize;
+        let mut points: Vec<[f64; 3]> = (0..=n)
+            .map(|k| {
+                let a = k as f64 * spacing / r;
+                [a.cos(), a.sin(), 0.0]
+            })
+            .collect();
+        let kink = *points.last().unwrap();
+        let a = half / r;
+        let t1 = [-a.sin(), a.cos(), 0.0];
+        let t2 = crate::stages::io::rotate_about(kink, t1, 45f64.to_radians());
+        for k in 1..=n {
+            let b = k as f64 * spacing / r;
+            points.push(normalize([
+                kink[0] * b.cos() + t2[0] * b.sin(),
+                kink[1] * b.cos() + t2[1] * b.sin(),
+                kink[2] * b.cos() + t2[2] * b.sin(),
+            ]));
+        }
+        let length = (points.len() - 1) as f64 * spacing;
+        let trough = Trough {
+            points,
+            spacing,
+            length,
+            width,
+            depth,
+            flank: 0.0,
+            tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
+            start_gyr: 1.0,
+            end_gyr: 1.0,
+            id: 7,
+            kind: TroughKind::Graben,
+            segments: Vec::new(),
+        };
+        let frames = TroughFrames::new(&trough);
+        // Off the turn, across the wedge between the two segments' normals on either side:
+        // the outer side, where the frames' bands spread apart, and the inner.
+        let n1 = normalize(crate::geom::cross(kink, t1));
+        for start in [n1, [-n1[0], -n1[1], -n1[2]]] {
+            for degree in 0..=45 {
+                let v = crate::stages::io::rotate_about(kink, start, (degree as f64).to_radians());
+                let mut last: Option<f64> = None;
+                for k in 0..=12 {
+                    let d = k as f64 * 1e3 / r;
+                    let q = normalize([kink[0] + d * v[0], kink[1] + d * v[1], kink[2] + d * v[2]]);
+                    let u = trough_depth_at(
+                        q,
+                        r,
+                        &trough,
+                        &frames,
+                        (0, frames.len()),
+                        1.0,
+                        100.0,
+                        1e3,
+                        0.0,
+                    );
+                    assert!(u > 0.5 * depth, "{degree} degrees, {k} km: {u}");
+                    if let Some(l) = last {
+                        assert!(
+                            (u - l).abs() < 0.2 * depth,
+                            "{degree} degrees, {k} km: {l} to {u}"
+                        );
+                    }
+                    last = Some(u);
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore = "diagnostic: lists Mars's troughs passing a point (EXOGEN_PT=lon,lat,km,face)"]
     fn troughs_near_a_point() {
@@ -3007,6 +3359,7 @@ mod tests {
             width: 150e3,
             depth: 6e3,
             flank: 0.0,
+            tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
             start_gyr: 1.0,
             end_gyr: 2.0,
             id: 11,
@@ -3058,6 +3411,7 @@ mod tests {
             width: 150e3,
             depth: 6e3,
             flank: 0.0,
+            tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
             start_gyr: 1.0,
             end_gyr: 2.0,
             id: 11,
@@ -3126,6 +3480,7 @@ mod tests {
             width: 40e3,
             depth: 2e3,
             flank: 0.0,
+            tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
             start_gyr: 1.0,
             end_gyr: 2.0,
             id: 13,
@@ -3309,6 +3664,7 @@ mod tests {
             width,
             depth: segments.iter().map(|g| g.throw).fold(0.0, f64::max),
             flank: 0.0,
+            tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
             start_gyr: 1.0,
             end_gyr: 1.0,
             id: 5,
@@ -3318,7 +3674,7 @@ mod tests {
         // Away from its tips, a graben keeps each segment's throw at its middle and dips by
         // SEGMENT_LINK_DEFICIT at a link, between the two segments' throws; at its tips it
         // falls to nothing (F112).
-        let tip = trough.depth / (2.0 * SEGMENT_THROW_PER_LENGTH);
+        let tip = trough.depth / trough.tip_rate;
         let inside = |s: f64| s > tip && s < length - tip;
         for g in &segments {
             let s = 0.5 * (g.start + g.end);

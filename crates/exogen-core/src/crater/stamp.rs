@@ -67,6 +67,20 @@ impl Stamper {
 
     /// Collect the cells within `radius_m` of `center` on a body of radius `body_radius`.
     pub fn gather(&mut self, grid: &CubeSphere, body_radius: f64, center: [f64; 3], radius_m: f64) {
+        self.gather_within(grid, body_radius, center, radius_m, |_| true);
+    }
+
+    /// Collect the cells within `radius_m` of `center` whose centres `keep` also accepts, a
+    /// region that must hold `center`'s cell and be connected across the grid's cells: the
+    /// walk spreads only through the cells it keeps.
+    pub fn gather_within<F: Fn([f64; 3]) -> bool>(
+        &mut self,
+        grid: &CubeSphere,
+        body_radius: f64,
+        center: [f64; 3],
+        radius_m: f64,
+        keep: F,
+    ) {
         self.generation = self.generation.wrapping_add(1);
         if self.generation == 0 {
             self.visited.iter_mut().for_each(|v| *v = 0);
@@ -88,7 +102,7 @@ impl Stamper {
             let theta = angle_between(center, d);
             // Accept cells whose centre is within the radius plus half a cell so the edge
             // is not under-covered; the profile returns zero beyond the ejecta anyway.
-            if theta > theta_max + 0.5 * grid.delta() {
+            if theta > theta_max + 0.5 * grid.delta() || (idx != start && !keep(d)) {
                 continue;
             }
             let phi = azimuth_from(center, east, north, d);

@@ -262,6 +262,7 @@ impl EpisodicProcess {
                     width: w_lo * (w_hi / w_lo).powf(rng.uniform(draw, 4)),
                     depth: NOVA_DEPTH * (0.6 + 0.8 * rng.uniform(draw, 5)),
                     flank: 0.0,
+                    tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
                     start_gyr: c.time_gyr,
                     end_gyr: c.time_gyr,
                     id: 2_000_000 + draw,
