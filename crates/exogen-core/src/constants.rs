@@ -353,9 +353,9 @@ pub const FLOOD_SHEET_ASPECT: f64 = 2.2;
 pub const FLOOD_MARGIN_THRESHOLD: f64 = 0.45;
 pub const FLOOD_MARGIN_LOBE_CELLS: f64 = 2.0;
 pub const FLOOD_MARGIN_WOBBLE: f64 = 0.3;
-/// Subsidence of a lava fill as a fraction of its thickness, from compaction of the pile
-/// and the sag of the floor under it, so a surface over a buried crater dips over the
-/// deep fill and shows the rim as a ring (ghost craters).
+/// Subsidence of a lava fill as a fraction of its thickness, from compaction of the pile,
+/// so a surface over a buried crater dips over the deep fill and shows the rim as a ring
+/// (ghost craters); the sag of the floor under the fill is the lid's bending (F162).
 pub const LAVA_SUBSIDENCE: f64 = 0.05;
 /// Wrinkle ridges on plains (PLAN.md 4.4): ridge length per plains area, 1/m (lunar
 /// maria carry about a kilometre of ridge per forty square kilometres); the range of

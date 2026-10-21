@@ -1206,6 +1206,11 @@ pub struct PlumeProcess {
 }
 
 impl PlumeProcess {
+    /// The height the shields have piled on each coarse cell, m: their loads (F161).
+    pub fn shield_built(&self) -> &[f32] {
+        &self.shield_built
+    }
+
     /// None when the body raises no plume. `relief` is the ground before the rises, for the
     /// stress its potential energy puts on the lid (F150).
     pub fn new<P: Reads>(

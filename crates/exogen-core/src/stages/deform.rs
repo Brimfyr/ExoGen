@@ -1,7 +1,8 @@
 //! What the slow processes have added to the ground by a time, for the finishing pass.
 //!
 //! The loop lifts the rises' domes, grows the shields and carves the canyon on the coarse
-//! ground as they happen, a step at a time and before that step's floods; a corona's
+//! ground as they happen, a step at a time and before that step's floods, and bends the
+//! ground under its loads at the end of a step (F162); a corona's
 //! profile is the finish's (F146), so it adds nothing here. A flood refilled at the finish must see the ground as it found
 //! it, so the growth since then is taken off the base it is refilled against and put
 //! back on top of what it writes. Each process has a growth law the loop followed, and
@@ -11,6 +12,7 @@
 use crate::crater::Stamper;
 use crate::geom::angle_between;
 use crate::grid::CubeSphere;
+use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::stages::plume::{
     Rise, Shield, Trough, TroughFrames, dome, rise_progress, shield_height, shield_progress,
     trough_depth_at, trough_progress,
@@ -38,6 +40,8 @@ pub struct Deformation<'a> {
     /// The features over each coarse cell, as ranges into `list`.
     offsets: Vec<u32>,
     list: Vec<Deformer>,
+    /// How far the ground sank under each load, on the coarse grid, and when (F162).
+    flexure: Vec<(f64, PaddedField)>,
 }
 
 impl<'a> Deformation<'a> {
@@ -50,6 +54,7 @@ impl<'a> Deformation<'a> {
         rises: &'a [Rise],
         shields: &'a [Shield],
         canyons: &'a [Trough],
+        flexure: &[(f64, Vec<f32>)],
     ) -> Self {
         let cell = coarse.delta() * body_radius;
         let n = coarse.cell_count();
@@ -119,12 +124,16 @@ impl<'a> Deformation<'a> {
             frames,
             offsets,
             list,
+            flexure: flexure
+                .iter()
+                .map(|(t, sunk)| (*t, PaddedField::new(&coarse, sunk)))
+                .collect(),
         }
     }
 
     /// Whether anything deforms at all.
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.list.is_empty() && self.flexure.is_empty()
     }
 
     /// End of the loop step a time falls in: the step's growth was on the ground before
@@ -139,10 +148,24 @@ impl<'a> Deformation<'a> {
     /// Height added at a point by the continuous processes up to `t_slow` and by the
     /// discrete events up to `t_events`, m.
     fn at(&self, d: [f64; 3], t_slow: f64, _t_events: f64) -> f64 {
+        // The ground's subsidence under the loads laid by then: each at the end of its
+        // step, after that step's floods, so a time within a step sees the loads before it,
+        // and the present all of its own.
+        let mut sunk = 0.0;
+        for (time, field) in &self.flexure {
+            let before = if t_slow >= self.present - 1e-9 {
+                *time <= self.present + 1e-9
+            } else {
+                *time < t_slow - 1e-9
+            };
+            if before {
+                sunk += sample_bilinear(&self.coarse, field, d) as f64;
+            }
+        }
         let c = self.coarse.index(self.coarse.locate(d).0);
         let (lo, hi) = (self.offsets[c] as usize, self.offsets[c + 1] as usize);
         if lo == hi {
-            return 0.0;
+            return -sunk;
         }
         let r_body = self.body_radius;
         let coarse_cell = self.coarse.delta() * r_body;
@@ -182,7 +205,7 @@ impl<'a> Deformation<'a> {
                 }
             }
         }
-        h
+        h - sunk
     }
 
     /// Height added at a point since a flood at `t` found the ground: the continuous
@@ -229,6 +252,7 @@ mod tests {
             present,
             &[],
             &shields,
+            &[],
             &[],
         );
         // At the summit, a flood at 2 Gyr saw the growth to the end of its step; what

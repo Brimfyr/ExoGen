@@ -465,10 +465,42 @@ pub fn flexural_parameter(elastic: f64, gravity: f64) -> f64 {
     (rigidity / (DENSITY_ROCK * gravity.max(1e-3))).powf(0.25)
 }
 
-/// The stress the lava laid on a grid puts on a rock lid `elastic` m thick (F157):
-/// `thickness`, m per cell of `grid`, of lava of `density`, kg/m³, averaged onto a plate
-/// grid that resolves the lid's flexural parameter, bent over the mantle. None where no
-/// lava was laid.
+/// A load laid on the lid (F157, F162): the stress it put on the lid and the lid's
+/// deflection under it, m, down positive, on the grid it was solved on.
+pub struct Laid {
+    pub stress: LoadStress,
+    pub grid: CubeSphere,
+    pub deflection: Vec<f32>,
+}
+
+impl Laid {
+    /// The deflection on another grid, bilinear.
+    pub fn deflection_on(&self, target: CubeSphere) -> Vec<f32> {
+        let mut field = crate::fields::Field::new(self.grid);
+        field.as_mut_slice().copy_from_slice(&self.deflection);
+        field.resample(target).into_vec()
+    }
+}
+
+/// How far the ground sinks under a deflection, m (F162): as far as the lid deflects, down
+/// positive, but beneath an edifice its lava fills the sag as far as it is thick (`held`,
+/// m), so that its surface stays as it built it while the ground about it sinks into a moat;
+/// the bulge beyond rises.
+pub fn sink(deflection: &[f32], held: Option<&[f32]>) -> Vec<f32> {
+    deflection
+        .iter()
+        .enumerate()
+        .map(|(k, &w)| {
+            let h = held.map_or(0.0, |s| s[k]);
+            if w > 0.0 { w - w.min(h) } else { w }
+        })
+        .collect()
+}
+
+/// The stress the lava laid on a grid puts on a rock lid `elastic` m thick (F157), and the
+/// lid's deflection under it (F162): `thickness`, m per cell of `grid`, of lava of
+/// `density`, kg/m³, averaged onto a plate grid that resolves the lid's flexural
+/// parameter, bent over the mantle. None where no lava was laid.
 pub fn lay(
     grid: CubeSphere,
     thickness: &[f32],
@@ -476,7 +508,7 @@ pub fn lay(
     gravity: f64,
     elastic: f64,
     density: f64,
-) -> Option<LoadStress> {
+) -> Option<Laid> {
     if !thickness.iter().any(|&t| t > 0.0) {
         return None;
     }
@@ -518,17 +550,26 @@ pub fn lay(
             let trace = 0.5 * (t[0] + t[1] + t[2]);
             (lo.min(trace), hi.max(trace))
         });
+        let (wlo, whi) = w
+            .iter()
+            .fold((0.0f64, 0.0f64), |(a, b), &v| (a.min(v), b.max(v)));
         eprintln!(
-            "load: lid {:.0} km, flexural parameter {:.0} km, plate face {}, load up to {:.1} MPa, mean stress {:.0} to {:.0} MPa",
+            "load: lid {:.0} km, flexural parameter {:.0} km, plate face {}, load up to {:.1} MPa, mean stress {:.0} to {:.0} MPa, deflection {:.0} to {:.0} m",
             elastic / 1e3,
             flexural / 1e3,
             plate.grid.face_size(),
             most / 1e6,
             lo / 1e6,
-            hi / 1e6
+            hi / 1e6,
+            wlo,
+            whi
         );
     }
-    Some(stress)
+    Some(Laid {
+        stress,
+        grid: target,
+        deflection: w.iter().map(|&v| v as f32).collect(),
+    })
 }
 
 /// The graben the loads open (F158): where the floods' loads stretch the lid's top past
@@ -855,6 +896,47 @@ mod tests {
         assert!(o6 > 5e6 && r6 > 0.0, "{o6} {r6}");
     }
 
+    /// The ground sinks under its load (F162), but an edifice fills the sag beneath it as
+    /// far as it is thick: a shield on a plate stands where it built itself, the ground
+    /// about it sunk into a moat, deepest at its foot, and raised in a bulge beyond; a flood
+    /// with no edifice sinks with the ground.
+    #[test]
+    fn a_shield_fills_the_sag_beneath_it_and_stands_in_a_moat() {
+        let (r, g, te) = (3.39e6, 3.71, 70e3);
+        let grid = CubeSphere::new(128);
+        let n = grid.cell_count();
+        let centre = [1.0, 0.0, 0.0];
+        let (radius, height) = (300e3, 20e3);
+        let shield: Vec<f32> = (0..n)
+            .map(|k| {
+                let x = angle_between(centre, grid.center(grid.cell(k))) * r / radius;
+                if x < 1.0 {
+                    (height * (1.0 - x * x)) as f32
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let laid = lay(grid, &shield, r, g, te, 2_900.0).expect("a load");
+        let w = laid.deflection_on(grid);
+        let sunk = sink(&w, Some(&shield));
+        let at = |d: f64| grid.index(grid.locate([(d / r).cos(), (d / r).sin(), 0.0]).0);
+        // The summit: the lid sags kilometres beneath it, and the edifice fills it all.
+        let summit = at(0.0);
+        assert!(w[summit] > 2_000.0, "{}", w[summit]);
+        assert!(sunk[summit].abs() < 1.0, "{}", sunk[summit]);
+        // Just past the foot the ground sinks into a moat, and farther off rises a little.
+        let moat = sunk[at(1.1 * radius)];
+        assert!(moat > 300.0, "{moat}");
+        let far: f32 = (15..40)
+            .map(|k| sunk[at(radius + k as f64 * 25e3)])
+            .fold(f32::MAX, f32::min);
+        assert!(far < 0.0, "{far}");
+        // Without an edifice the ground sinks with the lid.
+        let bare = sink(&w, None);
+        assert_eq!(bare[summit], w[summit]);
+    }
+
     /// A basin filled with lava opens graben beyond its margin (F158), where its load
     /// stretches the lid outward, running round it as the arcuate graben about the maria
     /// do, at the time it was filled, and none before the record began.
@@ -894,7 +976,7 @@ mod tests {
                     time: 3.0,
                     elastic: te,
                     relief: flat,
-                    load: lay(grid, &thickness, r, g, te, 3_000.0),
+                    load: lay(grid, &thickness, r, g, te, 3_000.0).map(|l| l.stress),
                 },
             ],
         };

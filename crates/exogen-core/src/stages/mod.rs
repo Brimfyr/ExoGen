@@ -140,6 +140,9 @@ pub struct LoopOutput {
     pub resurfacing: Option<episodic::Resurfacing>,
     pub coronae: Vec<corona::Corona>,
     pub domes: Vec<episodic::Dome>,
+    /// How far the ground sank under each load the loop laid, per coarse cell, and when
+    /// (F162), which the finish's floods see after them.
+    pub flexure: Vec<(f64, Vec<f32>)>,
     /// The Io regime's paterae and mountains through the body's life, each with its
     /// birth and death; the finish takes those alive at the epoch.
     pub paterae: Vec<io::Patera>,
@@ -373,7 +376,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 117;
+pub const FINISH_VERSION: u64 = 118;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -471,9 +474,10 @@ pub fn run_coarse_loop(
         layers: layers.clone(),
     });
     // The lava laid by the last load the field holds, per coarse cell, and when the field is
-    // read next (F157).
+    // read next (F157); and how far the ground sank under each load, when (F162).
     let mut laid = vec![0.0f32; grid.cell_count()];
     let mut next_epoch = LOAD_EPOCH_GYR;
+    let mut flexure: Vec<(f64, Vec<f32>)> = Vec::new();
 
     for s in 1..=steps {
         if sink.cancelled() {
@@ -620,16 +624,35 @@ pub fn run_coarse_loop(
             if let Some(f) = &floods
                 && let Some(density) = f.magma_density()
             {
-                let increment: Vec<f32> = f
-                    .thickness
+                // The lava the floods and the shields have laid (F161), less what the last
+                // load held.
+                let shields = plume.as_ref().map(|p| p.shield_built());
+                let now: Vec<f32> = (0..grid.cell_count())
+                    .map(|k| f.thickness[k] + shields.map_or(0.0, |s| s[k]))
+                    .collect();
+                let increment: Vec<f32> = now
                     .iter()
                     .zip(&laid)
                     .map(|(t, l)| (t - l).max(0.0))
                     .collect();
                 let most = increment.iter().fold(0.0f32, |m, &v| m.max(v));
-                if most as f64 >= LOAD_MIN_INCREMENT {
-                    load = load::lay(grid, &increment, body_radius, gravity, elastic, density);
-                    laid.copy_from_slice(&f.thickness);
+                if most as f64 >= LOAD_MIN_INCREMENT
+                    && let Some(laid_load) =
+                        load::lay(grid, &increment, body_radius, gravity, elastic, density)
+                {
+                    // The ground bends under the load (F162): it sinks, but beneath a shield
+                    // the edifice's lava fills the sag as far as it is thick, so that its
+                    // surface stays as it built it and only the ground about it sinks into a
+                    // moat, rising in a bulge beyond.
+                    let w = laid_load.deflection_on(grid);
+                    let bedrock = layers.bedrock.as_mut_slice();
+                    let sunk = load::sink(&w, shields);
+                    for (b, s) in bedrock.iter_mut().zip(&sunk) {
+                        *b -= s;
+                    }
+                    flexure.push((t1, sunk));
+                    load = Some(laid_load.stress);
+                    laid.copy_from_slice(&now);
                 }
             }
             history.push(stress::FieldEpoch {
@@ -758,6 +781,7 @@ pub fn run_coarse_loop(
         resurfacing,
         coronae,
         domes,
+        flexure,
         paterae,
         mountains,
         io_base,
@@ -1152,6 +1176,7 @@ pub fn finish(
         &loop_output.rises,
         &shields,
         &canyons,
+        &loop_output.flexure,
     );
     if !floods.is_empty() || resurfacing.is_some() {
         with_stamper(&grid, |stamper| {
@@ -3674,6 +3699,44 @@ mod tests {
         assert!(
             all > 1000 && below * 10 > all * 8,
             "{below} of {all} below the mean"
+        );
+    }
+
+    /// The ground bends under its loads (F162): Mars's largest shield stands in a moat, the
+    /// ground just past its foot lower than farther off, its summit still near the height it
+    /// built, and the loop keeps how far the ground sank for the finish.
+    #[test]
+    fn mars_s_largest_shield_stands_in_a_moat() {
+        let g = preset_graph("Mars", "preview");
+        let mars = run_coarse_loop(&g, &NoProgress).unwrap();
+        assert!(!mars.flexure.is_empty());
+        let r = g.f64("body.radius");
+        let grid = mars.grid;
+        let height = mars.keyframes.last().unwrap().layers.bedrock.as_slice();
+        let shield = mars
+            .shields
+            .iter()
+            .max_by(|a, b| a.radius.total_cmp(&b.radius))
+            .expect("a shield");
+        let (east, north) = local_basis(shield.center);
+        // The mean ground round the shield at a distance from its summit.
+        let ring = |d: f64| {
+            let mut sum = 0.0;
+            for k in 0..72 {
+                let phi = std::f64::consts::TAU * k as f64 / 72.0;
+                let p = offset(shield.center, east, north, d / r, phi);
+                sum += height[grid.index(grid.locate(p).0)] as f64;
+            }
+            sum / 72.0
+        };
+        let moat = ring(1.15 * shield.radius);
+        let beyond = ring(2.0 * shield.radius);
+        assert!(moat < beyond - 300.0, "{moat} {beyond}");
+        assert!(
+            ring(0.0) - beyond > 0.8 * shield.height,
+            "{} {}",
+            ring(0.0),
+            beyond
         );
     }
 

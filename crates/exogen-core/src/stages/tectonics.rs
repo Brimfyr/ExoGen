@@ -33,7 +33,7 @@ use crate::stages::stress::{Compression, FieldHistory, Squeeze, shrinking};
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 /// A scarp that was emplaced, kept for the sidecar and for re-stamping its face at the
 /// finishing resolution.

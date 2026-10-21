@@ -1974,3 +1974,27 @@ What the maps show:
 Still to do: Mercury's thrusts' direction (M27); the ground's flexure under its loads, a moat about a shield (M19); the drives the field does not hold, Venus's climate first (M26); the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25).
 
 Tests 247 (21 ignored), among them a thrust beside its host running along a span of it about where it starts, as far off as the host's reach sets, none joining a thrust that is not near, and one running its own way meeting a host at least as long within their reaches but not a shorter one nor one farther off. Clippy is clean and validate passes its 134 checks.
+
+## The seventy-eighth milestone: the ground bent under its loads
+
+M19, approved after the seventy-seventh: the shields' loads in the field, and the ground bent under every load.
+
+- **F161.** The shields' heights join the floods' lava as loads on the lid's shell, so the ground beneath and about a great shield is squeezed and its flexural arch stretched, where the loads' graben ring it.
+- **F162.** Each epoch's deflection is laid into the ground: the floods' ground sinks with the lid, while beneath a shield the edifice fills the sag as far as it is thick, so it stands in a moat with a bulge beyond; the finish's floods see the subsidence after them.
+
+How it went:
+
+- **A shield keeps its height.** A shield's height is its constructional surface, a 5° flank up to the relief the magma can raise; on a sinking plate its lava keeps filling the sag beneath it. Laying the whole deflection into the ground would have lowered every shield by kilometres; instead the edifice fills its own sag and only the ground about it sinks. Counting that root as load would deepen the sag again each epoch, so it is left out, a stated choice.
+- **The finish's floods.** A flood refilled at the finish is laid against the ground as it found it; the deflection is a deformation after it, as the shields' growth and the canyons' carving are, so the finish's deformation now carries every epoch's subsidence and gives each flood the ground it lay on.
+- **Two batches at once.** A render batch I took for dead had started all the same; the second's build found the executable locked and stopped. The first rendered from the same code, the edits since a comment and the cache versions; it is a lesson in starting renders only as tracked background tasks.
+
+What the maps show:
+
+- **Mars:** its largest shield, 684 km across and 25 km high, stands in a moat 2.4 km below the ground at 2.5 of its radii, its summit 26.0 km where it was 27.2; the four smaller shields stand in moats of their own, 0.4 to 3.7 km below the ground at 2.5 of their radii where the old ground dipped 0 to 1.5 km; the region about Tharsis sinks 1.5 to 2 km under its lavas and shields and its lava-filled basins deepen, the lowest to −8.0 km.
+- **The Moon:** its central mare sinks some 1 to 1.5 km under its fill; the lava in craters, too narrow to bend the lid far, sinks less.
+- **Venus and Mercury:** Venus's plains sink under the resurfacing's fill by up to 1.7 km, its mean height 0.24 km where it was 0.47; Mercury's deepest basin to −9.3 km from −7.2.
+- **Graben:** with the shields' loads the loads' graben grow from 605 to 774 on Mars and from 24 to 123 on Venus, about their shields; the Moon's and Mercury's, without shields, change only as their floods fill the sunk ground (193 to 207, 181 to 212).
+
+Still to do: the edifice's foot, its lava running into its moat and ponding there (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25).
+
+Tests 249 (21 ignored), among them a shield on a plate filling the sag beneath it, its summit where it built itself, the ground about it sunk into a moat with a bulge beyond while a flood with no edifice sinks with the ground; and Mars's largest shield standing in a moat in the loop, its summit still near the height it built. Clippy is clean and validate passes its 134 checks.
