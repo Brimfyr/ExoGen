@@ -606,9 +606,13 @@ pub const LID_FAULT_MAX_LENGTH: f64 = std::f64::consts::PI;
 /// `K - 1` times its faulted layer's pressure, `K = (sqrt(1 + mu²) + mu)²` (F147).
 pub const ICE_FRICTION: f64 = 0.69;
 pub const ROCK_FRICTION: f64 = 0.85;
-/// The brittle layer's depth varies from fault to fault by this spread in its logarithm,
-/// less than the surface layer's, a lithology's (a stated choice) (F147).
-pub const LID_LAYER_SPREAD: f64 = 0.2;
+/// A lid's fault cuts to a depth log-normal about this share of the deepest its faults
+/// reach, by this spread in its logarithm, and no deeper than the deepest: most faults
+/// nucleate and die within the brittle layer, and the few that cut it through make the
+/// widest graben (stated choices: Charon's chasmata 10 to 50 km wide, Serenity the widest;
+/// Pluto's fossae a few km to 20) (F147, revised).
+pub const LID_LAYER_MEDIAN_SHARE: f64 = 0.5;
+pub const LID_LAYER_SPREAD: f64 = 0.5;
 /// The faulted layer lies within this share of the body's radius: deeper, the lid is no
 /// thin shell stretched alike through its thickness, and its graben would span much of the
 /// body (a stated choice: Tethys's Ithaca Chasma, the widest graben known against its body,
@@ -632,16 +636,48 @@ pub const SEGMENT_LINK_DEFICIT: f64 = 0.25;
 pub const SEGMENT_THROW_SCATTER: f64 = 0.15;
 /// A fault's surface is rough at every scale, self-affine with a Hurst exponent of about
 /// 0.8 across its slip (Candela et al. 2012, from surface ruptures 200 m to 50 km long),
-/// so its trace at the surface is too (F112): a graben's two walls, each such a trace,
-/// stand in or out on their own by this share of its width over wavelengths from this
-/// many widths down, so the graben pinches and swells; and a fault's trace wanders off its
-/// segments' great circles by this share of its width over wavelengths from this many
-/// widths down (stated choices).
+/// so its trace at the surface is too (F112): a fault's trace wanders off its segments'
+/// great circles by this share of its width over wavelengths from this many widths down
+/// (stated choices).
 pub const FAULT_HURST: f64 = 0.8;
-pub const GRABEN_WALL_ROUGHNESS: f64 = 0.3;
-pub const GRABEN_WALL_WIDTHS: f64 = 6.0;
 pub const FAULT_MEANDER: f64 = 0.5;
 pub const FAULT_MEANDER_WIDTHS: f64 = 20.0;
+/// A graben's form (F149). Each wall is a chain of straight pieces this many widths long,
+/// each standing in or out of its neighbours by this share of the width (normal, cut at
+/// two deviations), the wall stepping from one to the next over a relay ramp this many
+/// widths long, and rough below that by this share of the width at the width's
+/// wavelength, self-affine down to the grid's cell, and swells in and out by this share of
+/// the width over this many widths, so that the two walls do not run parallel (stated
+/// choices: Pluto's and Charon's chasmata run straight for a few widths between jogs and
+/// widen and narrow along their length). A wall's throw is split now and
+/// then with a step fault within the graben: in each window of this many widths along the
+/// wall, with this probability, one runs 0.6 to 1.4 windows and dies out at its ends, its
+/// crest this share of the half width in from the wall's, taking this share of the wall's
+/// throw, and the terrace between tilts back toward the wall by this many degrees (stated
+/// choices: Ithaca Chasma's terraced walls; Charon's tilted blocks of 5 to 6 degrees,
+/// Beyer et al. 2017). The footwall beyond each crest stands raised by this share of the
+/// wall's throw, falling away over three TROUGH_FLANK_DECAY (a stated choice: a normal
+/// fault's footwall rises by a small share of its throw, flexing). A fault's throw is rough
+/// along it beyond its segments' by this share, over a few widths, and a graben is a
+/// half-graben, its floor tilted toward a master fault, as often as this (stated choices).
+pub const GRABEN_WALL_SEGMENT_WIDTHS: f64 = 3.0;
+pub const GRABEN_WALL_JOG: f64 = 0.07;
+pub const GRABEN_WALL_RAMP_WIDTHS: f64 = 0.6;
+pub const GRABEN_WALL_ROUGH: f64 = 0.03;
+pub const GRABEN_WALL_SWELL: f64 = 0.08;
+pub const GRABEN_WALL_SWELL_WIDTHS: f64 = 8.0;
+pub const GRABEN_TERRACE_WINDOW_WIDTHS: f64 = 4.0;
+pub const GRABEN_TERRACE_PROBABILITY: f64 = 0.7;
+pub const GRABEN_TERRACE_POSITION: (f64, f64) = (0.2, 0.5);
+pub const GRABEN_TERRACE_SHARE: (f64, f64) = (0.2, 0.5);
+pub const GRABEN_TERRACE_TILT_DEG: f64 = 3.0;
+pub const FAULT_FLANK_SHARE: f64 = 0.1;
+pub const GRABEN_THROW_ROUGHNESS: f64 = 0.2;
+pub const GRABEN_HALF_SHARE: f64 = 0.4;
+/// A graben narrows toward its tips as the square root of its throw's share of its
+/// greatest, to this share of its width, before its walls close over TROUGH_TIP_WIDTHS (a
+/// stated choice: the fossae of Pluto and Tharsis taper to points) (F149).
+pub const GRABEN_TIP_WIDTH_SHARE: f64 = 0.3;
 /// Graben in a parallel set stand apart, wall to wall, by this many thicknesses of their
 /// faulted layer, log-normal with this spread in its logarithm, no less than a quarter of
 /// it (F112: confined faults' spacing is linear in the mechanical layer's thickness,
@@ -696,7 +732,7 @@ pub const DIKE_START_SHARE: (f64, f64) = (0.1, 0.3);
 /// keeps its maze (RIFT_LABYRINTH), and the spread are stated choices.
 pub const RISE_AXIAL_STRESS: f64 = 0.07;
 pub const SHIELD_AXIS_SPREAD_DEG: f64 = 20.0;
-pub const TROUGH_TIP_WIDTHS: f64 = 1.0;
+pub const TROUGH_TIP_WIDTHS: f64 = 0.3;
 /// A rift's segments are half-graben (F111): one master fault drops the floor more on its
 /// side, the floor tilting down toward it so the far wall stands this share lower, and
 /// the master fault's side flips from one segment to the next with this probability, the

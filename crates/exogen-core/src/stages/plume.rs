@@ -33,7 +33,7 @@ use crate::stages::io::{Lobe, PathRules};
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 22;
+pub const VERSION: u64 = 23;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -216,8 +216,10 @@ pub fn trough_throw(trough: &Trough, s: f64) -> f64 {
         return throw * whole * link;
     }
     // Confined to its layer, a graben keeps its throw along its length, rising from each
-    // tip as fast as twice its throw per length allows.
-    let tip = (trough.depth / trough.tip_rate.max(1e-9))
+    // tip as a parabola whose slope at the tip is twice its throw per length (F112, F149):
+    // the quarter circle it rose as before stood up at once at the tip, so every graben
+    // ended square.
+    let tip = (2.0 * trough.depth / trough.tip_rate.max(1e-9))
         .min(0.5 * trough.length)
         .max(1.0);
     let d = s.min(trough.length - s).max(0.0);
@@ -225,7 +227,7 @@ pub fn trough_throw(trough: &Trough, s: f64) -> f64 {
         1.0
     } else {
         let u = d / tip;
-        (1.0 - (1.0 - u) * (1.0 - u)).sqrt()
+        1.0 - (1.0 - u) * (1.0 - u)
     };
     throw * rise * link
 }
@@ -907,9 +909,9 @@ pub(crate) enum FaultLayer {
     /// The layer near the surface a rise's bending breaks (F111): graben widths and layer
     /// depths drawn apart, log-normal about Tharsis's.
     Surface,
-    /// The layer a strain through the whole lid breaks (F147): log-normal about a depth that
-    /// changes with the lid through time, the graben as wide as their faults, dipping at 60°,
-    /// meet at its base.
+    /// The layer a strain through the whole lid breaks (F147): log-normal about half the
+    /// deepest its faults reach, within what the lid allows at the fault's time, the graben
+    /// as wide as their faults, dipping at 60°, meet at its base.
     Lid(f64),
 }
 
@@ -927,10 +929,12 @@ impl FaultLayer {
                 .clamp(FAULT_LAYER_RANGE.0, FAULT_LAYER_RANGE.1);
                 (layer_width, layer)
             }
-            FaultLayer::Lid(median) => {
-                let layer = (median
+            FaultLayer::Lid(deepest) => {
+                let layer = (deepest
+                    * LID_LAYER_MEDIAN_SHARE
                     * (LID_LAYER_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 2)).exp())
-                .min(bound);
+                .min(bound)
+                .min(deepest);
                 (2.0 * layer / GRABEN_DIP_DEG.to_radians().tan(), layer)
             }
         }
@@ -1109,11 +1113,22 @@ pub(crate) fn populate(
                     start: w[0],
                     end: w[1],
                     throw,
-                    polarity: if rift { polarity } else { 0.0 },
+                    polarity,
                 }
             })
             .collect();
         let depth = segments.iter().map(|g| g.throw).fold(0.0, f64::max);
+        // A graben is a half-graben as often as GRABEN_HALF_SHARE (F149), its floor tilted
+        // toward its master fault as a rift's segments are.
+        let half_graben = rng.uniform(draw ^ 0x4A1F_0000_0000, 0) < GRABEN_HALF_SHARE;
+        let segments: Vec<Segment> = if rift || half_graben {
+            segments
+        } else {
+            segments
+                .into_iter()
+                .map(|g| Segment { polarity: 0.0, ..g })
+                .collect()
+        };
         let carried = width >= RIFT_LOOP_WIDTH_CELLS * rules.cell;
         let (start_gyr, end_gyr) = window(time, carried);
         // The extension a fault takes up: its heave along its length, each segment's
@@ -1693,7 +1708,7 @@ impl PlumeProcess {
                 trough_depths(&grid, body_radius, canyon, p1, cell, 0.0, &mut self.stamper);
             let bedrock = layers.bedrock.as_mut_slice();
             let ages = layers.surface_age.as_mut_slice();
-            for (idx, depth) in target {
+            for (idx, depth, _) in target {
                 let more = depth - self.carved[idx] as f64;
                 if more <= 0.0 {
                     continue;
@@ -2259,6 +2274,8 @@ pub struct TroughFrames {
     width: f64,
     flank: f64,
     noise: GradientNoise,
+    /// Its own draws: a graben's walls' pieces and the step faults within them (F149).
+    rng: Rng,
     /// The trough's full depth, and the landslides off its walls in order along it
     /// (F106), with the farthest any reaches along the wall from its centre, m.
     depth: f64,
@@ -2425,7 +2442,8 @@ impl TroughFrames {
         // The walls retreat in landslides where they stand high enough (F106): along each
         // wall, alcoves sized by the wall's height there, one after another.
         let mut landslides = Vec::new();
-        if trough.depth >= LANDSLIDE_MIN_WALL && trough.length > 0.0 {
+        let faulted = trough.kind == TroughKind::Graben && !trough.segments.is_empty();
+        if trough.depth >= LANDSLIDE_MIN_WALL && trough.length > 0.0 && !faulted {
             let rng = Rng::new(trough.id ^ 0x1A2D_5D1D_0000);
             for (w, side) in [1.0f64, -1.0].into_iter().enumerate() {
                 let mut s = 0.0;
@@ -2470,6 +2488,7 @@ impl TroughFrames {
             width: trough.width,
             flank: trough.flank,
             noise,
+            rng: Rng::new(trough.id ^ 0x6A4B_0000),
             depth: trough.depth,
             landslides,
             slide_reach,
@@ -2588,6 +2607,7 @@ impl TroughFrames {
         let depth = trough.depth * progress;
         // Walls no narrower than the grid that carries them.
         let wall = (TROUGH_WALL_FRACTION * width).max(wall_floor);
+        let faulted = trough.kind == TroughKind::Graben && !trough.segments.is_empty();
         TroughSize {
             width,
             depth,
@@ -2599,9 +2619,21 @@ impl TroughFrames {
                 + if trough.segments.is_empty() {
                     0.0
                 } else {
-                    (1.5 * FAULT_MEANDER + GRABEN_WALL_ROUGHNESS) * trough.width
+                    1.5 * FAULT_MEANDER * trough.width
                 }
-                + if trough.depth >= LANDSLIDE_MIN_WALL {
+                + if faulted {
+                    // Its walls' jogs and roughness and its footwalls' raised flanks (F149).
+                    (2.0 * GRABEN_WALL_JOG
+                        + 2.0 * GRABEN_WALL_ROUGH
+                        + 2.0 * GRABEN_WALL_SWELL
+                        + 3.0 * TROUGH_FLANK_DECAY)
+                        * trough.width
+                } else if trough.segments.is_empty() {
+                    0.0
+                } else {
+                    TROUGH_SCALLOP * trough.width
+                }
+                + if trough.depth >= LANDSLIDE_MIN_WALL && !faulted {
                     LANDSLIDE_BACK.1 * LANDSLIDE_HALF_WIDTH.1 * depth
                 } else {
                     0.0
@@ -2617,7 +2649,8 @@ impl TroughFrames {
     }
 
     /// The depth a frame gives a point, with the weight the frame has there, falling to
-    /// nothing at its band's edge, or nothing when the point is outside the band.
+    /// nothing at its band's edge, and whether the point lies on a fault's face, or nothing
+    /// when the point is outside the band.
     fn depth_from(
         &self,
         d: [f64; 3],
@@ -2625,7 +2658,7 @@ impl TroughFrames {
         size: &TroughSize,
         blur: f64,
         f: &Frame,
-    ) -> Option<(f64, f64)> {
+    ) -> Option<(f64, f64, f64)> {
         let along = dot(d, f.t) * body_radius;
         let off = dot(d, f.normal) * body_radius;
         // Where the trace turns, at a link between segments most sharply, the frames fan
@@ -2638,27 +2671,50 @@ impl TroughFrames {
         // A fault's trace wanders off its segments' great circles, rough at every scale
         // (F112).
         let across = off - self.meander(f.along + along);
-        let scallop = if self.graben {
-            // A graben's walls are rough fault traces, each standing in or out on its own,
-            // so the graben pinches and swells (F112).
-            1.0 + GRABEN_WALL_ROUGHNESS
-                * self.noise.fbm(
-                    [d[0] + across.signum() * 3.0, d[1], d[2]],
-                    body_radius / (GRABEN_WALL_WIDTHS * self.width).max(1.0),
-                    3,
-                    2.0,
-                    2f64.powf(-FAULT_HURST),
-                )
-        } else {
-            1.0 + TROUGH_SCALLOP
+        // The frames that reach a point share it, each by how near the point is to its own
+        // line across the trace, so that where the trace turns the depth passes from one
+        // to the next without a seam; along a straight trace they agree.
+        let weight = (1.0 - along.abs() / reach).powi(2);
+        if self.graben && self.segmented {
+            // A fault's graben (F149): its walls scarps in pieces, its floor the old ground
+            // dropped, its throw rough along it beyond its segments' over a few widths.
+            let s = f.along + along;
+            let rough = 1.0
+                + GRABEN_THROW_ROUGHNESS
+                    * self.noise.fbm(
+                        [s / (4.0 * self.width.max(1.0)), 0.23, 0.71],
+                        1.0,
+                        2,
+                        2.0,
+                        0.5,
+                    );
+            let throw = size.depth * f.taper * rough.max(0.5);
+            // A graben narrows toward its tips with its throw, to a share of its width,
+            // before its walls close (a stated choice: the fossae of Pluto and Tharsis taper
+            // to points).
+            let tapering =
+                GRABEN_TIP_WIDTH_SHARE + (1.0 - GRABEN_TIP_WIDTH_SHARE) * f.taper.max(0.0).sqrt();
+            let (u, face) = self.graben_section(
+                s,
+                across,
+                size.width * f.narrow * tapering,
+                throw,
+                f.polarity,
+                size.cell,
+                blur,
+            );
+            return Some((weight, u, face));
+        }
+        // Chasmata: each wall is scalloped.
+        let scallop = 1.0
+            + TROUGH_SCALLOP
                 * self.noise.fbm(
                     [d[0] + across.signum() * 3.0, d[1], d[2]],
                     body_radius / TROUGH_SCALLOP_LENGTH.max(self.width),
                     2,
                     2.0,
                     0.5,
-                )
-        };
+                );
         let width = size.width * f.pulse * scallop * f.narrow;
         // The landslides cut the wall back on their side and lay their debris on the floor,
         // by the trough's own walls, not the grid's: a grid that widens the walls draws the
@@ -2684,16 +2740,206 @@ impl TroughFrames {
         }
         let u = f.taper * u;
         let u = if u > 0.0 { (u - debris).max(0.0) } else { u };
-        // The frames that reach a point share it, each by how near the point is to its own
-        // line across the trace, so that where the trace turns the depth passes from one
-        // to the next without a seam; along a straight trace they agree.
-        let weight = (1.0 - along.abs() / reach).powi(2);
-        Some((weight, u))
+        Some((weight, u, 0.0))
+    }
+
+    /// How far a graben's wall stands out from its mean line at a distance along it, m, on
+    /// `side` of the axis (F149): a fault scarp is a chain of straight pieces, each a
+    /// segment of the bounding fault standing a little in or out of its neighbours, the
+    /// wall stepping from one to the next over a relay ramp, and rough at every scale below
+    /// that, self-affine, down to the grid's cell.
+    fn wall_offset(&self, side: f64, s: f64, width: f64, cell: f64) -> f64 {
+        let piece = (GRABEN_WALL_SEGMENT_WIDTHS * width).max(1.0);
+        let ramp = GRABEN_WALL_RAMP_WIDTHS * width;
+        let salt = if side > 0.0 {
+            0x3A11_0000_0000u64
+        } else {
+            0x3A11_8000_0000u64
+        };
+        let key = |k: i64| (k + (1 << 30)) as u64 ^ salt;
+        // Where a piece ends, and how far it stands out.
+        let end = |k: i64| (k as f64 + 1.0 + 0.5 * (self.rng.uniform(key(k), 0) - 0.5)) * piece;
+        let out = |k: i64| GRABEN_WALL_JOG * width * self.rng.normal(key(k), 1).clamp(-2.0, 2.0);
+        let k = (s / piece).floor() as i64;
+        let (b0, b1) = (end(k - 1), end(k));
+        let mut offset = out(k);
+        if s > b1 - 0.5 * ramp {
+            offset += (out(k + 1) - offset) * smooth(s, b1 - 0.5 * ramp, b1 + 0.5 * ramp);
+        } else if s < b0 + 0.5 * ramp {
+            let before = out(k - 1);
+            offset = before + (offset - before) * smooth(s, b0 - 0.5 * ramp, b0 + 0.5 * ramp);
+        }
+        let octaves = (width / (2.0 * cell.max(1.0)))
+            .log2()
+            .floor()
+            .clamp(1.0, 6.0) as u32;
+        // And the wall swells in and out slowly, over many widths, so that the graben's two
+        // walls do not run parallel.
+        offset
+            + GRABEN_WALL_SWELL
+                * width
+                * self.noise.fbm(
+                    [
+                        s / (GRABEN_WALL_SWELL_WIDTHS * width).max(1.0),
+                        1.9 + 2.0 * side,
+                        4.1,
+                    ],
+                    1.0,
+                    2,
+                    2.0,
+                    2f64.powf(-FAULT_HURST),
+                )
+            + GRABEN_WALL_ROUGH
+                * width
+                * self.noise.fbm(
+                    [s / width.max(1.0), 5.3 + 2.0 * side, 0.77],
+                    1.0,
+                    octaves,
+                    2.0,
+                    2f64.powf(-FAULT_HURST),
+                )
+    }
+
+    /// The step faults within a graben's wall at a distance along it (F149), each as its
+    /// crest's distance in from the wall's crest as a share of the half width, and the
+    /// share of the wall's throw it takes, in order inward: a wall's throw is split now and
+    /// then with a fault within the graben, which runs a few widths and dies out at its
+    /// ends, so that terraces come and go along the wall.
+    fn terraces(&self, side: f64, s: f64, width: f64) -> Vec<(f64, f64)> {
+        let window = (GRABEN_TERRACE_WINDOW_WIDTHS * width).max(1.0);
+        let salt = if side > 0.0 {
+            0x7E44_0000_0000u64
+        } else {
+            0x7E44_8000_0000u64
+        };
+        let k0 = (s / window).floor() as i64;
+        let mut out = Vec::new();
+        for k in k0 - 1..=k0 {
+            let key = (k + (1 << 30)) as u64 ^ salt;
+            let draw = |i: u64| self.rng.uniform(key, i);
+            if draw(0) >= GRABEN_TERRACE_PROBABILITY {
+                continue;
+            }
+            let start = (k as f64 + 0.3 * draw(1)) * window;
+            let length = (0.6 + 0.8 * draw(2)) * window;
+            let x = 2.0 * (s - start) / length - 1.0;
+            if x.abs() >= 1.0 {
+                continue;
+            }
+            let (p_lo, p_hi) = GRABEN_TERRACE_POSITION;
+            let (q_lo, q_hi) = GRABEN_TERRACE_SHARE;
+            out.push((
+                p_lo + (p_hi - p_lo) * draw(3),
+                (q_lo + (q_hi - q_lo) * draw(4)) * (1.0 - x * x).sqrt(),
+            ));
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
+    /// A graben's cross-section at a point (F149): the subsidence there, m, positive down,
+    /// and 1 where the point lies on a fault's face. Each wall is a scarp from its crest,
+    /// degraded to the angle of repose, down to the floor, with the step faults within it
+    /// as terraces, each tilted back toward the wall; the floor is the old ground dropped,
+    /// level, or tilted toward the master fault of a half-graben (F111); and the footwall
+    /// stands raised a little beyond each crest. `x` is the distance across from the axis,
+    /// `width` the graben's rim to rim here and `throw` the floor's drop below the rims.
+    #[allow(clippy::too_many_arguments)]
+    fn graben_section(
+        &self,
+        s: f64,
+        x: f64,
+        width: f64,
+        throw: f64,
+        polarity: f64,
+        cell: f64,
+        blur: f64,
+    ) -> (f64, f64) {
+        let half = 0.5 * width;
+        let side = if x >= 0.0 { 1.0 } else { -1.0 };
+        let crest = (half + self.wall_offset(side, s, width, cell)).max(0.25 * half);
+        // How far in from this wall's crest the point lies.
+        let y = crest - x.abs();
+        let reach = 3.0 * TROUGH_FLANK_DECAY * width;
+        if y <= -reach {
+            return (0.0, 0.0);
+        }
+        let tilt = polarity.abs() * RIFT_TILT;
+        let floor_at = |xx: f64| {
+            let toward = (polarity * xx / half.max(1.0)).clamp(-1.0, 1.0);
+            throw * (1.0 - tilt * 0.5 * (1.0 - toward))
+        };
+        let repose = REPOSE_SLOPE_DEG.to_radians().tan();
+        let terrace_tilt = GRABEN_TERRACE_TILT_DEG.to_radians().tan();
+        // A face runs as far as its throw at the angle of repose, blurred by the diffusion
+        // since, and at least a cell.
+        let run_of = |t: f64| (t / repose).hypot(blur).max(cell);
+        let steps = self.terraces(side, s, width);
+        // The wall's faults in order inward, each its crest's distance in, its throw and its
+        // run; the wall's whole throw is the floor at the foot of its last face, which lies
+        // as far in as the faces run, so a second pass settles it.
+        let mut t_side = floor_at(side * crest);
+        let mut faults: Vec<(f64, f64, f64)> = Vec::new();
+        for _ in 0..2 {
+            faults.clear();
+            let shares: f64 = steps.iter().map(|q| q.1).sum();
+            let master = t_side * (1.0 - shares);
+            faults.push((0.0, master, run_of(master)));
+            for &(p, q) in &steps {
+                let last = faults.len() - 1;
+                let (y_prev, _, run_prev) = faults[last];
+                let base = y_prev + run_prev;
+                let y_k = p * half;
+                if y_k <= base {
+                    // No room beyond the face above: its share goes back to that face.
+                    let t = faults[last].1 + q * t_side;
+                    faults[last] = (faults[last].0, t, run_of(t));
+                    continue;
+                }
+                // The terrace rises back toward the wall; the fault below it drops that
+                // much more, so the floor lies where it would.
+                let lift = terrace_tilt * (y_k - base);
+                let t = q * t_side + lift;
+                faults.push((y_k, t, run_of(t)));
+            }
+            let (y_last, _, run_last) = faults[faults.len() - 1];
+            t_side = floor_at(side * (crest - y_last - run_last));
+        }
+        // The footwall rises by a share of the wall's own fault's throw.
+        let flank = FAULT_FLANK_SHARE * faults[0].1;
+        if y < 0.0 {
+            // The footwall's flank, raised at the crest and falling away beyond it.
+            let g = 1.0 + y / reach;
+            return (-flank * g * g, 0.0);
+        }
+        let (y_last, _, run_last) = faults[faults.len() - 1];
+        if y >= y_last + run_last {
+            return (floor_at(x), 0.0);
+        }
+        // Down the staircase: each face a smooth step over its run, each terrace rising in
+        // toward the next crest.
+        let mut u = 0.0;
+        let mut face = 0.0;
+        for (j, &(y_j, t_j, run_j)) in faults.iter().enumerate() {
+            if y < y_j {
+                break;
+            }
+            let on = ((y - y_j) / run_j).min(1.0);
+            u += t_j * on * on * (3.0 - 2.0 * on);
+            if on < 1.0 {
+                face = 1.0;
+            } else if let Some(&(y_next, _, _)) = faults.get(j + 1) {
+                u -= terrace_tilt * (y.min(y_next) - (y_j + run_j));
+            }
+        }
+        // The footwall's uplift fades down the first face.
+        u -= flank * (1.0 - smooth(y, 0.0, faults[0].2));
+        (u, face)
     }
 }
 
-/// Depth of a trough at each cell it touches, at a growth fraction, with scalloped
-/// walls and a tapered floor: the frames about the nearest trace point, blended.
+/// Depth of a trough at each cell it touches, at a growth fraction, with the share of the
+/// cell on a fault's face: the frames about the nearest trace point, blended.
 pub fn trough_depths(
     grid: &CubeSphere,
     body_radius: f64,
@@ -2702,11 +2948,11 @@ pub fn trough_depths(
     wall_floor: f64,
     blur: f64,
     stamper: &mut Stamper,
-) -> Vec<(usize, f64)> {
+) -> Vec<(usize, f64, f64)> {
     let cell = grid.delta() * body_radius;
     let frames = TroughFrames::new(trough);
     let size = TroughFrames::size(trough, progress, wall_floor, cell);
-    let mut shares: HashMap<usize, (f64, f64)> = HashMap::new();
+    let mut shares: HashMap<usize, (f64, f64, f64)> = HashMap::new();
     for f in &frames.frames {
         // Only the strip the frame's band reaches across the trough, with two cells to spare
         // so that the walk across it stays connected; the band's own test is exact.
@@ -2718,17 +2964,18 @@ pub fn trough_depths(
         stamper.gather_within(grid, body_radius, f.p, size.search, keep);
         for &(idx, _, _) in &stamper.footprint {
             let d = grid.center(grid.cell(idx));
-            if let Some((weight, u)) = frames.depth_from(d, body_radius, &size, blur, f) {
-                let entry = shares.entry(idx).or_insert((0.0, 0.0));
+            if let Some((weight, u, face)) = frames.depth_from(d, body_radius, &size, blur, f) {
+                let entry = shares.entry(idx).or_insert((0.0, 0.0, 0.0));
                 entry.0 += weight;
                 entry.1 += weight * u;
+                entry.2 += weight * face;
             }
         }
     }
-    let mut out: Vec<(usize, f64)> = shares
+    let mut out: Vec<(usize, f64, f64)> = shares
         .into_iter()
-        .filter(|(_, (w, _))| *w > 0.0)
-        .map(|(i, (w, wu))| (i, wu / w))
+        .filter(|(_, (w, _, _))| *w > 0.0)
+        .map(|(i, (w, wu, wf))| (i, wu / w, wf / w))
         .collect();
     out.sort_by_key(|e| e.0);
     out
@@ -2756,7 +3003,7 @@ pub fn trough_depth_at(
         if dot(f.p, d) < cos_reach {
             continue;
         }
-        if let Some((weight, u)) = frames.depth_from(d, body_radius, &size, blur, f) {
+        if let Some((weight, u, _)) = frames.depth_from(d, body_radius, &size, blur, f) {
             weights += weight;
             sum += weight * u;
         }
@@ -2875,13 +3122,20 @@ pub fn trough_compute(
         Some((coarse_cell, blur)) => {
             trough_depths(grid, body_radius, trough, 1.0, coarse_cell, blur, stamper)
                 .into_iter()
+                .map(|(i, u, _)| (i, u))
                 .collect()
         }
         None => HashMap::new(),
     };
+    // A fault's graben drops the old ground, craters and all, as its floor (F149); only
+    // its fault faces are new ground, which shed their regolith as a crater's walls do
+    // (F98). A rift's or a canyon's floor is cut anew.
+    let faulted = trough.kind == TroughKind::Graben && !trough.segments.is_empty();
+    let steeps = layers.steep.as_slice();
+    let mut faces: Vec<f32> = Vec::with_capacity(fine.len());
     let cells = fine
         .into_iter()
-        .map(|(idx, depth)| {
+        .map(|(idx, depth, face)| {
             let buried = shield_burial(
                 shields,
                 grid.center(grid.cell(idx)),
@@ -2900,7 +3154,13 @@ pub fn trough_compute(
             // removed inside it, as a crater's cavity removes what it cuts. (Taking the
             // current ground as the reference as well as keeping the difference counted
             // that difference twice, and overlapping graben doubled each other.)
-            let kept = (bedrock[idx] - base[idx]) as f64 * (1.0 - inside);
+            let kept = if faulted {
+                (bedrock[idx] - base[idx]) as f64
+            } else {
+                (bedrock[idx] - base[idx]) as f64 * (1.0 - inside)
+            };
+            let fresh = if faulted { face > 0.5 } else { inside > 0.5 };
+            faces.push(if face > 0.5 { 1.0 } else { steeps[idx] });
             let mut write = CellWrite {
                 idx: idx as u32,
                 bedrock: (base[idx] as f64 + kept - (depth - smeared)) as f32,
@@ -2911,7 +3171,7 @@ pub fn trough_compute(
                 melt: 0.0,
                 cover: 0.0,
             };
-            if inside > 0.5 && ages[idx] <= time_gyr + 1e-6 {
+            if fresh && ages[idx] <= time_gyr + 1e-6 {
                 write.surface = true;
                 write.age = time_gyr;
                 write.unit = layers.unit_id.as_slice()[idx];
@@ -2926,7 +3186,7 @@ pub fn trough_compute(
         cells,
         composition: None,
         stain: None,
-        steep: None,
+        steep: if faulted { Some(faces) } else { None },
         ejecta_age: None,
         compositions: None,
     }
@@ -3295,6 +3555,166 @@ mod tests {
         }
     }
 
+    /// A fault's graben drops the old ground as its floor and cuts no new one (F149): a
+    /// bowl on its floor keeps its depth, let down with the floor; its walls are scarps no
+    /// steeper across a face than the angle of repose's smooth step allows; its footwalls
+    /// stand raised beyond the crests; somewhere along it a wall carries a terrace; and
+    /// only its faces are new ground.
+    #[test]
+    fn a_graben_drops_the_old_ground_and_its_walls_are_scarps() {
+        let r = 600e3;
+        let grid = CubeSphere::new(256);
+        let cell = grid.delta() * r;
+        let (spacing, width, depth, length) = (0.5 * cell, 30e3, 3e3, 600e3);
+        let n = (length / spacing) as usize;
+        let points: Vec<[f64; 3]> = (0..=n)
+            .map(|k| {
+                let a = k as f64 * spacing / r;
+                [a.cos(), a.sin(), 0.0]
+            })
+            .collect();
+        let trough = Trough {
+            points,
+            spacing,
+            length,
+            width,
+            depth,
+            flank: 0.0,
+            tip_rate: 2.0 * SEGMENT_THROW_PER_LENGTH,
+            start_gyr: 1.0,
+            end_gyr: 1.0,
+            id: 9,
+            kind: TroughKind::Graben,
+            segments: vec![Segment {
+                start: 0.0,
+                end: length,
+                throw: depth,
+                polarity: 0.0,
+            }],
+        };
+        let at = |along: f64, across: f64| {
+            let a = along / r;
+            normalize([a.cos(), a.sin(), across / r])
+        };
+        // A bowl on the axis at mid-length, 200 m deep and 6 km across.
+        let mid = at(0.5 * length, 0.0);
+        let mut layers = LayerSet::new(grid);
+        for (i, b) in layers.bedrock.as_mut_slice().iter_mut().enumerate() {
+            let x = angle_between(mid, grid.center(grid.cell(i))) * r / 3e3;
+            if x < 1.0 {
+                *b = (-200.0 * (1.0 - x * x)) as f32;
+            }
+        }
+        let base = layers.bedrock.as_slice().to_vec();
+        let mut stamper = Stamper::new(&grid);
+        let out = trough_compute(
+            &layers,
+            &grid,
+            r,
+            &base,
+            &trough,
+            1.0,
+            0.0,
+            None,
+            &[],
+            4.5,
+            &mut stamper,
+        );
+        let after: HashMap<usize, f32> = out
+            .cells
+            .iter()
+            .map(|c| (c.idx as usize, c.bedrock))
+            .collect();
+        let steep = out.steep.as_ref().expect("a graben marks its faces");
+        let faces = out
+            .cells
+            .iter()
+            .zip(steep)
+            .filter(|(_, f)| **f > 0.5)
+            .count();
+        assert!(
+            faces > 0 && faces < out.cells.len() / 3,
+            "{faces} of {}",
+            out.cells.len()
+        );
+        let fresh = out.cells.iter().filter(|c| c.surface).count();
+        assert_eq!(fresh, faces, "only the faces are new ground");
+        // The bowl keeps its depth against the floor beside it, and the floor lies about the
+        // throw below the old ground.
+        let i_mid = grid.index(grid.locate(mid).0);
+        let i_beside = grid.index(grid.locate(at(0.5 * length + 12e3, 0.0)).0);
+        let before = (base[i_beside] - base[i_mid]) as f64;
+        let now = (after[&i_beside] - after[&i_mid]) as f64;
+        assert!(
+            before > 100.0 && (now - before).abs() < 0.1 * before,
+            "{before} {now}"
+        );
+        let drop = (base[i_beside] - after[&i_beside]) as f64;
+        assert!(drop > 0.6 * depth && drop < 1.3 * depth, "{drop}");
+        // Transects across, every 100 m: the floor about the throw deep, nothing beyond two
+        // widths, the rims raised, no face steeper than the step's crest, and a terrace
+        // somewhere.
+        let frames = TroughFrames::new(&trough);
+        let repose = REPOSE_SLOPE_DEG.to_radians().tan();
+        let mut terraces = 0;
+        for k in 1..10 {
+            let along = length * k as f64 / 10.0;
+            let profile: Vec<(f64, f64)> = (-600..=600)
+                .map(|j| {
+                    let x = 100.0 * j as f64;
+                    let u = trough_depth_at(
+                        at(along, x),
+                        r,
+                        &trough,
+                        &frames,
+                        (0, frames.len()),
+                        1.0,
+                        100.0,
+                        100.0,
+                        0.0,
+                    );
+                    (x, u)
+                })
+                .collect();
+            // The floor lies about the fault's throw there below the rims, within the
+            // throw's roughness along it.
+            let floor = profile[600].1;
+            let throw = trough_throw(&trough, along);
+            assert!(
+                floor > 0.75 * throw && floor < 1.3 * throw,
+                "{along}: {floor} vs {throw}"
+            );
+            assert_eq!(profile[0].1, 0.0);
+            assert_eq!(profile[1200].1, 0.0);
+            let rim = profile.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+            assert!(
+                rim < -0.03 * throw && rim > -0.2 * throw,
+                "{along}: rim {rim} for a throw of {throw}"
+            );
+            // A face's smooth step is steepest at its middle, 1.5 times its mean, and the
+            // first carries the footwall's uplift down it besides.
+            for w in profile.windows(2) {
+                let slope = (w[1].1 - w[0].1).abs() / 100.0;
+                assert!(
+                    slope <= 1.5 * (1.0 + FAULT_FLANK_SHARE) * repose * 1.02 + 1e-9,
+                    "{along}: slope {slope} at {}",
+                    w[0].0
+                );
+            }
+            // A terrace: a stretch inside the walls that is nearly level between the rim and
+            // the floor.
+            let level = profile.windows(2).any(|w| {
+                let slope = (w[1].1 - w[0].1).abs() / 100.0;
+                let u = w[0].1;
+                slope < 0.15 * repose && u > 0.15 * floor && u < 0.85 * floor
+            });
+            if level {
+                terraces += 1;
+            }
+        }
+        assert!(terraces >= 1, "no terrace along the graben");
+    }
+
     #[test]
     #[ignore = "diagnostic: lists Mars's troughs passing a point (EXOGEN_PT=lon,lat,km,face)"]
     fn troughs_near_a_point() {
@@ -3440,6 +3860,7 @@ mod tests {
             width,
             flank: 0.0,
             noise: GradientNoise::new(1),
+            rng: Rng::new(1),
             depth: canyon.depth,
             landslides: vec![*l],
             slide_reach: l.half * (1.0 + LANDSLIDE_SPREAD),
@@ -3674,7 +4095,7 @@ mod tests {
         // Away from its tips, a graben keeps each segment's throw at its middle and dips by
         // SEGMENT_LINK_DEFICIT at a link, between the two segments' throws; at its tips it
         // falls to nothing (F112).
-        let tip = trough.depth / trough.tip_rate;
+        let tip = 2.0 * trough.depth / trough.tip_rate;
         let inside = |s: f64| s > tip && s < length - tip;
         for g in &segments {
             let s = 0.5 * (g.start + g.end);

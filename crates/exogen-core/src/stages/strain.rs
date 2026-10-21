@@ -221,7 +221,9 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
     let deepest = closure_depth(graph);
     let bound = |t: f64| brittle_bound(graph, thermal, t);
     let layer = deepest.min(shell_bound(graph)).max(1e3);
-    let width = 2.0 * layer / GRABEN_DIP_DEG.to_radians().tan();
+    // The widest graben, whose faults cut the whole layer, and the median fault's.
+    let widest = 2.0 * layer / GRABEN_DIP_DEG.to_radians().tan();
+    let width = LID_LAYER_MEDIAN_SHARE * widest;
     // Its faults slip per length as density over stiffness against rock's (a stated choice
     // between stiffness alone, which would cut Charon's chasmata a tenth of their length
     // deep, and the frictional stress at a depth, which would leave them shallower than
@@ -235,9 +237,9 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
         l_max: (LID_FAULT_MAX_LENGTH * r).max(2.0 * l_min),
         depth_per_length: RIFT_DEPTH_PER_LENGTH * compliance,
         // A graben throws no more than its width allows (F111).
-        depth_cap: GRABEN_DEPTH_PER_WIDTH * width,
+        depth_cap: GRABEN_DEPTH_PER_WIDTH * widest,
         compliance,
-        layer: FaultLayer::Lid(deepest),
+        layer: FaultLayer::Lid(layer),
         cell,
         body_radius: r,
     };
@@ -321,8 +323,9 @@ mod tests {
     use crate::stages::plume::TroughKind;
 
     /// Charon's lid stretches as its ocean freezes, by at least 1 percent of its area
-    /// (Beyer et al. 2017), and breaks into chasmata some 30 to 50 km wide and kilometres
-    /// deep, Mandjet's 450 km among them, before its southern plain's flooding.
+    /// (Beyer et al. 2017), and breaks into chasmata 10 to 50 km wide and kilometres deep,
+    /// Serenity the widest, Mandjet's 450 km among them, before its southern plain's
+    /// flooding.
     #[test]
     fn charon_s_lid_stretches_as_its_ocean_freezes_and_breaks_into_chasmata() {
         let (g, _) = crate::presets::preset("Charon").unwrap().to_graph();
@@ -333,7 +336,7 @@ mod tests {
         assert_eq!(strain.shortening.last().copied().unwrap_or(0.0), 0.0);
         let faults = lid_faults(&g, CubeSphere::new(128), &thermal);
         assert!(
-            faults.len() >= 20 && faults.len() <= 150,
+            faults.len() >= 50 && faults.len() <= 500,
             "{}",
             faults.len()
         );
@@ -344,8 +347,10 @@ mod tests {
         let width = median(faults.iter().map(|f| f.width).collect());
         let depth = median(faults.iter().map(|f| f.depth).collect());
         let longest = faults.iter().map(|f| f.length).fold(0.0, f64::max);
-        assert!(width > 30e3 && width < 60e3, "{width}");
-        assert!(depth > 2e3 && depth < 9e3, "{depth}");
+        let widest = faults.iter().map(|f| f.width).fold(0.0, f64::max);
+        assert!(width > 15e3 && width < 35e3, "{width}");
+        assert!(widest > 35e3 && widest < 60e3, "{widest}");
+        assert!(depth > 1.5e3 && depth < 6e3, "{depth}");
         assert!(longest > 400e3, "{longest}");
         assert!(
             faults

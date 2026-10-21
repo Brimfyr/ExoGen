@@ -311,7 +311,7 @@ pub fn system_compute(
 ) -> StampOutput {
     let bedrock = layers.bedrock.as_slice();
     let cell = grid.delta() * body_radius;
-    let parts: Vec<Vec<(usize, f64)>> = system
+    let parts: Vec<Vec<(usize, f64, f64)>> = system
         .faults
         .par_iter()
         .map(|f| {
@@ -322,7 +322,7 @@ pub fn system_compute(
         .collect();
     let mut total: HashMap<usize, f64> = HashMap::new();
     for part in parts {
-        for (idx, depth) in part {
+        for (idx, depth, _) in part {
             *total.entry(idx).or_insert(0.0) += depth;
         }
     }

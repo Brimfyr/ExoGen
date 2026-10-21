@@ -1827,3 +1827,22 @@ Still to do:
 - **The lid's faults in the loop's history** (audit M24): drawn by the finish alone, so the loop's floods and relaxation do not see them.
 
 Tests 231 (17 ignored), among them Charon's lid stretching as its ocean freezes and breaking into chasmata against Beyer et al.'s measures, a shell melted and refrozen to where it was breaking nothing new, rock lids opening none, and a wide trough keeping its floor where its trace turns. Clippy is clean and validate passes its 134 checks.
+
+### Revised: a graben's form
+
+The user, on the renders: the faults look too wide on Miranda and Charon, their detail is circles embedded in their edges, which looks very bad, they do not look like cracks, and their depth is a straight cut down to one level; the icy moons cannot come out looking like this. The coarse physics may place and size them, and noise or randomness make them look right, so long as they are roughly plausible and convincing to the eye.
+
+- **F149.** A lid's faults cut to half the brittle layer at the median, not all of them to its base, so Charon's chasmata are 24 km wide at the median and 44 at most. A fault's graben takes no landslide alcoves; its walls are scarps in straight pieces with jogs and self-affine roughness, terraced by step faults that come and go; its floor is the old ground let down, craters and all, tilted toward a master fault in two graben of five; its footwalls stand raised; its throw is rough along it; and only its fault faces are new ground, which shed their regolith and stand bright.
+
+How it went:
+
+- **What made the look.** Every lid fault cut to the brittle layer's base, so every graben was the widest it could be; the circles were F106's landslide alcoves, Valles Marineris's scallops drawn along any wall a kilometre high, a few per wall height; and the trough's profile was a flat floor between tanh walls, cut anew, with the finish's relief removed inside it. The width came of the physics misapplied, the circles of a rift's process applied to a graben, the floor of a shape where a mechanism was wanted.
+- **The floor.** A graben's floor is the old surface dropped between its faults, which a ring graben's has been since F69; a fault's graben now drops it too, and the craters on it come down with it, so the floors are no longer one level. The faces are the new ground: the finish writes their age and marks the steep layer there, as it does a crater's walls, so the scarps shed their lag and stand bright on the icy moons.
+- **The walls.** A scarp from the crest at the angle of repose, a step fault or two within the wall as terraces drawn by window along it, each tilted back, and the footwall raised a tenth of its fault's throw: the cross-section is a staircase that meets the floor without a seam, its wall's throw found at the foot of its last face in a second pass. The walls' pieces, jogs and roughness are stated choices against Pluto's and Charon's chasmata; a first pass with jogs of a tenth of the width over 0.4 widths gave kinked diamonds, now 0.07 over 0.6.
+- **The ends.** A graben narrowed to its tips over a whole width at each end, half the length of a graben four widths long, so the short ones were lenses; narrowed over 0.3 widths instead they were pills with square ends, their throw standing up at once at the tip as a quarter circle. The throw now rises from each tip as a parabola, the width falls with it, and the walls swell in and out over many widths, so the troughs taper to points and their walls do not run parallel.
+
+What the maps show: Charon's chasmata in belts of narrow troughs with stepped walls and raised rims, old craters let down on their floors; Miranda's graben as fault troughs among its coronae rather than broad bands; Pluto's and the large moons' graben narrower and more numerous.
+
+Still to do: the terraces' places from the throw's partition on a listric master fault (audit M23, T1); the belts' tilted-block fabric between the chasmata; the lid's faults in the loop's history (M24).
+
+Tests 232 (17 ignored), among them a graben dropping the old ground as its floor with its walls scarps at the angle of repose, raised rims, a terrace along it and only its faces new ground. Clippy is clean and validate passes its 134 checks.
