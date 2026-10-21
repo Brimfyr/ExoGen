@@ -372,7 +372,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 113;
+pub const FINISH_VERSION: u64 = 114;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -418,6 +418,8 @@ pub fn run_coarse_loop(
         }
     };
     let mut plume = plume::PlumeProcess::new(graph, grid, &thermal, Some(relief));
+    // The lid's own faults, the wide ones carved through the loop (F147, F153).
+    let mut strain = strain::StrainProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(
         graph,
         grid,
@@ -483,6 +485,9 @@ pub fn run_coarse_loop(
         // an episodic lid's event renews the plains.
         if let Some(p) = &mut plume {
             p.step(&mut layers, t0, t1);
+        }
+        if let Some(s) = &mut strain {
+            s.step(&mut layers, grid, graph.f64("body.radius"), t0, t1);
         }
         if let Some(e) = &mut episodic
             && let Some(fill) = e.step(
@@ -602,14 +607,17 @@ pub fn run_coarse_loop(
         Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
         None => (None, Vec::new(), Vec::new(), Vec::new()),
     };
-    let (rises, shields, canyons, mut graben, load) = match plume {
+    let (rises, shields, mut canyons, mut graben, load) = match plume {
         Some(p) => (p.rises, p.shields, p.canyons, p.graben, Some(p.load)),
         None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
     };
     // The novae's fractures are stamped as the graben are, and so are the faults the lid's
-    // growth opens (F147).
+    // growth opens (F147): the wide ones carved through the loop as canyons (F153).
     graben.extend(novae);
-    graben.extend(strain::lid_faults(graph, grid, &thermal));
+    if let Some(s) = strain {
+        canyons.extend(s.canyons);
+        graben.extend(s.graben);
+    }
     let (floods, ridges, provinces) = match floods {
         Some(f) => {
             // The ridges follow the lava thickness and, around a rise, its load.
@@ -943,6 +951,21 @@ pub fn finish(
         .filter(|g| g.start_gyr <= present + 1e-9)
         .cloned()
         .collect();
+    // The faults inside the wide troughs (F152): the floors of the canyons and graben the
+    // grid resolves break into tilted blocks, drawn as graben just after their trough.
+    let graben: Vec<plume::Trough> = {
+        let mut all = graben;
+        let wide: Vec<&plume::Trough> = canyons.iter().chain(all.iter()).collect();
+        let cell = grid.delta() * body_radius;
+        let interior = plume::interior_faults(
+            &wide,
+            cell,
+            body_radius,
+            graph.f64("seed.tectonics") as u64 ^ 0x1B10,
+        );
+        all.extend(interior);
+        all
+    };
     let resurfacing = loop_output
         .resurfacing
         .clone()

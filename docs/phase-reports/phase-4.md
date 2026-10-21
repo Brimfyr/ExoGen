@@ -1870,3 +1870,27 @@ What the maps show:
 Still to do: the chasma fabric from a listric master fault's throw partition (M23) with Valles Marineris and Noctis Labyrinthus; compression on the same field, Mercury's scarps and the wrinkle ridges in the lows (M72c); the coronae's share on the rifts (M25); the lid's faults in the loop's history (M24); the icy lids' faults on the same field, which the relief's stress hardly moves at their gravity.
 
 Tests 235 (18 ignored), among them the relief's field, a high in tension spreading down its margin and a low in compression, Venus's rifts running from rise to rise along its limbs with no fault a step long, and Venus's coronae gathering along its limbs at their number. Clippy is clean and validate passes its 134 checks.
+
+## The seventy-fourth milestone: the fabric inside a chasma, and the lid's faults in the loop
+
+The second stage of M72b, approved after the seventy-third: the chasma fabric from the throw's partition, on Charon's chasmata and Mars's canyons alike, and the lid's wide faults carried by the coarse loop.
+
+- **F152.** A wide trough's floor breaks into tilted blocks on a population of interior faults, as dominoes above a listric master fault: blocks a quarter of the faulted layer wide, synthetic to the master and tilted back toward it, taking 0.3 of the throw in pieces drawn from the faults' power law, stamped as tilted-block graben just after their trough. They step the walls down in terraces and cut Valles Marineris's floors; the drawn terrace windows of F149 are gone.
+- **F153.** The lid's faults the loop's grid resolves are carved through the loop by the strain process, as a rise's canyons are, so Charon's floods pond in its chasmata and the relaxation sees them.
+
+How it went:
+
+- **From windows to a population.** The terraces of F149 were a drawn feature: a window along each wall, a step fault in it with a drawn share of the throw. The physics behind terraces and tilted blocks is one thing, the hanging wall of a listric fault breaking into dominoes, and ExoGen already had the generator for a population of faults; so the interior of a trough is now a population, its faults placed by the block width the faulted layer sets, their lengths from the same power law as every fault's, their throws from the throw's partition, each a tilted block drawn by the graben form with its floor tilted the whole way. One new field on a trough, its floor's tilt share, carries that.
+- **Where blocks show.** A block must span two cells of the grid that draws it, so at 2048 pixels Charon's chasmata and Valles Marineris's troughs break into blocks and Pluto's fossae and Venus's rifts do not; at 4096 more would.
+- **The loop.** The strain process carries the wide lid faults as the plume process carries canyons, carving each within the step it forms; a fault's window had to be its moment and a millionth of a gigayear, as a zero-length window made the loop's progress through it a division by nothing.
+
+What the maps show:
+
+- **Charon:** its wide chasmata with two to four tilted blocks across their floors, parallel scarps stepping down toward the master wall, and their walls stepped; 2,700 interior faults among 228 chasmata. The comb of arcs at one chasma's end that the seventy-second's report took for flood lobes is a basin's ring graben.
+- **Mars:** its canyons' floors in blocks three cells wide at 2048 pixels, texture rather than steps at that size; nothing else changed.
+- **Pluto and Miranda:** their wide graben carved through the loop and a few percent shallower for it, the rest as they were; Venus unchanged, its rifts too narrow at this size to break.
+- **Cost:** the interior faults add a third again to Charon's and Mars's stamping, and the carried faults a minute to Miranda's terrains, where the floods' deformation now lists every carried graben.
+
+Still to do: the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); compression on the same field, Mercury's scarps and the wrinkle ridges in the lows (M72c); the coronae's share on Venus's rifts (M25); the icy lids' faults on the same field.
+
+Tests 237 (18 ignored), among them a wide trough's floor breaking into as many tilted blocks as its width holds, each a share of the throw, stepping down toward the master wall and formed just after the trough, none where the grid cannot resolve a block; and Charon's wide chasmata carved through the loop within the step they form. Clippy is clean and validate passes its 134 checks.

@@ -292,7 +292,8 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
     // A fault breaks when the lid has stretched by as much as the faults before it took up,
     // so that the older ones are drawn first and stop the younger.
     let timing = |_u: f64, share: f64, _draw: u64| strain.extension_time(share);
-    let window = |t: f64, _carried: bool| (t, t);
+    // A fault drops its floor at once; the loop carves a wide one within the step it forms.
+    let window = |t: f64, _carried: bool| (t, t + 1e-6);
     let drawn = |t: &Trough| {
         let mut index = index.borrow_mut();
         for &p in &t.points {
@@ -314,6 +315,78 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
         &bound,
         Some(&drawn),
     )
+}
+
+/// The lid's faults through the coarse loop (F153): the wide ones, which the loop's grid
+/// resolves, carved as they form so that the floods pond in them and the relaxation sees
+/// them, as a rise's canyons are (F105); the narrow ones left to the finish.
+pub struct StrainProcess {
+    pub canyons: Vec<Trough>,
+    pub graben: Vec<Trough>,
+    carved: Vec<f32>,
+    stamper: crate::crater::stamp::Stamper,
+}
+
+impl StrainProcess {
+    /// None where the lid opens no fault.
+    pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
+        let faults = lid_faults(graph, grid, thermal);
+        if faults.is_empty() {
+            return None;
+        }
+        let cell = grid.delta() * graph.f64("body.radius");
+        let (canyons, graben): (Vec<Trough>, Vec<Trough>) = faults
+            .into_iter()
+            .partition(|f| f.width >= RIFT_LOOP_WIDTH_CELLS * cell);
+        Some(Self {
+            canyons,
+            graben,
+            carved: vec![0.0; grid.cell_count()],
+            stamper: crate::crater::stamp::Stamper::new(&grid),
+        })
+    }
+
+    /// Carve the wide faults that form in the step.
+    pub fn step(
+        &mut self,
+        layers: &mut crate::fields::LayerSet,
+        grid: CubeSphere,
+        body_radius: f64,
+        t0: f64,
+        t1: f64,
+    ) {
+        let cell = grid.delta() * body_radius;
+        let t_mid = 0.5 * (t0 + t1);
+        for fault in &self.canyons {
+            let p1 = crate::stages::plume::trough_progress(fault, t1);
+            let p0 = crate::stages::plume::trough_progress(fault, t0);
+            if p1 <= p0 {
+                continue;
+            }
+            let target = crate::stages::plume::trough_depths(
+                &grid,
+                body_radius,
+                fault,
+                p1,
+                cell,
+                0.0,
+                &mut self.stamper,
+            );
+            let bedrock = layers.bedrock.as_mut_slice();
+            let ages = layers.surface_age.as_mut_slice();
+            for (idx, depth, face) in target {
+                let more = depth - self.carved[idx] as f64;
+                if more <= 0.0 {
+                    continue;
+                }
+                bedrock[idx] -= more as f32;
+                self.carved[idx] += more as f32;
+                if face > 0.5 && more > CANYON_RENEWAL_THICKNESS {
+                    ages[idx] = t_mid as f32;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -472,6 +545,49 @@ mod tests {
             }
         }
         println!("{name}: {} faults, {jumping} with jumps", faults.len());
+    }
+
+    /// Charon's wide chasmata are carved through the coarse loop (F153): the strain process
+    /// carries the faults the loop's grid resolves, and a step through a fault's time drops
+    /// its floor and renews its faces.
+    #[test]
+    fn charon_s_wide_chasmata_are_carved_through_the_loop() {
+        let (g, _) = crate::presets::preset("Charon").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&g);
+        let grid = CubeSphere::new(128);
+        let r = g.f64("body.radius");
+        let mut process = StrainProcess::new(&g, grid, &thermal).expect("Charon's lid faults");
+        let cell = grid.delta() * r;
+        assert!(!process.canyons.is_empty() && !process.graben.is_empty());
+        assert!(
+            process
+                .canyons
+                .iter()
+                .all(|c| c.width >= RIFT_LOOP_WIDTH_CELLS * cell)
+        );
+        assert!(process.canyons.iter().all(|c| c.end_gyr > c.start_gyr));
+        let widest = process
+            .canyons
+            .iter()
+            .max_by(|a, b| a.width.total_cmp(&b.width))
+            .unwrap()
+            .clone();
+        let mut layers = crate::fields::LayerSet::new(grid);
+        let before = layers.bedrock.as_slice().to_vec();
+        let (t0, t1) = (widest.start_gyr - 0.01, widest.start_gyr + 0.01);
+        process.step(&mut layers, grid, r, t0, t1);
+        let centre = widest.points[widest.points.len() / 2];
+        let i = grid.index(grid.locate(centre).0);
+        let dropped = (before[i] - layers.bedrock.as_slice()[i]) as f64;
+        assert!(
+            dropped > 0.5 * widest.depth,
+            "{dropped} of {}",
+            widest.depth
+        );
+        // A step before its time carves it no more (other faults may form in that step).
+        let after = layers.bedrock.as_slice()[i];
+        process.step(&mut layers, grid, r, t0 - 0.1, t0);
+        assert_eq!(layers.bedrock.as_slice()[i], after);
     }
 
     /// Prints each icy body's strain since its record began and the faults it opens.
