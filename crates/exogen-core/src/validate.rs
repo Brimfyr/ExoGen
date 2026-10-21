@@ -433,6 +433,20 @@ pub fn reference_checks() -> Vec<Check> {
             3_200.0,
             "no craters below 1.5 to 3 km",
         ),
+        range(
+            "Venus",
+            "interior.elastic_thickness",
+            20e3,
+            40e3,
+            "29 ± 6 km, the global mean from its gravity (F144)",
+        ),
+        range(
+            "Venus",
+            "volcanism.corona_count",
+            400.0,
+            1_100.0,
+            "740 coronae of 60 km and more (Gülcher et al. 2025), 515 (Stofan et al. 2001)",
+        ),
         // Io
         range("Io", "body.gravity", 1.76, 1.84, "1.80 m/s²"),
         text("Io", "rotation.mode", "locked", ""),

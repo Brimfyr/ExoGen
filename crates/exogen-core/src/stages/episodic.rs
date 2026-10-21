@@ -8,8 +8,8 @@
 //! the old craters with it and leaves smooth lowlands under the regional slopes, while
 //! the highest-standing terrain, a small fraction, survives as tessera, deformed into a
 //! fabric of intersecting ridges. Afterwards the surface ages again under a sparse,
-//! un-degraded crater population, with flow fields, coronae (annular ridges round a
-//! central dome or sag) and steep-sided pancake domes on the plains.
+//! un-degraded crater population, with flow fields, coronae over the mantle's diapirs
+//! (F145, the corona process) and steep-sided pancake domes on the plains.
 
 use rayon::prelude::*;
 use std::cmp::Reverse;
@@ -29,7 +29,7 @@ use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 6;
+pub const VERSION: u64 = 7;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -45,24 +45,6 @@ pub struct Resurfacing {
     pub threshold: f32,
     /// Surface age the tessera keep, Gyr since formation.
     pub tessera_age: f32,
-}
-
-/// A corona: a central dome or sag inside an annular ridge.
-#[derive(Clone, Debug)]
-pub struct Corona {
-    pub center: [f64; 3],
-    pub radius: f64,
-    /// Central relief, positive for a dome, negative for a sag, m.
-    pub centre_relief: f64,
-    pub rim_height: f64,
-    pub time_gyr: f64,
-    pub id: u64,
-}
-
-impl Corona {
-    pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.4 * self.radius / body_radius
-    }
 }
 
 /// A pancake dome: flat-topped and steep-sided.
@@ -187,28 +169,6 @@ pub fn plateau_lift(score: f32, threshold: f32) -> f32 {
     TESSERA_PLATEAU_UPLIFT as f32 * x * x * (3.0 - 2.0 * x)
 }
 
-/// The central dome or sag of a corona at a fraction of its radius, m.
-pub fn corona_core(x: f64, centre_relief: f64) -> f64 {
-    centre_relief * (1.0 - (x / CORONA_RIM_POSITION).powi(2)).max(0.0)
-}
-
-/// Corona profile at a fraction of the radius: the central relief, the rim, the moat.
-pub fn corona_profile(x: f64, centre_relief: f64, rim_height: f64) -> f64 {
-    if x >= 1.4 {
-        return 0.0;
-    }
-    // Centre: a smooth dome or sag out to the rim.
-    let core = corona_core(x, centre_relief);
-    // Rim: a ridge ring at the rim position; moat just outside it.
-    let rim = rim_height * (-((x - CORONA_RIM_POSITION) / CORONA_RIM_WIDTH).powi(2)).exp();
-    let moat = -CORONA_MOAT_FRACTION
-        * rim_height
-        * (-((x - CORONA_RIM_POSITION - 2.0 * CORONA_RIM_WIDTH) / (1.5 * CORONA_RIM_WIDTH))
-            .powi(2))
-        .exp();
-    core + rim + moat
-}
-
 /// Pancake dome profile at a fraction of the radius: flat top, steep sides.
 pub fn dome_profile(x: f64) -> f64 {
     if x >= 1.0 {
@@ -228,7 +188,8 @@ pub struct EpisodicProcess {
     tessera_fraction: f64,
     done: bool,
     pub resurfacing: Option<Resurfacing>,
-    pub coronae: Vec<Corona>,
+    /// The coronae over the mantle's diapirs since the lid formed (F145).
+    pub coronae: Vec<crate::stages::corona::Corona>,
     pub domes: Vec<Dome>,
     /// Radial fracture systems round some of the coronae, stamped as graben.
     pub novae: Vec<Trough>,
@@ -236,7 +197,11 @@ pub struct EpisodicProcess {
 }
 
 impl EpisodicProcess {
-    pub fn new(graph: &ParamGraph, grid: CubeSphere) -> Option<Self> {
+    pub fn new(
+        graph: &ParamGraph,
+        grid: CubeSphere,
+        rises: &[crate::stages::plume::Rise],
+    ) -> Option<Self> {
         if graph.str("interior.tectonic_regime") != "episodic_lid" {
             return None;
         }
@@ -245,7 +210,8 @@ impl EpisodicProcess {
         let event_time = (age - graph.f64("tectonics.resurfacing_event_age")).max(0.0);
         // The tessera keep the surface the overturn before the event laid (F121), or one
         // TESSERA_AGE_LEAD_GYR older than the event where the mantle gives none before it.
-        let tessera_age = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph))
+        let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph));
+        let tessera_age = mantle
             .overturns
             .iter()
             .rev()
@@ -253,23 +219,8 @@ impl EpisodicProcess {
             .copied()
             .unwrap_or((event_time - TESSERA_AGE_LEAD_GYR).max(0.0));
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xE915_0D1C);
-        let n_coronae = graph.f64("volcanism.corona_count").round() as u64;
-        let mut coronae = Vec::new();
-        for k in 0..n_coronae {
-            let (lo, hi) = CORONA_DIAMETER;
-            let diameter = lo * (hi / lo).powf(rng.uniform(k, 1).powf(CORONA_SIZE_SKEW));
-            let radius = 0.5 * diameter;
-            let sag = rng.uniform(k, 2) < CORONA_SAG_FRACTION;
-            let relief = CORONA_CENTRE_RELIEF * (0.5 + rng.uniform(k, 3));
-            coronae.push(Corona {
-                center: rng.unit_direction(k, 8),
-                radius,
-                centre_relief: if sag { -relief } else { relief },
-                rim_height: CORONA_RIM_HEIGHT * (0.6 + 0.8 * rng.uniform(k, 5)),
-                time_gyr: (event_time + (age - event_time) * rng.uniform(k, 6)).min(age),
-                id: k,
-            });
-        }
+        // The coronae over the mantle's diapirs (F145).
+        let coronae = crate::stages::corona::rock_coronae(graph, &mantle, rises);
         let n_domes = graph.f64("volcanism.dome_count").round() as u64;
         let mut domes = Vec::new();
         for k in 0..n_domes {
@@ -296,9 +247,9 @@ impl EpisodicProcess {
             for j in 0..n {
                 let draw = 50_000 + c.id * 16 + j;
                 let phi = 2.0 * std::f64::consts::PI * (j as f64 + rng.uniform(draw, 1)) / n as f64;
-                let r0 = c.radius * (0.3 + 0.6 * rng.uniform(draw, 2));
+                let r0 = c.outline_radius() * (0.3 + 0.6 * rng.uniform(draw, 2));
                 let (l_lo, l_hi) = NOVA_LENGTH;
-                let length = c.radius * (l_lo + (l_hi - l_lo) * rng.uniform(draw, 3));
+                let length = c.outline_radius() * (l_lo + (l_hi - l_lo) * rng.uniform(draw, 3));
                 let start = offset(c.center, east, north, r0 / body_radius, phi);
                 let spacing = 0.5 * cell;
                 let points =
@@ -338,7 +289,7 @@ impl EpisodicProcess {
         self.event_time
     }
 
-    /// Apply what falls in the step: the event, and the coarse part of coronae and domes.
+    /// Apply what falls in the step: the event, and the coarse part of the coronae.
     /// Returns the event's fill when it happens, for the lava ledger. The tessera are
     /// chosen on the height without the plume rises' domes, which are young dynamic
     /// topography, not the old thick crust.
@@ -410,23 +361,19 @@ impl EpisodicProcess {
                 tessera_age,
             });
         }
-        // Coronae: the coarse grid carries the central relief; domes are left to the
-        // finishing pass unless they span cells.
+        // Coronae (F145): the lava their cores flood renews the coarse ground at their
+        // time; their profile and fabric are the finish's, on top of what the loop left.
+        let cell = grid.delta() * body_radius;
         for c in &self.coronae {
             if c.time_gyr <= t0 || c.time_gyr > t1 {
                 continue;
             }
-            self.stamper
-                .gather(&grid, body_radius, c.center, 1.4 * c.radius);
-            let bedrock = layers.bedrock.as_mut_slice();
+            let covers = c.covers(&grid, body_radius, cell, &mut self.stamper);
             let ages = layers.surface_age.as_mut_slice();
             let units = layers.unit_id.as_mut_slice();
             let cover = layers.cover.as_mut_slice();
-            for &(idx, r, _) in &self.stamper.footprint {
-                let x = r / c.radius;
-                let core = corona_core(x, c.centre_relief);
-                bedrock[idx] += core as f32;
-                if x < CORONA_RIM_POSITION && units[idx] != UNIT_TESSERA {
+            for (idx, w, core) in covers {
+                if w * core >= 0.5 && units[idx] != UNIT_TESSERA {
                     ages[idx] = c.time_gyr as f32;
                     units[idx] = UNIT_LAVA;
                     cover[idx] = 1.0;
@@ -534,82 +481,6 @@ pub fn resurfacing_compute(
         },
         taken,
     )
-}
-
-/// Finishing pass of a corona: the rim and moat the coarse grid could not carry.
-pub fn corona_compute(
-    layers: &LayerSet,
-    grid: &CubeSphere,
-    body_radius: f64,
-    c: &Corona,
-    blur: f64,
-    stamper: &mut Stamper,
-) -> StampOutput {
-    let bedrock = layers.bedrock.as_slice();
-    let ages = layers.surface_age.as_slice();
-    let units = layers.unit_id.as_slice();
-    let deep = layers.deep.as_slice();
-    let melt = layers.melt.as_slice();
-    let cover = layers.cover.as_slice();
-    stamper.gather(grid, body_radius, c.center, 1.4 * c.radius);
-    let noise = GradientNoise::new(c.id ^ 0xC020_0A00);
-    let time = c.time_gyr as f32;
-    // The interior's lava, inside the rim, by the share of each cell it covers (F131): the
-    // loop laid it on whole coarse cells.
-    let inside =
-        |e: [f64; 3]| CORONA_RIM_POSITION - angle_between(c.center, e) * body_radius / c.radius;
-    let cells = stamper
-        .footprint
-        .iter()
-        .map(|&(idx, r, phi)| {
-            let x = r / c.radius;
-            // The rim's height varies round the ring, and it is fractured: concentric
-            // ridges just inside and outside it.
-            let wobble =
-                1.0 + CORONA_RIM_WOBBLE * noise.fbm([phi.cos(), phi.sin(), 0.3], 2.0, 2, 2.0, 0.5);
-            let full = corona_profile(x, 0.0, c.rim_height * wobble);
-            let fractures = CORONA_FRACTURE_RELIEF
-                * c.rim_height
-                * (2.0 * std::f64::consts::PI * (x - CORONA_RIM_POSITION)
-                    / CORONA_FRACTURE_SPACING)
-                    .cos()
-                * (-((x - CORONA_RIM_POSITION) / (3.0 * CORONA_RIM_WIDTH)).powi(2)).exp();
-            let soft = (blur / (CORONA_RIM_WIDTH * c.radius)).min(1.0);
-            let mut write = CellWrite {
-                idx: idx as u32,
-                bedrock: (bedrock[idx] as f64 + (1.0 - 0.5 * soft) * (full + fractures)) as f32,
-                surface: false,
-                age: 0.0,
-                unit: 0,
-                deep: 0.0,
-                melt: 0.0,
-                cover: 0.0,
-            };
-            if units[idx] != UNIT_TESSERA && ages[idx] <= time + 1e-6 {
-                let share = crate::fields::level_share(
-                    &inside,
-                    grid.center(grid.cell(idx)),
-                    0.0,
-                    grid.delta(),
-                ) as f32;
-                if share > 0.0 {
-                    lava_by_share(
-                        &mut write, share, time, ages[idx], units[idx], deep[idx], melt[idx],
-                        cover[idx],
-                    );
-                }
-            }
-            write
-        })
-        .collect();
-    StampOutput {
-        cells,
-        composition: None,
-        stain: None,
-        steep: None,
-        ejecta_age: None,
-        compositions: None,
-    }
 }
 
 /// Finishing pass of a pancake dome: the whole edifice, with a fractured top.
@@ -755,11 +626,6 @@ mod tests {
 
     #[test]
     fn profiles_have_the_right_shape() {
-        assert!(corona_profile(0.0, 500.0, 400.0) > 400.0);
-        let rim = corona_profile(CORONA_RIM_POSITION, 0.0, 400.0);
-        assert!((rim - 400.0).abs() < 60.0, "{rim}");
-        assert!(corona_profile(CORONA_RIM_POSITION + 2.0 * CORONA_RIM_WIDTH, 0.0, 400.0) < 0.0);
-        assert!(corona_profile(1.5, 500.0, 400.0) == 0.0);
         assert!((dome_profile(0.0) - 1.0).abs() < 1e-9);
         assert!(dome_profile(0.6) > 0.9);
         assert!(dome_profile(0.95) < 0.5);

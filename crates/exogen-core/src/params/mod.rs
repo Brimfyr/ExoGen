@@ -547,3 +547,35 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
     }
     h
 }
+
+/// What a process reads its parameters through: the graph when it runs, or a derivation's
+/// context when a derived node runs the same process (F145), so that both read alike.
+pub trait Reads {
+    fn num(&self, id: &str) -> f64;
+    fn text(&self, id: &str) -> &str;
+    fn series(&self, id: &str) -> Option<&Curve>;
+}
+
+impl Reads for ParamGraph {
+    fn num(&self, id: &str) -> f64 {
+        self.f64(id)
+    }
+    fn text(&self, id: &str) -> &str {
+        self.str(id)
+    }
+    fn series(&self, id: &str) -> Option<&Curve> {
+        self.curve(id)
+    }
+}
+
+impl Reads for Ctx<'_> {
+    fn num(&self, id: &str) -> f64 {
+        self.f64(id)
+    }
+    fn text(&self, id: &str) -> &str {
+        self.str(id)
+    }
+    fn series(&self, id: &str) -> Option<&Curve> {
+        self.value(id).as_curve()
+    }
+}

@@ -174,8 +174,13 @@ pub const ICE_K_NUM: f64 = 651.0;
 /// Fraction of the surface heat flux that passes through the mantle lithosphere of a rocky
 /// body (the rest is produced in the crust). Provisional, Phase 3.
 pub const MANTLE_FLUX_FRACTION: f64 = 0.5;
-/// Isotherms bounding elastic behaviour, K.
-pub const ELASTIC_ISOTHERM_ROCK: f64 = 650.0;
+/// Isotherms bounding elastic behaviour, K. Rock's is 650 °C (F144): dry rock holds a
+/// load's stress elastically down to where it creeps away over geological time, the 600 °C
+/// isotherm for the oceanic lithosphere (McKenzie, Jackson and Priestley 2005), 650 °C for
+/// Venus's dry rheology (Davaille et al. 2017), where dry diabase creeps at 1e-17 /s under
+/// 100 MPa (Mackwell et al. 1998: 928 K). It was 650 K, below Venus's surface, which left
+/// Venus no elastic lid; Venus's now derives at 30 km, its measured mean 29 ± 6 km.
+pub const ELASTIC_ISOTHERM_ROCK: f64 = 923.0;
 pub const ELASTIC_ISOTHERM_ICE: f64 = 170.0;
 /// Crustal strength, Pa, and crustal density, kg/m³, for the relief limit (F15).
 pub const STRENGTH_ROCK: f64 = 150.0e6;
@@ -701,24 +706,8 @@ pub const TESSERA_EDGE_WIDTH: f64 = 300.0;
 pub const EPISODIC_FILL_FRACTION: f64 = 0.7;
 pub const EPISODIC_VENEER: f64 = 20.0;
 pub const EPISODIC_POST_EVENT_FRACTION: f64 = 0.02;
-/// Coronae on an episodic lid: how many per m² (Venus: some 500), their diameters, m,
-/// with the draw skewed to small ones by this power, the share whose centre sags, the
-/// central relief and rim height, m, the rim's position and width as fractions of the
-/// radius, the moat as a fraction of the rim height, the rim's height wobble, and the
-/// concentric fractures' relief and spacing. Pancake domes: how many per m² (Venus:
-/// some 150), diameters, height and top roughness.
-pub const CORONAE_PER_AREA: f64 = 1.1e-12;
-pub const CORONA_DIAMETER: (f64, f64) = (100e3, 1_000e3);
-pub const CORONA_SIZE_SKEW: f64 = 2.0;
-pub const CORONA_SAG_FRACTION: f64 = 0.4;
-pub const CORONA_CENTRE_RELIEF: f64 = 400.0;
-pub const CORONA_RIM_HEIGHT: f64 = 800.0;
-pub const CORONA_RIM_POSITION: f64 = 0.85;
-pub const CORONA_RIM_WIDTH: f64 = 0.05;
-pub const CORONA_MOAT_FRACTION: f64 = 0.3;
-pub const CORONA_RIM_WOBBLE: f64 = 0.3;
-pub const CORONA_FRACTURE_RELIEF: f64 = 0.15;
-pub const CORONA_FRACTURE_SPACING: f64 = 0.08;
+/// Pancake domes on an episodic lid's plains: how many per m² (Venus: some 150),
+/// diameters, height and top roughness (the coronae are the corona process's, F145).
 /// Coronae over the upwellings of a convecting layer under a lid (F133). The layer turns
 /// over in cells whose rising and sinking limbs are each about as wide as the layer is
 /// deep (aspect ratio one, the cell convection prefers at its onset), so that upwellings
@@ -781,6 +770,76 @@ pub const CORONA_LOCKUP_DIP_DEG: f64 = 30.0;
 /// The upwellings are placed each the farthest from those already placed of this many
 /// tries: spread, but no lattice.
 pub const CORONA_PLACEMENT_TRIES: u64 = 10;
+/// Coronae over a rock mantle's diapirs (F145). Of the heat a mantle convects into its lid
+/// this share rises in transient diapirs off its hot boundary layer, besides its plumes:
+/// the upwelling at Venus's coronae carries some 15 percent of its heat loss (Smrekar and
+/// Stofan 1997, half the coronae active).
+pub const CORONA_HEAT_SHARE: f64 = 0.15;
+/// A diapir's head flattens under the lid to a disc of about this radius, m, log-normal with
+/// this spread, as thick as this share of its radius, its excess temperature over the
+/// mantle about it drawn within this range of a plume's and falling from its axis as a
+/// Gaussian of its radius (stated choices: the hot regions Smrekar and Stofan 1997 seed are
+/// 50 to 100 km wide, heads 100 to 300 K hot (Dombard et al. 2007); under a lid whose mantle
+/// stands near its solidus a head melts across its width, and heads of this size make
+/// pockets the size of Venus's coronae, 215 km across on average, log-normal (Glaze et al.
+/// 2002)). At most this many are drawn.
+pub const CORONA_HEAD_RADIUS: f64 = 65e3;
+pub const CORONA_HEAD_SPREAD: f64 = 0.5;
+pub const CORONA_HEAD_ASPECT: f64 = 1.0;
+pub const CORONA_HEAD_EXCESS: (f64, f64) = (0.5, 1.5);
+pub const CORONA_MAX_DIAPIRS: u64 = 50_000;
+/// A diapir is a small plume: its conduit feeds its head with this buoyancy flux per unit
+/// of the head's disc, kg/s/m², for this long, Gyr, the head staying buoyant while fed
+/// (Smrekar and Stofan 1997: 0.30 Mg/s for an average corona 300 km across, the flux as
+/// the square of its radius; their run fed its plume for 140 Myr, their cases 50 to 430).
+/// The heat it brings, the flux times the heat capacity over the expansivity, is what it
+/// takes of its mantle's share.
+pub const CORONA_BUOYANCY_FLUX: f64 = 6.1e-9;
+pub const CORONA_FEED_GYR: f64 = 0.10;
+/// The diapirs are drawn toward the large upwellings, the plumes under the rises, from
+/// across their convection cells, each about as wide as the mantle is deep, where this many
+/// more rise than elsewhere (Johnson and Richards 2003: small transient instabilities
+/// coexist with the large upwellings and are drawn toward them; a stated choice that puts
+/// some nine-tenths of Venus's coronae in its upwellings' region, at its hot spots and
+/// along its rifts, and a tenth on its plains: 21, 68 and 11 percent, Stofan et al. 1992).
+pub const CORONA_UPWELLING_DRAW: f64 = 15.0;
+/// A plume's hot head under its rise is narrower than the dome its buoyancy lifts, which
+/// the lid's flexure spreads: its excess falls off as a Gaussian of this share of the
+/// rise's radius (a stated choice).
+pub const PLUME_HEAD_SHARE: f64 = 0.5;
+/// Decompression melting makes this melt fraction per pascal a mantle rises above its
+/// solidus (Langmuir, Klein and Plank 1992: some 10 percent per GPa).
+pub const MELT_PRODUCTIVITY: f64 = 1.0e-10;
+/// The share of a diapir's melt intruded into the crust rather than erupted (Dombard et al.
+/// 2007: intrusion three times eruption or more; White, Crisp and Spera 2006: about five);
+/// the rest erupts through the annulus's fractures, this share of it piling at its vents
+/// into the rim, which the lid holds up as a narrow load and bends down beside it into the
+/// moat (Sandwell and Schubert 1992), and the rest running down to flood the pocket's floor
+/// (Stofan et al. 1991: edifices along the annulus, flows ponding; a stated choice).
+pub const CORONA_INTRUSIVE_SHARE: f64 = 0.8;
+pub const CORONA_VENT_SHARE: f64 = 0.5;
+/// The intruded melt cools to cumulates denser than the crust it displaces by this much,
+/// kg/m³, and the displaced crust flows out to thicken the pocket's edge (Dombard et al.
+/// 2007: 200 kg/m³, a central depression ringed by a rim).
+pub const CORONA_STACK_DENSITY: f64 = 200.0;
+/// The edge's thickened crust, and while the head is buoyant the lid that founders at its
+/// edge (Smrekar and Stofan 1997), lie in rings this share of the pocket's radius wide
+/// (Gaussian half-width), the drip's just outside the rim's (a stated choice).
+pub const CORONA_RING_SHARE: f64 = 0.15;
+/// The crust thickens unevenly round the pocket's edge and the lid founders in arcs, not
+/// all round (Davaille et al. 2017: slabs in segments along the plume's rim; a third of
+/// Venus's coronae have less than half an annulus, Gülcher et al. 2025): the rim's
+/// thickening varies round the edge by this share of its mean, and the drip comes and
+/// goes in arcs (stated choices).
+pub const CORONA_RIM_VARIATION: f64 = 0.7;
+/// A diapir's head is no Gaussian: its pocket's edge wanders by this share of its radius,
+/// far more than a convection cell's worn corners (Venus's coronae circular to elongate and
+/// irregular, Stofan et al. 1992; a stated choice).
+pub const CORONA_HEAD_WANDER: f64 = 0.15;
+/// The lid breaks in an annulus where its loads bend it past this tension at its surface,
+/// Pa, fully at twice it (Dombard et al. 2007: fault strengths of 10 to perhaps 80 MPa; a
+/// stated choice within them).
+pub const CORONA_FAULT_STRENGTH: f64 = 20e6;
 pub const DOMES_PER_AREA: f64 = 3.3e-13;
 /// Novae: radial fracture systems round a share of the coronae, which with the rises'
 /// graben give Venus its spidery fracture belts. Fractures per nova, their length as a

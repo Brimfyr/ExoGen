@@ -27,7 +27,7 @@ use crate::geom::{
 use crate::grid::CubeSphere;
 use crate::grid::projection::PaddedField;
 use crate::noise::GradientNoise;
-use crate::params::ParamGraph;
+use crate::params::{ParamGraph, Reads};
 use crate::rng::Rng;
 use crate::stages::io::{Lobe, PathRules};
 use crate::thermal::ThermalHistory;
@@ -798,6 +798,83 @@ pub fn flank_profile(across: f64, width: f64, wall: f64, blur: f64) -> f64 {
     outside * (-beyond / (TROUGH_FLANK_DECAY * width).max(1.0)).exp()
 }
 
+/// The rises a body's plumes raise (F104, F120): where they stand once the body has turned
+/// under them, their size and when they grow. None when the body raises no plume.
+pub fn place_rises<P: Reads>(graph: &P, thermal: &ThermalHistory) -> Option<Vec<Rise>> {
+    let count = graph.num("tectonics.plume_rise_count").round() as usize;
+    if count == 0
+        || !matches!(
+            graph.text("interior.tectonic_regime"),
+            "stagnant_lid" | "episodic_lid"
+        )
+    {
+        return None;
+    }
+    let body_radius = graph.num("body.radius");
+    let age = graph.num("body.age");
+    // A rise grows as its plume's mantle melts beneath its lid, since the lid last
+    // formed (F120): a stagnant lid when the body formed, an episodic lid at its
+    // overturn, which foundered the lid and the domes on it.
+    let renewal = if graph.text("interior.tectonic_regime") == "episodic_lid" {
+        (age - graph.num("tectonics.resurfacing_event_age")).max(0.0)
+    } else {
+        0.0
+    };
+    let clock = thermal.melt_clock(4.0 * std::f64::consts::PI * body_radius * body_radius);
+    let since = clock.at(renewal);
+    let rise_start = clock.time_of(since + RISE_START_MELT);
+    let rise_end = clock.time_of(since + RISE_END_MELT);
+    let rng = Rng::new(graph.num("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
+    let rise_radius = 0.5 * graph.num("tectonics.plume_rise_diameter");
+    let rise_height = graph.num("tectonics.plume_rise_height");
+    let mut rises = Vec::new();
+    for i in 0..count as u64 {
+        let mut center = rng.unit_direction(i, 1);
+        // Rises keep apart.
+        for attempt in 0..16u64 {
+            if rises
+                .iter()
+                .all(|r: &Rise| angle_between(r.center, center) > 2.5 * rise_radius / body_radius)
+            {
+                break;
+            }
+            center = rng.unit_direction(i, 10 + 2 * attempt);
+        }
+        rises.push(Rise {
+            center,
+            radius: rise_radius * (0.8 + 0.4 * rng.uniform(i, 4)),
+            height: rise_height * (0.8 + 0.4 * rng.uniform(i, 5)),
+            start_gyr: rise_start,
+            end_gyr: rise_end,
+            paleo_latitude: center[2].clamp(-1.0, 1.0).asin(),
+            axis: [0.0, 0.0, 0.0],
+        });
+    }
+    // The body turns under its rises as they grow, carrying them toward its equator
+    // (F104); everything on them is placed where they stand now.
+    {
+        let mid = (0.5 * (rise_start + rise_end)).min(age);
+        let lithosphere_now = graph.num("interior.lithosphere_thickness").max(1.0);
+        let te = graph.num("interior.elastic_thickness")
+            * graph
+                .series("interior.lithosphere_history")
+                .map_or(lithosphere_now, |c| c.eval(mid))
+            / lithosphere_now;
+        let bulge = frozen_bulge(
+            body_radius,
+            graph.num("body.gravity"),
+            graph.num("rotation.angular_velocity"),
+            graph.num("body.moment_of_inertia_factor"),
+            te,
+        );
+        let (axis, angle) = polar_wander(&rises, body_radius, bulge);
+        for rise in &mut rises {
+            rise.center = normalize(rotate(rise.center, axis, angle));
+        }
+    }
+    Some(rises)
+}
+
 /// The dome, canyon and shields through the coarse loop.
 pub struct PlumeProcess {
     grid: CubeSphere,
@@ -823,76 +900,12 @@ pub struct PlumeProcess {
 impl PlumeProcess {
     /// None when the body raises no plume.
     pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
-        let count = graph.f64("tectonics.plume_rise_count").round() as usize;
-        if count == 0
-            || !matches!(
-                graph.str("interior.tectonic_regime"),
-                "stagnant_lid" | "episodic_lid"
-            )
-        {
-            return None;
-        }
+        let mut rises = place_rises(graph, thermal)?;
         let body_radius = graph.f64("body.radius");
         let age = graph.f64("body.age");
-        // A rise grows as its plume's mantle melts beneath its lid, since the lid last
-        // formed (F120): a stagnant lid when the body formed, an episodic lid at its
-        // overturn, which foundered the lid and the domes on it.
-        let renewal = if graph.str("interior.tectonic_regime") == "episodic_lid" {
-            (age - graph.f64("tectonics.resurfacing_event_age")).max(0.0)
-        } else {
-            0.0
-        };
         let clock = thermal.melt_clock(4.0 * std::f64::consts::PI * body_radius * body_radius);
-        let since = clock.at(renewal);
-        let rise_start = clock.time_of(since + RISE_START_MELT);
-        let rise_end = clock.time_of(since + RISE_END_MELT);
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
-        let rise_radius = 0.5 * graph.f64("tectonics.plume_rise_diameter");
         let rise_height = graph.f64("tectonics.plume_rise_height");
-        let mut rises = Vec::new();
-        for i in 0..count as u64 {
-            let mut center = rng.unit_direction(i, 1);
-            // Rises keep apart.
-            for attempt in 0..16u64 {
-                if rises.iter().all(|r: &Rise| {
-                    angle_between(r.center, center) > 2.5 * rise_radius / body_radius
-                }) {
-                    break;
-                }
-                center = rng.unit_direction(i, 10 + 2 * attempt);
-            }
-            rises.push(Rise {
-                center,
-                radius: rise_radius * (0.8 + 0.4 * rng.uniform(i, 4)),
-                height: rise_height * (0.8 + 0.4 * rng.uniform(i, 5)),
-                start_gyr: rise_start,
-                end_gyr: rise_end,
-                paleo_latitude: center[2].clamp(-1.0, 1.0).asin(),
-                axis: [0.0, 0.0, 0.0],
-            });
-        }
-        // The body turns under its rises as they grow, carrying them toward its equator
-        // (F104); everything on them is placed where they stand now.
-        {
-            let mid = (0.5 * (rise_start + rise_end)).min(age);
-            let lithosphere_now = graph.f64("interior.lithosphere_thickness").max(1.0);
-            let te = graph.f64("interior.elastic_thickness")
-                * graph
-                    .curve("interior.lithosphere_history")
-                    .map_or(lithosphere_now, |c| c.eval(mid))
-                / lithosphere_now;
-            let bulge = frozen_bulge(
-                body_radius,
-                graph.f64("body.gravity"),
-                graph.f64("rotation.angular_velocity"),
-                graph.f64("body.moment_of_inertia_factor"),
-                te,
-            );
-            let (axis, angle) = polar_wander(&rises, body_radius, bulge);
-            for rise in &mut rises {
-                rise.center = normalize(rotate(rise.center, axis, angle));
-            }
-        }
         // Each rise grows along an axis (F114), its azimuth drawn as its first dikes break
         // the symmetry of its crest.
         let axes: Vec<(f64, Axial)> = rises

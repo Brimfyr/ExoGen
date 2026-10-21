@@ -132,9 +132,10 @@ pub struct LoopOutput {
     pub shields: Vec<plume::Shield>,
     pub canyons: Vec<plume::Trough>,
     pub graben: Vec<plume::Trough>,
-    /// An episodic lid's resurfacing event, coronae and domes.
+    /// An episodic lid's resurfacing event, its coronae over the mantle's diapirs (F145)
+    /// and its domes.
     pub resurfacing: Option<episodic::Resurfacing>,
-    pub coronae: Vec<episodic::Corona>,
+    pub coronae: Vec<corona::Corona>,
     pub domes: Vec<episodic::Dome>,
     /// The Io regime's paterae and mountains through the body's life, each with its
     /// birth and death; the finish takes those alive at the epoch.
@@ -211,7 +212,7 @@ pub struct FinishOutput {
     /// The resurfacing event if it lies before the epoch, and the coronae and domes
     /// present at it.
     pub resurfacing: Option<episodic::Resurfacing>,
-    pub coronae: Vec<episodic::Corona>,
+    pub coronae: Vec<corona::Corona>,
     pub domes: Vec<episodic::Dome>,
     /// The Io regime's features, all of the present surface, and the plumes of its
     /// paterae over the history the surface remembers (F84).
@@ -369,7 +370,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 110;
+pub const FINISH_VERSION: u64 = 111;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -409,7 +410,11 @@ pub fn run_coarse_loop(
         &thermal,
         plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
     );
-    let mut episodic = episodic::EpisodicProcess::new(graph, grid);
+    let mut episodic = episodic::EpisodicProcess::new(
+        graph,
+        grid,
+        plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
+    );
     let mut io = io::IoProcess::new(graph, grid);
     // Io's lava erupts as floods, from its paterae (F117).
     let mut io_floods = io
@@ -756,6 +761,7 @@ pub fn finish(
     let ice_coronae: Vec<corona::Corona> = loop_output
         .ice_coronae
         .iter()
+        .chain(&loop_output.coronae)
         .filter(|c| c.time_gyr <= present + 1e-9)
         .cloned()
         .collect();
@@ -830,7 +836,11 @@ pub fn finish(
                 2 => renewal.take_polar(&polar_edge, time),
                 _ => renewal.take_hits(
                     time,
-                    crate::units::UNIT_CORONA,
+                    if ice_coronae[i].head.is_some() {
+                        crate::units::UNIT_LAVA
+                    } else {
+                        crate::units::UNIT_CORONA
+                    },
                     &corona_hits[i],
                     ice_coronae[i].smooth_length(),
                     ice_coronae[i].faults_on(cell),
@@ -919,7 +929,9 @@ pub fn finish(
         .resurfacing
         .clone()
         .filter(|r| r.time_gyr <= present + 1e-9);
-    let coronae: Vec<episodic::Corona> = loop_output
+    // A rock lid's coronae over its mantle's diapirs (F145) take the corona process's
+    // path with the icy ones.
+    let rock_coronae: Vec<corona::Corona> = loop_output
         .coronae
         .iter()
         .filter(|c| c.time_gyr <= present + 1e-9)
@@ -1017,7 +1029,6 @@ pub fn finish(
         &loop_output.rises,
         &shields,
         &canyons,
-        &coronae,
     );
     if !floods.is_empty() || resurfacing.is_some() {
         with_stamper(&grid, |stamper| {
@@ -1272,7 +1283,6 @@ pub fn finish(
         Graben(usize),
         Ring(usize),
         Resurfacing,
-        Corona(usize),
         Dome(usize),
         Patera(usize),
         Mountain(usize),
@@ -1342,9 +1352,6 @@ pub fn finish(
     }
     if let Some(r) = &resurfacing {
         events.push((r.time_gyr, 0, 0xE915_0000_0000, Event::Resurfacing));
-    }
-    for (k, c) in coronae.iter().enumerate() {
-        events.push((c.time_gyr, 0, c.id ^ 0xC020_0000_0000, Event::Corona(k)));
     }
     for (k, d) in domes.iter().enumerate() {
         events.push((d.time_gyr, 0, d.id ^ 0xD03E_0000_0000, Event::Dome(k)));
@@ -1477,10 +1484,6 @@ pub fn finish(
                     (c, r + 2.0 * grid.delta())
                 }
                 Event::Resurfacing => ([0.0, 0.0, 1.0], std::f64::consts::PI),
-                Event::Corona(k) => {
-                    let c = &coronae[*k];
-                    (c.center, c.cap_radius(body_radius) + 2.0 * grid.delta())
-                }
                 Event::Dome(k) => {
                     let d = &domes[*k];
                     (d.center, d.cap_radius(body_radius) + 2.0 * grid.delta())
@@ -1719,21 +1722,6 @@ pub fn finish(
                         );
                         Some((out, None, Some((taken, [0; 4]))))
                     }
-                    Event::Corona(k) => {
-                        let c = &coronae[*k];
-                        let kappa_t = inputs.diffusivity_m2_per_myr
-                            * inputs.bombardment.equivalent_gyr(c.time_gyr, present)
-                            * 1e3;
-                        let out = episodic::corona_compute(
-                            &layers,
-                            &grid,
-                            body_radius,
-                            c,
-                            (4.0 * kappa_t).sqrt(),
-                            stamper,
-                        );
-                        Some((out, None, None))
-                    }
                     Event::Dome(k) => {
                         let out = episodic::dome_compute(
                             &layers,
@@ -1781,6 +1769,7 @@ pub fn finish(
                             body_radius,
                             &ice_coronae[*k],
                             cell,
+                            present,
                             renewed,
                             &base,
                             stamper,
@@ -2303,7 +2292,7 @@ pub fn finish(
         canyons,
         graben,
         resurfacing,
-        coronae,
+        coronae: rock_coronae,
         domes,
         paterae,
         mountains,

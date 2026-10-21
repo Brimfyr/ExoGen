@@ -2606,7 +2606,7 @@ mod tests {
                     UNIT_PRIMORDIAL
                 };
             }
-            let deform = Deformation::new(coarse, body_radius, 0.01, 4.5, &[], &[], &[], &[]);
+            let deform = Deformation::new(coarse, body_radius, 0.01, 4.5, &[], &[], &[]);
             let mut stamper = Stamper::new(&grid);
             let flows = FloodFlows {
                 ground: &ground,
@@ -2679,7 +2679,7 @@ mod tests {
             }
             let base = layers.bedrock.as_slice().to_vec();
             let padded = PaddedField::new(&grid, &ground);
-            let deform = Deformation::new(coarse, body_radius, 0.01, 4.5, &[], &[], &[], &[]);
+            let deform = Deformation::new(coarse, body_radius, 0.01, 4.5, &[], &[], &[]);
             let mut stamper = Stamper::new(&grid);
             let flows = FloodFlows {
                 ground: &padded,

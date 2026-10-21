@@ -11,6 +11,7 @@ pub mod constants;
 pub mod crater;
 pub mod export;
 pub mod fields;
+pub mod flexure;
 pub mod geom;
 pub mod grid;
 pub mod mantle;

@@ -2322,9 +2322,15 @@ pub fn tectonics_tessera_fraction(c: &Ctx) -> Value {
 }
 
 pub fn volcanism_corona_count(c: &Ctx) -> Value {
-    if c.str("interior.tectonic_regime") == "episodic_lid" {
-        let r = c.f64("body.radius");
-        return (CORONAE_PER_AREA * 4.0 * PI * r * r).round().into();
+    // A rock lid's coronae over its mantle's diapirs (F145), as the loop makes them.
+    if matches!(
+        c.str("interior.tectonic_regime"),
+        "episodic_lid" | "stagnant_lid"
+    ) {
+        let mantle = mantle_history(c);
+        let thermal = crate::thermal::ThermalHistory::new(&thermal_inputs(c));
+        let rises = crate::stages::plume::place_rises(c, &thermal).unwrap_or_default();
+        return (crate::stages::corona::rock_coronae(c, &mantle, &rises).len() as f64).into();
     }
     // One over each upwelling of an ice mantle's convection, where the lid breaks (F133).
     match ice_corona_episode(c) {

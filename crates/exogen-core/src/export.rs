@@ -788,32 +788,36 @@ pub fn export(
             .as_ref()
             .map(|r| out.epoch_time_gyr - r.time_gyr),
         tessera_fraction: crate::stages::episodic::tessera_fraction(&out.layers),
+        // Every corona takes the corona process (F133, F145): an ice mantle's its outline's
+        // mean diameter; a rock lid's its profile at the epoch too, at its centre and its
+        // rim's crest.
         coronae: out
-            .coronae
+            .ice_coronae
             .iter()
             .map(|c| {
                 let (lon, lat) = crate::grid::lon_lat_from_direction(c.center);
-                CoronaInfo {
-                    lat_deg: lat.to_degrees(),
-                    lon_deg: lon.to_degrees(),
-                    diameter_km: 2.0 * c.radius / 1e3,
-                    centre_relief_m: c.centre_relief,
-                    rim_height_m: c.rim_height,
-                    age_gyr: out.epoch_time_gyr - c.time_gyr,
-                }
-            })
-            // An ice mantle's coronae (F133): their outlines' mean diameter.
-            .chain(out.ice_coronae.iter().map(|c| {
-                let (lon, lat) = crate::grid::lon_lat_from_direction(c.center);
+                let (centre, rim) = match &c.head {
+                    Some(h) => {
+                        let a = c.outline_radius();
+                        let at = |r: f64| h.profile(r, c.time_gyr, out.epoch_time_gyr);
+                        (
+                            at(0.0),
+                            (0..=20)
+                                .map(|i| at(a * (0.8 + 0.02 * i as f64)))
+                                .fold(f64::NEG_INFINITY, f64::max),
+                        )
+                    }
+                    None => (0.0, 0.0),
+                };
                 CoronaInfo {
                     lat_deg: lat.to_degrees(),
                     lon_deg: lon.to_degrees(),
                     diameter_km: 2.0 * c.outline_radius() / 1e3,
-                    centre_relief_m: 0.0,
-                    rim_height_m: 0.0,
+                    centre_relief_m: centre,
+                    rim_height_m: rim,
                     age_gyr: out.epoch_time_gyr - c.time_gyr,
                 }
-            }))
+            })
             .collect(),
         domes: out
             .domes

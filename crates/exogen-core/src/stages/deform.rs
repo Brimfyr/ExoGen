@@ -1,18 +1,16 @@
 //! What the slow processes have added to the ground by a time, for the finishing pass.
 //!
-//! The loop lifts the rises' domes, grows the shields, carves the canyon and raises the
-//! coronae's cores on the coarse ground as they happen, a step at a time and before
-//! that step's floods. A flood refilled at the finish must see the ground as it found
+//! The loop lifts the rises' domes, grows the shields and carves the canyon on the coarse
+//! ground as they happen, a step at a time and before that step's floods; a corona's
+//! profile is the finish's (F146), so it adds nothing here. A flood refilled at the finish must see the ground as it found
 //! it, so the growth since then is taken off the base it is refilled against and put
 //! back on top of what it writes. Each process has a growth law the loop followed, and
 //! this evaluates the same law at any point and time, through an index of the coarse
 //! cells each feature touches so a point only sees the features over it.
 
-use crate::constants::*;
 use crate::crater::Stamper;
 use crate::geom::angle_between;
 use crate::grid::CubeSphere;
-use crate::stages::episodic::{Corona, corona_core};
 use crate::stages::plume::{
     Rise, Shield, Trough, TroughFrames, dome, rise_progress, shield_height, shield_progress,
     trough_depth_at, trough_progress,
@@ -24,7 +22,6 @@ enum Deformer {
     Shield(usize),
     /// A canyon and the range of its frames that reach the cell.
     Canyon(usize, u32, u32),
-    Corona(usize),
 }
 
 /// The slow processes' growth, indexed by the coarse cells each feature touches.
@@ -38,7 +35,6 @@ pub struct Deformation<'a> {
     shields: &'a [Shield],
     canyons: &'a [Trough],
     frames: Vec<TroughFrames>,
-    coronae: &'a [Corona],
     /// The features over each coarse cell, as ranges into `list`.
     offsets: Vec<u32>,
     list: Vec<Deformer>,
@@ -54,7 +50,6 @@ impl<'a> Deformation<'a> {
         rises: &'a [Rise],
         shields: &'a [Shield],
         canyons: &'a [Trough],
-        coronae: &'a [Corona],
     ) -> Self {
         let cell = coarse.delta() * body_radius;
         let n = coarse.cell_count();
@@ -104,20 +99,6 @@ impl<'a> Deformation<'a> {
             touched.clear();
             frames.push(f);
         }
-        for (k, c) in coronae.iter().enumerate() {
-            stamper.gather(
-                &coarse,
-                body_radius,
-                c.center,
-                CORONA_RIM_POSITION * c.radius + cell,
-            );
-            pairs.extend(
-                stamper
-                    .footprint
-                    .iter()
-                    .map(|&(idx, _, _)| (idx as u32, Deformer::Corona(k))),
-            );
-        }
         pairs.sort_by_key(|p| p.0);
         let mut offsets = vec![0u32; n + 1];
         for &(c, _) in &pairs {
@@ -136,7 +117,6 @@ impl<'a> Deformation<'a> {
             shields,
             canyons,
             frames,
-            coronae,
             offsets,
             list,
         }
@@ -158,7 +138,7 @@ impl<'a> Deformation<'a> {
 
     /// Height added at a point by the continuous processes up to `t_slow` and by the
     /// discrete events up to `t_events`, m.
-    fn at(&self, d: [f64; 3], t_slow: f64, t_events: f64) -> f64 {
+    fn at(&self, d: [f64; 3], t_slow: f64, _t_events: f64) -> f64 {
         let c = self.coarse.index(self.coarse.locate(d).0);
         let (lo, hi) = (self.offsets[c] as usize, self.offsets[c + 1] as usize);
         if lo == hi {
@@ -198,13 +178,6 @@ impl<'a> Deformation<'a> {
                             coarse_cell,
                             0.0,
                         );
-                    }
-                }
-                Deformer::Corona(k) => {
-                    let c = &self.coronae[k];
-                    if c.time_gyr <= t_events {
-                        let x = angle_between(c.center, d) * r_body / c.radius;
-                        h += corona_core(x, c.centre_relief);
                     }
                 }
             }
@@ -256,7 +229,6 @@ mod tests {
             present,
             &[],
             &shields,
-            &[],
             &[],
         );
         // At the summit, a flood at 2 Gyr saw the growth to the end of its step; what

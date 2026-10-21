@@ -335,6 +335,48 @@ const THERMAL_DEPS: &[&str] = &[
     "interior.core_porosity",
 ];
 
+/// What a rock lid's coronae read (F145): the thermal history, the rises and the mantle.
+const CORONA_DEPS: &[&str] = &[
+    "body.age",
+    "body.radius",
+    "body.gravity",
+    "body.uncompressed_density",
+    "body.mass",
+    "body.rock_mass_fraction",
+    "body.core_mass_fraction",
+    "interior.secular_cooling_fraction",
+    "interior.tidal_flux",
+    "orbit.eccentricity",
+    "orbit.eccentricity_history",
+    "tectonics.initial_crust_thickness",
+    "body.composition_class",
+    "atmosphere.surface_temperature_mean",
+    "volatiles.inventory",
+    "interior.crust_strength",
+    "interior.tectonic_regime",
+    "interior.core_tidal_power",
+    "orbit.primary",
+    "orbit.primary_mass",
+    "orbit.semi_major_axis",
+    "orbit.mean_motion",
+    "rotation.mode",
+    "body.density",
+    "body.ice_layer_thickness",
+    "volatiles.working_liquid",
+    "tectonics.plume_rise_count",
+    "interior.core_porosity",
+    "tectonics.resurfacing_event_age",
+    "seed.tectonics",
+    "tectonics.plume_rise_diameter",
+    "tectonics.plume_rise_height",
+    "interior.lithosphere_thickness",
+    "interior.elastic_thickness",
+    "interior.lithosphere_history",
+    "rotation.angular_velocity",
+    "body.moment_of_inertia_factor",
+    "cratering.record_start",
+];
+
 static NODES: &[NodeDef] = &[
     // ------------------------------------------------------------------ star
     root(
@@ -1394,7 +1436,7 @@ static NODES: &[NodeDef] = &[
             "interior.lithosphere_thickness",
         ],
         d::interior_elastic_thickness,
-        "Depth to the 650 K isotherm for rock, 170 K for ice.",
+        "Depth to the 923 K (650 °C) isotherm for rock, 170 K for ice.",
         "",
     ),
     derived(
@@ -3097,10 +3139,10 @@ static NODES: &[NodeDef] = &[
         "",
         1.0,
         f(0.0, 5000.0),
-        THERMAL_DEPS,
+        CORONA_DEPS,
         d::volcanism_corona_count,
-        "Annular ridges round a central dome or sag on an episodic lid's plains, 100 to 1,000 km across: about 500 on Venus. On an ice mantle over rock, one over each upwelling of the convection a tidal heating episode drives under its lid (F133): as many as cells of the convecting layer's twice its depth fit on the sphere at the lid's base; Miranda's 5. Pin to choose.",
-        "PLAN.md 4.3, F133",
+        "On a rock lid, one over each of its mantle's diapirs that melts under the lid and breaks it in an annulus since the lid last formed (F145): as many as the share of the mantle's heat the diapirs carry allows, where the mantle about them stays below its solidus and the lid over them, thinned by their heads, breaks; Venus's some 750, none on Mars or the Moon. On an ice mantle over rock, one over each upwelling of the convection a tidal heating episode drives under its lid (F133): as many as cells of the convecting layer's twice its depth fit on the sphere at the lid's base; Miranda's 5. Reported, not read: pinning it changes nothing on a rock lid.",
+        "F133, F145",
     ),
     derived(
         "volcanism.corona_strength",

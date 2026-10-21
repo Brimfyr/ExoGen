@@ -82,6 +82,11 @@ impl MantleInputs {
         }
     }
 
+    /// The mantle's depth, m: from the core's surface to the body's.
+    pub fn depth(&self) -> f64 {
+        mantle_depth(self.radius, self.mass, self.core_fraction)
+    }
+
     /// The share of the heat-producing elements the crust holds (F123): its volume's share
     /// of the rock, phi, weighted by the enrichment of incompatible elements in the melts
     /// that made it, Lambda phi / (Lambda phi + 1 - phi).
@@ -126,6 +131,16 @@ impl MantleHistory {
         }
         let k = self.times.partition_point(|&x| x < t).min(n - 1);
         self.heat_flux[k]
+    }
+
+    /// The lid's thickness at a time, m.
+    pub fn lid_at(&self, t: f64) -> f64 {
+        let n = self.times.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let k = self.times.partition_point(|&x| x < t).min(n - 1);
+        self.lid[k]
     }
 
     /// The mantle's temperature at a time, K.
@@ -198,6 +213,26 @@ fn stagnant_flux(t: f64, gravity: f64) -> f64 {
         * K_ROCK
         * (DENSITY_ROCK * gravity * MANTLE_EXPANSIVITY / (MANTLE_DIFFUSIVITY * viscosity(t))).cbrt()
         * rheological.powf(4.0 / 3.0)
+}
+
+/// The depth of a body's mantle, m: from its iron core's surface, of the core's share of its
+/// mass, to its own surface.
+pub fn mantle_depth(radius: f64, mass: f64, core_fraction: f64) -> f64 {
+    let core_radius =
+        (3.0 * mass * core_fraction / (4.0 * std::f64::consts::PI * DENSITY_IRON)).cbrt();
+    (radius - core_radius).max(1.0)
+}
+
+/// The stagnant lid over mantle `excess` K hotter than mantle at `t` K, as a share of the
+/// lid over that (F145): the hotter mantle convects more heat into the lid's base, which
+/// lies at its own temperature, and the lid holds the thickness that conducts it.
+pub fn hotter_lid_share(t: f64, excess: f64, surface: f64, gravity: f64) -> f64 {
+    if excess <= 0.0 {
+        return 1.0;
+    }
+    let hot = t + excess;
+    (hot - surface) / (t - surface).max(1.0) * stagnant_flux(t, gravity)
+        / stagnant_flux(hot, gravity).max(1e-12)
 }
 
 /// The mantle's viscosity at a temperature, Pa s: Arrhenian about its reference.

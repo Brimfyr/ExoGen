@@ -1763,3 +1763,31 @@ Still to do:
 - **Mercury's largest scale**, Ganymede's and Callisto's large craters, Pluto's oldest terrains, Enceladus's plains (M3).
 
 Tests 223 (13 ignored), among them one of the base relief's octaves regenerated at any resolution, one of the lanes' ends and the lanes' floor completed on the resolved grid. Clippy is clean and validate passes its 129 checks.
+
+## The seventy-first milestone: Venus's coronae from the corona process
+
+Asked for by the user after the seventieth, in the order they set: Venus's coronae onto the corona process, before the rifts and graben from the fault fabric. Venus's coronae were still Phase 3's: 506 thin rings at random places, sizes uniform in the logarithm, a dome or a sag by a coin's toss.
+
+- **F144.** A rock lid's elastic layer ends at 650 °C (923 K), not 650 K, which lay below Venus's surface and left it no elastic lid: Venus's derives at 30 km (measured 29 ± 6), Mars's at 160 km.
+- **F145.** Venus's coronae come of its mantle's diapirs: small plumes whose heat is a share of what the mantle convects since its lid formed, born where its large upwellings draw them, each melting under the lid where the mantle about it does not, the pocket its corona where the loads break the lid it has thinned.
+- **F146.** A corona's profile is its lid's flexure under its loads: its cumulates, its rim of thickened crust and vent lava, the lava flooding its floor, and while its head lasts the head's lift and the trench where the lid founders at its edge.
+
+How it went:
+
+- **The research.** Venus's 740 coronae are log-normal about 215 km (Glaze et al. 2002; Gülcher et al. 2025), 68 percent along chasmata, 21 at hot spots, 11 on plains (Stofan et al. 1992), on lids 11 ± 7 km thick (Smrekar et al. 2023). Dombard et al. 2007 make a corona the pocket of melt at a plume head's top loading the crust, not the plume itself; Smrekar and Stofan 1997 give their plumes' fluxes and the upwelling's share of Venus's heat; Gülcher et al. 2020 classify the large ones as active, with outer rise and trench, or inactive, a rim round a low.
+- **What sets which bodies have coronae.** The first population put 470 on Mars and some on Mercury and the Moon. Their mantles, and Venus's for 200 Myr after its overturn, stand above the solidus at the lid's base, so a diapir's melt is the region's, their plains': only where the mantle about a head stays below its solidus does a pocket stand out. On a lid thick against the pocket the loads spread as a swell instead of breaking it in an annulus, as F133's rule has it over an ice mantle. Mars and the Moon now get none.
+- **What sets their size and number.** A corona's diapir is fed for some 100 Myr (Smrekar and Stofan 1997), not a lone head, so each takes some 10^25 J of the heat share; its pocket is about one and a half times its head. Two stated choices, the head's radius and the feeding time, were set against Venus's count and sizes; the rest emerged: a quarter near the rises, a third still active, a quarter raised and half rimmed lows, and the lid under them thinned by their own heads to 7 to 14 km, Smrekar et al.'s 11 ± 7.
+- **What made them look stamped.** Lava laid as a ring on the rim gave every corona the same thin bright ring; flooding the floor instead left the rims as the crust's root, spread low by the plate. The rim now carries half the lava at its vents, a narrow load the lid holds up, the floor the rest; the rim and the trench vary round the edge and the outline wanders.
+
+What the maps show:
+
+- **Venus:** coronae of every class about its rises and on its plains: plateaus and domes with trenches along arcs of their edges, rims round lava floors, overlapping chains; its plains otherwise as they were.
+- **Mars, Mercury and the Moon:** their elastic lids thicker; Mars's rise lands a degree or two farther from the equator; Mercury takes three faint domes in its last half gigayear.
+
+Still to do:
+
+- **The rifts** (M10), along which most of Venus's coronae lie: their thinning of the lid will string the coronae along them by the same rule; then the rifts and graben from the fault fabric, with a Charon preset.
+- **The novae** from the diapirs that dome the lid, now a random share; the annulus's fractures, which the lid's small bending strain leaves faint in the relief.
+- **Mercury's late melting**, which gives it its three domes, with its thermal history.
+
+Tests 227 (14 ignored), among them the plate's flexure against isostasy, Venus's coronae against their statistics with none on Mars or the Moon, and a corona's loads. Clippy is clean and validate passes its 131 checks.
