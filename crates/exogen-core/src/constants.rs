@@ -234,11 +234,13 @@ pub const SCARP_LOOP_MIN_CELLS: f64 = 2.0;
 /// Lobes along a trace: harmonics of heading wobble and the amplitude of the first.
 pub const SCARP_LOBE_HARMONICS: usize = 3;
 pub const SCARP_LOBE_DEG: f64 = 18.0;
-/// Longest scarp as a function of strain: the reference length at the reference strain
-/// (Mercury's thousand-kilometre scarps at half a per cent), scaling with the strain to
-/// this power as faulting deepens and segments link.
+/// Longest scarp as a function of the strain its place takes up beyond the lid's elastic
+/// strain (F155): the reference length at the reference strain (Mercury's thousand-
+/// kilometre scarps at 0.4 per cent, its contraction's half a per cent less what its lid
+/// holds within its strength), scaling with the strain to this power as faulting deepens
+/// and segments link.
 pub const SCARP_REFERENCE_MAX_LENGTH: f64 = 1.0e6;
-pub const SCARP_REFERENCE_STRAIN: f64 = 0.005;
+pub const SCARP_REFERENCE_STRAIN: f64 = 0.004;
 pub const SCARP_LENGTH_STRAIN_EXPONENT: f64 = 2.0;
 /// Flood volcanism (PLAN.md 4.4). The extrusive share of magma production (intrusive to
 /// extrusive 5:1 to 10:1, Crisp 1984); the lithosphere thickness over which ascent fails
@@ -360,7 +362,8 @@ pub const LAVA_SUBSIDENCE: f64 = 0.05;
 /// one ridge's length, m; arch height and width, crest height and width, m; how far the
 /// crest wanders within the arch and over what length; the floor of the seed weight
 /// relative to the mean thickness gradient; how strongly a trace follows the contours;
-/// the heading wobble; and the delay after the last flow before the ridges stand.
+/// the heading wobble about its course (F156); and the delay after the last flow before
+/// the ridges stand.
 pub const RIDGE_LENGTH_PER_AREA: f64 = 1.0 / 40e3;
 pub const RIDGE_LENGTH: (f64, f64) = (20e3, 300e3);
 pub const RIDGE_HEIGHT: f64 = 200.0;
@@ -373,11 +376,19 @@ pub const RIDGE_SEED_FLOOR: f64 = 0.3;
 pub const RIDGE_CONTOUR_FOLLOWING: f64 = 0.35;
 pub const RIDGE_WOBBLE_DEG: f64 = 25.0;
 pub const RIDGE_WOBBLE_LENGTH: f64 = 60e3;
+/// A ridge's meander about its course (F156): a second harmonic of the wobble at this
+/// ratio of its wavenumber and this share of its amplitude, so that the meander does not
+/// repeat (a stated choice).
+pub const RIDGE_WOBBLE_HARMONIC: (f64, f64) = (2.7, 0.5);
 pub const RIDGE_DELAY_GYR: f64 = 0.2;
+/// The plains' own drive past the lid's strength, as a share of it (F156): their
+/// subsidence as they cool and compact squeezes them this far past it where nothing else
+/// does (a stated choice, against Venus's ridged plains, 93 per cent of them below its mean
+/// radius, Bilotti and Suppe 1999).
+pub const RIDGE_DRIVE_SHARE: f64 = 0.03;
 /// Extra weight of a vent on a volcanic rise, per unit of dome height over the rise's
-/// full height, and the dome's share in the load field the ridges follow.
+/// full height.
 pub const PLUME_VENT_BOOST: f64 = 20.0;
-pub const RIDGE_LOAD_WEIGHT: f64 = 0.5;
 /// Plume loading (PLAN.md 4.3). A stagnant lid at least this big raises one plume per
 /// this much of the heat its mantle loses, W, up to three: a plume carries a share of the
 /// mantle's heat, so their number grows with what it loses in all rather than per square
@@ -537,14 +548,24 @@ pub const RIFT_MAX_FAULTS: u64 = 20_000;
 /// great circle between them by this share of the lesser crest's tension, over this many
 /// rise radii to either side (stated choices: Venus's Beta, Atla and Themis joined by
 /// Devana, Hecate and Parga Chasmata, rifts 150 to 250 km wide in belts of fractures
-/// hundreds of km across; Stofan et al. 1992). The lid under a rift is thinned by this
-/// share within the rift's width (a stated choice: the elastic lid at Venus's coronae, 11
-/// km against some 30 regionally, Smrekar et al. 2023, most of them along the chasmata).
+/// hundreds of km across; Stofan et al. 1992).
 pub const RISE_MEMBRANE_SHARE: f64 = 1.0;
+/// A thrust's strike against the scatter of the lid's strength (F154): the field decides
+/// it as its differential stress passes this share of the lid's strength in compression,
+/// below which a thrust follows the lid's own weaknesses, its craters' rims and old faults,
+/// in a field alike every way (a stated choice); and how far a rise grows before the
+/// compression the loop reads is read again.
+pub const THRUST_STRIKE_SCATTER: f64 = 0.1;
+pub const FIELD_REREAD_GROWTH: f64 = 0.02;
+/// How strongly a thrust's trace turns toward the field's strike per step, where the field
+/// decides it (F155; a stated choice, as the ridges follow their contours), and the face of
+/// the coarse grid the loop reads the lid's compression on: cells some 60 to 150 km across
+/// on the rocky bodies, a fraction of the lengths the field varies over.
+pub const THRUST_FIELD_FOLLOWING: f64 = 0.35;
+pub const COMPRESSION_FACE: u32 = 64;
 pub const UPWELLING_LIMB_REACH: f64 = 4.0;
 pub const UPWELLING_LIMB_TENSION: f64 = 0.8;
 pub const UPWELLING_LIMB_WIDTH: f64 = 1.0;
-pub const RIFT_LID_THINNING: f64 = 0.5;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
 /// Trough traces wander by this much over this length; their walls take this fraction

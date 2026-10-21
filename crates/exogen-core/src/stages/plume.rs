@@ -1334,7 +1334,7 @@ impl PlumeProcess {
             body_radius,
             graph.num("body.gravity"),
             graph.num("interior.elastic_thickness"),
-            relief,
+            relief.as_ref(),
         );
         let yield_tension = field.yield_tension;
         let mut canyons = Vec::new();

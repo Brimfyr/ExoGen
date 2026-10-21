@@ -367,6 +367,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | UPWELLING_LIMB_REACH, UPWELLING_LIMB_TENSION, UPWELLING_LIMB_WIDTH | Venus's three rises joined by rifts along their upwelling limbs (F150): plumes within four radii together on one upwelling, pulled apart by 0.8 of the lesser crest's tension over a rise radius | the mantle's convection pattern, its upwelling sheets and the traction they put on the lid |
 | the GPE margin's plane strain over the flexural wavelength | a stated choice (F150): a plateau's margin spreads down its slope, the stress along the contour Poisson's share of the stress across it | the membrane stress of the relief solved on the shell (Banerdt 1986) |
 | FAULT_FLANK_SHARE, GRABEN_HALF_SHARE, GRABEN_THROW_ROUGHNESS | stated choices (F149): a footwall a tenth of its throw up, two graben in five half-graben, the throw rough by 0.2 along the fault | the footwall's flexure from the elastic lid; the floor's tilt from the master fault's share |
+| THRUST_STRIKE_SCATTER, THRUST_FIELD_FOLLOWING | stated choices (F154, F155): the field decides a thrust's strike as its differential stress passes a tenth of the lid's strength in compression; a trace turns toward the strike by 0.35 a step | the lid's strength's own scatter from its fabric, its craters' rims and old faults, which the thrusts would follow in a field alike every way |
+| SCARP_REFERENCE_STRAIN | refitted (F155): Mercury's thousand-kilometre scarps at the 0.4 percent its thrusts take up beyond its lid's elastic strain | the longest thrust from the depth of the layer it cuts and the linking of its segments as the strain grows |
+| RIDGE_DRIVE_SHARE | Venus's ridged plains, 93 percent below its mean radius (Bilotti and Suppe 1999; F156): 87 percent of the model's ridge length below its mean height at 0.03, the most of the shares tried from 0 to 0.1 | the plains' own subsidence and the floods' load in the field, the lid's flexure under them, as the lunar maria's mascons squeeze their interiors (Freed et al. 2001) (audit M26) |
 | GRABEN_BLOCK_LAYERS, GRABEN_INTERIOR_SHARE | a wide trough's floor in blocks a quarter of its faulted layer wide, taking 0.3 of its throw (F152): Mandjet's tilted blocks 5 to 10 km on a layer of 20 to 40 km, Beyer et al. 2017; the bounding faults carry most of a graben's throw | the blocks' width and rotation from the domino kinematics of the extension over a listric master (Gibbs 1983) |
 | GROOVE_END_TAPER_WIDTHS, GROOVE_LANE_TAPER_POWER | a lane's end in the old ground closes linearly over three widths (F142), as a fault's displacement falls to its tip; Ganymede's lanes pinch out in long points | the taper from the rift's own mechanics, the strain falling along the lane's last reach |
 | DEBRIS_FRAGMENTS, DEBRIS_BREAK_KM, DEBRIS_SLOPES, DEBRIS_ECCENTRICITY | Mimas's craters beyond the comets' (F136) | checked on Tethys and Dione, within 1.4 times; the scaling with the square of the impact speed, which spares Miranda, is a stated choice with no derivation: standard ejecta scaling makes the mass an impact of a given crater throws out of the moon independent of its speed |
@@ -605,6 +608,22 @@ Two thirds of Venus's coronae lie along its chasmata (Stofan et al. 1992). With 
 Direction: the melting rule itself, which should give a corona where a rift focuses the upwelling's melt rather than none where the region melts; and the limbs' own heat in the mantle, which would place the diapirs' births along them without a draw.
 
 When: with the corona process's next revision.
+
+### M26. The field reads the ground before the plains and the lid of the present
+
+The lid's stress field (F150) reads its relief as the ground before the rises, low-passed over the flexural wavelength of the lid's present elastic thickness, and holds no load of the floods. The plains' ridges (F156) stand where the field squeezes them at their time, but the field does not know the plains themselves: the floods' load, which bends the lid under a filled basin and squeezes its interior while stretching its margin (the lunar maria's mascons, Freed et al. 2001), stands in as a drive past the strength, a stated share alike everywhere; and a thick present lid spreads the relief's force thinner and over longer lengths than the thinner lid the plains formed on, so the field's lows are the broad ones of the ground before the floods. Venus's ridges lie 87 percent below its mean height against the 93 percent of its ridged plains measured, the rest on plains the field's lows of the old ground do not hold.
+
+Direction: the relief and the floods' load read through the loop at their times, on the lid's elastic thickness then (F144), the floods' load bending the lid as a load on the plate (F146's flexure, solved on the sphere), so that the maria's ridges and the arcuate graben at their margins come of their own load and the drive's stated share goes.
+
+When: with the rise's flexure, the revisit plan's fifth item.
+
+### M27. Mercury's thrusts have no direction
+
+Mercury's lid is squeezed alike every way by its shrinking, 313 MPa of elastic stress against a few of its relief's, so its thrusts lie and run at random (F155). Its large thrusts run north and south at low latitudes and somewhat east and west at high ones (Watters et al. 2015), a pattern of its global contraction with its tidal despinning, or with its mantle's convection; neither is in the model, its rotation held at the present (the inputs held constant) and its mantle raising no downwellings. Its thrusts also gather in systems and belts, as its graben do (F112), which the thrusts' population lacks: no thrust runs beside another or stops at an older one.
+
+Direction: the despinning's stress from the rotation's history once that has one, and the mantle's downwellings in the field, squeezing the lid above them; the thrusts drawn by the faults' shared generator (F147), with their neighbours and their arrest.
+
+When: the despinning with the rotation's history; the generator with the thrusts' next revision.
 
 ### M24. The lid's faults are not in the loop's history (closed by F153)
 

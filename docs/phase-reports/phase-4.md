@@ -1894,3 +1894,30 @@ What the maps show:
 Still to do: the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); compression on the same field, Mercury's scarps and the wrinkle ridges in the lows (M72c); the coronae's share on Venus's rifts (M25); the icy lids' faults on the same field.
 
 Tests 237 (18 ignored), among them a wide trough's floor breaking into as many tilted blocks as its width holds, each a share of the throw, stepping down toward the master wall and formed just after the trough, none where the grid cannot resolve a block; and Charon's wide chasmata carved through the loop within the step they form. Clippy is clean and validate passes its 134 checks.
+
+## The seventy-fifth milestone: compression on the same field
+
+M72c, approved after the seventy-fourth: the lid's stress field read from its compressive side, so that the thrusts and the plains' ridges are placed and turned by it, with the shortening the body's shrinking gives.
+
+- **F154.** The field gives a thrust its compression: the most compressive stress, the strike across it, and how far the field decides that strike against the scatter of the lid's strength; the lid's strength in compression, Anderson's thrusts at the faulted layer's base; and the squeeze the body's shrinking puts on a whole lid alike every way.
+- **F155.** One shortening budget, place by place: what passes the lid's elastic strain and the most a place has borne. Each scarp starts where that grew, its longest length from the strain its place takes up, strikes across the compression as far as the field decides it, and stops where the lid is no longer squeezed past its strength; the short scarps are drawn by the finish; a thrust beneath the plains folds them into a ridge.
+- **F156.** The plains' ridges stand where the lid squeezes the plains, with the plains' own drive a stated share past the strength, and strike across the field's compression, following the lava's contours where it does not decide, meandering about their course.
+
+How it went:
+
+- **Measuring the field first.** The field's compression on each rocky lid was printed before anything was built on it: a few MPa on Mercury and the Moon, whose thick lids spread their relief's force thin, against the hundreds of MPa Mercury's shrinking would put on its lid; ten to thirty-five on Venus; hundreds at Tharsis's foot. So the field cannot place or turn Mercury's thrusts, and the milestone's plan for Mercury became the budget's physics and the drawing of its short scarps, with the direction its real thrusts have left open (audit M27); Mars and Venus are where the field shows.
+- **One budget, the elastic part kept.** The lid holds part of its squeeze elastically, as the icy lids do (F147), so only the strain past its strength is faulted, a seventh less on Mercury and more than half less on Mars, where the shrinking passes the strength by little and its thrusts beyond Tharsis's reach are too short to draw. The longest scarp's scaling was refitted to the strain the thrusts now take up, keeping Mercury's thousand-kilometre scarps.
+- **The plains' drive.** Venus's field is a tenth of its lid's strength, and its lid was renewed too lately for its shrinking to squeeze it; the plains' ridges stand on their own subsidence, which the floods do not yet load into the field (audit M26), so the drive past the strength is a stated share, chosen where Venus's ridges keep most to its lows. The share below the mean height was 75 percent at a tenth and 87 at a few hundredths; nothing fixed in between reaches the 93 percent measured, as the field's lows are the old ground's.
+- **The combed look.** Read by a field that decides their strike, Mars's ridges came out as straight parallel dashes: the pull toward the strike each step took back their wobble. The wobble is now a meander about the course, as the scarps' lobes were, and the ridges keep it.
+
+What the maps show:
+
+- **Mars:** 3,400 lobate scarps where it had none, all about Tharsis, thickest at its foot and out to two and a half rise radii, running round the rise; the longest, 1,200 km long and 3.4 km high, runs north and south down its western foot. The plains' ridges about the rise run round it as Lunae Planum's do, north and south over the lava basin east of it, near the pixel's size at 2048.
+- **Venus:** its ridges have left the margins of the tessera plateaus, where the lava's contours crowded them, for the lowland plains and rings at the feet of its grown rises: 84 percent of their midpoints lie below the mean height on the finished map, against 59 before. At 19 km a pixel they are texture, not lines.
+- **Mercury:** 7,200 scarps, the short ones drawn whole by the finish; 225 longer than 100 km against 352, as its lid holds a seventh of its contraction elastically and a quarter of its thrusts fold its smooth plains into ridges; placed and turned at random as before.
+- **The Moon:** unchanged: its shrinking stays within its lid's strength, and its maria keep their 2,300 ridges.
+- **Cost:** none to speak of, Mars's loop 18 s against 19. The finish's event sequence on Mars swings from 127 to 611 s between renders with the machine's load; the seventy-fourth's 314 s, and the third again its report put on the interior faults, were measured beside other work, and quiet runs give 130 to 150 s before and after.
+
+Still to do: the floods' load and the relief at their time in the field (M26); Mercury's thrusts' direction and their systems (M27); the belt's tilted-block fabric between Charon's chasmata and the belts' direction (M23); the coronae's share on Venus's rifts (M25); the icy lids' faults on the same field.
+
+Tests 241 (20 ignored), among them a thrust striking along a low's margin where the field decides its strike and hardly decided in the low's middle; a thrust's trace turning across the squeeze and stopping where it ends; the plains' ridges standing where the lid squeezes them and striking across its compression; and Mars's thrusts running round Tharsis while Venus's ridges keep to its lows. Clippy is clean and validate passes its 134 checks.

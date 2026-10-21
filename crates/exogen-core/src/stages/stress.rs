@@ -8,11 +8,15 @@
 //! potential energy of the relief: a high stands in tension, a low in compression, each
 //! alike every way within and across the slope at its margin, where a plateau spreads down
 //! its slope (Bilotti and Suppe 1999). A fault forms where the most tensile stress passes
-//! what breaks the brittle layer, and runs as long as it does.
+//! what breaks the brittle layer, and runs as long as it does. A thrust reads the same
+//! field from its other side (F154): it strikes across the most compressive stress, and it
+//! forms where the field's compression, added to what the body's shrinking puts on the lid
+//! alike every way, passes what breaks the layer in compression.
 
 use crate::constants::*;
 use crate::geom::{angle_between, cross, dot, local_basis, normalize};
 use crate::grid::CubeSphere;
+use crate::params::ParamGraph;
 use crate::stages::plume::{Axial, FieldAt, Rise, dome, rise_progress, total_stress};
 
 /// The upwelling limbs between neighbouring plumes: pairs of rises, by index, closer than
@@ -103,7 +107,7 @@ pub struct StressField<'a> {
     pub limbs: Limbs,
     /// The limb's pull at full growth, Pa, and the stress along it, a share of that.
     limb_tension: f64,
-    relief: Option<Relief>,
+    relief: Option<&'a Relief>,
     body_radius: f64,
     gravity: f64,
     /// The lid's elastic thickness, m, which carries the relief's force, and the length its
@@ -114,8 +118,23 @@ pub struct StressField<'a> {
     density: f64,
     mantle: f64,
     poisson: f64,
-    /// The tension that breaks the brittle layer, Pa.
+    /// The tension that breaks the brittle layer, Pa, and the compression (F154).
     pub yield_tension: f64,
+    pub yield_compression: f64,
+}
+
+/// The lid's compression at a place and time as a thrust reads it (F154).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Squeeze {
+    /// The field's most compressive stress, Pa, compression positive: negative where the
+    /// field stands in tension every way.
+    pub stress: f64,
+    /// The strike a thrust takes there: across the most compressive direction.
+    pub strike: [f64; 3],
+    /// How far the field decides that strike, 0 to 1: its differential stress against the
+    /// scatter of the lid's own strength, which a thrust in a field alike every way follows
+    /// instead.
+    pub decided: f64,
 }
 
 impl<'a> StressField<'a> {
@@ -126,7 +145,7 @@ impl<'a> StressField<'a> {
         body_radius: f64,
         gravity: f64,
         elastic: f64,
-        relief: Option<Relief>,
+        relief: Option<&'a Relief>,
     ) -> Self {
         let crest = rises
             .iter()
@@ -145,6 +164,7 @@ impl<'a> StressField<'a> {
         let flexural = std::f64::consts::TAU * (rigidity / (mantle * gravity.max(1e-3))).powf(0.25);
         let k = ((1.0 + ROCK_FRICTION.powi(2)).sqrt() + ROCK_FRICTION).powi(2);
         let yield_tension = (1.0 - 1.0 / k) * density * gravity * FAULT_LAYER_DEPTH;
+        let yield_compression = (k - 1.0) * density * gravity * FAULT_LAYER_DEPTH;
         Self {
             rises,
             axes,
@@ -160,6 +180,7 @@ impl<'a> StressField<'a> {
             mantle,
             poisson,
             yield_tension,
+            yield_compression,
         }
     }
 
@@ -325,11 +346,278 @@ impl<'a> StressField<'a> {
     pub fn excess(&self, p: [f64; 3], t: f64) -> f64 {
         (self.at(p, t).0 - self.yield_tension).max(0.0)
     }
+
+    /// The compression a thrust reads at a point and time (F154): the most compressive
+    /// stress, the strike across it, and how far the field decides that strike, its
+    /// differential stress against THRUST_STRIKE_SCATTER of the lid's strength in
+    /// compression.
+    pub fn squeeze(&self, p: [f64; 3], t: f64) -> Squeeze {
+        let (s1, s2, strike, _, _) = self.at(p, t);
+        // The normal faults' strike runs along the most compressive direction; a thrust's
+        // runs across it.
+        let across = cross(p, strike);
+        let strike = if dot(across, across) < 1e-20 {
+            local_basis(p).0
+        } else {
+            normalize(across)
+        };
+        let differential = (s1 - s2).max(0.0);
+        let scatter = THRUST_STRIKE_SCATTER * self.yield_compression;
+        Squeeze {
+            stress: -s2,
+            strike,
+            decided: differential / (differential + scatter.max(1.0)),
+        }
+    }
+}
+
+/// The compression the body's shrinking puts on a whole rock lid alike every way at a time,
+/// Pa (F154): its contraction over its radius, times the lid's stiffness alike every way.
+pub fn shrinking(thermal: &crate::thermal::ThermalHistory, body_radius: f64, t: f64) -> f64 {
+    ROCK_YOUNG_MODULUS / (1.0 - ROCK_POISSON) * thermal.at(t).contraction / body_radius
+}
+
+/// What the lid's field is built from, owned, so that a process can read the field through
+/// the loop (F154): the rises with their axes, the relief and the lid.
+#[derive(Clone, Debug)]
+pub struct FieldSource {
+    pub rises: Vec<Rise>,
+    pub relief: Option<Relief>,
+    pub body_radius: f64,
+    pub gravity: f64,
+    pub elastic: f64,
+}
+
+impl FieldSource {
+    pub fn new(graph: &ParamGraph, rises: Vec<Rise>, relief: Option<Relief>) -> Self {
+        Self {
+            rises,
+            relief,
+            body_radius: graph.f64("body.radius"),
+            gravity: graph.f64("body.gravity"),
+            elastic: graph.f64("interior.elastic_thickness"),
+        }
+    }
+
+    /// The field, each rise growing along its axis (F114).
+    pub fn field(&self) -> StressField<'_> {
+        let axes = self
+            .rises
+            .iter()
+            .map(|rise| Axial {
+                axis: rise.axis,
+                stress: RISE_AXIAL_STRESS,
+            })
+            .collect();
+        StressField::new(
+            &self.rises,
+            axes,
+            self.body_radius,
+            self.gravity,
+            self.elastic,
+            self.relief.as_ref(),
+        )
+    }
+}
+
+/// The lid's compression on a coarse grid through the loop (F154): each cell's reading at
+/// the time last asked for, read again only as the rises grow, since the relief's part of
+/// the field stands still.
+pub struct Compression {
+    pub source: FieldSource,
+    pub grid: CubeSphere,
+    /// Each cell's area, m².
+    pub area: Vec<f64>,
+    pub squeeze: Vec<Squeeze>,
+    pub yield_compression: f64,
+    /// The rises' growth when the cells were last read, and whether they have been.
+    grown: Vec<f64>,
+    read: bool,
+}
+
+impl Compression {
+    pub fn new(source: FieldSource, face: u32) -> Self {
+        let grid = CubeSphere::new(face);
+        let r = source.body_radius;
+        let area = (0..grid.cell_count())
+            .map(|i| grid.cell_area(grid.cell(i)) * r * r)
+            .collect();
+        let yield_compression = source.field().yield_compression;
+        Self {
+            source,
+            grid,
+            area,
+            squeeze: vec![Squeeze::default(); grid.cell_count()],
+            yield_compression,
+            grown: Vec::new(),
+            read: false,
+        }
+    }
+
+    /// Read the cells at a time, unless no rise has grown by FIELD_REREAD_GROWTH since
+    /// they were last read.
+    pub fn at(&mut self, t: f64) {
+        let grown: Vec<f64> = self
+            .source
+            .rises
+            .iter()
+            .map(|r| rise_progress(r, t))
+            .collect();
+        let moved = grown
+            .iter()
+            .zip(&self.grown)
+            .any(|(a, b)| (a - b).abs() > FIELD_REREAD_GROWTH);
+        if self.read && !moved {
+            return;
+        }
+        let field = self.source.field();
+        let grid = self.grid;
+        self.squeeze = (0..grid.cell_count())
+            .map(|i| field.squeeze(grid.center(grid.cell(i)), t))
+            .collect();
+        self.grown = grown;
+        self.read = true;
+    }
+
+    /// The reading at the cell that holds a point.
+    pub fn reading(&self, p: [f64; 3]) -> Squeeze {
+        self.squeeze[self.grid.index(self.grid.locate(p).0)]
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A thrust reads the field from its other side (F154): a low squeezes the lid and a
+    /// high stretches it; at the low's margin the squeeze is greatest across the slope, so a
+    /// thrust strikes along the contour, and the field decides it there, while in the low's
+    /// middle, squeezed alike every way, it decides little.
+    #[test]
+    fn a_thrust_strikes_along_a_low_s_margin_as_the_field_decides() {
+        let (r, g, te) = (6.0e6, 8.9, 30e3);
+        let grid = CubeSphere::new(128);
+        let ramp = |x: f64| {
+            let u = x.clamp(0.0, 1.0);
+            u * u * (3.0 - 2.0 * u)
+        };
+        let cap = |p: [f64; 3]| {
+            let lat = p[2].asin().to_degrees();
+            3000.0 * (ramp((lat - 55.0) / 10.0) - ramp((-lat - 55.0) / 10.0))
+        };
+        let height: Vec<f32> = (0..grid.cell_count())
+            .map(|i| cap(grid.center(grid.cell(i))) as f32)
+            .collect();
+        let relief = Relief { grid, height };
+        let field = StressField::new(&[], Vec::new(), r, g, te, Some(&relief));
+        let at = |lat: f64, lon: f64| {
+            let (la, lo) = (lat.to_radians(), lon.to_radians());
+            [la.cos() * lo.cos(), la.cos() * lo.sin(), la.sin()]
+        };
+        assert!(field.yield_compression > 3.0 * field.yield_tension);
+        let margin = field.squeeze(at(-60.0, 20.0), 1.0);
+        let middle = field.squeeze(at(-85.0, 20.0), 1.0);
+        let high = field.squeeze(at(85.0, 20.0), 1.0);
+        let (east, _) = local_basis(at(-60.0, 20.0));
+        assert!(
+            margin.stress > 0.0 && middle.stress > margin.stress,
+            "{} {}",
+            margin.stress,
+            middle.stress
+        );
+        assert!(high.stress < 0.0, "{}", high.stress);
+        assert!(
+            dot(margin.strike, east).abs() > 0.9,
+            "{}",
+            dot(margin.strike, east)
+        );
+        assert!(
+            margin.decided > 0.2 && margin.decided > 5.0 * middle.decided,
+            "{} {}",
+            margin.decided,
+            middle.decided
+        );
+    }
+
+    /// Prints the compression the field puts on each rocky lid: the most compressive
+    /// stress's spread, the differential stress and the lid's strength in compression.
+    #[test]
+    #[ignore = "diagnostic: the field's compression on the rocky lids"]
+    fn print_compression() {
+        let names =
+            std::env::var("EXOGEN_BODY").unwrap_or_else(|_| "Mercury,Moon,Mars,Venus".into());
+        for name in names.split(',') {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let thermal = crate::thermal::ThermalHistory::from_graph(&g);
+            let grid = CubeSphere::new(g.f64("detail.loop_resolution") as u32);
+            let r = g.f64("body.radius");
+            let gravity = g.f64("body.gravity");
+            let age = g.f64("body.age");
+            let elastic = g.f64("interior.elastic_thickness");
+            let layers = crate::stages::primordial_crust::PrimordialCrust::new(&g, grid).init();
+            let wavelength = StressField::flexural_wavelength(elastic, gravity);
+            let cell = grid.delta() * r;
+            let relief = Relief {
+                grid,
+                height: crate::stages::relaxation::low_pass(&layers.bedrock, cell, wavelength),
+            };
+            let (hmin, hmax) = relief
+                .height
+                .iter()
+                .fold((f32::MAX, f32::MIN), |a, &h| (a.0.min(h), a.1.max(h)));
+            let plume =
+                crate::stages::plume::PlumeProcess::new(&g, grid, &thermal, Some(relief.clone()));
+            let rises = plume.as_ref().map(|p| p.rises.clone()).unwrap_or_default();
+            let axes: Vec<Axial> = rises
+                .iter()
+                .map(|rise| Axial {
+                    axis: rise.axis,
+                    stress: RISE_AXIAL_STRESS,
+                })
+                .collect();
+            let field = StressField::new(&rises, axes, r, gravity, elastic, Some(&relief));
+            let k = ((1.0 + ROCK_FRICTION.powi(2)).sqrt() + ROCK_FRICTION).powi(2);
+            let yc = (k - 1.0) * DENSITY_CRUST_ROCK * gravity * FAULT_LAYER_DEPTH;
+            println!(
+                "{name}: Te {:.0} km, flexural {:.0} km, relief {:.1}..{:.1} km, rises {}, yield {:.1} MPa tension, {:.1} MPa compression",
+                elastic / 1e3,
+                wavelength / 1e3,
+                hmin / 1e3,
+                hmax / 1e3,
+                rises.len(),
+                field.yield_tension / 1e6,
+                yc / 1e6
+            );
+            let probe = CubeSphere::new(48);
+            for t in [0.25 * age, 0.5 * age, 0.75 * age, age] {
+                let mut s2s = Vec::new();
+                let mut diffs = Vec::new();
+                for i in 0..probe.cell_count() {
+                    let p = probe.center(probe.cell(i));
+                    let (s1, s2, _, _, _) = field.at(p, t);
+                    s2s.push(s2 / 1e6);
+                    diffs.push((s1 - s2) / 1e6);
+                }
+                s2s.sort_by(f64::total_cmp);
+                diffs.sort_by(f64::total_cmp);
+                let q = |v: &[f64], f: f64| v[((v.len() - 1) as f64 * f) as usize];
+                let beyond =
+                    s2s.iter().filter(|&&x| x < -yc / 1e6).count() as f64 / s2s.len() as f64;
+                println!(
+                    "  t {t:.2}: s2 MPa p1 {:.1} p10 {:.1} p50 {:.1} p90 {:.1} p99 {:.1}; s1-s2 p50 {:.1} p90 {:.1} p99 {:.1}; s2 beyond -Yc {:.3}",
+                    q(&s2s, 0.01),
+                    q(&s2s, 0.1),
+                    q(&s2s, 0.5),
+                    q(&s2s, 0.9),
+                    q(&s2s, 0.99),
+                    q(&diffs, 0.5),
+                    q(&diffs, 0.9),
+                    q(&diffs, 0.99),
+                    beyond
+                );
+            }
+        }
+    }
 
     /// The relief's potential energy stresses a high in tension, alike every way at its
     /// middle, across its slope at its margin, where the faults would run along the
@@ -350,7 +638,8 @@ mod tests {
         let height: Vec<f32> = (0..grid.cell_count())
             .map(|i| cap(grid.center(grid.cell(i))) as f32)
             .collect();
-        let field = StressField::new(&[], Vec::new(), r, g, te, Some(Relief { grid, height }));
+        let relief = Relief { grid, height };
+        let field = StressField::new(&[], Vec::new(), r, g, te, Some(&relief));
         let at = |lat: f64, lon: f64| {
             let (la, lo) = (lat.to_radians(), lon.to_radians());
             [la.cos() * lo.cos(), la.cos() * lo.sin(), la.sin()]

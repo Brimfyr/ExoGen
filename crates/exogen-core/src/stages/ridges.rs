@@ -9,6 +9,15 @@
 //! quickly, long sinuous ridges form roughly along the contours of the lava thickness,
 //! with a broad arch and a narrow crenulated crest. They form within a few hundred
 //! million years of the flows and are cut by whatever comes later.
+//!
+//! The plains stand in the lid's stress field (F156): the shrinking of a whole lid
+//! squeezes them, their own subsidence brings them past their strength, and the field
+//! adds its compression in the lows and at the feet of the rises and takes it away on the
+//! highs, so the ridges gather where the plains are squeezed most and are absent where the
+//! field holds them in tension (Venus's ridged plains, 93 per cent of them below its mean
+//! radius, Bilotti and Suppe 1999), and strike across the field's compression where it
+//! decides their strike, around Tharsis as around Venus's highlands, following the lava's
+//! contours where it does not.
 
 use std::collections::HashMap;
 
@@ -17,10 +26,13 @@ use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
 use crate::geom::{cross, dot, normalize};
 use crate::grid::CubeSphere;
+use crate::params::ParamGraph;
 use crate::rng::Rng;
+use crate::stages::stress::{FieldSource, Squeeze, shrinking};
 use crate::stages::volcanism::is_lava_unit;
+use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// A wrinkle ridge, kept for the sidecar and for stamping at the finishing resolution.
 #[derive(Clone, Debug)]
@@ -84,16 +96,61 @@ fn gradient(grid: &CubeSphere, body_radius: f64, field: &[f32], idx: usize) -> [
     ]
 }
 
+/// How far the lid squeezes the plains at each cell of the loop's grid, read at the time
+/// the cell's ridges would stand (F156), and the strike the field gives there. The squeeze
+/// is the overstress, the compression past the lid's strength: what a whole lid's
+/// shrinking puts on it, or at least the plains' own drive, which brings them
+/// RIDGE_DRIVE_SHARE past their strength (a stated choice standing for their subsidence as
+/// they cool and compact, against Venus's ridged plains, 93 per cent of them below the mean
+/// radius, Bilotti and Suppe 1999), with the field's compression added; given as a share
+/// that saturates at the lid's strength, past which the ridges stand as densely as they
+/// can and the shortening goes into their slip.
+pub fn plains_squeeze(
+    graph: &ParamGraph,
+    thermal: &ThermalHistory,
+    source: &FieldSource,
+    grid: CubeSphere,
+    last_time: &[f32],
+) -> (Vec<f64>, Vec<Squeeze>) {
+    let field = source.field();
+    let age = graph.f64("body.age");
+    let whole = graph.str("interior.tectonic_regime") == "stagnant_lid";
+    let strength = field.yield_compression;
+    (0..grid.cell_count())
+        .map(|k| {
+            let t = last_time[k];
+            if !t.is_finite() {
+                return (0.0, Squeeze::default());
+            }
+            let t = (t as f64 + RIDGE_DELAY_GYR).min(age);
+            let q = field.squeeze(grid.center(grid.cell(k)), t);
+            let shrink = if whole {
+                shrinking(thermal, source.body_radius, t)
+            } else {
+                0.0
+            };
+            let drive = shrink.max((1.0 + RIDGE_DRIVE_SHARE) * strength) - strength;
+            let over = (drive + q.stress).max(0.0);
+            (over / (over + strength.max(1.0)), q)
+        })
+        .unzip()
+}
+
 /// Lay out the ridges of the plains at the end of the loop from the cumulative lava
-/// thickness and the time of the last flood at each cell. Seeds favour steep thickness
-/// gradients; each ridge follows the thickness contours with some inertia and wobble,
-/// and stops where the plains end.
+/// thickness, the time of the last flood at each cell and the lid's squeeze on it (F156).
+/// Seeds favour the squeezed plains and steep thickness gradients; each ridge strikes
+/// across the field's compression as far as the field decides it, follows the thickness
+/// contours with some inertia and wobble where it does not, and stops where the plains end
+/// or are no longer squeezed.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_ridges(
     grid: &CubeSphere,
     body_radius: f64,
     units: &[u16],
     thickness: &[f32],
     last_time: &[f32],
+    squeezed: &[f64],
+    squeeze: &[Squeeze],
     age_gyr: f64,
     seed: u64,
 ) -> Vec<RidgeRecord> {
@@ -105,8 +162,11 @@ pub fn plan_ridges(
     let mut weights = vec![0.0f64; n];
     let mut lava_area = 0.0;
     let mut grads = vec![0.0f64; n];
-    // Plains proper: lava that was laid down here, not crater floors or ejecta on it.
-    let plains = |k: usize| units[k] == crate::units::UNIT_LAVA && last_time[k].is_finite();
+    // Plains proper: lava that was laid down here, not crater floors or ejecta on it, that
+    // the lid squeezes.
+    let plains = |k: usize| {
+        units[k] == crate::units::UNIT_LAVA && last_time[k].is_finite() && squeezed[k] > 0.0
+    };
     for (k, gk) in grads.iter_mut().enumerate() {
         if !plains(k) {
             continue;
@@ -138,7 +198,7 @@ pub fn plan_ridges(
             } else {
                 1.0
             };
-            weights[k] = RIDGE_SEED_FLOOR + rel;
+            weights[k] = (RIDGE_SEED_FLOOR + rel) * squeezed[k];
         }
         acc += weights[k];
         cumulative.push(acc);
@@ -171,6 +231,18 @@ pub fn plan_ridges(
                 east[2] * phi.cos() + north[2] * phi.sin(),
             ])
         };
+        // Across the field's compression, as far as it decides the strike.
+        let q = squeeze[start];
+        let strike = if dot(q.strike, heading) < 0.0 {
+            [-q.strike[0], -q.strike[1], -q.strike[2]]
+        } else {
+            q.strike
+        };
+        heading = normalize([
+            q.decided * strike[0] + (1.0 - q.decided) * heading[0],
+            q.decided * strike[1] + (1.0 - q.decided) * heading[1],
+            q.decided * strike[2] + (1.0 - q.decided) * heading[2],
+        ]);
         if rng.uniform(0, draw + 5) < 0.5 {
             heading = [-heading[0], -heading[1], -heading[2]];
         }
@@ -178,10 +250,11 @@ pub fn plan_ridges(
         let mut points = vec![p0];
         let mut p = p0;
         let wobble_phase = 2.0 * std::f64::consts::PI * rng.uniform(0, draw + 6);
+        let second_phase = 2.0 * std::f64::consts::PI * rng.uniform(0, draw + 7);
         for i in 1..=steps {
             // Follow the contour with inertia, plus a slow wobble.
             let idx = grid.index(grid.locate(p).0);
-            if !is_lava_unit(units[idx]) {
+            if !is_lava_unit(units[idx]) || squeezed[idx] <= 0.0 {
                 break;
             }
             let g = gradient(grid, body_radius, thickness, idx);
@@ -196,25 +269,21 @@ pub fn plan_ridges(
                 0.0
             };
             let along = if gn > 0.0 { normalize(along) } else { heading };
-            let mut h = [
-                (1.0 - follow) * heading[0] + follow * along[0],
-                (1.0 - follow) * heading[1] + follow * along[1],
-                (1.0 - follow) * heading[2] + follow * along[2],
-            ];
-            // Wobble: a slow sinusoidal turn about the normal.
-            let turn = RIDGE_WOBBLE_DEG.to_radians()
-                * (2.0 * std::f64::consts::PI * i as f64 * spacing / RIDGE_WOBBLE_LENGTH
-                    + wobble_phase)
-                    .sin()
-                * spacing
-                / RIDGE_WOBBLE_LENGTH
-                * 2.0
-                * std::f64::consts::PI;
-            let side = cross(p, h);
-            h = [
-                h[0] + turn * side[0],
-                h[1] + turn * side[1],
-                h[2] + turn * side[2],
+            // The field's strike where it decides it, the contours where it does not.
+            let q = squeeze[idx];
+            let strike = if dot(q.strike, heading) < 0.0 {
+                [-q.strike[0], -q.strike[1], -q.strike[2]]
+            } else {
+                q.strike
+            };
+            let (fc, ff) = (
+                (1.0 - q.decided) * follow,
+                q.decided * THRUST_FIELD_FOLLOWING,
+            );
+            let h = [
+                (1.0 - fc - ff) * heading[0] + fc * along[0] + ff * strike[0],
+                (1.0 - fc - ff) * heading[1] + fc * along[1] + ff * strike[1],
+                (1.0 - fc - ff) * heading[2] + fc * along[2] + ff * strike[2],
             ];
             let radial = dot(h, p);
             heading = normalize([
@@ -222,11 +291,20 @@ pub fn plan_ridges(
                 h[1] - radial * p[1],
                 h[2] - radial * p[2],
             ]);
+            // Its meander about that course: the step's direction wobbles slowly, in two
+            // harmonics, which the pull of the field or the contours does not take back.
+            let s = i as f64 * spacing / RIDGE_WOBBLE_LENGTH;
+            let (ratio, share) = RIDGE_WOBBLE_HARMONIC;
+            let wobble = RIDGE_WOBBLE_DEG.to_radians()
+                * ((2.0 * std::f64::consts::PI * s + wobble_phase).sin()
+                    + share * (2.0 * std::f64::consts::PI * ratio * s + second_phase).sin());
+            let side = normalize(cross(p, heading));
+            let (c, w) = (wobble.cos(), wobble.sin());
             let step = spacing / body_radius;
             p = normalize([
-                p[0] + step * heading[0],
-                p[1] + step * heading[1],
-                p[2] + step * heading[2],
+                p[0] + step * (c * heading[0] + w * side[0]),
+                p[1] + step * (c * heading[1] + w * side[1]),
+                p[2] + step * (c * heading[2] + w * side[2]),
             ]);
             points.push(p);
         }
@@ -375,6 +453,63 @@ mod tests {
         assert!(ridge_profile(0.0, 0.0, 60.0, 2_000.0) < 60.0);
     }
 
+    /// The lid's squeeze places the plains' ridges and strikes them (F156): on plains of
+    /// even thickness, squeezed in their northern half alone with the field's strike east,
+    /// the ridges stand in the north and run east and west but for their wobble.
+    #[test]
+    fn the_lid_s_squeeze_places_the_plains_ridges_and_strikes_them() {
+        let grid = CubeSphere::new(64);
+        let body_radius = 1_700e3;
+        let n = grid.cell_count();
+        let centre = normalize([1.0, 0.0, 0.0]);
+        let mut units = vec![UNIT_PRIMORDIAL; n];
+        let thickness = vec![500.0f32; n];
+        let last_time = vec![3.0f32; n];
+        let mut squeezed = vec![0.0; n];
+        let mut squeeze = vec![Squeeze::default(); n];
+        for k in 0..n {
+            let p = grid.center(grid.cell(k));
+            if angle_between(centre, p) < 0.5 {
+                units[k] = UNIT_LAVA;
+            }
+            if p[2] > 0.0 {
+                squeezed[k] = 0.5;
+            }
+            squeeze[k] = Squeeze {
+                stress: 1e6,
+                strike: crate::geom::local_basis(p).0,
+                decided: 1.0,
+            };
+        }
+        let ridges = plan_ridges(
+            &grid,
+            body_radius,
+            &units,
+            &thickness,
+            &last_time,
+            &squeezed,
+            &squeeze,
+            4.5,
+            11,
+        );
+        assert!(ridges.len() > 10, "{} ridges", ridges.len());
+        let (mut steps, mut east) = (0usize, 0usize);
+        for r in &ridges {
+            for w in r.points.windows(2) {
+                assert!(w[0][2] > -grid.delta(), "a ridge in the south: {}", w[0][2]);
+                let d = normalize([w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]]);
+                steps += 1;
+                if dot(d, crate::geom::local_basis(w[0]).0).abs() > 0.87 {
+                    east += 1;
+                }
+            }
+        }
+        assert!(
+            east * 10 > steps * 6,
+            "{east} of {steps} steps east and west"
+        );
+    }
+
     /// A round patch of plains thickest in the middle: the ridges lie on it, run roughly
     /// along its contours, and together reach the planned length per area.
     #[test]
@@ -394,7 +529,20 @@ mod tests {
                 thickness[k] = (2_000.0 * (1.0 - (a / radius).powi(2))) as f32;
             }
         }
-        let ridges = plan_ridges(&grid, body_radius, &units, &thickness, &last_time, 4.5, 7);
+        // Squeezed alike everywhere, with no strike of the field's own.
+        let squeezed = vec![0.5; n];
+        let squeeze = vec![Squeeze::default(); n];
+        let ridges = plan_ridges(
+            &grid,
+            body_radius,
+            &units,
+            &thickness,
+            &last_time,
+            &squeezed,
+            &squeeze,
+            4.5,
+            7,
+        );
         assert!(ridges.len() > 10, "{} ridges", ridges.len());
         let lava_area: f64 = (0..n)
             .filter(|&k| units[k] == UNIT_LAVA)

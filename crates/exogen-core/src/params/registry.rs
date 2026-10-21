@@ -2987,7 +2987,7 @@ static NODES: &[NodeDef] = &[
         f(0.0, 0.1),
         &["interior.contraction_total", "body.radius"],
         d::tectonics_contraction_strain,
-        "Areal strain from global contraction, 2 dR / R; Mercury about 0.5%. The scarps take up this fraction of the surface area as shortening.",
+        "Areal strain from global contraction, 2 dR / R; Mercury about 0.5%. The thrusts take up what of it passes the lid's elastic strain, place by place with the stress field's squeeze (F155).",
         "F16",
     ),
     derived(

@@ -3,13 +3,21 @@
 
 //! Global contraction expressed as lobate thrust scarps (PLAN.md 4.3, stagnant lid).
 //!
-//! The thermal history gives the cumulative radial contraction. The areal strain 2 ΔR / R
-//! times the surface area is the shortening area the scarps take up: a scarp of length L
-//! and height h shortens the crust by h / tan(dip) across its length. As the budget grows
-//! through the loop, scarps are sampled from a power-law length distribution and stamped
-//! at the step they form, so they cut what is older and are cut by what is younger. Each
-//! has a steep face on the hanging-wall side and a gentle back slope, tapering to nothing
-//! at its ends, along a gently curving trace.
+//! The thermal history gives the cumulative radial contraction, which squeezes the lid
+//! alike every way; the lid's stress field adds its own compression and tension (F150).
+//! The lid holds the squeeze elastically until it passes what breaks its faulted layer in
+//! compression, and its thrusts take up whatever lies beyond (F155): twice that overstress
+//! over the lid's stiffness, as a share of its area, place by place, so that a thrust forms
+//! where the overstress grows and a place shortens only past the most it has borne. A
+//! scarp of length L and height h shortens the crust by h / tan(dip) across its length. As
+//! the budget grows through the loop, scarps are sampled from a power-law length
+//! distribution, the longest growing with the strain the place takes up, and stamped at
+//! the step they form, so they cut what is older and are cut by what is younger. Each
+//! strikes across the most compressive stress as far as the field decides it and otherwise
+//! runs its own way, scalloped into lobes, and stops where the lid is no longer squeezed
+//! past its strength. Each has a steep face on the hanging-wall side and a gentle back
+//! slope, tapering to nothing at its ends. A thrust beneath the layered lava of the plains
+//! breaks no scarp: it folds them into a wrinkle ridge.
 
 use std::collections::HashMap;
 
@@ -20,9 +28,12 @@ use crate::geom::{azimuth_from, cross, dot, local_basis, normalize, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
+use crate::stages::ridges::RidgeRecord;
+use crate::stages::stress::{Compression, FieldSource, Squeeze};
+use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// A scarp that was emplaced, kept for the sidecar and for re-stamping its face at the
 /// finishing resolution.
@@ -36,6 +47,8 @@ pub struct ScarpRecord {
     pub height: f64,
     pub time_gyr: f64,
     pub id: u64,
+    /// Whether the loop's grid carried it; the finish draws the rest whole (F155).
+    pub carried: bool,
 }
 
 impl ScarpRecord {
@@ -98,32 +111,76 @@ fn sample_length(u: f64, l_min: f64, l_max: f64) -> f64 {
     (lo - u.clamp(0.0, 1.0) * (lo - hi)).powf(-1.0 / a)
 }
 
-/// A curving trace of `length` from `start` along `heading`: an overall turn of `turn`
-/// with lobes from a few harmonics of heading wobble at the given `phases`, so the trace
-/// bends and scallops the way lobate scarps do rather than running straight.
-fn make_trace(
+/// A thrust's trace (F155): from `start` along `heading`, a unit vector in the tangent
+/// plane, turning toward the strike the lid's compression gives as far as the field decides
+/// it, and where it does not, bending its own way by `turn` over its length; lobes from a
+/// few harmonics of heading wobble at the given `phases` scallop it as lobate scarps are.
+/// It stops where the lid is no longer squeezed past its strength: where the uniform
+/// compression's excess over the strength, `drive`, Pa, and the field's compression there
+/// sum to nothing.
+#[allow(clippy::too_many_arguments)]
+fn thrust_trace(
     start: [f64; 3],
-    heading: f64,
+    heading: [f64; 3],
     turn: f64,
     phases: [f64; SCARP_LOBE_HARMONICS],
     length: f64,
     spacing: f64,
     body_radius: f64,
+    field: &dyn Fn([f64; 3]) -> Squeeze,
+    drive: f64,
 ) -> Vec<[f64; 3]> {
     let n = (length / spacing).ceil().max(2.0) as usize;
     let mut points = Vec::with_capacity(n + 1);
+    let tangent = |p: [f64; 3], v: [f64; 3]| {
+        let r = dot(v, p);
+        normalize([v[0] - r * p[0], v[1] - r * p[1], v[2] - r * p[2]])
+    };
     let mut p = start;
+    let mut base = tangent(p, heading);
     for i in 0..=n {
+        let here = field(p);
+        if i > 0 && drive + here.stress <= 0.0 {
+            break;
+        }
         points.push(p);
+        if i == n {
+            break;
+        }
         let (east, north) = local_basis(p);
+        // Toward the field's strike, as far as it decides it, the way the trace runs.
+        let strike = if dot(here.strike, base) < 0.0 {
+            [-here.strike[0], -here.strike[1], -here.strike[2]]
+        } else {
+            here.strike
+        };
+        let pull = here.decided * THRUST_FIELD_FOLLOWING;
+        base = tangent(
+            p,
+            [
+                (1.0 - pull) * base[0] + pull * strike[0],
+                (1.0 - pull) * base[1] + pull * strike[1],
+                (1.0 - pull) * base[2] + pull * strike[2],
+            ],
+        );
+        // Its own bend, where the field leaves it free.
+        let azimuth =
+            dot(base, north).atan2(dot(base, east)) + (1.0 - here.decided) * turn / n as f64;
+        base = [
+            east[0] * azimuth.cos() + north[0] * azimuth.sin(),
+            east[1] * azimuth.cos() + north[1] * azimuth.sin(),
+            east[2] * azimuth.cos() + north[2] * azimuth.sin(),
+        ];
         let s = (i as f64 + 0.5) / n as f64;
-        let mut head = heading + turn * s;
+        let mut head = azimuth;
         for (k, phase) in phases.iter().enumerate() {
             let k = (k + 1) as f64;
             head += SCARP_LOBE_DEG.to_radians() / k
                 * (2.0 * std::f64::consts::PI * k * s + phase).sin();
         }
-        p = offset(p, east, north, spacing / body_radius, head);
+        let q = offset(p, east, north, spacing / body_radius, head);
+        base = tangent(q, base);
+        p = q;
     }
     points
 }
@@ -218,7 +275,6 @@ pub fn scarp_compute(
 pub struct ContractionProcess {
     grid: CubeSphere,
     body_radius: f64,
-    area: f64,
     thermal: ThermalHistory,
     age: f64,
     rng: Rng,
@@ -226,54 +282,88 @@ pub struct ContractionProcess {
     /// Shortening area still to be taken up, carried between steps.
     carry: f64,
     l_min: f64,
-    l_max: f64,
     stamp_min: f64,
+    /// The lid's compression the thrusts read (F154), its stiffness alike every way, Pa,
+    /// and each coarse cell's overstress at its highest so far, Pa: the lid there has
+    /// failed up to it, and only what passes it shortens it anew (F155).
+    compression: Compression,
+    stiffness: f64,
+    high: Vec<f64>,
+    /// The longest thrust each coarse cell's strain makes, m.
+    reach: Vec<f64>,
     pub records: Vec<ScarpRecord>,
+    /// The thrusts beneath the plains, which fold them into ridges (F155).
+    pub ridges: Vec<RidgeRecord>,
+}
+
+/// The longest thrust a strain makes: deeper faulting under higher stress and the linking
+/// of segments into longer systems. Mercury's 0.4 per cent beyond its lid's elastic strain
+/// gives thousand-kilometre scarps; a hundredth of that, kilometres.
+fn longest_thrust(strain: f64, body_radius: f64) -> f64 {
+    (SCARP_REFERENCE_MAX_LENGTH
+        * (strain / SCARP_REFERENCE_STRAIN).powf(SCARP_LENGTH_STRAIN_EXPONENT))
+    .min(SCARP_MAX_LENGTH_FRACTION * body_radius)
 }
 
 impl ContractionProcess {
-    /// None for regimes that do not express contraction as scarps.
-    pub fn new(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory) -> Option<Self> {
+    /// None for regimes that do not express contraction as scarps, and where the lid holds
+    /// its squeeze within its strength. `source` is the lid's field (F150, F154).
+    pub fn new(
+        graph: &ParamGraph,
+        grid: CubeSphere,
+        thermal: &ThermalHistory,
+        source: FieldSource,
+    ) -> Option<Self> {
         if graph.str("interior.tectonic_regime") != "stagnant_lid" {
             return None;
         }
         let body_radius = graph.f64("body.radius");
+        let age = graph.f64("body.age");
         let cell = 2.0 * std::f64::consts::PI * body_radius / (4.0 * grid.face_size() as f64);
-        // The longest fault grows with the strain taken up: deeper faulting under higher
-        // stress and the linking of segments into longer systems. Mercury's half per cent
-        // gives thousand-kilometre scarps; the Moon's hundredth of a per cent, kilometres.
-        let strain = graph.f64("tectonics.contraction_strain");
-        let l_max = (SCARP_REFERENCE_MAX_LENGTH
-            * (strain / SCARP_REFERENCE_STRAIN).powf(SCARP_LENGTH_STRAIN_EXPONENT))
-        .min(SCARP_MAX_LENGTH_FRACTION * body_radius);
-        if l_max <= SCARP_MIN_LENGTH {
+        let stiffness = ROCK_YOUNG_MODULUS / (1.0 - ROCK_POISSON);
+        let mut compression = Compression::new(source, COMPRESSION_FACE);
+        // The longest thrust grows with the strain the place takes up by the present.
+        compression.at(age);
+        let drive = crate::stages::stress::shrinking(thermal, body_radius, age)
+            - compression.yield_compression;
+        let reach: Vec<f64> = compression
+            .squeeze
+            .iter()
+            .map(|q| longest_thrust(2.0 * (drive + q.stress).max(0.0) / stiffness, body_radius))
+            .collect();
+        if reach.iter().all(|&l| l <= SCARP_MIN_LENGTH) {
             return None;
         }
+        let cells = compression.grid.cell_count();
         Some(Self {
             grid,
             body_radius,
-            area: 4.0 * std::f64::consts::PI * body_radius * body_radius,
             thermal: thermal.clone(),
-            age: graph.f64("body.age"),
+            age,
             rng: Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x5CA2_9F11),
             stamper: Stamper::new(&grid),
             carry: 0.0,
             l_min: SCARP_MIN_LENGTH,
-            l_max,
             stamp_min: SCARP_LOOP_MIN_CELLS * cell,
+            compression,
+            stiffness,
+            high: vec![0.0; cells],
+            reach,
             records: Vec::new(),
+            ridges: Vec::new(),
         })
     }
 
-    /// Shortening area to take up between two times.
-    fn budget(&self, t0: f64, t1: f64) -> f64 {
-        let strain = |t: f64| 2.0 * self.thermal.at(t).contraction / self.body_radius;
-        ((strain(t1) - strain(t0)) * self.area).max(0.0)
+    /// The uniform compression's excess over the lid's strength at a time, Pa: what the
+    /// body's shrinking puts on the lid alike every way, over its stiffness.
+    fn drive(&self, t: f64) -> f64 {
+        crate::stages::stress::shrinking(&self.thermal, self.body_radius, t)
+            - self.compression.yield_compression
     }
 
     /// Scarps formed between two times, in order of formation, not yet emplaced. The
-    /// budget is spent on the whole population; only those the loop grid can carry are
-    /// returned.
+    /// budget is spent on the whole population; those the loop grid can carry are marked
+    /// so, and the rest are left to the finish.
     pub fn sample(&mut self, t0: f64, t1: f64) -> Vec<ScarpRecord> {
         let mut out = Vec::new();
         for (bin, b0, b1) in crate::stages::time_bins(self.age, t0, t1) {
@@ -286,61 +376,149 @@ impl ContractionProcess {
     /// The scarps of one time bin, drawn with the bin as the random index.
     fn sample_bin(&mut self, bin: u64, t0: f64, t1: f64, out: &mut Vec<ScarpRecord>) {
         let step_index = bin;
-        let mut budget = self.budget(t0, t1) + self.carry;
+        // Where the lid's overstress grew in the bin, and the shortening it asks.
+        self.compression.at(t1);
+        let drive = self.drive(t1);
+        let mut weights = Vec::with_capacity(self.high.len());
+        let mut sum = 0.0;
+        let mut budget = self.carry;
+        for (i, q) in self.compression.squeeze.iter().enumerate() {
+            let over = (drive + q.stress).max(0.0);
+            let grown = (over - self.high[i]).max(0.0);
+            self.high[i] = self.high[i].max(over);
+            let w = grown * self.compression.area[i];
+            budget += 2.0 * w / self.stiffness;
+            sum += w;
+            weights.push(sum);
+        }
+        if sum <= 0.0 {
+            self.carry = budget.min(0.0);
+            return;
+        }
+        let grid = self.compression.grid;
+        let half_cell = 0.5 * grid.delta();
         let mut j = 0u64;
         while budget > 0.0 && j < 200_000 {
             let draw = 16 + j * 12;
-            let length = sample_length(self.rng.uniform(step_index, draw), self.l_min, self.l_max);
-            let height = scarp_height(length);
-            budget -= length * scarp_shortening(height);
-            if length >= self.stamp_min {
-                let spacing = 0.5 * self.stamp_min / SCARP_LOOP_MIN_CELLS;
-                let start = self.rng.unit_direction(step_index, draw + 1);
-                let heading = 2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 3);
-                let turn = SCARP_TURN_DEG.to_radians()
-                    * (2.0 * self.rng.uniform(step_index, draw + 4) - 1.0);
-                let time_gyr = t0 + (t1 - t0) * self.rng.uniform(step_index, draw + 5);
-                let mut phases = [0.0; SCARP_LOBE_HARMONICS];
-                for (k, phase) in phases.iter_mut().enumerate() {
-                    *phase = 2.0
-                        * std::f64::consts::PI
-                        * self.rng.uniform(step_index, draw + 6 + k as u64);
-                }
-                let rec = ScarpRecord {
-                    points: make_trace(
-                        start,
-                        heading,
-                        turn,
-                        phases,
-                        length,
-                        spacing,
-                        self.body_radius,
-                    ),
-                    spacing,
-                    length,
-                    height,
-                    time_gyr,
-                    id: (step_index << 32) | j,
-                };
-                out.push(rec);
-            }
             j += 1;
+            // Where it starts: as the overstress grew, anywhere in its cell.
+            let u = self.rng.uniform(step_index, draw + 1) * sum;
+            let i = weights.partition_point(|&w| w < u).min(weights.len() - 1);
+            let center = grid.center(grid.cell(i));
+            let (east, north) = local_basis(center);
+            let start = offset(
+                center,
+                east,
+                north,
+                half_cell * self.rng.uniform(step_index, draw + 9).sqrt(),
+                2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 2),
+            );
+            let reach = self.reach[i];
+            if reach <= self.l_min {
+                // Its strain goes into faults too short to draw, as the shortest drawn.
+                budget -= self.l_min * scarp_shortening(scarp_height(self.l_min));
+                continue;
+            }
+            let length = sample_length(self.rng.uniform(step_index, draw), self.l_min, reach);
+            let carried = length >= self.stamp_min;
+            let spacing = (0.5 * self.stamp_min / SCARP_LOOP_MIN_CELLS).min(length / 8.0);
+            // Its strike: across the most compressive stress as far as the field decides
+            // it, its own way otherwise.
+            let here = self.compression.reading(start);
+            let phi = 2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 3);
+            let free = [
+                east[0] * phi.cos() + north[0] * phi.sin(),
+                east[1] * phi.cos() + north[1] * phi.sin(),
+                east[2] * phi.cos() + north[2] * phi.sin(),
+            ];
+            let strike = if dot(here.strike, free) < 0.0 {
+                [-here.strike[0], -here.strike[1], -here.strike[2]]
+            } else {
+                here.strike
+            };
+            let a = here.decided;
+            let heading = [
+                a * strike[0] + (1.0 - a) * free[0],
+                a * strike[1] + (1.0 - a) * free[1],
+                a * strike[2] + (1.0 - a) * free[2],
+            ];
+            let turn =
+                SCARP_TURN_DEG.to_radians() * (2.0 * self.rng.uniform(step_index, draw + 4) - 1.0);
+            let time_gyr = t0 + (t1 - t0) * self.rng.uniform(step_index, draw + 5);
+            let mut phases = [0.0; SCARP_LOBE_HARMONICS];
+            for (k, phase) in phases.iter_mut().enumerate() {
+                *phase =
+                    2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 6 + k as u64);
+            }
+            let compression = &self.compression;
+            let points = thrust_trace(
+                start,
+                heading,
+                turn,
+                phases,
+                length,
+                spacing,
+                self.body_radius,
+                &|p| compression.reading(p),
+                drive,
+            );
+            // What it takes up, as far as it ran.
+            let actual = (points.len() - 1) as f64 * spacing;
+            let height = scarp_height(actual.max(1.0));
+            budget -= actual * scarp_shortening(height);
+            if actual < self.l_min || points.len() < 3 {
+                continue;
+            }
+            out.push(ScarpRecord {
+                points,
+                spacing,
+                length: actual,
+                height,
+                time_gyr,
+                id: (step_index << 32) | (j - 1),
+                carried: carried && actual >= self.stamp_min,
+            });
         }
         self.carry = budget.min(0.0);
     }
 
-    /// Cut one scarp into the surface as it is now, and record it.
+    /// Cut one scarp into the surface as it is now, if the loop's grid carries it, and
+    /// record it; beneath the plains, record the ridge it folds them into instead.
     pub fn apply(&mut self, layers: &mut LayerSet, rec: ScarpRecord) {
-        let out = scarp_compute(
-            layers,
-            &self.grid,
-            self.body_radius,
-            &rec,
-            0.0,
-            None,
-            &mut self.stamper,
-        );
-        out.apply(layers);
+        let units = layers.unit_id.as_slice();
+        let on_lava = rec
+            .points
+            .iter()
+            .filter(|p| is_lava_unit(units[self.grid.index(self.grid.locate(**p).0)]))
+            .count();
+        if 2 * on_lava > rec.points.len() {
+            // A thrust beneath layered lava folds it into a ridge as the plains' own are,
+            // its slip taken up in the fold (F155).
+            let height = RIDGE_HEIGHT * (0.6 + 0.8 * self.rng.uniform(rec.id, 0xA1));
+            let crest = RIDGE_CREST_HEIGHT * (0.6 + 0.8 * self.rng.uniform(rec.id, 0xA2));
+            self.ridges.push(RidgeRecord {
+                points: rec.points,
+                spacing: rec.spacing,
+                length: rec.length,
+                height,
+                crest,
+                time_gyr: rec.time_gyr,
+                id: rec.id ^ 0x7A12_0000_0000,
+            });
+            return;
+        }
+        if rec.carried {
+            let out = scarp_compute(
+                layers,
+                &self.grid,
+                self.body_radius,
+                &rec,
+                0.0,
+                None,
+                &mut self.stamper,
+            );
+            out.apply(layers);
+        }
         self.records.push(rec);
     }
 
@@ -390,14 +568,22 @@ mod tests {
         let height = scarp_height(length);
         let spacing = 0.5 * grid.delta() * body_radius;
         let start = normalize([1.0, 0.2, 0.1]);
-        let points = make_trace(
+        let (east, north) = local_basis(start);
+        let heading = [
+            east[0] * 0.3f64.cos() + north[0] * 0.3f64.sin(),
+            east[1] * 0.3f64.cos() + north[1] * 0.3f64.sin(),
+            east[2] * 0.3f64.cos() + north[2] * 0.3f64.sin(),
+        ];
+        let points = thrust_trace(
             start,
-            0.3,
+            heading,
             0.2,
             [0.0; SCARP_LOBE_HARMONICS],
             length,
             spacing,
             body_radius,
+            &|_| Squeeze::default(),
+            1e9,
         );
         let rec = ScarpRecord {
             points,
@@ -406,6 +592,7 @@ mod tests {
             height,
             time_gyr: 1.0,
             id: 1,
+            carried: true,
         };
         let mut stamper = Stamper::new(&grid);
         let out = scarp_compute(&layers, &grid, body_radius, &rec, 0.0, None, &mut stamper);
@@ -442,6 +629,57 @@ mod tests {
         // Near the ends the taper has brought it most of the way down.
         let end = at(2, 4.0 * face);
         assert!(end < 0.5 * crest, "{end} vs {crest}");
+    }
+
+    /// A thrust's trace turns across the squeeze where the field decides its strike, and
+    /// stops where the lid is no longer squeezed past its strength (F155).
+    #[test]
+    fn a_thrust_turns_across_the_squeeze_and_stops_where_it_ends() {
+        let body_radius = 1.0e6;
+        let spacing = 5e3;
+        // The strike runs east everywhere, wholly decided; the lid is squeezed past its
+        // strength west of 20 degrees east and not beyond.
+        let field = |p: [f64; 3]| Squeeze {
+            stress: if p[1].atan2(p[0]).to_degrees() < 20.0 {
+                1e6
+            } else {
+                -1e6
+            },
+            strike: local_basis(p).0,
+            decided: 1.0,
+        };
+        let start = [1.0, 0.0, 0.0];
+        let (east, north) = local_basis(start);
+        let heading = [
+            0.2 * east[0] + north[0],
+            0.2 * east[1] + north[1],
+            0.2 * east[2] + north[2],
+        ];
+        let points = thrust_trace(
+            start,
+            heading,
+            0.0,
+            [0.0; SCARP_LOBE_HARMONICS],
+            1.0e6,
+            spacing,
+            body_radius,
+            &field,
+            0.0,
+        );
+        // It stopped short of its length, at the squeeze's end.
+        let last = *points.last().unwrap();
+        assert!(points.len() < 150, "{}", points.len());
+        let lon = last[1].atan2(last[0]).to_degrees();
+        assert!(lon < 20.0 && lon > 15.0, "{lon}");
+        // Its last steps run east, across the squeeze.
+        let n = points.len();
+        let (a, b) = (points[n - 2], points[n - 1]);
+        let step = normalize([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+        assert!(
+            dot(step, local_basis(a).0) > 0.95,
+            "{}",
+            dot(step, local_basis(a).0)
+        );
     }
 
     #[test]

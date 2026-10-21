@@ -372,7 +372,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 114;
+pub const FINISH_VERSION: u64 = 115;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -404,7 +404,6 @@ pub fn run_coarse_loop(
     let crust = primordial_crust::PrimordialCrust::new(graph, grid);
     let mut layers = crust.init();
     let mut impacts = impacts::ImpactProcess::new(graph, grid);
-    let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal);
     // The ground before the rises, low-passed over the lid's flexural wavelength, for the
     // stress its potential energy puts on the lid (F150).
     let relief = {
@@ -417,7 +416,15 @@ pub fn run_coarse_loop(
             height: relaxation::low_pass(&layers.bedrock, cell, wavelength),
         }
     };
-    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal, Some(relief));
+    let mut plume = plume::PlumeProcess::new(graph, grid, &thermal, Some(relief.clone()));
+    // The thrusts read the same field from its other side (F154, F155).
+    let field_source = stress::FieldSource::new(
+        graph,
+        plume.as_ref().map(|p| p.rises.clone()).unwrap_or_default(),
+        Some(relief),
+    );
+    let mut contraction =
+        tectonics::ContractionProcess::new(graph, grid, &thermal, field_source.clone());
     // The lid's own faults, the wide ones carved through the loop (F147, F153).
     let mut strain = strain::StrainProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(
@@ -598,7 +605,10 @@ pub fn run_coarse_loop(
     let hash = hash_words(&hashes);
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
-    let scarps = contraction.map(|c| c.records).unwrap_or_default();
+    let (scarps, thrust_ridges) = match contraction {
+        Some(c) => (c.records, c.ridges),
+        None => (Vec::new(), Vec::new()),
+    };
     let (paterae, mountains, io_base) = match io {
         Some(i) => (i.paterae, i.mountains, i.base.map(|b| b.bedrock)),
         None => (Vec::new(), Vec::new(), None),
@@ -607,9 +617,9 @@ pub fn run_coarse_loop(
         Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
         None => (None, Vec::new(), Vec::new(), Vec::new()),
     };
-    let (rises, shields, mut canyons, mut graben, load) = match plume {
-        Some(p) => (p.rises, p.shields, p.canyons, p.graben, Some(p.load)),
-        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None),
+    let (rises, shields, mut canyons, mut graben) = match plume {
+        Some(p) => (p.rises, p.shields, p.canyons, p.graben),
+        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
     };
     // The novae's fractures are stamped as the graben are, and so are the faults the lid's
     // growth opens (F147): the wide ones carved through the loop as canyons (F153).
@@ -618,21 +628,21 @@ pub fn run_coarse_loop(
         canyons.extend(s.canyons);
         graben.extend(s.graben);
     }
-    let (floods, ridges, provinces) = match floods {
+    let (floods, mut ridges, provinces) = match floods {
         Some(f) => {
-            // The ridges follow the lava thickness and, around a rise, its load.
-            let mut field = f.thickness.clone();
-            if let Some(load) = &load {
-                for (v, l) in field.iter_mut().zip(load) {
-                    *v += RIDGE_LOAD_WEIGHT as f32 * l;
-                }
-            }
+            // The plains' ridges stand where the lid squeezes them, read when each place's
+            // would stand, and follow the lava's thickness where the field leaves them free
+            // (F156).
+            let (squeezed, squeeze) =
+                ridges::plains_squeeze(graph, &thermal, &field_source, grid, &f.last_time);
             let ridges = ridges::plan_ridges(
                 &grid,
                 graph.f64("body.radius"),
                 layers.unit_id.as_slice(),
-                &field,
+                &f.thickness,
                 &f.last_time,
+                &squeezed,
+                &squeeze,
                 age,
                 graph.f64("seed.volcanism") as u64,
             );
@@ -644,6 +654,9 @@ pub fn run_coarse_loop(
             Vec::new(),
         ),
     };
+    // The thrusts beneath the plains stand among the plains' own ridges (F155).
+    ridges.extend(thrust_ridges);
+    ridges.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
     let (lanes, lane_coverage, lane_core, episodes, polar_start, ice_coronae, renewed_fraction) =
         match ice_shell_process {
             Some(p) => (
@@ -1955,7 +1968,8 @@ pub fn finish(
                     }
                     Event::Scarp(k) => {
                         // The face the coarse grid could not carry: the profile at its
-                        // degraded width minus the coarse-smoothed one.
+                        // degraded width minus the coarse-smoothed one; a scarp the loop
+                        // did not carry, whole (F155).
                         let s = &scarps[*k];
                         let kappa_t = inputs.diffusivity_m2_per_myr
                             * inputs.bombardment.equivalent_gyr(s.time_gyr, present)
@@ -1968,7 +1982,7 @@ pub fn finish(
                             body_radius,
                             s,
                             fine,
-                            Some(coarse),
+                            s.carried.then_some(coarse),
                             stamper,
                         );
                         Some((out, None, None))
@@ -3049,6 +3063,124 @@ mod tests {
         g
     }
 
+    /// Prints the thrusts and ridges a body's loop lays (F155, F156): their numbers and
+    /// lengths, the share of the ridges' length below the mean height, and, about a rise,
+    /// the share running round it.
+    #[test]
+    #[ignore = "diagnostic: the thrusts and ridges a body's loop lays"]
+    fn print_thrusts() {
+        let names = std::env::var("EXOGEN_BODY").unwrap_or_else(|_| "Venus,Mars,Mercury".into());
+        let quality = std::env::var("EXOGEN_QUALITY").unwrap_or_else(|_| "preview".into());
+        for name in names.split(',') {
+            let g = preset_graph(name, &quality);
+            let t0 = Instant::now();
+            let out = run_coarse_loop(&g, &NoProgress).unwrap();
+            let r = g.f64("body.radius");
+            let grid = out.grid;
+            let layers = &out.keyframes.last().unwrap().layers;
+            let height = layers.bedrock.as_slice();
+            let (mut sum, mut area) = (0.0, 0.0);
+            for (k, &h) in height.iter().enumerate() {
+                let a = grid.cell_area(grid.cell(k));
+                sum += h as f64 * a;
+                area += a;
+            }
+            let mean = sum / area;
+            let carried = out.scarps.iter().filter(|s| s.carried).count();
+            let taken: f64 = out
+                .scarps
+                .iter()
+                .map(|s| s.length * tectonics::scarp_shortening(s.height))
+                .sum();
+            let mut lengths: Vec<f64> = out.scarps.iter().map(|s| s.length / 1e3).collect();
+            lengths.sort_by(f64::total_cmp);
+            let q = |v: &[f64], f: f64| {
+                if v.is_empty() {
+                    0.0
+                } else {
+                    v[((v.len() - 1) as f64 * f) as usize]
+                }
+            };
+            println!(
+                "{name}: loop {:.0} s; scarps {} ({} carried), length km p50 {:.0} p90 {:.0} max {:.0}, shortening {:.3e} m2 ({:.2e} of the area)",
+                t0.elapsed().as_secs_f64(),
+                out.scarps.len(),
+                carried,
+                q(&lengths, 0.5),
+                q(&lengths, 0.9),
+                q(&lengths, 1.0),
+                taken,
+                taken / (4.0 * std::f64::consts::PI * r * r)
+            );
+            let thrust = |id: u64| id >= 1 << 32;
+            for (label, pick) in [("plains ridges", false), ("thrust ridges", true)] {
+                let rs: Vec<&ridges::RidgeRecord> =
+                    out.ridges.iter().filter(|x| thrust(x.id) == pick).collect();
+                let total: f64 = rs.iter().map(|x| x.length).sum();
+                let mut below = 0.0f64;
+                let mut all = 0.0f64;
+                let mut round = 0.0f64;
+                let mut near = 0.0f64;
+                for x in &rs {
+                    for w in x.points.windows(2) {
+                        let k = grid.index(grid.locate(w[0]).0);
+                        all += 1.0;
+                        if (height[k] as f64) < mean {
+                            below += 1.0;
+                        }
+                        // Round the nearest rise: the step across the direction out from it.
+                        if let Some(rise) = out.rises.iter().min_by(|a, b| {
+                            angle_between(a.center, w[0]).total_cmp(&angle_between(b.center, w[0]))
+                        }) {
+                            let d = angle_between(rise.center, w[0]) * r;
+                            if d < 4.0 * rise.radius && d > 0.5 * rise.radius {
+                                near += 1.0;
+                                let along = dot(rise.center, w[0]);
+                                let o = [
+                                    w[0][0] * along - rise.center[0],
+                                    w[0][1] * along - rise.center[1],
+                                    w[0][2] * along - rise.center[2],
+                                ];
+                                let on = dot(o, o).sqrt().max(1e-12);
+                                let step =
+                                    [w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]];
+                                let sn = dot(step, step).sqrt().max(1e-12);
+                                // Within 30 degrees of round: the step's share outward under sin 30.
+                                if (dot(o, step) / (on * sn)).abs() < 0.5 {
+                                    round += 1.0;
+                                }
+                            }
+                        }
+                    }
+                }
+                println!(
+                    "  {label}: {} of {:.0} km in all; {:.2} of their length below the mean height; within 0.5 to 4 rise radii: {:.2} of it, {:.2} of that within 30 degrees of round",
+                    rs.len(),
+                    total / 1e3,
+                    below / all.max(1.0),
+                    near / all.max(1.0),
+                    round / near.max(1.0)
+                );
+            }
+            // The plains below the mean height, for comparison.
+            let (mut lava, mut lava_below) = (0.0, 0.0);
+            for (k, &h) in height.iter().enumerate() {
+                if layers.unit_id.as_slice()[k] == crate::units::UNIT_LAVA {
+                    let a = grid.cell_area(grid.cell(k));
+                    lava += a;
+                    if (h as f64) < mean {
+                        lava_below += a;
+                    }
+                }
+            }
+            println!(
+                "  plains: {:.2} of the surface, {:.2} of them below the mean height",
+                lava / area,
+                lava_below / lava.max(1e-12)
+            );
+        }
+    }
+
     #[test]
     fn the_same_seed_gives_identical_output_on_different_thread_counts() {
         let g = preset_graph("Moon", "preview");
@@ -3241,8 +3373,8 @@ mod tests {
             longest > 300_000.0 && highest > 1_500.0,
             "{longest} m, {highest} m"
         );
-        // Stamped scarps carry most of the budget; the rest is in scarps too short for
-        // the loop grid.
+        // The drawn scarps carry most of the budget; the rest is the lid's elastic strain,
+        // the thrusts beneath the plains and the faults too short to draw (F155).
         assert!(
             taken > 0.3 * budget && taken <= 1.05 * budget,
             "taken {taken} of {budget}"
@@ -3259,6 +3391,78 @@ mod tests {
         let moon_radius = preset_graph("Moon", "preview").f64("body.radius");
         let per_area = |t: f64, r: f64| t / (4.0 * std::f64::consts::PI * r * r);
         assert!(per_area(moon_taken, moon_radius) < 0.3 * per_area(taken, radius));
+    }
+
+    /// Mars's thrusts run round Tharsis, which squeezes its foot past the lid's strength
+    /// (F155, F156), and Venus's ridges keep to its lows, where the relief squeezes the
+    /// plains and its highs stretch them (Bilotti and Suppe 1999).
+    #[test]
+    fn mars_s_thrusts_run_round_tharsis_and_venus_s_ridges_keep_to_its_lows() {
+        let g = preset_graph("Mars", "preview");
+        let mars = run_coarse_loop(&g, &NoProgress).unwrap();
+        let r = g.f64("body.radius");
+        let rise = &mars.rises[0];
+        assert!(!mars.scarps.is_empty());
+        let thrust_ridges: Vec<&ridges::RidgeRecord> =
+            mars.ridges.iter().filter(|x| x.id >= 1 << 32).collect();
+        assert!(!thrust_ridges.is_empty());
+        // Within four radii of the rise, most of the thrusts' length runs round it.
+        let (mut near, mut round) = (0usize, 0usize);
+        let points = mars
+            .scarps
+            .iter()
+            .map(|s| &s.points)
+            .chain(thrust_ridges.iter().map(|x| &x.points));
+        for trace in points {
+            for w in trace.windows(2) {
+                let d = angle_between(rise.center, w[0]) * r;
+                if d < 0.5 * rise.radius || d > 4.0 * rise.radius {
+                    continue;
+                }
+                near += 1;
+                let along = dot(rise.center, w[0]);
+                let out = [
+                    w[0][0] * along - rise.center[0],
+                    w[0][1] * along - rise.center[1],
+                    w[0][2] * along - rise.center[2],
+                ];
+                let step = [w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]];
+                let cos = dot(out, step) / (dot(out, out) * dot(step, step)).sqrt().max(1e-30);
+                if cos.abs() < 0.5 {
+                    round += 1;
+                }
+            }
+        }
+        assert!(
+            near > 100 && round * 10 > near * 6,
+            "{round} of {near} round"
+        );
+
+        let g = preset_graph("Venus", "preview");
+        let venus = run_coarse_loop(&g, &NoProgress).unwrap();
+        assert!(venus.scarps.is_empty());
+        let grid = venus.grid;
+        let height = venus.keyframes.last().unwrap().layers.bedrock.as_slice();
+        let (mut sum, mut area) = (0.0, 0.0);
+        for (k, &h) in height.iter().enumerate() {
+            let a = grid.cell_area(grid.cell(k));
+            sum += h as f64 * a;
+            area += a;
+        }
+        let mean = sum / area;
+        let (mut below, mut all) = (0usize, 0usize);
+        for x in &venus.ridges {
+            for p in &x.points {
+                all += 1;
+                if (height[grid.index(grid.locate(*p).0)] as f64) < mean {
+                    below += 1;
+                }
+            }
+        }
+        assert!(
+            all > 1000 && below * 10 > all * 8,
+            "{below} of {all} below the mean"
+        );
     }
 
     /// The Moon's magma floods its thin-crust lowlands: a sixth of the surface or so,
