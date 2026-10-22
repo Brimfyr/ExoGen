@@ -2279,3 +2279,19 @@ What the maps show:
 Still to do: the lavas ponding in a rise's own lows and the dome's height from its plume head (F174's open ends); the flow's stresses on the lid, for Mercury's thrusts (M27) and Venus's ridges, and its upwellings' heat for Venus's coronae (M25); Venus relaxing as a stagnant lid does, and its tesserae from the tectonics that thickened their crust (M31); Valles Marineris with Phase 5 (M32); the Moon's maria in its province (M33); the drives the field does not hold (M26).
 
 Tests 270 (23 ignored), among them the melt one budget, what erupts and what stays below making the melt between any two times within 10⁻⁹, the intrusions laid keeping their volume, most beneath a rise's province and a rise's own share beneath it alone; and Mars's rise gathering 1 to 10 × 10⁸ km³ beneath it, all the loop lays the melt's intrusive share and the edifices' surplus within a percent. The test of the Moon's maria now asks only the plains' own ridges to lie on lava: a thrust's ridge folds the plains where most of its trace crossed lava and may cross older ground besides, and the intrusions' load now raises thrusts early in the Moon's life.
+
+## The ninety-first milestone: a deposit's level has no steps
+
+The user saw stepped relief fanning out from Mars's rise in the crops of the last two milestones.
+
+- **F175.** The level a crater's ejecta bury the old relief against is the sectors' means of its rings interpolated round and across them, rather than each point's own sector's mean.
+
+How it went:
+
+- **The steps.** The terraces were the sectors of the old basin's ejecta, some 2,400 km across beneath the rise: its deposit, kilometres thick near the rim, buried nearly all the relief beneath it against each sector's own mean (F169), so that each sector stood flat at its own level, stepping along the straight edges between them, radial from the basin. Every crater's deposit did so; the large ones on relief kilometres high showed it.
+
+What the maps show:
+
+- **Mars (seed 1048) and the Moon:** the ground beneath the basins' deposits rolls as the relief beneath it did, draped, without the fans of flat sectors.
+
+Tests 271 (23 ignored), among them a deposit's level without steps round its crater: on a plain tilted 3 m per km, the ground beneath a 600 km crater's thick deposit steps no more than the tilt and the grid give round rings at 1.15, 1.3 and 1.6 radii, where the sectors' edges stood as steps of 28 m.

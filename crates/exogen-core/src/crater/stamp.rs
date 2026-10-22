@@ -547,11 +547,13 @@ pub fn stamp_compute(
     } else {
         bedrock[stamper.footprint[0].0] as f64
     };
-    // The level the ejecta bury the old relief against at a point: its sector's mean, or its
-    // ring's where the sector holds no cell, or the floor's.
-    let level_of = |re: f64, phi: f64| -> f64 {
-        let (b, sc) = slot_of(re, phi);
-        let i = b * SECTORS + sc;
+    // The level the ejecta bury the old relief against at a point: the means of the sectors
+    // about it, interpolated round each ring between the sectors' middles and across the rings
+    // between theirs, so that the level has no steps at the sectors' edges, which beneath a
+    // thick deposit would stand as flat patches stepping along straight radial lines; a
+    // sector that holds no cell takes its ring's mean, a ring that holds none the floor's.
+    let mean_of = |b: usize, s: usize| -> f64 {
+        let i = b * SECTORS + s;
         if sector_area[i] > 0.0 {
             sector_sum[i] / sector_area[i]
         } else if ring_area[b] > 0.0 {
@@ -559,6 +561,21 @@ pub fn stamp_compute(
         } else {
             h_ref
         }
+    };
+    let around = |b: usize, turn: f64| -> f64 {
+        let n = sectors[b];
+        let f = turn * n as f64 - 0.5;
+        let lower = f.floor();
+        let t = f - lower;
+        let s0 = (lower as i64).rem_euclid(n as i64) as usize;
+        (1.0 - t) * mean_of(b, s0) + t * mean_of(b, (s0 + 1) % n)
+    };
+    let level_of = |re: f64, phi: f64| -> f64 {
+        let turn = phi.rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU;
+        let f = ((re / dim.radius - 1.0) / span * BINS as f64 - 0.5).clamp(0.0, (BINS - 1) as f64);
+        let b0 = f.floor() as usize;
+        let t = f - b0 as f64;
+        (1.0 - t) * around(b0, turn) + t * around((b0 + 1).min(BINS - 1), turn)
     };
     // The material the crater excavated: the deep bedrock, or what was already there.
     let source_deep = if p.deep {
@@ -2603,6 +2620,81 @@ mod tests {
                 (lo.min(v), hi.max(v))
             });
         assert!(hi - lo > 0.02, "{lo} {hi}");
+    }
+
+    /// F169: the level a deposit buries the old relief against changes smoothly round the
+    /// crater, the sectors' means interpolated, so that on a tilted plain the ground under a
+    /// thick deposit near the rim keeps no steps along the edges of the sectors: each step
+    /// round a ring is no more than the tilt and the grid give.
+    #[test]
+    fn a_deposit_s_level_has_no_steps_round_the_crater() {
+        use crate::grid::projection::{PaddedField, sample_bilinear};
+        let grid = CubeSphere::new(256);
+        let body_radius = 1.7374e6;
+        let scaling = lunar();
+        let big = dimensions(600_000.0, &scaling);
+        let center = [0.0, 0.0, 1.0];
+        let mut layers = LayerSet::new(grid);
+        // A plain tilted 3 m per km.
+        let tilt = 0.003;
+        for k in 0..grid.cell_count() {
+            let d = grid.center(grid.cell(k));
+            layers.bedrock.as_mut_slice()[k] = (tilt * d[0] * body_radius) as f32;
+        }
+        let mut stamper = Stamper::new(&grid);
+        let params = StampParams {
+            time_gyr: 1.0,
+            unit_floor: 4,
+            unit_ejecta: 5,
+            azimuth: 0.0,
+            angle: std::f64::consts::FRAC_PI_2,
+            ellipticity: 1.0,
+            amplitude: 1.0,
+            feature_amplitude: 1.0,
+            replace_floor: true,
+            set_age: true,
+            bury: true,
+            levelling: Levelling::new(&scaling),
+            seed: 0,
+            deep: false,
+            maturity_timescale: 0.5,
+            renewal_guard: true,
+            terraced: false,
+            shed: (
+                SLOPE_SHED_START_DEG.to_radians(),
+                REPOSE_SLOPE_DEG.to_radians(),
+            ),
+        };
+        stamp(
+            &mut layers,
+            &grid,
+            body_radius,
+            center,
+            &ProfileTable::new(big, 0.0),
+            &params,
+            &mut stamper,
+        );
+        let field = PaddedField::new(&grid, layers.bedrock.as_slice());
+        let (east, north) = crate::geom::local_basis(center);
+        for ring in [1.15, 1.3, 1.6] {
+            let n = 720;
+            let arc = ring * big.radius / body_radius;
+            let h: Vec<f64> = (0..n)
+                .map(|i| {
+                    let phi = std::f64::consts::TAU * i as f64 / n as f64;
+                    let q = crate::geom::offset(center, east, north, arc, phi);
+                    sample_bilinear(&grid, &field, q) as f64
+                })
+                .collect();
+            let step = (0..n)
+                .map(|i| (h[(i + 1) % n] - h[i]).abs())
+                .fold(0.0, f64::max);
+            // The tilt's own change between samples, and a grid cell's over its width.
+            let spacing = std::f64::consts::TAU * ring * big.radius / n as f64;
+            let allowed = tilt * spacing + 0.5 * tilt * grid.delta() * body_radius;
+            println!("ring {ring}: largest step {step:.1} m, allowed {allowed:.1} m");
+            assert!(step < allowed, "ring {ring}: {step} against {allowed}");
+        }
     }
 
     /// The lunar scaling of the terrace tests.
