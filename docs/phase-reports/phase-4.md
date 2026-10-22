@@ -2096,3 +2096,25 @@ The user's check of Mars on master seed 235 after the eighty-first: the largest 
 - **The sine is two giant basins.** The lowlands on seed 235 are a 4,911 km basin centred at 64°S and a 3,914 km one at 74°N, their floors flooded level. A circle centred far from the equator draws as a sine on an equirectangular map, and these are clean circles with narrow rims: the crust's own dichotomy lies beneath the primordial relief. The direction of a fix is left to the user's choice.
 
 Tests 254 (21 ignored); the test of a shield's eruptions past its foot now asks that none start on an edifice standing higher than a flow is thick by the eruption's time.
+
+## The eighty-third milestone: a crater's elongation follows its cratering efficiency
+
+The user's choice after the revised eighty-second: the largest basins elongate as the largest known basins are, their outlines' irregularity held back until the processes that wear them are in.
+
+- **F167.** A cavity comes out elliptical below a threshold angle that rises as the cratering efficiency falls, the crater a vertical impact makes over the impactor's diameter (Collins et al. 2011), read from the body's own crater scaling: the largest basins, made by impactors only a few times smaller than their cavities, elongate in some three to four impacts in ten on Mars, its craters of kilometres in some one in twenty.
+
+How it went:
+
+- **Footprint or efficiency.** Andrews-Hanna and Zuber (2010) elongated the largest basins from the footprint an oblique impactor leaves, stretched further by the planet's curvature; simulations of impacts on curved bodies found curvature suppresses the elongation instead (Collins, Miljković and Davison 2013), and pointed to the efficiency trend, which the experiments and simulations share across materials and regimes.
+- **The trend's line.** The 2011 paper was not open, and the user supplied the 2010 abstract's figures: the line through Figure 1, traced from the figure's image, is 90° times the efficiency to the power of −0.73 within 0.2° over its whole length.
+- **The growth below it.** The old elongation was 1 at the threshold and rose by a fixed curve; by the trend's definition it is 1.1 there, and it grows as the flat-target simulations do, a crater above the threshold coming out a hundredth or so longer than wide rather than a perfect circle.
+
+What the maps show:
+
+- **Mars on master seed 235:** its southern basin, 4,911 km across, struck at 32°, comes out 1.23 times as long as wide, and its northern one, 3,914 km, struck at 22.7°, 1.50 times. The northern lowland now reaches farther south west of the map's centre, so its edge no longer mirrors the southern one; the two lowlands still leave a band of highlands between them, as two giant impacts near opposite poles would on a dead world, their ramps to be worn by the surface processes to come.
+- **The Moon:** its largest basin comes out a little elongated, a few of its craters clearly so, and one of its oldest giant basins changes its outline in the eastern lowlands; elsewhere its craters stand as before, within a hundredth of round.
+- **Every body:** the share of elliptical craters rises with their size, Mars's 5.8 percent at 10 km to 35 percent at 2,500 km, the Moon's 3.5 percent at 10 km.
+
+Still to do: the giant basins' outlines broken up, should they still look too regular once their rims are worn (the user's note); the aureole and basal scarp (M30); the event's fill from its surge's melt (M29); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
+
+Tests 256 (21 ignored), among them the threshold angle following the cratering efficiency as Collins et al.'s line does and the elongation growing below it as the flat-target simulations do, and Mars's craters of 10 and 30 km elliptical in 3 to 10 percent of impacts, its basins of 2,500 km in 25 to 45 percent, the Moon's craters of 10 km in 2 to 8 percent, the share rising with the size.

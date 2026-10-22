@@ -1711,10 +1711,24 @@ pub const CONTINUOUS_EJECTA_MULTIPLE: f64 = 2.0;
 pub const BURIAL_FACTOR_LOW: f64 = 1.0;
 pub const BURIAL_FACTOR_HIGH: f64 = 0.5;
 /// Oblique impacts (Gault and Wedekind 1978; Bottke et al. 2000; Herrick and Forsberg-Taylor
-/// 2003). Impact angles follow sin 2θ. Cavities stay circular down to the angle below which
-/// the elliptical fraction of craters forms, with the elongation rising toward grazing
-/// incidence by at most this excess. Ejecta thickens downrange and thins uprange below
+/// 2003). Impact angles follow sin 2θ. Ejecta thickens downrange and thins uprange below
 /// 45°, an uprange zone of avoidance opens below 30°, and side lobes grow below 15°.
+///
+/// A cavity comes out elliptical, longer than 1.1 times its width, below a threshold angle
+/// that rises as the cratering efficiency falls, the crater a vertical impact would make
+/// over the impactor's diameter, one trend across laboratory experiments in sand, metals and
+/// rock and simulations in the strength and gravity regimes (Collins et al. 2011, Figure 1):
+/// 90° times the efficiency to the power of minus this exponent, the fit's line as
+/// digitised, within 0.2° from efficiencies of 1 to 100.
+pub const ELLIPTICAL_THRESHOLD_EXPONENT: f64 = 0.73;
+/// The elongation 1 plus this share at the threshold angle (the definition), growing below it
+/// as e to this rate times the share of the threshold the angle falls short by: 1.25 at
+/// three quarters of the threshold, 1.7 at half, 1.01 at one and a half times, as
+/// simulations of oblique impacts on a flat target give (Collins, Miljković and Davison
+/// 2013, Table 1: 1.10 at 20°, 1.25 at 15°, 1.71 at 10°, 1.01 at 30°), up to at most 1 plus
+/// the excess.
+pub const ELLIPTICITY_AT_THRESHOLD: f64 = 0.1;
+pub const ELLIPTICITY_GROWTH: f64 = 3.8;
 pub const ELLIPTICITY_MAX_EXCESS: f64 = 0.8;
 pub const OBLIQUE_ASYMMETRY_DEG: f64 = 45.0;
 pub const OBLIQUE_DOWNRANGE_MAX: f64 = 0.7;

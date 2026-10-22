@@ -3094,15 +3094,6 @@ static NODES: &[NodeDef] = &[
         Default::F64(0.2),
         "Scales the number of secondary craters per primary from Orientale's census, 0.2 (F129).",
     ),
-    expert_root(
-        "cratering.oblique_fraction",
-        "cratering",
-        "Oblique impact fraction",
-        "",
-        f(0.0, 0.5),
-        Default::F64(0.05),
-        "Fraction of craters elongated by a low impact angle.",
-    ),
     // ------------------------------------------------------------------ volcanism
     derived(
         "volcanism.rate",

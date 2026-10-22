@@ -7,11 +7,11 @@
 //! them. Each one is recorded for the finishing pass.
 
 use crate::constants::*;
-use crate::crater::production::{expected_count_above, poisson};
+use crate::crater::production::{Oblique, Target, expected_count_above, poisson};
 use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
     Bombardment, BombardmentParams, CraterRecord, ProfileTable, Scaling, StampParams, Stamper,
-    dimensions, ellipticity_for, hold_diameter, impact_angle, stamp,
+    dimensions, hold_diameter, impact_angle, stamp,
 };
 use crate::fields::LayerSet;
 use crate::grid::CubeSphere;
@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 26;
+pub const VERSION: u64 = 27;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -33,7 +33,8 @@ pub struct CraterInputs {
     pub scaling: Scaling,
     pub body_radius: f64,
     pub age: f64,
-    pub oblique_fraction: f64,
+    /// The threshold angles of elliptical craters (F167).
+    pub oblique: Oblique,
     pub secondary_fraction: f64,
     pub saturation_fraction: f64,
     pub retention_age: f64,
@@ -91,6 +92,22 @@ pub fn target_is_lava(layers: &LayerSet, grid: &CubeSphere, center: [f64; 3]) ->
     crate::stages::volcanism::is_lava_unit(layers.unit_id.as_slice()[idx])
 }
 
+/// The threshold angles of the body's elliptical craters (F167): its crater scaling at its
+/// mean impact speed, from the graph.
+pub fn oblique(graph: &ParamGraph) -> Oblique {
+    Oblique::new(&Target {
+        gravity: graph.f64("body.gravity"),
+        speed: graph.f64("cratering.impact_velocity"),
+        strength: if crate::stages::materials::is_ice(graph.str("materials.bedrock")) {
+            TARGET_STRENGTH_ICE
+        } else {
+            TARGET_STRENGTH_ROCK
+        },
+        density: graph.f64("cratering.target_density"),
+        simple_complex: graph.f64("cratering.simple_complex_transition"),
+    })
+}
+
 /// The populations striking the body (F135, F136), from the graph.
 pub fn bombardment(graph: &ParamGraph) -> Bombardment {
     BombardmentParams::from_nodes(
@@ -116,7 +133,7 @@ impl CraterInputs {
             },
             body_radius: graph.f64("body.radius"),
             age: graph.f64("body.age"),
-            oblique_fraction: graph.f64("cratering.oblique_fraction"),
+            oblique: oblique(graph),
             secondary_fraction: graph.f64("cratering.secondary_fraction"),
             saturation_fraction: graph.f64("cratering.empirical_saturation"),
             retention_age: graph.f64("cratering.retention_age"),
@@ -279,7 +296,7 @@ impl ImpactProcess {
                     } * 1e3;
                     let angle = impact_angle(self.rng.uniform(index, draw + 4));
                     let azimuth = self.rng.uniform(index, draw + 5) * 2.0 * std::f64::consts::PI;
-                    let ellipticity = ellipticity_for(angle, inp.oblique_fraction);
+                    let ellipticity = inp.oblique.ellipticity(diameter, angle);
                     batch.push(CraterRecord {
                         center,
                         diameter,
@@ -634,4 +651,33 @@ mod tests {
             age - start
         );
     }
+
+    /// F167: on Mars, a few percent of the craters of tens of kilometres come out elliptical,
+    /// and some three in ten of its giant basins (Collins et al. 2011, Figure 2: the model's
+    /// share some 3 to 4 percent from 10 to 100 km, near 30 percent at 2,500 km; the observed
+    /// share some 6.5 percent from 10 to 40 km), the share rising with the size on every
+    /// body; the Moon's craters of 10 km a few percent (Bottke et al. 2000: some 5 percent).
+    #[test]
+    fn a_few_craters_and_many_giant_basins_are_elliptical() {
+        let share = |o: &Oblique, d: f64| o.threshold(d).sin().powi(2);
+        let (g, _) = preset("Mars").unwrap().to_graph();
+        let mars = oblique(&g);
+        for d in [1e4, 3e4] {
+            let s = share(&mars, d);
+            assert!(s > 0.03 && s < 0.1, "{d}: {s}");
+        }
+        let s = share(&mars, 2.5e6);
+        assert!(s > 0.25 && s < 0.45, "{s}");
+        let (g, _) = preset("Moon").unwrap().to_graph();
+        let moon = oblique(&g);
+        let s = share(&moon, 1e4);
+        assert!(s > 0.02 && s < 0.08, "{s}");
+        for o in [mars, moon] {
+            for k in 0..24 {
+                let d = 1e3 * 10f64.powf(0.2 * k as f64);
+                assert!(o.threshold(1.6 * d) > o.threshold(d));
+            }
+        }
+    }
+
 }

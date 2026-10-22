@@ -28,7 +28,7 @@
 
 use rayon::prelude::*;
 
-use super::morphology::{ellipticity_for, impact_angle};
+use super::morphology::{elliptical_threshold, ellipticity_for, impact_angle};
 use crate::constants::*;
 use crate::fields::Field;
 use crate::grid::CubeSphere;
@@ -128,6 +128,60 @@ impl Target {
             k * tr.powf(p) * d_sc.powf(1.0 - p)
         };
         km * 1e3
+    }
+}
+
+/// The impact angle below which a body's craters come out elliptical, by their diameter
+/// (F167): from the cratering efficiency, the transient cavity a vertical impact makes over
+/// the impactor's diameter, read from the body's crater scaling at its mean impact speed
+/// for every population that strikes it (a stated choice), tabulated by the crater's
+/// diameter.
+#[derive(Clone, Copy, Debug)]
+pub struct Oblique {
+    /// The threshold angle, radians, for a crater of log10 diameter
+    /// `MAP_START + k * MAP_STEP`, km.
+    map: [f64; MAP_POINTS],
+}
+
+impl Oblique {
+    pub fn new(target: &Target) -> Self {
+        let mut map = [0.0; MAP_POINTS];
+        for (k, m) in map.iter_mut().enumerate() {
+            let crater = 10f64.powf(MAP_START + MAP_STEP * k as f64) * 1e3;
+            let (mut lo, mut hi) = (1e-4f64.ln(), 1e8f64.ln());
+            for _ in 0..80 {
+                let mid = 0.5 * (lo + hi);
+                if target.crater(mid.exp()) < crater {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            let impactor = (0.5 * (lo + hi)).exp();
+            *m = elliptical_threshold(target.transient(impactor) / impactor);
+        }
+        Self { map }
+    }
+
+    /// The same threshold for every crater: `threshold` radians.
+    pub fn fixed(threshold: f64) -> Self {
+        Self {
+            map: [threshold; MAP_POINTS],
+        }
+    }
+
+    /// The threshold angle, radians, for a crater of `diameter` m.
+    pub fn threshold(&self, diameter: f64) -> f64 {
+        let x = ((diameter.max(1e-9) / 1e3).log10() - MAP_START) / MAP_STEP;
+        let x = x.clamp(0.0, (MAP_POINTS - 1) as f64);
+        let i = (x.floor() as usize).min(MAP_POINTS - 2);
+        let f = x - i as f64;
+        self.map[i] * (1.0 - f) + self.map[i + 1] * f
+    }
+
+    /// The elongation of a crater of `diameter` m struck at `angle` radians from horizontal.
+    pub fn ellipticity(&self, diameter: f64, angle: f64) -> f64 {
+        ellipticity_for(angle, self.threshold(diameter))
     }
 }
 
@@ -824,7 +878,8 @@ pub struct PopulationConfig {
     pub saturation_fraction: f64,
     /// Longest effective surface age for crater retention, Gyr.
     pub retention_age: f64,
-    pub oblique_fraction: f64,
+    /// The threshold angles of elliptical craters (F167).
+    pub oblique: Oblique,
     pub seed: u64,
 }
 
@@ -944,7 +999,7 @@ pub fn sample_population(
                         .max(start);
                     let angle = impact_angle(u_ob);
                     let azimuth = u_az * 2.0 * std::f64::consts::PI;
-                    let ellipticity = ellipticity_for(angle, cfg.oblique_fraction);
+                    let ellipticity = cfg.oblique.ellipticity(diameter, angle);
                     out.push(CraterSample {
                         center,
                         diameter,
@@ -1064,7 +1119,7 @@ mod tests {
             bins_per_octave: 4,
             saturation_fraction: EMPIRICAL_SATURATION_FRACTION,
             retention_age: 10.0,
-            oblique_fraction: 0.0,
+            oblique: Oblique::fixed(0.0),
             seed: 11,
         };
         let area_km2 = 4.0 * std::f64::consts::PI * radius * radius / 1e6;

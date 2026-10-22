@@ -376,7 +376,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 123;
+pub const FINISH_VERSION: u64 = 124;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1244,7 +1244,7 @@ pub fn finish(
         bins_per_octave: BINS_PER_OCTAVE,
         saturation_fraction: inputs.saturation_fraction,
         retention_age: inputs.retention_age,
-        oblique_fraction: inputs.oblique_fraction,
+        oblique: inputs.oblique,
         seed: inputs.seed,
     };
     sink.report(Progress {

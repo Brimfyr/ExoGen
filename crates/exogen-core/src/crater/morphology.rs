@@ -242,15 +242,28 @@ pub fn impact_angle(u: f64) -> f64 {
     u.clamp(0.0, 1.0).sqrt().asin()
 }
 
-/// Elongation of the cavity for an impact angle. Cavities stay circular down to the angle
-/// below which `elliptical_fraction` of all craters form (about 12° for 5%), then elongate
-/// toward grazing incidence.
-pub fn ellipticity_for(angle: f64, elliptical_fraction: f64) -> f64 {
-    let threshold = elliptical_fraction.clamp(0.0, 1.0).sqrt().asin();
-    if threshold <= 0.0 || angle >= threshold {
+/// The impact angle, radians from horizontal, below which a cavity comes out elliptical, for
+/// a cratering efficiency, the diameter of the crater a vertical impact makes over the
+/// impactor's (F167, Collins et al. 2011): steep where the impactor is nearly as large as
+/// its crater, some 12° for the planets' craters of kilometres, 3° for a sand target's.
+pub fn elliptical_threshold(efficiency: f64) -> f64 {
+    std::f64::consts::FRAC_PI_2 * efficiency.max(1.0).powf(-ELLIPTICAL_THRESHOLD_EXPONENT)
+}
+
+/// Elongation of the cavity, its length over its width, for an impact angle and the
+/// threshold angle below which it passes 1.1 (F167): nearly circular well above the
+/// threshold, rising steeply toward grazing incidence.
+pub fn ellipticity_for(angle: f64, threshold: f64) -> f64 {
+    if threshold <= 0.0 {
         return 1.0;
     }
-    1.0 + ELLIPTICITY_MAX_EXCESS * ((threshold - angle) / threshold).powf(1.5)
+    let excess = ELLIPTICITY_AT_THRESHOLD * (ELLIPTICITY_GROWTH * (1.0 - angle / threshold)).exp();
+    // A cavity elongated by less than a thousandth stays a circle.
+    if excess < 1e-3 {
+        1.0
+    } else {
+        1.0 + excess.min(ELLIPTICITY_MAX_EXCESS)
+    }
 }
 
 fn smoothstep(t: f64) -> f64 {
@@ -572,11 +585,13 @@ mod tests {
         assert!(old < 0.7 * fresh, "fresh {fresh} old {old}");
     }
 
-    /// Impact angles follow sin 2θ: a mean of 45°, with the share below 12° being sin² 12°,
-    /// and only the elliptical fraction of cavities elongated.
+    /// Impact angles follow sin 2θ: a mean of 45°, with the share below 12° being sin² 12°;
+    /// the share of cavities longer than 1.1 times their width is the share of impacts below
+    /// the threshold angle (F167).
     #[test]
     fn impact_angles_follow_sin_two_theta_and_few_cavities_are_elliptical() {
         let n = 20_000;
+        let threshold = 12f64.to_radians();
         let (mut sum, mut below_12, mut elliptical) = (0.0, 0, 0);
         for i in 0..n {
             let a = impact_angle((i as f64 + 0.5) / n as f64);
@@ -584,7 +599,7 @@ mod tests {
             if a < 12f64.to_radians() {
                 below_12 += 1;
             }
-            if ellipticity_for(a, 0.05) > 1.0 {
+            if ellipticity_for(a, threshold) > 1.1 {
                 elliptical += 1;
             }
         }
@@ -596,9 +611,27 @@ mod tests {
             "{f12}"
         );
         let fe = elliptical as f64 / n as f64;
-        assert!((fe - 0.05).abs() < 0.005, "{fe}");
-        assert_eq!(ellipticity_for(0.8, 0.05), 1.0);
-        assert!(ellipticity_for(0.02, 0.05) > 1.5);
+        assert!((fe - f12).abs() < 0.002, "{fe} {f12}");
+        assert_eq!(ellipticity_for(0.8, threshold), 1.0);
+        assert!(ellipticity_for(0.02, threshold) > 1.5);
+    }
+
+    /// F167: the threshold angle follows the cratering efficiency as Collins et al.'s fit
+    /// does (90° at 1, 37° at 3.4, 16.8° at 10, 3.1° at 100), and the elongation grows below
+    /// it as the simulations on a flat target do.
+    #[test]
+    fn the_elliptical_threshold_follows_the_cratering_efficiency() {
+        for (eff, deg) in [(1.0, 90.0), (3.38, 37.0), (9.96, 16.8), (100.0, 3.1)] {
+            let t = elliptical_threshold(eff).to_degrees();
+            assert!((t - deg).abs() < 0.3, "{eff}: {t}");
+        }
+        let t = 20f64.to_radians();
+        for (deg, e, tol) in [(20.0, 1.10, 0.005), (15.0, 1.25, 0.02), (10.0, 1.71, 0.07), (30.0, 1.01, 0.01)] {
+            let got = ellipticity_for(f64::to_radians(deg), t);
+            assert!((got - e).abs() < tol, "{deg}: {got}");
+        }
+        assert_eq!(ellipticity_for(0.0, t), 1.0 + ELLIPTICITY_MAX_EXCESS);
+        assert_eq!(ellipticity_for(std::f64::consts::FRAC_PI_2, t), 1.0);
     }
 
     #[test]
