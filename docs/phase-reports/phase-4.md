@@ -2209,3 +2209,26 @@ What the maps show:
 Still to do: Valles Marineris with Phase 5 (M32); Venus's highlands and dynamic topography (M31); the Moon's maria in its province (M33); the aureole and basal scarp (M30); Mercury's thrusts' direction (M27); the drives the field does not hold (M26); the coronae on Venus's rifts (M25).
 
 Tests 259 (22 ignored). The test of a rise's shields taking its eruptions now holds its sums equal within 10⁻⁷, their rounding with the province's larger background, and the Moon's rayed share need stay below three tenths rather than a quarter (it is 25.2 percent).
+
+## The eighty-eighth milestone: an edifice its crust cannot hold sheds its flanks
+
+M30, which the user chose: Olympus Mons's basal scarp and aureole.
+
+- **F172.** A shield whose slope would build it taller than its crust holds spreads its flanks with the lava it would have stacked above: as much of its toe as that lava is pushed out beyond its foot and breaks away in a scarp, and the toe and the lava together run out beyond it as its aureole, in lobes as long as rock avalanches of their volumes run, ridged across their run.
+
+How it went:
+
+- **Which edifices fail.** A Coulomb wedge on a frictional base fails by its slope alone, the height cancelling, and every Tharsis shield has Olympus Mons's slope; but the crust's strength caps an edifice's height (F15), and only the largest of Mars's shields reaches the cap, 25 km where its slope would build 27.4. The criterion is the cap: an edifice at it has loaded its base to what the crust holds.
+- **How far it fails.** The lava past the cap, some 9 percent of the edifice, pushes out as much of its toe, which places the scarp at 0.81 of the reach and makes it 4.5 to 9.9 km high round the edifice, where Olympus Mons's stands 6 to 10 km; and the aureole, twice that lava, runs 120 to 350 km in seven lobes by the avalanches' trend, short of Olympus Mons's longest tongue of some 700 km, each lobe a smaller share.
+- **When it fails.** The failure was first set by the edifice's slope alone, and Venus's three largest shields, whose slope would build them 12.9 to 14.3 km against the 10.5 km its crust holds, shed their flanks too, though Venus's supply builds them only part of the way (F165): their summits fell by up to 3.7 km, the spread lava counted into an edifice they never filled. An edifice now fills to the cap first, and only the lava after that breaks its toe away and lays its aureole, so Venus's shields stand as before and Mars's largest fails once its edifice has filled.
+- **The budget.** The edifice's supply covers its aureole as well as the edifice (F164), and the aureole weighs on the lid in the moat (F162) but is not the edifice whose root fills the sag (F166).
+
+What the maps show:
+
+- **Mars (seed 1048):** its largest shield stands ringed by a basal scarp 4.5 to 9.9 km high, its old gentle toe gone, and its aureole lies beyond in seven lobes of curved, broken ridges, in its moat and out over the plains 120 to 350 km; its other shields keep their toes.
+- **Venus:** unchanged; its three largest shields would build past what its crust holds, but its supply never fills them.
+- **Every other body:** unchanged, raising no shields.
+
+Still to do: the lobes' directions from the ground they run down; Valles Marineris with Phase 5 (M32); Venus's highlands and dynamic topography (M31); the Moon's maria in its province (M33); Mercury's thrusts' direction (M27); the drives the field does not hold (M26); the coronae on Venus's rifts (M25).
+
+Tests 261 (22 ignored), among them a shield past what its crust holds shedding its toe and its aureole: the toe beyond the scarp holds the lava its supply would have stacked above, within 15 percent; each scarp 2 to 12 km high; each lobe running 100 to 1,200 km; the aureole holding twice that lava, within 15 percent; nothing beyond its reach, and the edifice nothing past its wall; and on Mars only the shields whose slope would build them past the cap shedding their flanks. The test of a shield's lava past its foot counts its aureole with its edifice; the test of a rise's shields taking its eruptions now holds Mars's largest edifice's flanks fully failed and none of Venus's, though its largest would build past the cap.

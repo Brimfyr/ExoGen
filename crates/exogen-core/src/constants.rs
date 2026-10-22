@@ -472,6 +472,29 @@ pub const CALDERA_RADIUS: (f64, f64) = (0.05, 0.28);
 pub const CALDERA_DEPTH_FRACTION: f64 = 0.12;
 pub const CALDERA_MAX_DEPTH: f64 = 3e3;
 pub const CALDERA_WALL_WIDTH: f64 = 0.15;
+/// An edifice its crust cannot hold (F172): a shield whose design height passes the relief
+/// its crust's strength holds (interior.max_relief, F15) stands at that height, and the
+/// lava its supply would have stacked above it spreads its flanks instead: as much of its
+/// toe as that lava is pushed out beyond its foot and breaks away in a scarp, the toe and
+/// the lava together running out as its aureole (Olympus Mons: a basal scarp 6 to 10 km
+/// high, an aureole of landslide lobes, Lycus Sulci the largest, reaching some 700 km
+/// beyond its edge and more than 2 km thick where two overlap; DLR and ESA 2023). The
+/// scarp's reach varies round the edifice by this share of itself and its wall slopes at
+/// this angle; the aureole lies in this many lobes (stated choices), each running out as far
+/// as a rock avalanche of its volume runs for its fall (Scheidegger 1973's trend as it is
+/// quoted, log₁₀(H/L) = −0.15666 log₁₀ V + 0.62419 with V in m³, which gives the canyons'
+/// landslides of some 400 km³ a reach of 16 beside F106's 7 to 14), widening by
+/// LANDSLIDE_SPREAD to its toe, its surface ridged across its run at this spacing by this
+/// share of its thickness, the ridges' crests wandering by up to this many spacings and
+/// their height coming and going over a few spacings (stated choices: Lycus Sulci's ridges
+/// are curved, broken and of uneven height, not stripes).
+pub const SCARP_WARP: f64 = 0.06;
+pub const SCARP_WALL_SLOPE_DEG: f64 = 30.0;
+pub const AUREOLE_LOBES: (usize, usize) = (4, 7);
+pub const AUREOLE_MOBILITY: (f64, f64) = (-0.15666, 0.62419);
+pub const AUREOLE_RIDGE_SPACING: f64 = 12e3;
+pub const AUREOLE_RIDGE_SHARE: f64 = 0.15;
+pub const AUREOLE_RIDGE_WARP: f64 = 1.0;
 /// A shield's summit sinks in collapses (F102): up to this many, fewer more often; the
 /// vent wanders between them by up to this share of the last pit's radius; each pit this
 /// share of the last one's size, the chamber shrinking as the supply wanes (Olympus Mons's

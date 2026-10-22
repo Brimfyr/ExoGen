@@ -14,8 +14,8 @@ use crate::geom::angle_between;
 use crate::grid::CubeSphere;
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::stages::plume::{
-    Rise, Shield, Trough, TroughFrames, dome, rise_progress, shield_height, shield_progress,
-    trough_depth_at, trough_progress,
+    Rise, Shield, Trough, TroughFrames, dome, rise_progress, shield_failed, shield_grown,
+    shield_height, trough_depth_at, trough_progress,
 };
 
 #[derive(Clone, Copy)]
@@ -181,9 +181,9 @@ impl<'a> Deformation<'a> {
                 }
                 Deformer::Shield(j) => {
                     let s = &self.shields[j];
-                    let p = shield_progress(t_slow, s);
+                    let p = shield_grown(t_slow, s);
                     if p > 0.0 {
-                        h += shield_height(s, d, r_body, false, 0.0) * p;
+                        h += shield_height(s, d, r_body, false, 0.0, shield_failed(t_slow, s)) * p;
                     }
                 }
                 Deformer::Canyon(k, lo, hi) => {
@@ -246,6 +246,7 @@ mod tests {
                 area: 0.0,
                 overflow: 0.0,
                 rift_overflow: 0.0,
+                failure: None,
                 id: 7,
             }
             .with_clock(1.0, 4.5),

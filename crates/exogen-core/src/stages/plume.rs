@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 29;
+pub const VERSION: u64 = 30;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -75,7 +75,48 @@ pub struct Shield {
     /// zone's eruptions bring (F163).
     pub overflow: f64,
     pub rift_overflow: f64,
+    /// Its flanks' failure where its crust cannot hold it (F172); none where it can.
+    pub failure: Option<Failure>,
     pub id: u64,
+}
+
+/// A shield's flanks failing where its crust cannot hold its height (F172): its toe broken
+/// away in a scarp and spread beyond it as its aureole.
+#[derive(Clone, Debug)]
+pub struct Failure {
+    /// The share of its reach its scarp stands at, round which the scarp's reach varies.
+    pub scarp: f64,
+    /// The lava that spreads its flanks, m³: what its supply would have stacked above the
+    /// relief its crust holds.
+    pub spread: f64,
+    pub lobes: Vec<AureoleLobe>,
+    /// What wanders and breaks up the aureole's ridges.
+    pub noise: GradientNoise,
+}
+
+/// One lobe of an aureole (F172), its sizes at the edifice's full growth.
+#[derive(Clone, Copy, Debug)]
+pub struct AureoleLobe {
+    /// The azimuth of its axis, rad from east towards north at the shield's centre, and
+    /// the distance from the summit its root lies at, the scarp's foot, m.
+    pub azimuth: f64,
+    pub root: f64,
+    /// Its half width at its root, m; its run-out beyond the scarp, m; its thickness at
+    /// its root on its axis, m.
+    pub width: f64,
+    pub run: f64,
+    pub peak: f64,
+    /// Its ridges' spacing, m, and phase.
+    pub spacing: f64,
+    pub phase: f64,
+}
+
+impl Failure {
+    /// The share of the reach the scarp stands at toward an azimuth.
+    pub fn scarp_at(&self, seed: u64, phi: f64) -> f64 {
+        (self.scarp * (1.0 + SCARP_WARP * crate::crater::crenulation(seed ^ 0x5CA2_9000, phi)))
+            .min(0.999)
+    }
 }
 
 /// One collapse of a shield's summit (F102): a pit sunk over the magma chamber as an
@@ -256,7 +297,18 @@ impl Trough {
 
 impl Shield {
     pub fn cap_radius(&self, body_radius: f64) -> f64 {
-        1.05 * SHIELD_FLOW_REACH * self.extent() / body_radius
+        (1.05 * SHIELD_FLOW_REACH * self.extent()).max(self.aureole_reach()) / body_radius
+    }
+
+    /// How far from the summit its aureole reaches, m (F172); none without one.
+    pub fn aureole_reach(&self) -> f64 {
+        self.failure.as_ref().map_or(0.0, |f| {
+            f.lobes
+                .iter()
+                .map(|l| (l.root + l.run).hypot(l.width * (1.0 + LANDSLIDE_SPREAD)))
+                .fold(0.0, f64::max)
+                * 1.02
+        })
     }
 
     /// A point's distance from the summit, m, and its azimuth there, rad from east
@@ -475,10 +527,36 @@ pub fn shield_laid(t: f64, shield: &Shield) -> f64 {
     (1.0 - shield.overflow) * shield_supplied(t, shield)
 }
 
-/// A shield's growth by a time, 0 to 1 (F164): the lava laid on it over its edifice's
-/// volume, which it fills and then stands at.
+/// The share of what a shield takes that is laid by a time, 0 to 1 (F164): the lava laid
+/// on it over its edifice's volume and, where its flanks fail, the lava that spreads them
+/// (F172), which it fills and then stands at.
 pub fn shield_progress(t: f64, shield: &Shield) -> f64 {
     (shield_laid(t, shield) / shield.volume.max(1.0)).min(1.0)
+}
+
+/// The lava that spreads a shield's flanks, m³ (F172); none where its crust holds it.
+fn shield_spread(shield: &Shield) -> f64 {
+    shield.failure.as_ref().map_or(0.0, |f| f.spread)
+}
+
+/// A shield's edifice's growth by a time, 0 to 1 (F172): the lava laid on it over what the
+/// edifice holds at the relief its crust holds, which it fills before its flanks fail; its
+/// progress where its crust holds it.
+pub fn shield_grown(t: f64, shield: &Shield) -> f64 {
+    let holds = (shield.volume - shield_spread(shield)).max(1.0);
+    (shield_laid(t, shield) / holds).min(1.0)
+}
+
+/// How far a shield's flanks have failed by a time, 0 to 1 (F172): not at all until its
+/// edifice has filled to the relief its crust holds, then the lava laid past that over the
+/// lava that spreads them, its toe breaking away and its aureole laid as it comes. An edifice
+/// its supply never fills never fails.
+pub fn shield_failed(t: f64, shield: &Shield) -> f64 {
+    let spread = shield_spread(shield);
+    if spread <= 0.0 {
+        return 0.0;
+    }
+    ((shield_laid(t, shield) - (shield.volume - spread)) / spread).clamp(0.0, 1.0)
 }
 
 /// The share of a rise's dikes its shields' loads gather by a time (F119), and so the share
@@ -642,9 +720,10 @@ fn laid_time(shield: &Shield, laid: f64) -> f64 {
     s.last().map_or(shield.start_gyr, |&(t, _)| t)
 }
 
-/// The time by which a shield had grown to a share of its edifice.
+/// The time by which a shield had grown to a share of its edifice, before its flanks fail
+/// (F172).
 fn progress_time(shield: &Shield, progress: f64) -> f64 {
-    laid_time(shield, progress * shield.volume)
+    laid_time(shield, progress * (shield.volume - shield_spread(shield)))
 }
 
 /// The lava laid on a shield, m³, over which the eruptions that can show on it came (F101,
@@ -663,6 +742,185 @@ fn shield_span(shield: &Shield, present: f64) -> Option<(f64, f64)> {
 /// The times of the eruptions that can show on a shield (F101).
 pub fn shield_window(shield: &Shield, present: f64) -> Option<(f64, f64)> {
     shield_span(shield, present).map(|(from, _)| (laid_time(shield, from).min(present), present))
+}
+
+/// The share of a shield's height a point keeps past its scarp (F172), its flanks failed by
+/// the share `failed`: all of it within the scarp, `1 − failed` of it beyond its wall's
+/// foot, the wall as wide as the scarp's height lies at SCARP_WALL_SLOPE_DEG; all of it on a
+/// shield without one.
+fn scarp_kept(shield: &Shield, u: f64, phi: f64, failed: f64) -> f64 {
+    match &shield.failure {
+        None => 1.0,
+        Some(f) => {
+            let at = f.scarp_at(shield.id, phi);
+            1.0 - failed * smooth(u, at, at + scarp_wall_share(shield, at))
+        }
+    }
+}
+
+/// A scarp's wall's width in shares of the reach, its height lying at SCARP_WALL_SLOPE_DEG.
+fn scarp_wall_share(shield: &Shield, at: f64) -> f64 {
+    let height = shield.height * shield_shape(at);
+    (height / SCARP_WALL_SLOPE_DEG.to_radians().tan() / shield.radius.max(1.0)).max(1e-3)
+}
+
+/// The volume of a shield's edifice, m³, each point keeping `kept(u, φ)` of its height.
+fn edifice_volume(shield: &Shield, kept: impl Fn(f64, f64) -> f64) -> f64 {
+    let (na, nr) = (128, 128);
+    let mut volume = 0.0;
+    for i in 0..na {
+        let phi = std::f64::consts::TAU * (i as f64 + 0.5) / na as f64;
+        let dr = shield.radius_toward(phi) / nr as f64;
+        for j in 0..nr {
+            let r = (j as f64 + 0.5) * dr;
+            let ring = r * dr * std::f64::consts::TAU / na as f64;
+            let u = shield.reach_share(r, phi);
+            volume += shield.height * shield_shape(u) * kept(u, phi) * ring;
+        }
+    }
+    volume
+}
+
+/// A shield's flanks failing (F172): the lava `spread` m³ its supply would have stacked above
+/// what its crust holds pushes as much of its toe out beyond its foot, the scarp where the
+/// toe breaks away standing at the share of the reach that leaves that much beyond it; the
+/// toe and the lava together lie beyond it in lobes, each as far as a rock avalanche of its
+/// volume runs for the scarp's height.
+fn flank_failure(shield: &Shield, spread: f64, rng: &Rng, draw: u64) -> Failure {
+    let whole = edifice_volume(shield, |_, _| 1.0);
+    let toe = |at: f64| {
+        let wall = scarp_wall_share(shield, at);
+        whole - edifice_volume(shield, |u, _| 1.0 - smooth(u, at, at + wall))
+    };
+    let (mut lo, mut hi) = (0.3f64, 0.999f64);
+    if toe(lo) <= spread {
+        hi = lo;
+    } else {
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            if toe(mid) > spread {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+    }
+    let scarp = 0.5 * (lo + hi);
+    let noise = GradientNoise::new(shield.id ^ 0xA0E0_1E00_0000_0000);
+    let partial = Failure {
+        scarp,
+        spread,
+        lobes: Vec::new(),
+        noise: noise.clone(),
+    };
+    // The lobes share the circle: sectors of random sizes from a random start, each lobe
+    // filling most of its sector, its volume by its sector and a draw.
+    let (n_lo, n_hi) = AUREOLE_LOBES;
+    let n = n_lo + ((n_hi - n_lo + 1) as f64 * rng.uniform(draw, 0)) as usize;
+    let n = n.min(n_hi);
+    let sizes: Vec<f64> = (0..n)
+        .map(|j| -rng.uniform(draw, 1 + j as u64).max(1e-9).ln())
+        .collect();
+    let total: f64 = sizes.iter().sum();
+    let weights: Vec<f64> = sizes
+        .iter()
+        .enumerate()
+        .map(|(j, s)| s * (0.5 + rng.uniform(draw, 20 + j as u64)))
+        .collect();
+    let weight: f64 = weights.iter().sum();
+    let aureole = 2.0 * spread;
+    let mut start = std::f64::consts::TAU * rng.uniform(draw, 40);
+    let mut lobes = Vec::with_capacity(n);
+    for j in 0..n {
+        let size = std::f64::consts::TAU * sizes[j] / total;
+        let azimuth = start + 0.5 * size;
+        start += size;
+        let at = partial.scarp_at(shield.id, azimuth);
+        let root = at * shield.radius_toward(azimuth);
+        let fall = (shield.height * shield_shape(at)).max(1.0);
+        let volume = aureole * weights[j] / weight;
+        let (slope, intercept) = AUREOLE_MOBILITY;
+        let reach = 10f64.powf(slope * volume.max(1.0).log10() + intercept);
+        let run = fall / reach.max(1e-6);
+        let width = root * (0.425 * size).min(std::f64::consts::FRAC_PI_2).sin();
+        // Its volume over its shape, (1 − x²) along and (1 − q²)^1.5 across a half width
+        // widening by LANDSLIDE_SPREAD.
+        let shape =
+            3.0 * std::f64::consts::PI / 8.0 * width * run * (2.0 / 3.0 + LANDSLIDE_SPREAD / 4.0);
+        lobes.push(AureoleLobe {
+            azimuth,
+            root,
+            width,
+            run,
+            peak: volume / shape.max(1.0),
+            spacing: AUREOLE_RIDGE_SPACING * (0.7 + 0.6 * rng.uniform(draw, 60 + j as u64)),
+            phase: std::f64::consts::TAU * rng.uniform(draw, 80 + j as u64),
+        });
+    }
+    Failure {
+        scarp,
+        spread,
+        lobes,
+        noise,
+    }
+}
+
+/// The aureole's thickness at a point at the edifice's full growth, m (F172): its lobes',
+/// ridged across their run, the ridges' amplitude falling as a grid `blur` m wide smooths
+/// them, or the ridges alone with `ridges`.
+pub fn aureole_thickness(
+    shield: &Shield,
+    d: [f64; 3],
+    body_radius: f64,
+    blur: f64,
+    ridges: bool,
+) -> f64 {
+    let Some(f) = &shield.failure else {
+        return 0.0;
+    };
+    let (r, phi) = shield.polar(d, body_radius);
+    let mut total = 0.0;
+    for l in &f.lobes {
+        let off = (phi - l.azimuth + 3.0 * std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        if off.abs() >= std::f64::consts::FRAC_PI_2 {
+            continue;
+        }
+        let along = r * off.cos() - l.root;
+        if along < 0.0 || along >= l.run {
+            continue;
+        }
+        let x = along / l.run;
+        let w = l.width * (1.0 + LANDSLIDE_SPREAD * x);
+        let q = r * off.sin() / w.max(1.0);
+        if q.abs() >= 1.0 {
+            continue;
+        }
+        let body = l.peak * (1.0 - x * x) * (1.0 - q * q).powf(1.5);
+        let k = std::f64::consts::TAU / l.spacing;
+        // The crests wander and the ridges come and go, as the slide's flow buckled its
+        // surface unevenly.
+        let wander = f.noise.fbm(d, body_radius / (3.0 * l.spacing), 3, 2.0, 0.5);
+        let patchy = (1.0
+            + f.noise.fbm(
+                [d[1], d[2], d[0]],
+                body_radius / (4.0 * l.spacing),
+                2,
+                2.0,
+                0.5,
+            ))
+        .clamp(0.0, 2.0);
+        let ridge = AUREOLE_RIDGE_SHARE
+            * (-0.5 * (k * blur).powi(2)).exp()
+            * patchy
+            * (k * along + l.phase + std::f64::consts::TAU * AUREOLE_RIDGE_WARP * wander).cos();
+        total += if ridges {
+            body * ridge
+        } else {
+            body * (1.0 + ridge)
+        };
+    }
+    total
 }
 
 /// A shield's edifice fully grown (F164): its volume, m³, and the area it covers, m², summed
@@ -929,7 +1187,7 @@ fn past_the_foot(
             let (r, a) = o.polar(at, body_radius);
             oi != si
                 && r < o.radius_toward(a)
-                && o.height * shield_shape(o.reach_share(r, a)) * shield_progress(t, o)
+                && o.height * shield_shape(o.reach_share(r, a)) * shield_grown(t, o)
                     > FLOOD_SHEET_THICKNESS
         })
     };
@@ -979,18 +1237,21 @@ fn rift_reach(shield: &Shield) -> f64 {
     sum / (2 * n) as f64 / shield.radius
 }
 
-/// Height of a shield's edifice at a point, fully grown, with or without the calderas
-/// cut into the summit. The loop builds the edifice without them, since they are too
-/// small for its grid; the finishing pass cuts them.
+/// Height of a shield's edifice at a point, fully grown and its flanks failed by the share
+/// `failed` (F172), with or without the calderas cut into the summit. The loop builds the
+/// edifice without them, since they are too small for its grid; the finishing pass cuts
+/// them.
 pub fn shield_height(
     shield: &Shield,
     d: [f64; 3],
     body_radius: f64,
     with_calderas: bool,
     blur: f64,
+    failed: f64,
 ) -> f64 {
     let (r, phi) = shield.polar(d, body_radius);
-    let h = shield.height * shield_shape(shield.reach_share(r, phi));
+    let u = shield.reach_share(r, phi);
+    let h = shield.height * shield_shape(u) * scarp_kept(shield, u, phi, failed);
     if with_calderas {
         (h - caldera_depth(shield, d, body_radius, blur)).max(0.0)
     } else {
@@ -1408,6 +1669,8 @@ pub struct PlumeProcess {
     present: f64,
     /// Shield height so far per coarse cell, m.
     shield_built: Vec<f32>,
+    /// The aureoles laid on each coarse cell, m (F172).
+    aureole: Vec<f32>,
     /// Canyon depth carved so far per coarse cell, m.
     carved: Vec<f32>,
     /// The share of that the shields' lava has filled since, m.
@@ -1428,6 +1691,11 @@ impl PlumeProcess {
     /// The height the shields have piled on each coarse cell, m: their loads (F161).
     pub fn shield_built(&self) -> &[f32] {
         &self.shield_built
+    }
+
+    /// The aureoles laid on each coarse cell, m: their loads (F172).
+    pub fn aureole_laid(&self) -> &[f32] {
+        &self.aureole
     }
 
     /// None when the body raises no plume. `relief` is the ground before the rises, for the
@@ -1541,10 +1809,25 @@ impl PlumeProcess {
                     area: 0.0,
                     overflow: 0.0,
                     rift_overflow: 0.0,
+                    failure: None,
                     id: sid,
                 };
                 (shield.volume, shield.area) = edifice_size(&shield);
                 (shield.overflow, shield.rift_overflow) = overflow_share(rift_reach(&shield));
+                // Where its crust cannot hold the height its slope would build, the lava it
+                // would have stacked above spreads its flanks once its edifice is full
+                // (F172), and its supply covers its aureole as well as its edifice.
+                let design = radius * SHIELD_SLOPE_DEG.to_radians().tan();
+                if design > height * (1.0 + 1e-9) {
+                    let spread = shield.volume * (design / height - 1.0);
+                    shield.failure = Some(flank_failure(
+                        &shield,
+                        spread,
+                        &rng,
+                        draw ^ 0xA0E0_1E00_0000,
+                    ));
+                    shield.volume += spread;
+                }
                 shields.push(shield);
                 before += volume(k as usize);
                 sid += 1;
@@ -1832,6 +2115,7 @@ impl PlumeProcess {
             rise_height: rise_height.max(1.0),
             present: graph.num("body.age"),
             shield_built: vec![0.0; grid.cell_count()],
+            aureole: vec![0.0; grid.cell_count()],
             carved: vec![0.0; grid.cell_count()],
             filled: vec![0.0; grid.cell_count()],
             foot,
@@ -1917,15 +2201,20 @@ impl PlumeProcess {
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             let present = self.present;
             for s in &self.shields {
-                let grown = shield_progress(present, s);
+                let grown = shield_grown(present, s);
                 eprintln!(
-                    "shield {}: edifice {:.3e} km3, brought {:.3e} km3, built {:.3}{}",
+                    "shield {}: edifice {:.3e} km3, brought {:.3e} km3, built {:.3}{}{}",
                     s.id,
                     s.volume / 1e9,
                     shield_supplied(present, s) / 1e9,
                     grown,
                     if grown >= 1.0 {
                         format!(", full at {:.2} Gyr", progress_time(s, 1.0))
+                    } else {
+                        String::new()
+                    },
+                    if s.failure.is_some() {
+                        format!(", flanks failed {:.2}", shield_failed(present, s))
                     } else {
                         String::new()
                     }
@@ -1967,7 +2256,7 @@ impl PlumeProcess {
             .iter()
             .map(|&(key, id, share)| {
                 let v = &self.shields[id as usize];
-                let grown = shield_progress(present, v);
+                let grown = shield_grown(present, v);
                 let time = (grown > 0.0).then(|| progress_time(v, share * grown).min(present));
                 (key, time)
             })
@@ -2112,6 +2401,10 @@ impl PlumeProcess {
             if dp <= 0.0 {
                 continue;
             }
+            // Its edifice grows until it is full, and then, where its crust holds no more,
+            // its flanks fail (F172).
+            let dg = shield_grown(t1, shield) - shield_grown(t0, shield);
+            let df = shield_failed(t1, shield) - shield_failed(t0, shield);
             self.stamper
                 .gather(&grid, body_radius, shield.center, shield.extent());
             let bedrock = layers.bedrock.as_mut_slice();
@@ -2144,8 +2437,19 @@ impl PlumeProcess {
             }
             for &(idx, r, _) in &self.stamper.footprint {
                 let d = grid.center(grid.cell(idx));
-                let full = shield_height(shield, d, body_radius, false, 0.0);
-                let dh = full * dp;
+                let whole = shield_height(shield, d, body_radius, false, 0.0, 0.0);
+                let toe = whole - shield_height(shield, d, body_radius, false, 0.0, 1.0);
+                let dh = whole * dg - toe * df;
+                if dh < 0.0 {
+                    // Its toe breaks away beyond its scarp, baring the wall and the ground
+                    // it stood on.
+                    bedrock[idx] += dh as f32;
+                    self.shield_built[idx] += dh as f32;
+                    if -dh > SHIELD_RENEWAL_THICKNESS {
+                        ages[idx] = t_mid as f32;
+                    }
+                    continue;
+                }
                 if dh <= 0.0 {
                     continue;
                 }
@@ -2165,6 +2469,35 @@ impl PlumeProcess {
                     deep[idx] = 0.0;
                     melt[idx] = 0.0;
                     cover[idx] = 1.0;
+                }
+            }
+            // Its aureole spreads as its flanks fail (F172), the ridges finer than the grid
+            // left to the finish.
+            if df > 0.0 {
+                let blur = 0.5 * grid.delta() * body_radius;
+                self.stamper
+                    .gather(&grid, body_radius, shield.center, shield.aureole_reach());
+                let bedrock = layers.bedrock.as_mut_slice();
+                let ages = layers.surface_age.as_mut_slice();
+                let units = layers.unit_id.as_mut_slice();
+                let deep = layers.deep.as_mut_slice();
+                let melt = layers.melt.as_mut_slice();
+                let cover = layers.cover.as_mut_slice();
+                for &(idx, _, _) in &self.stamper.footprint {
+                    let d = grid.center(grid.cell(idx));
+                    let da = aureole_thickness(shield, d, body_radius, blur, false) * df;
+                    if da <= 0.0 {
+                        continue;
+                    }
+                    bedrock[idx] += da as f32;
+                    self.aureole[idx] += da as f32;
+                    if da > SHIELD_RENEWAL_THICKNESS {
+                        ages[idx] = t_mid as f32;
+                        units[idx] = UNIT_LAVA;
+                        deep[idx] = 0.0;
+                        melt[idx] = 0.0;
+                        cover[idx] = 1.0;
+                    }
                 }
             }
         }
@@ -3732,11 +4065,16 @@ pub fn shield_burial<'a>(
     shields
         .into_iter()
         .map(|s| {
-            let grown = shield_progress(present, s) - shield_progress(since, s);
-            if grown <= 0.0 || angle_between(s.center, d) * body_radius > s.extent() {
+            let laid = shield_progress(present, s) - shield_progress(since, s);
+            if laid <= 0.0 || angle_between(s.center, d) * body_radius > s.extent() {
                 0.0
             } else {
-                shield_height(s, d, body_radius, false, 0.0) * grown
+                // Its toe, where its flanks failed since, is lava no longer there (F172).
+                let at = |t: f64| {
+                    shield_height(s, d, body_radius, false, 0.0, shield_failed(t, s))
+                        * shield_grown(t, s)
+                };
+                (at(present) - at(since)).max(0.0)
             }
         })
         .sum()
@@ -3952,14 +4290,15 @@ pub fn shield_compute(
     let cover = layers.cover.as_slice();
     // The summit's pond where the fine summit lies below the coarse, and the edifice's
     // own outline, each by the share of a cell its margin covers (F131).
+    let failed = shield_failed(present, shield);
     let pond = |e: [f64; 3]| {
-        shield_height(shield, e, body_radius, false, 0.0)
-            - shield_height(shield, e, body_radius, true, 0.0)
+        shield_height(shield, e, body_radius, false, 0.0, failed)
+            - shield_height(shield, e, body_radius, true, 0.0, failed)
     };
-    let edifice = |e: [f64; 3]| shield_height(shield, e, body_radius, false, 0.0);
+    let edifice = |e: [f64; 3]| shield_height(shield, e, body_radius, false, 0.0, failed);
     // The edifice's lava under the eruptions that show, as it was when they began.
     let older = shield_window(shield, present).map(|w| shield_composition(shield, w.0, None));
-    let built = shield_progress(present, shield);
+    let built = shield_grown(present, shield);
     stamper.gather(
         grid,
         body_radius,
@@ -3970,8 +4309,8 @@ pub fn shield_compute(
     let mut compositions = Vec::with_capacity(stamper.footprint.len());
     for &(idx, _, _) in &stamper.footprint {
         let d = grid.center(grid.cell(idx));
-        let fine = shield_height(shield, d, body_radius, true, 0.0);
-        let coarse = shield_height(shield, d, body_radius, false, 0.0);
+        let fine = shield_height(shield, d, body_radius, true, 0.0, failed);
+        let coarse = shield_height(shield, d, body_radius, false, 0.0, failed);
         let mut stack = 0.0;
         // The calderas sink by the share of its height the edifice built (F164).
         // The topmost eruption that holds the cell, else the topmost that touches it, and
@@ -3991,9 +4330,12 @@ pub fn shield_compute(
             }
         }
         let top = whole.or(touched);
+        // The aureole's ridges, finer than the coarse grid that laid it (F172).
+        let ridges = aureole_thickness(shield, d, body_radius, 0.0, true);
         let mut write = CellWrite {
             idx: idx as u32,
-            bedrock: (bedrock[idx] as f64 + (fine - coarse) * built + stack) as f32,
+            bedrock: (bedrock[idx] as f64 + (fine - coarse) * built + ridges * failed + stack)
+                as f32,
             surface: false,
             age: 0.0,
             unit: 0,
@@ -4093,18 +4435,19 @@ mod tests {
             area: 0.0,
             overflow: 0.0,
             rift_overflow: 0.0,
+            failure: None,
             id: 1,
         }
         .with_clock(1.0, 4.5);
         let r = 3.39e6;
-        let summit = shield_height(&shield, [1.0, 0.0, 0.0], r, true, 0.0);
+        let summit = shield_height(&shield, [1.0, 0.0, 0.0], r, true, 0.0, 1.0);
         assert!((summit - 17.5e3).abs() < 1.0, "{summit}");
         let (east, north) = local_basis(shield.center);
         let rim = offset(shield.center, east, north, 45e3 / r, 0.3);
-        let h_rim = shield_height(&shield, rim, r, true, 0.0);
+        let h_rim = shield_height(&shield, rim, r, true, 0.0, 1.0);
         assert!(h_rim > 19.0e3 && h_rim < 20.0e3, "{h_rim}");
         let flank = offset(shield.center, east, north, 150e3 / r, 1.0);
-        let h_flank = shield_height(&shield, flank, r, true, 0.0);
+        let h_flank = shield_height(&shield, flank, r, true, 0.0, 1.0);
         assert!(h_flank < h_rim && h_flank > 10e3, "{h_flank}");
         assert!(
             shield_height(
@@ -4112,7 +4455,8 @@ mod tests {
                 offset(shield.center, east, north, shield.extent() / r + 1e-4, 0.0),
                 r,
                 true,
-                0.0
+                0.0,
+                1.0
             ) == 0.0
         );
     }
@@ -4140,6 +4484,133 @@ mod tests {
         assert!(most >= 4, "the most collapses on a summit was {most}");
     }
 
+    /// F172: a shield of Olympus Mons's size whose slope would build it 27.4 km high, on a
+    /// crust that holds 25 km: the lava it would have stacked above spreads its flanks, its
+    /// toe breaking away in a scarp some kilometres high where the toe beyond holds that much
+    /// lava, and its aureole, the toe and the lava together, holds twice it, in a few lobes
+    /// that each run out as far as a rock avalanche of its volume runs for the scarp's
+    /// height, some hundreds of kilometres.
+    #[test]
+    fn a_shield_past_what_its_crust_holds_sheds_its_toe_and_its_aureole() {
+        let r = 3.39e6;
+        let mut shield = Shield {
+            center: normalize([0.4, -0.2, 0.9]),
+            radius: 313e3,
+            height: 25e3,
+            start_gyr: 1.0,
+            calderas: Vec::new(),
+            rift: 0.4,
+            elongation: 1.1,
+            supplied: Vec::new(),
+            volume: 0.0,
+            area: 0.0,
+            overflow: 0.0,
+            rift_overflow: 0.0,
+            failure: None,
+            id: 3,
+        };
+        (shield.volume, shield.area) = edifice_size(&shield);
+        let design = shield.radius * SHIELD_SLOPE_DEG.to_radians().tan();
+        let spread = shield.volume * (design / shield.height - 1.0);
+        let failure = flank_failure(&shield, spread, &Rng::new(7), 11);
+        assert!(
+            failure.scarp > 0.5 && failure.scarp < 0.95,
+            "{}",
+            failure.scarp
+        );
+        assert_eq!(failure.spread, spread);
+        let n = failure.lobes.len();
+        assert!((AUREOLE_LOBES.0..=AUREOLE_LOBES.1).contains(&n), "{n}");
+        shield.failure = Some(failure.clone());
+        // The toe beyond the scarp holds the spread lava.
+        let whole = edifice_volume(&shield, |_, _| 1.0);
+        let kept = edifice_volume(&shield, |u, phi| scarp_kept(&shield, u, phi, 1.0));
+        assert!(
+            ((whole - kept) - spread).abs() < 0.15 * spread,
+            "{:.3e} toe, {spread:.3e} spread",
+            whole - kept
+        );
+        // Each scarp kilometres high, each lobe as far as its volume runs for its fall.
+        for l in &failure.lobes {
+            let at = failure.scarp_at(shield.id, l.azimuth);
+            let fall = shield.height * shield_shape(at);
+            assert!(fall > 2e3 && fall < 12e3, "{fall}");
+            assert!(l.run > 100e3 && l.run < 1_200e3, "{}", l.run);
+        }
+        // The aureole holds the toe and the lava together, twice the spread.
+        let grid = CubeSphere::new(256);
+        let reach = shield.aureole_reach();
+        let mut stamper = crate::crater::Stamper::new(&grid);
+        stamper.gather(&grid, r, shield.center, reach);
+        let laid: f64 = stamper
+            .footprint
+            .iter()
+            .map(|&(idx, _, _)| {
+                let c = grid.cell(idx);
+                aureole_thickness(&shield, grid.center(c), r, 0.5 * grid.delta() * r, false)
+                    * grid.cell_area(c)
+                    * r
+                    * r
+            })
+            .sum();
+        assert!(
+            (laid - 2.0 * spread).abs() < 0.15 * 2.0 * spread,
+            "{laid:.3e} laid against {:.3e}",
+            2.0 * spread
+        );
+        // None beyond the reach, and the edifice's height none beyond the scarp's wall.
+        let (east, north) = local_basis(shield.center);
+        let far = offset(shield.center, east, north, 1.05 * reach / r, 0.7);
+        assert_eq!(aureole_thickness(&shield, far, r, 0.0, false), 0.0);
+        let past = offset(shield.center, east, north, 0.995 * shield.radius / r, 1.3);
+        assert!(shield_height(&shield, past, r, false, 0.0, 1.0) < 1.0);
+    }
+
+    /// F172: on Mars only the shields whose slope would build them taller than its crust
+    /// holds shed their flanks, the largest with a scarp kilometres high and an aureole
+    /// running out hundreds of kilometres, as Olympus Mons's do.
+    #[test]
+    fn mars_s_largest_shield_sheds_its_flanks() {
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&g);
+        let p = PlumeProcess::new(&g, CubeSphere::new(64), &thermal, None).unwrap();
+        let limit = g.f64("interior.max_relief");
+        let mut failed = 0;
+        for s in &p.shields {
+            let design = s.radius * SHIELD_SLOPE_DEG.to_radians().tan();
+            assert_eq!(
+                s.failure.is_some(),
+                design > limit * (1.0 + 1e-9),
+                "{}",
+                s.id
+            );
+            if let Some(f) = &s.failure {
+                failed += 1;
+                let heights: Vec<f64> = f
+                    .lobes
+                    .iter()
+                    .map(|l| s.height * shield_shape(f.scarp_at(s.id, l.azimuth)))
+                    .collect();
+                let runs: Vec<f64> = f.lobes.iter().map(|l| l.run).collect();
+                println!(
+                    "shield {}: {:.0} km across, {:.1} km high, scarp at {:.2} of its reach, {:.1}-{:.1} km high, {} lobes running {:.0}-{:.0} km",
+                    s.id,
+                    2.0 * s.radius / 1e3,
+                    s.height / 1e3,
+                    f.scarp,
+                    heights.iter().cloned().fold(f64::MAX, f64::min) / 1e3,
+                    heights.iter().cloned().fold(0.0, f64::max) / 1e3,
+                    f.lobes.len(),
+                    runs.iter().cloned().fold(f64::MAX, f64::min) / 1e3,
+                    runs.iter().cloned().fold(0.0, f64::max) / 1e3,
+                );
+                assert!(heights.iter().all(|&h| h > 2e3 && h < 12e3));
+                assert!(runs.iter().all(|&l| l > 100e3 && l < 1_200e3));
+            }
+        }
+        assert!(failed >= 1);
+    }
+
     /// A preset's plume with its shields' supply scheduled from its floods over `steps`
     /// steps (F164), against flat ground.
     fn scheduled(g: &crate::params::ParamGraph, grid: CubeSphere, steps: usize) -> PlumeProcess {
@@ -4158,8 +4629,10 @@ mod tests {
 
     /// The shields' melt is one budget (F164): each step a rise's shields take no more than
     /// the step's budget brings, nothing before the first starts, and their supplies add up
-    /// to what they take; Mars's largest edifice fills first, by 2 Gyr, and its shields are
-    /// brought more than thrice what they hold, the rest intruding; none of Venus's fills.
+    /// to what they take; Mars's largest edifice fills first, by 2 Gyr, and then sheds its
+    /// flanks (F172), and its shields are brought more than thrice what they hold, the rest
+    /// intruding; none of Venus's fills, so that none of its edifices fails, though its
+    /// largest would build past what its crust holds.
     #[test]
     fn a_rise_s_shields_grow_from_what_they_take_of_its_eruptions() {
         let grid = CubeSphere::new(64);
@@ -4196,6 +4669,7 @@ mod tests {
             .max_by(|a, b| a.volume.total_cmp(&b.volume))
             .unwrap();
         assert!(shield_progress(age, largest) >= 1.0);
+        assert!(largest.failure.is_some() && shield_failed(age, largest) == 1.0);
         let filled = progress_time(largest, 1.0);
         assert!(filled < 2.0, "{filled}");
         for s in &mars.shields {
@@ -4208,8 +4682,10 @@ mod tests {
         assert!(brought > 3.0 * held, "{brought:.3e} {held:.3e}");
         let (age, venus) = run("Venus");
         for s in &venus.shields {
-            assert!(shield_progress(age, s) < 1.0, "{}", shield_progress(age, s));
+            assert!(shield_grown(age, s) < 1.0, "{}", shield_grown(age, s));
+            assert_eq!(shield_failed(age, s), 0.0);
         }
+        assert!(venus.shields.iter().any(|s| s.failure.is_some()));
     }
 
     /// A volcano's weight gathers its rise's lava (F165): on each of Venus's rises, where
@@ -4236,7 +4712,7 @@ mod tests {
                 .max_by(|a, b| built(a).total_cmp(&built(b)))
                 .unwrap();
             assert!(built(leader) > 0.75 * whole, "{} of {whole}", built(leader));
-            let height = leader.height * shield_progress(age, leader);
+            let height = leader.height * shield_grown(age, leader);
             assert!(height < 0.8 * leader.height, "{height}");
             if height > 2e3 {
                 tall += 1;
@@ -4302,11 +4778,13 @@ mod tests {
             }
         }
         assert!(eruptions.len() > 100, "{}", eruptions.len());
+        // What the edifices hold with the aureoles their flanks shed (F172).
         let held: f64 = p
             .shield_built()
             .iter()
+            .zip(p.aureole_laid())
             .enumerate()
-            .map(|(k, &h)| h as f64 * grid.cell_area(grid.cell(k)) * r * r)
+            .map(|(k, (&h, &a))| (h + a) as f64 * grid.cell_area(grid.cell(k)) * r * r)
             .sum();
         let sent = eruptions.iter().map(|e| e.volume).sum::<f64>() + p.foot.iter().sum::<f64>();
         let built: f64 = p
@@ -4346,8 +4824,11 @@ mod tests {
                 }
                 let standing = s.height
                     * shield_shape(s.reach_share(rr + cell, phi))
-                    * shield_progress(e.time_gyr, s);
-                assert!(standing <= FLOOD_SHEET_THICKNESS, "on an edifice: {standing}");
+                    * shield_grown(e.time_gyr, s);
+                assert!(
+                    standing <= FLOOD_SHEET_THICKNESS,
+                    "on an edifice: {standing}"
+                );
             }
             let from = p.shields.iter().any(|s| {
                 let (rr, phi) = s.polar(d, r);
@@ -4389,12 +4870,20 @@ mod tests {
             area: 0.0,
             overflow: 0.0,
             rift_overflow: 0.0,
+            failure: None,
             id: 5,
         }
         .with_clock(1.0, 4.5);
         let height: Vec<f32> = (0..grid.cell_count())
             .map(|k| {
-                shield_height(&shield, grid.center(grid.cell(k)), body_radius, false, 0.0) as f32
+                shield_height(
+                    &shield,
+                    grid.center(grid.cell(k)),
+                    body_radius,
+                    false,
+                    0.0,
+                    1.0,
+                ) as f32
             })
             .collect();
         let ground = PaddedField::new(&grid, &height);
@@ -4403,7 +4892,7 @@ mod tests {
         let mut downhill = 0;
         for f in &flows {
             let p = &f.lobes[0].points;
-            let h = |q: [f64; 3]| shield_height(&shield, q, body_radius, false, 0.0);
+            let h = |q: [f64; 3]| shield_height(&shield, q, body_radius, false, 0.0, 1.0);
             if h(p[p.len() - 1]) < h(p[0]) {
                 downhill += 1;
             }
@@ -5782,6 +6271,7 @@ mod tests {
             area: 0.0,
             overflow: 0.0,
             rift_overflow: 0.0,
+            failure: None,
             id: 3,
         }
         .with_clock(1.0, 4.5);
@@ -5959,6 +6449,7 @@ mod tests {
             area: 0.0,
             overflow: 0.0,
             rift_overflow: 0.0,
+            failure: None,
             id: 2,
         }
         .with_clock(1.0, 4.5);

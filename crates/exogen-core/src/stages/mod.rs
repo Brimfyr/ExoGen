@@ -378,7 +378,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 126;
+pub const FINISH_VERSION: u64 = 127;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -696,8 +696,13 @@ pub fn run_coarse_loop(
                 // The lava the floods and the shields have laid (F161), less what the last
                 // load held.
                 let shields = plume.as_ref().map(|p| p.shield_built());
+                let aureoles = plume.as_ref().map(|p| p.aureole_laid());
                 let now: Vec<f32> = (0..grid.cell_count())
-                    .map(|k| f.thickness[k] + shields.map_or(0.0, |s| s[k]))
+                    .map(|k| {
+                        f.thickness[k]
+                            + shields.map_or(0.0, |s| s[k])
+                            + aureoles.map_or(0.0, |a| a[k])
+                    })
                     .collect();
                 let increment: Vec<f32> = now
                     .iter()
