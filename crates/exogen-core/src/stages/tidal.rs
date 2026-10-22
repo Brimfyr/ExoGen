@@ -735,6 +735,7 @@ mod tests {
                     }
                 })
                 .collect(),
+            mantle: None,
         };
         let f = Freezing::new(&history, 1.5608e6).unwrap();
         assert!(

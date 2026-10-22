@@ -2318,8 +2318,11 @@ pub fn volcanism_corona_count(c: &Ctx) -> Value {
         let thermal = crate::thermal::ThermalHistory::new(&thermal_inputs(c));
         // The plumes and the upwelling limbs between them, as the loop makes them (F150,
         // F151).
-        let rises = crate::stages::plume::place_rises(c, &thermal).unwrap_or_default();
-        let limbs = crate::stages::stress::Limbs::between(&rises, c.f64("body.radius"));
+        let (rises, turn) = crate::stages::plume::place_rises(c, &thermal).unwrap_or_default();
+        let support = crate::convection::Convection::from_graph(c, &thermal)
+            .map(|convection| crate::convection::Support { convection, turn });
+        let limbs =
+            crate::stages::stress::Limbs::along(&rises, support.as_ref(), c.f64("body.radius"));
         return (crate::stages::corona::rock_coronae(c, &mantle, &rises, &limbs).len() as f64)
             .into();
     }

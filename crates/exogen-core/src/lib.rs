@@ -8,6 +8,7 @@
 //! repository for the design.
 
 pub mod constants;
+pub mod convection;
 pub mod crater;
 pub mod export;
 pub mod fields;

@@ -1,7 +1,7 @@
 //! What the slow processes have added to the ground by a time, for the finishing pass.
 //!
-//! The loop lifts the rises' domes, grows the shields and carves the canyon on the coarse
-//! ground as they happen, a step at a time and before that step's floods, and bends the
+//! The loop lifts the rises' domes and the ground the mantle's flow holds up (F173), grows
+//! the shields and carves the canyon on the coarse ground as they happen, a step at a time and before that step's floods, and bends the
 //! ground under its loads at the end of a step (F162); a corona's
 //! profile is the finish's (F146), so it adds nothing here. A flood refilled at the finish must see the ground as it found
 //! it, so the growth since then is taken off the base it is refilled against and put
@@ -42,6 +42,8 @@ pub struct Deformation<'a> {
     list: Vec<Deformer>,
     /// How far the ground sank under each load, on the coarse grid, and when (F162).
     flexure: Vec<(f64, PaddedField)>,
+    /// The mantle's convection beneath the lid (F173).
+    support: Option<&'a crate::convection::Support>,
 }
 
 impl<'a> Deformation<'a> {
@@ -55,6 +57,7 @@ impl<'a> Deformation<'a> {
         shields: &'a [Shield],
         canyons: &'a [Trough],
         flexure: &[(f64, Vec<f32>)],
+        support: Option<&'a crate::convection::Support>,
     ) -> Self {
         let cell = coarse.delta() * body_radius;
         let n = coarse.cell_count();
@@ -128,12 +131,13 @@ impl<'a> Deformation<'a> {
                 .iter()
                 .map(|(t, sunk)| (*t, PaddedField::new(&coarse, sunk)))
                 .collect(),
+            support,
         }
     }
 
     /// Whether anything deforms at all.
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty() && self.flexure.is_empty()
+        self.list.is_empty() && self.flexure.is_empty() && self.support.is_none()
     }
 
     /// End of the loop step a time falls in: the step's growth was on the ground before
@@ -162,10 +166,13 @@ impl<'a> Deformation<'a> {
                 sunk += sample_bilinear(&self.coarse, field, d) as f64;
             }
         }
+        // The ground the mantle's flow holds up then, as the loop lifted it at the end of
+        // each step, before that step's floods (F173).
+        let lifted = self.support.map_or(0.0, |s| s.at(t_slow, d));
         let c = self.coarse.index(self.coarse.locate(d).0);
         let (lo, hi) = (self.offsets[c] as usize, self.offsets[c + 1] as usize);
         if lo == hi {
-            return -sunk;
+            return lifted - sunk;
         }
         let r_body = self.body_radius;
         let coarse_cell = self.coarse.delta() * r_body;
@@ -205,7 +212,7 @@ impl<'a> Deformation<'a> {
                 }
             }
         }
-        h - sunk
+        h + lifted - sunk
     }
 
     /// Height added at a point since a flood at `t` found the ground: the continuous
@@ -262,6 +269,7 @@ mod tests {
             &shields,
             &[],
             &[],
+            None,
         );
         // At the summit, a flood at 2 Gyr saw the growth to the end of its step; what
         // came after is the rest of the exponential approach to the full height.

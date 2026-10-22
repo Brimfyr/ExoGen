@@ -116,6 +116,9 @@ pub struct MantleHistory {
     /// The body's surface gravity, m/s², and temperature, K, for the stiff lid's base.
     pub gravity: f64,
     pub surface_temperature: f64,
+    /// The body's radius and its mantle's depth, m, for its convection's cells (F173).
+    pub radius: f64,
+    pub depth: f64,
     /// The core's temperature, K, and the heat it gives the mantle per unit of the body's
     /// surface, W/m², at each step's end (F124).
     pub core_temperature: Vec<f64>,
@@ -207,7 +210,7 @@ impl MantleHistory {
 /// The stagnant-lid convective flux at a mantle temperature, W/m² (Solomatov and Moresi
 /// 2000's form): a k (rho g alpha / (kappa eta))^(1/3) (R T² / E)^(4/3), the last factor the
 /// rheological temperature scale over which the viscosity changes by a factor e.
-fn stagnant_flux(t: f64, gravity: f64) -> f64 {
+pub(crate) fn stagnant_flux(t: f64, gravity: f64) -> f64 {
     let rheological = GAS_CONSTANT * t * t / MANTLE_ACTIVATION;
     STAGNANT_LID_PREFACTOR
         * K_ROCK
@@ -331,6 +334,8 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         crust_share,
         gravity: inp.gravity,
         surface_temperature: ts,
+        radius: inp.radius,
+        depth,
         core_temperature: Vec::with_capacity(n),
         core_flux: Vec::with_capacity(n),
     };

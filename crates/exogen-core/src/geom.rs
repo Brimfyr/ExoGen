@@ -15,6 +15,34 @@ pub fn rotate(d: [f64; 3], axis: [f64; 3], angle: f64) -> [f64; 3] {
     ]
 }
 
+/// A turn of the body under its spin axis (F104): the rotation carrying the body-fixed
+/// directions of before into the frame of the present spin axis; none by default.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Turn {
+    pub axis: [f64; 3],
+    pub angle: f64,
+}
+
+impl Turn {
+    /// Where a direction of before stands now.
+    pub fn apply(&self, d: [f64; 3]) -> [f64; 3] {
+        if self.angle == 0.0 {
+            d
+        } else {
+            normalize(rotate(d, self.axis, self.angle))
+        }
+    }
+
+    /// Where a direction of now stood before.
+    pub fn undo(&self, d: [f64; 3]) -> [f64; 3] {
+        if self.angle == 0.0 {
+            d
+        } else {
+            normalize(rotate(d, self.axis, -self.angle))
+        }
+    }
+}
+
 #[inline]
 pub fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]

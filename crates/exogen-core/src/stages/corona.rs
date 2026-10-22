@@ -1412,7 +1412,9 @@ mod tests {
             let (g, _) = crate::presets::preset(name).unwrap().to_graph();
             let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
             let thermal = crate::thermal::ThermalHistory::from_graph(&g);
-            let rises = crate::stages::plume::place_rises(&g, &thermal).unwrap_or_default();
+            let rises = crate::stages::plume::place_rises(&g, &thermal)
+                .map(|(r, _)| r)
+                .unwrap_or_default();
             let t0 = std::time::Instant::now();
             let coronae = rock_coronae(&g, &mantle, &rises, &Limbs::default());
             let r = g.f64("body.radius");
@@ -1524,7 +1526,9 @@ mod tests {
             let (g, _) = crate::presets::preset(name).unwrap().to_graph();
             let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
             let thermal = crate::thermal::ThermalHistory::from_graph(&g);
-            let rises = crate::stages::plume::place_rises(&g, &thermal).unwrap_or_default();
+            let rises = crate::stages::plume::place_rises(&g, &thermal)
+                .map(|(r, _)| r)
+                .unwrap_or_default();
             (
                 rock_coronae(&g, &mantle, &rises, &Limbs::default()),
                 g.f64("body.age"),
@@ -1588,7 +1592,9 @@ mod tests {
         let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
         let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
         let thermal = crate::thermal::ThermalHistory::from_graph(&g);
-        let rises = crate::stages::plume::place_rises(&g, &thermal).unwrap_or_default();
+        let rises = crate::stages::plume::place_rises(&g, &thermal)
+            .map(|(r, _)| r)
+            .unwrap_or_default();
         let coronae = rock_coronae(&g, &mantle, &rises, &Limbs::default());
         let mut lifted = 0;
         for c in &coronae {

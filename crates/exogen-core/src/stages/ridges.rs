@@ -569,6 +569,7 @@ mod tests {
         };
         let history = FieldHistory {
             rises: Vec::new(),
+            limbs: Default::default(),
             body_radius,
             gravity,
             epochs: vec![

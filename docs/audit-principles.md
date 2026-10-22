@@ -377,6 +377,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | SYSTEM_SPACING, SYSTEM_ARREST_SHARE, SYSTEM_INDEX_WIDTH | stated choices (F160): a neighbour 0.6 to 1.6 of its host's reach aside (the Tharsis plateau's ridges some 30 km apart, Watters 1991), an arrest within a quarter of the reaches, an index of 120 km cells | the spacing from the stress shadow a thrust casts over its faulted layer, as the cracks' spacing from theirs (CRACK_DENSITY_FACTOR) |
 | the spread toe (F172) | a stated choice: an edifice past what its crust holds pushes as much of its toe out as the lava it would have stacked above, which with the lava makes its aureole | the flank's spreading on its base by its stress and the base's strength |
 | SCARP_WARP, SCARP_WALL_SLOPE_DEG, AUREOLE_LOBES, AUREOLE_RIDGE_SPACING, AUREOLE_RIDGE_SHARE (F172) | stated choices: the scarp's variation round the edifice, its wall's slope, the aureole's lobes and their ridges, after Olympus Mons's | the lobes from the ground's fall, the ridges from the slide's flow |
+| CONVECTIVE_TOPOGRAPHY (F173) | the mean of Guimond, Rudge and Shorttle 2022's eleven stagnant-lid simulations, 1.5 to 3.2, applied beyond their Rayleigh numbers in the boundary-layer form that held across them | the support from the flow's own buoyancy through the layer |
+| CONVECTION_CELL_WAVELENGTH, CONVECTION_SPECTRUM_WIDTH, CONVECTION_ONSET (F173) | stated choices: the cells as wide as convection's onset wavelength between free-slip boundaries, their power spread about their degree, a layer convecting once several sublayers deep | the planform from the mantle's own heating, rheology and geometry, rolls in a thin shell and plumes in a thick one |
+| the convection's pattern (F173) | a draw from the body's seed: the flow is chaotic, its scale, strength and renewal the mantle's | the pattern from the mantle's evolution itself |
 | AUREOLE_MOBILITY (F172) | Scheidegger 1973's trend of a rock avalanche's run against its volume as it is quoted, unverified against the paper | a run-out from the slide's flow over its base |
 | MAGMA_PROVINCE_FLOOR (F171) | Mars's Early Hesperian plains, some 800 to 1,000 m over most of its northern lowlands (Head, Kreslavsky and Pratt 2002): a province's centre four times the rest | the province as its cumulates' heat in the thermal history (M33) |
 | CRUST_FLOW_RELIEF, CRUST_FLOW_MIN_VISCOSITY (F170) | stated choices: the lower crust's viscosity read at the stress a kilometre of relief drives, and never below 10¹⁸ Pa s, a lower crust near its solidus | the stress each band's relief drives in the power-law creep, and the crust's melt |
@@ -697,11 +700,13 @@ Direction: an edifice's flanks fail when the stress in them passes what they hol
 
 Closed in the eighty-eighth milestone (F172): an edifice past the relief its crust holds spreads its flanks with the lava it would have stacked above, its toe breaking away in a scarp and running out with that lava as its aureole's ridged lobes, as far as rock avalanches of their volumes run. Mars's largest shield ends in a scarp 4.5 to 9.9 km high and lays lobes 120 to 350 km long into its moat and beyond. The failure comes once an edifice has filled to the cap, so Venus's shields, which its supply builds only part of the way, keep their flanks. Still open: the lobes' directions from the ground they run down, and the weak base that lets a flank spread, which the model reads only as the crust's strength.
 
-### M31. Venus's highlands stand on the primordial relief
+### M31. Venus's highlands stand on the primordial relief (closed in part by F173)
 
 Venus's tessera plateaus stand one to four kilometres above its plains on crust their tectonics thickened, which holds them up as a compensated load: their gravity shows crust as thick as 40 km beneath them against a global mean under 30 km (Simons, Solomon and Hager 1997; Hansen, Banks and Ghent 1999; Maia and Wieczorek 2022). The model's tesserae are the old surface its overturn leaves, standing on the primordial relief (F137) and the craters on it. A hot early crust relaxes that relief away by its lower crust's flow (F170), and Venus came out flat but for its volcanoes, so an episodic lid does not relax.
 
 Direction: the tesserae from the tectonics that thickened their crust, the folds and the shortening of the event or of its downwellings, compensated by their roots, so that the lower crust's flow relaxes them on the time its temperature sets, and Venus's relief relaxes as a stagnant lid's does. The rest of Venus's relief, some nine tenths of its surface, is held up by the mantle's flow (Simons, Solomon and Hager 1997): its rises over the upwellings, its lowlands, Atalanta and Lavinia, over the downwellings; the primordial relief stands in for that support (the user noted it is about right against Venus's map), and the lower crust's flow would flatten it. Its dynamic topography from the mantle's convective planform, which the thermal history does not yet hold, the rises' domes its start (F170 relaxes toward them), before Venus relaxes.
+
+Closed in part in the eighty-ninth milestone (F173): a rocky mantle convects beneath its lid in cells from its depth, and the ground its flow holds up rises over the upwellings and sinks over the downwellings, some 300 m at its root mean square on Venus, from −1,350 to 890 m; the plumes rise at its strongest upwellings, the lower crust relaxes toward it and the lid bears none of it. Still open: Venus relaxing as a stagnant lid does, with the mantle's support as its equilibrium; the tesserae from the tectonics that thickened their crust, which the convection's downwellings would squeeze (the downwelling plateaus of Bindschadler, Schubert and Kaula 1992); and the stresses the flow puts on the lid, for Mercury's thrusts (M27) and Venus's ridges, and its upwellings' heat for the coronae (M25). The upwelling limbs between plumes (F150) follow the pattern's ridges.
 
 ### M32. Valles Marineris is a stretched trough, not a subsided one
 
@@ -716,6 +721,14 @@ The Procellarum KREEP Terrane covers some 16 percent of the Moon and holds more 
 Direction: the province as the heat its enriched cumulates make, raising the mantle's melting beneath it in the thermal history (F123's crustal heat, by region), rather than a weight on the vents; and the maria's extent against the measured.
 
 ## Validation (principle 15)
+
+### M34. A rise is a dome, not a pile
+
+Tharsis's long-wavelength gravity and Mars's shape are explained by its load of some 3 × 10⁸ km³ of magma (Phillips et al. 2001), most of it in place before about 3.7 Ga (Hynek et al. 2011), which buried the ancient terrain beneath it. The model's rise is a dome its plume holds up, 0.28 of the relief the crust holds and no volume of its own; its lava comes only through the floods, spread over the body by their vents' weights (F171), and the shields, and the magma the full edifices cannot take, some 5.7 × 10⁷ km³ on Mars (F164), is lost rather than thickening the crust beneath them. On Mars's preset (seed 1048, F173) the rise stands over an old basin some 2,400 km across, whose floor it lifts some 2 km while the basin keeps its depth and its shields' moats sink in it, where Tharsis's lavas would have filled it first.
+
+Direction: the plume's melt under its head builds the rise: the intrusions it makes, the full edifices' lost magma among them, thicken the crust beneath it and raise it as Airy's isostasy does, and its lavas pond in the rise's lows, the floods' budget kept as one, so that a rise is a pile as well as a dome.
+
+When: the next milestone (the user's choice, 2026-10-22).
 
 ### V1. Interpolated bodies in validation
 

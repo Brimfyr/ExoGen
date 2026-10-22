@@ -635,9 +635,20 @@ pub const PLATE_SOLVE_MAX_ITERATIONS: usize = 4000;
 /// a new one, m; less is carried to the next epoch.
 pub const LOAD_EPOCH_GYR: f64 = 0.3;
 pub const LOAD_MIN_INCREMENT: f64 = 10.0;
+/// The upwelling limbs between neighbouring plumes (F150): where the body keeps no
+/// convection, two plumes closer than this many of their radii together are joined along
+/// the great circle between them; the limb pulls the lid apart across it by this share of
+/// the lesser plume's crest stress, over a width of this many of the largest plume's radii.
+/// Where the mantle convects (F173) a limb follows the ridge of the pattern the plumes rose
+/// from, joining two plumes whose ridge stands above this much of the pattern's root mean
+/// square all the way between them (a stated choice: the mantle's mean, the ridge never
+/// leaving upwelling ground), the way between them found by the least cost, each step's
+/// length weighed by exp(−this × the pattern) (a stated choice that keeps it on the crest).
 pub const UPWELLING_LIMB_REACH: f64 = 4.0;
 pub const UPWELLING_LIMB_TENSION: f64 = 0.8;
 pub const UPWELLING_LIMB_WIDTH: f64 = 1.0;
+pub const UPWELLING_LIMB_SADDLE: f64 = 0.0;
+pub const UPWELLING_LIMB_RIDGE: f64 = 2.0;
 pub const CANYON_DEPTH_FRACTION: f64 = 1.0;
 pub const CANYON_RENEWAL_THICKNESS: f64 = 50.0;
 /// Trough traces wander by this much over this length; their walls take this fraction
@@ -1459,6 +1470,27 @@ pub const PLUME_EXCESS_K: f64 = 200.0;
 /// rheological temperature scales below the mantle's temperature (F123; Davaille and Jaupart
 /// 1993: 2.24).
 pub const LID_BASE_SCALES: f64 = 2.24;
+/// The mantle's convection under a rocky lid (F173). The ground its flow holds up has a root
+/// mean square this many times α ΔT_rh δ_rh, the temperature drop across the convecting
+/// sublayer under the lid (LID_BASE_SCALES rheological scales) times its expansion over the
+/// sublayer's thickness δ_rh = k ΔT_rh / q: the mean over the eleven time-dependent
+/// stagnant-lid simulations of Guimond, Rudge and Shorttle 2022 (their Table 4: 1.5 to 3.2,
+/// viscosity contrasts 10⁶ to 10⁹, interior Rayleigh numbers 3.6 × 10⁷ to 1.1 × 10⁸, whose
+/// δ_rh is k ΔT_rh / q within 8 percent). Its cells are as wide, an upwelling to the next,
+/// as this many times the depth of the layer under the stiff lid (a stated choice: 2√2, the
+/// wavelength at which convection between free-slip boundaries sets in, Chandrasekhar 1961),
+/// and its power spreads over the degrees about theirs as a normal curve in the logarithm of
+/// the degree this wide (a stated choice), out to at most this degree. A layer convects once
+/// it is as deep as several of its sublayers, its flow coming in between these many (a
+/// stated choice). Its pattern renews itself in the time its flux takes to carry off the heat
+/// its sublayer holds, ρ c_p ΔT_rh δ_rh / q, the sublayer's renewal, and at each overturn of
+/// an episodic lid; no more than this many renewals are kept.
+pub const CONVECTIVE_TOPOGRAPHY: f64 = 2.2;
+pub const CONVECTION_CELL_WAVELENGTH: f64 = 2.83;
+pub const CONVECTION_SPECTRUM_WIDTH: f64 = 0.35;
+pub const CONVECTION_MAX_DEGREE: usize = 80;
+pub const CONVECTION_ONSET: (f64, f64) = (2.0, 4.0);
+pub const CONVECTION_MAX_DRAWS: usize = 4_000;
 /// The dry peridotite solidus, C = c0 + c1 P + c2 P² with P in GPa (Hirschmann 2000).
 pub const SOLIDUS_C0: f64 = 1_120.661;
 pub const SOLIDUS_C1: f64 = 132.899;

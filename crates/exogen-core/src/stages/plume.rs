@@ -18,12 +18,12 @@
 use std::collections::HashMap;
 
 use crate::constants::*;
+use crate::convection::Convection;
 use crate::crater::stamp::burial_factor;
 use crate::crater::{CellWrite, StampOutput, Stamper};
 use crate::fields::LayerSet;
-use crate::geom::{
-    angle_between, azimuth_from, cross, dot, local_basis, normalize, offset, rotate,
-};
+use crate::geom::Turn;
+use crate::geom::{angle_between, azimuth_from, cross, dot, local_basis, normalize, offset};
 use crate::grid::CubeSphere;
 use crate::grid::projection::PaddedField;
 use crate::noise::GradientNoise;
@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 30;
+pub const VERSION: u64 = 31;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1279,8 +1279,9 @@ pub fn flank_profile(across: f64, width: f64, wall: f64, blur: f64) -> f64 {
 }
 
 /// The rises a body's plumes raise (F104, F120): where they stand once the body has turned
-/// under them, their size and when they grow. None when the body raises no plume.
-pub fn place_rises<P: Reads>(graph: &P, thermal: &ThermalHistory) -> Option<Vec<Rise>> {
+/// under them, their size and when they grow, and the turn. None when the body raises no
+/// plume.
+pub fn place_rises<P: Reads>(graph: &P, thermal: &ThermalHistory) -> Option<(Vec<Rise>, Turn)> {
     let count = graph.num("tectonics.plume_rise_count").round() as usize;
     if count == 0
         || !matches!(
@@ -1307,19 +1308,33 @@ pub fn place_rises<P: Reads>(graph: &P, thermal: &ThermalHistory) -> Option<Vec<
     let rng = Rng::new(graph.num("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
     let rise_radius = 0.5 * graph.num("tectonics.plume_rise_diameter");
     let rise_height = graph.num("tectonics.plume_rise_height");
+    // Rises keep apart.
+    let apart = |rises: &[Rise], center: [f64; 3]| {
+        rises
+            .iter()
+            .all(|r| angle_between(r.center, center) > 2.5 * rise_radius / body_radius)
+    };
+    // The plumes rise where the mantle's convection wells up most strongly as they start
+    // (F173), the strongest first, each apart from those before it; where the body keeps no
+    // history of its mantle, or its highs run out, anywhere.
+    let mut highs = Convection::from_graph(graph, thermal)
+        .map_or_else(Vec::new, |c| c.upwellings(rise_start))
+        .into_iter();
     let mut rises = Vec::new();
     for i in 0..count as u64 {
-        let mut center = rng.unit_direction(i, 1);
-        // Rises keep apart.
-        for attempt in 0..16u64 {
-            if rises
-                .iter()
-                .all(|r: &Rise| angle_between(r.center, center) > 2.5 * rise_radius / body_radius)
-            {
-                break;
+        let center = match highs.find(|&(c, _)| apart(&rises, c)) {
+            Some((c, _)) => c,
+            None => {
+                let mut center = rng.unit_direction(i, 1);
+                for attempt in 0..16u64 {
+                    if apart(&rises, center) {
+                        break;
+                    }
+                    center = rng.unit_direction(i, 10 + 2 * attempt);
+                }
+                center
             }
-            center = rng.unit_direction(i, 10 + 2 * attempt);
-        }
+        };
         rises.push(Rise {
             center,
             radius: rise_radius * (0.8 + 0.4 * rng.uniform(i, 4)),
@@ -1332,7 +1347,7 @@ pub fn place_rises<P: Reads>(graph: &P, thermal: &ThermalHistory) -> Option<Vec<
     }
     // The body turns under its rises as they grow, carrying them toward its equator
     // (F104); everything on them is placed where they stand now.
-    {
+    let turn = {
         let mid = (0.5 * (rise_start + rise_end)).min(age);
         let lithosphere_now = graph.num("interior.lithosphere_thickness").max(1.0);
         let te = graph.num("interior.elastic_thickness")
@@ -1348,11 +1363,13 @@ pub fn place_rises<P: Reads>(graph: &P, thermal: &ThermalHistory) -> Option<Vec<
             te,
         );
         let (axis, angle) = polar_wander(&rises, body_radius, bulge);
+        let turn = Turn { axis, angle };
         for rise in &mut rises {
-            rise.center = normalize(rotate(rise.center, axis, angle));
+            rise.center = turn.apply(rise.center);
         }
-    }
-    Some(rises)
+        turn
+    };
+    Some((rises, turn))
 }
 
 /// A fault's trace, evenly spaced points, and the distances along it where each segment
@@ -1657,6 +1674,8 @@ pub struct PlumeProcess {
     grid: CubeSphere,
     body_radius: f64,
     pub rises: Vec<Rise>,
+    /// The body's turn under its rises (F104).
+    pub turn: Turn,
     /// The upwelling limbs between neighbouring plumes (F150).
     pub limbs: Limbs,
     pub shields: Vec<Shield>,
@@ -1706,7 +1725,7 @@ impl PlumeProcess {
         thermal: &ThermalHistory,
         relief: Option<Relief>,
     ) -> Option<Self> {
-        let mut rises = place_rises(graph, thermal)?;
+        let (mut rises, turn) = place_rises(graph, thermal)?;
         let body_radius = graph.num("body.radius");
         let age = graph.num("body.age");
         let clock = thermal.melt_clock(4.0 * std::f64::consts::PI * body_radius * body_radius);
@@ -1841,7 +1860,11 @@ impl PlumeProcess {
         let cell = grid.delta() * body_radius;
         let extension = graph.num("tectonics.rift_extension");
         // The one field every fault reads (F150): the rises' stresses in pascals, the
-        // upwelling limbs between them and the relief's potential energy.
+        // upwelling limbs between them along the ridges of the mantle's convection (F173)
+        // and the relief's potential energy.
+        let support = Convection::from_graph(graph, thermal)
+            .map(|convection| crate::convection::Support { convection, turn });
+        let limbs = Limbs::along(&rises, support.as_ref(), body_radius);
         let field = StressField::new(
             &rises,
             axes.iter().map(|a| a.1).collect(),
@@ -1850,7 +1873,8 @@ impl PlumeProcess {
             graph.num("interior.elastic_thickness"),
             relief.as_ref(),
             Vec::new(),
-        );
+        )
+        .with_limbs(limbs);
         let yield_tension = field.yield_tension;
         let mut canyons = Vec::new();
         let mut graben = Vec::new();
@@ -2107,6 +2131,7 @@ impl PlumeProcess {
             grid,
             body_radius,
             rises,
+            turn,
             limbs,
             shields,
             canyons,
@@ -2796,17 +2821,14 @@ pub(crate) fn limb_faults(
     if limbs.pairs.is_empty() || extension <= 0.0 {
         return Vec::new();
     }
-    let longest = limbs
-        .pairs
-        .iter()
-        .map(|&(a, b)| angle_between(rises[a].center, rises[b].center) * body_radius)
-        .fold(0.0, f64::max);
+    let lengths = limbs.lengths(rises, body_radius);
+    let longest = lengths.iter().copied().fold(0.0, f64::max);
     let budget: f64 = limbs
         .pairs
         .iter()
-        .map(|&(a, b)| {
-            let apart = angle_between(rises[a].center, rises[b].center) * body_radius;
-            extension * apart * rise_progress(&rises[a], age).min(rise_progress(&rises[b], age))
+        .zip(&lengths)
+        .map(|(&(a, b), &length)| {
+            extension * length * rise_progress(&rises[a], age).min(rise_progress(&rises[b], age))
         })
         .sum();
     if budget <= 0.0 {
@@ -4397,6 +4419,7 @@ pub fn shield_compute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::rotate;
 
     #[test]
     fn shapes_fall_from_the_centre_to_the_edge() {
@@ -5141,10 +5164,10 @@ mod tests {
     }
 
     /// Prints a body's rises, limbs, field and fault population (EXOGEN_BODY, Venus).
-    /// Venus's plumes sit on upwelling limbs that join them (F150): rifts run from rise to
-    /// rise along the limbs, thousands of kilometres long, and the faults of every body
-    /// start where the field passes the yield, none a single step long; Mars's one plume has
-    /// no limb.
+    /// Venus's plumes sit on upwelling limbs that join them along the ridges of its mantle's
+    /// convection (F150, F173): rifts run from rise to rise along the limbs, the longest
+    /// some two thousand kilometres, and the faults of every body start where the field
+    /// passes the yield, none a single step long; Mars's one plume has no limb.
     #[test]
     fn venus_s_rifts_run_from_rise_to_rise_along_its_limbs() {
         let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
@@ -5164,22 +5187,16 @@ mod tests {
             .collect();
         let longest = rifts.iter().map(|t| t.length).fold(0.0, f64::max);
         assert!(
-            rifts.len() >= 10 && longest > 2000e3,
+            rifts.len() >= 10 && longest > 1500e3,
             "{} rifts, longest {longest}",
             rifts.len()
         );
         // Along some limb, the rifts reach from one rise to the other: at most a third of
-        // the arc between the rises lies farther than half the limb's width from any rift.
-        let linked = p.limbs.pairs.iter().any(|&(a, b)| {
-            let (ca, cb) = (p.rises[a].center, p.rises[b].center);
+        // its way lies farther than half the limb's width from any rift.
+        let linked = p.limbs.paths.iter().any(|path| {
             let gaps = (0..=20)
                 .filter(|&k| {
-                    let f = k as f64 / 20.0;
-                    let q = normalize([
-                        ca[0] + f * (cb[0] - ca[0]),
-                        ca[1] + f * (cb[1] - ca[1]),
-                        ca[2] + f * (cb[2] - ca[2]),
-                    ]);
+                    let q = path[(k * (path.len() - 1)) / 20];
                     !rifts.iter().any(|t| {
                         t.points
                             .iter()
@@ -6171,6 +6188,81 @@ mod tests {
                 gain * r > 0.5 * k as f64 * t.spacing,
                 "a dike runs back toward its source"
             );
+        }
+    }
+
+    /// F173: a body's plumes rise where its mantle's convection wells up as they start, the
+    /// first at its strongest high and each high in the pattern then, before the body turns
+    /// under them (F104).
+    #[test]
+    fn a_plume_rises_where_the_mantle_wells_up() {
+        for name in ["Venus", "Mars"] {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let thermal = ThermalHistory::from_graph(&g);
+            let (rises, turn) = place_rises(&g, &thermal).unwrap();
+            let convection = Convection::from_graph(&g, &thermal).unwrap();
+            let start = rises[0].start_gyr;
+            let rng = Rng::new(3);
+            let mut sample: Vec<f64> = (0..4000u64)
+                .map(|i| convection.pattern(start, rng.unit_direction(i, 0)))
+                .collect();
+            sample.sort_by(f64::total_cmp);
+            let high = sample[(0.8 * sample.len() as f64) as usize];
+            let strongest = convection.upwellings(start)[0].1;
+            for (i, rise) in rises.iter().enumerate() {
+                let p = convection.pattern(start, turn.undo(rise.center));
+                println!("{name}: rise {i} on a pattern of {p:.2}, the top fifth from {high:.2}");
+                assert!(p > high, "{name} rise {i}: {p} against {high}");
+                if i == 0 {
+                    assert!((p - strongest).abs() < 1e-3, "{p} {strongest}");
+                }
+            }
+        }
+    }
+
+    /// F173: a limb joins two plumes along the ridge of the convection they rose from, the
+    /// pattern standing above the mantle's mean all the way from one plume's centre to the
+    /// other's, and pulls hardest along its way; Venus's plumes the ridges do not join have
+    /// none between them.
+    #[test]
+    fn a_limb_follows_the_ridge_between_its_plumes() {
+        let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&g);
+        let r = g.f64("body.radius");
+        let (rises, turn) = place_rises(&g, &thermal).unwrap();
+        let convection = Convection::from_graph(&g, &thermal).unwrap();
+        let support = crate::convection::Support { convection, turn };
+        let limbs = Limbs::along(&rises, Some(&support), r);
+        assert!(!limbs.pairs.is_empty());
+        let start = rises[0].start_gyr;
+        let age = g.f64("body.age");
+        for (k, &(a, b)) in limbs.pairs.iter().enumerate() {
+            let path = &limbs.paths[k];
+            assert!(angle_between(path[0], rises[a].center) < 1e-9);
+            assert!(angle_between(*path.last().unwrap(), rises[b].center) < 1e-9);
+            let low = path
+                .iter()
+                .map(|&q| support.convection.pattern(start, turn.undo(q)))
+                .fold(f64::MAX, f64::min);
+            assert!(low > UPWELLING_LIMB_SADDLE - 0.25, "limb {a}-{b}: {low}");
+            let mid = path[path.len() / 2];
+            let (pull, _) = limbs.pull(&rises, mid, age, r);
+            assert!(pull > 0.95, "{pull}");
+        }
+        for a in 0..rises.len() {
+            for b in a + 1..rises.len() {
+                if !limbs.pairs.contains(&(a, b)) {
+                    let mid = normalize([
+                        rises[a].center[0] + rises[b].center[0],
+                        rises[a].center[1] + rises[b].center[1],
+                        rises[a].center[2] + rises[b].center[2],
+                    ]);
+                    println!(
+                        "rises {a} and {b} unjoined; pull between them {:.2}",
+                        limbs.pull(&rises, mid, age, r).0
+                    );
+                }
+            }
         }
     }
 

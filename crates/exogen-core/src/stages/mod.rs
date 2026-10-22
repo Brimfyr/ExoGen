@@ -131,6 +131,8 @@ pub struct LoopOutput {
     pub provinces: Vec<volcanism::Province>,
     /// Wrinkle ridges laid out on the plains at the end of the loop.
     pub ridges: Vec<ridges::RidgeRecord>,
+    /// The mantle's convection beneath the lid, as it stands under the map (F173).
+    pub support: Option<crate::convection::Support>,
     /// Plume rises, their shields, canyons and graben.
     pub rises: Vec<plume::Rise>,
     pub shields: Vec<plume::Shield>,
@@ -301,6 +303,7 @@ impl Runner {
             volcanism::VERSION,
             ridges::VERSION,
             plume::VERSION,
+            crate::convection::VERSION,
             episodic::VERSION,
             io::VERSION,
             ice_shell::VERSION,
@@ -378,7 +381,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 127;
+pub const FINISH_VERSION: u64 = 128;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -423,6 +426,15 @@ pub fn run_coarse_loop(
         }
     };
     let mut plume = plume::PlumeProcess::new(graph, grid, &thermal, Some(relief));
+    // The mantle's convection beneath the lid (F173), turned with the body as its rises
+    // turned it (F104), and the ground its flow holds up on each coarse cell so far.
+    let support = crate::convection::Convection::from_graph(graph, &thermal).map(|convection| {
+        crate::convection::Support {
+            convection,
+            turn: plume.as_ref().map_or_else(Default::default, |p| p.turn),
+        }
+    });
+    let mut lifted = vec![0.0f32; grid.cell_count()];
     // The lid's field through the loop (F154, F157), which the thrusts read from its other
     // side (F155): the ground and the lid read at epochs, and the lava laid since each load
     // bending the lid of its time.
@@ -432,6 +444,7 @@ pub fn run_coarse_loop(
     let mut history = stress::FieldHistory::new(
         graph,
         plume.as_ref().map(|p| p.rises.clone()).unwrap_or_default(),
+        plume.as_ref().map(|p| p.limbs.clone()).unwrap_or_default(),
     );
     let first_lid = thermal.at(0.0).elastic;
     history.push(stress::FieldEpoch {
@@ -494,6 +507,19 @@ pub fn run_coarse_loop(
         }
         let t0 = dt * (s - 1) as f64;
         let t1 = dt * s as f64;
+        // The mantle's flow holds the ground up over its upwellings and draws it down over
+        // its downwellings, as its pattern stands at the step's end (F173).
+        if let Some(sup) = &support {
+            let now: Vec<f32> = (0..grid.cell_count())
+                .into_par_iter()
+                .map(|k| sup.at(t1, grid.center(grid.cell(k))) as f32)
+                .collect();
+            let bedrock = layers.bedrock.as_mut_slice();
+            for ((b, l), v) in bedrock.iter_mut().zip(lifted.iter_mut()).zip(&now) {
+                *b += *v - *l;
+                *l = *v;
+            }
+        }
         // An ice shell relaxes what it carries, the longest wavelengths first, with the
         // shell as the thermal history has it now.
         if let Some(shell_at) = &ice_shell {
@@ -537,6 +563,17 @@ pub fn run_coarse_loop(
                     })
                     .collect()
             });
+            // Nor is the ground the mantle's flow holds up (F173).
+            let equilibrium = match domes {
+                Some(mut d) if support.is_some() => {
+                    for (x, l) in d.iter_mut().zip(&lifted) {
+                        *x += l;
+                    }
+                    Some(d)
+                }
+                None if support.is_some() => Some(lifted.clone()),
+                d => d,
+            };
             relaxation::relax(
                 &mut relax_bands,
                 &mut layers.bedrock,
@@ -544,7 +581,7 @@ pub fn run_coarse_loop(
                 dt,
                 &shell,
                 &relaxation::Local {
-                    equilibrium: domes.as_deref(),
+                    equilibrium: equilibrium.as_deref(),
                     ..Default::default()
                 },
             );
@@ -562,13 +599,12 @@ pub fn run_coarse_loop(
             s.step(&mut layers, grid, graph.f64("body.radius"), t0, t1);
         }
         let mut renewed = false;
+        let held = held_up(
+            plume.as_ref().map(|p| p.load.as_slice()),
+            support.as_ref().map(|_| lifted.as_slice()),
+        );
         if let Some(e) = &mut episodic
-            && let Some(fill) = e.step(
-                &mut layers,
-                t0,
-                t1,
-                plume.as_ref().map(|p| p.load.as_slice()),
-            )
+            && let Some(fill) = e.step(&mut layers, t0, t1, held.as_deref())
             && let Some(f) = &mut floods
         {
             f.note_resurfacing(&fill, e.event_time());
@@ -682,13 +718,12 @@ pub fn run_coarse_loop(
                 next_epoch += LOAD_EPOCH_GYR;
             }
             let elastic = thermal.at(t1).elastic;
-            let relief = stress::Relief::read(
-                &layers.bedrock,
+            let held = held_up(
                 plume.as_ref().map(|p| p.load.as_slice()),
-                cell,
-                elastic,
-                gravity,
+                support.as_ref().map(|_| lifted.as_slice()),
             );
+            let relief =
+                stress::Relief::read(&layers.bedrock, held.as_deref(), cell, elastic, gravity);
             let mut load = None;
             if let Some(f) = &floods
                 && let Some(density) = f.magma_density()
@@ -855,6 +890,7 @@ pub fn run_coarse_loop(
         floods,
         provinces,
         ridges,
+        support,
         rises,
         shields,
         canyons,
@@ -875,6 +911,17 @@ pub fn run_coarse_loop(
         renewed_fraction,
         hash,
     })
+}
+
+/// The ground the plumes' domes and the mantle's flow hold up (F150, F173), which the lid
+/// does not bear: their sum where either stands.
+fn held_up(load: Option<&[f32]>, lifted: Option<&[f32]>) -> Option<Vec<f32>> {
+    match (load, lifted) {
+        (None, None) => None,
+        (Some(a), None) => Some(a.to_vec()),
+        (None, Some(b)) => Some(b.to_vec()),
+        (Some(a), Some(b)) => Some(a.iter().zip(b).map(|(x, y)| x + y).collect()),
+    }
 }
 
 /// What one stamp of the finishing pass produces: the writes, a record for the sidecar
@@ -1270,6 +1317,7 @@ pub fn finish(
         &shields,
         &canyons,
         &loop_output.flexure,
+        loop_output.support.as_ref(),
     );
     if !floods.is_empty() || resurfacing.is_some() {
         with_stamper(&grid, |stamper| {
@@ -3807,6 +3855,40 @@ mod tests {
         let moon_radius = preset_graph("Moon", "preview").f64("body.radius");
         let per_area = |t: f64, r: f64| t / (4.0 * std::f64::consts::PI * r * r);
         assert!(per_area(moon_taken, moon_radius) < 0.3 * per_area(taken, radius));
+    }
+
+    /// F173: the ground stands on the mantle's flow: Mercury's surface rises and sinks as the
+    /// pattern beneath it changes, late in its life by as much as the ground the flow holds
+    /// up changes, little else moving it then, and the flow's highs and lows reach some
+    /// hundreds of metres.
+    #[test]
+    fn the_ground_stands_on_the_mantle_s_flow() {
+        let g = preset_graph("Mercury", "preview");
+        let out = run_coarse_loop(&g, &NoProgress).unwrap();
+        let support = out.support.as_ref().unwrap();
+        let grid = out.grid;
+        let frames = &out.keyframes;
+        let (a, b) = (&frames[frames.len() - 2], &frames[frames.len() - 1]);
+        let (ha, hb) = (a.layers.bedrock.as_slice(), b.layers.bedrock.as_slice());
+        let (mut cov, mut var, mut lo, mut hi) = (0.0, 0.0, f64::MAX, f64::MIN);
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            let d = grid.center(c);
+            let area = grid.cell_area(c);
+            let now = support.at(b.time_gyr, d);
+            let dl = now - support.at(a.time_gyr, d);
+            cov += area * (hb[k] - ha[k]) as f64 * dl;
+            var += area * dl * dl;
+            lo = lo.min(now);
+            hi = hi.max(now);
+        }
+        let slope = cov / var.max(1e-12);
+        println!(
+            "Mercury from {:.2} to {:.2} Gyr: the ground moved {slope:.3} of the flow's change; the flow holds it {lo:.0} to {hi:.0} m",
+            a.time_gyr, b.time_gyr
+        );
+        assert!((slope - 1.0).abs() < 0.15, "{slope}");
+        assert!(hi - lo > 500.0 && hi - lo < 6_000.0, "{lo} {hi}");
     }
 
     /// Mars's thrusts run round Tharsis, which squeezes its foot past the lid's strength

@@ -74,6 +74,9 @@ pub struct ThermalState {
 #[derive(Clone, Debug)]
 pub struct ThermalHistory {
     pub samples: Vec<ThermalState>,
+    /// The rocky mantle's own history where the body keeps one (F121), for its convection
+    /// (F173).
+    pub mantle: Option<crate::mantle::MantleHistory>,
 }
 
 /// The melt a body's mantle has made per unit area since it formed, m, through its life
@@ -238,7 +241,10 @@ impl ThermalHistory {
         for s in &mut samples {
             s.relief_limit *= (s.elastic / elastic_now).clamp(RELIEF_SUPPORT_MIN, 1.0);
         }
-        Self { samples }
+        Self {
+            samples,
+            mantle: inp.mantle.clone(),
+        }
     }
 
     /// The state at a time since formation, interpolated between samples.
