@@ -146,6 +146,8 @@ pub struct LoopOutput {
     /// How far the ground sank under each load the loop laid, per coarse cell, and when
     /// (F162), which the finish's floods see after them.
     pub flexure: Vec<(f64, Vec<f32>)>,
+    /// The intrusions laid since the last epoch at each, m per coarse cell, and when (F174).
+    pub intrusions: Vec<(f64, Vec<f32>)>,
     /// The Io regime's paterae and mountains through the body's life, each with its
     /// birth and death; the finish takes those alive at the epoch.
     pub paterae: Vec<io::Patera>,
@@ -381,7 +383,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 128;
+pub const FINISH_VERSION: u64 = 129;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -500,6 +502,13 @@ pub fn run_coarse_loop(
     let mut laid = vec![0.0f32; grid.cell_count()];
     let mut next_epoch = LOAD_EPOCH_GYR;
     let mut flexure: Vec<(f64, Vec<f32>)> = Vec::new();
+    // The magma that stays below (F174): what has intruded since the last epoch, all of it,
+    // and each epoch's, for the finish.
+    let mut pending = vec![0.0f32; grid.cell_count()];
+    let mut intruded = vec![0.0f32; grid.cell_count()];
+    let mut intrusions: Vec<(f64, Vec<f32>)> = Vec::new();
+    // The intrusions the last load held.
+    let mut intruded_laid = vec![0.0f32; grid.cell_count()];
 
     for s in 1..=steps {
         if sink.cancelled() {
@@ -699,6 +708,17 @@ pub fn run_coarse_loop(
                 }
             }
         }
+        // The melt that stays below thickens the crust beneath where it rose from: the
+        // intrusive share of the step's melt, and the magma the full edifices could not
+        // lift, beneath their rises (F174).
+        if let Some(f) = &floods {
+            f.intrude(f.step_intrusive(t0, t1), 0.5 * (t0 + t1), &mut pending);
+            if let Some(p) = &plume {
+                for (rise, volume) in p.surplus(t0, t1) {
+                    f.intrude_rise(rise, volume, &mut pending);
+                }
+            }
+        }
         // The polar terrain renews itself after everything the step brought it.
         if let Some(p) = &mut ice_shell_process {
             p.after(&mut layers);
@@ -716,6 +736,19 @@ pub fn run_coarse_loop(
         if t1 >= next_epoch - 1e-9 || renewed || s == steps {
             while next_epoch <= t1 + 1e-9 {
                 next_epoch += LOAD_EPOCH_GYR;
+            }
+            // The crust the intrusions thickened stands as much higher, its weight bending
+            // the lid with the lava's (F174).
+            if pending.iter().any(|&v| v > 0.0) {
+                let bedrock = layers.bedrock.as_mut_slice();
+                let crust = layers.crust_thickness.as_mut_slice();
+                for k in 0..pending.len() {
+                    bedrock[k] += pending[k];
+                    crust[k] += pending[k];
+                    intruded[k] += pending[k];
+                }
+                let n = pending.len();
+                intrusions.push((t1, std::mem::replace(&mut pending, vec![0.0; n])));
             }
             let elastic = thermal.at(t1).elastic;
             let held = held_up(
@@ -739,6 +772,8 @@ pub fn run_coarse_loop(
                             + aureoles.map_or(0.0, |a| a[k])
                     })
                     .collect();
+                let mut sunk_all: Option<Vec<f32>> = None;
+                let mut stress_all: Option<load::LoadStress> = None;
                 let increment: Vec<f32> = now
                     .iter()
                     .zip(&laid)
@@ -761,15 +796,42 @@ pub fn run_coarse_loop(
                     // surface stays as it built it and only the ground about it sinks into a
                     // moat, rising in a bulge beyond.
                     let w = laid_load.deflection_on(grid);
+                    sunk_all = Some(load::sink(&w, shields));
+                    stress_all = Some(laid_load.stress);
+                    laid.copy_from_slice(&now);
+                }
+                // The magma that stayed below weighs on the lid as well (F174), a load of its
+                // own: the edifices standing on it sink with the ground, their lava filling
+                // only the sags their own weight makes.
+                let deep: Vec<f32> = intruded
+                    .iter()
+                    .zip(&intruded_laid)
+                    .map(|(t, l)| (t - l).max(0.0))
+                    .collect();
+                let most = deep.iter().fold(0.0f32, |m, &v| m.max(v));
+                if most as f64 >= LOAD_MIN_INCREMENT
+                    && let Some(laid_load) =
+                        load::lay(grid, &deep, body_radius, gravity, elastic, density, None)
+                {
+                    let w = laid_load.deflection_on(grid);
+                    match &mut sunk_all {
+                        Some(s) => s.iter_mut().zip(&w).for_each(|(a, b)| *a += b),
+                        None => sunk_all = Some(w),
+                    }
+                    match &mut stress_all {
+                        Some(s) => s.add(&laid_load.stress),
+                        None => stress_all = Some(laid_load.stress),
+                    }
+                    intruded_laid.copy_from_slice(&intruded);
+                }
+                if let Some(sunk) = sunk_all {
                     let bedrock = layers.bedrock.as_mut_slice();
-                    let sunk = load::sink(&w, shields);
                     for (b, s) in bedrock.iter_mut().zip(&sunk) {
                         *b -= s;
                     }
                     flexure.push((t1, sunk));
-                    load = Some(laid_load.stress);
-                    laid.copy_from_slice(&now);
                 }
+                load = stress_all;
             }
             history.push(stress::FieldEpoch {
                 time: t1,
@@ -899,6 +961,7 @@ pub fn run_coarse_loop(
         coronae,
         domes,
         flexure,
+        intrusions,
         paterae,
         mountains,
         io_base,
@@ -1318,6 +1381,7 @@ pub fn finish(
         &canyons,
         &loop_output.flexure,
         loop_output.support.as_ref(),
+        &loop_output.intrusions,
     );
     if !floods.is_empty() || resurfacing.is_some() {
         with_stamper(&grid, |stamper| {
@@ -3857,6 +3921,64 @@ mod tests {
         assert!(per_area(moon_taken, moon_radius) < 0.3 * per_area(taken, radius));
     }
 
+    /// F174: a rise is a pile as well as a dome: the magma that stays below the eruptions,
+    /// laid where the melt rises from, gathers beneath Mars's rise as Tharsis's some 3 × 10⁸
+    /// km³ (Phillips et al. 2001), and all the loop lays is the melt's intrusive share and the
+    /// magma the full edifices could not lift, the melt one budget.
+    #[test]
+    fn mars_s_rise_gathers_its_pile() {
+        let g = preset_graph("Mars", "preview");
+        let out = run_coarse_loop(&g, &NoProgress).unwrap();
+        let r = g.f64("body.radius");
+        let grid = out.grid;
+        let rise = &out.rises[0];
+        let (mut all, mut under) = (0.0f64, 0.0f64);
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            let a = grid.cell_area(c) * r * r;
+            let laid: f64 = out.intrusions.iter().map(|(_, f)| f[k] as f64).sum();
+            all += laid * a;
+            if angle_between(grid.center(c), rise.center) * r < rise.radius {
+                under += laid * a;
+            }
+        }
+        let thermal = ThermalHistory::from_graph(&g);
+        let floods = volcanism::FloodProcess::new(&g, grid, &thermal, &out.rises).unwrap();
+        let steps = out.steps;
+        let dt = out.age_gyr / steps as f64;
+        let intrusive: f64 = (0..steps)
+            .map(|s| floods.step_intrusive(dt * s as f64, dt * (s + 1) as f64))
+            .sum();
+        let surplus: f64 = out
+            .shields
+            .iter()
+            .map(|s| {
+                let holds = s.volume / (1.0 - s.overflow).max(1e-9);
+                (plume::shield_supplied(out.age_gyr, s) - holds).max(0.0)
+            })
+            .sum();
+        let thickness = |k: usize| out.intrusions.iter().map(|(_, f)| f[k] as f64).sum::<f64>();
+        let centre = thickness(grid.index(grid.locate(rise.center).0));
+        let least = (0..grid.cell_count())
+            .map(thickness)
+            .fold(f64::MAX, f64::min);
+        println!(
+            "Mars: {:.3e} km3 intruded, {:.3e} km3 beneath its rise, {:.1} km at its centre and {:.1} km at the least; the melt's intrusive share {:.3e} km3 and the edifices' surplus {:.3e} km3",
+            all / 1e9,
+            under / 1e9,
+            centre / 1e3,
+            least / 1e3,
+            intrusive / 1e9,
+            surplus / 1e9
+        );
+        assert!(
+            ((intrusive + surplus) - all).abs() < 0.01 * all,
+            "{all} of {}",
+            intrusive + surplus
+        );
+        assert!(under > 1e17 && under < 1e18, "{under}");
+    }
+
     /// F173: the ground stands on the mantle's flow: Mercury's surface rises and sinks as the
     /// pattern beneath it changes, late in its life by as much as the ground the flow holds
     /// up changes, little else moving it then, and the flow's highs and lows reach some
@@ -4067,8 +4189,14 @@ mod tests {
         let fine = volcanism::lava_fraction(&out.finish.layers);
         assert!((fine - fraction).abs() < 0.05, "{fine} vs {fraction}");
         // The maria carry wrinkle ridges, all of them on lava, but for those a later
-        // mega-impact's ejecta buried (F168).
-        let ridges = &out.loop_output.ridges;
+        // mega-impact's ejecta buried (F168); a thrust's ridge folds the plains where most of
+        // its trace crossed lava (F155) and may cross older ground besides.
+        let ridges: Vec<&ridges::RidgeRecord> = out
+            .loop_output
+            .ridges
+            .iter()
+            .filter(|r| r.id < 1 << 32)
+            .collect();
         assert!(ridges.len() > 20, "{} ridges", ridges.len());
         let r_body = g.f64("body.radius");
         let megas: Vec<&CraterRecord> = out

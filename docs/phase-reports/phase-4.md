@@ -2257,3 +2257,25 @@ What the maps show:
 Still to do: the rise's own pile (M34, next); the flow's stresses on the lid, for Mercury's thrusts (M27) and Venus's ridges, and its upwellings' heat for Venus's coronae (M25); Venus relaxing as a stagnant lid does, and its tesserae from the tectonics that thickened their crust (M31); Valles Marineris with Phase 5 (M32); the Moon's maria in its province (M33); the drives the field does not hold (M26).
 
 Tests 268 (23 ignored), among them the cells following the mantle's depth, Venus's of degree 3 to 6 and Mercury's past 8, the ground the flow holds up some hundreds of metres and its pattern renewed in tens to hundreds of millions of years; the pattern keeping its strength as it changes and held flatter under Mercury's lid; its upwellings its highs, strongest first; a spherical harmonic field's grid holding its values; Venus's and Mars's plumes rising at the pattern's top fifth, the first at its strongest high; a limb following the ridge between its plumes, the pattern above the mantle's mean along its way within a quarter of its root mean square; and Mercury's ground moving late in its life by as much as the flow's support changes, within 15 percent; and a diagnostic printing each rocky preset's convection. The test of Venus's rifts along its limbs now asks the longest over 1,500 km rather than 2,000 (it is 1,900), the population's longest along its one limb, and follows the limb's way.
+
+## The ninetieth milestone: the melt is one budget, and a rise is a pile as well as a dome
+
+M34, which the user chose for the milestone after the convection, asking whether Mars's rise over an old basin should stand higher.
+
+- **F174.** The melt that does not erupt intrudes the crust beneath where it rose from, the provinces by the ambient mantle's share and the plumes' heads the rest, and the magma full edifices could not lift intrudes beneath their rises; the crust thickens, the ground rises and the intrusions' weight bends the lid.
+
+How it went:
+
+- **Where the volume was.** A rocky body erupts an eighth of its melt at most (F125), and the seven eighths left were lost: on Mars 1.1 × 10⁹ km³. Laid where the melt rises from, some 3 × 10⁸ km³ of it gathers beneath the rise's province, as much as Tharsis's load (Phillips et al. 2001), with nothing fitted.
+- **The edifices on it.** Laid with the lava's load, the intrusions beneath the shields never sank, F166's rule filling the sag beneath an edifice with its lava, and Mars's largest summit rose to 37 km. The rule is for an edifice's own weight: the intrusions are a load of their own, and the edifices on them sink with the ground. The summit stands at 27.3 km on some 2.5 km of new ground.
+- **The dome.** The rise's dome is still 0.28 of the relief its crust holds, fitted to Tharsis's whole height before the rise had a pile; with the pile its flanks stand some 7 km, within Tharsis's range, and the dome's height from its plume head's buoyancy is left open.
+
+What the maps show:
+
+- **Mars (seed 1048):** its rise fuller and broader, its flanks some 2 km higher, the old basin's floor raised some 2.5 km, at 2 to 3 km, the shields on the new ground. The basin keeps its depth below its rim: the intrusions raise the province about evenly and only lava fills a hollow, and the vents, favouring low ground against the body's median, find few hollows on a raised rise.
+- **Venus:** little change, its melt after its overturn small.
+- **The Moon and Mercury:** their provinces swell by a kilometre or two, the Moon's raising the lowland its province lies in; their crusts held most of their melt down.
+
+Still to do: the lavas ponding in a rise's own lows and the dome's height from its plume head (F174's open ends); the flow's stresses on the lid, for Mercury's thrusts (M27) and Venus's ridges, and its upwellings' heat for Venus's coronae (M25); Venus relaxing as a stagnant lid does, and its tesserae from the tectonics that thickened their crust (M31); Valles Marineris with Phase 5 (M32); the Moon's maria in its province (M33); the drives the field does not hold (M26).
+
+Tests 270 (23 ignored), among them the melt one budget, what erupts and what stays below making the melt between any two times within 10⁻⁹, the intrusions laid keeping their volume, most beneath a rise's province and a rise's own share beneath it alone; and Mars's rise gathering 1 to 10 × 10⁸ km³ beneath it, all the loop lays the melt's intrusive share and the edifices' surplus within a percent. The test of the Moon's maria now asks only the plains' own ridges to lie on lava: a thrust's ridge folds the plains where most of its trace crossed lava and may cross older ground besides, and the intrusions' load now raises thrusts early in the Moon's life.

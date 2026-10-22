@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 23;
+pub const VERSION: u64 = 24;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -495,12 +495,35 @@ impl FloodProcess {
         share * ascent * (-(strain / VOLCANISM_SHUTOFF_STRAIN).powi(2)).exp()
     }
 
-    /// Extrusive volume between two times, m³, by midpoint rule over sub-intervals. The
-    /// ambient mantle's melt comes anywhere and the plumes' only under their heads (F165).
-    /// On an episodic lid nothing before the event is kept, nor what comes while the ambient
-    /// mantle still melts after the overturn, which is the overturn's own resurfacing, laid
-    /// as the event.
+    /// Extrusive volume between two times, m³: the share of the melt that erupts.
     pub fn budget(&self, t0: f64, t1: f64) -> f64 {
+        self.melt_between(t0, t1, |t| self.eruptive_fraction(t))
+    }
+
+    /// Intrusive volume between two times, m³ (F174): the share of the melt that stays
+    /// below, which the eruptive fraction leaves, so that the melt is one budget; none for
+    /// cryolava.
+    pub fn intrusive(&self, t0: f64, t1: f64) -> f64 {
+        if self.buoyancy.is_none() {
+            return 0.0;
+        }
+        self.melt_between(t0, t1, |t| 1.0 - self.eruptive_fraction(t))
+    }
+
+    /// The intrusive volume a step brings, m³, over the bins its eruptions are drawn in.
+    pub fn step_intrusive(&self, t0: f64, t1: f64) -> f64 {
+        crate::stages::time_bins(self.age, t0, t1)
+            .iter()
+            .map(|&(_, b0, b1)| self.intrusive(b0, b1))
+            .sum()
+    }
+
+    /// The melt between two times, m³, by midpoint rule over sub-intervals, each time's
+    /// taking `share` of it. The ambient mantle's melt comes anywhere and the plumes' only
+    /// under their heads (F165). On an episodic lid nothing before the event is kept, nor
+    /// what comes while the ambient mantle still melts after the overturn, which is the
+    /// overturn's own resurfacing, laid as the event.
+    fn melt_between(&self, t0: f64, t1: f64, share: impl Fn(f64) -> f64) -> f64 {
         let t0 = match self.event_time {
             Some(event) if t1 <= event => return 0.0,
             Some(event) => t0.max(event).max(self.surge_end.unwrap_or(event)),
@@ -516,9 +539,55 @@ impl FloodProcess {
             let t = t0 + (i as f64 + 0.5) * dt;
             let s = self.thermal.at(t);
             let melts = s.ambient + (1.0 - s.ambient) * self.plume_area;
-            v += s.magma_rate * melts * self.eruptive_fraction(t) * dt * GYR;
+            v += s.magma_rate * melts * share(t) * dt * GYR;
         }
         v * self.flood_share
+    }
+
+    /// Where the melt rises from at a cell (F165, F174): the provinces the ambient mantle
+    /// melts in, by the share of the melt it makes, and the plumes' heads the rest.
+    fn source(&self, k: usize, ambient: f64) -> f64 {
+        let w = self.province_weight[k];
+        w - (1.0 - ambient) * (w - self.plume_weight[k]).max(0.0)
+    }
+
+    /// Lays `volume` m³ of magma that stays below beneath where the melt rises from at a
+    /// time (F174), as a thickness, m, added to `into` per coarse cell: where the vents'
+    /// sources are, without the ground the eruptions find their way through.
+    pub fn intrude(&self, volume: f64, t: f64, into: &mut [f32]) {
+        if volume <= 0.0 {
+            return;
+        }
+        let ambient = self.thermal.at(t).ambient;
+        let weights: Vec<f64> = (0..self.areas.len())
+            .map(|k| self.source(k, ambient))
+            .collect();
+        let whole: f64 = weights.iter().zip(&self.areas).map(|(w, a)| w * a).sum();
+        if whole <= 0.0 {
+            return;
+        }
+        for (x, w) in into.iter_mut().zip(&weights) {
+            *x += (volume * w / whole) as f32;
+        }
+    }
+
+    /// Lays `volume` m³ beneath a rise, by its own province (F174): the magma its full
+    /// edifices could not lift.
+    pub fn intrude_rise(&self, rise: usize, volume: f64, into: &mut [f32]) {
+        let Some(own) = self.rise_province.get(rise) else {
+            return;
+        };
+        let whole: f64 = own
+            .iter()
+            .zip(&self.areas)
+            .map(|(&w, a)| w as f64 * a)
+            .sum();
+        if volume <= 0.0 || whole <= 0.0 {
+            return;
+        }
+        for (x, &w) in into.iter_mut().zip(own) {
+            *x += (volume * w as f64 / whole) as f32;
+        }
     }
 
     /// Vent weights, cumulative, and the share of the floods' weight a rise's shields leave
@@ -553,10 +622,7 @@ impl FloodProcess {
         let lift = |k: usize| boost.map_or(1.0, |b| b[k]);
         // The ambient mantle's provinces weigh by the share of the melt it makes, the
         // plumes' whole (F165).
-        let weight = |k: usize| {
-            let w = self.province_weight[k];
-            w - (1.0 - ambient) * (w - self.plume_weight[k]).max(0.0)
-        };
+        let weight = |k: usize| self.source(k, ambient);
         let full: Vec<f64> = (0..n).map(|k| base[k] * weight(k) * lift(k)).collect();
         let mut w = full.clone();
         let mut cuts = vec![0.0f64; rises.len()];
@@ -2712,7 +2778,18 @@ mod tests {
                     UNIT_PRIMORDIAL
                 };
             }
-            let deform = Deformation::new(coarse, body_radius, 0.01, 4.5, &[], &[], &[], &[], None);
+            let deform = Deformation::new(
+                coarse,
+                body_radius,
+                0.01,
+                4.5,
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+                &[],
+            );
             let mut stamper = Stamper::new(&grid);
             let flows = FloodFlows {
                 ground: &ground,
@@ -2785,7 +2862,18 @@ mod tests {
             }
             let base = layers.bedrock.as_slice().to_vec();
             let padded = PaddedField::new(&grid, &ground);
-            let deform = Deformation::new(coarse, body_radius, 0.01, 4.5, &[], &[], &[], &[], None);
+            let deform = Deformation::new(
+                coarse,
+                body_radius,
+                0.01,
+                4.5,
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+                &[],
+            );
             let mut stamper = Stamper::new(&grid);
             let flows = FloodFlows {
                 ground: &padded,
@@ -3000,5 +3088,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// F174: the melt is one budget: what erupts and what stays below make the melt between
+    /// any two times; the magma that stays below is laid where the melt rises from, its
+    /// volume kept, most of it under a rise's province while the plumes melt, and a rise's
+    /// own share beneath its province alone.
+    #[test]
+    fn the_melt_is_one_budget() {
+        let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
+        let grid = CubeSphere::new(64);
+        let thermal = ThermalHistory::from_graph(&g);
+        let rises = crate::stages::plume::place_rises(&g, &thermal)
+            .map(|(r, _)| r)
+            .unwrap();
+        let f = FloodProcess::new(&g, grid, &thermal, &rises).unwrap();
+        let age = g.f64("body.age");
+        for k in 0..30 {
+            let (t0, t1) = (age * k as f64 / 30.0, age * (k + 1) as f64 / 30.0);
+            let melt = f.melt_between(t0, t1, |_| 1.0);
+            let split = f.budget(t0, t1) + f.intrusive(t0, t1);
+            assert!(
+                (split - melt).abs() <= 1e-9 * melt.max(1.0),
+                "{t0}: {split} of {melt}"
+            );
+        }
+        let body_radius = g.f64("body.radius");
+        let area = |k: usize| grid.cell_area(grid.cell(k)) * body_radius * body_radius;
+        let volume = 1e17;
+        let mut laid = vec![0.0f32; grid.cell_count()];
+        f.intrude(volume, 1.0, &mut laid);
+        let held: f64 = laid
+            .iter()
+            .enumerate()
+            .map(|(k, &h)| h as f64 * area(k))
+            .sum();
+        assert!((held - volume).abs() < 1e-4 * volume, "{held}");
+        let at = |d: [f64; 3]| laid[grid.index(grid.locate(d).0)];
+        let far = [
+            -rises[0].center[0],
+            -rises[0].center[1],
+            -rises[0].center[2],
+        ];
+        let least = laid.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(
+            at(rises[0].center) > 3.0 * least,
+            "{} {least}",
+            at(rises[0].center)
+        );
+        let mut own = vec![0.0f32; grid.cell_count()];
+        f.intrude_rise(0, volume, &mut own);
+        let held: f64 = own
+            .iter()
+            .enumerate()
+            .map(|(k, &h)| h as f64 * area(k))
+            .sum();
+        assert!((held - volume).abs() < 1e-4 * volume, "{held}");
+        assert!(
+            own[grid.index(grid.locate(far).0)]
+                < 1e-3 * own[grid.index(grid.locate(rises[0].center).0)]
+        );
     }
 }

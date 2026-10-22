@@ -44,6 +44,8 @@ pub struct Deformation<'a> {
     flexure: Vec<(f64, PaddedField)>,
     /// The mantle's convection beneath the lid (F173).
     support: Option<&'a crate::convection::Support>,
+    /// How far the intrusions raised the ground at each epoch, and when (F174).
+    intrusions: Vec<(f64, PaddedField)>,
 }
 
 impl<'a> Deformation<'a> {
@@ -58,6 +60,7 @@ impl<'a> Deformation<'a> {
         canyons: &'a [Trough],
         flexure: &[(f64, Vec<f32>)],
         support: Option<&'a crate::convection::Support>,
+        intrusions: &[(f64, Vec<f32>)],
     ) -> Self {
         let cell = coarse.delta() * body_radius;
         let n = coarse.cell_count();
@@ -132,12 +135,19 @@ impl<'a> Deformation<'a> {
                 .map(|(t, sunk)| (*t, PaddedField::new(&coarse, sunk)))
                 .collect(),
             support,
+            intrusions: intrusions
+                .iter()
+                .map(|(t, laid)| (*t, PaddedField::new(&coarse, laid)))
+                .collect(),
         }
     }
 
     /// Whether anything deforms at all.
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty() && self.flexure.is_empty() && self.support.is_none()
+        self.list.is_empty()
+            && self.flexure.is_empty()
+            && self.support.is_none()
+            && self.intrusions.is_empty()
     }
 
     /// End of the loop step a time falls in: the step's growth was on the ground before
@@ -155,15 +165,23 @@ impl<'a> Deformation<'a> {
         // The ground's subsidence under the loads laid by then: each at the end of its
         // step, after that step's floods, so a time within a step sees the loads before it,
         // and the present all of its own.
+        let before = |time: f64| {
+            if t_slow >= self.present - 1e-9 {
+                time <= self.present + 1e-9
+            } else {
+                time < t_slow - 1e-9
+            }
+        };
         let mut sunk = 0.0;
         for (time, field) in &self.flexure {
-            let before = if t_slow >= self.present - 1e-9 {
-                *time <= self.present + 1e-9
-            } else {
-                *time < t_slow - 1e-9
-            };
-            if before {
+            if before(*time) {
                 sunk += sample_bilinear(&self.coarse, field, d) as f64;
+            }
+        }
+        // The intrusions laid by then, at the same epochs (F174).
+        for (time, field) in &self.intrusions {
+            if before(*time) {
+                sunk -= sample_bilinear(&self.coarse, field, d) as f64;
             }
         }
         // The ground the mantle's flow holds up then, as the loop lifted it at the end of
@@ -270,6 +288,7 @@ mod tests {
             &[],
             &[],
             None,
+            &[],
         );
         // At the summit, a flood at 2 Gyr saw the growth to the end of its step; what
         // came after is the rest of the exponential approach to the full height.

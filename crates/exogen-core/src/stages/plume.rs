@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 31;
+pub const VERSION: u64 = 32;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1715,6 +1715,21 @@ impl PlumeProcess {
     /// The aureoles laid on each coarse cell, m: their loads (F172).
     pub fn aureole_laid(&self) -> &[f32] {
         &self.aureole
+    }
+
+    /// The magma each full edifice could not lift between two times, m³, and the rise it
+    /// stands on (F164, F174): all its supply once its laid lava has filled it, which
+    /// intrudes beneath its rise.
+    pub fn surplus(&self, t0: f64, t1: f64) -> Vec<(usize, f64)> {
+        self.shields
+            .iter()
+            .filter_map(|s| {
+                let holds = s.volume / (1.0 - s.overflow).max(1e-9);
+                let lost = |t: f64| (shield_supplied(t, s) - holds).max(0.0);
+                let volume = lost(t1) - lost(t0);
+                (volume > 0.0).then(|| (rise_of(&self.rises, s.center), volume))
+            })
+            .collect()
     }
 
     /// None when the body raises no plume. `relief` is the ground before the rises, for the

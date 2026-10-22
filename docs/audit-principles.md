@@ -722,13 +722,15 @@ Direction: the province as the heat its enriched cumulates make, raising the man
 
 ## Validation (principle 15)
 
-### M34. A rise is a dome, not a pile
+### M34. A rise is a dome, not a pile (closed by F174)
 
 Tharsis's long-wavelength gravity and Mars's shape are explained by its load of some 3 × 10⁸ km³ of magma (Phillips et al. 2001), most of it in place before about 3.7 Ga (Hynek et al. 2011), which buried the ancient terrain beneath it. The model's rise is a dome its plume holds up, 0.28 of the relief the crust holds and no volume of its own; its lava comes only through the floods, spread over the body by their vents' weights (F171), and the shields, and the magma the full edifices cannot take, some 5.7 × 10⁷ km³ on Mars (F164), is lost rather than thickening the crust beneath them. On Mars's preset (seed 1048, F173) the rise stands over an old basin some 2,400 km across, whose floor it lifts some 2 km while the basin keeps its depth and its shields' moats sink in it, where Tharsis's lavas would have filled it first.
 
 Direction: the plume's melt under its head builds the rise: the intrusions it makes, the full edifices' lost magma among them, thicken the crust beneath it and raise it as Airy's isostasy does, and its lavas pond in the rise's lows, the floods' budget kept as one, so that a rise is a pile as well as a dome.
 
 When: the next milestone (the user's choice, 2026-10-22).
+
+Closed in the ninetieth milestone (F174): the melt is one budget, what stays below intruding the crust beneath where it rose from and the full edifices' surplus beneath their rises, the ground rising as the crust thickens and the intrusions' weight bending the lid. 3.2 × 10⁸ km³ intrudes beneath Mars's rise, its flanks some 2 km higher and the old basin raised some 2.5 km. Still open: the lavas ponding in a rise's own lows, since the vents favour low ground against the body's median (F36) and a hollow on a raised rise draws few of them, the basin raised with its rim and keeping its depth, where Tharsis's lavas erupted high on their rise; and the dome's height, still the share Tharsis's whole height was fitted to (RISE_HEIGHT_FRACTION), which its plume head's buoyancy should give now that the pile stands beside it.
 
 ### V1. Interpolated bodies in validation
 

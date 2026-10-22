@@ -446,6 +446,16 @@ pub struct LoadStress {
 }
 
 impl LoadStress {
+    /// Another load's stress added, on the same grid (F174).
+    pub fn add(&mut self, other: &LoadStress) {
+        assert_eq!(self.tensor.len(), other.tensor.len());
+        for (a, b) in self.tensor.iter_mut().zip(&other.tensor) {
+            for (x, y) in a.iter_mut().zip(b) {
+                *x += y;
+            }
+        }
+    }
+
     /// The stress at a point in the frame (u, v) of its tangent plane: (σ_uu, σ_vv, σ_uv),
     /// from the cell that holds it.
     pub fn at(&self, p: [f64; 3], u: [f64; 3], v: [f64; 3]) -> (f64, f64, f64) {
