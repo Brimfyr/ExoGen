@@ -9,7 +9,7 @@
 //! and ejecta are added to whatever is there, with a short blend across the rim. Cells under
 //! the continuous ejecta have their surface age reset to the impact time.
 
-use super::morphology::{CraterClass, Dimensions, ProfileTable};
+use super::morphology::{CraterClass, Dimensions, Levelling, ProfileTable};
 use crate::constants::{
     BASIN_SCULPTURE, BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE,
     EJECTA_LOBE_MIN_CELLS, EJECTA_TEXTURE, FLOOR_TEXTURE, OBLIQUE_ASYMMETRY_DEG,
@@ -422,6 +422,8 @@ pub struct StampParams {
     pub set_age: bool,
     /// Bury the relief already there under the ejecta according to its thickness.
     pub bury: bool,
+    /// The width over which the ejecta level the ground they bury (F169).
+    pub levelling: Levelling,
     /// Seed of the crater's rim scalloping and texture; zero for a smooth stamp.
     pub seed: u64,
     /// The crater excavated the deep bedrock: its floor and near ejecta are deep material.
@@ -509,6 +511,22 @@ pub fn stamp_compute(
     // and the mean only serves as a local reference.
     let mut ring_sum = [0.0f64; BINS];
     let mut ring_area = [0.0f64; BINS];
+    // The ejecta level the ground only over the hollows they can fill (F169): each ring
+    // splits into sectors about that long, whose means are the reference, so the relief
+    // longer than the sector is draped rather than buried.
+    const SECTORS: usize = 64;
+    let sectors: [usize; BINS] = std::array::from_fn(|b| {
+        let re = dim.radius * (1.0 + span * (b as f64 + 0.5) / BINS as f64);
+        let length = p.levelling.length(profile.height(re) * p.amplitude);
+        ((std::f64::consts::TAU * re / length).ceil() as usize).clamp(1, SECTORS)
+    });
+    let slot_of = |re: f64, phi: f64| -> (usize, usize) {
+        let b = bin_of(re);
+        let turn = phi.rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU;
+        (b, ((turn * sectors[b] as f64) as usize).min(sectors[b] - 1))
+    };
+    let mut sector_sum = vec![0.0f64; BINS * SECTORS];
+    let mut sector_area = vec![0.0f64; BINS * SECTORS];
     for &(idx, r, phi) in &stamper.footprint {
         let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity) * shape.factor(phi);
         if re <= dim.radius {
@@ -517,15 +535,30 @@ pub fn stamp_compute(
             deep_sum += deep[idx] as f64 * a;
             wsum += a;
         } else if p.bury && re < dim.ejecta_radius {
-            let b = bin_of(re);
+            let (b, s) = slot_of(re, phi);
             ring_sum[b] += bedrock[idx] as f64;
             ring_area[b] += 1.0;
+            sector_sum[b * SECTORS + s] += bedrock[idx] as f64;
+            sector_area[b * SECTORS + s] += 1.0;
         }
     }
     let h_ref = if wsum > 0.0 {
         sum / wsum
     } else {
         bedrock[stamper.footprint[0].0] as f64
+    };
+    // The level the ejecta bury the old relief against at a point: its sector's mean, or its
+    // ring's where the sector holds no cell, or the floor's.
+    let level_of = |re: f64, phi: f64| -> f64 {
+        let (b, sc) = slot_of(re, phi);
+        let i = b * SECTORS + sc;
+        if sector_area[i] > 0.0 {
+            sector_sum[i] / sector_area[i]
+        } else if ring_area[b] > 0.0 {
+            ring_sum[b] / ring_area[b]
+        } else {
+            h_ref
+        }
     };
     // The material the crater excavated: the deep bedrock, or what was already there.
     let source_deep = if p.deep {
@@ -580,12 +613,7 @@ pub fn stamp_compute(
             * p.amplitude
             * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle);
         let kept = if p.bury && thickness > 0.0 {
-            let b = bin_of(re);
-            let mean = if ring_area[b] > 0.0 {
-                ring_sum[b] / ring_area[b]
-            } else {
-                h_ref
-            };
+            let mean = level_of(re, phi);
             burial_factor(bedrock[idx] as f64 - mean, thickness)
         } else {
             1.0
@@ -640,12 +668,7 @@ pub fn stamp_compute(
         }
         let mut old = bedrock[idx] as f64;
         if p.bury && re > dim.radius && v > 0.0 {
-            let b = bin_of(re);
-            let mean = if ring_area[b] > 0.0 {
-                ring_sum[b] / ring_area[b]
-            } else {
-                h_ref
-            };
+            let mean = level_of(re, phi);
             old = mean + (old - mean) * burial_factor(old - mean, v);
         }
         let w = if p.replace_floor {
@@ -2127,6 +2150,7 @@ mod tests {
             replace_floor: true,
             set_age: true,
             bury: true,
+            levelling: Levelling::rings(),
             seed: 0,
             deep: false,
             maturity_timescale: 0.5,
@@ -2234,6 +2258,7 @@ mod tests {
                 replace_floor: true,
                 set_age: true,
                 bury,
+                levelling: Levelling::rings(),
                 seed: 0,
                 deep: false,
                 maturity_timescale: 0.5,
@@ -2323,6 +2348,7 @@ mod tests {
                 replace_floor: true,
                 set_age: true,
                 bury: true,
+                levelling: Levelling::rings(),
                 seed: 0,
                 deep: false,
                 maturity_timescale: 0.5,
@@ -2439,6 +2465,7 @@ mod tests {
             replace_floor: true,
             set_age: true,
             bury: true,
+            levelling: Levelling::rings(),
             seed: 0,
             deep: false,
             maturity_timescale: 0.5,

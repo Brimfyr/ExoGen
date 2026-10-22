@@ -377,7 +377,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 125;
+pub const FINISH_VERSION: u64 = 126;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2209,6 +2209,7 @@ pub fn finish(
                             replace_floor: true,
                             set_age: true,
                             bury: true,
+                            levelling: inputs.levelling,
                             seed: c.key,
                             deep,
                             maturity_timescale: inputs.maturity_timescale,
@@ -3802,8 +3803,8 @@ mod tests {
     /// and its root weighs on the lid (F166): Mars's largest shield's moat holds the lava its
     /// flows sent past its foot, the shields' own lava lying far thicker there than farther
     /// off, and still the ground just past its foot stands below the ground beyond; its
-    /// summit is still near the height it built; and the loop keeps how far the ground sank
-    /// for the finish.
+    /// summit still stands three quarters of the height it built above the ground beyond;
+    /// and the loop keeps how far the ground sank for the finish.
     #[test]
     fn mars_s_largest_shield_s_moat_holds_its_lava() {
         let g = preset_graph("Mars", "preview");
@@ -3857,11 +3858,14 @@ mod tests {
         assert!(near > 3.0 * far + 300.0, "{near} {far}");
         // Its root deepens the moat past what its lava fills (F166).
         assert!(moat < beyond - 300.0, "{moat} {beyond}");
+        // Near: its root sinks it (F166), and the ground beyond keeps the relief the
+        // ejecta about it draped (F169).
         assert!(
-            ring(&ground, 0.0) - beyond > 0.8 * shield.height,
-            "{} {}",
+            ring(&ground, 0.0) - beyond > 0.75 * shield.height,
+            "summit {} beyond {} height {}",
             ring(&ground, 0.0),
-            beyond
+            beyond,
+            shield.height
         );
     }
 

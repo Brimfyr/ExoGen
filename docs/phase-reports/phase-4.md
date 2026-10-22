@@ -2144,3 +2144,24 @@ What the maps show:
 Still to do: the boundary scarp's wear and the lowlands' sediments (Phase 5); the endogenic route and a locked moon's near side (T5); the giant basins' outlines, on hold; the aureole and basal scarp (M30); the event's fill from its surge's melt (M29); Mercury's thrusts' direction (M27); the drives the field does not hold (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
 
 Tests 257 (21 ignored), among them a mega-impact excavating its basin and throwing the crust beyond its rim: the crust kept within a thousandth, the floor level and as low as its lost crust floats, the rim's crust the thickest and thinning outward, the basin longer along its azimuth by its elongation, the floor a basin floor of its age and the ejecta deep ejecta. The test that nothing older than a loop crater survives inside it now holds a mega-impact's interior too; the Moon's ridges lie on lava but for those a later mega-impact buried; the Moon's spectrum is averaged over its rows; the basin-secondaries test keeps its own seed; and Mars's deepest canyon need stand over a kilometre deep along most of its length, seed 1048's standing 3.1, 2.7 and 1.3 km below its rims at a quarter, half and three quarters along.
+
+## The eighty-fifth milestone: an ejecta deposit levels only the hollows it can fill
+
+The user's review of the eighty-fourth: a Moon struck by a mega-impact (master seed 6342) stood flat but for its basin, where the primordial relief had been believable ground, and asked whether to keep that relief. It had not gone; the mega-impact's ejecta buried it.
+
+- **F169.** A deposit levels the ground over the width of the fresh crater as deep as it is thick, the largest hollow it can fill, no farther than a landslide's debris runs out for its fall, and drapes the longer relief. A crater's rings split into sectors that long; a mega-impact's reference is the ground low-passed over that width.
+
+How it went:
+
+- **The reference was too wide.** A crater's ejecta buried the older relief against the mean of the whole ring about it, and a mega-impact's against the ground low-passed over its basin's radius: around a body-sized basin each reference spanned thousands of kilometres, so its kilometres of ejecta buried the hemisphere-wide swells of the primordial relief, which a deposit drapes.
+- **The crater rule alone reaches too far.** The diameter of the crater as deep as a deposit is thick grows slowly with the depth of the largest basins, so that a deposit 10 km thick would have levelled over 1,300 km; a deposit spreads only as far as its debris runs out, the landslides' 14 times its thickness, and levels over 140 km.
+- **The same rule for every crater.** The craters' ejecta take the sectors too, so that the largest stamped basins drape the swells about them as the mega-impacts do.
+
+What the maps show:
+
+- **The Moon, master seed 6342:** its far side keeps the swells and lowlands of its primordial relief under the mega-impact's ejecta, where they had been buried flat; the belt beyond the basin's rim stands some 6 km high, which the old reference had partly buried as relief; the floor stays the level melt pond it was.
+- **Mars (seed 1048):** the highlands along the dichotomy stand higher and roll, the old basins' rims beside the boundary showing through the ejecta; its lowland's heights gather about −1.8 km and its highlands spread to some 5 km.
+
+Still to do: the relaxation of a rocky crust by its lower crust's flow, which would soften the dichotomy's boundary and the old basins; Valles Marineris as subsidence along the buried boundary, with M23; the lowlands' lava against the Hesperian plains; the boundary's wear and the lowlands' sediments (Phase 5).
+
+Tests 258 (21 ignored), among them a deposit levelling the hollows it can fill: at every thickness from a metre to a hundred kilometres no wider than its debris runs out, and where narrower the crater it levels over as deep as it is thick or, past the simple craters' transition, the first so deep. Mars's largest shield's summit now need stand three quarters of its height above the ground beyond its moat rather than four fifths, the ground there keeping the relief its ejecta draped; it stands 79 percent.

@@ -7,6 +7,7 @@
 //! them. Each one is recorded for the finishing pass.
 
 use crate::constants::*;
+use crate::crater::Levelling;
 use crate::crater::production::{Oblique, Target, expected_count_above, poisson};
 use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
@@ -22,7 +23,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 28;
+pub const VERSION: u64 = 29;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -59,6 +60,8 @@ pub struct CraterInputs {
     /// regolith.
     pub shed: (f64, f64),
     pub seed: u64,
+    /// The width over which an ejecta deposit levels the ground, by its thickness (F169).
+    pub levelling: Levelling,
 }
 
 /// Whether a crater's excavation reaches below the surface layer into the deep bedrock.
@@ -126,7 +129,7 @@ pub fn bombardment(graph: &ParamGraph) -> Bombardment {
 
 impl CraterInputs {
     pub fn from_graph(graph: &ParamGraph) -> Self {
-        Self {
+        let mut inputs = Self {
             bombardment: bombardment(graph),
             scaling: Scaling {
                 simple_complex: graph.f64("cratering.simple_complex_transition"),
@@ -165,7 +168,10 @@ impl CraterInputs {
                 )
             },
             seed: graph.f64("seed.cratering") as u64,
-        }
+            levelling: Levelling::rings(),
+        };
+        inputs.levelling = Levelling::new(&inputs.scaling);
+        inputs
     }
 }
 
@@ -335,6 +341,7 @@ impl ImpactProcess {
                 &rec,
                 inp.mega_floor_crust,
                 inp.airy,
+                &inp.levelling,
             );
             self.records.push(rec);
             return;
@@ -356,6 +363,7 @@ impl ImpactProcess {
                 replace_floor: true,
                 set_age: true,
                 bury: true,
+                levelling: inp.levelling,
                 seed: rec.id,
                 deep,
                 maturity_timescale: inp.maturity_timescale,

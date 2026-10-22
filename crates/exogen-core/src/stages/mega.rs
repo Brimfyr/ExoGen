@@ -13,7 +13,7 @@ use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::crater::stamp::{burial_factor, elliptical_radius};
-use crate::crater::{CellWrite, CraterRecord, StampOutput};
+use crate::crater::{CellWrite, CraterRecord, Levelling, StampOutput};
 use crate::fields::LayerSet;
 use crate::geom::{angle_between, azimuth_from, local_basis};
 use crate::grid::CubeSphere;
@@ -58,6 +58,7 @@ pub fn emplace(
     rec: &CraterRecord,
     floor_crust: f64,
     airy: f64,
+    levelling: &Levelling,
 ) {
     let n = grid.cell_count();
     let radius = 0.5 * rec.diameter;
@@ -128,8 +129,14 @@ pub fn emplace(
     // against the body's mean column, whatever stood there before.
     let bed = layers.bedrock.as_slice();
     let level = mean_ground + airy * (floor_crust - mean_crust);
-    // The ejecta buries the relief shorter than the basin's radius by its thickness.
-    let low = crate::stages::relaxation::low_pass(&layers.bedrock, grid.delta() * body_radius, radius);
+    // The ejecta levels the ground only over the hollows it can fill (F169): the relief
+    // shorter than that width it buries by its thickness, the longer it drapes.
+    let longest = levelling.length(at_rim).min(radius);
+    let lows = crate::stages::relaxation::low_passes(
+        &layers.bedrock,
+        grid.delta() * body_radius,
+        longest,
+    );
     let time = rec.time_gyr as f32;
     let cells: Vec<CellWrite> = (0..n)
         .map(|k| {
@@ -138,8 +145,14 @@ pub fn emplace(
             let inside = x <= 1.0;
             let bedrock = if inside {
                 b + (level - b) * excavated(x)
+            } else if lows.is_empty() {
+                b
             } else {
-                let l = low[k] as f64;
+                let l = crate::stages::relaxation::blend_levels(
+                    &lows,
+                    levelling.length(ejecta[k]),
+                    k,
+                ) as f64;
                 let relief = b - l;
                 l + relief * burial_factor(relief, ejecta[k])
             };
@@ -299,7 +312,7 @@ mod tests {
         let before = volume(&layers);
         let center = crate::geom::normalize([0.2, 0.5, 0.8]);
         let rec = record(center, 1.8 * body_radius, 1.4);
-        emplace(&mut layers, &grid, body_radius, &rec, floor, airy);
+        emplace(&mut layers, &grid, body_radius, &rec, floor, airy, &Levelling::rings());
         let after = volume(&layers);
         assert!((after - before).abs() < 1e-3 * before, "{before:.4e} {after:.4e}");
 

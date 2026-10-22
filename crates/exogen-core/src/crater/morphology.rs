@@ -235,6 +235,57 @@ pub fn transient_diameter(diameter: f64, s: &Scaling) -> f64 {
     tr * 1e3
 }
 
+/// The width over which an ejecta deposit levels the ground it lands on (F169): the
+/// diameter of the fresh crater as deep as the deposit is thick, the largest hollow it can
+/// fill, but no farther than the deposit can spread, as far as a landslide's debris runs
+/// out for its fall (LANDSLIDE_REACH's longer end, F106); the relief longer than that it
+/// drapes. Tabulated by the deposit's thickness from a metre to a hundred kilometres.
+#[derive(Clone, Copy, Debug)]
+pub struct Levelling {
+    map: Option<[f64; LEVEL_POINTS]>,
+}
+
+const LEVEL_POINTS: usize = 41;
+const LEVEL_STEP: f64 = 0.125;
+
+impl Levelling {
+    pub fn new(scaling: &Scaling) -> Self {
+        let deepest = dimensions(2.0e7, scaling).depth;
+        let mut map = [0.0; LEVEL_POINTS];
+        for (k, m) in map.iter_mut().enumerate() {
+            let deposit = 10f64.powf(LEVEL_STEP * k as f64);
+            let thickness = deposit.min(0.999 * deepest);
+            let (mut lo, mut hi) = (0.0f64, 2.0e7f64.ln());
+            for _ in 0..60 {
+                let mid = 0.5 * (lo + hi);
+                if dimensions(mid.exp(), scaling).depth < thickness {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            *m = (0.5 * (lo + hi)).exp().min(LANDSLIDE_REACH.1 * deposit);
+        }
+        Self { map: Some(map) }
+    }
+
+    /// Levelling over whole rings about a crater, as before F169.
+    pub fn rings() -> Self {
+        Self { map: None }
+    }
+
+    /// The width, m, a deposit `thickness` m thick levels over.
+    pub fn length(&self, thickness: f64) -> f64 {
+        let Some(map) = &self.map else {
+            return f64::INFINITY;
+        };
+        let x = (thickness.max(1.0).log10() / LEVEL_STEP).clamp(0.0, (LEVEL_POINTS - 1) as f64);
+        let i = (x.floor() as usize).min(LEVEL_POINTS - 2);
+        let f = x - i as f64;
+        (map[i].ln() * (1.0 - f) + map[i + 1].ln() * f).exp()
+    }
+}
+
 /// Impact angle from horizontal for a uniform draw `u`: isotropic impactors strike a
 /// sphere with probability density sin 2θ (Gilbert 1893; Shoemaker 1962), whose
 /// cumulative distribution is sin²θ. The most probable angle is 45°.
@@ -614,6 +665,39 @@ mod tests {
         assert!((fe - f12).abs() < 0.002, "{fe} {f12}");
         assert_eq!(ellipticity_for(0.8, threshold), 1.0);
         assert!(ellipticity_for(0.02, threshold) > 1.5);
+    }
+
+    /// F169: a deposit levels the ground over the width of the fresh crater as deep as it is
+    /// thick: a metre-thick one the hollows of a few metres, a kilometre-thick one those of
+    /// a simple crater a few kilometres across, but never farther than it spreads, as a
+    /// landslide's debris runs out for its fall; the rings' levelling is unbounded.
+    #[test]
+    fn a_deposit_levels_the_hollows_it_can_fill() {
+        let s = lunar();
+        let l = Levelling::new(&s);
+        let mut last = 0.0;
+        // At the table's points, from a metre to a hundred kilometres.
+        for k in 0..=40 {
+            let t = 10f64.powf(0.125 * k as f64);
+            let w = l.length(t);
+            assert!(w >= last * 0.98, "{t}: {w} after {last}");
+            last = w;
+            // At least as deep as the deposit is thick, and no deeper than that by much but
+            // where the complex craters past the transition are shallower than the simple
+            // ones before it.
+            let depth = dimensions(w, &s).depth;
+            let deepest = dimensions(2.0e7, &s).depth;
+            let target = t.min(0.999 * deepest);
+            assert!(w <= LANDSLIDE_REACH.1 * t * 1.02, "{t}: {w}");
+            if w < 0.98 * LANDSLIDE_REACH.1 * t {
+                assert!(depth > 0.97 * target - 1.0, "{t}: {w} m deep {depth}");
+            }
+            assert!(depth < 1.35 * target + 1.0, "{t}: {w} m deep {depth}");
+        }
+        println!("lunar levelling: 10 m {:.0}, 100 m {:.0}, 1 km {:.0}, 3 km {:.0}, 10 km {:.0}, 30 km {:.0} m",
+            l.length(10.0), l.length(100.0), l.length(1e3), l.length(3e3), l.length(1e4), l.length(3e4));
+        assert!(l.length(1e3) > 3e3 && l.length(1e3) < 1.5e4);
+        assert_eq!(Levelling::rings().length(1e3), f64::INFINITY);
     }
 
     /// F167: the threshold angle follows the cratering efficiency as Collins et al.'s fit
