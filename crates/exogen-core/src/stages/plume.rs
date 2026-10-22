@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 28;
+pub const VERSION: u64 = 29;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -900,14 +900,16 @@ pub fn overflow_share(along: f64) -> (f64, f64) {
 /// Where a shield's lava past its foot starts to run on down (F163): an eruption whose flow
 /// carries lava beyond the foot, its rift zone's if `rift`, drawn as F101 draws them and
 /// kept by the lava it carries there, and a point along its run beyond the foot, over which
-/// that lava lies evenly; never on another edifice, whose flanks the lava would not climb.
-/// The azimuth from the summit, rad from east towards north, and the distance, m; the foot
-/// off the rift zone's end where no draw is kept.
+/// that lava lies evenly; never on another edifice standing higher than a flow is thick by
+/// time `t`, whose flanks the lava would not climb. The azimuth from the summit, rad from
+/// east towards north, and the distance, m; the foot at an azimuth of its own where no draw
+/// is kept.
 fn past_the_foot(
     shields: &[Shield],
     si: usize,
     rift: bool,
     body_radius: f64,
+    t: f64,
     rng: &Rng,
     index: u64,
 ) -> (f64, f64) {
@@ -920,6 +922,17 @@ fn past_the_foot(
     };
     // The most lava a flow can carry past the foot: its run squared, all of it beyond.
     let most = (l_hi * shield.radius).powi(2);
+    // Another edifice turns the lava where it stands higher than a flow is thick by then: one
+    // that has hardly grown does not (F163).
+    let climbs = |at: [f64; 3]| {
+        shields.iter().enumerate().any(|(oi, o)| {
+            let (r, a) = o.polar(at, body_radius);
+            oi != si
+                && r < o.radius_toward(a)
+                && o.height * shield_shape(o.reach_share(r, a)) * shield_progress(t, o)
+                    > FLOOD_SHEET_THICKNESS
+        })
+    };
     for attempt in 0..64u64 {
         let k = 8 * attempt;
         let phi = if rift {
@@ -942,15 +955,14 @@ fn past_the_foot(
         }
         let distance = foot + beyond * rng.uniform(index, k + 5);
         let at = offset(shield.center, east, north, distance / body_radius, phi);
-        let climbs = shields.iter().enumerate().any(|(oi, o)| {
-            let (r, a) = o.polar(at, body_radius);
-            oi != si && o.reach_share(r, a) < 1.0
-        });
-        if !climbs {
+        if !climbs(at) {
             return (phi, distance);
         }
     }
-    (shield.rift, shield.radius_toward(shield.rift))
+    // Where no draw is kept, the foot at an azimuth of its own, so that such eruptions do
+    // not gather on one point.
+    let phi = std::f64::consts::TAU * rng.uniform(index, 8 * 64);
+    (phi, shield.radius_toward(phi))
 }
 
 /// The way from a shield's summit to its foot along its rift zone, in its radii (F163): the
@@ -2042,16 +2054,17 @@ impl PlumeProcess {
                 let draw = 8 * j;
                 let volume = (lo * (hi / lo).powf(rng.uniform(key, draw))).min(self.foot[si]);
                 let rift = rng.uniform(key, draw + 1) < shield.rift_overflow;
+                let time_gyr = t0 + (t1 - t0) * rng.uniform(key, draw + 4);
                 let (phi, distance) = past_the_foot(
                     &self.shields,
                     si,
                     rift,
                     body_radius,
+                    time_gyr,
                     &rng,
                     crate::rng::hash_words(&[key, j, 0xF00D]),
                 );
                 let at = offset(shield.center, east, north, distance / body_radius, phi);
-                let time_gyr = t0 + (t1 - t0) * rng.uniform(key, draw + 4);
                 let id = crate::rng::hash_words(&[shield.id, key, j, 0xF007]);
                 out.push(FloodEvent {
                     vent: grid.index(grid.locate(at).0),
@@ -4321,13 +4334,20 @@ mod tests {
             "{held:.4e} {built:.4e}"
         );
         // Each beyond a shield's foot within a flow's run, all but a few off the ends of its
-        // rift zone, and none on an edifice.
+        // rift zone, and none on an edifice standing higher than a flow is thick by then (the
+        // ground a cell outward from the vent's cell, toward which the entry point may lie).
         let mut off_rift = 0;
         for e in &eruptions {
             let d = grid.center(grid.cell(e.vent));
             for s in &p.shields {
                 let (rr, phi) = s.polar(d, r);
-                assert!(rr > s.radius_toward(phi) - cell, "on an edifice: {rr}");
+                if rr + cell >= s.radius_toward(phi) {
+                    continue;
+                }
+                let standing = s.height
+                    * shield_shape(s.reach_share(rr + cell, phi))
+                    * shield_progress(e.time_gyr, s);
+                assert!(standing <= FLOOD_SHEET_THICKNESS, "on an edifice: {standing}");
             }
             let from = p.shields.iter().any(|s| {
                 let (rr, phi) = s.polar(d, r);
