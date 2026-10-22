@@ -16,4 +16,4 @@ description = "Reference body. Airless, locked to Earth."
 "atmosphere.surface_pressure" = 0.0
 "atmosphere.composition" = {}
 "volatiles.inventory" = {}
-"seed.master" = 13.0
+"seed.master" = 10.0

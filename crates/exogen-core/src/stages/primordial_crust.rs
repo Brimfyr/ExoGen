@@ -3,9 +3,9 @@
 
 //! Primordial crust (PLAN.md 4.1): the initial layered state at formation.
 //!
-//! Crustal thickness is a low-degree spherical-harmonic field with an optional hemispheric
-//! dichotomy term, or a two-level crust for mobile-lid bodies until plate tectonics
-//! exists. Elevation follows from Airy isostasy, with a seeded self-affine relief from the
+//! Crustal thickness is a low-degree spherical-harmonic field, or a two-level crust for
+//! mobile-lid bodies until plate tectonics exists; a hemispheric dichotomy comes of the
+//! impacts the body takes (F168), not of the crust it starts with. Elevation follows from Airy isostasy, with a seeded self-affine relief from the
 //! scale of the body's hemispheres down to the grid, as rough at its largest as a cratered
 //! surface is at the scale of the largest crater the body holds (F137), standing in for
 //! the relief its history before the record left.
@@ -25,7 +25,7 @@ use crate::spharm::Harmonics;
 use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC, UNIT_PRIMORDIAL};
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 /// Two-level crust for mobile-lid bodies: thin oceanic crust and thick continental crust
 /// covering a fraction of the area, which gives the bimodal hypsometry that lets an ocean
@@ -36,12 +36,25 @@ struct Continents {
     area_fraction: f64,
 }
 
+/// The height the ground stands per metre of crust, the crust's buoyancy in the mantle
+/// beneath it (Airy): rock on rock, or ice on its ocean.
+pub fn airy_factor(graph: &ParamGraph) -> f64 {
+    let icy = matches!(
+        graph.str("body.composition_class"),
+        "rock_ice" | "ice_dominated"
+    );
+    let (rho_mantle, rho_crust) = if icy {
+        (1000.0, DENSITY_CRUST_ICE)
+    } else {
+        (3300.0, DENSITY_CRUST_ROCK)
+    };
+    (rho_mantle - rho_crust) / rho_mantle
+}
+
 pub struct PrimordialCrust {
     grid: CubeSphere,
     noise: GradientNoise,
     harmonics: Harmonics,
-    dichotomy_axis: [f64; 3],
-    dichotomy_amplitude: f64,
     crust_mean: f64,
     crust_sigma: f64,
     continents: Option<Continents>,
@@ -62,15 +75,6 @@ impl PrimordialCrust {
     pub fn new(graph: &ParamGraph, grid: CubeSphere) -> Self {
         let seed = graph.f64("seed.terrain") as u64;
         let rng = Rng::new(seed);
-        let icy = matches!(
-            graph.str("body.composition_class"),
-            "rock_ice" | "ice_dominated"
-        );
-        let (rho_mantle, rho_crust) = if icy {
-            (1000.0, DENSITY_CRUST_ICE)
-        } else {
-            (3300.0, DENSITY_CRUST_ROCK)
-        };
         // F137: the relief of a cratered surface at the scale of the largest crater the
         // body holds, a share of its depth, as the history before the record left it;
         // never more than a quarter of the relief the crust's strength supports.
@@ -102,15 +106,13 @@ impl PrimordialCrust {
             grid,
             noise: GradientNoise::new(seed ^ 0x9E37_79B9),
             harmonics: Harmonics::random(&rng, 2, 8, 2.0),
-            dichotomy_axis: rng.unit_direction(1, 0),
-            dichotomy_amplitude: graph.f64("tectonics.dichotomy_amplitude"),
             crust_mean: graph.f64("tectonics.initial_crust_thickness"),
             crust_sigma: 0.12 * graph.f64("tectonics.initial_crust_thickness"),
             continents,
             relief,
             relief_frequency,
             relief_cap,
-            isostatic_factor: (rho_mantle - rho_crust) / rho_mantle,
+            isostatic_factor: airy_factor(graph),
             relief_scale: 0.0,
         };
         let raw = crust.raw_relief();
@@ -288,7 +290,6 @@ impl PrimordialCrust {
             .sqrt()
             .max(1e-12);
 
-        let axis = self.dichotomy_axis;
         let crust: Vec<f32> = match &self.continents {
             Some(cont) => {
                 let mut sorted = raw.clone();
@@ -308,12 +309,7 @@ impl PrimordialCrust {
             }
             None => (0..grid.cell_count())
                 .into_par_iter()
-                .map(|k| {
-                    let d = grid.center(grid.cell(k));
-                    let dot = d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2];
-                    let dichotomy = 0.5 * self.dichotomy_amplitude * (3.0 * dot).tanh();
-                    (self.crust_mean + dichotomy + self.crust_sigma * raw[k] / rms) as f32
-                })
+                .map(|k| (self.crust_mean + self.crust_sigma * raw[k] / rms) as f32)
                 .collect(),
         };
         let mean_crust = crust.iter().map(|v| *v as f64).sum::<f64>() / crust.len() as f64;

@@ -313,6 +313,14 @@ pub const FLOOD_VISIBLE_DEPTH: usize = 4;
 /// maria are.
 pub const BASIN_CRUST_THINNING: f64 = 0.5;
 pub const CRUST_THICKNESS_MIN: f64 = 3e3;
+/// A mega-impact's basin (F168): the crust its melt sheet makes on the floor, as a share of
+/// the body's starting crust (a stated choice between Mars's northern lowlands, whose crust
+/// is some 32 km against the southern highlands' 58, Neumann et al. 2004, and the thinner
+/// crust of South Pole-Aitken's floor, Wieczorek et al. 2013); and the basin's wall, the
+/// outer share of its radius over which the excavation gives way to the rim (a stated
+/// choice, a boundary scarp a few loop cells wide for the surface processes to wear).
+pub const MEGA_FLOOR_CRUST_SHARE: f64 = 0.5;
+pub const MEGA_WALL_SHARE: f64 = 0.05;
 /// Thinner lava than this is not recorded, m.
 pub const FLOOD_MIN_THICKNESS: f64 = 1.0;
 /// Lava thinner than this is mixed with its substrate by gardening and shows it through:
@@ -3114,13 +3122,14 @@ pub const ICY_EARLY_TOTAL: f64 = 2475.0;
 pub const EARLY_TIME_EXPONENTS: (f64, f64) = (0.75, -0.5);
 /// The largest crater a body holds, its radius as a share of the body's: an icy body's as
 /// wide as the body's radius (Odysseus 0.84 R on Tethys, Turgis 0.79 R on Iapetus, Herschel
-/// 0.70 R on Mimas), a rocky body's as wide as the body (Vesta kept Rheasilvia, 1.93 R,
-/// and older craters beside it, Schenk et al. 2012). A larger impact shatters and
-/// resurfaces the body, and its crater record starts after the last one (F135; Movshovitz
-/// et al. 2015). The loop draws a rocky body's craters only to MAX_CRATER_RADIUS_FRACTION,
-/// the stamp's limit.
+/// 0.70 R on Mimas), a rocky body's as wide as a hemisphere (F168: Mars kept the Borealis
+/// basin, 10,650 by 8,520 km, Andrews-Hanna et al. 2008, its long axis half the planet's
+/// circumference; Vesta kept Rheasilvia, 1.93 R, Schenk et al. 2012). A larger impact
+/// shatters or resurfaces the body, and its crater record starts after the last one (F135;
+/// Movshovitz et al. 2015). Wider than MAX_CRATER_RADIUS_FRACTION, the stamp's limit, an
+/// impact takes the mega-impact form (F168).
 pub const ICE_HOLD_RADIUS_FRACTION: f64 = 0.5;
-pub const ROCK_HOLD_RADIUS_FRACTION: f64 = 1.0;
+pub const ROCK_HOLD_RADIUS_FRACTION: f64 = std::f64::consts::FRAC_PI_2;
 /// Neukum chronology function coefficients: N(>=1 km) = A (exp(B T) - 1) + C T per km².
 pub const NEUKUM_A: f64 = 5.44e-14;
 pub const NEUKUM_B: f64 = 6.93;

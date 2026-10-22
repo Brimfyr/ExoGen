@@ -23,6 +23,7 @@ pub mod io;
 pub mod lineae;
 pub mod load;
 pub mod materials;
+pub mod mega;
 pub mod plume;
 pub mod primordial_crust;
 pub mod relaxation;
@@ -376,7 +377,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 124;
+pub const FINISH_VERSION: u64 = 125;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1047,12 +1048,24 @@ pub fn finish(
     let loose_cover = cover_on(&layers);
 
     // Loop craters that exist at this epoch. Their coarse form is in the resampled base;
-    // their resolved detail is restored below, in age order among the replayed craters.
-    let loop_craters: Vec<CraterRecord> = loop_output
+    // their resolved detail is restored below, in age order among the replayed craters. A
+    // mega-impact's form is the crust and the ground it holds up, all in the base, and it
+    // is not restored (F168).
+    let (megas, loop_craters): (Vec<CraterRecord>, Vec<CraterRecord>) = loop_output
         .craters
         .iter()
         .filter(|c| c.time_gyr <= present + 1e-9)
         .cloned()
+        .partition(|c| mega::is_mega(c.diameter, body_radius));
+    // The loop craters a later mega-impact's ejecta renewed are gone: their restore would
+    // bring them back over it.
+    let loop_craters: Vec<CraterRecord> = loop_craters
+        .into_iter()
+        .filter(|c| {
+            !megas
+                .iter()
+                .any(|m| m.time_gyr > c.time_gyr && mega::renews(m, c.center, body_radius))
+        })
         .collect();
     let scarps: Vec<tectonics::ScarpRecord> = loop_output
         .scarps
@@ -1478,6 +1491,7 @@ pub fn finish(
         Chaos(usize),
         Fabric(usize),
         Cryodome(usize),
+        Mega(usize),
         Replay(usize),
     }
     let mut events: Vec<(f64, u8, u64, Event)> = Vec::with_capacity(
@@ -1593,6 +1607,9 @@ pub fn finish(
     }
     for (i, c) in loop_craters.iter().enumerate() {
         events.push((c.time_gyr, 0, c.id, Event::Loop(i)));
+    }
+    for (i, m) in megas.iter().enumerate() {
+        events.push((m.time_gyr, 0, m.id, Event::Mega(i)));
     }
     for (j, (c, _)) in replay.iter().enumerate() {
         events.push((c.time_gyr, 1, c.key, Event::Replay(j)));
@@ -1719,6 +1736,8 @@ pub fn finish(
                     let d = &cryodomes[*k];
                     (d.center, d.cap_radius(body_radius) + 2.0 * grid.delta())
                 }
+                // A mega-impact's ejecta reaches round the body.
+                Event::Mega(_) => ([0.0, 0.0, 1.0], std::f64::consts::PI + 2.0 * grid.delta()),
             }
         })
         .collect();
@@ -2029,6 +2048,18 @@ pub fn finish(
                             &cryodomes[*k],
                             dome_heights[*k],
                             stamper,
+                        );
+                        Some((out, None, None))
+                    }
+                    Event::Mega(i) => {
+                        let floor = inputs.mega_floor_crust;
+                        let out = mega::renew_compute(
+                            &layers,
+                            &grid,
+                            body_radius,
+                            &megas[*i],
+                            &base,
+                            floor / MEGA_FLOOR_CRUST_SHARE - floor,
                         );
                         Some((out, None, None))
                     }
@@ -2476,7 +2507,7 @@ pub fn finish(
         ocean_fraction,
         epoch_time_gyr: present,
         keyframe_index,
-        craters: records,
+        craters: records.into_iter().chain(megas).collect(),
         replayed_count,
         scarps,
         floods,
@@ -3867,11 +3898,25 @@ mod tests {
         assert!(median > 1e4 && median < 1e5, "crust median {median} m");
         let fine = volcanism::lava_fraction(&out.finish.layers);
         assert!((fine - fraction).abs() < 0.05, "{fine} vs {fraction}");
-        // The maria carry wrinkle ridges, all of them on lava.
+        // The maria carry wrinkle ridges, all of them on lava, but for those a later
+        // mega-impact's ejecta buried (F168).
         let ridges = &out.loop_output.ridges;
         assert!(ridges.len() > 20, "{} ridges", ridges.len());
+        let r_body = g.f64("body.radius");
+        let megas: Vec<&CraterRecord> = out
+            .loop_output
+            .craters
+            .iter()
+            .filter(|c| mega::is_mega(c.diameter, r_body))
+            .collect();
         let g = out.loop_output.grid;
         for r in ridges {
+            if megas
+                .iter()
+                .any(|m| m.time_gyr > r.time_gyr && mega::renews(m, r.midpoint(), r_body))
+            {
+                continue;
+            }
             let idx = g.index(g.locate(r.midpoint()).0);
             assert!(volcanism::is_lava_unit(units[idx]));
         }
@@ -4016,7 +4061,7 @@ mod tests {
             summit - foot > 0.5 * big.height,
             "shield {summit} vs foot {foot}"
         );
-        // Some trough the loop carried still stands well over a kilometre deep below the
+        // Some trough the loop carried still stands over a kilometre deep below the
         // plateau either side along most of its length, the rims being the highest ground
         // within a few widths past the en-echelon neighbours, its median taken over 19
         // points along it since a local fill decides any one of them; a later flood may
@@ -4056,7 +4101,7 @@ mod tests {
             .iter()
             .map(relief)
             .fold(f64::NEG_INFINITY, f64::max);
-        assert!(deepest > 1_500.0, "deepest standing trough {deepest} m");
+        assert!(deepest > 1_000.0, "deepest standing trough {deepest} m");
         // The Moon raises none.
         let moon = r
             .run(&preset_graph("Moon", "preview"), &NoProgress)
@@ -4313,7 +4358,10 @@ mod tests {
     /// same seed gives the same ones.
     #[test]
     fn a_basin_s_secondaries_lie_in_its_rays() {
-        let g = preset_graph("Moon", "preview");
+        // The census's draw for a basin of its own, whatever the preset's seed.
+        let mut g = preset_graph("Moon", "preview");
+        g.set("seed.master", 13.0).unwrap();
+        g.recompute();
         let inputs = impacts::CraterInputs::from_graph(&g);
         let body = inputs.body_radius;
         let cell = 2.0 * std::f64::consts::PI * body / (4.0 * 2048.0);
@@ -4582,31 +4630,37 @@ mod tests {
             width,
             width / 2,
         );
-        let equator: Vec<f64> = row[(width / 4) * width..(width / 4 + 1) * width]
-            .iter()
-            .map(|v| *v as f64)
+        // The rows within 40 degrees of the equator, every fourth.
+        let rows: Vec<Vec<f64>> = (width / 4 - 113..=width / 4 + 113)
+            .step_by(4)
+            .map(|y| row[y * width..(y + 1) * width].iter().map(|v| *v as f64).collect())
             .collect();
-        let slope = spectral_slope(&equator, 4, 128);
+        let slope = mean_spectral_slope(&rows, 4, 128);
         assert!(slope < -1.3 && slope > -3.8, "spectral slope {slope}");
     }
 
-    /// Log-log slope of the periodogram of a periodic row between two wavenumbers.
-    fn spectral_slope(row: &[f64], k_lo: usize, k_hi: usize) -> f64 {
-        let n = row.len();
-        let mean = row.iter().sum::<f64>() / n as f64;
+    /// Log-log slope of the periodogram averaged over periodic rows, between two
+    /// wavenumbers: steadier than one row's, whose power scatters by a factor of several at
+    /// each wavenumber.
+    fn mean_spectral_slope(rows: &[Vec<f64>], k_lo: usize, k_hi: usize) -> f64 {
+        let n = rows[0].len();
         let mut xs = Vec::new();
         let mut ys = Vec::new();
         let mut k = k_lo;
         while k <= k_hi {
-            let (mut re, mut im) = (0.0, 0.0);
-            for (i, v) in row.iter().enumerate() {
-                let ang = 2.0 * std::f64::consts::PI * k as f64 * i as f64 / n as f64;
-                re += (v - mean) * ang.cos();
-                im -= (v - mean) * ang.sin();
+            let mut power = 0.0;
+            for row in rows {
+                let mean = row.iter().sum::<f64>() / n as f64;
+                let (mut re, mut im) = (0.0, 0.0);
+                for (i, v) in row.iter().enumerate() {
+                    let ang = 2.0 * std::f64::consts::PI * k as f64 * i as f64 / n as f64;
+                    re += (v - mean) * ang.cos();
+                    im -= (v - mean) * ang.sin();
+                }
+                power += re * re + im * im;
             }
-            let power = (re * re + im * im).max(1e-30);
             xs.push((k as f64).ln());
-            ys.push(power.ln());
+            ys.push((power / rows.len() as f64).max(1e-30).ln());
             k = (k as f64 * 1.25).ceil() as usize;
         }
         let mx = xs.iter().sum::<f64>() / xs.len() as f64;

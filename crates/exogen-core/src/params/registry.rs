@@ -274,7 +274,6 @@ const WORKING_LIQUID: &[&str] = &[
     "carbon_dioxide",
 ];
 const CAP_MODE: &[&str] = &["none", "polar", "equatorial", "hemispheric"];
-const DICHOTOMY_MODE: &[&str] = &["none", "harmonic", "giant_impact"];
 const PRODUCTION_FUNCTION: &[&str] = &["neukum_lunar", "neukum_mars"];
 const QUALITY: &[&str] = &["preview", "standard", "high"];
 const DATUM: &[&str] = &["mean_radius", "sea_level", "ellipsoid"];
@@ -1904,28 +1903,6 @@ static NODES: &[NodeDef] = &[
         "Area fraction below the liquid surface.",
     ),
     // ------------------------------------------------------------------ tectonics (Phase 1 subset)
-    root(
-        "tectonics.dichotomy_mode",
-        "tectonics",
-        "Crustal dichotomy",
-        "",
-        1.0,
-        ValueType::Enum(DICHOTOMY_MODE),
-        Default::Str("harmonic"),
-        "Hemispheric crustal thickness contrast in the primordial crust.",
-    ),
-    derived(
-        "tectonics.dichotomy_amplitude",
-        "tectonics",
-        "Dichotomy amplitude",
-        "km of crust",
-        1e3,
-        f(0.0, 1e5),
-        &["tectonics.dichotomy_mode", "interior.tectonic_regime"],
-        d::tectonics_dichotomy_amplitude,
-        "Crust thickness contrast between hemispheres: 20 km on a stagnant lid, 5 km episodic, 2 km ice, none mobile.",
-        "provisional",
-    ),
     derived(
         "tectonics.initial_crust_thickness",
         "tectonics",

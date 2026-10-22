@@ -22,7 +22,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 27;
+pub const VERSION: u64 = 28;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -35,6 +35,10 @@ pub struct CraterInputs {
     pub age: f64,
     /// The threshold angles of elliptical craters (F167).
     pub oblique: Oblique,
+    /// The crust a mega-impact's melt sheet makes on its floor, m, and the height the
+    /// ground stands per metre of crust (F168).
+    pub mega_floor_crust: f64,
+    pub airy: f64,
     pub secondary_fraction: f64,
     pub saturation_fraction: f64,
     pub retention_age: f64,
@@ -134,6 +138,9 @@ impl CraterInputs {
             body_radius: graph.f64("body.radius"),
             age: graph.f64("body.age"),
             oblique: oblique(graph),
+            mega_floor_crust: MEGA_FLOOR_CRUST_SHARE
+                * graph.f64("tectonics.initial_crust_thickness"),
+            airy: crate::stages::primordial_crust::airy_factor(graph),
             secondary_fraction: graph.f64("cratering.secondary_fraction"),
             saturation_fraction: graph.f64("cratering.empirical_saturation"),
             retention_age: graph.f64("cratering.retention_age"),
@@ -191,9 +198,8 @@ impl ImpactProcess {
         let inputs = CraterInputs::from_graph(graph);
         let d_loop = graph.f64("cratering.loop_threshold");
         // The largest crater the body holds (F135), any larger impact having come before its
-        // record, or the largest the stamp draws.
-        let d_max = hold_diameter(inputs.body_radius, inputs.scaling.icy)
-            .min(2.0 * MAX_CRATER_RADIUS_FRACTION * inputs.body_radius);
+        // record; those wider than the stamp draws are mega-impacts (F168).
+        let d_max = hold_diameter(inputs.body_radius, inputs.scaling.icy);
         Self {
             rng: Rng::new(inputs.seed ^ 0x1D2A_9F0B),
             stamper: Stamper::new(&grid),
@@ -321,6 +327,18 @@ impl ImpactProcess {
     /// Emplace one crater on the surface as it is now, and record it.
     pub fn apply(&mut self, layers: &mut LayerSet, mut rec: CraterRecord) {
         let inp = &self.inputs;
+        if crate::stages::mega::is_mega(rec.diameter, inp.body_radius) {
+            crate::stages::mega::emplace(
+                layers,
+                &self.grid,
+                inp.body_radius,
+                &rec,
+                inp.mega_floor_crust,
+                inp.airy,
+            );
+            self.records.push(rec);
+            return;
+        }
         {
             let dim = dimensions(rec.diameter, &inp.scaling);
             let deep = reaches_deep_bedrock(rec.diameter, inp.deep_bedrock_depth);
@@ -356,14 +374,36 @@ impl ImpactProcess {
             );
             // Large impacts thin the crust under them, by excavation and the mantle's
             // rise beneath the cavity. Later magma favours these thin spots, so basins
-            // flood.
+            // flood. The crust they excavate and push aside lands beyond the rim, thinning
+            // outward as their ejecta does, so the crust is kept, thickest in an annulus
+            // about the basin (F168; the lunar basins' annuli, Wieczorek et al. 2013).
             let thinning = BASIN_CRUST_THINNING * EXCAVATION_DEPTH_FRACTION * rec.diameter;
             let radius = dim.radius * rec.ellipticity.sqrt();
+            let area = |idx: usize| self.grid.cell_area(self.grid.cell(idx));
             let crust = layers.crust_thickness.as_mut_slice();
+            let mut volume = 0.0;
             for &(idx, r, _) in &self.stamper.footprint {
                 if r < radius {
                     let w = 1.0 - (r / radius).powi(2);
-                    crust[idx] = (crust[idx] as f64 - thinning * w).max(CRUST_THICKNESS_MIN) as f32;
+                    let old = crust[idx] as f64;
+                    let new = (old - thinning * w).max(CRUST_THICKNESS_MIN);
+                    crust[idx] = new as f32;
+                    volume += (old - new) * area(idx);
+                }
+            }
+            let spread: f64 = self
+                .stamper
+                .footprint
+                .iter()
+                .filter(|&&(_, r, _)| r >= radius)
+                .map(|&(idx, r, _)| (r / radius).powf(dim.ejecta_exponent) * area(idx))
+                .sum();
+            if volume > 0.0 && spread > 0.0 {
+                for &(idx, r, _) in &self.stamper.footprint {
+                    if r >= radius {
+                        crust[idx] += (volume * (r / radius).powf(dim.ejecta_exponent) / spread)
+                            as f32;
+                    }
                 }
             }
         }

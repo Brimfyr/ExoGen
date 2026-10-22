@@ -1900,19 +1900,6 @@ pub fn volatiles_cap_mode(c: &Ctx) -> Value {
 
 // ------------------------------------------------------------------ tectonics (subset)
 
-pub fn tectonics_dichotomy_amplitude(c: &Ctx) -> Value {
-    if c.str("tectonics.dichotomy_mode") == "none" {
-        return 0.0.into();
-    }
-    match c.str("interior.tectonic_regime") {
-        "mobile_lid" => 0.0,
-        "episodic_lid" => 5_000.0,
-        "stagnant_lid" => 20_000.0,
-        _ => 2_000.0,
-    }
-    .into()
-}
-
 pub fn tectonics_initial_crust_thickness(c: &Ctx) -> Value {
     if is_icy(c.str("body.composition_class")) {
         20_000.0
