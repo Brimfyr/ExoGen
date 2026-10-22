@@ -2165,3 +2165,25 @@ What the maps show:
 Still to do: the relaxation of a rocky crust by its lower crust's flow, which would soften the dichotomy's boundary and the old basins; Valles Marineris as subsidence along the buried boundary, with M23; the lowlands' lava against the Hesperian plains; the boundary's wear and the lowlands' sediments (Phase 5).
 
 Tests 258 (21 ignored), among them a deposit levelling the hollows it can fill: at every thickness from a metre to a hundred kilometres no wider than its debris runs out, and where narrower the crater it levels over as deep as it is thick or, past the simple craters' transition, the first so deep. Mars's largest shield's summit now need stand three quarters of its height above the ground beyond its moat rather than four fifths, the ground there keeping the relief its ejecta draped; it stands 79 percent.
+
+## The eighty-sixth milestone: a rocky lid's lower crust flows
+
+The second of the items the user agreed after the eighty-fourth: whether the dichotomy's boundary softens before the surface processes wear it.
+
+- **F170.** Where the base of a rocky crust is warm its lower crust flows as a channel beneath the rigid crust above, the relief's pressure moving the crust from under the high ground to under the low, so that the relief diffuses and the longest wavelengths last; the elastic lid holds up the short ones. The relief relaxes toward the domes the plumes hold up.
+
+How it went:
+
+- **Too cold to flow.** The model's thermal histories keep the base of Mars's crust below 1,200 K even early, under a crust 60 km thick, and the Moon's and Mercury's below it too: dry diabase holds the relief there for the age of the solar system, as Nimmo and Stevenson found for a Martian crust thinner than some 100 km. The user chose to build the process as the physics has it rather than a weaker, wet crust for the water-rich bodies, whose flow law and water are both uncertain: so Mars's boundary stands as it formed, and its wear waits for the surface processes.
+- **Venus.** Its crust's base stands above 1,600 K through its first billion years, so that the relief formed then relaxes away, and with it the primordial relief its tesserae and lowlands stand on: Venus came out flat but for its volcanoes, and its plains' wrinkle ridges no longer kept to its lows. Its highlands are thought to stand on crust their tectonics thickened, which the model does not make; so an episodic lid waits for that (audit M31).
+- **The rises.** The band relaxation acts on the whole surface, and a rise the plume holds up is not the crust's relief: the relief relaxes toward the rises' domes.
+- **The scope.** Earth's thermal history and Io's put their crusts' bases at the mantle's temperature, which would flatten Earth's continents and Io's mountains; a mobile lid's crust is its plates', and Io's heat pipe is not a conductive lid, so neither relaxes (a stated scope, against S1).
+
+What the maps show:
+
+- **Every preset:** unchanged. Mars's, the Moon's and Mercury's crusts are too cold at their base for diabase to flow, Venus's episodic lid waits for its highlands' thickened crust, and Earth and Io are outside the scope.
+- **Venus, had it relaxed:** flat but for its volcanoes, its tessera highlands and lowland basins gone.
+
+Still to do: Valles Marineris as subsidence along the buried boundary, with M23; the lowlands' lava against the Hesperian plains; the boundary's wear and the lowlands' sediments (Phase 5).
+
+Tests 259 (22 ignored), among them a warm lower crust relaxing the relief between its lid and its breadth: under a crust 60 km thick whose base stands at 1,550 K, a wavelength of 1,000 km loses most of its relief in a hundred million years, one of 10,000 km keeps nearly all of it and the elastic lid holds up one of 200 km, while at 900 K the crust keeps everything for a billion years; and a diagnostic printing each rocky preset's survival by wavelength.

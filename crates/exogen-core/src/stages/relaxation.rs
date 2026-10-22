@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Brimfyr
 
-//! Viscous relaxation of an ice shell's topography (PLAN.md 4.3 and Phase 4).
+//! Viscous relaxation of an ice shell's topography (PLAN.md 4.3 and Phase 4), and of a
+//! rocky lid's by the flow of its lower crust (F170).
 //!
 //! Ice flows. A load of wavelength λ on a shell relaxes on a timescale τ = 4π η / (ρ g λ)
 //! with the viscosity of the ice at the depth the load reaches into, about a quarter of
@@ -25,6 +26,9 @@
 //! relief decays in the bands it had when it came, by the product of their survivals.
 
 use crate::constants::*;
+
+/// Bumped when the behaviour changes, so caches are not reused across versions.
+pub const VERSION: u64 = 1;
 
 use crate::fields::Field;
 use crate::grid::{Cell, CubeSphere};
@@ -50,6 +54,43 @@ pub struct Shell {
     pub gravity: f64,
     /// Stiffening of the ice by the rock in it, a factor on the viscosity.
     pub viscosity_scale: f64,
+    /// A rocky lid's crust (F170): `thickness` is the crust's, `basal_temperature` its
+    /// base's, and the relief relaxes by the flow of its lower crust.
+    pub rock: bool,
+}
+
+/// The viscosity of a rocky lid's lower crust at a temperature, Pa s, under the stress a
+/// kilometre of relief drives on a body of this gravity (F170).
+pub fn crust_viscosity(t: f64, gravity: f64) -> f64 {
+    let (a, n, q) = DIABASE_CREEP;
+    let stress = DENSITY_CRUST_ROCK * gravity * CRUST_FLOW_RELIEF;
+    let rate = a * (stress / 1e6).powf(n) * (-q / (GAS_CONSTANT * t.max(1.0))).exp();
+    if rate <= 0.0 {
+        return f64::INFINITY;
+    }
+    (stress / (2.0 * rate)).max(CRUST_FLOW_MIN_VISCOSITY)
+}
+
+/// The relaxation timescale of a wavelength on a rocky lid, Gyr (F170). The lower crust
+/// flows where it is warm, a channel at the crust's base as thick as the depth over which
+/// its viscosity falls by e, δ = R T² / (Q dT/dz) along the crust's conductive profile,
+/// beneath crust it holds rigid; the pressure of the relief above drives it, moving the
+/// crust from under the high ground to under the low, so that, the crust kept compensated,
+/// the relief diffuses with κ = (Δρ/ρₘ) ρ g δ³ / η and a wavelength decays as (λ/2π)² / κ:
+/// the longest wavelengths last (McKenzie, Nimmo and others 2000; Nimmo and Stevenson 2001).
+pub fn rock_relaxation_time_gyr(wavelength: f64, shell: &Shell) -> f64 {
+    let (_, _, q) = DIABASE_CREEP;
+    let t_base = shell.basal_temperature.max(shell.surface_temperature + 1.0);
+    let gradient = (t_base - shell.surface_temperature) / shell.thickness.max(1.0);
+    let channel = (GAS_CONSTANT * t_base * t_base / (q * gradient)).min(shell.thickness);
+    let eta = crust_viscosity(t_base, shell.gravity);
+    let airy = (DENSITY_ROCK - DENSITY_CRUST_ROCK) / DENSITY_ROCK;
+    let kappa = airy * DENSITY_CRUST_ROCK * shell.gravity * channel.powi(3) / eta;
+    if kappa <= 0.0 {
+        return f64::INFINITY;
+    }
+    let k = wavelength / std::f64::consts::TAU;
+    k * k / kappa / SECONDS_PER_GYR
 }
 
 /// The relaxation timescale of a wavelength on a shell, Gyr: the ice at the depth the
@@ -75,8 +116,13 @@ pub fn relaxation_time_gyr(wavelength: f64, shell: &Shell) -> f64 {
 /// Mimas's 12 km lid 450 km, Enceladus's 12 km 370 km, Ganymede's 32 km 420 km.
 pub fn flexural_wavelength(shell: &Shell) -> f64 {
     let te = shell.elastic.max(0.0);
-    let rigidity = ICE_YOUNG_MODULUS * te.powi(3) / (12.0 * (1.0 - ICE_POISSON * ICE_POISSON));
-    std::f64::consts::TAU * (rigidity / (DENSITY_CRUST_ICE * shell.gravity.max(1e-9))).powf(0.25)
+    let (modulus, poisson, density) = if shell.rock {
+        (ROCK_YOUNG_MODULUS, ROCK_POISSON, DENSITY_CRUST_ROCK)
+    } else {
+        (ICE_YOUNG_MODULUS, ICE_POISSON, DENSITY_CRUST_ICE)
+    };
+    let rigidity = modulus * te.powi(3) / (12.0 * (1.0 - poisson * poisson));
+    std::f64::consts::TAU * (rigidity / (density * shell.gravity.max(1e-9))).powf(0.25)
 }
 
 /// The share of a load that rides on the ductile ice rather than the elastic lid (F139).
@@ -99,7 +145,11 @@ pub fn survival(wavelength: f64, dt_gyr: f64, shell: &Shell) -> f64 {
     if ductile <= 0.0 {
         return 1.0;
     }
-    let tau = relaxation_time_gyr(wavelength, shell);
+    let tau = if shell.rock {
+        rock_relaxation_time_gyr(wavelength, shell)
+    } else {
+        relaxation_time_gyr(wavelength, shell)
+    };
     let flowed = if tau <= 0.0 {
         0.0
     } else {
@@ -422,6 +472,20 @@ pub fn relax(
 ) -> Option<Vec<f32>> {
     let grid = height.grid();
     let cell = grid.delta() * body_radius;
+    // Nothing to do when no band relaxes and nothing is renewed: leave the surface as it is,
+    // not even shifted to its equilibrium and back.
+    if local.renew.is_none() {
+        let depth = ((grid.face_size() as f64).log2().floor() as usize)
+            .saturating_sub(2)
+            .max(1);
+        let levels = pyramid_depth(&grid, depth).max(1);
+        let still = (0..=levels).all(|l| {
+            survival(2.0 * cell * (2u32.pow(l as u32 + 1) as f64), dt_gyr, shell) as f32 > 0.999
+        });
+        if still {
+            return None;
+        }
+    }
     if let Some(eq) = local.equilibrium {
         for (h, e) in height.as_mut_slice().iter_mut().zip(eq) {
             *h -= e;
@@ -585,6 +649,35 @@ mod tests {
         }
     }
 
+    /// F170: a rocky lid's lower crust flows where it is warm. Under a crust 60 km thick on
+    /// Mars whose base stands at 1,550 K, a wavelength of 1,000 km loses most of its relief
+    /// in a hundred million years, one of 10,000 km keeps nearly all of it, and the elastic
+    /// lid 30 km thick holds up one of 200 km; at 900 K the crust keeps everything for a
+    /// billion years.
+    #[test]
+    fn a_warm_lower_crust_relaxes_the_relief_between_its_lid_and_its_breadth() {
+        let hot = Shell {
+            thickness: 60e3,
+            elastic: 30e3,
+            surface_temperature: 214.0,
+            basal_temperature: 1_550.0,
+            gravity: 3.71,
+            viscosity_scale: 1.0,
+            rock: true,
+        };
+        assert!(survival(1_000e3, 0.1, &hot) < 0.5, "{}", survival(1_000e3, 0.1, &hot));
+        assert!(survival(10_000e3, 0.1, &hot) > 0.95, "{}", survival(10_000e3, 0.1, &hot));
+        assert_eq!(survival(200e3, 0.1, &hot), 1.0);
+        let cold = Shell {
+            basal_temperature: 900.0,
+            ..hot
+        };
+        assert!(survival(1_000e3, 1.0, &cold) > 0.999, "{}", survival(1_000e3, 1.0, &cold));
+        // The viscosity falls with the temperature, to the floor near the solidus.
+        assert!(crust_viscosity(1_100.0, 3.71) > 1e3 * crust_viscosity(1_400.0, 3.71));
+        assert_eq!(crust_viscosity(2_000.0, 3.71), CRUST_FLOW_MIN_VISCOSITY);
+    }
+
     #[test]
     fn a_thinned_shell_relaxes_the_long_wavelengths_beside_a_terrain_first() {
         // F66 with F139: under Enceladus's 22 km shell thinned to a fifth for an episode of
@@ -598,6 +691,7 @@ mod tests {
             basal_temperature: 273.0,
             gravity: 0.113,
             viscosity_scale: 1.0,
+            rock: false,
         };
         let flexural = flexural_wavelength(&shell);
         assert!((330e3..410e3).contains(&flexural), "{flexural}");
@@ -624,6 +718,7 @@ mod tests {
             basal_temperature: 273.0,
             gravity: 0.064,
             viscosity_scale: 1.0,
+            rock: false,
         };
         let flexural = flexural_wavelength(&mimas);
         assert!((400e3..500e3).contains(&flexural), "{flexural}");
@@ -717,6 +812,7 @@ mod tests {
             basal_temperature: 273.0,
             gravity: 1.43,
             viscosity_scale: 1.0,
+            rock: false,
         };
         assert!(relaxation_time_gyr(300e3, &ganymede) < 1e-3);
         assert!(relaxation_time_gyr(20e3, &ganymede) > 100.0);
@@ -730,6 +826,7 @@ mod tests {
             basal_temperature: 273.0,
             gravity: 1.31,
             viscosity_scale: 1.0,
+            rock: false,
         };
         assert!(relaxation_time_gyr(30e3, &europa) < 0.05);
         assert!(survival_since(30e3, 4.0, 4.5, &|_| europa, 1.0) > 0.95);

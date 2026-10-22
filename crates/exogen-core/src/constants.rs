@@ -423,6 +423,14 @@ pub const ROCK_YOUNG_MODULUS: f64 = 1.0e11;
 /// still floats (a stated floor, below any lava a rocky crust buoys up).
 pub const ROOT_MIN_CONTRAST: f64 = 100.0;
 pub const ROCK_POISSON: f64 = 0.25;
+/// A rocky lid's lower crust (F170): dry diabase in dislocation creep, its strain rate
+/// A σⁿ exp(−Q / R T) with A in MPa⁻ⁿ s⁻¹ (Mackwell, Zimmerman and Kohlstedt 1998: n 4.7 ±
+/// 0.6, Q 485 ± 30 kJ/mol, A 8 ± 4 as the rheology tables read it from their figure 4); its
+/// viscosity read at the stress a kilometre of the crust's relief drives (a stated choice),
+/// and never below what a lower crust near its solidus keeps (a stated floor).
+pub const DIABASE_CREEP: (f64, f64, f64) = (8.0, 4.7, 485.0e3);
+pub const CRUST_FLOW_RELIEF: f64 = 1_000.0;
+pub const CRUST_FLOW_MIN_VISCOSITY: f64 = 1.0e18;
 /// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
 /// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise
 /// they sit (fraction of its radius; each starts as its rise's stretching wanes, F119,

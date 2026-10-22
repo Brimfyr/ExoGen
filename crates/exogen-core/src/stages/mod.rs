@@ -295,6 +295,7 @@ impl Runner {
                 "materials.deep_bedrock_depth",
             ]),
             primordial_crust::VERSION,
+            relaxation::VERSION,
             impacts::VERSION,
             tectonics::VERSION,
             volcanism::VERSION,
@@ -461,6 +462,7 @@ pub fn run_coarse_loop(
         .as_ref()
         .map(|_| volcanism::FloodProcess::for_io(graph, grid, &thermal));
     let ice_shell = ice_shell_history(graph, &thermal);
+    let rock_crust = rock_crust_history(graph, &thermal);
     // The relief the ice shell holds, band by band, from step to step (F134).
     let mut relax_bands = relaxation::Bands::default();
     let mut ice_shell_process = ice_shell::IceShellProcess::new(graph, grid);
@@ -509,6 +511,43 @@ pub fn run_coarse_loop(
             if let (Some(p), Some(f)) = (&mut ice_shell_process, floor) {
                 p.set_floor(f);
             }
+        } else if let Some(crust_at) = &rock_crust {
+            // A rocky lid's lower crust flows where it is warm, the relief relaxing the
+            // longest wavelengths last (F170): under the thick crust, its tenth thickest,
+            // whose base is the warmest.
+            let mut crust: Vec<f32> = layers.crust_thickness.as_slice().to_vec();
+            let k = (0.9 * (crust.len() - 1) as f64) as usize;
+            let (_, thick, _) = crust.select_nth_unstable_by(k, f32::total_cmp);
+            let shell = crust_at(t1, *thick as f64);
+            // The rises the plumes hold up are not the crust's to relax: the relief relaxes
+            // toward their domes.
+            let body_radius = graph.f64("body.radius");
+            let domes: Option<Vec<f32>> = plume.as_ref().filter(|p| !p.rises.is_empty()).map(|p| {
+                (0..grid.cell_count())
+                    .into_par_iter()
+                    .map(|k| {
+                        let d = grid.center(grid.cell(k));
+                        p.rises
+                            .iter()
+                            .map(|rise| {
+                                let x = angle_between(rise.center, d) * body_radius / rise.radius;
+                                rise.height * plume::dome(x) * plume::rise_progress(rise, t1)
+                            })
+                            .sum::<f64>() as f32
+                    })
+                    .collect()
+            });
+            relaxation::relax(
+                &mut relax_bands,
+                &mut layers.bedrock,
+                body_radius,
+                dt,
+                &shell,
+                &relaxation::Local {
+                    equilibrium: domes.as_deref(),
+                    ..Default::default()
+                },
+            );
         }
         // The shell's partial resurfacing: the lanes of grooved terrain at their time.
         if let Some(p) = &mut ice_shell_process {
@@ -2566,6 +2605,44 @@ fn ice_shell_history(
             basal_temperature: state.mantle_temperature,
             gravity,
             viscosity_scale,
+            rock: false,
+        }
+    }))
+}
+
+/// A rocky lid's crust through time for relaxation (F170), as a function of the time and
+/// the crust's thickness: its base's temperature on the lid's conductive profile, from the
+/// surface to the mantle at the lithosphere's base, and the elastic lid that holds up the
+/// short loads. A stagnant lid's alone (a stated scope): an icy surface's shell relaxes it;
+/// a mobile lid's crust is its plates' (Phase 6); Io's heat pipe is not the conductive lid
+/// its thermal history describes; and an episodic lid's highlands, Venus's tesserae, stand
+/// on the primordial relief rather than on a crust their tectonics thickened, which a hot
+/// early crust would relax away.
+fn rock_crust_history(
+    graph: &ParamGraph,
+    thermal: &ThermalHistory,
+) -> Option<Box<dyn Fn(f64, f64) -> relaxation::Shell + Sync>> {
+    if ice::is_ice_surface(graph)
+        || graph.str("interior.tectonic_regime") != "stagnant_lid"
+        || io::is_io_regime(graph)
+    {
+        return None;
+    }
+    let thermal = thermal.clone();
+    let surface_temperature = graph.f64("atmosphere.surface_temperature_mean");
+    let gravity = graph.f64("body.gravity");
+    Some(Box::new(move |t: f64, crust: f64| {
+        let state = thermal.at(t);
+        let share = (crust / state.lithosphere.max(1.0)).min(1.0);
+        relaxation::Shell {
+            thickness: crust,
+            elastic: state.elastic,
+            surface_temperature,
+            basal_temperature: surface_temperature
+                + (state.mantle_temperature - surface_temperature) * share,
+            gravity,
+            viscosity_scale: 1.0,
+            rock: true,
         }
     }))
 }
@@ -4619,6 +4696,48 @@ mod tests {
             rr > gg && gg > bb && rr > 0.3,
             "mean colour {rr:.2} {gg:.2} {bb:.2}"
         );
+    }
+
+    /// Diagnostic (F170): the share of each wavelength's relief a rocky lid's lower crust
+    /// lets survive from a time to the present, for each rocky preset, a crust 1.5 times the
+    /// starting one and on Mars one 100 km thick; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_rock_relaxation() {
+        for name in ["Moon", "Mercury", "Mars", "Venus", "Earth", "Io"] {
+            let g = preset_graph(name, "preview");
+            let thermal = ThermalHistory::from_graph(&g);
+            let Some(crust_at) = rock_crust_history(&g, &thermal) else {
+                println!("{name}: none");
+                continue;
+            };
+            let age = g.f64("body.age");
+            // The crust 1.5 times the starting one, and on Mars a crust 100 km thick too.
+            let crusts: Vec<f64> = if name == "Mars" {
+                vec![1.5 * g.f64("tectonics.initial_crust_thickness"), 100e3]
+            } else {
+                vec![1.5 * g.f64("tectonics.initial_crust_thickness")]
+            };
+            for crust in crusts {
+            for from in [0.1, 0.5, 1.0, 3.5, 4.0] {
+                let steps = 200;
+                let dt = (age - from) / steps as f64;
+                let kept: Vec<String> = [300e3, 1_000e3, 3_000e3]
+                    .iter()
+                    .map(|&w| {
+                        let mut k = 1.0;
+                        for i in 0..steps {
+                            let t = from + (i as f64 + 0.5) * dt;
+                            k *= relaxation::survival(w, dt, &crust_at(t, crust));
+                        }
+                        format!("{:.0} km {:.3}", w / 1e3, k)
+                    })
+                    .collect();
+                let s = crust_at(from, crust);
+                println!("{name} crust {:.0} km from {from} Gyr (base {:.0} K, lid {:.0} km): {}", crust / 1e3, s.basal_temperature, s.elastic / 1e3, kept.join(", "));
+            }
+            }
+        }
     }
 
     #[test]
