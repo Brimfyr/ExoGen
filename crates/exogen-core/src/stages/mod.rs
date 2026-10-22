@@ -662,6 +662,7 @@ pub fn run_coarse_loop(
                 t0,
                 t1,
                 taken.get(s - 1).copied(),
+                held.as_deref(),
             )
         });
         // The lava the shields' flows sent past their feet, ponding beyond them (F163).

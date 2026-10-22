@@ -2295,3 +2295,24 @@ What the maps show:
 - **Mars (seed 1048) and the Moon:** the ground beneath the basins' deposits rolls as the relief beneath it did, draped, without the fans of flat sectors.
 
 Tests 271 (23 ignored), among them a deposit's level without steps round its crater: on a plain tilted 3 m per km, the ground beneath a 600 km crater's thick deposit steps no more than the tilt and the grid give round rings at 1.15, 1.3 and 1.6 radii, where the sectors' edges stood as steps of 28 m.
+
+## The ninety-second milestone: the vents read the ground less what is held up
+
+F174's first open end, which the user chose next: the lavas ponding in a rise's own lows.
+
+- **F176.** The flood vents read the ground less what the plumes' domes and the mantle's flow hold up, which lift the magma beneath with the ground; the relief the crust holds counts as before.
+
+How it went:
+
+- **Why the rise shunned its lavas.** The vents favour low ground against the body's median (F36), and Mars's rise stood 5 to 7 km over it, some twenty times fewer vents a cell. The plume's dome and the mantle's flow raise the ground and the magma beneath it together, so the vents now leave that uplift out.
+- **What moved.** On Mars's preset at the preview's resolution the rise holds some 3.5 × 10⁷ km³ of lava rather than 2.5 × 10⁷, and within 900 km of its old basin 3.8 km rather than 2.7; the lowland's and the highlands' lava stay as F171 left them, 713 m and 383 m against 735 m and 413 m.
+- **Why the basin stays.** The basin's floor rises only some 0.2 km under the kilometre more of lava: a load as wide as the basin, some 1,800 km, bends the lid nearly as far as it is thick, being far wider than the lid can hold up by its strength. Mars's filled basins, Utopia and Isidis, still stand kilometres deep, so the basin keeping its depth beneath the rise is the lid's doing.
+
+What the maps show:
+
+- **Mars (seed 1048):** the rise's hollows hold more lava, the basin's floor some 0.2 km higher; little else changes.
+- **Venus:** its rises draw more of its lava.
+
+Still to do: the dome's height from its plume head (F174's other open end); the flow's stresses on the lid, for Mercury's thrusts (M27) and Venus's ridges, and its upwellings' heat for Venus's coronae (M25); Venus relaxing as a stagnant lid does, and its tesserae from the tectonics that thickened their crust (M31); Valles Marineris with Phase 5 (M32); the Moon's maria in its province (M33); the drives the field does not hold (M26).
+
+Tests 272 (23 ignored), among them a rise's vents reading the ground its plume holds up as level: a dome held 4 km high draws its share of the vents as flat ground would, 0.069 against 0.058, where read whole it draws half of that, and a hollow on it draws more per cell than its flank.

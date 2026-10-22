@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 24;
+pub const VERSION: u64 = 25;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -591,7 +591,10 @@ impl FloodProcess {
     }
 
     /// Vent weights, cumulative, and the share of the floods' weight a rise's shields leave
-    /// them: thin crust and low ground, and any rise's boost. A rise's shields take the
+    /// them: thin crust and low ground, and any rise's boost. The ground is read less what
+    /// the plumes' domes and the mantle's flow hold up (`held`, F176): that uplift raises the
+    /// magma beneath with the ground, so that a rise's lavas find their way to its own lows
+    /// rather than shunning the whole rise. A rise's shields take the
     /// share of its eruptions that those started hold (F108): what the rise adds to the
     /// weights, by its fertile mantle and its dome, goes by that share to its shields,
     /// whose edifices and flows are their own, so that a rise's late lava builds its
@@ -602,11 +605,21 @@ impl FloodProcess {
         boost: Option<&[f64]>,
         rises: &[RiseVent],
         ambient: f64,
+        held: Option<&[f32]>,
     ) -> (Vec<f64>, f64, Vec<f64>) {
         let crust = layers.crust_thickness.as_slice();
-        let bedrock = layers.bedrock.as_slice();
+        let bedrock: Vec<f32> = match held {
+            Some(h) => layers
+                .bedrock
+                .as_slice()
+                .iter()
+                .zip(h)
+                .map(|(b, h)| b - h)
+                .collect(),
+            None => layers.bedrock.as_slice().to_vec(),
+        };
         let n = bedrock.len();
-        let mut heights: Vec<f32> = bedrock.to_vec();
+        let mut heights: Vec<f32> = bedrock.clone();
         heights.sort_by(f32::total_cmp);
         let median = heights[n / 2] as f64;
         let crust_min = crust.iter().cloned().fold(f32::INFINITY, f32::min) as f64;
@@ -674,7 +687,7 @@ impl FloodProcess {
         rises: &[RiseVent],
         t: f64,
     ) -> Vec<f64> {
-        self.vent_weights(layers, boost, rises, self.thermal.at(t).ambient)
+        self.vent_weights(layers, boost, rises, self.thermal.at(t).ambient, None)
             .2
     }
 
@@ -687,8 +700,10 @@ impl FloodProcess {
     }
 
     /// Eruptions between two times, in order of formation, not yet emplaced. Vents are
-    /// drawn against the surface as it is at the start of the step. `taken`, m³, is the lava
-    /// the shields take of the step's budget when they grow from it (F164).
+    /// drawn against the surface as it is at the start of the step, less what the plumes and
+    /// the mantle's flow hold up (`held`, F176). `taken`, m³, is the lava the shields take of
+    /// the step's budget when they grow from it (F164).
+    #[allow(clippy::too_many_arguments)]
     pub fn sample(
         &mut self,
         layers: &LayerSet,
@@ -697,11 +712,12 @@ impl FloodProcess {
         t0: f64,
         t1: f64,
         taken: Option<f64>,
+        held: Option<&[f32]>,
     ) -> Vec<FloodEvent> {
         let bins = crate::stages::time_bins(self.age, t0, t1);
         let ambient = self.thermal.at(0.5 * (t0 + t1)).ambient;
         let kept = if rises.iter().any(|r| r.capture > 0.0) {
-            Some(self.vent_weights(layers, boost, rises, ambient))
+            Some(self.vent_weights(layers, boost, rises, ambient, held))
         } else {
             None
         };
@@ -726,7 +742,7 @@ impl FloodProcess {
             return Vec::new();
         }
         let (cumulative, _, _) =
-            kept.unwrap_or_else(|| self.vent_weights(layers, boost, rises, ambient));
+            kept.unwrap_or_else(|| self.vent_weights(layers, boost, rises, ambient, held));
         let total = *cumulative.last().unwrap_or(&0.0);
         if total <= 0.0 {
             return Vec::new();
@@ -798,7 +814,7 @@ impl FloodProcess {
 
     /// Sample and emplace a step's eruptions.
     pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, _step_index: u64) {
-        for ev in self.sample(layers, None, &[], t0, t1, None) {
+        for ev in self.sample(layers, None, &[], t0, t1, None, None) {
             self.apply(layers, ev);
         }
     }
@@ -2621,6 +2637,72 @@ mod tests {
         assert!(spilled > 0, "no lake spilled");
     }
 
+    /// F176: the vents read the ground less what the plumes and the mantle's flow hold up:
+    /// a dome a plume holds 4 km high draws its share of the vents as flat ground would,
+    /// where read whole it would shun them, and a hollow on it still draws more than its
+    /// flanks.
+    #[test]
+    fn a_rise_s_vents_read_the_ground_its_plume_holds_up_as_level() {
+        let grid = CubeSphere::new(32);
+        let n = grid.cell_count();
+        let p = process(grid);
+        let center = normalize([1.0, 0.2, 0.1]);
+        let sigma = 0.5;
+        let angle = |k: usize| angle_between(center, grid.center(grid.cell(k)));
+        let dome: Vec<f32> = (0..n)
+            .map(|k| (4000.0 * crate::stages::plume::dome(angle(k) / sigma)) as f32)
+            .collect();
+        let flat = LayerSet::new(grid);
+        let mut domed = LayerSet::new(grid);
+        domed.bedrock.as_mut_slice().copy_from_slice(&dome);
+        // A hollow 1 km deep on the dome's flank.
+        let hollow = |k: usize| (angle(k) - 0.25).abs() < 0.05;
+        for k in 0..n {
+            if hollow(k) {
+                domed.bedrock.as_mut_slice()[k] -= 1000.0;
+            }
+        }
+        let per_cell = |c: Vec<f64>| {
+            let mut prev = 0.0;
+            c.into_iter()
+                .map(|v| {
+                    let w = v - prev;
+                    prev = v;
+                    w
+                })
+                .collect::<Vec<f64>>()
+        };
+        let share = |w: &[f64], on: &dyn Fn(usize) -> bool| {
+            let whole: f64 = w.iter().sum();
+            (0..n).filter(|&k| on(k)).map(|k| w[k]).sum::<f64>() / whole
+        };
+        let on_dome = |k: usize| angle(k) < 0.8 * sigma;
+        let level = per_cell(p.vent_weights(&flat, None, &[], 1.0, None).0);
+        let whole = per_cell(p.vent_weights(&domed, None, &[], 1.0, None).0);
+        let held = per_cell(p.vent_weights(&domed, None, &[], 1.0, Some(&dome)).0);
+        let (s_level, s_whole, s_held) = (
+            share(&level, &on_dome),
+            share(&whole, &on_dome),
+            share(&held, &on_dome),
+        );
+        println!(
+            "the dome's share of the vents: level {s_level:.3}, read whole {s_whole:.3}, held {s_held:.3}"
+        );
+        assert!(s_whole < 0.5 * s_level, "{s_whole} {s_level}");
+        assert!(s_held > 0.8 * s_level, "{s_held} {s_level}");
+        // The hollow draws more per cell than the flank about it.
+        let per = |on: &dyn Fn(usize) -> bool| {
+            let cells: Vec<usize> = (0..n).filter(|&k| on(k)).collect();
+            cells
+                .iter()
+                .map(|&k| held[k] / grid.cell_area(grid.cell(k)))
+                .sum::<f64>()
+                / cells.len() as f64
+        };
+        let flank = |k: usize| (angle(k) - 0.25).abs() >= 0.05 && (angle(k) - 0.25).abs() < 0.12;
+        assert!(per(&hollow) > 1.3 * per(&flank));
+    }
+
     /// A rise's shields take the share of its eruptions that those started hold (F108):
     /// what the rise adds to the vent weights goes by that share to its shields, out of the
     /// floods' weights, and the weights away from the rise stay as they were.
@@ -2656,7 +2738,7 @@ mod tests {
         };
         // The weights with no rise at all: the background a rise adds to.
         p.province_weight = vec![MAGMA_PROVINCE_FLOOR; n];
-        let background = per_cell(p.vent_weights(&layers, None, &[], 1.0).0);
+        let background = per_cell(p.vent_weights(&layers, None, &[], 1.0, None).0);
         p.province_weight = own
             .iter()
             .map(|&g| MAGMA_PROVINCE_FLOOR + g as f64)
@@ -2667,7 +2749,7 @@ mod tests {
                 dome: dome_cells.clone(),
                 capture,
             };
-            let (cumulative, kept, _) = p.vent_weights(&layers, Some(&boost), &[rise], 1.0);
+            let (cumulative, kept, _) = p.vent_weights(&layers, Some(&boost), &[rise], 1.0, None);
             (per_cell(cumulative), kept)
         };
         let ((before, whole), (after, kept)) = (weights(0.0), weights(0.6));
