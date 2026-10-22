@@ -236,8 +236,8 @@ impl SpherePlate {
         });
     }
 
-    /// The plate's operator: D Gᵀ M G x + k M x.
-    fn apply(&self, rigidity: f64, restoring: f64, x: &[f64], tmp: &mut [f64], out: &mut [f64]) {
+    /// The plate's operator: D Gᵀ M G x + k M x, its restoring force per cell.
+    fn apply(&self, rigidity: f64, restoring: &[f64], x: &[f64], tmp: &mut [f64], out: &mut [f64]) {
         self.laplace(x, tmp);
         tmp.par_iter_mut()
             .enumerate()
@@ -245,7 +245,7 @@ impl SpherePlate {
         self.laplace_transposed(tmp, out);
         out.par_iter_mut()
             .enumerate()
-            .for_each(|(i, o)| *o = rigidity * *o + restoring * self.area[i] * x[i]);
+            .for_each(|(i, o)| *o = rigidity * *o + restoring[i] * self.area[i] * x[i]);
     }
 
     /// The deflection, m, down positive, of a plate of this rigidity, N m, over a fluid
@@ -253,6 +253,12 @@ impl SpherePlate {
     /// cell: D ∇⁴w + k w = q, by conjugate gradients preconditioned by the operator's
     /// diagonal, from the Airy deflection q / k.
     pub fn deflect(&self, rigidity: f64, restoring: f64, load: &[f64]) -> Vec<f64> {
+        self.deflect_varying(rigidity, &vec![restoring; self.area.len()], load)
+    }
+
+    /// The deflection under a restoring force that varies from cell to cell, Pa/m (F166):
+    /// weaker where the sag fills with something heavier than air.
+    pub fn deflect_varying(&self, rigidity: f64, restoring: &[f64], load: &[f64]) -> Vec<f64> {
         let n = self.area.len();
         let b: Vec<f64> = (0..n).map(|i| self.area[i] * load[i]).collect();
         let diagonal: Vec<f64> = (0..n)
@@ -261,10 +267,10 @@ impl SpherePlate {
                     .iter()
                     .map(|&(r, g)| g * g * self.area[r as usize])
                     .sum();
-                rigidity * bending + restoring * self.area[j]
+                rigidity * bending + restoring[j] * self.area[j]
             })
             .collect();
-        let mut x: Vec<f64> = load.iter().map(|q| q / restoring).collect();
+        let mut x: Vec<f64> = load.iter().zip(restoring).map(|(q, k)| q / k).collect();
         let mut tmp = vec![0.0; n];
         let mut ap = vec![0.0; n];
         self.apply(rigidity, restoring, &x, &mut tmp, &mut ap);
@@ -500,7 +506,10 @@ pub fn sink(deflection: &[f32], held: Option<&[f32]>) -> Vec<f32> {
 /// The stress the lava laid on a grid puts on a rock lid `elastic` m thick (F157), and the
 /// lid's deflection under it (F162): `thickness`, m per cell of `grid`, of lava of
 /// `density`, kg/m³, averaged onto a plate grid that resolves the lid's flexural
-/// parameter, bent over the mantle. None where no lava was laid.
+/// parameter, bent over the mantle. Beneath the edifices standing `held` m high the lid
+/// sinks into their own lava, which fills the sag as far as they are thick, so that the
+/// mantle pushes back there by the difference between the rock's density and the lava's
+/// (F166). None where no lava was laid.
 pub fn lay(
     grid: CubeSphere,
     thickness: &[f32],
@@ -508,6 +517,7 @@ pub fn lay(
     gravity: f64,
     elastic: f64,
     density: f64,
+    held: Option<&[f32]>,
 ) -> Option<Laid> {
     if !thickness.iter().any(|&t| t > 0.0) {
         return None;
@@ -520,13 +530,20 @@ pub fn lay(
     // that holds its centre.
     let mut weight = vec![0.0f64; target.cell_count()];
     let mut covered = vec![0.0f64; target.cell_count()];
+    let mut standing = vec![0.0f64; target.cell_count()];
     for (k, &t) in thickness.iter().enumerate() {
         let c = grid.cell(k);
         let a = grid.cell_area(c);
         let j = target.index(target.locate(grid.center(c)).0);
         weight[j] += a * t as f64;
         covered[j] += a;
+        standing[j] += a * held.map_or(0.0, |h| h[k] as f64);
     }
+    let edifice: Vec<f64> = standing
+        .iter()
+        .zip(&covered)
+        .map(|(&s, &a)| if a > 0.0 { s / a } else { 0.0 })
+        .collect();
     let load: Vec<f64> = weight
         .iter()
         .zip(&covered)
@@ -541,8 +558,30 @@ pub fn lay(
     let rigidity =
         ROCK_YOUNG_MODULUS * elastic.powi(3) / (12.0 * (1.0 - ROCK_POISSON * ROCK_POISSON));
     // The lid is a shell: its membrane stiffens it against the load.
-    let restoring = DENSITY_ROCK * gravity + plate.membrane_stiffness(elastic);
-    let w = plate.deflect(rigidity, restoring, &load);
+    let membrane = plate.membrane_stiffness(elastic);
+    let open = DENSITY_ROCK * gravity + membrane;
+    // Beneath an edifice its lava fills the sag as far as it is thick (F166): the share of
+    // the sag it fills, read from the deflection it is filling, once more from the first.
+    let filled = |w: &[f64]| -> Vec<f64> {
+        (0..w.len())
+            .map(|j| {
+                let fill = if edifice[j] <= 0.0 {
+                    0.0
+                } else if w[j] > 0.0 {
+                    (edifice[j] / w[j]).min(1.0)
+                } else {
+                    1.0
+                };
+                ((DENSITY_ROCK - density * fill).max(ROOT_MIN_CONTRAST)) * gravity + membrane
+            })
+            .collect()
+    };
+    let w = if edifice.iter().any(|&h| h > 0.0) {
+        let first = plate.deflect_varying(rigidity, &filled(&vec![0.0; load.len()]), &load);
+        plate.deflect_varying(rigidity, &filled(&first), &load)
+    } else {
+        plate.deflect(rigidity, open, &load)
+    };
     let stress = plate.surface_stress(&w, elastic, true);
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         let most = load.iter().fold(0.0f64, |m, &q| m.max(q));
@@ -917,7 +956,7 @@ mod tests {
                 }
             })
             .collect();
-        let laid = lay(grid, &shield, r, g, te, 2_900.0).expect("a load");
+        let laid = lay(grid, &shield, r, g, te, 2_900.0, Some(&shield)).expect("a load");
         let w = laid.deflection_on(grid);
         let sunk = sink(&w, Some(&shield));
         let at = |d: f64| grid.index(grid.locate([(d / r).cos(), (d / r).sin(), 0.0]).0);
@@ -935,6 +974,64 @@ mod tests {
         // Without an edifice the ground sinks with the lid.
         let bare = sink(&w, None);
         assert_eq!(bare[summit], w[summit]);
+    }
+
+    /// An edifice's root weighs on the lid (F166): its lava filling the sag beneath it, the
+    /// mantle pushes back there by the difference between the rock's density and the lava's,
+    /// so that the lid sinks further beneath it and its moat deepens with it, by some half
+    /// again on a thick lid, while the lid's strength keeps it within a few times the sag of
+    /// the edifice alone; where no edifice stands the lid bends as before.
+    #[test]
+    fn an_edifice_s_root_deepens_its_sag_and_its_moat() {
+        let (r, g, te) = (3.39e6, 3.71, 70e3);
+        let grid = CubeSphere::new(128);
+        let n = grid.cell_count();
+        let centre = [1.0, 0.0, 0.0];
+        let (radius, height) = (300e3, 20e3);
+        let shield: Vec<f32> = (0..n)
+            .map(|k| {
+                let x = angle_between(centre, grid.center(grid.cell(k))) * r / radius;
+                if x < 1.0 {
+                    (height * (1.0 - x * x)) as f32
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let at = |d: f64| grid.index(grid.locate([(d / r).cos(), (d / r).sin(), 0.0]).0);
+        let bare = lay(grid, &shield, r, g, te, 2_900.0, None)
+            .unwrap()
+            .deflection_on(grid);
+        let root = lay(grid, &shield, r, g, te, 2_900.0, Some(&shield))
+            .unwrap()
+            .deflection_on(grid);
+        let (summit, moat) = (at(0.0), at(1.1 * radius));
+        assert!(
+            root[summit] > 1.3 * bare[summit],
+            "{} {}",
+            root[summit],
+            bare[summit]
+        );
+        assert!(
+            root[summit] < 3.0 * bare[summit],
+            "{} {}",
+            root[summit],
+            bare[summit]
+        );
+        assert!(
+            root[moat] > 1.3 * bare[moat],
+            "{} {}",
+            root[moat],
+            bare[moat]
+        );
+        // The edifice still fills its own sag, standing where it built itself.
+        assert!(sink(&root, Some(&shield))[summit].abs() < 1.0);
+        // A flood with no edifice bends the lid as an empty sag does.
+        let none = vec![0.0f32; n];
+        let open = lay(grid, &shield, r, g, te, 2_900.0, Some(&none))
+            .unwrap()
+            .deflection_on(grid);
+        assert_eq!(open[summit], bare[summit]);
     }
 
     /// A basin filled with lava opens graben beyond its margin (F158), where its load
@@ -976,7 +1073,7 @@ mod tests {
                     time: 3.0,
                     elastic: te,
                     relief: flat,
-                    load: lay(grid, &thickness, r, g, te, 3_000.0).map(|l| l.stress),
+                    load: lay(grid, &thickness, r, g, te, 3_000.0, None).map(|l| l.stress),
                 },
             ],
         };

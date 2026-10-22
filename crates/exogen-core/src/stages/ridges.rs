@@ -589,6 +589,7 @@ mod tests {
                         gravity,
                         elastic,
                         3_000.0,
+                        None,
                     )
                     .map(|l| l.stress),
                 },

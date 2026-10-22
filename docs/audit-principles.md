@@ -373,7 +373,8 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | PLATE_CELLS_PER_PARAMETER, PLATE_FACE_RANGE, LOAD_EPOCH_GYR, LOAD_MIN_INCREMENT | numerical choices (F157): two cells across the plate's flexural parameter, faces 16 to 128, the field read every 0.3 Gyr, a load once 10 m of lava lies anywhere | checks: the shell against the Hankel transform's solutions within a few percent; Venus's thin lids under-resolved at 128 |
 | the loads' graben within the faulted layer (F158) | a stated choice: the loads' stretch is small and none of its faults rift | the throw's partition between graben and rifts from the strain the loads open |
 | SYSTEM_SPACING, SYSTEM_ARREST_SHARE, SYSTEM_INDEX_WIDTH | stated choices (F160): a neighbour 0.6 to 1.6 of its host's reach aside (the Tharsis plateau's ridges some 30 km apart, Watters 1991), an arrest within a quarter of the reaches, an index of 120 km cells | the spacing from the stress shadow a thrust casts over its faulted layer, as the cracks' spacing from theirs (CRACK_DENSITY_FACTOR) |
-| the edifice's root left out of its load (F162) | a stated choice: the lava filling a shield's sag is not counted as load, as counting it would deepen the sag again each epoch | the root's load with the lid's strength bounding the sag (M19) |
+| ROOT_MIN_CONTRAST (F166) | a stated floor: the least density contrast the mantle pushes back with beneath an edifice filling its sag, 100 kg/m³, below any lava a rocky crust buoys up | none needed while lavas stay lighter than the rock beneath |
+| the intruded surplus as underplating (F166) | a stated reading: the magma a full edifice cannot lift spreads beneath the rise, lighter than the mantle it replaces, which the dome holds, rather than loading the lid beneath the edifice | the rise's dome from the underplating it holds |
 | the plumes' heads under their rises' provinces (F165) | a stated choice: the plumes melt over the area their rises' Gaussian provinces cover, 3.4 percent of Venus and 16 percent of Mars | the plumes' heads from their buoyancy flux |
 | the overturn's resurfacing while the ambient mantle melts after it (F165) | a stated choice: the melt that comes before the ambient mantle stops melting after an overturn is the event's, laid by its fill | the event's fill from that melt |
 | the regional stress a volcano's weight turns dikes against (F165) | a stated choice: the lid's yield in tension at the rise's peak, falling as its growth wanes, F119's own reading | the rise's stress as the lid's field reads it |
@@ -568,7 +569,7 @@ Direction: the regional stress from those sources, and the axis from them where 
 
 When: with the rise's flexure and the dichotomy, the revisit plan's fifth item.
 
-### M19. A volcano's load in the stress field, and its lava at its foot (closed in part by F161, F162, F163)
+### M19. A volcano's load in the stress field, and its lava at its foot (closed by F161, F162, F163, F166)
 
 A large volcano is a load on the lithosphere: beneath and about it the ground is compressed, and in the flexural arch beyond, stretched, so regional graben end at or curve round the great shields and concentric graben ring the loads (Comer, Solomon and Head 1985; McGovern and Solomon 1993; at Alba Patera the volcano's own stress shaped the graben, Cailleau et al. 2003). The model's stress field (F105, F114) is the rise's alone: a fault younger than a shield draws over it as it would over the plains, its floor the dropped flank (F116 has made such faults few on Mars, the faults forming as the dome rises, before the shields). And a shield's outline is its own rule: its lava buries what it grows over (F115), but lava reaching a depression at the edifice's foot, a crater the flank has half buried, would run in and pond across it, which the outline does not do.
 
@@ -579,6 +580,8 @@ Direction: each shield's load in the stress field by the lithosphere's flexure a
 Closed in part in the seventy-eighth milestone (F161, F162): the shields' loads join the floods' in the field, and every load's deflection is laid into the ground, the edifices filling the sag beneath them so that each stands in a moat with a bulge beyond, and the maria sink under their fill. Still open: the edifice's foot, whose lava would run into its moat and the depressions about it and pond there, as Olympus Mons's aureole and lava plains fill its moat; and the root, the lava that fills a shield's sag, left out of its load.
 
 Closed further in the seventy-ninth milestone (F163): the lava a shield's flows carry past its foot, some two fifths of its lava, starts from along their runs beyond it and runs on down as a flood's does, ponding in the moat, which it mostly fills on Mars, and spilling past it. Still open: the root, the lava that fills a shield's sag, left out of its load.
+
+Closed in the eighty-second milestone (F166): beneath an edifice the lid sinks into the edifice's own lava, which fills the sag as far as the edifice is thick, so that the mantle pushes back there by the difference between the rock's density and the lava's. Mars's shields' moats deepen to some 3 to 4 km, which their lava only partly fills (M30); the magma a full edifice cannot lift spreads beneath the rise as underplating rather than loading the lid beneath it.
 
 When: with the rise's flexure, the revisit plan's fifth item.
 
@@ -669,6 +672,12 @@ Since F164 a shield grows from the lava its rise brings it, and Venus's shields 
 Direction: Venus's eruptions after the overturn from its mantle's history rather than a share, gathered at its rises' volcanoes as the Beta-Atla-Themis region's are, so that the plains stay within the crater record while the shields take most of the lava.
 
 Closed in the eighty-first milestone (F165): the ambient mantle makes the share of the melt its own gate keeps and the plumes the rest under their heads, so that once Venus's ambient mantle stops melting after its overturn its lava comes out at its rises alone; the melt before that is the overturn's own resurfacing. A rise's shields share its lava by the dikes their weights gather, and each rise's leading volcano stands 2.8 to 5.1 km over a few hundred kilometres, as Maat Mons does. Still open: the event lays its resurfacing by its own fill (EPISODIC_FILL_FRACTION), not from the melt its surge brings.
+
+### M30. A shield's flanks do not spread into its moat
+
+Olympus Mons is ringed by a basal scarp up to some 8 km high and by its aureole, lobes of ridged deposits that reach hundreds of kilometres out, which its flanks shed by gravity spreading or landsliding (Lycus Sulci among them), and its moat is thought mostly filled with lava and those deposits (Isherwood et al. 2013). Since F166 the model's shields stand in moats some 3 to 4 km deep on Mars, which the lava their flows send past their feet (F163) only partly fills; their flanks stand as they built them, without a scarp at their foot or the debris that would fill the moat.
+
+Direction: an edifice's flanks fail when the stress in them passes what they hold, by spreading on a weak base or by sliding, as the canyon's walls shed their alcoves (F106's landslides), the debris running out into the moat and the lobes it lays ridged; a basal scarp where the flank's toe is cut back.
 
 ## Validation (principle 15)
 

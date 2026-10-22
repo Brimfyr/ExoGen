@@ -410,6 +410,10 @@ pub const RISE_END_MELT: f64 = 4_280.0;
 /// strength at the longest wavelengths (the values flexure studies of Mars use: McGovern
 /// et al. 2002).
 pub const ROCK_YOUNG_MODULUS: f64 = 1.0e11;
+/// The least density contrast, kg/m³, the mantle pushes back with beneath an edifice that
+/// fills its sag with its own lava (F166), so that a lava as dense as the rock beneath
+/// still floats (a stated floor, below any lava a rocky crust buoys up).
+pub const ROOT_MIN_CONTRAST: f64 = 100.0;
 pub const ROCK_POISSON: f64 = 0.25;
 /// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
 /// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise

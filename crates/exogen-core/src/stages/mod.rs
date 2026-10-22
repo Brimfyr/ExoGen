@@ -376,7 +376,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 121;
+pub const FINISH_VERSION: u64 = 122;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -666,8 +666,15 @@ pub fn run_coarse_loop(
                     .collect();
                 let most = increment.iter().fold(0.0f32, |m, &v| m.max(v));
                 if most as f64 >= LOAD_MIN_INCREMENT
-                    && let Some(laid_load) =
-                        load::lay(grid, &increment, body_radius, gravity, elastic, density)
+                    && let Some(laid_load) = load::lay(
+                        grid,
+                        &increment,
+                        body_radius,
+                        gravity,
+                        elastic,
+                        density,
+                        shields,
+                    )
                 {
                     // The ground bends under the load (F162): it sinks, but beneath a shield
                     // the edifice's lava fills the sag as far as it is thick, so that its
@@ -3760,11 +3767,12 @@ mod tests {
         );
     }
 
-    /// The ground bends under its loads (F162) and a shield's lava ponds past its foot
-    /// (F163): Mars's largest shield's moat holds the lava its flows sent past its foot,
-    /// the shields' own lava lying far thicker there than farther off, so that the ground
-    /// just past its foot stands little below the ground beyond; its summit is still near
-    /// the height it built; and the loop keeps how far the ground sank for the finish.
+    /// The ground bends under its loads (F162), a shield's lava ponds past its foot (F163)
+    /// and its root weighs on the lid (F166): Mars's largest shield's moat holds the lava its
+    /// flows sent past its foot, the shields' own lava lying far thicker there than farther
+    /// off, and still the ground just past its foot stands below the ground beyond; its
+    /// summit is still near the height it built; and the loop keeps how far the ground sank
+    /// for the finish.
     #[test]
     fn mars_s_largest_shield_s_moat_holds_its_lava() {
         let g = preset_graph("Mars", "preview");
@@ -3816,7 +3824,8 @@ mod tests {
             .sum::<f64>()
             / 3.0;
         assert!(near > 3.0 * far + 300.0, "{near} {far}");
-        assert!(moat > beyond - 1_500.0, "{moat} {beyond}");
+        // Its root deepens the moat past what its lava fills (F166).
+        assert!(moat < beyond - 300.0, "{moat} {beyond}");
         assert!(
             ring(&ground, 0.0) - beyond > 0.8 * shield.height,
             "{} {}",

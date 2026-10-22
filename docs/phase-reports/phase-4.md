@@ -2066,3 +2066,24 @@ What the maps show:
 Still to do: the event's fill from its surge's melt (M29); the root's load (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
 
 Tests 253 (21 ignored), among them a rise's leading volcano gathering its lava: on each of Venus's rises the largest takes more than three quarters of what its shields hold, at least two stand over 2 km, none full, and no dike swarm comes from a volcano that never grew. The budget test now has Mars's largest edifice fill first, by 2 Gyr, and the moat test reads the shields' own lava, poured out at a shield's rates, near the foot against farther off, the moat within 1.5 km of the ground beyond. Clippy is clean and validate passes its 134 checks.
+
+## The eighty-second milestone: the shields' roots
+
+M19's last part, approved after the eighty-first: the lava that fills a shield's sag weighs on the lid.
+
+- **F166.** Beneath an edifice the lid sinks into the edifice's own lava, which fills the sag as far as the edifice is thick, so that the mantle pushes back there by the difference between the rock's density and the lava's. The plate is solved with its restoring force cell by cell, the share of the sag the edifice fills read from the deflection it fills and then once more.
+
+How it went:
+
+- **Bounded by the lid.** Lava nearly as dense as the rock, Mars's at some 2,970 kg/m³ against 3,300, would sink an edifice without a lid some ten times as far; the lid's strength holds it to 1.65 times beneath a shield 600 km across on a lid 70 km thick, 1.25 times on 30 km, 1.16 times on Venus's 25 km.
+- **Solved directly.** Counted as load epoch by epoch, as F162 feared, the root would have deepened the sag again each epoch, converging only slowly; solved as a weaker restoring force where the edifice fills its sag, it converges within the epoch.
+- **The intruded surplus is not a root.** The magma Mars's largest shield cannot lift would stand a column some 115 km thick over its footprint, thicker than the lid: it spreads beneath the rise as underplating, which the dome holds.
+
+What the maps show:
+
+- **Mars:** its largest shield stands in a moat some 3 km below the ground at 2.5 of its radii, where it stood in 1.2 km, the second in 4 km, the third in 2.8 km; the lava past their feet fills part of them, and the apron between the largest and its neighbours sits lower. The summits stand where they built them. Olympus Mons's moat is mostly filled, by lava and its aureole's deposits, which the model lacks (M30).
+- **Venus:** its leading volcanoes' surroundings sink some 0.2 km, its lid too thin for their roots to bend it far.
+
+Still to do: the aureole and basal scarp, a shield's flanks spreading into its moat (M30); the event's fill from its surge's melt (M29); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
+
+Tests 254 (21 ignored), among them an edifice's root deepening its sag and its moat: on a Mars lid 70 km thick the sag beneath a shield's summit and its moat come out more than 1.3 and less than 3 times as deep as an empty sag would leave them, the edifice still standing where it built itself, and a flood with no edifice bending the lid as before. The moat test now asks that Mars's largest shield's moat stand below the ground beyond while its shields' own lava ponds in it. Clippy is clean and validate passes its 134 checks.
