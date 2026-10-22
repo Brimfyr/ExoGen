@@ -823,8 +823,8 @@ pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// tessera are the highest-standing fraction of the surface by a height smoothed this
 /// many passes, keep the surface the overturn before the event laid (F121), or one this much
 /// older than the event where there was none, Gyr, and carry a fabric
-/// of this relief, m, at this wavelength, m. After the event, eruptions carry this share
-/// of the extrusive budget, the rest having gone into the event.
+/// of this relief, m, at this wavelength, m. After the event the eruptions follow the
+/// mantle's history (F165).
 pub const TESSERA_FRACTION: f64 = 0.08;
 pub const TESSERA_SMOOTHING_PASSES: usize = 20;
 pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
@@ -840,7 +840,6 @@ pub const TESSERA_PLATEAU_UPLIFT: f64 = 2_000.0;
 pub const TESSERA_EDGE_WIDTH: f64 = 300.0;
 pub const EPISODIC_FILL_FRACTION: f64 = 0.7;
 pub const EPISODIC_VENEER: f64 = 20.0;
-pub const EPISODIC_POST_EVENT_FRACTION: f64 = 0.02;
 /// Pancake domes on an episodic lid's plains: how many per m² (Venus: some 150),
 /// diameters, height and top roughness (the coronae are the corona process's, F145).
 /// Coronae over the upwellings of a convecting layer under a lid (F133). The layer turns

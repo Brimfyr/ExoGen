@@ -65,6 +65,10 @@ pub struct ThermalState {
     /// The depth the mantle rising under the lid reaches, the stiff lid's base, m, where
     /// its magma comes from (F125); the lithosphere where no mantle history is kept.
     pub melt_depth: f64,
+    /// The share of the melt the ambient mantle makes beside its plumes' heads, 0 to 1
+    /// (F165): all of it where no plumes rise, none once the mantle under the lid has
+    /// cooled below its solidus there and only the plumes' excess heat melts it.
+    pub ambient: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -260,6 +264,7 @@ impl ThermalHistory {
             contraction: lerp(a.contraction, b.contraction),
             magma_rate: lerp(a.magma_rate, b.magma_rate),
             melt_depth: lerp(a.melt_depth, b.melt_depth),
+            ambient: lerp(a.ambient, b.ambient),
         }
     }
 
@@ -392,6 +397,19 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
         }
         None => magma_rate(heat_flux, area, efficiency, heat_per_m3),
     };
+    // The melt is reckoned with the plumes' excess heat where plumes rise (F123); of it the
+    // ambient mantle makes the share its own gate keeps (F165).
+    let ambient = match &inp.mantle {
+        Some(m) if inp.plumes => {
+            let plume = m.melt_gate_at(t, true);
+            if plume > 0.0 {
+                (m.melt_gate_at(t, false) / plume).clamp(0.0, 1.0)
+            } else {
+                1.0
+            }
+        }
+        _ => 1.0,
+    };
     ThermalState {
         time_gyr: t,
         heat_flux,
@@ -406,6 +424,7 @@ pub fn state_at(inp: &ThermalInputs, t: f64) -> ThermalState {
             .mantle
             .as_ref()
             .map_or(lithosphere, |m| m.stiff_lid_at(t)),
+        ambient,
     }
 }
 

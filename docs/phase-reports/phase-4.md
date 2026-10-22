@@ -2043,3 +2043,26 @@ What the maps show:
 Still to do: Venus's shields' supply (M29); the root's load (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
 
 Tests 252 (21 ignored), among them a rise's shields growing from what they take of its eruptions: each step no more than its budget brings, nothing before the first shield starts, the supplies adding up to what they take, Mars's edifices full by 3 Gyr with more than thrice what they hold brought to them, and Venus's partly built. The foot test now checks the flows' shares of what the edifices grew by, the rest intruding; the plume's tests schedule their shields' supply. Clippy is clean and validate passes its 134 checks.
+
+## The eighty-first milestone: the plumes' melt and a volcano's weight
+
+M29, after the user judged Venus's small shields right and asked for some volcanoes like Maat Mons: Venus's lava after its overturn from its mantle's history, gathered at its rises, and a rise's lava gathered by its volcanoes' weights.
+
+- **F165.** The ambient mantle makes the share of the melt its own gate keeps, and the plumes the rest only under their heads; once the ambient mantle stops melting, all the lava comes out at the rises. On an episodic lid the melt while the ambient mantle still melts after the overturn is the overturn's own resurfacing. A rise's shields share its lava by the area each gathers dikes from, its vents' and its weight's over the regional stress, which falls as the rise's growth wanes, so that the leading volcano takes more as it grows.
+
+How it went:
+
+- **Where Venus's lava can go.** Its mantle's own history gives some 5 × 10⁷ km³ after the overturn, against 1.2 × 10⁶ kept by the stated 2 percent; spent as plains it would bury Venus many times over, where only 2.5 percent of its craters are embayed by lava. But the melt was reckoned with the plumes' excess heat over the whole body: Venus's ambient mantle stops melting 0.45 Ga ago, after which only the plumes' heads melt, 3.4 percent of the surface, and their lava comes out at the rises.
+- **Mars checks out again.** Its ambient mantle tapers over its last gigayear, and its eruptions since 1.3 Ga fall from 1.95 to 1.19 × 10⁷ km³, where Greeley and Schneid (1991) put its Middle and Late Amazonian deposits at 1.18 × 10⁷.
+- **A feedback too weak at first.** Against the lid's yield, a leading volcano's weight only matched its own vents' area by the end, and its rise's smaller shields came out the more built. The regional stress falls with the rise's growth as F119 has it, and once it is gone the shields gather by their weights alone: the leader keeps its lead.
+
+What the maps show:
+
+- **Venus:** each rise's leading volcano takes most of its lava, standing 5.1, 4.6 and 2.8 km over 328, 296 and 312 km, with summit calderas and lobate lava fields at its feet, as Maat Mons stands 4.9 km over 395 km; their neighbours stand 0.3 to 0.9 km, and three volcanoes that started as their rises stopped growing never grew, nor sent dikes. No lava reaches the plains after the overturn's resurfacing.
+- **Mars:** its largest shield fills by 3.0 Ga, the next two by 2.1 and 1.3 Ga, and the two smallest stand half and a third built.
+- **Counts:** Venus's floods fall from 720 to 320, none on its plains after the overturn's resurfacing; Mars's thrusts number 3,437 where they were 3,123, its late lava gathered at Tharsis moving the field.
+- **The Moon:** byte-identical.
+
+Still to do: the event's fill from its surge's melt (M29); the root's load (M19); Mercury's thrusts' direction (M27); the drives the field does not hold, Venus's climate first (M26); the belt's fabric between Charon's chasmata (M23); the coronae on Venus's rifts (M25).
+
+Tests 253 (21 ignored), among them a rise's leading volcano gathering its lava: on each of Venus's rises the largest takes more than three quarters of what its shields hold, at least two stand over 2 km, none full, and no dike swarm comes from a volcano that never grew. The budget test now has Mars's largest edifice fill first, by 2 Gyr, and the moat test reads the shields' own lava, poured out at a shield's rates, near the foot against farther off, the moat within 1.5 km of the ground beyond. Clippy is clean and validate passes its 134 checks.

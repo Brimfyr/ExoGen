@@ -761,6 +761,8 @@ pub fn export(
         shields: out
             .shields
             .iter()
+            // A volcano that never grew stands nowhere (F165).
+            .filter(|sh| crate::stages::plume::shield_progress(out.epoch_time_gyr, sh) > 0.0)
             .map(|sh| {
                 let (lon, lat) = crate::grid::lon_lat_from_direction(sh.center);
                 ShieldInfo {

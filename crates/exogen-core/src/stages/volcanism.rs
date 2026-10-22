@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 21;
+pub const VERSION: u64 = 22;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -255,8 +255,15 @@ pub struct FloodProcess {
     /// Magmatic provinces and their weight per coarse cell, which the vents favour.
     pub provinces: Vec<Province>,
     province_weight: Vec<f64>,
-    /// Each rise's own share of that weight per coarse cell (F108).
+    /// Each rise's own share of that weight per coarse cell (F108), and theirs together,
+    /// the plumes' (F165).
     rise_province: Vec<Vec<f32>>,
+    plume_weight: Vec<f64>,
+    /// The share of the surface over the plumes' heads, where they melt (F165).
+    plume_area: f64,
+    /// On an episodic lid, when the ambient mantle stops melting after the overturn, whose
+    /// own resurfacing the melt till then is (F165).
+    surge_end: Option<f64>,
     /// Cumulative lava thickness and the time of the last flood, per coarse cell, for
     /// laying out the ridges at the end.
     pub thickness: Vec<f32>,
@@ -323,7 +330,7 @@ impl FloodProcess {
             _ => return None,
         };
         let body_radius = graph.f64("body.radius");
-        let areas = (0..grid.cell_count())
+        let areas: Vec<f64> = (0..grid.cell_count())
             .map(|k| grid.cell_area(grid.cell(k)) * body_radius * body_radius)
             .collect();
         let rng = Rng::new(graph.f64("seed.volcanism") as u64 ^ 0x7F10_0D5A);
@@ -352,7 +359,7 @@ impl FloodProcess {
                 })
             })
             .collect();
-        let rise_province = provinces
+        let rise_province: Vec<Vec<f32>> = provinces
             .iter()
             .take(rises.len())
             .map(|p| {
@@ -364,6 +371,29 @@ impl FloodProcess {
                     .collect()
             })
             .collect();
+        let plume_weight: Vec<f64> = (0..grid.cell_count())
+            .map(|k| rise_province.iter().map(|own| own[k] as f64).sum())
+            .collect();
+        let whole: f64 = areas.iter().sum();
+        let plume_area = plume_weight
+            .iter()
+            .zip(&areas)
+            .map(|(w, a)| w.min(1.0) * a)
+            .sum::<f64>()
+            / whole.max(1.0);
+        // The overturn's resurfacing lasts while the ambient mantle melts after it.
+        let surge_end = event_time.map(|event| {
+            let age = graph.f64("body.age");
+            let mut t = event;
+            while t < age {
+                let s = thermal.at(t);
+                if s.magma_rate * s.ambient <= 1e-9 {
+                    break;
+                }
+                t += 0.005;
+            }
+            t.min(age)
+        });
         Some(Self {
             grid,
             body_radius,
@@ -373,6 +403,9 @@ impl FloodProcess {
             provinces,
             province_weight,
             rise_province,
+            plume_weight,
+            plume_area,
+            surge_end,
             thickness: vec![0.0; grid.cell_count()],
             last_time: vec![f32::NEG_INFINITY; grid.cell_count()],
             visited: vec![0; grid.cell_count()],
@@ -407,6 +440,9 @@ impl FloodProcess {
             provinces: Vec::new(),
             province_weight: vec![1.0; n],
             rise_province: Vec::new(),
+            plume_weight: vec![0.0; n],
+            plume_area: 0.0,
+            surge_end: None,
             thickness: vec![0.0; n],
             last_time: vec![f32::NEG_INFINITY; n],
             visited: vec![0; n],
@@ -459,22 +495,30 @@ impl FloodProcess {
         share * ascent * (-(strain / VOLCANISM_SHUTOFF_STRAIN).powi(2)).exp()
     }
 
-    /// Extrusive volume between two times, m³, by midpoint rule over sub-intervals. On an
-    /// episodic lid nothing before the event is kept, and a small share erupts after it.
+    /// Extrusive volume between two times, m³, by midpoint rule over sub-intervals. The
+    /// ambient mantle's melt comes anywhere and the plumes' only under their heads (F165).
+    /// On an episodic lid nothing before the event is kept, nor what comes while the ambient
+    /// mantle still melts after the overturn, which is the overturn's own resurfacing, laid
+    /// as the event.
     pub fn budget(&self, t0: f64, t1: f64) -> f64 {
-        let (t0, share) = match self.event_time {
+        let t0 = match self.event_time {
             Some(event) if t1 <= event => return 0.0,
-            Some(event) => (t0.max(event), EPISODIC_POST_EVENT_FRACTION),
-            None => (t0, 1.0),
+            Some(event) => t0.max(event).max(self.surge_end.unwrap_or(event)),
+            None => t0,
         };
+        if t1 <= t0 {
+            return 0.0;
+        }
         let n = 8;
         let dt = (t1 - t0) / n as f64;
         let mut v = 0.0;
         for i in 0..n {
             let t = t0 + (i as f64 + 0.5) * dt;
-            v += self.thermal.at(t).magma_rate * self.eruptive_fraction(t) * dt * GYR;
+            let s = self.thermal.at(t);
+            let melts = s.ambient + (1.0 - s.ambient) * self.plume_area;
+            v += s.magma_rate * melts * self.eruptive_fraction(t) * dt * GYR;
         }
-        v * share * self.flood_share
+        v * self.flood_share
     }
 
     /// Vent weights, cumulative, and the share of the floods' weight a rise's shields leave
@@ -488,6 +532,7 @@ impl FloodProcess {
         layers: &LayerSet,
         boost: Option<&[f64]>,
         rises: &[RiseVent],
+        ambient: f64,
     ) -> (Vec<f64>, f64, Vec<f64>) {
         let crust = layers.crust_thickness.as_slice();
         let bedrock = layers.bedrock.as_slice();
@@ -506,9 +551,13 @@ impl FloodProcess {
             })
             .collect();
         let lift = |k: usize| boost.map_or(1.0, |b| b[k]);
-        let full: Vec<f64> = (0..n)
-            .map(|k| base[k] * self.province_weight[k] * lift(k))
-            .collect();
+        // The ambient mantle's provinces weigh by the share of the melt it makes, the
+        // plumes' whole (F165).
+        let weight = |k: usize| {
+            let w = self.province_weight[k];
+            w - (1.0 - ambient) * (w - self.plume_weight[k]).max(0.0)
+        };
+        let full: Vec<f64> = (0..n).map(|k| base[k] * weight(k) * lift(k)).collect();
         let mut w = full.clone();
         let mut cuts = vec![0.0f64; rises.len()];
         for (r, rise) in rises.iter().enumerate() {
@@ -525,8 +574,8 @@ impl FloodProcess {
             // What the rise adds at each cell: the weight less what it would be without
             // the rise's province and dome.
             for k in 0..n {
-                let without = (self.province_weight[k] - own[k] as f64)
-                    * (lift(k) - PLUME_VENT_BOOST * dome[k]).max(1.0);
+                let without =
+                    (weight(k) - own[k] as f64) * (lift(k) - PLUME_VENT_BOOST * dome[k]).max(1.0);
                 let cut = rise.capture * (full[k] - base[k] * without).max(0.0);
                 w[k] -= cut;
                 cuts[r] += cut;
@@ -549,15 +598,18 @@ impl FloodProcess {
         (cumulative, kept, shares)
     }
 
-    /// Each rise's shields' share of the floods' whole vent weight (F108, F164): what the
-    /// rise adds by its fertile mantle and its dome, by the share its started shields take.
+    /// Each rise's shields' share of the floods' whole vent weight at a time (F108, F164):
+    /// what the rise adds by its fertile mantle and its dome, by the share its started
+    /// shields take.
     pub fn capture_shares(
         &self,
         layers: &LayerSet,
         boost: Option<&[f64]>,
         rises: &[RiseVent],
+        t: f64,
     ) -> Vec<f64> {
-        self.vent_weights(layers, boost, rises).2
+        self.vent_weights(layers, boost, rises, self.thermal.at(t).ambient)
+            .2
     }
 
     /// The extrusive budget a step brings, m³, over the bins its eruptions are drawn in.
@@ -581,8 +633,9 @@ impl FloodProcess {
         taken: Option<f64>,
     ) -> Vec<FloodEvent> {
         let bins = crate::stages::time_bins(self.age, t0, t1);
+        let ambient = self.thermal.at(0.5 * (t0 + t1)).ambient;
         let kept = if rises.iter().any(|r| r.capture > 0.0) {
-            Some(self.vent_weights(layers, boost, rises))
+            Some(self.vent_weights(layers, boost, rises, ambient))
         } else {
             None
         };
@@ -606,7 +659,8 @@ impl FloodProcess {
             self.carry += step_budget;
             return Vec::new();
         }
-        let (cumulative, _, _) = kept.unwrap_or_else(|| self.vent_weights(layers, boost, rises));
+        let (cumulative, _, _) =
+            kept.unwrap_or_else(|| self.vent_weights(layers, boost, rises, ambient));
         let total = *cumulative.last().unwrap_or(&0.0);
         if total <= 0.0 {
             return Vec::new();
@@ -2536,7 +2590,7 @@ mod tests {
         };
         // The weights with no rise at all: the background a rise adds to.
         p.province_weight = vec![MAGMA_PROVINCE_FLOOR; n];
-        let background = per_cell(p.vent_weights(&layers, None, &[]).0);
+        let background = per_cell(p.vent_weights(&layers, None, &[], 1.0).0);
         p.province_weight = own
             .iter()
             .map(|&g| MAGMA_PROVINCE_FLOOR + g as f64)
@@ -2547,7 +2601,7 @@ mod tests {
                 dome: dome_cells.clone(),
                 capture,
             };
-            let (cumulative, kept, _) = p.vent_weights(&layers, Some(&boost), &[rise]);
+            let (cumulative, kept, _) = p.vent_weights(&layers, Some(&boost), &[rise], 1.0);
             (per_cell(cumulative), kept)
         };
         let ((before, whole), (after, kept)) = (weights(0.0), weights(0.6));

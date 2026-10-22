@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 27;
+pub const VERSION: u64 = 28;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1405,6 +1405,10 @@ pub struct PlumeProcess {
     /// The volcanoes' dike swarms (F116): each swarm's key, its volcano's id and the share of
     /// the volcano's growth it comes at, timed once the supply is scheduled (F164).
     volcano_swarms: Vec<(u64, u64, f64)>,
+    /// The body's gravity, m/s², and the lid's yield in tension, Pa, the regional stress a
+    /// volcano's weight turns dikes against (F165).
+    gravity: f64,
+    yield_tension: f64,
     stamper: Stamper,
 }
 
@@ -1820,6 +1824,8 @@ impl PlumeProcess {
             filled: vec![0.0; grid.cell_count()],
             foot,
             volcano_swarms,
+            gravity: graph.num("body.gravity"),
+            yield_tension,
             stamper: Stamper::new(&grid),
         })
     }
@@ -1850,22 +1856,33 @@ impl PlumeProcess {
         for s in &mut self.shields {
             s.supplied = vec![(s.start_gyr, 0.0)];
         }
+        let density = floods.magma_density().unwrap_or(DENSITY_CRUST_ROCK);
         let mut taken = Vec::with_capacity(steps);
         for k in 1..=steps {
             let (t0, t1) = (dt * (k - 1) as f64, dt * k as f64);
             let vents = self.rise_vents(t0, t1);
             let boost = self.boost_at(t1);
-            let shares = floods.capture_shares(layers, Some(&boost), &vents);
+            let shares = floods.capture_shares(layers, Some(&boost), &vents, 0.5 * (t0 + t1));
             let budget = floods.step_budget(t0, t1);
             let mut took = 0.0;
             for (r, share) in shares.iter().enumerate() {
                 let supply = budget * share;
+                // Each started shield gathers dikes from its own vents' area and from where its
+                // weight's stress, its weight over the area, outweighs the regional stress
+                // (F165), so that the leading volcano takes more as it grows. The regional
+                // stress is the rise's, the lid's yield at its peak, falling as its growth
+                // wanes (F119); its weight over the stress, against the area, is the weight
+                // against the area times the stress.
+                let regional = self.yield_tension
+                    * (1.0 - rise_focus(&self.rises[r], 0.5 * (t0 + t1))).max(0.0);
                 let started: Vec<(usize, f64)> = (0..n)
                     .filter(|&i| owner[i] == r && self.shields[i].start_gyr < t1)
                     .map(|i| {
                         let s = &self.shields[i];
                         let part = ((t1 - s.start_gyr.max(t0)) / dt).clamp(0.0, 1.0);
-                        (i, s.volume * part)
+                        let built = s.volume * shield_progress(t0, s);
+                        let gathers = s.area * regional + density * self.gravity * built;
+                        (i, gathers * part)
                     })
                     .collect();
                 let whole: f64 = started.iter().map(|&(_, w)| w).sum();
@@ -1929,27 +1946,29 @@ impl PlumeProcess {
     }
 
     /// The times of the volcanoes' dike swarms (F116, F164): each at its share of its
-    /// volcano's growth to the present, at the volcano's start where it never grew.
+    /// volcano's growth to the present; a volcano that never grew, its rise's larger loads
+    /// gathering every dike, sends none (F165).
     fn time_swarms(&mut self) {
         let present = self.present;
-        let times: HashMap<u64, f64> = self
+        let times: HashMap<u64, Option<f64>> = self
             .volcano_swarms
             .iter()
             .map(|&(key, id, share)| {
                 let v = &self.shields[id as usize];
                 let grown = shield_progress(present, v);
-                let time = if grown > 0.0 {
-                    progress_time(v, share * grown)
-                } else {
-                    v.start_gyr
-                };
-                (key, time.min(present))
+                let time = (grown > 0.0).then(|| progress_time(v, share * grown).min(present));
+                (key, time)
             })
             .collect();
+        let swarm = |t: &Trough| {
+            (t.id >> 48 == 0x0D1C)
+                .then(|| times.get(&((t.id & 0xFFFF_FFFF_FFFF) >> 8)).copied())
+                .flatten()
+        };
+        self.canyons.retain(|t| !matches!(swarm(t), Some(None)));
+        self.graben.retain(|t| !matches!(swarm(t), Some(None)));
         for t in self.canyons.iter_mut().chain(self.graben.iter_mut()) {
-            if t.id >> 48 == 0x0D1C
-                && let Some(&time) = times.get(&((t.id & 0xFFFF_FFFF_FFFF) >> 8))
-            {
+            if let Some(Some(time)) = swarm(t) {
                 t.start_gyr = time;
                 t.end_gyr = time;
             }
@@ -4126,8 +4145,8 @@ mod tests {
 
     /// The shields' melt is one budget (F164): each step a rise's shields take no more than
     /// the step's budget brings, nothing before the first starts, and their supplies add up
-    /// to what they take; Mars's edifices fill from it by 3 Gyr and the rest, more than
-    /// thrice what they hold, intrudes; Venus's stay partly built on its small budget.
+    /// to what they take; Mars's largest edifice fills first, by 2 Gyr, and its shields are
+    /// brought more than thrice what they hold, the rest intruding; none of Venus's fills.
     #[test]
     fn a_rise_s_shields_grow_from_what_they_take_of_its_eruptions() {
         let grid = CubeSphere::new(64);
@@ -4157,21 +4176,73 @@ mod tests {
             (age, p)
         };
         let (age, mars) = run("Mars");
+        // The largest fills first, by 2 Gyr; its weight gathers the most (F165).
+        let largest = mars
+            .shields
+            .iter()
+            .max_by(|a, b| a.volume.total_cmp(&b.volume))
+            .unwrap();
+        assert!(shield_progress(age, largest) >= 1.0);
+        let filled = progress_time(largest, 1.0);
+        assert!(filled < 2.0, "{filled}");
         for s in &mars.shields {
-            assert!(
-                shield_progress(age, s) >= 1.0,
-                "{}",
-                shield_progress(age, s)
-            );
-            assert!(progress_time(s, 1.0) < 3.0, "{}", progress_time(s, 1.0));
+            if s.id != largest.id && shield_progress(age, s) >= 1.0 {
+                assert!(progress_time(s, 1.0) > filled, "{}", s.id);
+            }
         }
         let brought: f64 = mars.shields.iter().map(|s| shield_supplied(age, s)).sum();
         let held: f64 = mars.shields.iter().map(|s| s.volume).sum();
         assert!(brought > 3.0 * held, "{brought:.3e} {held:.3e}");
         let (age, venus) = run("Venus");
         for s in &venus.shields {
-            let p = shield_progress(age, s);
-            assert!(p > 0.0 && p < 0.5, "{p}");
+            assert!(shield_progress(age, s) < 1.0, "{}", shield_progress(age, s));
+        }
+    }
+
+    /// A volcano's weight gathers its rise's lava (F165): on each of Venus's rises, where
+    /// only the plumes melt once its overturn's resurfacing is over, the largest volcano
+    /// takes most of the lava its rise's shields take and stands as Maat Mons does, some
+    /// kilometres over a few hundred kilometres, its neighbours low or never grown; and the
+    /// volcanoes that never grew send no dikes.
+    #[test]
+    fn a_rise_s_leading_volcano_gathers_its_lava() {
+        let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
+        let p = scheduled(&g, CubeSphere::new(64), 90);
+        let age = g.f64("body.age");
+        let mut tall = 0;
+        for ri in 0..p.rises.len() {
+            let mine: Vec<&Shield> = p
+                .shields
+                .iter()
+                .filter(|s| rise_of(&p.rises, s.center) == ri)
+                .collect();
+            let built = |s: &Shield| s.volume * shield_progress(age, s);
+            let whole: f64 = mine.iter().map(|s| built(s)).sum();
+            let leader = mine
+                .iter()
+                .max_by(|a, b| built(a).total_cmp(&built(b)))
+                .unwrap();
+            assert!(built(leader) > 0.75 * whole, "{} of {whole}", built(leader));
+            let height = leader.height * shield_progress(age, leader);
+            assert!(height < 0.8 * leader.height, "{height}");
+            if height > 2e3 {
+                tall += 1;
+            }
+        }
+        assert!(tall >= 2, "{tall} rises with a volcano over 2 km");
+        // No dike swarm comes from a volcano that never grew.
+        for t in p.graben.iter().chain(&p.canyons) {
+            if t.id >> 48 == 0x0D1C {
+                let key = (t.id & 0xFFFF_FFFF_FFFF) >> 8;
+                if key >= 0x0D1D_0000 {
+                    let v = &p.shields[(key - 0x0D1D_0000) as usize];
+                    assert!(
+                        shield_progress(age, v) > 0.0,
+                        "a swarm from shield {}",
+                        v.id
+                    );
+                }
+            }
         }
     }
 

@@ -376,7 +376,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 120;
+pub const FINISH_VERSION: u64 = 121;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3762,9 +3762,9 @@ mod tests {
 
     /// The ground bends under its loads (F162) and a shield's lava ponds past its foot
     /// (F163): Mars's largest shield's moat holds the lava its flows sent past its foot,
-    /// which lies far thicker there than farther off, so that the ground just past its foot
-    /// stands little below the ground beyond; its summit is still near the height it built;
-    /// and the loop keeps how far the ground sank for the finish.
+    /// the shields' own lava lying far thicker there than farther off, so that the ground
+    /// just past its foot stands little below the ground beyond; its summit is still near
+    /// the height it built; and the loop keeps how far the ground sank for the finish.
     #[test]
     fn mars_s_largest_shield_s_moat_holds_its_lava() {
         let g = preset_graph("Mars", "preview");
@@ -3773,9 +3773,14 @@ mod tests {
         let r = g.f64("body.radius");
         let grid = mars.grid;
         let height = mars.keyframes.last().unwrap().layers.bedrock.as_slice();
-        // The lava the floods laid on each coarse cell.
+        // The lava the shields' own eruptions laid past their feet on each coarse cell, poured
+        // out at a shield's rates where the floods' are a flood basalt's (F163).
         let mut lava = vec![0.0f64; grid.cell_count()];
-        for f in &mars.floods {
+        for f in mars
+            .floods
+            .iter()
+            .filter(|f| f.effusion < FLOOD_EFFUSION_RATE.0)
+        {
             for (&idx, c) in &f.cells() {
                 lava[idx as usize] += c.thickness as f64;
             }
@@ -3810,8 +3815,8 @@ mod tests {
             .map(|&f| ring(&laid, f * shield.radius))
             .sum::<f64>()
             / 3.0;
-        assert!(near > far + 1_500.0, "{near} {far}");
-        assert!(moat > beyond - 1_000.0, "{moat} {beyond}");
+        assert!(near > 3.0 * far + 300.0, "{near} {far}");
+        assert!(moat > beyond - 1_500.0, "{moat} {beyond}");
         assert!(
             ring(&ground, 0.0) - beyond > 0.8 * shield.height,
             "{} {}",
