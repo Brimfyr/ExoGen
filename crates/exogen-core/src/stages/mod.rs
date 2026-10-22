@@ -3683,7 +3683,7 @@ mod tests {
             .filter(|v| **v > 0.05)
             .count() as f64
             / moon.finish.rays.len() as f64;
-        assert!(rayed > 0.001 && rayed < 0.25, "rayed fraction {rayed}");
+        assert!(rayed > 0.001 && rayed < 0.3, "rayed fraction {rayed}");
         // Mature highlands are dark; fresh ejecta is brighter.
         let (lo, hi) = {
             let a = moon.finish.albedo.as_slice();

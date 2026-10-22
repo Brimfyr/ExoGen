@@ -2187,3 +2187,25 @@ What the maps show:
 Still to do: Valles Marineris as subsidence along the buried boundary, with M23; the lowlands' lava against the Hesperian plains; the boundary's wear and the lowlands' sediments (Phase 5).
 
 Tests 259 (22 ignored), among them a warm lower crust relaxing the relief between its lid and its breadth: under a crust 60 km thick whose base stands at 1,550 K, a wavelength of 1,000 km loses most of its relief in a hundred million years, one of 10,000 km keeps nearly all of it and the elastic lid holds up one of 200 km, while at 900 K the crust keeps everything for a billion years; and a diagnostic printing each rocky preset's survival by wavelength.
+
+## The eighty-seventh milestone: the floods fill the low ground
+
+The last two of the items the user agreed after the eighty-fourth: Valles Marineris along the buried boundary, and the lowlands' lava against the Hesperian plains.
+
+- **Valles Marineris, deferred (M32).** Its depth is subsidence under the sediments that filled it, since eroded (Andrews-Hanna 2012, part 3), which waits for Phase 5's sediments; and its place along the buried boundary needs the rise's stresses solved through a lid whose stiffness follows the crust, where the dichotomy's own tension, some 2 MPa, cannot steer faults the rise opens at 100 to 250 MPa. The user chose to defer it to Phase 5 and record it.
+- **F171.** The floods' vents favour the thin crust and the low ground everywhere, a province's centre standing four times the rest rather than thirty: Mars's lowland now takes its share of the floods.
+
+How it went:
+
+- **The provinces decided.** Mars's lowland draws five to thirteen times the vents per area that its highlands do by its thin crust and low ground, and still held no more lava per area, the provinces outweighing everything outside them thirty times.
+- **The Moon does not check it.** The Procellarum KREEP Terrane holds most of the Moon's maria, so it was to be the check on the provinces' weight; but the model's Moon lays only a fifth to a quarter of its lava within its province at any weight, its basins' thin crust deciding (M33), so the weight is fitted on Mars.
+- **Venus's relief.** The user noted that relaxing Venus would flatten more than its tesserae: nine tenths of its relief is held up by the mantle's flow, which the primordial relief stands in for; the convective planform joins M31.
+
+What the maps show:
+
+- **Mars (seed 1048):** the lowland holds some 900 m of lava against the highlands' 600 m; a few of its craters' floors fill further, and its craters of 50 to 200 km keep their rims, deeper than the lava.
+- **Venus, the Moon and Mercury:** their floods spread somewhat more over their low ground; their maps change little.
+
+Still to do: Valles Marineris with Phase 5 (M32); Venus's highlands and dynamic topography (M31); the Moon's maria in its province (M33); the aureole and basal scarp (M30); Mercury's thrusts' direction (M27); the drives the field does not hold (M26); the coronae on Venus's rifts (M25).
+
+Tests 259 (22 ignored). The test of a rise's shields taking its eruptions now holds its sums equal within 10⁻⁷, their rounding with the province's larger background, and the Moon's rayed share need stay below three tenths rather than a quarter (it is 25.2 percent).

@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 22;
+pub const VERSION: u64 = 23;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -2608,8 +2608,10 @@ mod tests {
         let total = |w: &[f64]| w.iter().sum::<f64>();
         assert!((whole - 1.0).abs() < 1e-12);
         let left = total(&before) - 0.6 * (total(&before) - total(&background));
-        assert!((total(&after) - left).abs() < 1e-9 * left);
-        assert!((kept - left / total(&before)).abs() < 1e-9);
+        // Equal within their rounding: sums of some 10¹² m² of weighted area, and the
+        // dome kept as an f32 in the rise's cells against the f64 the boost is made from.
+        assert!((total(&after) - left).abs() < 1e-7 * left);
+        assert!((kept - left / total(&before)).abs() < 1e-7);
         let far = (0..n)
             .max_by(|&a, &b| angle(a).total_cmp(&angle(b)))
             .unwrap();
@@ -2618,7 +2620,7 @@ mod tests {
             .min_by(|&a, &b| (angle(a) - 0.25).abs().total_cmp(&(angle(b) - 0.25).abs()))
             .unwrap();
         let stays = before[flank] - 0.6 * (before[flank] - background[flank]);
-        assert!((after[flank] - stays).abs() < 1e-9 * before[flank]);
+        assert!((after[flank] - stays).abs() < 1e-7 * before[flank]);
         assert!(
             after[flank] < 0.45 * before[flank],
             "{} vs {}",

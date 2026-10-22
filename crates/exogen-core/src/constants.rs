@@ -265,10 +265,15 @@ pub const VOLCANISM_VENT_CRUST_SCALE: f64 = 10e3;
 /// ocean leaves concentrates the heat-producing elements in a few regions, and the
 /// eruptions favour them: the Moon's Procellarum KREEP Terrane holds most of the maria,
 /// Mercury's northern plains most of its smooth plains. One province per this much
-/// radius, their Gaussian angular radius, and the weight of the rest of the body.
+/// radius, their Gaussian angular radius, and the weight of the rest of the body: a
+/// province's centre four times the rest (F171), so that the thin crust and the low ground
+/// still draw the floods outside the provinces, as Mars's Early Hesperian plains filled most
+/// of its northern lowlands to some 800 to 1,000 m and its highland basins too (Head,
+/// Kreslavsky and Pratt 2002; fitted on Mars, where the lowland now holds some 900 m of
+/// lava against 600 m on the highlands).
 pub const MAGMA_PROVINCE_RADIUS_PER: f64 = 2.0e6;
 pub const MAGMA_PROVINCE_SIGMA_RAD: f64 = 0.7;
-pub const MAGMA_PROVINCE_FLOOR: f64 = 0.03;
+pub const MAGMA_PROVINCE_FLOOR: f64 = 0.25;
 pub const VOLCANISM_VENT_HEIGHT_SCALE: f64 = 2e3;
 pub const VOLCANISM_EVENT_VOLUME: (f64, f64) = (1e11, 1e13);
 /// Cells one flood's lake may take in, and the thickness of a flow, m: a lake spreads no
