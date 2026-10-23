@@ -385,9 +385,28 @@ impl EpisodicProcess {
     }
 }
 
-/// Finishing pass of the event: the tessera boundary at the resolved resolution, the
-/// plains refilled against the resolved ground, the tessera fabric. Returns the writes
-/// and the smear taken out per cell.
+/// The tessera fabric's median over the sphere, m: the level half of it stands above.
+fn fabric_median(noise: &GradientNoise, body_radius: f64) -> f32 {
+    let count = 4096;
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    let mut values: Vec<f32> = (0..count)
+        .map(|i| {
+            let z = 1.0 - (2.0 * i as f64 + 1.0) / count as f64;
+            let r = (1.0 - z * z).sqrt();
+            let a = golden * i as f64;
+            tessera_texture([r * a.cos(), r * a.sin(), z], noise, body_radius) as f32
+        })
+        .collect();
+    values.sort_by(|a, b| a.total_cmp(b));
+    values[count / 2]
+}
+
+/// Finishing pass of the event at the resolved resolution (F186): the old ground with the
+/// tessera's fabric, over the tesserae and sinking beneath the plains beyond them, and the
+/// event's lava ponded against it at the tesserae's edge: the plains onlap the tesserae,
+/// their lava running up the fabric's valleys and leaving its ridges standing as inliers,
+/// each cell tessera or plains by the share of it the lava left above its surface. Returns
+/// the writes and the smear taken out per cell.
 #[allow(clippy::too_many_arguments)]
 pub fn resurfacing_compute(
     layers: &LayerSet,
@@ -403,6 +422,8 @@ pub fn resurfacing_compute(
     let padded_filled = PaddedField::new(coarse, &rec.filled);
     let padded_score = PaddedField::new(coarse, &rec.score);
     let noise = GradientNoise::new(seed ^ 0x7E55_E2A0);
+    let median = fabric_median(&noise, body_radius);
+    let reach = (TESSERA_RELIEF + TESSERA_FOLD_RELIEF) as f32 / 2.0 - median;
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let deep = layers.deep.as_slice();
@@ -429,32 +450,42 @@ pub fn resurfacing_compute(
         let later = deform.since_event(d, rec.time_gyr) as f32;
         let ground = bedrock[idx] - remaining - later;
         let carry = remaining - own + later;
-        // The tessera's share of the cell, from where its score's margin crosses it, and
-        // the plains' the rest (F131): a contact drawn by share, not a staircase of cells.
+        // How far the old ground's smoothed height stands below the tesserae's edge, m:
+        // beyond them the old ground sinking beneath the plains, which thicken away from
+        // the edge in an onlap wedge, and within them the lava ponded at the edge's level
+        // below the ground, filling the fabric's valleys deeper than that.
+        let below = |e: [f64; 3]| rec.threshold - sample_bilinear(coarse, &padded_score, e);
+        // The fabric less the burial, centred so that half of it stands above the plains
+        // at the edge; beyond its highest ridges' reach all of it is buried.
+        let exposed = |e: [f64; 3], below: f32| -> f32 {
+            if below >= reach {
+                -below
+            } else {
+                tessera_texture(e, &noise, body_radius) as f32 - median - below
+            }
+        };
+        let plains_depth = |e: [f64; 3]| -> f32 {
+            let target = sample_bilinear(coarse, &padded_filled, e);
+            (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0) + EPISODIC_VENEER as f32
+        };
+        // The share of the cell the lava left standing above its surface, by where the
+        // fabric crosses it (F131): a contact drawn by share, not by whole cells.
         let held = crate::fields::level_share(
-            &|e: [f64; 3]| sample_bilinear(coarse, &padded_score, e) as f64,
+            &|e: [f64; 3]| (exposed(e, below(e)) - plains_depth(e)) as f64,
             d,
-            rec.threshold as f64,
+            0.0,
             grid.delta(),
         ) as f32;
-        let tessera = if held > 0.0 {
-            ground + tessera_texture(d, &noise, body_radius) as f32 + carry
-        } else {
-            0.0
-        };
-        let plains = if held < 1.0 {
-            let target = sample_bilinear(coarse, &padded_filled, d);
-            ground
-                + (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0)
-                + EPISODIC_VENEER as f32
-                + carry
-        } else {
-            0.0
-        };
+        // The old ground with its fabric, and the lava's surface: the plains' where it
+        // laid them, ponded at the edge's level within the tesserae.
+        let b = below(d);
+        let old = ground + exposed(d, b) + b.min(0.0);
+        let pond = ground + plains_depth(d) + b.min(0.0);
+        let surface = old.max(pond) + carry;
         let whole = held >= 0.5;
         cells.push(CellWrite {
             idx: idx as u32,
-            bedrock: held * tessera + (1.0 - held) * plains,
+            bedrock: surface,
             surface: true,
             age: if whole {
                 ages[idx].min(rec.tessera_age)

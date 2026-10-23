@@ -385,7 +385,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 135;
+pub const FINISH_VERSION: u64 = 136;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -4602,6 +4602,31 @@ mod tests {
             assert!(
                 contact > 0 && partial * 4 > contact,
                 "{partial} of {contact} cells on the tessera's contact partly covered"
+            );
+            // The plains onlap the tesserae (F186): the fabric's ridges stand as inliers
+            // beyond the edge of the old ground's smoothed height, and the lava runs up its
+            // valleys within it.
+            let rec = lo.resurfacing.as_ref().unwrap();
+            let coarse = crate::grid::CubeSphere::new(((rec.score.len() / 6) as f64).sqrt() as u32);
+            let score = crate::grid::projection::PaddedField::new(&coarse, &rec.score);
+            let (mut inliers, mut embayed, mut near) = (0usize, 0usize, 0usize);
+            for (k, &unit) in units.iter().enumerate() {
+                let d = grid.center(grid.cell(k));
+                let s =
+                    crate::grid::projection::sample_bilinear(&coarse, &score, d) - rec.threshold;
+                if s.abs() > 300.0 {
+                    continue;
+                }
+                near += 1;
+                if s < 0.0 && unit == crate::units::UNIT_TESSERA {
+                    inliers += 1;
+                } else if s > 0.0 && unit == crate::units::UNIT_LAVA {
+                    embayed += 1;
+                }
+            }
+            assert!(
+                inliers * 20 > near && embayed * 20 > near,
+                "{inliers} inliers and {embayed} embayed of {near} cells about the edge"
             );
         }
         let units = layers.unit_id.as_slice();
