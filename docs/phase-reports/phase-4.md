@@ -2358,3 +2358,26 @@ What the maps show:
 Still to do: the dome's height from its plume head (set aside in the ninety-third); the flow's stresses on the lid (M27, M25); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
 
 Tests 273 (23 ignored), among them a filled basin's graben opened through the loop round its margin, and Venus's rifts reaching from rise to rise along its limb, the longest past a thousand kilometres where fifteen hundred had been asked: the population is a draw, and the rifts through the loop read the field as it grows and the loads' stresses with it, which the plan before the loop did not.
+
+## The ninety-fifth milestone: the faults grow and link
+
+The user on the ninety-fourth: the canyons still looked shallow, and Venus had lost the connected look its rifts had. Both came from the same place: each step of the loop opened faults afresh, none grew, and the faults of one step never gathered beside those of another. The user chose for the faults to grow and link.
+
+- **F179.** A rise's and a limb's faults persist through the loop and grow as their driver stretches the lid: each takes up the growth within its shadow, runs its tips on as the field leads them and deepens as far as the system it linked into is long; what falls outside every shadow opens new faults.
+
+How it went:
+
+- **Growth alone.** The faults grew, but the extension each took up was small against what it had, and most of it went to some 1,300 new faults a step: Mars's longest rift 1,133 km, 2.6 km deep. A graben confined to its layer takes up extension as its length, not its square, so it was lengthened as a rift is and gave most of it back; it now lengthens as what it takes up.
+- **Deepening.** A fault blocked at its tips deepened without bound, so that short stubs became deep rifts; its throw now grows only as far as the length of the system it linked into (Cartwright et al. 1995).
+- **Linking.** A tip stopped at the first fault within half its width, and the swarm of small graben stopped every rift short; a tip now stops only at a fault at least half as wide. Mars's longest rift went to 4,360 km, its deepest to the 8 km cap.
+- **Increments.** Venus's rises grow over some six of the loop's steps, so its faults had no time to grow, its limb's extension opening new faults; a rise's or a limb's extension is now spent in sixty-fourths of its whole, each taken up before the next opens more.
+- **Small fixes on the way.** A fault's draw is the one before its id; a rise's faults formed after it stopped growing when extension waited a step; a canyon is carved anew when it grows; the test of when the rise's faults form reads their formation, a canyon being carved on over the melt after.
+
+What the maps show:
+
+- **Mars:** a long, deep canyon along the rise's axis, running out smoothly into a northern basin, branching where its rifts overlap, with mounds between them; 14 rifts carved, the longest 2,940 km, the deepest 8 km.
+- **Venus:** long, deeper rifts through its rises, through the western one as Devana Chasma runs through Beta Regio; the arc of rifts along its limb is there, its rifts a little shorter and more subdued than the planned population's were.
+
+Still to do: Venus's subdued arc (its limb's faults read the whole field, the loads' stresses with it, which the planned population did not); the dome's height from its plume head (set aside in the ninety-third); the flow's stresses on the lid (M27, M25); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
+
+Tests 274 (23 ignored), among them a fault reshaped as drawn coming back as it was.

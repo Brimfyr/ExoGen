@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 34;
+pub const VERSION: u64 = 35;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1690,11 +1690,12 @@ pub struct PlumeProcess {
     shield_built: Vec<f32>,
     /// The aureoles laid on each coarse cell, m (F172).
     aureole: Vec<f32>,
-    /// Canyon depth carved so far per coarse cell, m, and how far each canyon has grown, its
-    /// share of its depth, as carved: the rifts the loop opens join the canyons as they form
-    /// (F178), their carving begun before the step that hears of them.
+    /// Canyon depth carved so far per coarse cell, m, and how far each canyon had grown, its
+    /// share of its depth, its depth and its length when last carved: the rifts the loop
+    /// opens join the canyons as they form (F178), their carving begun before the step that
+    /// hears of them, and grow longer and deeper as they are carved (F179).
     carved: Vec<f32>,
-    canyon_grown: Vec<f64>,
+    canyon_grown: Vec<[f64; 3]>,
     /// The share of that the shields' lava has filled since, m.
     filled: Vec<f32>,
     /// The lava each shield has sent past its foot but not yet erupted, m³ (F163).
@@ -2468,13 +2469,14 @@ impl PlumeProcess {
             }
         }
         // Canyon: the trough deepens and widens through its growth.
-        self.canyon_grown.resize(self.canyons.len(), 0.0);
+        self.canyon_grown.resize(self.canyons.len(), [0.0; 3]);
         for (canyon, grown) in self.canyons.iter().zip(self.canyon_grown.iter_mut()) {
             let p1 = smooth(t1, canyon.start_gyr, canyon.end_gyr);
-            if p1 <= *grown {
+            let now = [p1, canyon.depth, canyon.length];
+            if p1 <= 0.0 || (p1 <= grown[0] && now[1..] == grown[1..]) {
                 continue;
             }
-            *grown = p1;
+            *grown = now;
             let cell = grid.delta() * body_radius;
             let target =
                 trough_depths(&grid, body_radius, canyon, p1, cell, 0.0, &mut self.stamper);
@@ -6213,7 +6215,11 @@ mod tests {
                     plume_dikes += 1;
                 }
             } else {
-                assert!(rising, "a fault at {time}");
+                // A fault breaks while the dome rises; a canyon is carved on over the melt
+                // its mantle makes after (F120, F179).
+                let broke =
+                    t.start_gyr >= rise.start_gyr - 1e-9 && t.start_gyr <= rise.end_gyr + 1e-9;
+                assert!(broke, "a fault at {}", t.start_gyr);
                 faults += 1;
             }
         }

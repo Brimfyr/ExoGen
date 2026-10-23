@@ -584,6 +584,10 @@ pub const RIFT_MIN_TENSION: f64 = 0.05;
 pub const RIFT_CLUSTER_PROBABILITY: f64 = 0.5;
 pub const RIFT_CLUSTER_OFFSET: (f64, f64) = (0.8, 3.5);
 pub const RIFT_LOOP_WIDTH_CELLS: f64 = 2.0;
+/// The increments a rise's or a limb's whole extension is spent in, each taken up by the
+/// faults standing before the next opens more (F179), so that its faults grow and link as
+/// it stretches the lid, whatever the loop's step (a stated choice).
+pub const RIFT_GROWTH_INCREMENTS: f64 = 64.0;
 /// A canyon carried by the loop is carved over the melt its mantle makes per unit area
 /// about the time it formed, m (F120: Mars's melt over the gigayear about its dome's turn,
 /// as the gigayear it was carved over before; set again on its own mantle's history, F122).

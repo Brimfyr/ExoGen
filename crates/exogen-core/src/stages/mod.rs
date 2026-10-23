@@ -384,7 +384,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 131;
+pub const FINISH_VERSION: u64 = 132;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -460,7 +460,6 @@ pub fn run_coarse_loop(
     // The lid's tension faults, opened through the loop as its field stretches it (F178),
     // and those no rise carves.
     let mut rifts = rifting::RiftProcess::new(graph, grid, &thermal, &history);
-    let mut rift_graben: Vec<plume::Trough> = Vec::new();
     // The lid's own faults, the wide ones carved through the loop (F147, F153).
     let mut strain = strain::StrainProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(
@@ -865,14 +864,16 @@ pub fn run_coarse_loop(
                 load,
             });
         }
-        // The faults the field opened in the step (F178): a rift wide enough for the loop's
-        // grid is carved with the rise's canyons, the rest drawn by the finish.
+        // The faults the field opened or grew in the step (F178, F179): a rift wide enough
+        // for the loop's grid is carved with the rise's canyons as it grows, the rest drawn
+        // by the finish.
         if let Some(r) = &mut rifts {
             for f in r.step(&history, t1) {
-                match &mut plume {
-                    Some(p) if f.width >= RIFT_LOOP_WIDTH_CELLS * cell => p.canyons.push(f),
-                    Some(p) => p.graben.push(f),
-                    None => rift_graben.push(f),
+                if let Some(p) = &mut plume {
+                    match p.canyons.iter_mut().find(|c| c.id == f.id) {
+                        Some(c) => *c = f,
+                        None => p.canyons.push(f),
+                    }
                 }
             }
         }
@@ -909,6 +910,7 @@ pub fn run_coarse_loop(
         Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
         None => (None, Vec::new(), Vec::new(), Vec::new()),
     };
+    let rift_graben = rifts.map_or_else(Vec::new, |r| r.finish(plume.is_some()));
     let (rises, shields, mut canyons, mut graben) = match plume {
         Some(p) => (p.rises, p.shields, p.canyons, p.graben),
         None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
