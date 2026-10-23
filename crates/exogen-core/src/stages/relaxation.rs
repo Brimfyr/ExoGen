@@ -369,6 +369,11 @@ pub(crate) fn halve(field: &Field<f32>) -> Option<Field<f32>> {
 pub struct Bands {
     bands: Vec<Vec<f32>>,
     last: Option<Vec<f32>>,
+    /// When kept, the potential of the flow that relaxed the relief, m³ (F188): each band's
+    /// relaxed relief over its wavenumber squared, summed over the steps since it was
+    /// cleared, whose curvature is the flow's strain times the crust's root share and
+    /// thickness.
+    pub flow: Option<Vec<f32>>,
 }
 
 impl Bands {
@@ -414,20 +419,34 @@ impl Bands {
         &mut self,
         height: &mut Field<f32>,
         factors: &[f32],
+        lengths: &[f64],
         own: impl Fn(usize, usize) -> f32,
     ) {
         let count = self.bands.len();
         let h = height.as_mut_slice();
+        let mut flow = self.flow.take().filter(|f| f.len() == h.len());
+        let reach: Vec<f32> = (0..count)
+            .map(|l| {
+                let w = lengths.get(l).or(lengths.last()).copied().unwrap_or(0.0);
+                (w / std::f64::consts::TAU).powi(2) as f32
+            })
+            .collect();
         for (k, cell) in h.iter_mut().enumerate() {
             let mut v = 0.0f32;
+            let mut potential = 0.0f32;
             for (l, band) in self.bands.iter_mut().enumerate() {
                 let f =
                     factors[l.min(factors.len() - 1)] * if l + 1 < count { own(l, k) } else { 1.0 };
+                potential += band[k] * (f - 1.0) * reach[l];
                 band[k] *= f;
                 v += band[k];
             }
             *cell = v;
+            if let Some(flow) = flow.as_mut() {
+                flow[k] += potential;
+            }
         }
+        self.flow = flow;
         self.last = Some(h.to_vec());
     }
 }
@@ -692,7 +711,7 @@ fn relax_deviation(
     // by its weight and relaxes the rest like its neighbours, so that it never stands apart
     // from them.
     held.absorb(height, depth);
-    held.decay(height, &factors, |l, k| {
+    held.decay(height, &factors, &wavelengths, |l, k| {
         let (level, keep) = kept(k);
         let own = if l < level { keep * beside(l, k) } else { 1.0 };
         match &local.rock {
@@ -719,6 +738,48 @@ fn relax_deviation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F188: the flow's potential the bands keep has minus the relaxed relief for its
+    /// Laplacian, to within the bands' spread of wavelengths, which the strain's reading
+    /// scales out (crust::StrainRecord::add_collapse).
+    #[test]
+    fn the_relaxing_flow_s_potential_has_the_relaxed_relief_for_its_laplacian() {
+        let grid = CubeSphere::new(64);
+        let center = grid.center(crate::grid::Cell { face: 0, i: 32, j: 32 });
+        let sigma = 6.0 * grid.delta();
+        let mut h = Field::<f32>::new(grid);
+        for (k, v) in h.as_mut_slice().iter_mut().enumerate() {
+            let x = crate::geom::angle_between(grid.center(grid.cell(k)), center) / sigma;
+            *v = (1000.0 * (-0.5 * x * x).exp()) as f32;
+        }
+        let before = h.as_slice().to_vec();
+        let depth = ((grid.face_size() as f64).log2().floor() as usize).saturating_sub(2);
+        let levels = pyramid_depth(&grid, depth).max(1);
+        let lengths: Vec<f64> = (0..=levels)
+            .map(|l| 2.0 * grid.delta() * (2u32.pow(l as u32 + 1) as f64))
+            .collect();
+        let mut held = Bands {
+            flow: Some(vec![0.0; grid.cell_count()]),
+            ..Default::default()
+        };
+        held.absorb(&h, depth);
+        held.decay(&mut h, &vec![0.5; levels + 1], &lengths, |_, _| 1.0);
+        let flow = held.flow.unwrap();
+        for (i, j) in [(32, 32), (38, 32), (32, 41)] {
+            let c = grid.cell(grid.index(crate::grid::Cell { face: 0, i, j }));
+            let k = grid.index(c);
+            let side = |di: i32, dj: i32| flow[grid.index(grid.neighbor(c, di, dj))] as f64;
+            let laplacian = (side(1, 0) + side(-1, 0) + side(0, 1) + side(0, -1)
+                - 4.0 * flow[k] as f64)
+                / (grid.delta() * grid.delta());
+            let relaxed = (h.as_slice()[k] - before[k]) as f64;
+            let ratio = -laplacian / relaxed;
+            assert!(
+                ratio > 0.3 && ratio < 3.0,
+                "({i}, {j}): laplacian {laplacian}, relaxed {relaxed}"
+            );
+        }
+    }
 
     #[test]
     fn a_pyramid_level_spreads_as_its_kernels_add_up() {
@@ -909,7 +970,7 @@ mod tests {
                     held = Bands::default();
                 }
                 held.absorb(&h, depth);
-                held.decay(&mut h, &factors, |_, _| 1.0);
+                held.decay(&mut h, &factors, &[], |_, _| 1.0);
             }
             h.as_slice().to_vec()
         };

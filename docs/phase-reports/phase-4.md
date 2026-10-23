@@ -2489,3 +2489,17 @@ How it went:
 - **A grating.** Packets covering each place eight times over summed to one wave across whole domains, a combed grating; at one and a half times over, with their strike and spacing scattered, they break into en echelon segments and cross as basins and domes.
 
 Still to do: the strain after the event, on tesserae and plains alike; the lid's thickening where it is shortened; the shortening the folds cannot take up.
+
+## The hundred-and-second milestone: the plateaus' collapse
+
+The user found the hundred-and-first milestone's tesserae reading as a giant fingerprint, or dunes with very long rolls, and asked whether the natural look should come from a shader in the artistic pass. The fabric below the map's cells, the brittle layer's ribbons and short folds, belongs to such a shader, fed by these fields; the fingerprint was a gap in the model, one deformation where tesserae have several, and the plateaus' collapse, which the relaxation already computes, was the deformation missing.
+
+- **F188.** The lower crust's flow as the relief relaxes strains the lid by its potential's curvature, recorded over the lid's life as one more set: graben and folds across the drag's.
+
+How it went:
+
+- **Half the strain.** Each band's wavenumber is the one it is named for, which its content spreads about: the potential's Laplacian came to half the relaxed relief, and is scaled to it over the body.
+- **An egg crate.** Sine folds crossing made a field of round knobs, and their tops broke through the plains as blobs; a narrow crest over a broad trough reads as ridges.
+- **Ten minutes.** Every set's packets were looked up within the widest set's reach, the lid's 97 km folds, some five hundred coarse cells about each point; within each set's own reach the pass takes 81 s.
+
+Still to do: the strain after the event; the fabric under the cells, for the artistic pass's shader.

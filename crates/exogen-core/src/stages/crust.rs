@@ -50,6 +50,8 @@ pub struct StrainRecord {
     pub from: f64,
     pub to: f64,
     pub sets: Vec<StrainSet>,
+    /// The strain the lower crust's flow put on the lid as the relief relaxed (F188).
+    pub collapse: Option<StrainSet>,
 }
 
 impl StrainRecord {
@@ -58,7 +60,86 @@ impl StrainRecord {
             from,
             to,
             sets: Vec::new(),
+            collapse: None,
         }
+    }
+
+    /// Whether a step from `t0` to `t1`, Gyr, falls in the record's times, by its middle.
+    pub fn covers(&self, t0: f64, t1: f64) -> bool {
+        let t = 0.5 * (t0 + t1);
+        t >= self.from && t < self.to
+    }
+
+    /// Adds the strain the lower crust's flow put on the lid over a step ending at `t`, Gyr,
+    /// as the relief relaxed by `relaxed`, m (F188). The flow runs down the slope of its
+    /// potential, `flow` (relaxation::Bands), so its strain is the potential's curvature over
+    /// the crust's root share and thickness, `crust`, m, its trace the crust's thinning: the
+    /// lid, whose crust thins as its lower part flows out from under the highs, stretches
+    /// with it there and is pressed where it flows in. The potential is scaled so that its
+    /// Laplacian is the relief relaxed, which the bands' spread of wavelengths about the
+    /// ones they stand for blurs.
+    pub fn add_collapse(
+        &mut self,
+        grid: CubeSphere,
+        body_radius: f64,
+        flow: &[f32],
+        relaxed: &[f32],
+        crust: &[f32],
+        t: f64,
+    ) {
+        let airy = (DENSITY_ROCK - DENSITY_CRUST_ROCK) / DENSITY_ROCK;
+        let padded = crate::grid::projection::PaddedField::new(&grid, flow);
+        let h = grid.delta();
+        let n = grid.cell_count();
+        let curvatures: Vec<[f64; 3]> = (0..n)
+            .into_par_iter()
+            .map(|k| {
+                curvature(
+                    &|e| crate::grid::projection::sample_bilinear(&grid, &padded, e) as f64,
+                    grid.center(grid.cell(k)),
+                    h,
+                )
+            })
+            .collect();
+        let r2 = body_radius * body_radius;
+        let (mut cross_sum, mut square) = (0.0f64, 0.0f64);
+        for (c, &dh) in curvatures.iter().zip(relaxed) {
+            let laplacian = (c[0] + c[2]) / r2;
+            cross_sum -= laplacian * dh as f64;
+            square += laplacian * laplacian;
+        }
+        if square <= 0.0 {
+            return;
+        }
+        let scale = cross_sum / square / (airy * r2);
+        let strain: Vec<[f32; 3]> = curvatures
+            .iter()
+            .zip(crust)
+            .map(|(&[ee, en, nn], &c)| {
+                if c <= 0.0 {
+                    return [0.0; 3];
+                }
+                let f = scale / c as f64;
+                [(ee * f) as f32, (en * f) as f32, (nn * f) as f32]
+            })
+            .collect();
+        let set = self.collapse.get_or_insert_with(|| StrainSet {
+            state: usize::MAX,
+            time: 0.0,
+            weight: 0.0,
+            strain: vec![[0.0; 3]; n],
+            pressed: vec![0.0; n],
+            pulled: vec![0.0; n],
+        });
+        let mut weight = 0.0f64;
+        for (s, inc) in set.strain.iter_mut().zip(&strain) {
+            s[0] += inc[0];
+            s[1] += inc[1];
+            s[2] += inc[2];
+            weight += (inc[0].abs() + inc[2].abs()) as f64;
+        }
+        set.time = (set.time * set.weight + t * weight) / (set.weight + weight).max(1e-300);
+        set.weight += weight;
     }
 
     fn set(&mut self, state: usize, cells: usize) -> &mut StrainSet {
@@ -82,9 +163,15 @@ impl StrainRecord {
 /// The pattern's second derivatives at a direction, per radian², in the direction's east
 /// and north basis: [ee, en, nn].
 fn hessian(support: &Support, t: f64, d: [f64; 3], h: f64) -> [f64; 3] {
+    curvature(&|e| support.pattern(t, e), d, h)
+}
+
+/// A field's second derivatives at a direction, per radian², read `h` radians about it, in
+/// the direction's east and north basis: [ee, en, nn].
+fn curvature(field: &dyn Fn([f64; 3]) -> f64, d: [f64; 3], h: f64) -> [f64; 3] {
     let (east, north) = local_basis(d);
-    let at = |theta: f64, phi: f64| support.pattern(t, offset(d, east, north, theta, phi));
-    let p0 = support.pattern(t, d);
+    let at = |theta: f64, phi: f64| field(offset(d, east, north, theta, phi));
+    let p0 = field(d);
     let q = std::f64::consts::FRAC_PI_4;
     let diagonal = h * std::f64::consts::SQRT_2;
     let ee = (at(h, 0.0) - 2.0 * p0 + at(h, 4.0 * q)) / (h * h);
@@ -342,6 +429,56 @@ mod tests {
         assert!(median(&mut pressed) < 0.0 && median(&mut pulled) > 0.0);
         assert!(strained < grid.cell_count() * record.sets.len());
         assert!(deviatoric * 4 > strained, "{deviatoric} of {strained}");
+    }
+
+    /// F188: a high relaxing stretches the lid every way on its crest, and at its foot,
+    /// where the lower crust flows in, stretches it around the high and presses it toward
+    /// the high: graben radial there, folds concentric. Its trace is the crust's thinning.
+    #[test]
+    fn a_relaxing_high_stretches_its_crest_and_presses_its_foot() {
+        let grid = CubeSphere::new(64);
+        let r = 6.05e6;
+        let center = grid.center(crate::grid::Cell {
+            face: 0,
+            i: 32,
+            j: 32,
+        });
+        let sigma = 5.0 * grid.delta();
+        let n = grid.cell_count();
+        // A relaxed high of 100 m at its crest, and the potential whose Laplacian it is.
+        let x2 = |k: usize| {
+            let a = crate::geom::angle_between(grid.center(grid.cell(k)), center) / sigma;
+            a * a
+        };
+        let flow: Vec<f32> = (0..n).map(|k| (-(-0.5 * x2(k)).exp()) as f32).collect();
+        let relaxed: Vec<f32> = (0..n)
+            .map(|k| {
+                let q = x2(k);
+                (-100.0 * (2.0 - q) * (-0.5 * q).exp()) as f32
+            })
+            .collect();
+        let crust = vec![30e3f32; n];
+        let mut record = StrainRecord::new(0.0, 1.0);
+        record.add_collapse(grid, r, &flow, &relaxed, &crust, 0.5);
+        let set = record.collapse.as_ref().unwrap();
+        let principal = |i: u32, j: u32| {
+            let k = grid.index(crate::grid::Cell { face: 0, i, j });
+            let [a, b, c] = set.strain[k];
+            let m = 0.5 * (a + c);
+            let rad = (0.25 * (a - c) * (a - c) + b * b).sqrt();
+            (m - rad, m + rad, a + c)
+        };
+        let airy = ((DENSITY_ROCK - DENSITY_CRUST_ROCK) / DENSITY_ROCK) as f32;
+        let (least, greatest, trace) = principal(32, 32);
+        assert!(least > 0.0 && greatest > 0.0, "{least} {greatest}");
+        // The crest thins by its relaxed relief over the root's share.
+        let thinning = 200.0 / airy / 30e3;
+        assert!(
+            (trace - thinning).abs() < 0.3 * thinning,
+            "{trace} {thinning}"
+        );
+        let (least, greatest, _) = principal(32 + 9, 32);
+        assert!(least < 0.0 && greatest > 0.0, "{least} {greatest}");
     }
 
     /// F184: after an overturn Venus's crust reaches below its regrowing lid, and the flow

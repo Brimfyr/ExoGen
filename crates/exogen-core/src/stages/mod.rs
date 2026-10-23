@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 137;
+pub const FINISH_VERSION: u64 = 138;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -654,6 +654,12 @@ pub fn run_coarse_loop(
                 d => d,
             };
             let before: Vec<f32> = layers.bedrock.as_slice().to_vec();
+            // Within the lid the tesserae keep, the flow that relaxes the relief is kept for
+            // the strain it puts on the lid (F188).
+            let collapsing = lid_strain.as_ref().is_some_and(|r| r.covers(t0, t1));
+            if collapsing {
+                relax_bands.flow = Some(vec![0.0; grid.cell_count()]);
+            }
             relaxation::relax(
                 &mut relax_bands,
                 &mut layers.bedrock,
@@ -673,6 +679,16 @@ pub fn run_coarse_loop(
             // The crust keeps the relief compensated: what the flow took from under a high
             // it moved to under a low (F170, F184).
             let airy = ((DENSITY_ROCK - DENSITY_CRUST_ROCK) / DENSITY_ROCK) as f32;
+            if let (Some(record), Some(flow)) = (lid_strain.as_mut(), relax_bands.flow.take()) {
+                let relaxed: Vec<f32> = layers
+                    .bedrock
+                    .as_slice()
+                    .iter()
+                    .zip(&before)
+                    .map(|(h, b)| h - b)
+                    .collect();
+                record.add_collapse(grid, body_radius, &flow, &relaxed, &crust, t1);
+            }
             let thickness = layers.crust_thickness.as_mut_slice();
             for ((c, h), b) in thickness.iter_mut().zip(layers.bedrock.as_slice()).zip(&before) {
                 *c += (h - b) / airy;
@@ -999,6 +1015,7 @@ pub fn run_coarse_loop(
         r.strain = record
             .sets
             .into_iter()
+            .chain(record.collapse)
             .filter(|s| s.strain.iter().any(|v| v.iter().any(|&x| x != 0.0)))
             .map(|s| episodic::LidStrain {
                 time: s.time,

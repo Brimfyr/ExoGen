@@ -32,7 +32,7 @@ use crate::stages::tessera::TesseraFabric;
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 12;
+pub const VERSION: u64 = 13;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -429,17 +429,22 @@ pub fn resurfacing_compute(
         seed,
         &|k| rec.threshold - rec.score[k] < band,
     );
-    let drawn: Vec<f32> = (0..grid.cell_count())
-        .into_par_iter()
-        .map(|idx| {
+    // The fabric over the tesserae, then beyond them as far below their edge as its highest
+    // ridges stand above its median.
+    let draw_within = |drawn: &mut Vec<f32>, from: f32, to: f32| {
+        if fabric.is_empty() {
+            return;
+        }
+        drawn.par_iter_mut().enumerate().for_each(|(idx, v)| {
             let d = grid.center(grid.cell(idx));
-            if below(d) < band && !fabric.is_empty() {
-                fabric.at(d) as f32
-            } else {
-                0.0
+            let b = below(d);
+            if b >= from && b < to {
+                *v = fabric.at(d) as f32;
             }
-        })
-        .collect();
+        });
+    };
+    let mut drawn = vec![0.0f32; grid.cell_count()];
+    draw_within(&mut drawn, f32::NEG_INFINITY, 0.0);
     // Centred so that half of the tesserae's fabric stands above the plains at the edge;
     // beyond its highest ridges' reach all of it is buried.
     let median = {
@@ -456,6 +461,7 @@ pub fn resurfacing_compute(
         }
     };
     let reach = (drawn.iter().fold(0.0f32, |m, &v| m.max(v)) - median).min(band);
+    draw_within(&mut drawn, 0.0, reach);
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let deep = layers.deep.as_slice();

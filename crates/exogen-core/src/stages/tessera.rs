@@ -60,10 +60,10 @@ struct Packet {
 pub struct TesseraFabric {
     coarse: CubeSphere,
     body_radius: f64,
-    packets: Vec<Vec<Packet>>,
+    /// Per family, the packets by coarse cell and how many coarse cells about a point they
+    /// reach.
+    packets: Vec<(Vec<Vec<Packet>>, i32)>,
     families: usize,
-    /// How many coarse cells about a point the packets reach.
-    reach: i32,
     /// The highest relief any one wave reaches, m, for the fabric's bound.
     pub bound: f64,
 }
@@ -77,7 +77,9 @@ fn profile(phase: f64, graben: bool) -> f64 {
         // A trough across a third of the spacing, flat between, taken about its mean.
         -((phase.cos() - 0.5).max(0.0) / 0.5 - GRABEN_MEAN)
     } else {
-        phase.cos()
+        // A narrow crest and a broad trough, as the tesserae's ridges are narrower than the
+        // troughs between (Hansen and Willis 1996), taken about its mean.
+        4.0 / std::f64::consts::PI - 2.0 * (0.5 * phase).sin().abs()
     }
 }
 
@@ -104,9 +106,8 @@ impl TesseraFabric {
         let coarse_cell = coarse.delta() * body_radius;
         let rng = Rng::new(seed ^ 0x7E55_E2A0);
         let n = coarse.cell_count();
-        let mut packets: Vec<Vec<Packet>> = vec![Vec::new(); n];
+        let mut packets: Vec<(Vec<Vec<Packet>>, i32)> = Vec::new();
         let mut families = 0usize;
-        let mut widest = 0.0f64;
         let mut bound = 0.0f64;
         // The layers: the brittle layer the faults cut and the elastic lid.
         for (s, set) in sets.iter().enumerate() {
@@ -240,24 +241,26 @@ impl TesseraFabric {
                         Some((k, out))
                     })
                     .collect();
-                for (k, mut list) in made {
+                let mut cells: Vec<Vec<Packet>> = vec![Vec::new(); n];
+                let mut widest = 0.0f64;
+                for (k, list) in made {
                     for p in &list {
                         for w in &p.waves {
                             widest = widest.max(w.along).max(w.across);
                             bound = bound.max(w.relief);
                         }
                     }
-                    packets[k].append(&mut list);
+                    cells[k] = list;
                 }
+                let reach = ((PACKET_CUTOFF * widest + coarse_cell) / coarse_cell).ceil() as i32;
+                packets.push((cells, reach));
             }
         }
-        let reach = ((PACKET_CUTOFF * widest + coarse_cell) / coarse_cell).ceil() as i32;
         Self {
             coarse: *coarse,
             body_radius,
             packets,
             families,
-            reach,
             bound,
         }
     }
@@ -275,30 +278,32 @@ impl TesseraFabric {
         let mut sums = vec![[0.0f64; 4]; self.families];
         let (home, _, _) = self.coarse.locate(d);
         let r = self.body_radius;
-        for di in -self.reach..=self.reach {
-            for dj in -self.reach..=self.reach {
-                let c = self.coarse.neighbor(home, di, dj);
-                for p in &self.packets[self.coarse.index(c)] {
-                    let v = [
-                        (d[0] - p.center[0]) * r,
-                        (d[1] - p.center[1]) * r,
-                        (d[2] - p.center[2]) * r,
-                    ];
-                    let normal = p.center;
-                    for (w, wave) in p.waves.iter().enumerate() {
-                        let u = dot(v, wave.dir);
-                        let side = cross(normal, wave.dir);
-                        let s = dot(v, side);
-                        let q = (u / wave.across).powi(2) + (s / wave.along).powi(2);
-                        if q > PACKET_CUTOFF * PACKET_CUTOFF {
-                            continue;
+        for (cells, reach) in &self.packets {
+            for di in -reach..=*reach {
+                for dj in -reach..=*reach {
+                    let c = self.coarse.neighbor(home, di, dj);
+                    for p in &cells[self.coarse.index(c)] {
+                        let v = [
+                            (d[0] - p.center[0]) * r,
+                            (d[1] - p.center[1]) * r,
+                            (d[2] - p.center[2]) * r,
+                        ];
+                        let normal = p.center;
+                        for (w, wave) in p.waves.iter().enumerate() {
+                            let u = dot(v, wave.dir);
+                            let side = cross(normal, wave.dir);
+                            let s = dot(v, side);
+                            let q = (u / wave.across).powi(2) + (s / wave.along).powi(2);
+                            if q > PACKET_CUTOFF * PACKET_CUTOFF {
+                                continue;
+                            }
+                            let weight = (-0.5 * q).exp();
+                            let e = &mut sums[p.family];
+                            e[2 * w] += weight
+                                * wave.relief
+                                * profile(wave.wavenumber * u + wave.phase, wave.graben);
+                            e[2 * w + 1] += weight * weight;
                         }
-                        let weight = (-0.5 * q).exp();
-                        let e = &mut sums[p.family];
-                        e[2 * w] += weight
-                            * wave.relief
-                            * profile(wave.wavenumber * u + wave.phase, wave.graben);
-                        e[2 * w + 1] += weight * weight;
                     }
                 }
             }
