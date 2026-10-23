@@ -462,6 +462,60 @@ mod tests {
         }
     }
 
+    /// Diagnostic: each rocky preset's stiff lid against its crust through its life and
+    /// after each overturn, and the melt its mantle makes in the surge after an overturn,
+    /// per unit area; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_stiff_lids_and_surges() {
+        for name in ["Venus", "Mars", "Moon", "Mercury"] {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let thermal = crate::thermal::ThermalHistory::from_graph(&g);
+            let h = thermal.mantle.clone().unwrap();
+            let crust = g.f64("tectonics.initial_crust_thickness");
+            let age = g.f64("body.age");
+            let mut times: Vec<f64> = vec![0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 3.0, age];
+            for &o in h.overturns.iter().rev().take(2) {
+                for d in [0.002, 0.01, 0.03, 0.06, 0.1, 0.2] {
+                    times.push(o + d);
+                }
+            }
+            times.sort_by(f64::total_cmp);
+            for t in times {
+                let s = thermal.at(t.min(age));
+                println!(
+                    "{name} t {t:.3}: stiff lid {:.1} km, lid {:.1} km, lithosphere {:.1} km, elastic {:.1} km, crust {:.0} km, mantle {:.0} K, flux {:.0} mW/m2, ambient {:.2}, magma {:.2e} m3/s",
+                    h.stiff_lid_at(t) / 1e3,
+                    h.lid_at(t) / 1e3,
+                    s.lithosphere / 1e3,
+                    s.elastic / 1e3,
+                    crust / 1e3,
+                    h.temperature_at(t),
+                    s.heat_flux * 1e3,
+                    s.ambient,
+                    s.magma_rate
+                );
+            }
+            let area = 4.0 * std::f64::consts::PI * g.f64("body.radius").powi(2);
+            for &o in &h.overturns {
+                let (mut t, mut melt, mut dur) = (o, 0.0, 0.0);
+                while t < age {
+                    let s = thermal.at(t);
+                    if (s.ambient < 0.01 && t > o + 0.002) || t > o + 0.5 {
+                        break;
+                    }
+                    melt += s.magma_rate * s.ambient * 0.001 * crate::constants::SECONDS_PER_GYR;
+                    t += 0.001;
+                    dur += 0.001;
+                }
+                println!(
+                    "{name} overturn at {o:.3}: surge {dur:.3} Gyr, melt {:.2} km per unit area",
+                    melt / area / 1e3
+                );
+            }
+        }
+    }
+
     /// Diagnostic: Venus's overturns under a range of frictions; run with `--ignored
     /// --nocapture`.
     #[test]

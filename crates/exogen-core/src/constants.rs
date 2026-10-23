@@ -436,6 +436,20 @@ pub const ROCK_POISSON: f64 = 0.25;
 pub const DIABASE_CREEP: (f64, f64, f64) = (8.0, 4.7, 485.0e3);
 pub const CRUST_FLOW_RELIEF: f64 = 1_000.0;
 pub const CRUST_FLOW_MIN_VISCOSITY: f64 = 1.0e18;
+/// The crust the mantle's flow carries (F184): the thickest a basaltic crust stands before
+/// its base turns to eclogite, denser than the mantle, and founders, m: some 65 km at a
+/// thermal gradient of 10 °C/km, less at other gradients (Semprich et al. 2025, 21 to 65 km
+/// over the gradients; the transition at 60 to 70 km in the earlier estimates Orth and
+/// Solomatov 2012 review), and a crust thickened faster than its root can transform
+/// outruns it (Namiki and Solomon 1993); a stated choice. The flow is followed in
+/// substeps this long, Gyr, the lid regrowing after an overturn within a few of them.
+pub const CRUST_MAX_THICKNESS: f64 = 65e3;
+pub const CRUST_DRAG_SUBSTEP_GYR: f64 = 0.001;
+/// A rocky lid's relief relaxes under each cell's own crust (F184), the lid as it stood
+/// through this many substeps of the loop's step, from a table of each band's survival over
+/// this many crusts between the thinnest and the thickest.
+pub const RELAX_SUBSTEPS: usize = 10;
+pub const ROCK_CRUST_TABLE: usize = 48;
 /// Shields on a rise: how many, the largest as a fraction of the rise diameter (Olympus
 /// Mons: 600 km on a 5,000 km rise), the flank slope, the flank shape, where on the rise
 /// they sit (fraction of its radius; each starts as its rise's stretching wanes, F119,
@@ -884,10 +898,11 @@ pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// The episodic lid (PLAN.md 4.3, Venus). The event fills every depression this far
 /// towards its spill point and lays this veneer everywhere else on the plains, m; the
 /// tessera are the highest-standing fraction of the surface by a height smoothed this
-/// many passes, keep the surface the overturn before the event laid (F121), or one this much
-/// older than the event where there was none, Gyr, and carry a fabric
-/// of this relief, m, at this wavelength, m. After the event the eruptions follow the
-/// mantle's history (F165).
+/// many passes, less what the plumes and the mantle's flow hold up, which is the crust the
+/// flow thickened over its downwellings (F184), keep the surface the overturn before the
+/// event laid (F121), or one this much older than the event where there was none, Gyr,
+/// and carry a fabric of this relief, m, at this wavelength, m. After the event the
+/// eruptions follow the mantle's history (F165).
 pub const TESSERA_FRACTION: f64 = 0.08;
 pub const TESSERA_SMOOTHING_PASSES: usize = 20;
 pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
@@ -896,11 +911,6 @@ pub const TESSERA_FABRIC_LENGTH: f64 = 30e3;
 /// Broader folds under the fine fabric, as the tessera's ridge belts are.
 pub const TESSERA_FOLD_RELIEF: f64 = 800.0;
 pub const TESSERA_FOLD_LENGTH: f64 = 120e3;
-/// Tessera stand as crustal plateaus: thickened crust held up isostatically, 1 to 4 km
-/// above the plains (Ovda, Thetis, Alpha Regio). The uplift ramps in over a width of the
-/// smoothed-height score about the tessera threshold, so the plateau edge is a slope.
-pub const TESSERA_PLATEAU_UPLIFT: f64 = 2_000.0;
-pub const TESSERA_EDGE_WIDTH: f64 = 300.0;
 pub const EPISODIC_FILL_FRACTION: f64 = 0.7;
 pub const EPISODIC_VENEER: f64 = 20.0;
 /// Pancake domes on an episodic lid's plains: how many per m² (Venus: some 150),

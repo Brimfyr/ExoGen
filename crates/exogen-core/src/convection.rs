@@ -275,6 +275,12 @@ impl Support {
     pub fn at(&self, t: f64, d: [f64; 3]) -> f64 {
         self.convection.support(t, self.turn.undo(d))
     }
+
+    /// The pattern at a time and a direction of the map, of unit root mean square: above
+    /// nothing over an upwelling, below it over a downwelling.
+    pub fn pattern(&self, t: f64, d: [f64; 3]) -> f64 {
+        self.convection.pattern(t, self.turn.undo(d))
+    }
 }
 
 #[cfg(test)]
@@ -371,19 +377,34 @@ mod tests {
         let rng = Rng::new(17);
         for name in ["Mercury", "Venus", "Moon", "Mars"] {
             let (c, mantle, age) = convection(name);
-            let cells = cells(&mantle, age);
-            let values: Vec<f64> = (0..20_000u64)
-                .map(|i| c.support(age, rng.unit_direction(i, 0)))
-                .collect();
-            let rms = (values.iter().map(|v| v * v).sum::<f64>() / values.len() as f64).sqrt();
-            let lo = values.iter().cloned().fold(f64::MAX, f64::min);
-            let hi = values.iter().cloned().fold(f64::MIN, f64::max);
-            println!(
-                "{name}: degree {:.1}, {} renewals, unbent rms {:.0} m, standing rms {rms:.0} m, {lo:.0} to {hi:.0} m",
-                cells.degree,
-                c.renewals(),
-                cells.support
-            );
+            let overturn = mantle.last_overturn().map(|o| o + 0.01);
+            for t in [0.5, 1.0, 2.0, 3.0]
+                .into_iter()
+                .chain(overturn)
+                .chain([age])
+            {
+                let cells = cells(&mantle, t);
+                let values: Vec<f64> = (0..20_000u64)
+                    .map(|i| c.support(t, rng.unit_direction(i, 0)))
+                    .collect();
+                let pattern: Vec<f64> = (0..20_000u64)
+                    .map(|i| c.pattern(t, rng.unit_direction(i, 0)))
+                    .collect();
+                let rms = (values.iter().map(|v| v * v).sum::<f64>() / values.len() as f64).sqrt();
+                let lo = values.iter().cloned().fold(f64::MAX, f64::min);
+                let hi = values.iter().cloned().fold(f64::MIN, f64::max);
+                let plo = pattern.iter().cloned().fold(f64::MAX, f64::min);
+                let phi = pattern.iter().cloned().fold(f64::MIN, f64::max);
+                println!(
+                    "{name} t {t:.3}: degree {:.1}, depth {:.0} km, sublayer {:.1} km, renewal {:.1} Myr, {} renewals, unbent rms {:.0} m, standing rms {rms:.0} m, {lo:.0} to {hi:.0} m, pattern {plo:.2} to {phi:.2}",
+                    cells.degree,
+                    cells.depth / 1e3,
+                    cells.sublayer / 1e3,
+                    cells.renewal * 1e3,
+                    c.renewals(),
+                    cells.support
+                );
+            }
         }
     }
 

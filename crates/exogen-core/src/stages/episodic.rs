@@ -7,9 +7,11 @@
 //! the plains: every depression fills most of the way to its spill point, which takes
 //! the old craters with it and leaves smooth lowlands under the regional slopes, while
 //! the highest-standing terrain, a small fraction, survives as tessera, deformed into a
-//! fabric of intersecting ridges. Afterwards the surface ages again under a sparse,
-//! un-degraded crater population, with flow fields, coronae over the mantle's diapirs
-//! (F145, the corona process) and steep-sided pancake domes on the plains.
+//! fabric of intersecting ridges: the plateaus of crust the mantle's flow thickened over
+//! its downwellings after the overturn before (F184), compensated on their roots.
+//! Afterwards the surface ages again under a sparse, un-degraded crater population, with
+//! flow fields, coronae over the mantle's diapirs (F145, the corona process) and
+//! steep-sided pancake domes on the plains.
 
 use rayon::prelude::*;
 use std::cmp::Reverse;
@@ -29,7 +31,7 @@ use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 9;
+pub const VERSION: u64 = 10;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -162,13 +164,6 @@ pub fn tessera_texture(d: [f64; 3], noise: &GradientNoise, body_radius: f64) -> 
     TESSERA_RELIEF * (a.max(b) - 0.5) + TESSERA_FOLD_RELIEF * (fold - 0.5)
 }
 
-/// The plateau uplift of the tessera at a smoothed-height score, m: full above the
-/// threshold, ramping in over the edge width below it.
-pub fn plateau_lift(score: f32, threshold: f32) -> f32 {
-    let x = ((score - threshold) / (2.0 * TESSERA_EDGE_WIDTH as f32) + 0.5).clamp(0.0, 1.0);
-    TESSERA_PLATEAU_UPLIFT as f32 * x * x * (3.0 - 2.0 * x)
-}
-
 /// Pancake dome profile at a fraction of the radius: flat top, steep sides.
 pub fn dome_profile(x: f64) -> f64 {
     if x >= 1.0 {
@@ -294,14 +289,15 @@ impl EpisodicProcess {
 
     /// Apply what falls in the step: the event, and the coarse part of the coronae.
     /// Returns the event's fill when it happens, for the lava ledger. The tessera are
-    /// chosen on the height without the plume rises' domes, which are young dynamic
-    /// topography, not the old thick crust.
+    /// chosen on the height less what the plume rises' domes and the mantle's flow hold up
+    /// (`held`), which is young dynamic topography, not the crust: the plateaus of crust
+    /// the flow thickened stand highest (F184), and keep their ground as it is.
     pub fn step(
         &mut self,
         layers: &mut LayerSet,
         t0: f64,
         t1: f64,
-        dome: Option<&[f32]>,
+        held: Option<&[f32]>,
     ) -> Option<Vec<f32>> {
         let grid = self.grid;
         let body_radius = self.body_radius;
@@ -309,7 +305,7 @@ impl EpisodicProcess {
         if !self.done && self.event_time > t0 && self.event_time <= t1 {
             self.done = true;
             let heights = layers.bedrock.as_slice().to_vec();
-            let old_crust: Vec<f32> = match dome {
+            let old_crust: Vec<f32> = match held {
                 Some(l) => heights.iter().zip(l).map(|(h, l)| h - l).collect(),
                 None => heights.clone(),
             };
@@ -330,18 +326,14 @@ impl EpisodicProcess {
                 let lava_age = layers.lava_age.as_mut_slice();
                 let lava = overturn_composition(self.event_time);
                 for k in 0..n {
-                    let lift = plateau_lift(score[k], threshold);
                     if score[k] > threshold {
-                        fill[k] = lift;
-                        bedrock[k] += lift;
                         units[k] = UNIT_TESSERA;
                         ages[k] = ages[k].min(tessera_age);
                         cover[k] = 0.0;
                         continue;
                     }
                     let t = (EPISODIC_FILL_FRACTION as f32 * (filled[k] - heights[k])).max(0.0)
-                        + EPISODIC_VENEER as f32
-                        + lift;
+                        + EPISODIC_VENEER as f32;
                     fill[k] = t;
                     bedrock[k] += t;
                     ages[k] = self.event_time as f32;
@@ -431,8 +423,6 @@ pub fn resurfacing_compute(
         let later = deform.since_event(d, rec.time_gyr) as f32;
         let ground = bedrock[idx] - remaining - later;
         let carry = remaining - own + later;
-        let score = sample_bilinear(coarse, &padded_score, d);
-        let lift = plateau_lift(score, rec.threshold);
         // The tessera's share of the cell, from where its score's margin crosses it, and
         // the plains' the rest (F131): a contact drawn by share, not a staircase of cells.
         let held = crate::fields::level_share(
@@ -442,7 +432,7 @@ pub fn resurfacing_compute(
             grid.delta(),
         ) as f32;
         let tessera = if held > 0.0 {
-            ground + lift + tessera_texture(d, &noise, body_radius) as f32 + carry
+            ground + tessera_texture(d, &noise, body_radius) as f32 + carry
         } else {
             0.0
         };
@@ -451,7 +441,6 @@ pub fn resurfacing_compute(
             ground
                 + (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0)
                 + EPISODIC_VENEER as f32
-                + lift
                 + carry
         } else {
             0.0

@@ -12,6 +12,7 @@
 //! by a hash of the parameters and seeds they depend on.
 
 pub mod corona;
+pub mod crust;
 pub mod cryo;
 pub mod deform;
 pub mod episodic;
@@ -384,7 +385,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 133;
+pub const FINISH_VERSION: u64 = 134;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -559,13 +560,41 @@ pub fn run_coarse_loop(
                 p.set_floor(f);
             }
         } else if let Some(crust_at) = &rock_crust {
+            // The mantle's flow carries the crust beneath the stiff lid toward its
+            // downwellings (F184), before the lower crust's own flow spreads what piles up.
+            if let (Some(sup), Some(mantle)) = (&support, &thermal.mantle) {
+                let moved = crust::drag(
+                    grid,
+                    layers.crust_thickness.as_mut_slice(),
+                    layers.bedrock.as_mut_slice(),
+                    sup,
+                    mantle,
+                    t0,
+                    t1,
+                );
+                if moved.carried > 0 && std::env::var_os("EXOGEN_DEBUG").is_some() {
+                    eprintln!(
+                        "crust {t0:.3} to {t1:.3}: the flow carried crust in {} cell-substeps, by up to {:.0} m, the thickest {:.1} km, the mean {:.1} km, {:.2} km of it foundered",
+                        moved.carried,
+                        moved.most,
+                        moved.thickest / 1e3,
+                        moved.mean / 1e3,
+                        moved.foundered / 1e3
+                    );
+                }
+            }
             // A rocky lid's lower crust flows where it is warm, the relief relaxing the
-            // longest wavelengths last (F170): under the thick crust, its tenth thickest,
-            // whose base is the warmest.
-            let mut crust: Vec<f32> = layers.crust_thickness.as_slice().to_vec();
-            let k = (0.9 * (crust.len() - 1) as f64) as usize;
-            let (_, thick, _) = crust.select_nth_unstable_by(k, f32::total_cmp);
-            let shell = crust_at(t1, *thick as f64);
+            // longest wavelengths last (F170), each cell under its own crust, the lid as it
+            // stood through the step (F184).
+            let crust: Vec<f32> = layers.crust_thickness.as_slice().to_vec();
+            let thickest = crust.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
+            let shell = crust_at(t1, thickest);
+            let substeps: Vec<(f64, f64)> = (0..RELAX_SUBSTEPS)
+                .map(|i| {
+                    let sub = (t1 - t0) / RELAX_SUBSTEPS as f64;
+                    (t0 + (i as f64 + 0.5) * sub, sub)
+                })
+                .collect();
             // The rises the plumes hold up are not the crust's to relax: the relief relaxes
             // toward their domes.
             let body_radius = graph.f64("body.radius");
@@ -595,6 +624,7 @@ pub fn run_coarse_loop(
                 None if support.is_some() => Some(lifted.clone()),
                 d => d,
             };
+            let before: Vec<f32> = layers.bedrock.as_slice().to_vec();
             relaxation::relax(
                 &mut relax_bands,
                 &mut layers.bedrock,
@@ -603,9 +633,21 @@ pub fn run_coarse_loop(
                 &shell,
                 &relaxation::Local {
                     equilibrium: equilibrium.as_deref(),
+                    rock: Some(relaxation::RockCrust {
+                        crust: &crust,
+                        shell_at: &**crust_at,
+                        steps: &substeps,
+                    }),
                     ..Default::default()
                 },
             );
+            // The crust keeps the relief compensated: what the flow took from under a high
+            // it moved to under a low (F170, F184).
+            let airy = ((DENSITY_ROCK - DENSITY_CRUST_ROCK) / DENSITY_ROCK) as f32;
+            let thickness = layers.crust_thickness.as_mut_slice();
+            for ((c, h), b) in thickness.iter_mut().zip(layers.bedrock.as_slice()).zip(&before) {
+                *c += (h - b) / airy;
+            }
         }
         // The shell's partial resurfacing: the lanes of grooved terrain at their time.
         if let Some(p) = &mut ice_shell_process {
@@ -2767,17 +2809,20 @@ fn ice_shell_history(
 /// A rocky lid's crust through time for relaxation (F170), as a function of the time and
 /// the crust's thickness: its base's temperature on the lid's conductive profile, from the
 /// surface to the mantle at the lithosphere's base, and the elastic lid that holds up the
-/// short loads. A stagnant lid's alone (a stated scope): an icy surface's shell relaxes it;
-/// a mobile lid's crust is its plates' (Phase 6); Io's heat pipe is not the conductive lid
-/// its thermal history describes; and an episodic lid's highlands, Venus's tesserae, stand
-/// on the primordial relief rather than on a crust their tectonics thickened, which a hot
-/// early crust would relax away.
+/// short loads. A stagnant or an episodic lid's (a stated scope): an icy surface's shell
+/// relaxes it; a mobile lid's crust is its plates' (Phase 6); Io's heat pipe is not the
+/// conductive lid its thermal history describes. An episodic lid's highlands stand on the
+/// crust the mantle's flow thickened over its downwellings (F184), which relaxes as the
+/// rest does.
 fn rock_crust_history(
     graph: &ParamGraph,
     thermal: &ThermalHistory,
 ) -> Option<Box<dyn Fn(f64, f64) -> relaxation::Shell + Sync>> {
     if ice::is_ice_surface(graph)
-        || graph.str("interior.tectonic_regime") != "stagnant_lid"
+        || !matches!(
+            graph.str("interior.tectonic_regime"),
+            "stagnant_lid" | "episodic_lid"
+        )
         || io::is_io_regime(graph)
     {
         return None;
@@ -4967,11 +5012,17 @@ mod tests {
             // The crust 1.5 times the starting one, and on Mars a crust 100 km thick too.
             let crusts: Vec<f64> = if name == "Mars" {
                 vec![1.5 * g.f64("tectonics.initial_crust_thickness"), 100e3]
+            } else if name == "Venus" {
+                vec![g.f64("tectonics.initial_crust_thickness"), 65e3]
             } else {
                 vec![1.5 * g.f64("tectonics.initial_crust_thickness")]
             };
+            let overturn = thermal.mantle.as_ref().and_then(|m| m.last_overturn());
+            let after: Vec<f64> = overturn
+                .map(|o| [0.005, 0.02, 0.05, 0.1, 0.3].iter().map(|d| o + d).collect())
+                .unwrap_or_default();
             for crust in crusts {
-            for from in [0.1, 0.5, 1.0, 3.5, 4.0] {
+            for from in [0.1, 0.5, 1.0, 3.5, 4.0].into_iter().chain(after.clone()) {
                 let steps = 200;
                 let dt = (age - from) / steps as f64;
                 let kept: Vec<String> = [300e3, 1_000e3, 3_000e3]

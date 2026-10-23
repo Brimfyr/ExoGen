@@ -2404,3 +2404,27 @@ What the maps show:
 Still to do: Mercury's despinning (the rotation's history); the coronae's share on the rifts themselves, and the hot region they crowd; the dome, the plumes' share of the melt and the rifting from the rise's relief (held); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
 
 Tests 274 (24 ignored).
+
+## The ninety-seventh milestone: the crust the mantle's flow carries
+
+The user asked for M31: Venus relaxing as a stagnant lid does, and its tesserae from the tectonics that thickened their crust.
+
+- **F184.** Where a rocky lid's crust reaches below the lid's stiff base it moves with the mantle's flow, piling over the downwellings to the depth its base turns to eclogite and thinning over the upwellings; the lower crust's flow spreads it, each cell relaxing under its own crust; the tesserae are the plateaus the last epoch piled, and an episodic lid relaxes as a stagnant one does.
+
+How it went:
+
+- **Plateaus stamped at the overturn.** A crust 65 km thick formed at the overturn would lose everything under 1,000 km and three quarters of its 3,000 km in the regrowing lid's hot phase, so the plateaus cannot be set at the event: they must build while the lower crust is mobile and freeze as the lid cools, which is Bindschadler, Schubert and Kaula's picture. Venus's stiff lid falls below its crust for some 30 Myr after each overturn and stands 45 to 80 km above it between them.
+- **Conservation.** The thinning over the upwellings slows as the carried crust thins while the thickening ran on, so the downwellings piled more than the flow brought; the thickening is now scaled to the thinning that supplies it, and only the eclogite cap loses crust, which lowers the datum with the body.
+- **Each cell's own crust.** The relaxation relaxed the whole body under its tenth thickest crust and the lid of the step's end; with plateaus of 65 km among plains of 40, and a lid that regrows within a step, it now relaxes each cell under its own crust through the step's substeps.
+- **The last epoch.** The plateaus of the epoch before the last overturn relaxed to a few hundred metres within 50 Myr of theirs; the last epoch's stand some 3.7 km above the plains.
+- **Two leaks.** The crust's mean fell from 40 km to 13 where the eclogite's cap accounted for 17: the thinning over the upwellings ran unmatched where the downwellings took less than they gave, and the relaxation under each cell's own crust let the thick-crust highs go faster than the thin-crust lows, so that each band's mean sank, 190 m of ground a step in the hot phase, and the crust, kept compensated, followed it down. The flow now moves the lesser of what is given and taken, and the relaxation keeps the ground's area mean, as a flow that moves material must (the test of a plateau relaxing on Ganymede's shell now reads the relief about the mean, where it read the plateau's volume vanishing); the crust ends 16 km thick on average, 24 km of it foundered, and the ground's mean holds through the history.
+- **The stagnant lids.** Mars, the Moon and Mercury start with a finished crust on a mantle with no lid, so their crust rides with the flow for their first 30 Myr too and keeps the pattern it piled into, ±3 km at their cells' wavelengths: the Moon's at degree one, as its farside crust stands. The user chose to keep it on every body, one process, the amount a prediction from a starting state the magma ocean's end is not modelled for (audit M35).
+
+What the maps show:
+
+- **Venus:** broad plateaus with organic outlines over the last epoch's downwellings, the tesserae 2.3 to 5.3 km above the plains, their margins gentle where the hot phase smoothed them; the primordial relief gone; the rifts of the rises cut through their shields, as Devana Chasma cuts Theia Mons, the rises still growing.
+- **Mars, the Moon, Mercury:** their long wavelengths shifted by ±3 km, at the degree of their cells; the craters, the floods and the faults on them as before, the rifts drawn anew.
+
+Still to do: the tesserae's fabric from their own shortening; the tessera share from the surge's lava (M29); steeper plateau margins; Venus's deformation belts (M10).
+
+Tests 276 (25 ignored), among them the flow piling Venus's crust over its downwellings beneath its regrowing lid and none under Mars's stagnant one, and a cell relaxing under its own crust.

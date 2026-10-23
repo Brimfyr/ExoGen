@@ -3011,6 +3011,7 @@ impl IceShellProcess {
         }
         crate::stages::relaxation::Local {
             equilibrium: self.equilibrium.as_deref(),
+            rock: None,
             renew: self
                 .renewing
                 .then_some((self.active_now.as_slice(), length)),

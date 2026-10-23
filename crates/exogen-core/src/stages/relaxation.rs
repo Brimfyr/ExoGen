@@ -28,7 +28,7 @@
 use crate::constants::*;
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 use crate::fields::Field;
 use crate::grid::{Cell, CubeSphere};
@@ -448,6 +448,9 @@ impl Bands {
 #[derive(Default, Clone, Copy)]
 pub struct Local<'a> {
     pub equilibrium: Option<&'a [f32]>,
+    /// A rocky lid's crust under each cell (F184): each cell relaxes under its own crust,
+    /// the lid as it stood through the step's substeps.
+    pub rock: Option<RockCrust<'a>>,
     pub renew: Option<(&'a [f32], f64)>,
     /// While a terrain renews, the factor its episode's thinning puts on the shell under
     /// each cell, and for how long, Gyr: the ground beside the terrain relaxes the
@@ -458,6 +461,25 @@ pub struct Local<'a> {
     /// cell takes in the measure it gave up what stood there: the texture under the new
     /// terrain, where the low-pass alone left a blur of the old craters.
     pub fine: Option<&'a [f32]>,
+}
+
+/// A rocky lid's crust for relaxation (F184): its thickness under each cell, m, the shell
+/// of the lid at a time over a crust of a thickness, and the step's substeps, (time,
+/// duration) Gyr, over which the lid changes.
+#[derive(Clone, Copy)]
+pub struct RockCrust<'a> {
+    pub crust: &'a [f32],
+    pub shell_at: &'a (dyn Fn(f64, f64) -> Shell + Sync),
+    pub steps: &'a [(f64, f64)],
+}
+
+/// The share of a wavelength's relief a rocky lid lets survive over a step's substeps under
+/// a crust of `thickness`, m (F184): the survivals of the lid as it stood at each.
+pub fn rock_survival(wavelength: f64, rock: &RockCrust, thickness: f64) -> f64 {
+    rock.steps
+        .iter()
+        .map(|&(t, dt)| survival(wavelength, dt, &(rock.shell_at)(t, thickness)))
+        .product()
 }
 
 /// The step, on the bands the surface holds (F134). Returns the relaxed surface, which is
@@ -479,8 +501,18 @@ pub fn relax(
             .saturating_sub(2)
             .max(1);
         let levels = pyramid_depth(&grid, depth).max(1);
+        // Under each cell's own crust, the thickest relaxes most.
+        let thickest = local
+            .rock
+            .as_ref()
+            .map(|r| r.crust.iter().fold(0.0f32, |m, &c| m.max(c)) as f64);
         let still = (0..=levels).all(|l| {
-            survival(2.0 * cell * (2u32.pow(l as u32 + 1) as f64), dt_gyr, shell) as f32 > 0.999
+            let w = 2.0 * cell * (2u32.pow(l as u32 + 1) as f64);
+            let kept = match (&local.rock, thickest) {
+                (Some(r), Some(c)) => rock_survival(w, r, c),
+                _ => survival(w, dt_gyr, shell),
+            };
+            kept as f32 > 0.999
         });
         if still {
             return None;
@@ -491,13 +523,33 @@ pub fn relax(
             *h -= e;
         }
     }
+    // The ground's mean is its height above the body's mean radius, no load: what the
+    // relaxation takes from the mean it gives back, so that a datum's move (F177, F184) is
+    // not relaxed away.
+    let mean_of = |h: &[f32]| -> f64 {
+        let (mut sum, mut area) = (0.0f64, 0.0f64);
+        for (k, &v) in h.iter().enumerate() {
+            let a = grid.cell_area(grid.cell(k));
+            sum += v as f64 * a;
+            area += a;
+        }
+        sum / area.max(1e-30)
+    };
+    let mean = mean_of(height.as_slice());
     let result = relax_deviation(bands, height, cell, dt_gyr, shell, local);
+    let shifted = (mean - mean_of(height.as_slice())) as f32;
+    for h in height.as_mut_slice().iter_mut() {
+        *h += shifted;
+    }
     if let Some(eq) = local.equilibrium {
         for (h, e) in height.as_mut_slice().iter_mut().zip(eq) {
             *h += e;
         }
     }
     result.map(|mut floor| {
+        for f in floor.iter_mut() {
+            *f += shifted;
+        }
         if let Some(eq) = local.equilibrium {
             for (f, e) in floor.iter_mut().zip(eq) {
                 *f += e;
@@ -526,11 +578,58 @@ fn relax_deviation(
     let wavelengths: Vec<f64> = (0..=levels)
         .map(|l| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64))
         .collect();
-    let factors: Vec<f32> = wavelengths
-        .iter()
-        .map(|&w| survival(w, dt_gyr, shell) as f32)
-        .collect();
-    if local.renew.is_none() && factors.iter().all(|&f| f > 0.999) {
+    // Under a rocky lid's crust each cell keeps each band by its own crust's survival
+    // (F184), from a table over the crusts the lid holds, the global shape under the
+    // median crust.
+    let tables: Option<(Vec<Vec<f32>>, f32, f32)> = local.rock.as_ref().map(|r| {
+        let (lo, hi) = r
+            .crust
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), &c| (a.min(c), b.max(c)));
+        let tables = wavelengths
+            .iter()
+            .map(|&w| {
+                (0..=ROCK_CRUST_TABLE)
+                    .map(|j| {
+                        let c = lo + (hi - lo) * j as f32 / ROCK_CRUST_TABLE as f32;
+                        rock_survival(w, r, c as f64) as f32
+                    })
+                    .collect()
+            })
+            .collect();
+        (tables, lo, hi)
+    });
+    let under = |l: usize, thickness: f32| -> f32 {
+        match &tables {
+            Some((tables, lo, hi)) => {
+                let x = ((thickness - lo) / (hi - lo).max(1e-3)).clamp(0.0, 1.0)
+                    * ROCK_CRUST_TABLE as f32;
+                let i = (x.floor() as usize).min(ROCK_CRUST_TABLE - 1);
+                let f = x - i as f32;
+                tables[l][i] + (tables[l][i + 1] - tables[l][i]) * f
+            }
+            None => 1.0,
+        }
+    };
+    let factors: Vec<f32> = match (&local.rock, &tables) {
+        (Some(r), Some(_)) => {
+            let mut sorted = r.crust.to_vec();
+            sorted.sort_by(f32::total_cmp);
+            let median = sorted[sorted.len() / 2];
+            (0..wavelengths.len())
+                .map(|l| if l + 1 < wavelengths.len() { 1.0 } else { under(l, median) })
+                .collect()
+        }
+        _ => wavelengths
+            .iter()
+            .map(|&w| survival(w, dt_gyr, shell) as f32)
+            .collect(),
+    };
+    let still = match &tables {
+        Some((tables, _, _)) => tables.iter().all(|t| t.iter().all(|&f| f > 0.999)),
+        None => factors.iter().all(|&f| f > 0.999),
+    };
+    if local.renew.is_none() && still {
         return None;
     }
     // A renewed terrain keeps nothing shorter than the first band at least its renewal
@@ -595,7 +694,11 @@ fn relax_deviation(
     held.absorb(height, depth);
     held.decay(height, &factors, |l, k| {
         let (level, keep) = kept(k);
-        if l < level { keep * beside(l, k) } else { 1.0 }
+        let own = if l < level { keep * beside(l, k) } else { 1.0 };
+        match &local.rock {
+            Some(r) => own * under(l, r.crust[k]),
+            None => own,
+        }
     });
     // What a renewed cell gave up of the short bands it takes back from the base relief
     // (F141): laid now, it relaxes from now on like anything new.
@@ -676,6 +779,55 @@ mod tests {
         // The viscosity falls with the temperature, to the floor near the solidus.
         assert!(crust_viscosity(1_100.0, 3.71) > 1e3 * crust_viscosity(1_400.0, 3.71));
         assert_eq!(crust_viscosity(2_000.0, 3.71), CRUST_FLOW_MIN_VISCOSITY);
+    }
+
+    /// F184: under a rocky lid each cell relaxes by its own crust's survival over the step's
+    /// substeps: a crust 65 km thick on Venus just after its overturn loses its thousand
+    /// kilometres where one 40 km thick keeps half of them, and later neither relaxes.
+    #[test]
+    fn a_cell_relaxes_under_its_own_crust() {
+        let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
+        let thermal = crate::thermal::ThermalHistory::from_graph(&g);
+        let surface = g.f64("atmosphere.surface_temperature_mean");
+        let gravity = g.f64("body.gravity");
+        let shell_at = move |t: f64, crust: f64| {
+            let state = thermal.at(t);
+            let share = (crust / state.lithosphere.max(1.0)).min(1.0);
+            Shell {
+                thickness: crust,
+                elastic: state.elastic,
+                surface_temperature: surface,
+                basal_temperature: surface + (state.mantle_temperature - surface) * share,
+                gravity,
+                viscosity_scale: 1.0,
+                rock: true,
+            }
+        };
+        let overturn = crate::thermal::ThermalHistory::from_graph(&g)
+            .mantle
+            .unwrap()
+            .last_overturn()
+            .unwrap();
+        let steps: Vec<(f64, f64)> = (0..10)
+            .map(|i| (overturn + 0.005 * (i as f64 + 0.5), 0.005))
+            .collect();
+        let crust = [40e3f32, 65e3];
+        let rock = RockCrust {
+            crust: &crust,
+            shell_at: &shell_at,
+            steps: &steps,
+        };
+        let thin = rock_survival(1_000e3, &rock, 40e3);
+        let thick = rock_survival(1_000e3, &rock, 65e3);
+        assert!(thick < 0.1 && thin > 0.3, "{thick} {thin}");
+        let later: Vec<(f64, f64)> = (0..10)
+            .map(|i| (overturn + 0.3 + 0.005 * (i as f64 + 0.5), 0.005))
+            .collect();
+        let rock = RockCrust {
+            steps: &later,
+            ..rock
+        };
+        assert!(rock_survival(1_000e3, &rock, 65e3) > 0.99);
     }
 
     #[test]
@@ -851,7 +1003,26 @@ mod tests {
                 10.0 * fine
             }
         });
-        let before: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
+        // The relief about the mean, by area, and the mean: the flow spreads the plateau over
+        // the sphere and keeps what it is made of (F184).
+        let measure = |h: &Field<f32>| -> (f32, f32) {
+            let (mut sum, mut area) = (0.0f64, 0.0f64);
+            for (k, &v) in h.as_slice().iter().enumerate() {
+                let a = grid.cell_area(grid.cell(k));
+                sum += v as f64 * a;
+                area += a;
+            }
+            let mean = sum / area;
+            let spread: f64 = h
+                .as_slice()
+                .iter()
+                .enumerate()
+                .map(|(k, &v)| (v as f64 - mean).abs() * grid.cell_area(grid.cell(k)))
+                .sum::<f64>()
+                / area;
+            (spread as f32, mean as f32)
+        };
+        let (before, mean) = measure(&h);
         relax(
             &mut Bands::default(),
             &mut h,
@@ -860,7 +1031,8 @@ mod tests {
             &ganymede,
             &Local::default(),
         );
-        let after: f32 = h.as_slice().iter().map(|v| v.abs()).sum();
+        let (after, kept) = measure(&h);
         assert!(after < 0.5 * before, "{after} vs {before}");
+        assert!((kept - mean).abs() < 1.0, "{kept} vs {mean}");
     }
 }
