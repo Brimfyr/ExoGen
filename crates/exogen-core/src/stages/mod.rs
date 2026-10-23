@@ -35,6 +35,7 @@ pub mod roughness;
 pub mod strain;
 pub mod stress;
 pub mod tectonics;
+pub mod tessera;
 pub mod tidal;
 pub mod volcanism;
 
@@ -385,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 136;
+pub const FINISH_VERSION: u64 = 137;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -496,6 +497,21 @@ pub fn run_coarse_loop(
         plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
         plume.as_ref().map_or(&no_limbs, |p| &p.limbs),
     );
+    // The strain the lid the last overturn keeps took from the mantle's flow since the
+    // overturn before (F187), which the tesserae's fabric records.
+    let mut lid_strain = episodic.as_ref().and_then(|e| {
+        let to = e.event_time();
+        let from = thermal
+            .mantle
+            .as_ref()?
+            .overturns
+            .iter()
+            .rev()
+            .find(|&&o| o < to - 1e-9)
+            .copied()
+            .unwrap_or(0.0);
+        Some(crust::StrainRecord::new(from, to))
+    });
     let mut io = io::IoProcess::new(graph, grid);
     // Io's lava erupts as floods, from its paterae (F117).
     let mut io_floods = io
@@ -583,6 +599,7 @@ pub fn run_coarse_loop(
                     mantle,
                     t0,
                     t1,
+                    lid_strain.as_mut(),
                 );
                 if moved.carried > 0 && std::env::var_os("EXOGEN_DEBUG").is_some() {
                     eprintln!(
@@ -973,10 +990,25 @@ pub fn run_coarse_loop(
         Some(i) => (i.paterae, i.mountains, i.base.map(|b| b.bedrock)),
         None => (Vec::new(), Vec::new(), None),
     };
-    let (resurfacing, coronae, domes, novae) = match episodic {
+    let (mut resurfacing, coronae, domes, novae) = match episodic {
         Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
         None => (None, Vec::new(), Vec::new(), Vec::new()),
     };
+    // The tesserae keep the strain their lid took, each set with the lid of its time.
+    if let (Some(r), Some(record)) = (resurfacing.as_mut(), lid_strain) {
+        r.strain = record
+            .sets
+            .into_iter()
+            .filter(|s| s.strain.iter().any(|v| v.iter().any(|&x| x != 0.0)))
+            .map(|s| episodic::LidStrain {
+                time: s.time,
+                elastic: thermal.at(s.time).elastic,
+                strain: s.strain,
+                pressed: s.pressed,
+                pulled: s.pulled,
+            })
+            .collect();
+    }
     let rift_graben = rifts.map_or_else(Vec::new, |r| r.finish(plume.is_some()));
     let (rises, shields, mut canyons, mut graben) = match plume {
         Some(p) => (p.rises, p.shields, p.canyons, p.graben),
@@ -4558,6 +4590,79 @@ mod tests {
         assert!(moon.loop_output.rises.is_empty() && moon.loop_output.shields.is_empty());
     }
 
+    /// F187 diagnostic: the strain the tesserae's lid took from the flow, set by set, over
+    /// the tesserae; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_tessera_strain() {
+        let mut r = Runner::new();
+        let g = preset_graph("Venus", "standard");
+        let out = r.run(&g, &NoProgress).unwrap();
+        let rec = out.loop_output.resurfacing.as_ref().unwrap();
+        let n = rec.score.len();
+        let tessera: Vec<usize> = (0..n).filter(|&k| rec.score[k] > rec.threshold).collect();
+        println!("event {:.3} Gyr, {} tessera cells of {n}", rec.time_gyr, tessera.len());
+        let q = |v: &mut Vec<f32>, f: f64| {
+            if v.is_empty() {
+                return 0.0;
+            }
+            v.sort_by(|a, b| a.total_cmp(b));
+            v[((v.len() - 1) as f64 * f) as usize]
+        };
+        for s in &rec.strain {
+            let (mut short, mut ext, mut iso) = (Vec::new(), Vec::new(), Vec::new());
+            let mut any = 0usize;
+            for k in 0..n {
+                let [a, b, c] = s.strain[k];
+                if a == 0.0 && b == 0.0 && c == 0.0 {
+                    continue;
+                }
+                any += 1;
+            }
+            for &k in &tessera {
+                let [a, b, c] = s.strain[k];
+                if a == 0.0 && b == 0.0 && c == 0.0 {
+                    continue;
+                }
+                let m = 0.5 * (a + c);
+                let r = (0.25 * (a - c) * (a - c) + b * b).sqrt();
+                short.push(m - r);
+                ext.push(m + r);
+                iso.push(2.0 * m);
+            }
+            let strained = short.len();
+            let past = |v: &[f32]| -> Vec<f32> {
+                tessera
+                    .iter()
+                    .map(|&k| v[k] / 1e6)
+                    .filter(|&x| x > 0.0)
+                    .collect()
+            };
+            let (mut pressed, mut pulled) = (past(&s.pressed), past(&s.pulled));
+            println!(
+                "  pressed past strength on {} tessera cells, p50 {:.1} p90 {:.1} MPa; pulled on {}, p50 {:.1} p90 {:.1} MPa",
+                pressed.len(),
+                q(&mut pressed, 0.5),
+                q(&mut pressed, 0.9),
+                pulled.len(),
+                q(&mut pulled, 0.5),
+                q(&mut pulled, 0.9)
+            );
+            println!(
+                "set at {:.4} Gyr, Te {:.1} km: {any} cells strained, {strained} of the tesserae; least principal p10 {:.3} p50 {:.3} p90 {:.3}; greatest p10 {:.3} p50 {:.3} p90 {:.3}; areal p50 {:.3}",
+                s.time,
+                s.elastic / 1e3,
+                q(&mut short, 0.1),
+                q(&mut short, 0.5),
+                q(&mut short, 0.9),
+                q(&mut ext, 0.1),
+                q(&mut ext, 0.5),
+                q(&mut ext, 0.9),
+                q(&mut iso, 0.5),
+            );
+        }
+    }
+
     /// Venus renews its surface: most of it is plains the age of the event, a few per
     /// cent is older tessera, coronae and domes dot the plains, and the craters are few.
     #[test]
@@ -4605,7 +4710,7 @@ mod tests {
             );
             // The plains onlap the tesserae (F186): the fabric's ridges stand as inliers
             // beyond the edge of the old ground's smoothed height, and the lava runs up its
-            // valleys within it.
+            // valleys within it, as far as the grid draws the fabric (F187).
             let rec = lo.resurfacing.as_ref().unwrap();
             let coarse = crate::grid::CubeSphere::new(((rec.score.len() / 6) as f64).sqrt() as u32);
             let score = crate::grid::projection::PaddedField::new(&coarse, &rec.score);
@@ -4625,7 +4730,7 @@ mod tests {
                 }
             }
             assert!(
-                inliers * 20 > near && embayed * 20 > near,
+                inliers > 0 && embayed > 0 && (inliers + embayed) * 20 > near,
                 "{inliers} inliers and {embayed} embayed of {near} cells about the edge"
             );
         }

@@ -28,10 +28,11 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::deform::Deformation;
 use crate::stages::plume::{Trough, TroughKind, radial_trace};
+use crate::stages::tessera::TesseraFabric;
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 11;
+pub const VERSION: u64 = 12;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -47,6 +48,25 @@ pub struct Resurfacing {
     pub threshold: f32,
     /// Surface age the tessera keep, Gyr since formation.
     pub tessera_age: f32,
+    /// The body's surface gravity, m/s².
+    pub gravity: f64,
+    /// The strain the lid the event keeps took from the mantle's flow, a set for each state
+    /// of the flow (F187).
+    pub strain: Vec<LidStrain>,
+}
+
+/// The strain one state of the mantle's flow put on the lid an overturn keeps (F187).
+#[derive(Clone, Debug)]
+pub struct LidStrain {
+    /// The time it was taken at, Gyr, and the lid's elastic thickness then, m.
+    pub time: f64,
+    pub elastic: f64,
+    /// Per coarse cell, the horizontal strain in the cell's east and north basis,
+    /// [ee, en, nn], extension positive.
+    pub strain: Vec<[f32; 3]>,
+    /// Per coarse cell, the most the drag pressed and pulled the lid past its strength, Pa.
+    pub pressed: Vec<f32>,
+    pub pulled: Vec<f32>,
 }
 
 /// A pancake dome: flat-topped and steep-sided.
@@ -142,28 +162,6 @@ fn upper_quantile(grid: &CubeSphere, score: &[f32], fraction: f64) -> f32 {
     f32::NEG_INFINITY
 }
 
-/// Tessera fabric: two sets of ridges crossing, as ridged noise, m.
-pub fn tessera_texture(d: [f64; 3], noise: &GradientNoise, body_radius: f64) -> f64 {
-    let f = body_radius / TESSERA_FABRIC_LENGTH;
-    let a = noise.ridged([d[0] * f, d[1] * f * 0.35, d[2] * f], 1.0, 3, 2.0, 0.5);
-    let b = noise.ridged(
-        [d[1] * f * 1.3 + 7.0, d[2] * f * 0.4 + 3.0, d[0] * f * 1.1],
-        1.0,
-        3,
-        2.0,
-        0.5,
-    );
-    let g = body_radius / TESSERA_FOLD_LENGTH;
-    let fold = noise.ridged(
-        [d[2] * g + 11.0, d[0] * g * 0.5, d[1] * g * 1.2],
-        1.0,
-        2,
-        2.0,
-        0.5,
-    );
-    TESSERA_RELIEF * (a.max(b) - 0.5) + TESSERA_FOLD_RELIEF * (fold - 0.5)
-}
-
 /// Pancake dome profile at a fraction of the radius: flat top, steep sides.
 pub fn dome_profile(x: f64) -> f64 {
     if x >= 1.0 {
@@ -181,6 +179,7 @@ pub struct EpisodicProcess {
     /// The surface age the tessera keep, Gyr since formation (F121).
     tessera_age: f64,
     tessera_fraction: f64,
+    gravity: f64,
     done: bool,
     pub resurfacing: Option<Resurfacing>,
     /// The coronae over the mantle's diapirs since the lid formed (F145).
@@ -280,6 +279,7 @@ impl EpisodicProcess {
             event_time,
             tessera_age,
             tessera_fraction: graph.f64("tectonics.tessera_fraction"),
+            gravity: graph.f64("body.gravity"),
             done: false,
             resurfacing: None,
             coronae,
@@ -360,6 +360,8 @@ impl EpisodicProcess {
                 score,
                 threshold,
                 tessera_age,
+                gravity: self.gravity,
+                strain: Vec::new(),
             });
         }
         // Coronae (F145): the lava their cores flood renews the coarse ground at their
@@ -385,24 +387,9 @@ impl EpisodicProcess {
     }
 }
 
-/// The tessera fabric's median over the sphere, m: the level half of it stands above.
-fn fabric_median(noise: &GradientNoise, body_radius: f64) -> f32 {
-    let count = 4096;
-    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
-    let mut values: Vec<f32> = (0..count)
-        .map(|i| {
-            let z = 1.0 - (2.0 * i as f64 + 1.0) / count as f64;
-            let r = (1.0 - z * z).sqrt();
-            let a = golden * i as f64;
-            tessera_texture([r * a.cos(), r * a.sin(), z], noise, body_radius) as f32
-        })
-        .collect();
-    values.sort_by(|a, b| a.total_cmp(b));
-    values[count / 2]
-}
-
 /// Finishing pass of the event at the resolved resolution (F186): the old ground with the
-/// tessera's fabric, over the tesserae and sinking beneath the plains beyond them, and the
+/// tessera's fabric from the strain its lid took (F187), over the tesserae and sinking
+/// beneath the plains beyond them, and the
 /// event's lava ponded against it at the tesserae's edge: the plains onlap the tesserae,
 /// their lava running up the fabric's valleys and leaving its ridges standing as inliers,
 /// each cell tessera or plains by the share of it the lava left above its surface. Returns
@@ -421,9 +408,54 @@ pub fn resurfacing_compute(
     let padded_fill = PaddedField::new(coarse, &rec.fill);
     let padded_filled = PaddedField::new(coarse, &rec.filled);
     let padded_score = PaddedField::new(coarse, &rec.score);
-    let noise = GradientNoise::new(seed ^ 0x7E55_E2A0);
-    let median = fabric_median(&noise, body_radius);
-    let reach = (TESSERA_RELIEF + TESSERA_FOLD_RELIEF) as f32 / 2.0 - median;
+    // How far the old ground's smoothed height stands below the tesserae's edge, m:
+    // beyond them the old ground sinking beneath the plains, which thicken away from the
+    // edge in an onlap wedge, and within them the lava ponded at the edge's level below the
+    // ground, filling the fabric's valleys deeper than that.
+    let below = |e: [f64; 3]| rec.threshold - sample_bilinear(coarse, &padded_score, e);
+    // The fabric about the tesserae, as deep below their edge as all its waves at their
+    // highest could stand.
+    let near_band = |fabric_bound: f64| 4.0 * fabric_bound * rec.strain.len().max(1) as f64;
+    let (_, yield_compression) = crate::stages::stress::brittle_yields(rec.gravity);
+    let highest = (1.0 + TESSERA_RELIEF_SCATTER) * yield_compression
+        / (DENSITY_CRUST_ROCK * rec.gravity * TESSERA_BUCKLING_RATIO);
+    let band = near_band(highest) as f32;
+    let fabric = TesseraFabric::new(
+        coarse,
+        &rec.strain,
+        body_radius,
+        rec.gravity,
+        grid.delta() * body_radius,
+        seed,
+        &|k| rec.threshold - rec.score[k] < band,
+    );
+    let drawn: Vec<f32> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|idx| {
+            let d = grid.center(grid.cell(idx));
+            if below(d) < band && !fabric.is_empty() {
+                fabric.at(d) as f32
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    // Centred so that half of the tesserae's fabric stands above the plains at the edge;
+    // beyond its highest ridges' reach all of it is buried.
+    let median = {
+        let mut inside: Vec<f32> = (0..grid.cell_count())
+            .step_by(7)
+            .filter(|&idx| below(grid.center(grid.cell(idx))) < 0.0)
+            .map(|idx| drawn[idx])
+            .collect();
+        if inside.is_empty() {
+            0.0
+        } else {
+            let mid = inside.len() / 2;
+            *inside.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1
+        }
+    };
+    let reach = (drawn.iter().fold(0.0f32, |m, &v| m.max(v)) - median).min(band);
     let bedrock = layers.bedrock.as_slice();
     let ages = layers.surface_age.as_slice();
     let deep = layers.deep.as_slice();
@@ -450,18 +482,14 @@ pub fn resurfacing_compute(
         let later = deform.since_event(d, rec.time_gyr) as f32;
         let ground = bedrock[idx] - remaining - later;
         let carry = remaining - own + later;
-        // How far the old ground's smoothed height stands below the tesserae's edge, m:
-        // beyond them the old ground sinking beneath the plains, which thicken away from
-        // the edge in an onlap wedge, and within them the lava ponded at the edge's level
-        // below the ground, filling the fabric's valleys deeper than that.
-        let below = |e: [f64; 3]| rec.threshold - sample_bilinear(coarse, &padded_score, e);
-        // The fabric less the burial, centred so that half of it stands above the plains
-        // at the edge; beyond its highest ridges' reach all of it is buried.
-        let exposed = |e: [f64; 3], below: f32| -> f32 {
-            if below >= reach {
-                -below
+        // The fabric less the burial at a cell; beyond its highest ridges' reach all of it
+        // is buried.
+        let exposed = |k: usize, e: [f64; 3]| -> (f32, f32) {
+            let b = below(e);
+            if b >= reach {
+                (-b, b)
             } else {
-                tessera_texture(e, &noise, body_radius) as f32 - median - below
+                (drawn[k] - median - b, b)
             }
         };
         let plains_depth = |e: [f64; 3]| -> f32 {
@@ -469,17 +497,29 @@ pub fn resurfacing_compute(
             (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0) + EPISODIC_VENEER as f32
         };
         // The share of the cell the lava left standing above its surface, by where the
-        // fabric crosses it (F131): a contact drawn by share, not by whole cells.
-        let held = crate::fields::level_share(
-            &|e: [f64; 3]| (exposed(e, below(e)) - plains_depth(e)) as f64,
-            d,
-            0.0,
-            grid.delta(),
-        ) as f32;
+        // fabric crosses it across the cell, read from the cells beside it (F131): a contact
+        // drawn by share, not by whole cells.
+        let (x, b) = exposed(idx, d);
+        let v = x - plains_depth(d);
+        let held = {
+            let cell = grid.cell(idx);
+            let side = |di: i32, dj: i32| {
+                let k = grid.index(grid.neighbor(cell, di, dj));
+                let e = grid.center(grid.cell(k));
+                exposed(k, e).0 - plains_depth(e)
+            };
+            let gx = 0.5 * (side(1, 0) - side(-1, 0));
+            let gy = 0.5 * (side(0, 1) - side(0, -1));
+            let across = (gx * gx + gy * gy).sqrt();
+            if across < 1e-6 {
+                if v > 0.0 { 1.0 } else { 0.0 }
+            } else {
+                (0.5 + v / across).clamp(0.0, 1.0)
+            }
+        };
         // The old ground with its fabric, and the lava's surface: the plains' where it
         // laid them, ponded at the edge's level within the tesserae.
-        let b = below(d);
-        let old = ground + exposed(d, b) + b.min(0.0);
+        let old = ground + x + b.min(0.0);
         let pond = ground + plains_depth(d) + b.min(0.0);
         let surface = old.max(pond) + carry;
         let whole = held >= 0.5;
@@ -659,15 +699,5 @@ mod tests {
         assert!(dome_profile(0.6) > 0.9);
         assert!(dome_profile(0.95) < 0.5);
         assert!(dome_profile(1.0) == 0.0);
-        let noise = GradientNoise::new(3);
-        let v: Vec<f64> = (0..200)
-            .map(|k| {
-                let a = k as f64 * 0.01;
-                tessera_texture([a.cos(), a.sin(), 0.2], &noise, 6.05e6)
-            })
-            .collect();
-        let max = v.iter().cloned().fold(f64::MIN, f64::max);
-        let min = v.iter().cloned().fold(f64::MAX, f64::min);
-        assert!(max - min > 0.3 * TESSERA_RELIEF, "{min}..{max}");
     }
 }

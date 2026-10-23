@@ -899,18 +899,28 @@ pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// towards its spill point and lays this veneer everywhere else on the plains, m; the
 /// tessera are the highest-standing fraction of the surface by a height smoothed this
 /// many passes, less what the plumes and the mantle's flow hold up, which is the crust the
-/// flow thickened over its downwellings (F184), keep the surface the overturn before the
-/// event laid (F121), or one this much older than the event where there was none, Gyr,
-/// and carry a fabric of this relief, m, at this wavelength, m. After the event the
-/// eruptions follow the mantle's history (F165).
+/// flow thickened over its downwellings (F184), and keep the surface the overturn before the
+/// event laid (F121), or one this much older than the event where there was none, Gyr.
+/// After the event the eruptions follow the mantle's history (F165).
 pub const TESSERA_FRACTION: f64 = 0.08;
 pub const TESSERA_SMOOTHING_PASSES: usize = 20;
 pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
-pub const TESSERA_RELIEF: f64 = 1_000.0;
-pub const TESSERA_FABRIC_LENGTH: f64 = 30e3;
-/// Broader folds under the fine fabric, as the tessera's ridge belts are.
-pub const TESSERA_FOLD_RELIEF: f64 = 800.0;
-pub const TESSERA_FOLD_LENGTH: f64 = 120e3;
+/// The tesserae's fabric from the strain their lid took (F187). A strong layer shortened
+/// over a weaker one buckles at this many times its thickness (a stated choice within
+/// buckling theory's 4 to 6 for a layer of plastic strength over a viscous one; with the
+/// brittle layer of a lid 6.4 km thick it gives Tellus's folds 6 km apart and with the lid
+/// itself Ovda's 30 km long folds, Ghent and Hansen 1999, Resor et al. 2021). The fabric is
+/// drawn as wave packets this many wavelengths across the crests and this many along them,
+/// covering each place this many times over (stated choices, the folds' en echelon
+/// segments), their spacing scattered by a factor of two to this power either way, their
+/// strike by this many radians and their relief by this share.
+pub const TESSERA_BUCKLING_RATIO: f64 = 5.0;
+pub const TESSERA_PACKET_WIDTH: f64 = 0.75;
+pub const TESSERA_PACKET_LENGTH: f64 = 1.5;
+pub const TESSERA_PACKET_DENSITY: f64 = 1.5;
+pub const TESSERA_SPACING_SCATTER: f64 = 0.25;
+pub const TESSERA_STRIKE_SCATTER: f64 = 0.25;
+pub const TESSERA_RELIEF_SCATTER: f64 = 0.3;
 pub const EPISODIC_FILL_FRACTION: f64 = 0.7;
 pub const EPISODIC_VENEER: f64 = 20.0;
 /// Pancake domes on an episodic lid's plains: how many per m² (Venus: some 150),

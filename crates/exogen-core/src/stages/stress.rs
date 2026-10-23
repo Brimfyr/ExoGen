@@ -411,6 +411,14 @@ pub struct StressField<'a> {
     pub yield_compression: f64,
 }
 
+/// The tension and the compression, Pa, that break a rock lid's brittle layer (F154): its
+/// friction over the fault layer's depth, Anderson's normal faults and thrusts.
+pub fn brittle_yields(gravity: f64) -> (f64, f64) {
+    let k = ((1.0 + ROCK_FRICTION.powi(2)).sqrt() + ROCK_FRICTION).powi(2);
+    let weight = DENSITY_CRUST_ROCK * gravity * FAULT_LAYER_DEPTH;
+    ((1.0 - 1.0 / k) * weight, (k - 1.0) * weight)
+}
+
 /// The lid's compression at a place and time as a thrust reads it (F154).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Squeeze {
@@ -456,9 +464,7 @@ impl<'a> StressField<'a> {
         let rigidity =
             ROCK_YOUNG_MODULUS * elastic.max(1e3).powi(3) / (12.0 * (1.0 - poisson * poisson));
         let flexural = std::f64::consts::TAU * (rigidity / (mantle * gravity.max(1e-3))).powf(0.25);
-        let k = ((1.0 + ROCK_FRICTION.powi(2)).sqrt() + ROCK_FRICTION).powi(2);
-        let yield_tension = (1.0 - 1.0 / k) * density * gravity * FAULT_LAYER_DEPTH;
-        let yield_compression = (k - 1.0) * density * gravity * FAULT_LAYER_DEPTH;
+        let (yield_tension, yield_compression) = brittle_yields(gravity);
         Self {
             rises,
             axes,

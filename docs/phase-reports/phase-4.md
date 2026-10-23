@@ -2474,3 +2474,18 @@ How it went:
 - **A shadowed name.** The pond's height first took the name of the event's lava composition, and the maps came out black and white: the plains took heights for their composition.
 
 Still to do: the tesserae's fabric from the shortening that piled them and the extension after (W3, T1), which the user asked for next.
+
+## The hundred-and-first milestone: the tesserae's fabric from their lid's strain
+
+The user asked for the tesserae's noise fabric to be replaced by one from the plateaus' history.
+
+- **F187.** The mantle's flow broke the young lid where its drag passed the lid's strength and carried it along; the strain it took, the pattern's curvature, is recorded set by set, and the tesserae fold across its shortening and neck into graben across its stretching, at the brittle layer's and the elastic lid's wavelengths, as high as friction and strength let them stand.
+
+How it went:
+
+- **The lid did not move.** The flow carries the crust beneath the stiff lid (F184), which alone would leave the surface undeformed; the drag the lid bears from it (F185) passes its strength over the strong downwellings and upwellings in the lid's first few million years, and there the lid goes with the flow.
+- **Kinks for curvature.** Read across one coarse cell, the pattern's curvature picked up the kinks of the grid it is sampled from, principal strains of ±2.4; read across two of its own grid's cells, ±0.5.
+- **Saturated strain.** The flow strains the broken lid by about half in a few million years, far past what folds take up (Tellus's folds take 1 to 12 percent), so the folds stand as high as their layer's strength lets them, 0.88 km, Tellus's 0.5 to 1 km.
+- **A grating.** Packets covering each place eight times over summed to one wave across whole domains, a combed grating; at one and a half times over, with their strike and spacing scattered, they break into en echelon segments and cross as basins and domes.
+
+Still to do: the strain after the event, on tesserae and plains alike; the lid's thickening where it is shortened; the shortening the folds cannot take up.

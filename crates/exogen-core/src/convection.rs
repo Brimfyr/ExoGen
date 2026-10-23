@@ -214,6 +214,23 @@ impl Convection {
         }
     }
 
+    /// The state the pattern is passing from at a time.
+    pub fn state_at(&self, t: f64) -> usize {
+        self.draws
+            .partition_point(|w| w.time <= t)
+            .saturating_sub(1)
+    }
+
+    /// The spacing of the grid the pattern is sampled from at a time, radians: below it
+    /// the sampling's own kinks, not the pattern, shape the field.
+    pub fn spacing_at(&self, t: f64) -> f64 {
+        let j = self.state_at(t);
+        self.draws[j..(j + 2).min(self.draws.len())]
+            .iter()
+            .map(|w| std::f64::consts::PI / w.grid().nlat as f64)
+            .fold(0.0, f64::max)
+    }
+
     /// The ground the flow holds up at a time and a direction of the mantle's frame, m.
     pub fn support(&self, t: f64, d: [f64; 3]) -> f64 {
         self.support_rms(t) * self.pattern(t, d)
