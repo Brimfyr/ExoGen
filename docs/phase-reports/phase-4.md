@@ -2503,3 +2503,16 @@ How it went:
 - **Ten minutes.** Every set's packets were looked up within the widest set's reach, the lid's 97 km folds, some five hundred coarse cells about each point; within each set's own reach the pass takes 81 s.
 
 Still to do: the strain after the event; the fabric under the cells, for the artistic pass's shader.
+
+## The hundred-and-third milestone: a layer holds its fabric's relief together
+
+The user found the tesserae's tops much bumpier at the fine scale than Venus's topography.
+
+- **F189.** The strength bound on a fold's relief bounds its layer's: each layer's relief, its sets together, saturates at what its strength holds.
+
+How it went:
+
+- **Summed past the bound.** Each fold set kept to the bound alone, and three sets and the packets' interference stood two to three times past it; together the tesserae's peaks fall from 9.8 to 7.4 km.
+- **The instrument's share.** Magellan's altimetry averages over some 15 km; blurred to it, the tops show the reference map's soft mottle, so the fine-scale smoothness of the reference is mostly the instrument's. What the model lacks is Ovda's broad internal relief, basins and swirls 50 to 300 km across.
+
+Still to do: the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.

@@ -64,6 +64,10 @@ pub struct TesseraFabric {
     /// reach.
     packets: Vec<(Vec<Vec<Packet>>, i32)>,
     families: usize,
+    /// Per family, the layer it folds or necks: the brittle layer or the elastic lid.
+    layers: Vec<usize>,
+    /// The relief a layer's strength holds, m.
+    hold: f64,
     /// The highest relief any one wave reaches, m, for the fabric's bound.
     pub bound: f64,
 }
@@ -108,6 +112,7 @@ impl TesseraFabric {
         let n = coarse.cell_count();
         let mut packets: Vec<(Vec<Vec<Packet>>, i32)> = Vec::new();
         let mut families = 0usize;
+        let mut layers = Vec::new();
         let mut bound = 0.0f64;
         // The layers: the brittle layer the faults cut and the elastic lid.
         for (s, set) in sets.iter().enumerate() {
@@ -126,6 +131,7 @@ impl TesseraFabric {
                 }
                 let family = families;
                 families += 1;
+                layers.push(l);
                 // As many packets as cover each place this many times over, so that each
                 // shows as a segment of its own rather than merging into a grating.
                 let shortest = fold_length.min(graben_length);
@@ -261,6 +267,8 @@ impl TesseraFabric {
             body_radius,
             packets,
             families,
+            layers,
+            hold: fold_cap,
             bound,
         }
     }
@@ -308,8 +316,15 @@ impl TesseraFabric {
                 }
             }
         }
-        sums.iter()
-            .map(|e| e[0] / (e[1] + 1.0).sqrt() + e[2] / (e[3] + 1.0).sqrt())
+        // Each layer's relief, every set it took laid together, weighs on it no more than
+        // its strength holds: past that the relief its sets would add gives way.
+        let mut layer = [0.0f64; 2];
+        for (f, e) in sums.iter().enumerate() {
+            layer[self.layers[f]] += e[0] / (e[1] + 1.0).sqrt() + e[2] / (e[3] + 1.0).sqrt();
+        }
+        layer
+            .iter()
+            .map(|&v| self.hold * (v / self.hold).tanh())
             .sum()
     }
 }
@@ -368,6 +383,25 @@ mod tests {
             fabric.bound <= cap * (1.0 + TESSERA_RELIEF_SCATTER) + 1.0,
             "{}",
             fabric.bound
+        );
+        // Three sets shortened every way, laid together: each layer's relief no more than
+        // its strength holds (F189).
+        let sets = [
+            fold([-0.3, 0.05, -0.2]),
+            fold([-0.25, -0.1, -0.3]),
+            fold([-0.2, 0.0, -0.2]),
+        ];
+        let fabric = TesseraFabric::new(&coarse, &sets, r, 8.87, cell, 7, &near);
+        let highest = (0..400)
+            .map(|i| {
+                fabric
+                    .at(offset(at, east, north, i as f64 * 250.0 / r, 0.7))
+                    .abs()
+            })
+            .fold(0.0f64, f64::max);
+        assert!(
+            highest <= 2.0 * cap + 1.0,
+            "{highest} against {cap} a layer"
         );
         // Stretched: graben, the relief's low side deeper than its high side is high.
         let fabric = TesseraFabric::new(&coarse, &[fold([0.3, 0.0, 0.0])], r, 8.87, cell, 7, &near);
