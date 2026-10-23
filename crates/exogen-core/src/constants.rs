@@ -912,8 +912,8 @@ pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
 /// itself Ovda's 30 km long folds, Ghent and Hansen 1999, Resor et al. 2021). The fabric is
 /// drawn as lines along the strain's strike, each between this many spacings long and this
 /// many (a stated choice: periclinal folds three times as long as their spacing and more,
-/// Ovda's long folds up to 400 km, some thirteen of their spacings), a graben's floor this
-/// share of its spacing wide (a stated choice), the lines' spacing scattered by a factor of
+/// Ovda's long folds up to 400 km, some thirteen of their spacings), the lines' spacing
+/// scattered by a factor of
 /// two to this power either way (a fold train's spacing scatters by a third or so about its
 /// dominant wavelength) and their relief by this share (a fold train's amplitudes vary two
 /// to three times). A set is drawn where its spacing spans this many cells, fading in from
@@ -921,7 +921,6 @@ pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
 /// which the artistic pass's detail stands for).
 pub const TESSERA_BUCKLING_RATIO: f64 = 5.0;
 pub const TESSERA_LINE_LENGTH: (f64, f64) = (3.0, 15.0);
-pub const TESSERA_GRABEN_FLOOR: f64 = 0.33;
 pub const TESSERA_SPACING_SCATTER: f64 = 0.45;
 pub const TESSERA_RELIEF_SCATTER: f64 = 0.5;
 pub const TESSERA_MIN_CELLS: (f64, f64) = (3.0, 5.0);

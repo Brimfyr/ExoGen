@@ -2529,3 +2529,15 @@ How it went:
 - **Long arcs.** Lines up to fifteen spacings long, evenly spaced, curved with the strain into concentric arcs and fine combed sets, the user's fine seashell: each line's length is drawn between three and fifteen spacings, its spacing and relief scattered more, and a set drawn only where its spacing spans three cells or more.
 
 Still to do: the collapse's graben deeper by the tension through the stretched layer, for clearer tiles; the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.
+
+## The hundred-and-fifth milestone: the tesserae's graben are the model's
+
+The user asked what to do next; I proposed the lid's strength through its thickness, a yield envelope, to deepen the tesserae's graben and carry the plateaus' broad relief. The user remembered it from the ninety-fourth milestone, where it was set aside: its 150 to 380 MPa broke no lid, and here it would leave Venus's young lid unbroken by the drag and the tesserae without their fabric. The user chose instead to make the tesserae's graben follow the model's own graben.
+
+- **F191.** The tesserae's graben are the model's graben, their width from the faults meeting at their layer's base, their depth within their layer, a fifth of their width and their length's throw; the lid necked whole opens rifts by the rifts' rules.
+
+How it went:
+
+- **Gashes.** By the graben's rules the lid's troughs, 22 km wide, sank 4 km, a grid of gashes; the graben's rules hold for graben up to 12 km wide, and the model opens a rift where a fault would cut below its layer. As rifts, 1.5 thousandths of their length deep, they stand 0.3 to 1.5 km and tile the plateaus' crests.
+
+Still to do: the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.

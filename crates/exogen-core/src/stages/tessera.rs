@@ -13,9 +13,12 @@
 //! strain makes folds or graben at two scales (the short and long folds and the ribbons of
 //! Ghent and Hansen). A fold grows as the layer's length takes up the shortening, until its
 //! limbs dip as steeply as the layer's friction lets them slip, or its relief weighs on the
-//! layer as much as the layer's strength holds; a graben deepens with the stretching until
-//! its relief weighs as much as the layer pulled apart holds. Each state of the flow made
-//! its own sets, the later laid over the earlier.
+//! layer as much as the layer's strength holds; a graben is the model's graben (F191): its
+//! faults, dipping at GRABEN_DIP_DEG, meet at the base of the layer it necks, which sets
+//! its width, and it sinks with the stretching no deeper than that layer, a fifth of its
+//! width or the throw its length allows, and the elastic lid necked whole opens the model's
+//! rifts, as deep as their heave and their length allow and thirty depths wide. Each state
+//! of the flow made its own sets, the later laid over the earlier.
 //!
 //! Each fold's crest and each graben is a line along the strain's strike, the lines of a
 //! set as far apart as their wavelength (evenly spaced streamlines, Jobard and Lefer 1997):
@@ -48,11 +51,13 @@ struct Segment {
     line: u32,
 }
 
-/// What a line is: a fold's crest or a graben, and its set's spacing, m.
+/// What a line is: a fold's crest or a graben, its set's spacing, m, and a graben's width
+/// at the surface, m.
 #[derive(Clone, Copy, Debug)]
 struct Kind {
     graben: bool,
     spacing: f64,
+    width: f64,
 }
 
 /// One family of lines: one principal strain of one state in one layer, its segments
@@ -142,13 +147,11 @@ impl TesseraFabric {
         seed: u64,
         near: &(dyn Fn(usize) -> bool + Sync),
     ) -> Self {
-        let (yield_tension, yield_compression) = brittle_yields(gravity);
+        let (_, yield_compression) = brittle_yields(gravity);
         let weight = DENSITY_CRUST_ROCK * gravity;
         let friction = ROCK_FRICTION;
-        // Anderson's normal faults dip at 45 degrees plus half the friction angle.
-        let dip = std::f64::consts::FRAC_PI_4 + 0.5 * friction.atan();
+        let dip = GRABEN_DIP_DEG.to_radians();
         let fold_cap = yield_compression / (weight * TESSERA_BUCKLING_RATIO);
-        let graben_cap = yield_tension / (weight * GROOVE_NECKING_WAVELENGTH);
         // The grid draws a line's set where its spacing spans enough cells to read as
         // ridges, not a hatch of cells, fading in over a range.
         let drawn = |length: f64| {
@@ -166,13 +169,13 @@ impl TesseraFabric {
                     continue;
                 }
                 for which in 0..2 {
-                    jobs.push((s, l, which, fold, graben));
+                    jobs.push((s, l, which, fold, graben, layer));
                 }
             }
         }
         let families: Vec<Family> = jobs
             .par_iter()
-            .map(|&(s, l, which, fold_length, graben_length)| {
+            .map(|&(s, l, which, fold_length, graben_length, layer)| {
                 let set = &sets[s];
                 let parts = [0, 1, 2].map(|i| {
                     let v: Vec<f32> = set.strain.iter().map(|t| t[i]).collect();
@@ -186,9 +189,23 @@ impl TesseraFabric {
                     let k = coarse.index(coarse.locate(d).0);
                     near(k) && set.strain[k] != [0.0; 3]
                 };
+                // A graben's faults meet at the base of the brittle layer it necks; the elastic
+                // lid necked whole opens rifts, cutting below any faulted layer (F112), as wide
+                // as their depth allows.
+                let rift = l == 1;
+                let graben_width = 2.0 * layer / dip.tan();
                 let relief_of = |value: f64, graben: bool| -> (f64, f64) {
                     if graben {
-                        let h = (0.5 * value * graben_length * dip.tan()).min(graben_cap);
+                        // Two faults take the stretching across its spacing, sinking it as
+                        // they slip: a graben no deeper than its layer or a fifth of its
+                        // width, a rift as deep as its heave.
+                        let h = if rift {
+                            value * graben_length / RIFT_HEAVE_PER_DEPTH
+                        } else {
+                            (0.5 * value * graben_length * dip.tan())
+                                .min(layer)
+                                .min(GRABEN_DEPTH_PER_WIDTH * graben_width)
+                        };
                         (h * drawn(graben_length), graben_length)
                     } else {
                         let h = ((fold_length / std::f64::consts::PI) * (-value).sqrt())
@@ -328,6 +345,25 @@ impl TesseraFabric {
                     if n < 6 {
                         continue;
                     }
+                    // A graben throws no more than its length allows, a rift no deeper than
+                    // its length allows (F112, F38).
+                    let mut width = graben_width;
+                    if graben {
+                        let per_length = if rift {
+                            RIFT_DEPTH_PER_LENGTH
+                        } else {
+                            SEGMENT_THROW_PER_LENGTH
+                        };
+                        let most = (per_length * n as f64 * step) as f32;
+                        for r in rel.iter_mut() {
+                            *r = r.min(most);
+                        }
+                        if rift {
+                            let deepest = rel.iter().fold(0.0f32, |m, &r| m.max(r)) as f64;
+                            width = (RIFT_WIDTH_PER_DEPTH * deepest)
+                                .clamp(RIFT_MIN_WIDTH, 0.5 * spacing);
+                        }
+                    }
                     // Its ends plunge out over a spacing.
                     for (i, r) in rel.iter_mut().enumerate() {
                         let x = (i.min(n - 1 - i) as f64 / 6.0).min(1.0);
@@ -348,7 +384,15 @@ impl TesseraFabric {
                             seeds.push(advance(q, dir, gap / body_radius));
                         }
                     }
-                    lines.push((Kind { graben, spacing }, pts, rel));
+                    lines.push((
+                        Kind {
+                            graben,
+                            spacing,
+                            width,
+                        },
+                        pts,
+                        rel,
+                    ));
                 }
                 // The segments, by the cell of a grid as coarse as the farthest a line
                 // reaches, so that a point finds every line that reaches it among the cells
@@ -403,9 +447,11 @@ impl TesseraFabric {
     }
 
     /// The fabric's relief at a direction, m: each family's nearest line's profile, the
-    /// layers' reliefs each no higher than their strength holds.
+    /// layers' folds each no higher than their strength holds, the graben as deep as their
+    /// own faults let them sink.
     pub fn at(&self, d: [f64; 3]) -> f64 {
         let mut layer = [0.0f64; 2];
+        let mut graben = 0.0f64;
         let r = self.body_radius;
         let fade = |x: f64| {
             let x = x.clamp(0.0, 1.0);
@@ -437,11 +483,16 @@ impl TesseraFabric {
             if dist >= REACH * spacing {
                 continue;
             }
-            let value = if kind.graben {
-                // A flat floor across part of the spacing between walls a cell wide.
-                let half = 0.5 * TESSERA_GRABEN_FLOOR * spacing;
-                -relief * fade((dist - half) / self.wall + 0.5)
-            } else {
+            if kind.graben {
+                // A flat floor between walls dipping at the faults' dip, a cell wide at the
+                // least.
+                let top = 0.5 * kind.width;
+                let floor = (top - relief / GRABEN_DIP_DEG.to_radians().tan()).max(0.0);
+                let wall = (top - floor).max(self.wall);
+                graben -= relief * fade((dist - floor) / wall);
+                continue;
+            }
+            let value = {
                 // A narrow crest over broad troughs, fading to the mean beyond them.
                 let x = (dist / spacing).min(0.5);
                 let profile = 4.0 / std::f64::consts::PI - 2.0 * (std::f64::consts::PI * x).sin();
@@ -459,7 +510,8 @@ impl TesseraFabric {
         layer
             .iter()
             .map(|&v| self.hold * (v / self.hold).tanh())
-            .sum()
+            .sum::<f64>()
+            + graben
     }
 }
 
