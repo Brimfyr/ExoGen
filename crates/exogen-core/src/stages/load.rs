@@ -526,6 +526,33 @@ pub fn sink(deflection: &[f32], held: Option<&[f32]>) -> Vec<f32> {
         .collect()
 }
 
+/// The stress at its top of a rock lid `elastic` m thick bent to follow the ground the
+/// mantle's flow holds up (F182): `up`, m, up positive, at a direction, the flow's support as
+/// the lid holds it flatter at the wavelengths it can bend over (F173), on a plate grid that
+/// resolves the lid's flexural parameter. The flow presses the lid's base up over its
+/// upwellings and draws it down over its downwellings; the lid bends with the ground it
+/// holds up, stretched at its top over a bulge and squeezed over a bowl, and its membrane
+/// strained as a shell, as any deflection strains it.
+pub fn bent(
+    up: &(dyn Fn([f64; 3]) -> f64 + Sync),
+    body_radius: f64,
+    gravity: f64,
+    elastic: f64,
+) -> LoadStress {
+    let elastic = elastic.max(1e3);
+    let flexural = flexural_parameter(elastic, gravity);
+    // The flow's cells are as wide as the mantle is deep, many times the lid's flexural
+    // parameter on a thin lid: a plate as fine as FLOW_PLATE_FACE resolves them (F173).
+    let face = SpherePlate::face_for(flexural, body_radius).min(FLOW_PLATE_FACE);
+    let plate = SpherePlate::new(face, body_radius);
+    let grid = plate.grid;
+    let w: Vec<f64> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|i| -up(grid.center(grid.cell(i))))
+        .collect();
+    plate.surface_stress(&w, elastic, true)
+}
+
 /// The stress the lava laid on a grid puts on a rock lid `elastic` m thick (F157), and the
 /// lid's deflection under it (F162): `thickness`, m per cell of `grid`, of lava of
 /// `density`, kg/m³, averaged onto a plate grid that resolves the lid's flexural
@@ -647,6 +674,54 @@ pub fn lay(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Diagnostic: the stress the mantle's flow bends a body's lid with through its life
+    /// (EXOGEN_PRESET, Mercury by default), against its shrinking's squeeze; run with
+    /// `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_flow_stress() {
+        let name = std::env::var("EXOGEN_PRESET").unwrap_or_else(|_| "Mercury".into());
+        let (g, _) = crate::presets::preset(&name).unwrap().to_graph();
+        let thermal = crate::thermal::ThermalHistory::from_graph(&g);
+        let convection = crate::convection::Convection::from_graph(&g, &thermal).unwrap();
+        let (r, gravity, age) = (
+            g.f64("body.radius"),
+            g.f64("body.gravity"),
+            g.f64("body.age"),
+        );
+        for t in [0.5, 1.0, 2.0, 3.0, age] {
+            let elastic = thermal.at(t).elastic;
+            let up = |d: [f64; 3]| convection.support(t, d);
+            let started = std::time::Instant::now();
+            let stress = bent(&up, r, gravity, elastic);
+            let mut diffs: Vec<f64> = Vec::new();
+            let mut means: Vec<f64> = Vec::new();
+            for (i, _) in stress.tensor.iter().enumerate().step_by(7) {
+                let p = stress.grid.center(stress.grid.cell(i));
+                let (e, n) = crate::geom::local_basis(p);
+                let (a, b, c) = stress.at(p, e, n);
+                let half = (0.25 * (a - b).powi(2) + c * c).sqrt();
+                diffs.push(2.0 * half);
+                means.push(0.5 * (a + b));
+            }
+            diffs.sort_by(f64::total_cmp);
+            means.sort_by(f64::total_cmp);
+            let q = |v: &Vec<f64>, f: f64| v[((v.len() - 1) as f64 * f) as usize] / 1e6;
+            println!(
+                "{name} t {t:.2}: lid {:.0} km, support rms {:.0} m, differential median {:.1} p90 {:.1} MPa, mean p10 {:.1} p90 {:.1} MPa, shrinking {:.0} MPa, plate face {}, {:.1} s",
+                elastic / 1e3,
+                convection.support_rms(t),
+                q(&diffs, 0.5),
+                q(&diffs, 0.9),
+                q(&means, 0.1),
+                q(&means, 0.9),
+                crate::stages::stress::shrinking(&thermal, r, t) / 1e6,
+                stress.grid.face_size(),
+                started.elapsed().as_secs_f64()
+            );
+        }
+    }
     use crate::flexure::{Plate, deflect};
     use crate::geom::angle_between;
 

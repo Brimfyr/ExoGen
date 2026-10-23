@@ -648,6 +648,8 @@ Direction: the melting rule itself, which should give a corona where a rift focu
 
 When: with the corona process's next revision.
 
+Closed in part in the ninety-sixth milestone (F183): where the region melts, a diapir on a limb, where the rifts run, makes a pocket as far as its head at least doubles the region's melt, so that 14 percent of Venus's 841 coronae lie within 150 km of a rift and 38 on a limb, where 7 and 30 did. Drawing the births by the convection's upwellings spread them over the pattern's broad highs and was set aside. Still open: the share on the rifts themselves, which the rifts the loop opens, drawn after the coronae, cannot yet focus; the hot upwelling region the real coronae crowd.
+
 ### M26. The field reads the ground before the plains and the lid of the present (closed in part by F157)
 
 The lid's stress field (F150) reads its relief as the ground before the rises, low-passed over the flexural wavelength of the lid's present elastic thickness, and holds no load of the floods. The plains' ridges (F156) stand where the field squeezes them at their time, but the field does not know the plains themselves: the floods' load, which bends the lid under a filled basin and squeezes its interior while stretching its margin (the lunar maria's mascons, Freed et al. 2001), stands in as a drive past the strength, a stated share alike everywhere; and a thick present lid spreads the relief's force thinner and over longer lengths than the thinner lid the plains formed on, so the field's lows are the broad ones of the ground before the floods. Venus's ridges lie 87 percent below its mean height against the 93 percent of its ridged plains measured, the rest on plains the field's lows of the old ground do not hold.
@@ -669,6 +671,8 @@ Direction: the despinning's stress from the rotation's history once that has one
 When: the despinning with the rotation's history; the generator with the thrusts' next revision.
 
 Closed in part in the seventy-seventh milestone (F160): the thrusts and the plains' ridges gather in systems, half beside one drawn before near where they start and the rest stopping at one at least as long. Since the seventy-sixth (F157) Mercury's field no longer leaves its thrusts at random: the loads of its plains and its relief, carried by the thinner lid of their times, decide most of their strikes (the field's differential stress 9 MPa at the median against a scatter of 4.6), so that they run regionally alike, by 0.3 to 0.75 in sixty-degree bands of longitude where they ran at random before, along its plains' margins and their loads' fields. Still open: the north and south its large thrusts run at low latitudes, which wants the despinning or the mantle's convection.
+
+Closed further in the ninety-sixth milestone (F182): the mantle's flow bends the lid, 7 to 15 MPa of differential stress on Mercury, and loosens its thrusts' trend. Their strikes are its plains' loads', some 70 to 100 MPa through their membrane at its equator, east and west at low latitudes, where its large thrusts run north and south: still open, the despinning, which wants the rotation's history (an input held at the present).
 
 ### M24. The lid's faults are not in the loop's history (closed by F153)
 

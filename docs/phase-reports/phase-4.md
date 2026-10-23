@@ -2381,3 +2381,26 @@ What the maps show:
 Still to do: Venus's subdued arc (its limb's faults read the whole field, the loads' stresses with it, which the planned population did not); the dome's height from its plume head (set aside in the ninety-third); the flow's stresses on the lid (M27, M25); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
 
 Tests 274 (23 ignored), among them a fault reshaped as drawn coming back as it was.
+
+## The ninety-sixth milestone: the flow bends the lid, and the rifts focus the coronae
+
+After the ninety-fifth the user asked for the dome's height from its plume head. The dome came out physical, and with it an audit of Tharsis's magma found the plumes made almost none of their mantle's melt; the plumes' share of the melt and the rifting from the rise's relief as it is built were tried, and the user chose to set all three aside (the patches kept). The user then asked for the flow's stresses on the lid (M27) and Venus's coronae on its rifts (M25).
+
+- **F182.** The mantle's flow bends the lid: each reading of the field holds the stress of the lid bent to the ground the flow holds up.
+- **F183.** A rift focuses a diapir's melt: where the region melts, a diapir on a limb makes a pocket as far as its head at least doubles the region's melt.
+
+How it went:
+
+- **The dome, held.** The plume's head flattened into a disc stands Mars's dome at 2.9 km; the canyon's depth and the rifts' extension, scaled to the dome, fell with it. Mars's mantle makes 1.37e9 km³ of melt over its life, 4.2e8 while Tharsis grows, but its plume took 1.8e7 of it, the ambient mantle melting all the while (F165). A plume's share of its mantle's heat (F121, 0.59 on Mars) beneath its head gave it 6.9e8 km³, of Tharsis's some 3e8 (Phillips et al. 2001), and the rise stood 5 km above the body's median. Rifting from the rise's relief as built gave shallow canyons on Tharsis's margin, where its pile's loads stretch the lid, and ran away on Venus across its overturn. Set aside.
+- **Mercury's thrusts.** The flow bends Mercury's lid by 7 to 15 MPa, but its plains' loads bend its small shell by 70 to 100 MPa at its equator and decide its thrusts' strikes, east and west at low latitudes; the north and south of Watters et al. (2015) wants the despinning.
+- **The coronae's births.** Drawn by the convection's upwellings, the diapirs spread over the pattern's broad highs: 7 percent of the coronae on the limbs, where 30 had been. Set aside.
+- **The melting rule.** A diapir on a limb or within a rise made a pocket where the region melts; Mars's rise then made coronae, and the focusing was kept to the limbs.
+
+What the maps show:
+
+- **Mercury:** its thrusts' strikes a little less alike, otherwise as before.
+- **Venus:** 841 coronae, more of them along the limbs; the rifts on its western rise cross, where a long parallel set ran, the flow deciding their strikes on the rise's crest.
+
+Still to do: Mercury's despinning (the rotation's history); the coronae's share on the rifts themselves, and the hot region they crowd; the dome, the plumes' share of the melt and the rifting from the rise's relief (held); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
+
+Tests 274 (24 ignored).

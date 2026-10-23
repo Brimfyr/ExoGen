@@ -1000,6 +1000,17 @@ pub const CORONA_FEED_GYR: f64 = 0.10;
 /// some nine-tenths of Venus's coronae in its upwellings' region, at its hot spots and
 /// along its rifts, and a tenth on its plains: 21, 68 and 11 percent, Stofan et al. 1992).
 pub const CORONA_UPWELLING_DRAW: f64 = 15.0;
+/// The finest plate the mantle's flow bends the lid on (F182): a cube face of this many
+/// cells resolves the flow's cells, as wide as the mantle is deep, with some eighteen cells
+/// across Mercury's narrowest (a stated choice).
+pub const FLOW_PLATE_FACE: u32 = 64;
+/// Where the region's mantle melts too, a rift focuses a diapir's melt into a pocket where
+/// the rifts run (F183): on a limb between rises where its pull stands past this share;
+/// the pocket reaches as far as the head melts at least twice the region's column, its
+/// excess past the region's (√2 − 1) of the region's own over the solidus, the columns
+/// growing as the square of their excess (stated choices).
+pub const CORONA_FOCUS_PULL: f64 = 0.5;
+pub const CORONA_FOCUS_EXCESS: f64 = std::f64::consts::SQRT_2 - 1.0;
 /// A plume's hot head under its rise is narrower than the dome its buoyancy lifts, which
 /// the lid's flexure spreads: its excess falls off as a Gaussian of this share of the
 /// rise's radius (a stated choice).

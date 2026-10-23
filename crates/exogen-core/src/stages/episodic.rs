@@ -29,7 +29,7 @@ use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 8;
+pub const VERSION: u64 = 9;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]

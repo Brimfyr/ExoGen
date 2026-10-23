@@ -1051,12 +1051,14 @@ mod tests {
             gravity: g,
             epochs: vec![
                 FieldEpoch {
+                    flow: None,
                     time: 0.0,
                     elastic: te,
                     relief: flat.clone(),
                     load: None,
                 },
                 FieldEpoch {
+                    flow: None,
                     time: 3.0,
                     elastic: te,
                     relief: flat,

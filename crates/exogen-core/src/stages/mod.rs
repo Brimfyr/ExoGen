@@ -384,7 +384,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 132;
+pub const FINISH_VERSION: u64 = 133;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -450,11 +450,19 @@ pub fn run_coarse_loop(
         plume.as_ref().map(|p| p.limbs.clone()).unwrap_or_default(),
     );
     let first_lid = thermal.at(0.0).elastic;
+    // The stress the mantle's flow bends the lid with as it stands at a time (F182).
+    let flow_at = |t: f64, elastic: f64| {
+        support
+            .as_ref()
+            .filter(|_| std::env::var_os("EXOGEN_SKIP_FLOW").is_none())
+            .map(|s| load::bent(&|d| s.at(t, d), body_radius, gravity, elastic))
+    };
     history.push(stress::FieldEpoch {
         time: 0.0,
         elastic: first_lid,
         relief: stress::Relief::read(&layers.bedrock, None, cell, first_lid, gravity),
         load: None,
+        flow: flow_at(0.0, first_lid),
     });
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal, &history);
     // The lid's tension faults, opened through the loop as its field stretches it (F178),
@@ -862,6 +870,7 @@ pub fn run_coarse_loop(
                 elastic,
                 relief,
                 load,
+                flow: flow_at(t1, elastic),
             });
         }
         // The faults the field opened or grew in the step (F178, F179): a rift wide enough
@@ -902,6 +911,9 @@ pub fn run_coarse_loop(
         Some(c) => (c.records, c.ridges),
         None => (Vec::new(), Vec::new()),
     };
+    if std::env::var_os("EXOGEN_DEBUG").is_some() && !scarps.is_empty() {
+        eprintln!("thrusts: {}", tectonics::strike_summary(&scarps));
+    }
     let (paterae, mountains, io_base) = match io {
         Some(i) => (i.paterae, i.mountains, i.base.map(|b| b.bedrock)),
         None => (Vec::new(), Vec::new(), None),

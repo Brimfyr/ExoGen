@@ -861,6 +861,13 @@ impl RockLid<'_> {
         }
     }
 
+    /// Whether a place lies where the rifts run at `t` (F183): on a limb between rises,
+    /// where its pull stands past CORONA_FOCUS_PULL, along which the rifts join them
+    /// (F150).
+    fn on_rift(&self, d: [f64; 3], t: f64) -> bool {
+        self.limbs.pull(self.rises, d, t, self.body_radius).0 >= CORONA_FOCUS_PULL
+    }
+
     /// The weight a place gets as a diapir's birthplace at `t`: more within the convection
     /// cells of the large upwellings and along the limbs between them, toward which the
     /// diapirs are drawn (F151).
@@ -1046,14 +1053,23 @@ fn rock_corona(
     // mantle about it melts too, the melting is the region's, its floods' and its plains',
     // and no pocket stands out of it: Mars's, Mercury's and the Moon's mantles through most
     // of their histories, and Venus's for a while after its lid founders.
+    // Where the region melts, a rift draws the head's melt together, its stretched lid the
+    // way up (F183; two thirds of Venus's coronae lie along its chasmata, Stofan et al.
+    // 1992): on a limb, where the rifts run, the head's pocket stands as far out
+    // as it melts at least twice what the region's mantle does; elsewhere the region's melt
+    // spreads with it.
     let need = solidus - state.mantle;
-    if need <= 0.0 {
+    let threshold = if need > 0.0 {
+        need
+    } else if lid.on_rift(center, time) {
+        CORONA_FOCUS_EXCESS * -need
+    } else {
         return Err(NoCorona::Regional);
-    }
-    if excess <= need {
+    };
+    if excess <= threshold {
         return Err(NoCorona::Cool);
     }
-    let pocket = (radius * (excess / need).ln().sqrt()).min(1.5 * radius);
+    let pocket = (radius * (excess / threshold).ln().sqrt()).min(1.5 * radius);
     // The melt column: the head's mantle rose along its adiabat from where it crossed the
     // solidus to the lid's base, melting the more the farther above it, so that its melt
     // fraction stands highest at its top and falls with depth through its thickness, or to
@@ -1092,9 +1108,11 @@ fn rock_corona(
     let rs: Vec<f64> = (0..n).map(|i| i as f64 * step).collect();
     let ring = |r: f64, centre: f64| (-((r - centre) / (CORONA_RING_SHARE * pocket)).powi(2)).exp();
     let inside = |r: f64| if r < pocket { 1.0 } else { 0.0 };
+    // The head's own melt, past what the region's mantle makes about it.
+    let region = column(f64::INFINITY);
     let intruded: Vec<f64> = rs
         .iter()
-        .map(|&r| CORONA_INTRUSIVE_SHARE * column(r) * inside(r))
+        .map(|&r| CORONA_INTRUSIVE_SHARE * (column(r) - region).max(0.0) * inside(r))
         .collect();
     // The crust the cumulates displace thickens the pocket's edge, as much as they take,
     // and the lava that erupts through the annulus builds on it.

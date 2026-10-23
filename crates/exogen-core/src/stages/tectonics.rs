@@ -51,6 +51,65 @@ pub struct ScarpRecord {
     pub carried: bool,
 }
 
+/// How the thrusts' strikes lie (F182), for the debug log: by length, in bands of latitude
+/// below 30°, to 60° and beyond, the share running within 30° of north and south, and how
+/// alike they run within each sixty degrees of longitude, the mean resultant length of
+/// their doubled strikes, 0 at random and 1 all alike.
+pub fn strike_summary(records: &[ScarpRecord]) -> String {
+    let mut lines = Vec::new();
+    for (lo, hi) in [(0.0, 30.0), (30.0, 60.0), (60.0, 90.0)] {
+        let (mut north, mut whole) = (0.0, 0.0);
+        let mut bands = [[0.0f64; 3]; 6];
+        for r in records {
+            let n = r.points.len();
+            if n < 2 {
+                continue;
+            }
+            let m = r.midpoint();
+            let lat = m[2].clamp(-1.0, 1.0).asin().to_degrees();
+            if lat.abs() < lo || lat.abs() >= hi {
+                continue;
+            }
+            let (east, up) = crate::geom::local_basis(m);
+            let d = [
+                r.points[n - 1][0] - r.points[0][0],
+                r.points[n - 1][1] - r.points[0][1],
+                r.points[n - 1][2] - r.points[0][2],
+            ];
+            let theta = crate::geom::dot(d, east).atan2(crate::geom::dot(d, up));
+            let w = r.length;
+            whole += w;
+            let off = (theta.rem_euclid(std::f64::consts::PI))
+                .min(std::f64::consts::PI - theta.rem_euclid(std::f64::consts::PI));
+            if off < 30f64.to_radians() {
+                north += w;
+            }
+            let lon = m[1].atan2(m[0]).to_degrees() + 180.0;
+            let b = ((lon / 60.0) as usize).min(5);
+            bands[b][0] += w * (2.0 * theta).cos();
+            bands[b][1] += w * (2.0 * theta).sin();
+            bands[b][2] += w;
+        }
+        let alike: Vec<String> = bands
+            .iter()
+            .map(|b| {
+                if b[2] > 0.0 {
+                    format!("{:.2}", (b[0] * b[0] + b[1] * b[1]).sqrt() / b[2])
+                } else {
+                    "-".into()
+                }
+            })
+            .collect();
+        lines.push(format!(
+            "lat {lo:.0}-{hi:.0}: {:.0} km, north-south {:.2} (random 0.33), alike by longitude {}",
+            whole / 1e3,
+            north / whole.max(1.0),
+            alike.join(" ")
+        ));
+    }
+    lines.join("; ")
+}
+
 impl ScarpRecord {
     pub fn midpoint(&self) -> [f64; 3] {
         self.points[self.points.len() / 2]

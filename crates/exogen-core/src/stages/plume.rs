@@ -5138,12 +5138,17 @@ mod tests {
         );
         // The coronae: how many lie on a rift, within its width, and on a limb.
         let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
-        let rifts: Vec<Trough> = p
-            .canyons
-            .iter()
-            .chain(p.graben.iter().filter(|t| t.kind == TroughKind::Rift))
-            .cloned()
-            .collect();
+        let thermal_now = ThermalHistory::from_graph(&g);
+        let rifts: Vec<Trough> = crate::stages::rifting::rise_faults(
+            &g,
+            CubeSphere::new(256),
+            &thermal_now,
+            &p.rises,
+            &p.limbs,
+        )
+        .into_iter()
+        .filter(|t| t.kind == TroughKind::Rift)
+        .collect();
         let t1 = std::time::Instant::now();
         let coronae = crate::stages::corona::rock_coronae(&g, &mantle, &p.rises, &p.limbs);
         let within = |reach: &dyn Fn(&crate::stages::corona::Corona, &Trough) -> f64| {

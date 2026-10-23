@@ -690,14 +690,17 @@ pub fn shrinking(thermal: &crate::thermal::ThermalHistory, body_radius: f64, t: 
 }
 
 /// One reading of the ground through the loop (F157): its time, the lid's elastic thickness
-/// then, the relief as the field reads it then, and the stress of the load laid since the
-/// epoch before, bending the lid of its time.
+/// then, the relief as the field reads it then, the stress of the load laid since the epoch
+/// before, bending the lid of its time, and the stress the mantle's flow then bent it with
+/// (F182).
 #[derive(Clone, Debug)]
 pub struct FieldEpoch {
     pub time: f64,
     pub elastic: f64,
     pub relief: Relief,
     pub load: Option<LoadStress>,
+    /// The stress the mantle's flow bent the lid of its time with as it then stood (F182).
+    pub flow: Option<LoadStress>,
 }
 
 /// What the lid's field is built from through the loop (F154, F157): the rises with their
@@ -769,9 +772,11 @@ impl FieldHistory {
             current.map_or(1e3, |e| e.elastic),
             current.map(|e| &e.relief),
             if loaded {
+                // Each load as it was laid, and the flow as it stands now (F182).
                 self.epochs[..k]
                     .iter()
                     .filter_map(|e| e.load.as_ref())
+                    .chain(current.and_then(|e| e.flow.as_ref()))
                     .collect()
             } else {
                 Vec::new()
