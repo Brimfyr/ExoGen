@@ -1,95 +1,137 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Brimfyr
 
-//! The tesserae's fabric from the strain their lid took (docs/parameters.md F187).
+//! The tesserae's fabric from the strain their lid took (docs/parameters.md F187, F190).
 //!
 //! Where the mantle's flow dragged the young lid past its strength, the lid broke and went
 //! with the flow (crust::drag), shortening where the flow converged and stretching where
-//! it spread, each way by the flow's own curvature. A strong layer shortened buckles into
+//! it spread, each way by the flow's own curvature; and later, as the plateaus collapsed,
+//! the lower crust's flow stretched it again (F188). A strong layer shortened buckles into
 //! folds across the shortening, some five times as long as the layer is thick, and one
 //! stretched necks into graben across the stretching, three and a half times; the lid has
 //! two such layers, the brittle layer its faults cut and the elastic lid beneath, so each
-//! strain makes folds or graben at two scales, the brittle layer's a few kilometres apart
-//! and the lid's some tens (the short and long folds and the ribbons of Ghent and Hansen).
-//! A fold grows as the layer's length takes up the shortening, until its limbs dip as
-//! steeply as the layer's friction lets them slip, or its relief weighs on the layer as
-//! much as the layer's strength holds; a graben deepens with the stretching until its
-//! relief weighs as much as the layer pulled apart holds. Each state of the flow made its
-//! own sets, the later laid over the earlier.
+//! strain makes folds or graben at two scales (the short and long folds and the ribbons of
+//! Ghent and Hansen). A fold grows as the layer's length takes up the shortening, until its
+//! limbs dip as steeply as the layer's friction lets them slip, or its relief weighs on the
+//! layer as much as the layer's strength holds; a graben deepens with the stretching until
+//! its relief weighs as much as the layer pulled apart holds. Each state of the flow made
+//! its own sets, the later laid over the earlier.
 //!
-//! The fabric is drawn as a sum of oriented wave packets on the coarse cells, each with the
-//! cell's strain: the packets' places, phases and a scatter in their spacing and relief are
-//! drawn, so that the folds come as en echelon ridges of a few wavelengths each rather than
-//! a grating, while where they stand, which way they run, how far apart and how high is the
-//! strain's.
+//! Each fold's crest and each graben is a line along the strain's strike, the lines of a
+//! set as far apart as their wavelength (evenly spaced streamlines, Jobard and Lefer 1997):
+//! a line runs on as long as the strain keeps its sense and no other line of its set
+//! crowds it, so folds end where the shortening does or where they converge on their
+//! neighbours, plunging out at their ends. A fold is a narrow crest over broad troughs, a
+//! graben a flat floor between steep walls with flat blocks between; crossing sets bound
+//! cells, basins and domes where the lid shortened both ways and blocks where it stretched
+//! both ways, the tiles the tesserae are named for.
+
+use std::collections::HashMap;
 
 use rayon::prelude::*;
 
 use crate::constants::*;
-use crate::geom::{cross, dot, local_basis, normalize, offset};
+use crate::geom::{cross, dot, local_basis, normalize};
 use crate::grid::CubeSphere;
+use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::rng::Rng;
 use crate::stages::episodic::LidStrain;
 use crate::stages::stress::brittle_yields;
 
-/// One wave of a packet: across `dir`, a fold or a graben.
+/// A piece of a line: from `a` to `b`, its relief at each end, m, and its line.
 #[derive(Clone, Copy, Debug)]
-struct Wave {
-    /// The direction the strain ran, which the wave's crests cross.
-    dir: [f64; 3],
-    wavenumber: f64,
-    /// The fold's amplitude or the graben's depth, m.
-    relief: f64,
-    phase: f64,
+struct Segment {
+    a: [f64; 3],
+    b: [f64; 3],
+    ra: f32,
+    rb: f32,
+    line: u32,
+}
+
+/// What a line is: a fold's crest or a graben, and its set's spacing, m.
+#[derive(Clone, Copy, Debug)]
+struct Kind {
     graben: bool,
-    /// The packet's reach across its crests and along them, m.
-    across: f64,
-    along: f64,
+    spacing: f64,
 }
 
-/// A wave packet: the strain of one coarse cell in one layer of one state, its two waves
-/// across the two principal directions.
-#[derive(Clone, Debug)]
-struct Packet {
-    center: [f64; 3],
-    family: usize,
-    waves: Vec<Wave>,
+/// One family of lines: one principal strain of one state in one layer, its segments
+/// by the cell of a grid about as fine as its reach.
+struct Family {
+    layer: usize,
+    kinds: Vec<Kind>,
+    segments: Vec<Segment>,
+    index: HashMap<u32, Vec<u32>>,
+    grid: CubeSphere,
 }
 
-/// The fabric of the tesserae: the packets by the coarse cell they stand in.
+/// The fabric of the tesserae: its lines, family by family.
 pub struct TesseraFabric {
-    coarse: CubeSphere,
     body_radius: f64,
-    /// Per family, the packets by coarse cell and how many coarse cells about a point they
-    /// reach.
-    packets: Vec<(Vec<Vec<Packet>>, i32)>,
-    families: usize,
-    /// Per family, the layer it folds or necks: the brittle layer or the elastic lid.
-    layers: Vec<usize>,
+    families: Vec<Family>,
     /// The relief a layer's strength holds, m.
     hold: f64,
-    /// The highest relief any one wave reaches, m, for the fabric's bound.
+    /// A graben's walls, m wide at the least: the grid's cell.
+    wall: f64,
+    /// The highest relief any one line reaches, m, for the fabric's bound.
     pub bound: f64,
 }
 
-/// The mean of a graben's profile over its spacing, which the profile is taken about so
-/// that the packets sum to no net change.
-const GRABEN_MEAN: f64 = 0.2180;
+/// A line's reach about it, in its set's spacings: the trough between two fold crests
+/// lies half a spacing out, and the fabric fades to its mean beyond.
+const REACH: f64 = 0.75;
 
-fn profile(phase: f64, graben: bool) -> f64 {
-    if graben {
-        // A trough across a third of the spacing, flat between, taken about its mean.
-        -((phase.cos() - 0.5).max(0.0) / 0.5 - GRABEN_MEAN)
-    } else {
-        // A narrow crest and a broad trough, as the tesserae's ridges are narrower than the
-        // troughs between (Hansen and Willis 1996), taken about its mean.
-        4.0 / std::f64::consts::PI - 2.0 * (0.5 * phase).sin().abs()
+/// The strain of one state, read anywhere: its three components in the local east and
+/// north basis.
+struct Strain<'a> {
+    coarse: &'a CubeSphere,
+    parts: [PaddedField; 3],
+}
+
+impl Strain<'_> {
+    /// The principal strain `which` (0 the greatest, 1 the least) at a direction and the
+    /// strike across it, a tangent unit vector.
+    fn principal(&self, d: [f64; 3], which: usize) -> (f64, [f64; 3]) {
+        let [a, b, c] = [0, 1, 2].map(|i| sample_bilinear(self.coarse, &self.parts[i], d) as f64);
+        let mean = 0.5 * (a + c);
+        let radius = (0.25 * (a - c) * (a - c) + b * b).sqrt();
+        let theta = 0.5 * (2.0 * b).atan2(a - c);
+        let (east, north) = local_basis(d);
+        let axis = |angle: f64| {
+            let (s, cs) = angle.sin_cos();
+            normalize([
+                east[0] * cs + north[0] * s,
+                east[1] * cs + north[1] * s,
+                east[2] * cs + north[2] * s,
+            ])
+        };
+        // The greatest runs along `theta` and its strike across it; the least the reverse.
+        if which == 0 {
+            (mean + radius, axis(theta + std::f64::consts::FRAC_PI_2))
+        } else {
+            (mean - radius, axis(theta))
+        }
     }
+}
+
+/// A step of `h` radians from `p` along the tangent `dir`.
+fn advance(p: [f64; 3], dir: [f64; 3], h: f64) -> [f64; 3] {
+    normalize([p[0] + dir[0] * h, p[1] + dir[1] * h, p[2] + dir[2] * h])
+}
+
+/// The distance from `c` to the segment, m, and how far along it the nearest point is.
+fn to_segment(c: [f64; 3], s: &Segment, radius: f64) -> (f64, f64) {
+    let ab = [s.b[0] - s.a[0], s.b[1] - s.a[1], s.b[2] - s.a[2]];
+    let ac = [c[0] - s.a[0], c[1] - s.a[1], c[2] - s.a[2]];
+    let len2 = dot(ab, ab).max(1e-30);
+    let t = (dot(ac, ab) / len2).clamp(0.0, 1.0);
+    let q = [ac[0] - t * ab[0], ac[1] - t * ab[1], ac[2] - t * ab[2]];
+    (dot(q, q).sqrt() * radius, t)
 }
 
 impl TesseraFabric {
     /// The fabric from the lid's strain sets on the coarse grid, drawn on a grid of cells
-    /// `cell` m wide: the waves the grid cannot resolve are left out. `near` says which
+    /// `cell` m wide: the lines the grid cannot resolve are left out. `near` says which
     /// coarse cells the fabric is wanted about.
     pub fn new(
         coarse: &CubeSphere,
@@ -107,221 +149,313 @@ impl TesseraFabric {
         let dip = std::f64::consts::FRAC_PI_4 + 0.5 * friction.atan();
         let fold_cap = yield_compression / (weight * TESSERA_BUCKLING_RATIO);
         let graben_cap = yield_tension / (weight * GROOVE_NECKING_WAVELENGTH);
-        let coarse_cell = coarse.delta() * body_radius;
-        let rng = Rng::new(seed ^ 0x7E55_E2A0);
-        let n = coarse.cell_count();
-        let mut packets: Vec<(Vec<Vec<Packet>>, i32)> = Vec::new();
-        let mut families = 0usize;
-        let mut layers = Vec::new();
-        let mut bound = 0.0f64;
-        // The layers: the brittle layer the faults cut and the elastic lid.
+        // The grid draws a line's set where its spacing spans enough cells to read as
+        // ridges, not a hatch of cells, fading in over a range.
+        let drawn = |length: f64| {
+            let (from, to) = TESSERA_MIN_CELLS;
+            let x = ((length / cell - from) / (to - from)).clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+        let mut jobs = Vec::new();
         for (s, set) in sets.iter().enumerate() {
             for (l, &share) in [GROOVE_RIFT_LID_SHARE, 1.0].iter().enumerate() {
                 let layer = share * set.elastic;
-                let fold_length = TESSERA_BUCKLING_RATIO * layer;
-                let graben_length = GROOVE_NECKING_WAVELENGTH * layer;
-                // The grid draws a wave where it spans this many cells, fading in from two.
-                let drawn = |length: f64| {
-                    let x = ((length / cell - 2.0) / (GROOVE_MIN_CELLS - 2.0)).clamp(0.0, 1.0);
-                    x * x * (3.0 - 2.0 * x)
-                };
-                let (fold_drawn, graben_drawn) = (drawn(fold_length), drawn(graben_length));
-                if fold_drawn <= 0.0 && graben_drawn <= 0.0 {
+                let fold = TESSERA_BUCKLING_RATIO * layer;
+                let graben = GROOVE_NECKING_WAVELENGTH * layer;
+                if drawn(fold) <= 0.0 && drawn(graben) <= 0.0 {
                     continue;
                 }
-                let family = families;
-                families += 1;
-                layers.push(l);
-                // As many packets as cover each place this many times over, so that each
-                // shows as a segment of its own rather than merging into a grating.
-                let shortest = fold_length.min(graben_length);
-                let area = TESSERA_PACKET_WIDTH * TESSERA_PACKET_LENGTH * shortest * shortest;
-                let per_cell = ((TESSERA_PACKET_DENSITY * coarse_cell * coarse_cell / area).ceil()
-                    as usize)
-                    .clamp(1, 16);
-                let made: Vec<(usize, Vec<Packet>)> = (0..n)
-                    .into_par_iter()
-                    .filter(|&k| near(k))
-                    .filter_map(|k| {
-                        let [a, b, c] = set.strain[k];
-                        if a == 0.0 && b == 0.0 && c == 0.0 {
-                            return None;
-                        }
-                        let (a, b, c) = (a as f64, b as f64, c as f64);
-                        let mean = 0.5 * (a + c);
-                        let radius = (0.25 * (a - c) * (a - c) + b * b).sqrt();
-                        let theta = 0.5 * (2.0 * b).atan2(a - c);
-                        let center = coarse.center(coarse.cell(k));
-                        let (east, north) = local_basis(center);
-                        let axis = |angle: f64| {
-                            let (sn, cs) = angle.sin_cos();
-                            normalize([
-                                east[0] * cs + north[0] * sn,
-                                east[1] * cs + north[1] * sn,
-                                east[2] * cs + north[2] * sn,
-                            ])
-                        };
-                        // The greatest principal strain along `theta`, the least across it.
-                        let id = ((s as u64) << 40) ^ ((l as u64) << 36) ^ k as u64;
-                        let mut out = Vec::with_capacity(per_cell);
-                        for j in 0..per_cell as u64 {
-                            let draw = |i: u64| rng.uniform(id, 16 * j + i);
-                            // The strike scattered about the strain's, as a fold set's
-                            // segments step and turn.
-                            let turn = TESSERA_STRIKE_SCATTER * (2.0 * draw(8) - 1.0);
-                            let principal = [
-                                (mean + radius, axis(theta + turn)),
-                                (
-                                    mean - radius,
-                                    axis(theta + turn + std::f64::consts::FRAC_PI_2),
-                                ),
-                            ];
-                            let place = offset(
-                                center,
-                                east,
-                                north,
-                                0.5 * coarse.delta() * draw(0).sqrt(),
-                                std::f64::consts::TAU * draw(1),
-                            );
-                            let mut waves = Vec::with_capacity(2);
-                            for (w, &(strain, dir)) in principal.iter().enumerate() {
-                                let graben = strain > 0.0;
-                                let (length, drawn) = if graben {
-                                    (graben_length, graben_drawn)
-                                } else {
-                                    (fold_length, fold_drawn)
-                                };
-                                if drawn <= 0.0 || strain == 0.0 {
-                                    continue;
-                                }
-                                let length = length
-                                    * 2f64.powf(
-                                        TESSERA_SPACING_SCATTER * (2.0 * draw(2 + w as u64) - 1.0),
-                                    );
-                                let relief = if graben {
-                                    // Each graben takes the stretching across its spacing
-                                    // on two faults, sinking as they slip.
-                                    (0.5 * strain * length * dip.tan()).min(graben_cap)
-                                } else {
-                                    // A fold takes up the shortening in its layer's length,
-                                    // to its limbs' friction or its layer's strength.
-                                    ((length / std::f64::consts::PI) * (-strain).sqrt())
-                                        .min(friction * length / std::f64::consts::TAU)
-                                        .min(fold_cap)
-                                };
-                                let relief = relief
-                                    * drawn
-                                    * (1.0
-                                        + TESSERA_RELIEF_SCATTER
-                                            * (2.0 * draw(4 + w as u64) - 1.0));
-                                // The wave's direction moved to the packet's place.
-                                let dir = normalize(cross(cross(place, dir), place));
-                                waves.push(Wave {
-                                    dir,
-                                    wavenumber: std::f64::consts::TAU / length,
-                                    relief,
-                                    phase: std::f64::consts::TAU * draw(6 + w as u64),
-                                    graben,
-                                    across: TESSERA_PACKET_WIDTH * length,
-                                    along: TESSERA_PACKET_LENGTH * length,
-                                });
-                            }
-                            // The folds of one layer together weigh on it no more than
-                            // its strength holds.
-                            let folded: f64 =
-                                waves.iter().filter(|w| !w.graben).map(|w| w.relief).sum();
-                            let most = fold_cap * (1.0 + TESSERA_RELIEF_SCATTER);
-                            if folded > most {
-                                for w in waves.iter_mut().filter(|w| !w.graben) {
-                                    w.relief *= most / folded;
-                                }
-                            }
-                            if !waves.is_empty() {
-                                out.push(Packet {
-                                    center: place,
-                                    family,
-                                    waves,
-                                });
-                            }
-                        }
-                        Some((k, out))
-                    })
-                    .collect();
-                let mut cells: Vec<Vec<Packet>> = vec![Vec::new(); n];
-                let mut widest = 0.0f64;
-                for (k, list) in made {
-                    for p in &list {
-                        for w in &p.waves {
-                            widest = widest.max(w.along).max(w.across);
-                            bound = bound.max(w.relief);
-                        }
-                    }
-                    cells[k] = list;
+                for which in 0..2 {
+                    jobs.push((s, l, which, fold, graben));
                 }
-                let reach = ((PACKET_CUTOFF * widest + coarse_cell) / coarse_cell).ceil() as i32;
-                packets.push((cells, reach));
             }
         }
+        let families: Vec<Family> = jobs
+            .par_iter()
+            .map(|&(s, l, which, fold_length, graben_length)| {
+                let set = &sets[s];
+                let parts = [0, 1, 2].map(|i| {
+                    let v: Vec<f32> = set.strain.iter().map(|t| t[i]).collect();
+                    PaddedField::new(coarse, &v)
+                });
+                let strain = Strain { coarse, parts };
+                let rng = Rng::new(seed ^ 0x7E55_E2A0 ^ ((s as u64) << 20) ^ ((l as u64) << 16));
+                let id = which as u64;
+                // Where a line may run: about the tesserae, where the state strained the lid.
+                let inside = |d: [f64; 3]| {
+                    let k = coarse.index(coarse.locate(d).0);
+                    near(k) && set.strain[k] != [0.0; 3]
+                };
+                let relief_of = |value: f64, graben: bool| -> (f64, f64) {
+                    if graben {
+                        let h = (0.5 * value * graben_length * dip.tan()).min(graben_cap);
+                        (h * drawn(graben_length), graben_length)
+                    } else {
+                        let h = ((fold_length / std::f64::consts::PI) * (-value).sqrt())
+                            .min(friction * fold_length / std::f64::consts::TAU)
+                            .min(fold_cap);
+                        (h * drawn(fold_length), fold_length)
+                    }
+                };
+                // The lines' points by the cell of a grid as fine as the closer spacing,
+                // for how near a line runs to the others.
+                let near_spacing = fold_length.min(graben_length);
+                let face = ((std::f64::consts::FRAC_PI_2 * body_radius / near_spacing).ceil()
+                    as u32)
+                    .clamp(4, 4096);
+                let crowd = CubeSphere::new(face);
+                let mut points: HashMap<u32, Vec<[f64; 3]>> = HashMap::new();
+                let crowded = |points: &HashMap<u32, Vec<[f64; 3]>>, p: [f64; 3], within: f64| {
+                    let (c, _, _) = crowd.locate(p);
+                    let reach = (within / near_spacing).ceil() as i32 + 1;
+                    for di in -reach..=reach {
+                        for dj in -reach..=reach {
+                            let k = crowd.index(crowd.neighbor(c, di, dj)) as u32;
+                            if let Some(list) = points.get(&k)
+                                && list.iter().any(|&q| {
+                                    crate::geom::angle_between(p, q) * body_radius < within
+                                })
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                };
+                let mut lines: Vec<(Kind, Vec<[f64; 3]>, Vec<f32>)> = Vec::new();
+                let mut seeds: Vec<[f64; 3]> = Vec::new();
+                let mut next_seed = 0usize;
+                let mut coarse_seed = 0usize;
+                let mut draws = 0u64;
+                loop {
+                    // The next seed: one beside a line drawn, or a coarse cell's centre.
+                    let p0 = if next_seed < seeds.len() {
+                        next_seed += 1;
+                        seeds[next_seed - 1]
+                    } else {
+                        let mut found = None;
+                        while coarse_seed < coarse.cell_count() {
+                            let k = coarse_seed;
+                            coarse_seed += 1;
+                            if near(k) && set.strain[k] != [0.0; 3] {
+                                found = Some(coarse.center(coarse.cell(k)));
+                                break;
+                            }
+                        }
+                        match found {
+                            Some(p) => p,
+                            None => break,
+                        }
+                    };
+                    if !inside(p0) {
+                        continue;
+                    }
+                    let (v0, strike0) = strain.principal(p0, which);
+                    if v0 == 0.0 {
+                        continue;
+                    }
+                    let graben = v0 > 0.0;
+                    let (h0, spacing) = relief_of(v0, graben);
+                    if h0 <= 0.0 {
+                        continue;
+                    }
+                    draws += 1;
+                    let spread = 2f64
+                        .powf(TESSERA_SPACING_SCATTER * (2.0 * rng.uniform(id, 3 * draws) - 1.0));
+                    let gap = spacing * spread;
+                    if crowded(&points, p0, 0.9 * gap) {
+                        continue;
+                    }
+                    let scatter =
+                        1.0 + TESSERA_RELIEF_SCATTER * (2.0 * rng.uniform(id, 3 * draws + 1) - 1.0);
+                    // Traced both ways from the seed along the strike, a sixth of a spacing
+                    // at a step.
+                    let step = spacing / 6.0;
+                    let h = step / body_radius;
+                    // Its length drawn within the range folds of a set run, so that they
+                    // stand en echelon and plunge out at their own ends.
+                    let (short, long) = TESSERA_LINE_LENGTH;
+                    let length = short + (long - short) * rng.uniform(id, 3 * draws + 2);
+                    let longest = (length * spacing / step) as usize;
+                    let mut halves: [Vec<([f64; 3], f32)>; 2] = [Vec::new(), Vec::new()];
+                    for (half, sign) in [(0usize, 1.0f64), (1, -1.0)] {
+                        let aligned = |d: [f64; 3], prev: [f64; 3]| {
+                            if dot(d, prev) < 0.0 {
+                                [-d[0], -d[1], -d[2]]
+                            } else {
+                                d
+                            }
+                        };
+                        let mut p = p0;
+                        let mut dir = [strike0[0] * sign, strike0[1] * sign, strike0[2] * sign];
+                        for _ in 0..longest / 2 {
+                            let (_, s1) = strain.principal(p, which);
+                            let d1 = aligned(s1, dir);
+                            // The strike turning sharply: the strain alike every way, no
+                            // strike to follow.
+                            if dot(d1, dir) < std::f64::consts::FRAC_1_SQRT_2 {
+                                break;
+                            }
+                            let mid = advance(p, d1, 0.5 * h);
+                            let (_, s2) = strain.principal(mid, which);
+                            let d2 = aligned(s2, d1);
+                            let q = advance(p, d2, h);
+                            if !inside(q) {
+                                break;
+                            }
+                            let (v, _) = strain.principal(q, which);
+                            if v == 0.0 || (v > 0.0) != graben {
+                                break;
+                            }
+                            if crowded(&points, q, 0.5 * gap) {
+                                break;
+                            }
+                            let (hq, _) = relief_of(v, graben);
+                            halves[half].push((q, (hq * scatter) as f32));
+                            dir = normalize(cross(cross(q, d2), q));
+                            p = q;
+                        }
+                    }
+                    let [forward, backward] = halves;
+                    let mut pts: Vec<[f64; 3]> = backward.iter().rev().map(|x| x.0).collect();
+                    let mut rel: Vec<f32> = backward.iter().rev().map(|x| x.1).collect();
+                    pts.push(p0);
+                    rel.push((h0 * scatter) as f32);
+                    pts.extend(forward.iter().map(|x| x.0));
+                    rel.extend(forward.iter().map(|x| x.1));
+                    let n = pts.len();
+                    // A line shorter than its spacing is no fold.
+                    if n < 6 {
+                        continue;
+                    }
+                    // Its ends plunge out over a spacing.
+                    for (i, r) in rel.iter_mut().enumerate() {
+                        let x = (i.min(n - 1 - i) as f64 / 6.0).min(1.0);
+                        *r *= (x * x * (3.0 - 2.0 * x)) as f32;
+                    }
+                    for &q in &pts {
+                        let k = crowd.index(crowd.locate(q).0) as u32;
+                        points.entry(k).or_default().push(q);
+                    }
+                    // Seeds a spacing to either side, every spacing along.
+                    for i in (0..n).step_by(6) {
+                        let q = pts[i];
+                        let other = if i + 1 < n { pts[i + 1] } else { pts[i - 1] };
+                        let t = normalize([other[0] - q[0], other[1] - q[1], other[2] - q[2]]);
+                        let side = normalize(cross(q, t));
+                        for sgn in [1.0, -1.0] {
+                            let dir = [side[0] * sgn, side[1] * sgn, side[2] * sgn];
+                            seeds.push(advance(q, dir, gap / body_radius));
+                        }
+                    }
+                    lines.push((Kind { graben, spacing }, pts, rel));
+                }
+                // The segments, by the cell of a grid as coarse as the farthest a line
+                // reaches, so that a point finds every line that reaches it among the cells
+                // about its own.
+                let widest = fold_length.max(graben_length) * REACH;
+                let face = ((std::f64::consts::FRAC_PI_2 * body_radius / widest).floor() as u32)
+                    .clamp(4, 4096);
+                let grid = CubeSphere::new(face);
+                let mut kinds = Vec::with_capacity(lines.len());
+                let mut segments = Vec::new();
+                let mut index: HashMap<u32, Vec<u32>> = HashMap::new();
+                for (li, (kind, pts, rel)) in lines.into_iter().enumerate() {
+                    kinds.push(kind);
+                    for i in 0..pts.len().saturating_sub(1) {
+                        let sid = segments.len() as u32;
+                        segments.push(Segment {
+                            a: pts[i],
+                            b: pts[i + 1],
+                            ra: rel[i],
+                            rb: rel[i + 1],
+                            line: li as u32,
+                        });
+                        let k = grid.index(grid.locate(pts[i]).0) as u32;
+                        index.entry(k).or_default().push(sid);
+                    }
+                }
+                Family {
+                    layer: l,
+                    kinds,
+                    segments,
+                    index,
+                    grid,
+                }
+            })
+            .filter(|f| !f.segments.is_empty())
+            .collect();
+        let bound = families
+            .iter()
+            .flat_map(|f| f.segments.iter().map(|s| s.ra.max(s.rb) as f64))
+            .fold(0.0f64, f64::max);
         Self {
-            coarse: *coarse,
             body_radius,
-            packets,
             families,
-            layers,
             hold: fold_cap,
+            wall: cell,
             bound,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.families == 0
+        self.families.is_empty()
     }
 
-    /// The fabric's relief at a direction, m.
+    /// The fabric's relief at a direction, m: each family's nearest line's profile, the
+    /// layers' reliefs each no higher than their strength holds.
     pub fn at(&self, d: [f64; 3]) -> f64 {
-        if self.families == 0 {
-            return 0.0;
-        }
-        // Per family and wave, the packets' weighted sum and their weights' squares.
-        let mut sums = vec![[0.0f64; 4]; self.families];
-        let (home, _, _) = self.coarse.locate(d);
+        let mut layer = [0.0f64; 2];
         let r = self.body_radius;
-        for (cells, reach) in &self.packets {
-            for di in -reach..=*reach {
-                for dj in -reach..=*reach {
-                    let c = self.coarse.neighbor(home, di, dj);
-                    for p in &cells[self.coarse.index(c)] {
-                        let v = [
-                            (d[0] - p.center[0]) * r,
-                            (d[1] - p.center[1]) * r,
-                            (d[2] - p.center[2]) * r,
-                        ];
-                        let normal = p.center;
-                        for (w, wave) in p.waves.iter().enumerate() {
-                            let u = dot(v, wave.dir);
-                            let side = cross(normal, wave.dir);
-                            let s = dot(v, side);
-                            let q = (u / wave.across).powi(2) + (s / wave.along).powi(2);
-                            if q > PACKET_CUTOFF * PACKET_CUTOFF {
-                                continue;
-                            }
-                            let weight = (-0.5 * q).exp();
-                            let e = &mut sums[p.family];
-                            e[2 * w] += weight
-                                * wave.relief
-                                * profile(wave.wavenumber * u + wave.phase, wave.graben);
-                            e[2 * w + 1] += weight * weight;
+        let fade = |x: f64| {
+            let x = x.clamp(0.0, 1.0);
+            1.0 - x * x * (3.0 - 2.0 * x)
+        };
+        for f in &self.families {
+            let (c, _, _) = f.grid.locate(d);
+            let mut best = (f64::INFINITY, 0.0f64, None::<Kind>);
+            for di in -1..=1 {
+                for dj in -1..=1 {
+                    let k = f.grid.index(f.grid.neighbor(c, di, dj)) as u32;
+                    let Some(list) = f.index.get(&k) else {
+                        continue;
+                    };
+                    for &sid in list {
+                        let s = &f.segments[sid as usize];
+                        let (dist, t) = to_segment(d, s, r);
+                        if dist < best.0 {
+                            let relief = s.ra as f64 + (s.rb as f64 - s.ra as f64) * t;
+                            best = (dist, relief, Some(f.kinds[s.line as usize]));
                         }
                     }
                 }
             }
+            let (dist, relief, Some(kind)) = best else {
+                continue;
+            };
+            let spacing = kind.spacing;
+            if dist >= REACH * spacing {
+                continue;
+            }
+            let value = if kind.graben {
+                // A flat floor across part of the spacing between walls a cell wide.
+                let half = 0.5 * TESSERA_GRABEN_FLOOR * spacing;
+                -relief * fade((dist - half) / self.wall + 0.5)
+            } else {
+                // A narrow crest over broad troughs, fading to the mean beyond them.
+                let x = (dist / spacing).min(0.5);
+                let profile = 4.0 / std::f64::consts::PI - 2.0 * (std::f64::consts::PI * x).sin();
+                let beyond = if dist > 0.5 * spacing {
+                    fade((dist - 0.5 * spacing) / ((REACH - 0.5) * spacing))
+                } else {
+                    1.0
+                };
+                relief * profile * beyond
+            };
+            layer[f.layer] += value;
         }
         // Each layer's relief, every set it took laid together, weighs on it no more than
         // its strength holds: past that the relief its sets would add gives way.
-        let mut layer = [0.0f64; 2];
-        for (f, e) in sums.iter().enumerate() {
-            layer[self.layers[f]] += e[0] / (e[1] + 1.0).sqrt() + e[2] / (e[3] + 1.0).sqrt();
-        }
         layer
             .iter()
             .map(|&v| self.hold * (v / self.hold).tanh())
@@ -329,16 +463,14 @@ impl TesseraFabric {
     }
 }
 
-/// A packet's reach in its widths: its weight is negligible beyond.
-const PACKET_CUTOFF: f64 = 2.5;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::offset;
 
-    /// F187: a lid shortened one way folds across that way, its crests running along the
-    /// other, as far apart as five times its layer, no higher than its strength holds; one
-    /// stretched one way has graben across it.
+    /// F187, F190: a lid shortened one way folds across that way, its crests lines running
+    /// along the other, as far apart as five times its layer, no higher than its strength
+    /// holds; one stretched one way has graben across it, flat blocks between.
     #[test]
     fn a_strained_lid_folds_across_its_shortening_and_necks_across_its_stretching() {
         let coarse = CubeSphere::new(64);
@@ -403,18 +535,16 @@ mod tests {
             highest <= 2.0 * cap + 1.0,
             "{highest} against {cap} a layer"
         );
-        // Stretched: graben, the relief's low side deeper than its high side is high.
+        // Stretched: graben, flat blocks standing between them at the mean.
         let fabric = TesseraFabric::new(&coarse, &[fold([0.3, 0.0, 0.0])], r, 8.87, cell, 7, &near);
         let mut hs: Vec<f64> = (0..400)
             .map(|i| fabric.at(offset(at, east, north, i as f64 * 250.0 / r, 0.0)))
             .collect();
         hs.sort_by(f64::total_cmp);
-        let median = hs[200];
         assert!(
-            median - hs[4] > 1.5 * (hs[395] - median),
-            "{} {} {}",
+            hs[4] < -50.0 && hs[395].abs() < 1.0,
+            "{} {}",
             hs[4],
-            median,
             hs[395]
         );
     }

@@ -910,17 +910,21 @@ pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
 /// buckling theory's 4 to 6 for a layer of plastic strength over a viscous one; with the
 /// brittle layer of a lid 6.4 km thick it gives Tellus's folds 6 km apart and with the lid
 /// itself Ovda's 30 km long folds, Ghent and Hansen 1999, Resor et al. 2021). The fabric is
-/// drawn as wave packets this many wavelengths across the crests and this many along them,
-/// covering each place this many times over (stated choices, the folds' en echelon
-/// segments), their spacing scattered by a factor of two to this power either way, their
-/// strike by this many radians and their relief by this share.
+/// drawn as lines along the strain's strike, each between this many spacings long and this
+/// many (a stated choice: periclinal folds three times as long as their spacing and more,
+/// Ovda's long folds up to 400 km, some thirteen of their spacings), a graben's floor this
+/// share of its spacing wide (a stated choice), the lines' spacing scattered by a factor of
+/// two to this power either way (a fold train's spacing scatters by a third or so about its
+/// dominant wavelength) and their relief by this share (a fold train's amplitudes vary two
+/// to three times). A set is drawn where its spacing spans this many cells, fading in from
+/// the first to the second (a stated choice: fewer cells to a spacing draw a hatch of cells,
+/// which the artistic pass's detail stands for).
 pub const TESSERA_BUCKLING_RATIO: f64 = 5.0;
-pub const TESSERA_PACKET_WIDTH: f64 = 0.75;
-pub const TESSERA_PACKET_LENGTH: f64 = 1.5;
-pub const TESSERA_PACKET_DENSITY: f64 = 1.5;
-pub const TESSERA_SPACING_SCATTER: f64 = 0.25;
-pub const TESSERA_STRIKE_SCATTER: f64 = 0.25;
-pub const TESSERA_RELIEF_SCATTER: f64 = 0.3;
+pub const TESSERA_LINE_LENGTH: (f64, f64) = (3.0, 15.0);
+pub const TESSERA_GRABEN_FLOOR: f64 = 0.33;
+pub const TESSERA_SPACING_SCATTER: f64 = 0.45;
+pub const TESSERA_RELIEF_SCATTER: f64 = 0.5;
+pub const TESSERA_MIN_CELLS: (f64, f64) = (3.0, 5.0);
 pub const EPISODIC_FILL_FRACTION: f64 = 0.7;
 pub const EPISODIC_VENEER: f64 = 20.0;
 /// Pancake domes on an episodic lid's plains: how many per m² (Venus: some 150),

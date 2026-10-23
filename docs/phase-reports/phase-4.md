@@ -2516,3 +2516,16 @@ How it went:
 - **The instrument's share.** Magellan's altimetry averages over some 15 km; blurred to it, the tops show the reference map's soft mottle, so the fine-scale smoothness of the reference is mostly the instrument's. What the model lacks is Ovda's broad internal relief, basins and swirls 50 to 300 km across.
 
 Still to do: the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.
+
+## The hundred-and-fourth milestone: the tesserae's folds and graben as lines
+
+The user found the wave packets reading as frosted glass at a global view, where the noise fabric had a turtleshell of ridged cells, and asked whether the two could be blended.
+
+- **F190.** Each fold crest and graben is a line along the strain's strike, a set's lines evenly spaced, ending where the strain changes sense or their neighbours crowd them; crossing sets bound cells.
+
+How it went:
+
+- **A blend.** The old noise varying the packets' strength by six tenths either way and bending their crests changed almost nothing: a fabric's strength varies its contrast, not its mean, and cells need rims standing above their interiors. The user chose founded tiles over the noise as relief of its own or the artistic pass.
+- **Long arcs.** Lines up to fifteen spacings long, evenly spaced, curved with the strain into concentric arcs and fine combed sets, the user's fine seashell: each line's length is drawn between three and fifteen spacings, its spacing and relief scattered more, and a set drawn only where its spacing spans three cells or more.
+
+Still to do: the collapse's graben deeper by the tension through the stretched layer, for clearer tiles; the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.
