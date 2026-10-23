@@ -684,9 +684,15 @@ impl<'a> StressField<'a> {
 }
 
 /// The compression the body's shrinking puts on a whole rock lid alike every way at a time,
-/// Pa (F154): its contraction over its radius, times the lid's stiffness alike every way.
+/// Pa (F154): its contraction over its radius, times the lid's stiffness alike every way;
+/// since the lid last formed, as a lid that founders takes its strain with it (F185).
 pub fn shrinking(thermal: &crate::thermal::ThermalHistory, body_radius: f64, t: f64) -> f64 {
-    ROCK_YOUNG_MODULUS / (1.0 - ROCK_POISSON) * thermal.at(t).contraction / body_radius
+    let formed = thermal
+        .mantle
+        .as_ref()
+        .and_then(|m| m.overturns.iter().rev().find(|&&o| o <= t).copied());
+    let before = formed.map_or(0.0, |o| thermal.at(o).contraction);
+    ROCK_YOUNG_MODULUS / (1.0 - ROCK_POISSON) * (thermal.at(t).contraction - before) / body_radius
 }
 
 /// One reading of the ground through the loop (F157): its time, the lid's elastic thickness

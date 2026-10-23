@@ -33,7 +33,7 @@ use crate::stages::stress::{Compression, FieldHistory, Squeeze, shrinking};
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 /// A scarp that was emplaced, kept for the sidecar and for re-stamping its face at the
 /// finishing resolution.
@@ -508,6 +508,10 @@ pub struct ContractionProcess {
     compression: Compression,
     stiffness: f64,
     high: Vec<f64>,
+    /// When the lid foundered, which takes what it bore with it (F185), and the time the
+    /// overstress was last read to.
+    overturns: Vec<f64>,
+    read_to: f64,
     pub records: Vec<ScarpRecord>,
     /// The thrusts beneath the plains, which fold them into ridges (F155).
     pub ridges: Vec<RidgeRecord>,
@@ -534,8 +538,11 @@ impl ContractionProcess {
         thermal: &ThermalHistory,
         history: &FieldHistory,
     ) -> Option<Self> {
-        if graph.str("interior.tectonic_regime") != "stagnant_lid"
-            || crate::stages::io::is_io_regime(graph)
+        // A stagnant lid's thrusts, and an episodic lid's between its overturns (F185).
+        if !matches!(
+            graph.str("interior.tectonic_regime"),
+            "stagnant_lid" | "episodic_lid"
+        ) || crate::stages::io::is_io_regime(graph)
         {
             return None;
         }
@@ -562,6 +569,12 @@ impl ContractionProcess {
             compression,
             stiffness,
             high: vec![0.0; cells],
+            overturns: thermal
+                .mantle
+                .as_ref()
+                .map(|m| m.overturns.clone())
+                .unwrap_or_default(),
+            read_to: 0.0,
             records: Vec::new(),
             ridges: Vec::new(),
             systems: Systems::new(SYSTEM_INDEX_WIDTH, body_radius),
@@ -596,6 +609,19 @@ impl ContractionProcess {
         out: &mut Vec<ScarpRecord>,
     ) {
         let step_index = bin;
+        // A lid that founders takes what it bore with it: the new one has borne nothing, and
+        // its thrusts come after it.
+        let mut t0 = t0;
+        if let Some(&o) = self
+            .overturns
+            .iter()
+            .rev()
+            .find(|&&o| o > self.read_to && o <= t1)
+        {
+            self.high.iter_mut().for_each(|h| *h = 0.0);
+            t0 = t0.max(o);
+        }
+        self.read_to = t1;
         // Where the lid's overstress grew in the bin, and the shortening it asks.
         self.compression.at(t1, history);
         let drive = self.drive(t1);

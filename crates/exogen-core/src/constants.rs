@@ -1059,10 +1059,10 @@ pub const CORONA_HEAD_WANDER: f64 = 0.15;
 /// stated choice within them).
 pub const CORONA_FAULT_STRENGTH: f64 = 20e6;
 pub const DOMES_PER_AREA: f64 = 3.3e-13;
-/// Novae: radial fracture systems round a share of the coronae, which with the rises'
-/// graben give Venus its spidery fracture belts. Fractures per nova, their length as a
-/// fraction of the corona radius, width and depth.
-pub const NOVA_FRACTION: f64 = 0.3;
+/// Novae: radial fracture systems round the coronae whose heads stretched their domes past
+/// the lid's strength (F185), which with the rises' graben give Venus its spidery fracture
+/// belts. Fractures per nova, their length as a fraction of the corona radius, width and
+/// depth.
 pub const NOVA_FRACTURES: (u64, u64) = (6, 14);
 pub const NOVA_LENGTH: (f64, f64) = (1.0, 3.0);
 pub const NOVA_WIDTH: (f64, f64) = (6e3, 15e3);

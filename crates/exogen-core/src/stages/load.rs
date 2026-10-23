@@ -527,7 +527,7 @@ pub fn sink(deflection: &[f32], held: Option<&[f32]>) -> Vec<f32> {
 }
 
 /// The stress at its top of a rock lid `elastic` m thick bent to follow the ground the
-/// mantle's flow holds up (F182): `up`, m, up positive, at a direction, the flow's support as
+/// mantle's flow holds up (F182), and dragged by the flow, `drag`, Pa (F185): `up`, m, up positive, at a direction, the flow's support as
 /// the lid holds it flatter at the wavelengths it can bend over (F173), on a plate grid that
 /// resolves the lid's flexural parameter. The flow presses the lid's base up over its
 /// upwellings and draws it down over its downwellings; the lid bends with the ground it
@@ -535,6 +535,7 @@ pub fn sink(deflection: &[f32], held: Option<&[f32]>) -> Vec<f32> {
 /// strained as a shell, as any deflection strains it.
 pub fn bent(
     up: &(dyn Fn([f64; 3]) -> f64 + Sync),
+    drag: &(dyn Fn([f64; 3]) -> f64 + Sync),
     body_radius: f64,
     gravity: f64,
     elastic: f64,
@@ -550,7 +551,21 @@ pub fn bent(
         .into_par_iter()
         .map(|i| -up(grid.center(grid.cell(i))))
         .collect();
-    plate.surface_stress(&w, elastic, true)
+    let mut stress = plate.surface_stress(&w, elastic, true);
+    // And the flow drags it (F185): `drag`, Pa, stretches it alike every way in its plane,
+    // tension positive.
+    stress.tensor.par_iter_mut().enumerate().for_each(|(i, t)| {
+        let n = grid.center(grid.cell(i));
+        let s = drag(n);
+        let plane = |a: usize, b: usize| s * (f64::from(u8::from(a == b)) - n[a] * n[b]);
+        t[0] += plane(0, 0) as f32;
+        t[1] += plane(1, 1) as f32;
+        t[2] += plane(2, 2) as f32;
+        t[3] += plane(0, 1) as f32;
+        t[4] += plane(0, 2) as f32;
+        t[5] += plane(1, 2) as f32;
+    });
+    stress
 }
 
 /// The stress the lava laid on a grid puts on a rock lid `elastic` m thick (F157), and the
@@ -693,8 +708,14 @@ mod tests {
         for t in [0.5, 1.0, 2.0, 3.0, age] {
             let elastic = thermal.at(t).elastic;
             let up = |d: [f64; 3]| convection.support(t, d);
+            let scale = crate::convection::drag_stress(thermal.mantle.as_ref().unwrap(), t);
+            let drag = |d: [f64; 3]| scale * convection.pattern(t, d);
             let started = std::time::Instant::now();
-            let stress = bent(&up, r, gravity, elastic);
+            let stress = bent(&up, &drag, r, gravity, elastic);
+            println!(
+                "{name} t {t:.2}: drag {:.1} MPa per unit of the pattern",
+                scale / 1e6
+            );
             let mut diffs: Vec<f64> = Vec::new();
             let mut means: Vec<f64> = Vec::new();
             for (i, _) in stress.tensor.iter().enumerate().step_by(7) {

@@ -31,7 +31,7 @@ use crate::stages::plume::{Trough, TroughKind, radial_trace};
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 10;
+pub const VERSION: u64 = 11;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -230,11 +230,17 @@ impl EpisodicProcess {
                 id: 1_000 + k,
             });
         }
-        // Novae: a share of the coronae send fractures radiating out beyond their rims.
+        // Novae: the young coronae, whose heads, still fed and rising, stretch their domes'
+        // crests past what breaks the lid, send fractures radiating out beyond their rims
+        // (F185), the first stage of a corona (Stofan et al. 2001); an older corona's dome
+        // has subsided and its floor's lava flooded them.
         let cell = grid.delta() * body_radius;
         let mut novae = Vec::new();
         for c in &coronae {
-            if rng.uniform(c.id, 7) >= NOVA_FRACTION {
+            let rising = c.head.as_ref().is_some_and(|h| {
+                h.lift_tension > CORONA_FAULT_STRENGTH && age <= c.time_gyr + h.feeding
+            });
+            if !rising {
                 continue;
             }
             let (east, north) = local_basis(c.center);

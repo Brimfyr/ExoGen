@@ -187,6 +187,9 @@ pub struct Head {
     pub drip: Radial,
     /// The greatest tension its loads put in its lid's surface about its edge, Pa.
     pub tension: f64,
+    /// The greatest tension its head's lift put in its lid's surface over the pocket, Pa:
+    /// the dome's crest stretched as the head rose (F185).
+    pub lift_tension: f64,
 }
 
 impl Head {
@@ -1010,6 +1013,17 @@ pub fn rock_coronae<P: Reads>(
         }
     }
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let novae = out
+            .iter()
+            .filter(|c| {
+                c.head.as_ref().is_some_and(|h| {
+                    h.lift_tension > CORONA_FAULT_STRENGTH && age <= c.time_gyr + h.feeding
+                })
+            })
+            .count();
+        eprintln!(
+            "rock coronae: {novae} novae, their domes still rising and stretched past the lid's strength"
+        );
         eprintln!(
             "rock coronae: {k} diapirs, {} coronae; no pocket under regional melting {}, too cool {}, lid unbroken {}",
             out.len(),
@@ -1226,6 +1240,12 @@ fn rock_corona(
         .filter(|(_, r)| (0.5 * pocket..1.5 * pocket).contains(*r))
         .map(|(s, _)| *s)
         .fold(0.0, f64::max);
+    let lift_tension = surface_tension(&plate, step, &lift_w)
+        .iter()
+        .zip(&rs)
+        .filter(|(_, r)| **r < pocket)
+        .map(|(s, _)| *s)
+        .fold(0.0, f64::max);
     // How fully the lid breaks: by the tension its loads put in its surface, and, as over
     // an ice mantle's upwelling (F133), by the share of the pocket's loads it takes in an
     // annulus of its own rather than spreading them as a swell over its flexural length.
@@ -1290,6 +1310,7 @@ fn rock_corona(
         lift: radial(&lift_w),
         drip: radial(&drip_w),
         tension,
+        lift_tension,
     });
     Ok(corona)
 }
@@ -1603,6 +1624,30 @@ mod tests {
             "{on_limb} of {} on the limbs",
             coronae.len()
         );
+    }
+
+    /// F185: the novae are the young coronae, their domes still rising on heads that stretch
+    /// their crests past the lid's strength: some one in six of Venus's, against the 64 novae
+    /// Krassilnikov and Head (2003) catalogued among some 500 coronae.
+    #[test]
+    fn venus_s_novae_are_its_rising_coronae() {
+        let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
+        let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(&g));
+        let thermal = crate::thermal::ThermalHistory::from_graph(&g);
+        let rises = crate::stages::plume::place_rises(&g, &thermal)
+            .map(|(r, _)| r)
+            .unwrap_or_default();
+        let age = g.f64("body.age");
+        let coronae = rock_coronae(&g, &mantle, &rises, &Limbs::default());
+        let novae = coronae
+            .iter()
+            .filter(|c| {
+                let h = c.head.as_ref().unwrap();
+                h.lift_tension > CORONA_FAULT_STRENGTH && age <= c.time_gyr + h.feeding
+            })
+            .count();
+        let share = novae as f64 / coronae.len() as f64;
+        assert!((0.05..0.3).contains(&share), "{novae} of {}", coronae.len());
     }
 
     #[test]

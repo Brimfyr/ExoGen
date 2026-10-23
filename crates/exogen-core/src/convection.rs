@@ -270,6 +270,26 @@ pub struct Support {
     pub turn: Turn,
 }
 
+/// The stress the mantle's flow drags its lid with, per unit of its pattern, Pa, tension
+/// positive (F185). The flow along the lid's base runs from the upwellings to the
+/// downwellings and drags the lid with it, so that the lid, balancing the traction along
+/// its base by its stress through its thickness, is stretched over the upwellings and
+/// squeezed over the downwellings, alike every way, in proportion to the pattern: the
+/// traction toward the downwellings, the pattern's fall, is the stress's own. Its strength
+/// is the stress the sublayer's buoyancy puts on the lid along a cell as long as the mantle
+/// is deep, ρ g α ΔT_rh δ_rh D, carried through the lid's thickness, the stress by which the
+/// lid founders when it passes its friction (F121), reached over a downwelling twice the
+/// pattern's root mean square deep (a stated choice).
+pub fn drag_stress(mantle: &MantleHistory, t: f64) -> f64 {
+    let c = cells(mantle, t);
+    let lid = mantle.lid_at(t).max(c.sublayer).max(1.0);
+    if c.support <= 0.0 {
+        return 0.0;
+    }
+    let buoyancy = DENSITY_ROCK * mantle.gravity * MANTLE_EXPANSIVITY * c.drop * c.sublayer;
+    0.5 * buoyancy * c.depth / lid
+}
+
 impl Support {
     /// The ground the flow holds up at a time and a direction of the map, m.
     pub fn at(&self, t: f64, d: [f64; 3]) -> f64 {

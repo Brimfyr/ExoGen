@@ -2428,3 +2428,25 @@ What the maps show:
 Still to do: the tesserae's fabric from their own shortening; the tessera share from the surge's lava (M29); steeper plateau margins; Venus's deformation belts (M10).
 
 Tests 276 (25 ignored), among them the flow piling Venus's crust over its downwellings beneath its regrowing lid and none under Mars's stagnant one, and a cell relaxing under its own crust.
+
+## The ninety-eighth milestone: the flow drags the lid
+
+The user asked for M10: Venus's deformation belts and wrinkle ridges, and the novae.
+
+- **F185.** The mantle's flow drags the lid, stretching it over the upwellings and squeezing it over the downwellings by the stress that founders it at an overturn; an episodic lid has thrusts between its overturns; a nova is a young corona whose rising dome stretches past the lid's strength.
+
+How it went:
+
+- **The drag.** The flow's deflection bent Venus's thin lid by some 3 MPa (F182); the traction along its base, carried through its thickness, is the same stress the overturn criterion uses, 35 to 57 MPa per unit of the pattern, 70 to 140 over the strong downwellings.
+- **No thrusts on Venus.** The thrusts and the shrinking's squeeze switched on the stagnant lid's name; the shrinking is now counted since the lid last formed, so an episodic lid has both.
+- **Where they form.** Judged against the present pattern the thrusts seemed to stand between the cells; the pattern renews every 30 to 40 Myr, and judged against the pattern of their own time 95 percent stand over the downwellings. Nine tenths of their length forms in the first hundred million years after the overturn, the longest in its first ten, on the plateaus the flow piled, and barely show through the tesserae's fabric; later in the epoch the lid is too thick for the drag to break it, so no lowland belts form.
+- **The novae.** Every corona's rising head stretched its crest past the strength (56 MPa at the median); those still stood on their heads by half were 27 percent, those still fed 17, against the catalogue's 12: a nova is a corona still rising.
+
+What the maps show:
+
+- **Venus:** much as before; a few thrusts on the plateaus; the plains' ridges a little denser in the lows; radial fractures round the rising coronae only.
+- **Mars, Mercury, the Moon:** their thrusts as before, within a few percent.
+
+Still to do: the lowland ridge belts; the thrusts on the plateaus as the tesserae's fabric (W3); the coronae on the rifts (M25).
+
+Tests 277 (25 ignored), among them Venus's novae being its rising coronae, and its thrusts forming on the lid its last overturn left, where they had been none (a thrust timed in the bin of the overturn now comes after it).

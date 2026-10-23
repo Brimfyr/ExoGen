@@ -35,7 +35,7 @@ use crate::stages::tectonics::Systems;
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 /// A wrinkle ridge, kept for the sidecar and for stamping at the finishing resolution.
 #[derive(Clone, Debug)]
@@ -108,7 +108,11 @@ pub fn plains_squeeze(
     grid: CubeSphere,
     last_time: &[f32],
 ) -> (Vec<f64>, Vec<Squeeze>) {
-    let whole = graph.str("interior.tectonic_regime") == "stagnant_lid";
+    // A whole lid's shrinking, since it last formed on an episodic lid (F185).
+    let whole = matches!(
+        graph.str("interior.tectonic_regime"),
+        "stagnant_lid" | "episodic_lid"
+    );
     let shrink = |t: f64| {
         if whole {
             shrinking(thermal, history.body_radius, t)

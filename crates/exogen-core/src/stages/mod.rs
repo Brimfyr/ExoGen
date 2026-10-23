@@ -385,7 +385,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 134;
+pub const FINISH_VERSION: u64 = 135;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -453,10 +453,22 @@ pub fn run_coarse_loop(
     let first_lid = thermal.at(0.0).elastic;
     // The stress the mantle's flow bends the lid with as it stands at a time (F182).
     let flow_at = |t: f64, elastic: f64| {
+        let drag = thermal
+            .mantle
+            .as_ref()
+            .map_or(0.0, |m| crate::convection::drag_stress(m, t));
         support
             .as_ref()
             .filter(|_| std::env::var_os("EXOGEN_SKIP_FLOW").is_none())
-            .map(|s| load::bent(&|d| s.at(t, d), body_radius, gravity, elastic))
+            .map(|s| {
+                load::bent(
+                    &|d| s.at(t, d),
+                    &|d| drag * s.pattern(t, d),
+                    body_radius,
+                    gravity,
+                    elastic,
+                )
+            })
     };
     history.push(stress::FieldEpoch {
         time: 0.0,
@@ -956,6 +968,7 @@ pub fn run_coarse_loop(
     if std::env::var_os("EXOGEN_DEBUG").is_some() && !scarps.is_empty() {
         eprintln!("thrusts: {}", tectonics::strike_summary(&scarps));
     }
+    let contraction_records = &scarps;
     let (paterae, mountains, io_base) = match io {
         Some(i) => (i.paterae, i.mountains, i.base.map(|b| b.bedrock)),
         None => (Vec::new(), Vec::new(), None),
@@ -995,6 +1008,49 @@ pub fn run_coarse_loop(
                 age,
                 graph.f64("seed.volcanism") as u64,
             );
+            // Where the ridges and thrusts stand against the mantle's flow (F185), for the
+            // debug log: their length over its downwellings and upwellings against the area.
+            if let (Some(sup), true) = (&support, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+                // Each against the pattern of its own time.
+                let class = |d: [f64; 3], t: f64| {
+                    let p = sup.pattern(t, d);
+                    if p < -1.0 { 0 } else if p > 1.0 { 2 } else { 1 }
+                };
+                let mut area = [0.0f64; 3];
+                for k in 0..grid.cell_count() {
+                    let c = grid.cell(k);
+                    area[class(grid.center(c), age)] += grid.cell_area(c);
+                }
+                let whole: f64 = area.iter().sum();
+                let tally = |traces: &mut dyn Iterator<Item = (&Vec<[f64; 3]>, f64, f64)>| {
+                    let mut l = [0.0f64; 3];
+                    for (points, spacing, t) in traces {
+                        for &q in points.iter() {
+                            l[class(q, t)] += spacing;
+                        }
+                    }
+                    let all: f64 = l.iter().sum::<f64>().max(1.0);
+                    format!(
+                        "{:.0} km: down {:.2}, between {:.2}, up {:.2}",
+                        all / 1e3,
+                        l[0] / all,
+                        l[1] / all,
+                        l[2] / all
+                    )
+                };
+                eprintln!(
+                    "flow classes by area: down {:.2}, between {:.2}, up {:.2}; plains ridges {}; thrusts {}",
+                    area[0] / whole,
+                    area[1] / whole,
+                    area[2] / whole,
+                    tally(&mut ridges.iter().map(|r| (&r.points, r.spacing, r.time_gyr))),
+                    tally(
+                        &mut contraction_records
+                            .iter()
+                            .map(|r| (&r.points, r.spacing, r.time_gyr))
+                    )
+                );
+            }
             (f.records, ridges, f.provinces)
         }
         None => (
@@ -4097,7 +4153,8 @@ mod tests {
 
     /// Mars's thrusts run round Tharsis, which squeezes its foot past the lid's strength
     /// (F155, F156), and Venus's ridges keep to its lows, where the relief squeezes the
-    /// plains and its highs stretch them (Bilotti and Suppe 1999).
+    /// plains and its highs stretch them (Bilotti and Suppe 1999); its thrusts form soon after
+    /// its last overturn (F185).
     #[test]
     fn mars_s_thrusts_run_round_tharsis_and_venus_s_ridges_keep_to_its_lows() {
         let g = preset_graph("Mars", "preview");
@@ -4142,7 +4199,21 @@ mod tests {
 
         let g = preset_graph("Venus", "preview");
         let venus = run_coarse_loop(&g, &NoProgress).unwrap();
-        assert!(venus.scarps.is_empty());
+        // Its thrusts form on the lid its last overturn left (F185).
+        let overturn = ThermalHistory::from_graph(&g)
+            .mantle
+            .unwrap()
+            .last_overturn()
+            .unwrap();
+        assert!(!venus.scarps.is_empty());
+        let length: f64 = venus.scarps.iter().map(|s| s.length).sum();
+        let mut by_age = [0.0f64; 5];
+        for s in &venus.scarps {
+            assert!(s.time_gyr > overturn, "{} after {overturn}", s.time_gyr);
+            let k = (((s.time_gyr - overturn) / 0.05) as usize).min(4);
+            by_age[k] += s.length / length;
+        }
+        eprintln!("Venus's thrusts by 50 Myr since the overturn: {by_age:.2?}, {:.0} km", length / 1e3);
         let grid = venus.grid;
         let height = venus.keyframes.last().unwrap().layers.bedrock.as_slice();
         let (mut sum, mut area) = (0.0, 0.0);
