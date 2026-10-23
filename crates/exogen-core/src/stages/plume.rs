@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 32;
+pub const VERSION: u64 = 33;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]

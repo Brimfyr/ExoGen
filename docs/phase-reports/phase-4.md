@@ -2316,3 +2316,23 @@ What the maps show:
 Still to do: the dome's height from its plume head (F174's other open end); the flow's stresses on the lid, for Mercury's thrusts (M27) and Venus's ridges, and its upwellings' heat for Venus's coronae (M25); Venus relaxing as a stagnant lid does, and its tesserae from the tectonics that thickened their crust (M31); Valles Marineris with Phase 5 (M32); the Moon's maria in its province (M33); the drives the field does not hold (M26).
 
 Tests 272 (23 ignored), among them a rise's vents reading the ground its plume holds up as level: a dome held 4 km high draws its share of the vents as flat ground would, 0.069 against 0.058, where read whole it draws half of that, and a hollow on it draws more per cell than its flank.
+
+## The ninety-third milestone: what bends the lid
+
+The user asked for the dome's height from its plume head next (F174's open end). The dome came out physical, and what it drove did not survive it; the user chose to set it aside, make the rises' faults read the loop's own field first, and, when that showed a deeper fault, to fix the lid's loads first.
+
+- **F177.** A load laid evenly over the body bends nothing, and a shift of the whole lid strains nothing: the load's mean leaves the plate's solve, the deflection's mean and first degree leave its membrane, and what a load lays evenly raises the datum with the body.
+
+How it went:
+
+- **The dome.** A plume's head flattens beneath the lid into a disc twice its diameter (Campbell 2007), so that a disc as wide as the rise and a sixth of its radius thick, 200 K hotter than the mantle, holds up some 2.9 km on Mars and 1.0 to 1.4 km on Venus, where 0.28 of the relief the crust holds gave 7 and some 3 (a head from the Earth's core: some 1 km, as Campbell and Griffiths's heads raise the ground before their floods). Mars's ground about its rise fell from some 7.5 km to some 3, its lighter dome turning the body only 18°, from 31° to 13° north, and its rise's faults and canyon, its limbs' rifts on Venus, which scale with the dome's height, planned before the loop, all but went. Set aside.
+- **One population of faults.** The rises' faults, the limbs' rifts and the loads' graben, opened through the loop by what the lid's field adds to its tension past the yield beyond the bare relief's, over the lid's stiffness, as the thrusts take the field's compression: built and run, it faulted most of Mars. The relief alone stands past the faulted layer's yield over three quarters of Mars, so that anything added counts, and the loads added tens of megapascals nearly everywhere. Set aside: a budget needs the lid's strength through its thickness, which the faulted layer's yield is not.
+- **The loads.** Tracing the tension found two errors in the loads' solve: the intrusions, laid nearly everywhere, deflected the whole lid evenly by kilometres, and the membrane read that and the deflection's first degree as stretching it. Neither can strain a lid on an incompressible mantle; both are gone, and the heights keep their datum. The tension over most of Mars stayed, some 77 MPa past the yield at the median where it had been 87: the loads' own stresses, which a lid as strong through its thickness as rock is would bear.
+
+What the maps show:
+
+- **Every rocky body:** the relief within a few hundred metres of what it was, the mean nearer the datum.
+
+Still to do: the lid's strength through its thickness, a yield-strength envelope, against which the field's stresses stretch it; then the one population of faults and the dome from its plume head (both set aside); the flow's stresses on the lid (M27, M25); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
+
+Tests 273 (23 ignored), among them an even load bending nothing, a lid deflected less than a metre under a kilometre laid evenly over it, and a shift of the whole lid straining none of it, its stress under a fiftieth of what a membrane straining it would stand at. The test of a filled basin's graben now pools six draws of them, its graben in the ring the load stretches out to six flexural parameters and seventeen in twenty within it, the rest beside one that is.

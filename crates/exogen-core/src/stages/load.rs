@@ -327,8 +327,9 @@ impl SpherePlate {
     /// positive, so that the top of a bowl is squeezed and of a bulge stretched; and, for a
     /// shell (`membrane`), its membrane's stress through its thickness, from the Airy stress
     /// function Φ with ∇²Φ = −E h w / R, σ_uu = Φ_vv / h, σ_vv = Φ_uu / h, σ_uv = −Φ_uv / h,
-    /// the deflection's mean left out, which an incompressible interior lets no lid make; as
-    /// tensors in space.
+    /// the deflection's mean left out, which an incompressible interior lets no lid make, and
+    /// its first degree, a shift of the whole lid that strains none of it (F177); as tensors in
+    /// space.
     pub fn surface_stress(&self, w: &[f64], elastic: f64, membrane: bool) -> LoadStress {
         let s = ROCK_YOUNG_MODULUS * elastic / (2.0 * (1.0 - ROCK_POISSON * ROCK_POISSON));
         let nu = ROCK_POISSON;
@@ -336,8 +337,21 @@ impl SpherePlate {
         let phi = if membrane {
             let total: f64 = det_sum(n, |i| self.area[i]);
             let mean = det_sum(n, |i| self.area[i] * w[i]) / total;
+            // Its first degree, c · n with c = 3 Σ a w n / Σ a, a shift of the whole lid.
+            let centre: Vec<[f64; 3]> = (0..n)
+                .map(|i| self.grid.center(self.grid.cell(i)))
+                .collect();
+            let dipole: [f64; 3] = std::array::from_fn(|k| {
+                3.0 * det_sum(n, |i| self.area[i] * w[i] * centre[i][k]) / total
+            });
             let scale = -ROCK_YOUNG_MODULUS * elastic / self.radius;
-            let f: Vec<f64> = (0..n).map(|i| scale * (w[i] - mean)).collect();
+            let f: Vec<f64> = (0..n)
+                .map(|i| {
+                    let c = centre[i];
+                    let shift = dipole[0] * c[0] + dipole[1] * c[1] + dipole[2] * c[2];
+                    scale * (w[i] - mean - shift)
+                })
+                .collect();
             Some(self.inverse_laplace(&f))
         } else {
             None
@@ -565,6 +579,16 @@ pub fn lay(
             }
         })
         .collect();
+    // A load spread evenly over the whole body bends nothing: the mantle beneath has nowhere
+    // to go, and the body grows by it (F177). Only what departs from its mean bends the lid.
+    let whole: f64 = plate.area.iter().sum();
+    let mean = load
+        .iter()
+        .zip(&plate.area)
+        .map(|(q, a)| q * a)
+        .sum::<f64>()
+        / whole.max(1.0);
+    let load: Vec<f64> = load.iter().map(|q| q - mean).collect();
     let rigidity =
         ROCK_YOUNG_MODULUS * elastic.powi(3) / (12.0 * (1.0 - ROCK_POISSON * ROCK_POISSON));
     // The lid is a shell: its membrane stiffens it against the load.
@@ -1088,11 +1112,14 @@ mod tests {
                 },
             ],
         };
-        let faults = graben(&history, grid, 7, 4.5, 0.0);
+        // Over a few draws of the graben, as their population is a draw.
+        let faults: Vec<crate::stages::plume::Trough> = (0..6u64)
+            .flat_map(|seed| graben(&history, grid, seed, 4.5, 0.0))
+            .collect();
         assert!(faults.len() >= 5, "{}", faults.len());
         let flexural = flexural_parameter(te, g) / r;
         // Near the margin, within a flexural parameter of it, and beyond.
-        let (mut steps, mut round) = ([0usize; 2], [0usize; 2]);
+        let (mut steps, mut round, mut inside) = ([0usize; 2], [0usize; 2], 0usize);
         for f in &faults {
             assert!(
                 f.start_gyr > 0.0 && f.start_gyr <= 3.0 + 1e-9,
@@ -1101,7 +1128,9 @@ mod tests {
             );
             let m = f.points[f.points.len() / 2];
             let d = angle_between(centre, m);
-            assert!(d > radius - flexural && d < radius + 5.0 * flexural, "{d}");
+            if d > radius - flexural && d < radius + 6.0 * flexural {
+                inside += 1;
+            }
             for w in f.points.windows(2) {
                 let band = usize::from(angle_between(centre, w[0]) > radius + flexural);
                 let along = dot(centre, w[0]);
@@ -1125,9 +1154,60 @@ mod tests {
             "near: {} of {} round; beyond: {} of {} round",
             round[0], steps[0], round[1], steps[1]
         );
+        // Most lie in the ring the load stretches, from a flexural parameter within the
+        // margin to six beyond it; the rest beside one that does, which the ring does not
+        // bound.
+        assert!(
+            inside * 20 >= faults.len() * 17,
+            "{inside} of {}",
+            faults.len()
+        );
         assert!(round[0] * 10 > steps[0] * 7, "{round:?} of {steps:?}");
         // Formed before the record began, they are gone with it.
         assert!(graben(&history, grid, 7, 4.5, 3.1).is_empty());
+    }
+
+    /// F177: a load laid evenly over the whole body bends nothing, the mantle beneath having
+    /// nowhere to go, and a shift of the whole lid, its deflection's first degree, strains
+    /// none of it, where the membrane read every degree alike.
+    #[test]
+    fn an_even_load_bends_nothing_and_a_shift_strains_nothing() {
+        let (r, g, te) = (3.39e6, 3.71, 100e3);
+        // A source grid finer than the plate's, as the loop's is, so that every plate cell
+        // takes its share.
+        let grid = CubeSphere::new(128);
+        let even = vec![1_000.0f32; grid.cell_count()];
+        let laid = lay(grid, &even, r, g, te, 2_900.0, None).unwrap();
+        let w = laid.deflection_on(grid);
+        assert!(
+            w.iter().all(|x| x.abs() < 1.0),
+            "{:?}",
+            w.iter().cloned().fold(0.0f32, f32::max)
+        );
+        let most = |t: &[[f32; 6]]| {
+            t.iter()
+                .flat_map(|x| x.iter())
+                .map(|v| v.abs())
+                .fold(0.0f32, f32::max)
+        };
+        assert!(
+            most(&laid.stress.tensor) < 1e5,
+            "{}",
+            most(&laid.stress.tensor)
+        );
+        let plate = SpherePlate::new(32, r);
+        let e = crate::geom::normalize([0.3, 0.5, 0.8]);
+        let shift: Vec<f64> = (0..plate.grid.cell_count())
+            .map(|i| 1_000.0 * dot(plate.grid.center(plate.grid.cell(i)), e))
+            .collect();
+        let stress = plate.surface_stress(&shift, te, true);
+        // A membrane straining it would stand at E w / R, some 30 MPa.
+        let full = ROCK_YOUNG_MODULUS * 1_000.0 / r;
+        assert!(
+            (most(&stress.tensor) as f64) < 0.02 * full,
+            "{} of {full}",
+            most(&stress.tensor)
+        );
     }
 
     /// A disc of lava on the sphere bends the plate as the axisymmetric plate does: the

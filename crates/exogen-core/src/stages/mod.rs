@@ -383,7 +383,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 129;
+pub const FINISH_VERSION: u64 = 130;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -775,6 +775,16 @@ pub fn run_coarse_loop(
                     .collect();
                 let mut sunk_all: Option<Vec<f32>> = None;
                 let mut stress_all: Option<load::LoadStress> = None;
+                let mut datum = 0.0f64;
+                let mean_of = |v: &[f32]| -> f64 {
+                    let (mut sum, mut area) = (0.0, 0.0);
+                    for (k, &x) in v.iter().enumerate() {
+                        let a = grid.cell_area(grid.cell(k));
+                        sum += a * x as f64;
+                        area += a;
+                    }
+                    sum / area.max(1e-30)
+                };
                 let increment: Vec<f32> = now
                     .iter()
                     .zip(&laid)
@@ -799,6 +809,7 @@ pub fn run_coarse_loop(
                     let w = laid_load.deflection_on(grid);
                     sunk_all = Some(load::sink(&w, shields));
                     stress_all = Some(laid_load.stress);
+                    datum += mean_of(&increment);
                     laid.copy_from_slice(&now);
                 }
                 // The magma that stayed below weighs on the lid as well (F174), a load of its
@@ -823,7 +834,15 @@ pub fn run_coarse_loop(
                         Some(s) => s.add(&laid_load.stress),
                         None => stress_all = Some(laid_load.stress),
                     }
+                    datum += mean_of(&deep);
                     intruded_laid.copy_from_slice(&intruded);
+                }
+                // What the loads laid evenly over the whole body bends nothing but makes the
+                // body that much larger, its mean radius, the heights' datum, with it (F177).
+                if let Some(sunk) = &mut sunk_all {
+                    for s in sunk.iter_mut() {
+                        *s += datum as f32;
+                    }
                 }
                 if let Some(sunk) = sunk_all {
                     let bedrock = layers.bedrock.as_mut_slice();
