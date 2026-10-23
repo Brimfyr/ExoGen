@@ -2450,3 +2450,13 @@ What the maps show:
 Still to do: the lowland ridge belts; the thrusts on the plateaus as the tesserae's fabric (W3); the coronae on the rifts (M25).
 
 Tests 277 (25 ignored), among them Venus's novae being its rising coronae, and its thrusts forming on the lid its last overturn left, where they had been none (a thrust timed in the bin of the overturn now comes after it).
+
+## The ninety-ninth milestone: the event's lava from its surge, examined
+
+The user asked for M29: the overturn's resurfacing from the melt its surge brings, which would free the tessera share. The model's behaviour is unchanged; what was found is in the audit (M29), and FloodProcess::surge_lava with its diagnostic stays for the next attempt.
+
+- **46 m.** The surge erupts 46 m of lava per unit area of its 2.3 km of melt: the contraction shutoff reads the body's whole contraction. Read since the lid formed, as the thrusts' squeeze is (F185), it erupts some 300 m, and Venus's floods after its overturn grow sevenfold, which builds its leading volcanoes to 10.5 km and fails their flanks against Maat Mons's 5: set aside.
+- **54 percent dry.** Laid as the event's lava, 300 m leaves over half of Venus dry against its 8 percent of tesserae; some 2 km would be needed. The user chose to let a thin lid let more out; the sources show intrusion dominating eruption in every setting, mid-ocean ridges included, so that rule was not built.
+- **Foundering.** The user chose the old lid's foundering as what renews the surface, the tesserae what did not founder: the crust's buoyancy against the lid's thermal excess would keep 99 percent of Venus, its decoupling from a delaminating mantle lid none; neither founds 8 percent.
+
+Still to do: the event from the surge's melt and the lid's foundering on a founded rule, and the limit on Venus's eruptions after its overturn (M29); the lowland ridge belts (M10).

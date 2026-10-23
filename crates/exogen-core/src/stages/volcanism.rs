@@ -544,6 +544,28 @@ impl FloodProcess {
         v * self.flood_share
     }
 
+    /// The overturn's own lava, m³ (audit M29): what the mantle erupts from the event while its
+    /// ambient mantle still melts after it, the surge the event's resurfacing is, which the
+    /// floods after it leave out; none on a lid that does not founder.
+    pub fn surge_lava(&self) -> f64 {
+        let (Some(event), Some(end)) = (self.event_time, self.surge_end) else {
+            return 0.0;
+        };
+        if end <= event {
+            return 0.0;
+        }
+        let n = 64;
+        let dt = (end - event) / n as f64;
+        let mut v = 0.0;
+        for i in 0..n {
+            let t = event + (i as f64 + 0.5) * dt;
+            let s = self.thermal.at(t);
+            let melts = s.ambient + (1.0 - s.ambient) * self.plume_area;
+            v += s.magma_rate * melts * self.eruptive_fraction(t) * dt * GYR;
+        }
+        v * self.flood_share
+    }
+
     /// Where the melt rises from at a cell (F165, F174): the provinces the ambient mantle
     /// melts in, by the share of the melt it makes, and the plumes' heads the rest.
     fn source(&self, k: usize, ambient: f64) -> f64 {
@@ -2424,6 +2446,24 @@ mod tests {
         let moon = |depth: f64| crust_buoyancy(2_905.0, 2_750.0, 40e3, depth);
         assert!(moon(60e3) < 0.5 && moon(200e3) > moon(60e3) && moon(200e3) < 1.0);
         assert_eq!(crust_buoyancy(2_705.0, 2_871.0, 40e3, 80e3), 1.0);
+    }
+
+    /// Diagnostic: an episodic lid's surge lava per unit area, against its melt; run with
+    /// `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_surge_lava() {
+        let (g, _) = preset("Venus").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&g);
+        let f = FloodProcess::new(&g, CubeSphere::new(32), &thermal, &[]).unwrap();
+        let area = 4.0 * std::f64::consts::PI * g.f64("body.radius").powi(2);
+        let (event, end) = (f.event_time.unwrap(), f.surge_end.unwrap());
+        println!(
+            "Venus: event {event:.3}, surge to {end:.3} Gyr, lava {:.0} m per unit area, eruptive share at the event {:.3}, at the end {:.3}",
+            f.surge_lava() / area,
+            f.eruptive_fraction(event + 0.001),
+            f.eruptive_fraction(end)
+        );
     }
 
     fn process(grid: CubeSphere) -> FloodProcess {
