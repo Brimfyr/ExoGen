@@ -2336,3 +2336,25 @@ What the maps show:
 Still to do: the lid's strength through its thickness, a yield-strength envelope, against which the field's stresses stretch it; then the one population of faults and the dome from its plume head (both set aside); the flow's stresses on the lid (M27, M25); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
 
 Tests 273 (23 ignored), among them an even load bending nothing, a lid deflected less than a metre under a kilometre laid evenly over it, and a shift of the whole lid straining none of it, its stress under a fiftieth of what a membrane straining it would stand at. The test of a filled basin's graben now pools six draws of them, its graben in the ring the load stretches out to six flexural parameters and seventeen in twenty within it, the rest beside one that is.
+
+## The ninety-fourth milestone: the lid's tension faults by their drivers
+
+The user chose to keep the loads' stresses, which a lid as strong through its thickness as rock bears (the mascons' stresses persist), and to bring back the one population of the lid's tension faults with each fault sized by what drives it: graben within the faulted layer where the strain is broad and small, rifts as deep as a rise's canyon only where it is concentrated, on a rise's crest or along a limb.
+
+- **F178.** The lid's tension faults open through the loop by three drivers, each read beyond those beneath it: the rises' domes beyond the bare relief, the limbs beyond the rises, the loads beyond both. A rise's and a limb's extension is released as they grow and spent where their share of the field grew past the yield, on faults as deep as a rise's canyon; the loads' is their share of the excess over the lid's stiffness, spent on graben within the faulted layer.
+
+How it went:
+
+- **Two drivers.** The rises and limbs together, the loads apart, each with the field's budget, the excess's growth over the stiffness: the loads' graben came out as F158's had (6.2e10 m² on Mars, 3,871 drawn, against 6.4e10 and 3,952), but the rises' budget was a twenty-fifth of F38's extension (1.5e10 m² on Mars against 3.7e11), and Venus's limbs opened two rifts. A dome stretches the lid by its growth, the dikes and faults taking that up whatever the stress past the yield (Buck 2004), so a rise's and a limb's extension is F38's, released as they grow; the field says where and when.
+- **Three drivers.** With F38's extension the rises and limbs pooled opened 51 rifts on Venus, but spent the limbs' extension on the crests, where the rises' share is greatest: along its one limb, 14,800 km long, faults stood everywhere, a few hundred kilometres long, and rifts on a quarter of it. The limbs now have their own share, beyond the rises', and their own extension: rifts on four fifths of the limb, the longest 1,390 km.
+- **Chronology.** A fault formed within the step its share grew in, from when the loop last read the field; a rise's could so fall before its rise began. A rise's and a limb's now form while the rises rose.
+- **Carving.** A canyon was carved only while its growth rose across the loop's step, so that a rift that joined the canyons after its carving window had closed was never carved. Each canyon now keeps how far it has grown.
+
+What the maps show:
+
+- **Mars:** no rift across the lowland; Tharsis keeps its faults and its graben about the volcanoes; the long trough that curved south of Tharsis is gone, and a few rifts run by the volcanoes instead. The loads' graben as before.
+- **Venus:** rifts on both rises, graben along the whole of its limb, and fewer long rifts carved along it than before: the rises and the limb opened some 25 rifts each, one wide enough to carve, 1,560 km long; the arc of carved rifts between its rises is mostly gone.
+
+Still to do: the dome's height from its plume head (set aside in the ninety-third); the flow's stresses on the lid (M27, M25); Venus relaxing and its tesserae (M31); the Moon's maria in its province (M33).
+
+Tests 273 (23 ignored), among them a filled basin's graben opened through the loop round its margin, and Venus's rifts reaching from rise to rise along its limb, the longest past a thousand kilometres where fifteen hundred had been asked: the population is a draw, and the rifts through the loop read the field as it grows and the loads' stresses with it, which the plan before the loop did not.

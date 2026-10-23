@@ -26,6 +26,7 @@ pub mod materials;
 pub mod mega;
 pub mod plume;
 pub mod primordial_crust;
+pub mod rifting;
 pub mod relaxation;
 pub mod ridges;
 pub mod rings;
@@ -383,7 +384,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 130;
+pub const FINISH_VERSION: u64 = 131;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -456,6 +457,10 @@ pub fn run_coarse_loop(
         load: None,
     });
     let mut contraction = tectonics::ContractionProcess::new(graph, grid, &thermal, &history);
+    // The lid's tension faults, opened through the loop as its field stretches it (F178),
+    // and those no rise carves.
+    let mut rifts = rifting::RiftProcess::new(graph, grid, &thermal, &history);
+    let mut rift_graben: Vec<plume::Trough> = Vec::new();
     // The lid's own faults, the wide ones carved through the loop (F147, F153).
     let mut strain = strain::StrainProcess::new(graph, grid, &thermal);
     let mut floods = volcanism::FloodProcess::new(
@@ -860,6 +865,17 @@ pub fn run_coarse_loop(
                 load,
             });
         }
+        // The faults the field opened in the step (F178): a rift wide enough for the loop's
+        // grid is carved with the rise's canyons, the rest drawn by the finish.
+        if let Some(r) = &mut rifts {
+            for f in r.step(&history, t1) {
+                match &mut plume {
+                    Some(p) if f.width >= RIFT_LOOP_WIDTH_CELLS * cell => p.canyons.push(f),
+                    Some(p) => p.graben.push(f),
+                    None => rift_graben.push(f),
+                }
+            }
+        }
         if s % keep_every == 0 || s == steps {
             keyframes.push(Keyframe {
                 step: s,
@@ -904,20 +920,7 @@ pub fn run_coarse_loop(
         canyons.extend(s.canyons);
         graben.extend(s.graben);
     }
-    // The graben the floods' loads open beyond their margins (F158); EXOGEN_SKIP_LOAD_GRABEN
-    // leaves them out, a debug switch for timing them.
-    if std::env::var_os("EXOGEN_SKIP_LOAD_GRABEN").is_none() {
-        graben.extend(load::graben(
-            &history,
-            grid,
-            graph.f64("seed.tectonics") as u64,
-            age,
-            graph
-                .f64("cratering.record_start")
-                .max(age - graph.f64("cratering.retention_age"))
-                .clamp(0.0, age),
-        ));
-    }
+    graben.extend(rift_graben);
     let (floods, mut ridges, provinces) = match floods {
         Some(f) => {
             // The plains' ridges stand where the lid squeezes them, read when each place's

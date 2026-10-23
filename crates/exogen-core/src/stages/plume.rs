@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 33;
+pub const VERSION: u64 = 34;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1690,8 +1690,11 @@ pub struct PlumeProcess {
     shield_built: Vec<f32>,
     /// The aureoles laid on each coarse cell, m (F172).
     aureole: Vec<f32>,
-    /// Canyon depth carved so far per coarse cell, m.
+    /// Canyon depth carved so far per coarse cell, m, and how far each canyon has grown, its
+    /// share of its depth, as carved: the rifts the loop opens join the canyons as they form
+    /// (F178), their carving begun before the step that hears of them.
     carved: Vec<f32>,
+    canyon_grown: Vec<f64>,
     /// The share of that the shields' lava has filled since, m.
     filled: Vec<f32>,
     /// The lava each shield has sent past its foot but not yet erupted, m³ (F163).
@@ -1743,7 +1746,6 @@ impl PlumeProcess {
         let (mut rises, turn) = place_rises(graph, thermal)?;
         let body_radius = graph.num("body.radius");
         let age = graph.num("body.age");
-        let clock = thermal.melt_clock(4.0 * std::f64::consts::PI * body_radius * body_radius);
         let rng = Rng::new(graph.num("seed.tectonics") as u64 ^ 0x9D1F_E5A7);
         let rise_height = graph.num("tectonics.plume_rise_height");
         // Each rise grows along an axis (F114), its azimuth drawn as its first dikes break
@@ -1873,7 +1875,6 @@ impl PlumeProcess {
         // Faults cluster beside faults, so the big ones gather en-echelon neighbours and
         // the small ones form swarms.
         let cell = grid.delta() * body_radius;
-        let extension = graph.num("tectonics.rift_extension");
         // The one field every fault reads (F150): the rises' stresses in pascals, the
         // upwelling limbs between them along the ridges of the mantle's convection (F173)
         // and the relief's potential energy.
@@ -1895,94 +1896,15 @@ impl PlumeProcess {
         let mut graben = Vec::new();
         let mut volcano_swarms: Vec<(u64, u64, f64)> = Vec::new();
         for (ri, rise) in rises.iter().enumerate() {
-            let (east, north) = local_basis(rise.center);
-            // Where faults start: as often as the ground about the rise is in tension beyond
-            // what breaks the lid (F105), by the total field (F114, F150).
-            let starts = StartTable::from_field(&field, rise, axes[ri].0, age);
-            let budget = extension
-                * (rise.height / rise_height.max(1.0))
-                * 2.0
-                * std::f64::consts::PI
-                * RIFT_TRANSECT_FRACTION
-                * rise.radius;
-            let l_min = RIFT_MIN_LENGTH;
-            let l_max = (RIFT_MAX_LENGTH_FRACTION * 2.0 * rise.radius).max(2.0 * l_min);
-            // Faults form as the rise's stress grows (F105, F116): as its dome rises, the
-            // dome's bending and load being that stress, at the pace of its growth and none
-            // once it has stopped, on every lid, the dome growing since its lid last formed
-            // (F120); a rise still growing has stretched by its growth so far, and one whose
-            // plume has yet to rise not at all.
-            if rise.start_gyr >= age {
-                continue;
-            }
-            let budget = budget * rise_progress(rise, age);
+            // The rise's own faults open through the loop as its field stretches the lid
+            // (F178); its dike swarms come with its magma (F113, F116).
+            let mut faults: Vec<Trough> = Vec::new();
             let (t_lo, t_hi) = (rise.start_gyr, rise.end_gyr.min(age));
-            let time_cdf = Tabulated::new(t_lo, t_hi, 256, |t| {
+            let time_cdf = Tabulated::new(t_lo, t_hi.max(t_lo + 1e-9), 256, |t| {
                 // The rate of the dome's smoothstep growth.
                 let x = ((t - rise.start_gyr) / (rise.end_gyr - rise.start_gyr)).clamp(0.0, 1.0);
                 6.0 * x * (1.0 - x)
             });
-            let depth_cap = (CANYON_DEPTH_FRACTION * rise.height).max(RIFT_MIN_DEPTH);
-            let rules = FaultRules {
-                l_min,
-                l_max,
-                depth_per_length: RIFT_DEPTH_PER_LENGTH,
-                depth_cap,
-                compliance: 1.0,
-                layer: FaultLayer::Surface,
-                cell,
-                body_radius,
-            };
-            let fresh = |draw: u64, length: f64, spacing: f64, width: f64| {
-                // A fault starts where the ground is in tension beyond the yield, as often
-                // as it is by more, and runs as the stress field leads it (F105, F150), in
-                // segments (F111).
-                let (x, a) = starts.sample(
-                    rng.uniform(draw, 20),
-                    rng.uniform(draw, 22),
-                    rng.uniform(draw, 23),
-                );
-                // The axis lies at `a` from the direction outward at the start.
-                let phi = axes[ri].0 - a;
-                let start = offset(rise.center, east, north, x * rise.radius / body_radius, phi);
-                trace_in(
-                    &|q| field.at(q, age),
-                    start,
-                    length,
-                    spacing,
-                    body_radius,
-                    &rng,
-                    draw,
-                    width,
-                    None,
-                    yield_tension,
-                    None,
-                )
-            };
-            let timing = |u: f64, _spent: f64, _draw: u64| time_cdf.sample(u);
-            let window = |time: f64, carried: bool| {
-                if carried {
-                    // Carved over the melt its mantle makes about its time (F120).
-                    let m = clock.at(time);
-                    (
-                        clock.time_of(m - 0.5 * RIFT_CARVING_MELT).max(t_lo),
-                        clock.time_of(m + 0.5 * RIFT_CARVING_MELT).min(age),
-                    )
-                } else {
-                    (time, time)
-                }
-            };
-            let mut faults = populate(
-                &rules,
-                budget,
-                &rng,
-                (5_000 + ri as u64 * 1_000_000, 1_000 + ri as u64 * 1_000_000),
-                &fresh,
-                &timing,
-                &window,
-                &|_| 0.0,
-                None,
-            );
             let spacing = 0.5 * cell;
             // Radiating dike swarms (F113): the plume's head and each volcano on the rise
             // send dikes out laterally through the crust, each on its own heading within
@@ -2130,16 +2052,6 @@ impl PlumeProcess {
                 }
             }
         }
-        // The lid-wide population (F150): the extension the upwelling limbs take up, spent
-        // on faults that start wherever the field passes the lid's yield and run as the
-        // field leads them, so that rifts run from rise to rise.
-        for f in limb_faults(&field, &rises, &clock, grid, &rng, extension, age) {
-            if f.width >= RIFT_LOOP_WIDTH_CELLS * cell {
-                canyons.push(f);
-            } else {
-                graben.push(f);
-            }
-        }
         let limbs = field.limbs.clone();
         let foot = vec![0.0; shields.len()];
         Some(Self {
@@ -2157,6 +2069,7 @@ impl PlumeProcess {
             shield_built: vec![0.0; grid.cell_count()],
             aureole: vec![0.0; grid.cell_count()],
             carved: vec![0.0; grid.cell_count()],
+            canyon_grown: Vec::new(),
             filled: vec![0.0; grid.cell_count()],
             foot,
             volcano_swarms,
@@ -2555,12 +2468,13 @@ impl PlumeProcess {
             }
         }
         // Canyon: the trough deepens and widens through its growth.
-        for canyon in &self.canyons {
+        self.canyon_grown.resize(self.canyons.len(), 0.0);
+        for (canyon, grown) in self.canyons.iter().zip(self.canyon_grown.iter_mut()) {
             let p1 = smooth(t1, canyon.start_gyr, canyon.end_gyr);
-            let p0 = smooth(t0, canyon.start_gyr, canyon.end_gyr);
-            if p1 <= p0 {
+            if p1 <= *grown {
                 continue;
             }
+            *grown = p1;
             let cell = grid.delta() * body_radius;
             let target =
                 trough_depths(&grid, body_radius, canyon, p1, cell, 0.0, &mut self.stamper);
@@ -2732,224 +2646,6 @@ fn principal(radial: f64, hoop: f64, shear: f64) -> (f64, f64, f64, f64) {
     // The most tensile lies at this angle from the radial direction, toward the hoop.
     let theta = 0.5 * (2.0 * shear).atan2(radial - hoop);
     (mean + half, mean - half, -theta.sin(), theta.cos())
-}
-
-/// Where faults start about a rise (F105, F114): as often as the ground is in tension,
-/// over the distance from its centre in rise radii and the angle of its axis from the
-/// direction outward there.
-struct StartTable {
-    cumulative: Vec<f64>,
-    nx: usize,
-    na: usize,
-}
-
-impl StartTable {
-    /// Over the disc about a rise, by the total field at a time (F150): as often as the
-    /// most tensile stress passes the lid's yield.
-    fn from_field(field: &StressField, rise: &Rise, axis_phi: f64, t: f64) -> Self {
-        let (nx, na) = (128, 72);
-        let dx = RIFT_REACH / nx as f64;
-        let da = std::f64::consts::TAU / na as f64;
-        let (east, north) = local_basis(rise.center);
-        let mut cumulative = Vec::with_capacity(nx * na + 1);
-        cumulative.push(0.0);
-        let mut sum = 0.0;
-        for ix in 0..nx {
-            let x = (ix as f64 + 0.5) * dx;
-            for ia in 0..na {
-                let a = (ia as f64 + 0.5) * da;
-                let p = offset(
-                    rise.center,
-                    east,
-                    north,
-                    x * rise.radius / field.body_radius(),
-                    axis_phi - a,
-                );
-                sum += field.excess(p, t) * x * dx * da;
-                cumulative.push(sum);
-            }
-        }
-        Self { cumulative, nx, na }
-    }
-
-    #[allow(dead_code)]
-    fn new(axial: f64) -> Self {
-        let (nx, na) = (256, 72);
-        let dx = RIFT_REACH / nx as f64;
-        let da = std::f64::consts::TAU / na as f64;
-        let mut cumulative = Vec::with_capacity(nx * na + 1);
-        cumulative.push(0.0);
-        let mut sum = 0.0;
-        for ix in 0..nx {
-            let x = (ix as f64 + 0.5) * dx;
-            let (radial, hoop) = rise_stress(x);
-            let s = axial / x.max(1.0).powi(2);
-            for ia in 0..na {
-                let a = 2.0 * (ia as f64 + 0.5) * da;
-                let (t1, _, _, _) =
-                    principal(radial - s * a.cos(), hoop + s * a.cos(), -s * a.sin());
-                sum += (t1 - RIFT_MIN_TENSION).max(0.0) * x * dx * da;
-                cumulative.push(sum);
-            }
-        }
-        Self { cumulative, nx, na }
-    }
-
-    /// A start's distance in rise radii and the angle of the axis from the direction
-    /// outward there, rad, for three uniform draws.
-    fn sample(&self, u: f64, v: f64, w: f64) -> (f64, f64) {
-        let total = *self.cumulative.last().unwrap_or(&0.0);
-        let cells = self.cumulative.len() - 1;
-        let k = if total <= 0.0 {
-            ((u * cells as f64) as usize).min(cells - 1)
-        } else {
-            let target = u.clamp(0.0, 1.0) * total;
-            self.cumulative
-                .partition_point(|&c| c <= target)
-                .saturating_sub(1)
-                .min(cells - 1)
-        };
-        let (ix, ia) = (k / self.na, k % self.na);
-        (
-            (ix as f64 + v) * RIFT_REACH / self.nx as f64,
-            (ia as f64 + w) * std::f64::consts::TAU / self.na as f64,
-        )
-    }
-}
-
-/// The faults the lid-wide field opens (F150): the extension the upwelling limbs between
-/// neighbouring plumes take up, `extension` m across each limb along its length as a rise
-/// takes along its transect, spent on a population that starts wherever the field passes
-/// the lid's yield, as often as it passes it by more, and runs as the field leads it. A
-/// fault forms when the field first passes the yield where it starts, as the plumes rise.
-pub(crate) fn limb_faults(
-    field: &StressField,
-    rises: &[Rise],
-    clock: &crate::thermal::MeltClock,
-    grid: CubeSphere,
-    rng: &Rng,
-    extension: f64,
-    age: f64,
-) -> Vec<Trough> {
-    let body_radius = field.body_radius();
-    let limbs = &field.limbs;
-    if limbs.pairs.is_empty() || extension <= 0.0 {
-        return Vec::new();
-    }
-    let lengths = limbs.lengths(rises, body_radius);
-    let longest = lengths.iter().copied().fold(0.0, f64::max);
-    let budget: f64 = limbs
-        .pairs
-        .iter()
-        .zip(&lengths)
-        .map(|(&(a, b), &length)| {
-            extension * length * rise_progress(&rises[a], age).min(rise_progress(&rises[b], age))
-        })
-        .sum();
-    if budget <= 0.0 {
-        return Vec::new();
-    }
-    // Where faults start: each cell of the loop's grid by the field's excess over the yield
-    // there at the present.
-    let n = grid.cell_count();
-    let mut cumulative = Vec::with_capacity(n + 1);
-    cumulative.push(0.0);
-    let mut sum = 0.0;
-    for i in 0..n {
-        let c = grid.cell(i);
-        sum += field.excess(grid.center(c), age) * grid.cell_area(c);
-        cumulative.push(sum);
-    }
-    if sum <= 0.0 {
-        return Vec::new();
-    }
-    let cell = grid.delta() * body_radius;
-    let yield_tension = field.yield_tension;
-    let start_of = |draw: u64| -> [f64; 3] {
-        let target = rng.uniform(draw, 20) * sum;
-        let i = cumulative
-            .partition_point(|&c| c <= target)
-            .saturating_sub(1)
-            .min(n - 1);
-        let p = grid.center(grid.cell(i));
-        let (east, north) = local_basis(p);
-        let (u, v) = (rng.uniform(draw, 22) - 0.5, rng.uniform(draw, 23) - 0.5);
-        let step = grid.delta();
-        normalize([
-            p[0] + step * (u * east[0] + v * north[0]),
-            p[1] + step * (u * east[1] + v * north[1]),
-            p[2] + step * (u * east[2] + v * north[2]),
-        ])
-    };
-    let earliest = rises
-        .iter()
-        .map(|r| r.start_gyr)
-        .fold(f64::INFINITY, f64::min)
-        .min(age);
-    let tallest = rises.iter().map(|r| r.height).fold(0.0, f64::max);
-    let rules = FaultRules {
-        l_min: RIFT_MIN_LENGTH,
-        l_max: (longest + 2.0 * limbs.width).max(2.0 * RIFT_MIN_LENGTH),
-        depth_per_length: RIFT_DEPTH_PER_LENGTH,
-        depth_cap: (CANYON_DEPTH_FRACTION * tallest).max(RIFT_MIN_DEPTH),
-        compliance: 1.0,
-        layer: FaultLayer::Surface,
-        cell,
-        body_radius,
-    };
-    let fresh = |draw: u64, length: f64, spacing: f64, width: f64| {
-        trace_in(
-            &|q| field.at(q, age),
-            start_of(draw),
-            length,
-            spacing,
-            body_radius,
-            rng,
-            draw,
-            width,
-            None,
-            yield_tension,
-            None,
-        )
-    };
-    // A fault forms when the field first passes the yield where it starts, within the step
-    // that it does.
-    let timing = |u: f64, _spent: f64, draw: u64| -> f64 {
-        let start = start_of(draw);
-        let steps = 48;
-        for k in 0..=steps {
-            let t = earliest + (age - earliest) * k as f64 / steps as f64;
-            if field.excess(start, t) > 0.0 {
-                let before =
-                    (earliest + (age - earliest) * (k as f64 - 1.0) / steps as f64).max(earliest);
-                return before + (t - before) * u;
-            }
-        }
-        age
-    };
-    let window = |time: f64, carried: bool| {
-        if carried {
-            // Carved over the melt its mantle makes about its time (F120).
-            let m = clock.at(time);
-            (
-                clock.time_of(m - 0.5 * RIFT_CARVING_MELT).max(earliest),
-                clock.time_of(m + 0.5 * RIFT_CARVING_MELT).min(age),
-            )
-        } else {
-            (time, time)
-        }
-    };
-    populate(
-        &rules,
-        budget,
-        rng,
-        (9_000_000_000, 8_000_000_000),
-        &fresh,
-        &timing,
-        &window,
-        &|_| 0.0,
-        None,
-    )
 }
 
 /// A fault's trace through a rise's stress field (F105), from a point, in straight segments
@@ -5180,29 +4876,26 @@ mod tests {
 
     /// Prints a body's rises, limbs, field and fault population (EXOGEN_BODY, Venus).
     /// Venus's plumes sit on upwelling limbs that join them along the ridges of its mantle's
-    /// convection (F150, F173): rifts run from rise to rise along the limbs, the longest
-    /// some two thousand kilometres, and the faults of every body start where the field
-    /// passes the yield, none a single step long; Mars's one plume has no limb.
+    /// convection (F150, F173): rifts, opened through the loop as the limbs grow (F178), run
+    /// from rise to rise along the limbs, the longest over a thousand kilometres, and the
+    /// faults of every body start where the field passes the yield, none a single step long;
+    /// Mars's one plume has no limb.
     #[test]
     fn venus_s_rifts_run_from_rise_to_rise_along_its_limbs() {
         let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
         let thermal = ThermalHistory::from_graph(&g);
         let r = g.f64("body.radius");
-        let p = PlumeProcess::new(&g, CubeSphere::new(256), &thermal, None).unwrap();
+        let grid = CubeSphere::new(256);
+        let p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
         assert!(!p.limbs.pairs.is_empty(), "no limbs");
-        let limb_faults: Vec<&Trough> = p
-            .canyons
-            .iter()
-            .chain(&p.graben)
-            .filter(|t| (8_000_000_000..9_000_000_000).contains(&t.id))
-            .collect();
-        let rifts: Vec<&&Trough> = limb_faults
+        let opened = crate::stages::rifting::rise_faults(&g, grid, &thermal, &p.rises, &p.limbs);
+        let rifts: Vec<&Trough> = opened
             .iter()
             .filter(|t| t.kind == TroughKind::Rift)
             .collect();
         let longest = rifts.iter().map(|t| t.length).fold(0.0, f64::max);
         assert!(
-            rifts.len() >= 10 && longest > 1500e3,
+            rifts.len() >= 10 && longest > 1000e3,
             "{} rifts, longest {longest}",
             rifts.len()
         );
@@ -5222,17 +4915,20 @@ mod tests {
             gaps <= 7
         });
         assert!(linked, "no limb's rifts reach from rise to rise");
-        for t in p.canyons.iter().chain(&p.graben) {
+        for t in p.canyons.iter().chain(&p.graben).chain(&opened) {
             assert!(t.points.len() >= 3, "a fault a step long: id {}", t.id);
         }
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
         let thermal = ThermalHistory::from_graph(&g);
-        let p = PlumeProcess::new(&g, CubeSphere::new(128), &thermal, None).unwrap();
+        let grid = CubeSphere::new(128);
+        let p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
         assert!(p.limbs.pairs.is_empty());
+        let opened = crate::stages::rifting::rise_faults(&g, grid, &thermal, &p.rises, &p.limbs);
         assert!(
             p.canyons
                 .iter()
                 .chain(&p.graben)
+                .chain(&opened)
                 .all(|t| t.points.len() >= 3)
         );
     }
@@ -5950,14 +5646,10 @@ mod tests {
         // length, and its throw stays within the layer; the faults whose throw over their
         // length would exceed the layer are rifts, as wide as their throw, the long ones.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(
-            &g,
-            CubeSphere::new(64),
-            &ThermalHistory::from_graph(&g),
-            None,
-        )
-        .unwrap();
-        let all: Vec<&Trough> = p.canyons.iter().chain(&p.graben).collect();
+        let (grid, thermal) = (CubeSphere::new(64), ThermalHistory::from_graph(&g));
+        let p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+        let opened = crate::stages::rifting::rise_faults(&g, grid, &thermal, &p.rises, &p.limbs);
+        let all: Vec<&Trough> = p.canyons.iter().chain(&p.graben).chain(&opened).collect();
         let graben: Vec<&&Trough> = all
             .iter()
             .filter(|t| t.kind == TroughKind::Graben)
@@ -6132,13 +5824,9 @@ mod tests {
         );
         // On Mars the faults beyond the foot gather along the axis, and the shields lie on it.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(
-            &g,
-            CubeSphere::new(64),
-            &ThermalHistory::from_graph(&g),
-            None,
-        )
-        .unwrap();
+        let (grid, thermal) = (CubeSphere::new(64), ThermalHistory::from_graph(&g));
+        let p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+        let opened = crate::stages::rifting::rise_faults(&g, grid, &thermal, &p.rises, &p.limbs);
         let rise = &p.rises[0];
         let (re, rn) = local_basis(rise.center);
         let phi_axis = dot(rise.axis, rn).atan2(dot(rise.axis, re));
@@ -6151,7 +5839,7 @@ mod tests {
             assert!(off_axis(s.center) < 3.5 * SHIELD_AXIS_SPREAD_DEG.to_radians());
         }
         let (mut near, mut far) = (0, 0);
-        for t in p.graben.iter().chain(&p.canyons) {
+        for t in p.graben.iter().chain(&p.canyons).chain(&opened) {
             let m = t.midpoint();
             if angle_between(rise.center, m) * g.f64("body.radius") < 1.2 * rise.radius {
                 continue;
@@ -6501,17 +6189,13 @@ mod tests {
         // F116: on Mars the rise's faults form while its dome rises, and the plume head's
         // dikes with them; each volcano's dikes come while it grows.
         let (g, _) = crate::presets::preset("Mars").unwrap().to_graph();
-        let p = PlumeProcess::new(
-            &g,
-            CubeSphere::new(64),
-            &ThermalHistory::from_graph(&g),
-            None,
-        )
-        .unwrap();
+        let (grid, thermal) = (CubeSphere::new(64), ThermalHistory::from_graph(&g));
+        let p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+        let opened = crate::stages::rifting::rise_faults(&g, grid, &thermal, &p.rises, &p.limbs);
         let rise = &p.rises[0];
         let age = g.f64("body.age");
         let (mut faults, mut plume_dikes, mut volcano_dikes) = (0, 0, 0);
-        for t in p.graben.iter().chain(&p.canyons) {
+        for t in p.graben.iter().chain(&p.canyons).chain(&opened) {
             let time = 0.5 * (t.start_gyr + t.end_gyr);
             let rising = time >= rise.start_gyr - 1e-9 && time <= rise.end_gyr + 1e-9;
             if t.id & 0xFFFF_0000_0000_0000 == 0x0D1C_0000_0000_0000 {

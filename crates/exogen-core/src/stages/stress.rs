@@ -744,6 +744,12 @@ impl FieldHistory {
         self.field_with(t, false)
     }
 
+    /// The field at a time of the rises and the relief alone (F178): no limbs nor loads, for
+    /// what the limbs add beyond the rises.
+    pub fn field_rises(&self, t: f64) -> StressField<'_> {
+        self.field_with(t, false).with_limbs(Limbs::default())
+    }
+
     fn field_with(&self, t: f64, loaded: bool) -> StressField<'_> {
         let k = self.read_by(t);
         let current = self.epochs.get(k.saturating_sub(1));
@@ -772,6 +778,22 @@ impl FieldHistory {
             },
         )
         .with_limbs(self.limbs.clone())
+    }
+
+    /// The field of the relief alone at a time (F178): no rises, limbs nor loads, against
+    /// which the lid's tension faults reckon what the rest add.
+    pub fn field_bare(&self, t: f64) -> StressField<'_> {
+        let k = self.read_by(t);
+        let current = self.epochs.get(k.saturating_sub(1));
+        StressField::new(
+            &[],
+            Vec::new(),
+            self.body_radius,
+            self.gravity,
+            current.map_or(1e3, |e| e.elastic),
+            current.map(|e| &e.relief),
+            Vec::new(),
+        )
     }
 
     /// Whether any load has been laid.
