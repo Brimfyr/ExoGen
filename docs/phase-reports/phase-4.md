@@ -2541,3 +2541,17 @@ How it went:
 - **Gashes.** By the graben's rules the lid's troughs, 22 km wide, sank 4 km, a grid of gashes; the graben's rules hold for graben up to 12 km wide, and the model opens a rift where a fault would cut below its layer. As rifts, 1.5 thousandths of their length deep, they stand 0.3 to 1.5 km and tile the plateaus' crests.
 
 Still to do: the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.
+
+## The hundred-and-sixth milestone: the tesserae's graben take the model's graben form
+
+The user found the crossing rifts reading as a grid that ended abruptly and did not blend with the tesserae, and then, on the crests, graben in perfectly aligned, perfectly spaced lines.
+
+- **F192.** Relief grows smoothly toward its bounds; a later fault ends at an earlier; a line follows the strain's strike as far as the strain decides it; the lid rifts across its greatest stretching alone; and the graben have the model's graben form, segmented, stepping en echelon, scattered in throw and spacing, wandering.
+
+How it went:
+
+- **Abutting and deciding.** A later fault ending at an earlier and the thrusts' rule for the strike barely changed the grid: the collapse's strain is decided almost everywhere, and two orthogonal sets of evenly spaced faults read as a grid whatever their junctions.
+- **One rifting.** With the lid rifting across its greatest stretching alone, the grid faded to one set crossed faintly by the brittle layer's folds (the user chose this of three).
+- **Aligned lines.** The graben were continuous, smooth and nearly evenly spaced, where the model's graben elsewhere are segments that step, throw unevenly and wander, a set's spacing log-normal: with that form the crests' graben break up among the fold belts.
+
+Still to do: the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.

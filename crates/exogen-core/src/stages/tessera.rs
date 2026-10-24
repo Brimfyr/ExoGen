@@ -17,8 +17,13 @@
 //! faults, dipping at GRABEN_DIP_DEG, meet at the base of the layer it necks, which sets
 //! its width, and it sinks with the stretching no deeper than that layer, a fifth of its
 //! width or the throw its length allows, and the elastic lid necked whole opens the model's
-//! rifts, as deep as their heave and their length allow and thirty depths wide. Each state
-//! of the flow made its own sets, the later laid over the earlier.
+//! rifts across its greatest stretching, as deep as their heave and their length allow and
+//! thirty depths wide. A graben has the model's graben form (F192): a set log-normally
+//! spaced, each graben a chain of segments that step en echelon, its throw scattered and
+//! falling where they link, its trace wandering; the lesser stretching's faults end where
+//! they meet the greater's; and a line follows the strain's strike only as far as the
+//! strain decides it, as a thrust does. Each state of the flow made its own sets, the later
+//! laid over the earlier.
 //!
 //! Each fold's crest and each graben is a line along the strain's strike, the lines of a
 //! set as far apart as their wavelength (evenly spaced streamlines, Jobard and Lefer 1997):
@@ -119,6 +124,28 @@ impl Strain<'_> {
     }
 }
 
+impl Strain<'_> {
+    /// How far the strain decides a line's strike at a direction, 0 to 1 (as the field
+    /// decides a thrust's, F154): its differential against the scatter of the lid's own
+    /// strength, a share of its mean, below which a line follows the lid's own weaknesses.
+    fn decided(&self, d: [f64; 3]) -> f64 {
+        let [a, b, c] = [0, 1, 2].map(|i| sample_bilinear(self.coarse, &self.parts[i], d) as f64);
+        let differential = 2.0 * (0.25 * (a - c) * (a - c) + b * b).sqrt();
+        let scatter = THRUST_STRIKE_SCATTER * (0.5 * (a + c)).abs();
+        differential / (differential + scatter).max(1e-12)
+    }
+}
+
+/// The tangent at `p` nearest a direction.
+fn tangent(p: [f64; 3], v: [f64; 3]) -> [f64; 3] {
+    let along = dot(v, p);
+    normalize([
+        v[0] - along * p[0],
+        v[1] - along * p[1],
+        v[2] - along * p[2],
+    ])
+}
+
 /// A step of `h` radians from `p` along the tangent `dir`.
 fn advance(p: [f64; 3], dir: [f64; 3], h: f64) -> [f64; 3] {
     normalize([p[0] + dir[0] * h, p[1] + dir[1] * h, p[2] + dir[2] * h])
@@ -164,18 +191,19 @@ impl TesseraFabric {
             for (l, &share) in [GROOVE_RIFT_LID_SHARE, 1.0].iter().enumerate() {
                 let layer = share * set.elastic;
                 let fold = TESSERA_BUCKLING_RATIO * layer;
-                let graben = GROOVE_NECKING_WAVELENGTH * layer;
+                // A parallel set of graben stands as far apart, wall to wall, as the model's
+                // (F112): GRABEN_SPACING_LAYERS of its layer at the median.
+                let graben =
+                    2.0 * layer / GRABEN_DIP_DEG.to_radians().tan() + GRABEN_SPACING_LAYERS * layer;
                 if drawn(fold) <= 0.0 && drawn(graben) <= 0.0 {
                     continue;
                 }
-                for which in 0..2 {
-                    jobs.push((s, l, which, fold, graben, layer));
-                }
+                jobs.push((s, l, fold, graben, layer));
             }
         }
         let families: Vec<Family> = jobs
             .par_iter()
-            .map(|&(s, l, which, fold_length, graben_length, layer)| {
+            .flat_map_iter(|&(s, l, fold_length, graben_length, layer)| {
                 let set = &sets[s];
                 let parts = [0, 1, 2].map(|i| {
                     let v: Vec<f32> = set.strain.iter().map(|t| t[i]).collect();
@@ -183,7 +211,6 @@ impl TesseraFabric {
                 });
                 let strain = Strain { coarse, parts };
                 let rng = Rng::new(seed ^ 0x7E55_E2A0 ^ ((s as u64) << 20) ^ ((l as u64) << 16));
-                let id = which as u64;
                 // Where a line may run: about the tesserae, where the state strained the lid.
                 let inside = |d: [f64; 3]| {
                     let k = coarse.index(coarse.locate(d).0);
@@ -194,23 +221,35 @@ impl TesseraFabric {
                 // as their depth allows.
                 let rift = l == 1;
                 let graben_width = 2.0 * layer / dip.tan();
+                // What a line's relief grows toward as it takes up the strain, approached
+                // smoothly, so that the fabric grows in where the strain does rather than
+                // standing at its bound wherever the strain passes it.
+                let soft = |raw: f64, bound: f64| {
+                    if bound <= 0.0 {
+                        0.0
+                    } else {
+                        bound * (1.0 - (-raw.max(0.0) / bound).exp())
+                    }
+                };
                 let relief_of = |value: f64, graben: bool| -> (f64, f64) {
                     if graben {
                         // Two faults take the stretching across its spacing, sinking it as
                         // they slip: a graben no deeper than its layer or a fifth of its
-                        // width, a rift as deep as its heave.
+                        // width, a rift as deep as its heave, its length bounding it later.
                         let h = if rift {
                             value * graben_length / RIFT_HEAVE_PER_DEPTH
                         } else {
-                            (0.5 * value * graben_length * dip.tan())
-                                .min(layer)
-                                .min(GRABEN_DEPTH_PER_WIDTH * graben_width)
+                            soft(
+                                0.5 * value * graben_length * dip.tan(),
+                                layer.min(GRABEN_DEPTH_PER_WIDTH * graben_width),
+                            )
                         };
                         (h * drawn(graben_length), graben_length)
                     } else {
-                        let h = ((fold_length / std::f64::consts::PI) * (-value).sqrt())
-                            .min(friction * fold_length / std::f64::consts::TAU)
-                            .min(fold_cap);
+                        let h = soft(
+                            (fold_length / std::f64::consts::PI) * (-value).sqrt(),
+                            (friction * fold_length / std::f64::consts::TAU).min(fold_cap),
+                        );
                         (h * drawn(fold_length), fold_length)
                     }
                 };
@@ -221,7 +260,6 @@ impl TesseraFabric {
                     as u32)
                     .clamp(4, 4096);
                 let crowd = CubeSphere::new(face);
-                let mut points: HashMap<u32, Vec<[f64; 3]>> = HashMap::new();
                 let crowded = |points: &HashMap<u32, Vec<[f64; 3]>>, p: [f64; 3], within: f64| {
                     let (c, _, _) = crowd.locate(p);
                     let reach = (within / near_spacing).ceil() as i32 + 1;
@@ -239,193 +277,351 @@ impl TesseraFabric {
                     }
                     false
                 };
-                let mut lines: Vec<(Kind, Vec<[f64; 3]>, Vec<f32>)> = Vec::new();
-                let mut seeds: Vec<[f64; 3]> = Vec::new();
-                let mut next_seed = 0usize;
-                let mut coarse_seed = 0usize;
-                let mut draws = 0u64;
-                loop {
-                    // The next seed: one beside a line drawn, or a coarse cell's centre.
-                    let p0 = if next_seed < seeds.len() {
-                        next_seed += 1;
-                        seeds[next_seed - 1]
-                    } else {
-                        let mut found = None;
-                        while coarse_seed < coarse.cell_count() {
-                            let k = coarse_seed;
-                            coarse_seed += 1;
-                            if near(k) && set.strain[k] != [0.0; 3] {
-                                found = Some(coarse.center(coarse.cell(k)));
-                                break;
-                            }
-                        }
-                        match found {
-                            Some(p) => p,
-                            None => break,
-                        }
-                    };
-                    if !inside(p0) {
-                        continue;
-                    }
-                    let (v0, strike0) = strain.principal(p0, which);
-                    if v0 == 0.0 {
-                        continue;
-                    }
-                    let graben = v0 > 0.0;
-                    let (h0, spacing) = relief_of(v0, graben);
-                    if h0 <= 0.0 {
-                        continue;
-                    }
-                    draws += 1;
-                    let spread = 2f64
-                        .powf(TESSERA_SPACING_SCATTER * (2.0 * rng.uniform(id, 3 * draws) - 1.0));
-                    let gap = spacing * spread;
-                    if crowded(&points, p0, 0.9 * gap) {
-                        continue;
-                    }
-                    let scatter =
-                        1.0 + TESSERA_RELIEF_SCATTER * (2.0 * rng.uniform(id, 3 * draws + 1) - 1.0);
-                    // Traced both ways from the seed along the strike, a sixth of a spacing
-                    // at a step.
-                    let step = spacing / 6.0;
-                    let h = step / body_radius;
-                    // Its length drawn within the range folds of a set run, so that they
-                    // stand en echelon and plunge out at their own ends.
-                    let (short, long) = TESSERA_LINE_LENGTH;
-                    let length = short + (long - short) * rng.uniform(id, 3 * draws + 2);
-                    let longest = (length * spacing / step) as usize;
-                    let mut halves: [Vec<([f64; 3], f32)>; 2] = [Vec::new(), Vec::new()];
-                    for (half, sign) in [(0usize, 1.0f64), (1, -1.0)] {
-                        let aligned = |d: [f64; 3], prev: [f64; 3]| {
-                            if dot(d, prev) < 0.0 {
-                                [-d[0], -d[1], -d[2]]
-                            } else {
-                                d
-                            }
-                        };
-                        let mut p = p0;
-                        let mut dir = [strike0[0] * sign, strike0[1] * sign, strike0[2] * sign];
-                        for _ in 0..longest / 2 {
-                            let (_, s1) = strain.principal(p, which);
-                            let d1 = aligned(s1, dir);
-                            // The strike turning sharply: the strain alike every way, no
-                            // strike to follow.
-                            if dot(d1, dir) < std::f64::consts::FRAC_1_SQRT_2 {
-                                break;
-                            }
-                            let mid = advance(p, d1, 0.5 * h);
-                            let (_, s2) = strain.principal(mid, which);
-                            let d2 = aligned(s2, d1);
-                            let q = advance(p, d2, h);
-                            if !inside(q) {
-                                break;
-                            }
-                            let (v, _) = strain.principal(q, which);
-                            if v == 0.0 || (v > 0.0) != graben {
-                                break;
-                            }
-                            if crowded(&points, q, 0.5 * gap) {
-                                break;
-                            }
-                            let (hq, _) = relief_of(v, graben);
-                            halves[half].push((q, (hq * scatter) as f32));
-                            dir = normalize(cross(cross(q, d2), q));
-                            p = q;
-                        }
-                    }
-                    let [forward, backward] = halves;
-                    let mut pts: Vec<[f64; 3]> = backward.iter().rev().map(|x| x.0).collect();
-                    let mut rel: Vec<f32> = backward.iter().rev().map(|x| x.1).collect();
-                    pts.push(p0);
-                    rel.push((h0 * scatter) as f32);
-                    pts.extend(forward.iter().map(|x| x.0));
-                    rel.extend(forward.iter().map(|x| x.1));
-                    let n = pts.len();
-                    // A line shorter than its spacing is no fold.
-                    if n < 6 {
-                        continue;
-                    }
-                    // A graben throws no more than its length allows, a rift no deeper than
-                    // its length allows (F112, F38).
-                    let mut width = graben_width;
-                    if graben {
-                        let per_length = if rift {
-                            RIFT_DEPTH_PER_LENGTH
+                // The greater stretching breaks the lid first and the lesser later, a later
+                // fault ending where it meets an earlier one (as a lane does, F61): the faults
+                // of the first set of a layer, by the crowding grid.
+                let mut older: HashMap<u32, Vec<[f64; 3]>> = HashMap::new();
+                let mut out = Vec::with_capacity(2);
+                for which in 0..2usize {
+                    let id = which as u64;
+                    let mut points: HashMap<u32, Vec<[f64; 3]>> = HashMap::new();
+                    let mut lines: Vec<(Kind, Vec<[f64; 3]>, Vec<f32>)> = Vec::new();
+                    let mut seeds: Vec<[f64; 3]> = Vec::new();
+                    let mut next_seed = 0usize;
+                    let mut coarse_seed = 0usize;
+                    let mut draws = 0u64;
+                    loop {
+                        // The next seed: one beside a line drawn, or a coarse cell's centre.
+                        let p0 = if next_seed < seeds.len() {
+                            next_seed += 1;
+                            seeds[next_seed - 1]
                         } else {
-                            SEGMENT_THROW_PER_LENGTH
+                            let mut found = None;
+                            while coarse_seed < coarse.cell_count() {
+                                let k = coarse_seed;
+                                coarse_seed += 1;
+                                if near(k) && set.strain[k] != [0.0; 3] {
+                                    found = Some(coarse.center(coarse.cell(k)));
+                                    break;
+                                }
+                            }
+                            match found {
+                                Some(p) => p,
+                                None => break,
+                            }
                         };
-                        let most = (per_length * n as f64 * step) as f32;
-                        for r in rel.iter_mut() {
-                            *r = r.min(most);
+                        if !inside(p0) {
+                            continue;
                         }
-                        if rift {
-                            let deepest = rel.iter().fold(0.0f32, |m, &r| m.max(r)) as f64;
-                            width = (RIFT_WIDTH_PER_DEPTH * deepest)
-                                .clamp(RIFT_MIN_WIDTH, 0.5 * spacing);
+                        let (v0, strike0) = strain.principal(p0, which);
+                        if v0 == 0.0 {
+                            continue;
+                        }
+                        let graben = v0 > 0.0;
+                        // The lid necks whole across its greatest stretching alone: the rifts
+                        // that open there take the heave, and the lesser stretching is taken
+                        // by the brittle layer's graben.
+                        if graben && rift && which == 1 {
+                            continue;
+                        }
+                        let (h0, spacing) = relief_of(v0, graben);
+                        if h0 <= 0.0 {
+                            continue;
+                        }
+                        draws += 1;
+                        // A graben's spacing log-normal about its median, wall to wall no less
+                        // than a quarter of it (F112); a fold's scattered about its dominant
+                        // wavelength.
+                        let gap = if graben {
+                            let walls = GRABEN_SPACING_LAYERS
+                                * layer
+                                * (GRABEN_SPACING_SPREAD * rng.normal(id ^ 0x5BAC_E000, draws))
+                                    .exp()
+                                    .max(0.25);
+                            graben_width + walls
+                        } else {
+                            spacing
+                                * 2f64.powf(
+                                    TESSERA_SPACING_SCATTER
+                                        * (2.0 * rng.uniform(id, 3 * draws) - 1.0),
+                                )
+                        };
+                        if crowded(&points, p0, 0.9 * gap) {
+                            continue;
+                        }
+                        let scatter = 1.0
+                            + TESSERA_RELIEF_SCATTER * (2.0 * rng.uniform(id, 3 * draws + 1) - 1.0);
+                        // Traced both ways from the seed along the strike, a sixth of a spacing
+                        // at a step.
+                        let step = spacing / 6.0;
+                        let h = step / body_radius;
+                        // Its length drawn within the range folds of a set run, so that they
+                        // stand en echelon and plunge out at their own ends.
+                        let (short, long) = TESSERA_LINE_LENGTH;
+                        let length = short + (long - short) * rng.uniform(id, 3 * draws + 2);
+                        let longest = (length * spacing / step) as usize;
+                        let mut halves: [Vec<([f64; 3], f32)>; 2] = [Vec::new(), Vec::new()];
+                        // It starts along the strain's strike as far as the strain decides it,
+                        // and along the lid's own weaknesses where it does not, and bends as a
+                        // thrust does where the strain leaves it free (F154, F155).
+                        let (east0, north0) = local_basis(p0);
+                        let free_angle = std::f64::consts::TAU * rng.uniform(id, 5 * draws + 3);
+                        let free = [
+                            east0[0] * free_angle.cos() + north0[0] * free_angle.sin(),
+                            east0[1] * free_angle.cos() + north0[1] * free_angle.sin(),
+                            east0[2] * free_angle.cos() + north0[2] * free_angle.sin(),
+                        ];
+                        let a0 = strain.decided(p0);
+                        let free = if dot(free, strike0) < 0.0 {
+                            [-free[0], -free[1], -free[2]]
+                        } else {
+                            free
+                        };
+                        let start = tangent(
+                            p0,
+                            [
+                                a0 * strike0[0] + (1.0 - a0) * free[0],
+                                a0 * strike0[1] + (1.0 - a0) * free[1],
+                                a0 * strike0[2] + (1.0 - a0) * free[2],
+                            ],
+                        );
+                        let turn = SCARP_TURN_DEG.to_radians()
+                            * (2.0 * rng.uniform(id, 5 * draws + 4) - 1.0);
+                        let steps = (longest / 2).max(1);
+                        for (half, sign) in [(0usize, 1.0f64), (1, -1.0)] {
+                            let aligned = |d: [f64; 3], prev: [f64; 3]| {
+                                if dot(d, prev) < 0.0 {
+                                    [-d[0], -d[1], -d[2]]
+                                } else {
+                                    d
+                                }
+                            };
+                            let mut p = p0;
+                            let mut dir = [start[0] * sign, start[1] * sign, start[2] * sign];
+                            for _ in 0..steps {
+                                // Toward the strain's strike as far as it decides it, and its
+                                // own bend where it does not.
+                                let (_, s1) = strain.principal(p, which);
+                                let a = strain.decided(p);
+                                let pull = a * THRUST_FIELD_FOLLOWING;
+                                let toward = aligned(s1, dir);
+                                let blended = tangent(
+                                    p,
+                                    [
+                                        (1.0 - pull) * dir[0] + pull * toward[0],
+                                        (1.0 - pull) * dir[1] + pull * toward[1],
+                                        (1.0 - pull) * dir[2] + pull * toward[2],
+                                    ],
+                                );
+                                let (east, north) = local_basis(p);
+                                let azimuth = dot(blended, north).atan2(dot(blended, east))
+                                    + sign * (1.0 - a) * turn / steps as f64;
+                                let d2 = [
+                                    east[0] * azimuth.cos() + north[0] * azimuth.sin(),
+                                    east[1] * azimuth.cos() + north[1] * azimuth.sin(),
+                                    east[2] * azimuth.cos() + north[2] * azimuth.sin(),
+                                ];
+                                let q = advance(p, d2, h);
+                                if !inside(q) {
+                                    break;
+                                }
+                                let (v, _) = strain.principal(q, which);
+                                if v == 0.0 || (v > 0.0) != graben {
+                                    break;
+                                }
+                                if crowded(&points, q, 0.5 * gap) {
+                                    break;
+                                }
+                                // A later fault ends where it meets an earlier one.
+                                if graben && which == 1 && crowded(&older, q, step) {
+                                    break;
+                                }
+                                let (hq, _) = relief_of(v, graben);
+                                halves[half].push((q, (hq * scatter) as f32));
+                                dir = normalize(cross(cross(q, d2), q));
+                                p = q;
+                            }
+                        }
+                        let [forward, backward] = halves;
+                        let mut pts: Vec<[f64; 3]> = backward.iter().rev().map(|x| x.0).collect();
+                        let mut rel: Vec<f32> = backward.iter().rev().map(|x| x.1).collect();
+                        pts.push(p0);
+                        rel.push((h0 * scatter) as f32);
+                        pts.extend(forward.iter().map(|x| x.0));
+                        rel.extend(forward.iter().map(|x| x.1));
+                        let n = pts.len();
+                        // A line shorter than its spacing is no fold.
+                        if n < 6 {
+                            continue;
+                        }
+                        // A graben throws no more than its length allows, a rift no deeper than
+                        // its length allows (F112, F38).
+                        let mut width = graben_width;
+                        if graben {
+                            let per_length = if rift {
+                                RIFT_DEPTH_PER_LENGTH
+                            } else {
+                                SEGMENT_THROW_PER_LENGTH
+                            };
+                            let most = (per_length * n as f64 * step) as f32;
+                            for r in rel.iter_mut() {
+                                *r = most * (1.0 - (-*r / most.max(1e-3)).exp());
+                            }
+                            if rift {
+                                let deepest = rel.iter().fold(0.0f32, |m, &r| m.max(r)) as f64;
+                                width = (RIFT_WIDTH_PER_DEPTH * deepest)
+                                    .clamp(RIFT_MIN_WIDTH, 0.5 * spacing);
+                            }
+                        }
+                        // Its ends plunge out over a spacing.
+                        for (i, r) in rel.iter_mut().enumerate() {
+                            let x = (i.min(n - 1 - i) as f64 / 6.0).min(1.0);
+                            *r *= (x * x * (3.0 - 2.0 * x)) as f32;
+                        }
+                        // A graben has the model's graben form (F111, F112): segments some
+                        // widths long, each a step to the same side of the last as often as
+                        // SEGMENT_STEP_PROBABILITY, its throw scattered from segment to segment
+                        // and falling where they link, its trace wandering self-affinely.
+                        if graben {
+                            let side_sign = if rng.uniform(id ^ 0x5E6E_0000, draws) < 0.5 {
+                                -1.0
+                            } else {
+                                1.0
+                            };
+                            let (short, long) = SEGMENT_LENGTH_WIDTHS;
+                            let mut offset = 0.0f64;
+                            let mut next = 0.0f64;
+                            let mut k = 0u64;
+                            let mut throw = 1.0f64;
+                            let mut walked = 0.0f64;
+                            // The trace's wander: octaves from FAULT_MEANDER_WIDTHS widths down,
+                            // each weaker by the Hurst exponent.
+                            let octaves: Vec<(f64, f64, f64)> = (0..4)
+                                .map(|o| {
+                                    let wavelength =
+                                        FAULT_MEANDER_WIDTHS * width / 2f64.powi(o as i32);
+                                    let amplitude = FAULT_MEANDER
+                                        * width
+                                        * (wavelength / (FAULT_MEANDER_WIDTHS * width))
+                                            .powf(FAULT_HURST);
+                                    let phase = std::f64::consts::TAU
+                                        * rng.uniform(id ^ 0x3EA_0000, 4 * draws + o);
+                                    (wavelength, amplitude, phase)
+                                })
+                                .collect();
+                            let original = pts.clone();
+                            for i in 0..n {
+                                if i > 0 {
+                                    walked +=
+                                        crate::geom::angle_between(original[i - 1], original[i])
+                                            * body_radius;
+                                }
+                                // A new segment: a step to the fault's side as often as not,
+                                // its own throw.
+                                let mut link = 1.0f64;
+                                if walked >= next {
+                                    if k > 0
+                                        && rng.uniform(id ^ 0x57E9_0000, 3 * (draws * 64 + k))
+                                            < SEGMENT_STEP_PROBABILITY
+                                    {
+                                        let (a, b) = SEGMENT_STEP_WIDTHS;
+                                        let u =
+                                            rng.uniform(id ^ 0x57E9_0000, 3 * (draws * 64 + k) + 1);
+                                        offset += side_sign * (a + (b - a) * u) * width;
+                                    }
+                                    if k > 0 {
+                                        link = 1.0 - SEGMENT_LINK_DEFICIT;
+                                    }
+                                    throw = (SEGMENT_THROW_SCATTER
+                                        * rng.normal(id ^ 0x7A20_0000, 2 * (draws * 64 + k)))
+                                    .exp();
+                                    let u = rng.uniform(id ^ 0x5E61_0000, draws * 64 + k);
+                                    next = walked + short * (long / short).powf(u) * width;
+                                    k += 1;
+                                }
+                                let wander: f64 = octaves
+                                    .iter()
+                                    .map(|&(w, a, ph)| {
+                                        a * (std::f64::consts::TAU * walked / w + ph).sin()
+                                    })
+                                    .sum();
+                                let q = original[i];
+                                let other = if i + 1 < n {
+                                    original[i + 1]
+                                } else {
+                                    original[i - 1]
+                                };
+                                let t =
+                                    normalize([other[0] - q[0], other[1] - q[1], other[2] - q[2]]);
+                                let t = if i + 1 < n { t } else { [-t[0], -t[1], -t[2]] };
+                                let side = normalize(cross(q, t));
+                                pts[i] = advance(q, side, (offset + wander) / body_radius);
+                                rel[i] *= (throw * link) as f32;
+                            }
+                        }
+                        for &q in &pts {
+                            let k = crowd.index(crowd.locate(q).0) as u32;
+                            points.entry(k).or_default().push(q);
+                            if graben && which == 0 {
+                                older.entry(k).or_default().push(q);
+                            }
+                        }
+                        // Seeds a spacing to either side, every spacing along.
+                        for i in (0..n).step_by(6) {
+                            let q = pts[i];
+                            let other = if i + 1 < n { pts[i + 1] } else { pts[i - 1] };
+                            let t = normalize([other[0] - q[0], other[1] - q[1], other[2] - q[2]]);
+                            let side = normalize(cross(q, t));
+                            for sgn in [1.0, -1.0] {
+                                let dir = [side[0] * sgn, side[1] * sgn, side[2] * sgn];
+                                seeds.push(advance(q, dir, gap / body_radius));
+                            }
+                        }
+                        lines.push((
+                            Kind {
+                                graben,
+                                spacing,
+                                width,
+                            },
+                            pts,
+                            rel,
+                        ));
+                    }
+                    // The segments, by the cell of a grid as coarse as the farthest a line
+                    // reaches, so that a point finds every line that reaches it among the cells
+                    // about its own.
+                    let widest = fold_length.max(graben_length) * REACH;
+                    let face = ((std::f64::consts::FRAC_PI_2 * body_radius / widest).floor()
+                        as u32)
+                        .clamp(4, 4096);
+                    let grid = CubeSphere::new(face);
+                    let mut kinds = Vec::with_capacity(lines.len());
+                    let mut segments = Vec::new();
+                    let mut index: HashMap<u32, Vec<u32>> = HashMap::new();
+                    for (li, (kind, pts, rel)) in lines.into_iter().enumerate() {
+                        kinds.push(kind);
+                        for i in 0..pts.len().saturating_sub(1) {
+                            let sid = segments.len() as u32;
+                            segments.push(Segment {
+                                a: pts[i],
+                                b: pts[i + 1],
+                                ra: rel[i],
+                                rb: rel[i + 1],
+                                line: li as u32,
+                            });
+                            let k = grid.index(grid.locate(pts[i]).0) as u32;
+                            index.entry(k).or_default().push(sid);
                         }
                     }
-                    // Its ends plunge out over a spacing.
-                    for (i, r) in rel.iter_mut().enumerate() {
-                        let x = (i.min(n - 1 - i) as f64 / 6.0).min(1.0);
-                        *r *= (x * x * (3.0 - 2.0 * x)) as f32;
-                    }
-                    for &q in &pts {
-                        let k = crowd.index(crowd.locate(q).0) as u32;
-                        points.entry(k).or_default().push(q);
-                    }
-                    // Seeds a spacing to either side, every spacing along.
-                    for i in (0..n).step_by(6) {
-                        let q = pts[i];
-                        let other = if i + 1 < n { pts[i + 1] } else { pts[i - 1] };
-                        let t = normalize([other[0] - q[0], other[1] - q[1], other[2] - q[2]]);
-                        let side = normalize(cross(q, t));
-                        for sgn in [1.0, -1.0] {
-                            let dir = [side[0] * sgn, side[1] * sgn, side[2] * sgn];
-                            seeds.push(advance(q, dir, gap / body_radius));
-                        }
-                    }
-                    lines.push((
-                        Kind {
-                            graben,
-                            spacing,
-                            width,
-                        },
-                        pts,
-                        rel,
-                    ));
+                    out.push(Family {
+                        layer: l,
+                        kinds,
+                        segments,
+                        index,
+                        grid,
+                    });
                 }
-                // The segments, by the cell of a grid as coarse as the farthest a line
-                // reaches, so that a point finds every line that reaches it among the cells
-                // about its own.
-                let widest = fold_length.max(graben_length) * REACH;
-                let face = ((std::f64::consts::FRAC_PI_2 * body_radius / widest).floor() as u32)
-                    .clamp(4, 4096);
-                let grid = CubeSphere::new(face);
-                let mut kinds = Vec::with_capacity(lines.len());
-                let mut segments = Vec::new();
-                let mut index: HashMap<u32, Vec<u32>> = HashMap::new();
-                for (li, (kind, pts, rel)) in lines.into_iter().enumerate() {
-                    kinds.push(kind);
-                    for i in 0..pts.len().saturating_sub(1) {
-                        let sid = segments.len() as u32;
-                        segments.push(Segment {
-                            a: pts[i],
-                            b: pts[i + 1],
-                            ra: rel[i],
-                            rb: rel[i + 1],
-                            line: li as u32,
-                        });
-                        let k = grid.index(grid.locate(pts[i]).0) as u32;
-                        index.entry(k).or_default().push(sid);
-                    }
-                }
-                Family {
-                    layer: l,
-                    kinds,
-                    segments,
-                    index,
-                    grid,
-                }
+                out
             })
             .filter(|f| !f.segments.is_empty())
             .collect();
