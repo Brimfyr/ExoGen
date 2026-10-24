@@ -309,6 +309,57 @@ impl CrackIndex {
         }
     }
 
+    /// The nearest point of an open fissure to a direction, within a bucket's reach, rad.
+    fn nearest_open(&self, p: [f64; 3]) -> Option<f64> {
+        let (i, j, k) = self.key(p);
+        let mut best: Option<f64> = None;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dk in -1..=1 {
+                    let Some(v) = self.buckets.get(&(i + di, j + dj, k + dk)) else {
+                        continue;
+                    };
+                    for &(_, q, _, open) in v {
+                        if !open {
+                            continue;
+                        }
+                        let dist = angle_between(p, q);
+                        if best.is_none_or(|b| dist < b) {
+                            best = Some(dist);
+                        }
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    /// The nearest point of an open fissure to a direction, within a bucket's reach: its
+    /// crack, the point, its tangent there and its distance, rad.
+    fn nearest_open_point(&self, p: [f64; 3]) -> Option<(usize, [f64; 3], [f64; 3], f64)> {
+        let (i, j, k) = self.key(p);
+        let mut best: Option<(usize, [f64; 3], [f64; 3], f64)> = None;
+        for di in -1..=1 {
+            for dj in -1..=1 {
+                for dk in -1..=1 {
+                    let Some(v) = self.buckets.get(&(i + di, j + dj, k + dk)) else {
+                        continue;
+                    };
+                    for &(c, q, t, open) in v {
+                        if !open {
+                            continue;
+                        }
+                        let dist = angle_between(p, q);
+                        if best.is_none_or(|b| dist < b.3) {
+                            best = Some((c, q, t, dist));
+                        }
+                    }
+                }
+            }
+        }
+        best
+    }
+
     /// The nearest point of another crack to a direction, within a bucket's reach: its
     /// distance, rad, its tangent and whether it is open.
     fn nearest(&self, p: [f64; 3], exclude: Option<usize>) -> Option<(f64, [f64; 3], bool)> {
@@ -585,6 +636,14 @@ impl Cracks {
         let window_start = (present - self.retention.min(self.floated)).max(0.0);
         let mut out: Vec<Linea> = Vec::new();
         let mut index = CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius);
+        // Each past episode cracked its terrain as the present one cracks the zone, its
+        // cracks meeting one another as they opened, in the pole's frame before the body
+        // carried them off (F193): an index of its own for each.
+        let mut past: Vec<CrackIndex> = self
+            .episodes
+            .iter()
+            .map(|_| CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius))
+            .collect();
         // Under a plume the vents of the thinned zone come first, in their cascade (F57),
         // for the present episode and for each past one; the zone's other cracks are its
         // lesser fractures.
@@ -605,7 +664,7 @@ impl Cracks {
                     cell,
                     &rng,
                     &mut out,
-                    &mut index,
+                    &mut past[vi],
                 );
             }
         }
@@ -750,9 +809,13 @@ impl Cracks {
                     };
                     let rules = TraceRules {
                         polar,
-                        // A carried crack traces in the pole's frame, where the present
-                        // cracks are not its neighbours.
-                        index: if carry.is_some() { None } else { Some(&index) },
+                        // A carried crack traces in the pole's frame among its own
+                        // episode's cracks, not the present ones.
+                        index: Some(if carry.is_some() {
+                            &past[vi - 1]
+                        } else {
+                            &index
+                        }),
                         exclude: branch.map(|b| b.0),
                         one_way: branch.map(|b| b.2),
                         junction: (0.5 * width).max(cell),
@@ -770,17 +833,16 @@ impl Cracks {
                     if points.len() < 3 {
                         continue;
                     }
-                    // A past episode's crack is carried to where the body left its terrain,
-                    // and is long healed.
+                    // A past episode's crack joins its own episode's, then is carried to
+                    // where the body left its terrain, and is long healed.
+                    match carry {
+                        Some(_) => past[vi - 1].insert(out.len(), &points, kind == LineaKind::Vent),
+                        None => index.insert(out.len(), &points, kind == LineaKind::Vent),
+                    }
                     let points: Vec<[f64; 3]> = match carry {
                         Some(e) => points.iter().map(|p| e.carry(*p)).collect(),
                         None => points,
                     };
-                    index.insert(
-                        out.len(),
-                        &points,
-                        kind == LineaKind::Vent && carry.is_none(),
-                    );
                     out.push(Linea {
                         length: (points.len() - 1) as f64 * spacing,
                         points,
@@ -795,7 +857,216 @@ impl Cracks {
                 }
             }
         }
+        // The thinned zone cracks until it is saturated (F193), for the present episode
+        // and each past one.
+        if self.vent
+            && self.shell_map.has_active_terrain()
+            && let Some(pole) = self.shell_map.pole
+        {
+            self.saturate(
+                pole, present, None, 0, spacing, cell, &rng, &mut out, &mut index,
+            );
+            for (vi, e) in self.episodes.iter().enumerate() {
+                self.saturate(
+                    pole,
+                    present,
+                    Some(e),
+                    vi as u64 + 1,
+                    spacing,
+                    cell,
+                    &rng,
+                    &mut out,
+                    &mut past[vi],
+                );
+            }
+        }
         out
+    }
+
+    /// The thinned zone's cracking saturates (F193): a fissure through the shell relieves
+    /// the tension about it as far as it is tall, the shell's thickness there (its stress
+    /// shadow, Pollard and Aydin 1988), and a new fissure opens wherever the ground lies
+    /// beyond every open one's shadow, until none does; so that the fissures' spacing goes
+    /// as the shell's thickness, as joints' does as their layer's (Bai and Pollard 2000).
+    /// Each runs along the field of its time, turning to meet the open fissures it nears
+    /// and ending against them, so that the zone is one network of fissures, the tiger
+    /// stripes its greatest. A fissure's trough is as deep for its width as a stripe's.
+    #[allow(clippy::too_many_arguments)]
+    fn saturate(
+        &self,
+        pole: [f64; 3],
+        present: f64,
+        carry: Option<&crate::stages::ice::FocusEpisode>,
+        vi: u64,
+        spacing: f64,
+        cell: f64,
+        rng: &Rng,
+        out: &mut Vec<Linea>,
+        index: &mut CrackIndex,
+    ) {
+        let bin = u64::MAX - 1024 - vi;
+        let time = match carry {
+            None => present,
+            Some(e) => 0.5 * (e.start + e.end),
+        };
+        let axis = mean_axis_at(time, present, self.nsr_period_gyr);
+        let l_max = LINEA_LENGTH_RAD.1 * self.body_radius;
+        let reach = self.shell_map.radius_rad;
+        let (east, north) = local_basis(pole);
+        // Candidate sites over the zone, uniform in area, in a random order.
+        let tries = POLAR_SATURATION_TRIES;
+        for n in 0..tries as u64 {
+            let r = reach * rng.uniform(bin, 4 * n).sqrt();
+            let a = std::f64::consts::TAU * rng.uniform(bin, 4 * n + 1);
+            let p = normalize([
+                pole[0] * r.cos() + (east[0] * a.cos() + north[0] * a.sin()) * r.sin(),
+                pole[1] * r.cos() + (east[1] * a.cos() + north[1] * a.sin()) * r.sin(),
+                pole[2] * r.cos() + (east[2] * a.cos() + north[2] * a.sin()) * r.sin(),
+            ]);
+            if !self.shell_map.thin(p) {
+                continue;
+            }
+            // Beyond every open fissure's shadow: as far as the shell there is thick.
+            let shadow = self.mean_shell * self.shell_map.factor(p) / self.body_radius;
+            if index.nearest_open(p).is_some_and(|d| d < shadow) {
+                continue;
+            }
+            let (peak, phase) = self.shell.peak_tension(axis, p);
+            if peak <= 0.0 {
+                continue;
+            }
+            // A heavy tail of widths (F78), its trough as deep for its width as a stripe's.
+            let (w_lo, w_hi) = LINEA_WIDTH_RANGE;
+            let k = 1.0 - LINEA_WIDTH_EXPONENT;
+            let u = rng.uniform(bin, 4 * n + 2);
+            let width = (w_lo.powf(k) + u * (w_hi.powf(k) - w_lo.powf(k))).powf(1.0 / k);
+            let relief =
+                VENT_TROUGH_DEPTH * width / VENT_WIDTH * (0.7 + 0.6 * rng.uniform(bin, 4 * n + 3));
+            let id = (VENT_SATURATION_BIN << 32) | n | (vi << 56);
+            let rules = TraceRules {
+                polar: true,
+                index: Some(&*index),
+                exclude: None,
+                one_way: None,
+                junction: (0.5 * width).max(cell),
+                wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
+                bias: (0.0, 1.0),
+                held_open: true,
+                time: None,
+            };
+            let pts = self.ridge_trace(axis, p, phase, spacing, l_max, id, &rules);
+            if pts.len() < 3 {
+                continue;
+            }
+            index.insert(out.len(), &pts, true);
+            let time_gyr = match carry {
+                None => present,
+                Some(e) => e.end + FOSSIL_VENT_LAG_GYR * (1.0 + rng.uniform(bin, 4 * n + 2)),
+            };
+            let points: Vec<[f64; 3]> = match carry {
+                Some(e) => pts.iter().map(|q| e.carry(*q)).collect(),
+                None => pts,
+            };
+            out.push(Linea {
+                length: (points.len() - 1) as f64 * spacing,
+                points,
+                spacing,
+                width,
+                relief,
+                kind: LineaKind::Vent,
+                phase,
+                time_gyr,
+                id,
+            });
+        }
+        // Then the branches (F193): the saturated set relieves the tension across itself
+        // but not along, and a fissure's stress concentrates where it bends and steps, so
+        // that new fissures leave the old ones at an angle, as a stripe's forks do (F57),
+        // bend back to the field and run on until they meet the next, splaying and
+        // linking the set into one network; one opens wherever the ground lies beyond
+        // every earlier branch's shadow.
+        let mut branched =
+            CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius);
+        for n in 0..tries as u64 {
+            let m = tries as u64 + n;
+            let r = reach * rng.uniform(bin, 4 * m).sqrt();
+            let a = std::f64::consts::TAU * rng.uniform(bin, 4 * m + 1);
+            let p = normalize([
+                pole[0] * r.cos() + (east[0] * a.cos() + north[0] * a.sin()) * r.sin(),
+                pole[1] * r.cos() + (east[1] * a.cos() + north[1] * a.sin()) * r.sin(),
+                pole[2] * r.cos() + (east[2] * a.cos() + north[2] * a.sin()) * r.sin(),
+            ]);
+            if !self.shell_map.thin(p) {
+                continue;
+            }
+            let shadow = self.mean_shell * self.shell_map.factor(p) / self.body_radius;
+            if branched.nearest_open(p).is_some_and(|d| d < shadow) {
+                continue;
+            }
+            let Some((parent, q, t, d0)) = index.nearest_open_point(p) else {
+                continue;
+            };
+            let (w_lo, w_hi) = LINEA_WIDTH_RANGE;
+            let k = 1.0 - LINEA_WIDTH_EXPONENT;
+            let u = rng.uniform(bin, 4 * m + 2);
+            let width = (w_lo.powf(k) + u * (w_hi.powf(k) - w_lo.powf(k))).powf(1.0 / k);
+            let junction = (0.5 * width).max(cell);
+            if d0 * self.body_radius < 2.0 * junction {
+                continue;
+            }
+            // From the parent's nearest point toward the site, leaving at the fork's angle
+            // on the site's side and bending back to the field.
+            let toward = normalize([p[0] - q[0], p[1] - q[1], p[2] - q[2]]);
+            let side = normalize(cross(q, t));
+            let sign = if dot(side, toward) >= 0.0 { 1.0 } else { -1.0 };
+            let along = if dot(t, toward) >= 0.0 { 1.0 } else { -1.0 };
+            let angle = VENT_FORK_ANGLE_DEG.to_radians();
+            let out_dir = normalize([
+                along * t[0] * angle.cos() + sign * side[0] * angle.sin(),
+                along * t[1] * angle.cos() + sign * side[1] * angle.sin(),
+                along * t[2] * angle.cos() + sign * side[2] * angle.sin(),
+            ]);
+            let (_, phase) = self.shell.peak_tension(axis, q);
+            let id = (VENT_SATURATION_BIN << 32) | m | (vi << 56);
+            let rules = TraceRules {
+                polar: true,
+                index: Some(&*index),
+                exclude: Some(parent),
+                one_way: Some(out_dir),
+                junction,
+                wobble: (VENT_WOBBLE_RAD, VENT_WOBBLE_LENGTH),
+                bias: (sign * along * angle, VENT_FORK_BIAS_LENGTH),
+                held_open: true,
+                time: None,
+            };
+            let pts = self.ridge_trace(axis, q, phase, spacing, l_max, id, &rules);
+            if pts.len() < 3 {
+                continue;
+            }
+            let relief =
+                VENT_TROUGH_DEPTH * width / VENT_WIDTH * (0.7 + 0.6 * rng.uniform(bin, 4 * m + 3));
+            index.insert(out.len(), &pts, true);
+            branched.insert(out.len(), &pts, true);
+            let time_gyr = match carry {
+                None => present,
+                Some(e) => e.end + FOSSIL_VENT_LAG_GYR * (1.0 + rng.uniform(bin, 4 * m + 2)),
+            };
+            let points: Vec<[f64; 3]> = match carry {
+                Some(e) => pts.iter().map(|q| e.carry(*q)).collect(),
+                None => pts,
+            };
+            out.push(Linea {
+                length: (points.len() - 1) as f64 * spacing,
+                points,
+                spacing,
+                width,
+                relief,
+                kind: LineaKind::Vent,
+                phase,
+                time_gyr,
+                id,
+            });
+        }
     }
 
     /// The fissures of a plume's thinned zone form in a cascade (F57; Hemingway, Rudolph
@@ -869,7 +1140,7 @@ impl Cracks {
         let first = {
             let rules = TraceRules {
                 polar: true,
-                index: if carry.is_none() { Some(&*index) } else { None },
+                index: Some(&*index),
                 exclude: None,
                 one_way: None,
                 junction,
@@ -899,11 +1170,13 @@ impl Cracks {
                 Some(e) => e.end + FOSSIL_VENT_LAG_GYR * (1.0 + rng.uniform(bin, 10 + 2 * k)),
             };
             let relief = scale * VENT_TROUGH_DEPTH * (0.7 + 0.6 * rng.uniform(bin, 11 + 2 * k));
+            // The episode's fissures meet one another in the pole's frame, where they
+            // opened (F193), and are carried after.
+            index.insert(out.len(), pts, true);
             let points: Vec<[f64; 3]> = match carry {
                 Some(e) => pts.iter().map(|p| e.carry(*p)).collect(),
                 None => pts.to_vec(),
             };
-            index.insert(out.len(), &points, carry.is_none());
             out.push(Linea {
                 length: (points.len() - 1) as f64 * spacing,
                 points,
@@ -946,7 +1219,7 @@ impl Cracks {
                 let branch = {
                     let rules = TraceRules {
                         polar: true,
-                        index: if carry.is_none() { Some(&*index) } else { None },
+                        index: Some(&*index),
                         exclude: Some(parent),
                         one_way: Some(outward),
                         junction,
@@ -997,7 +1270,7 @@ impl Cracks {
                 let pts = {
                     let rules = TraceRules {
                         polar: true,
-                        index: if carry.is_none() { Some(&*index) } else { None },
+                        index: Some(&*index),
                         exclude: None,
                         one_way: None,
                         junction,
@@ -2012,6 +2285,56 @@ mod tests {
         );
     }
 
+    /// Diagnostic: the cracks per episode and kind; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_polar_cracks() {
+        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let cracks = Cracks::new(&g).unwrap();
+        let present = g.f64("body.age");
+        let seed = g.f64("seed.cratering") as u64;
+        let all = cracks.generate(present, &CubeSphere::new(FINISHING_FACE_SIZE[1]), seed);
+        let r = cracks.body_radius;
+        let mut by: std::collections::BTreeMap<(u64, String), (usize, f64)> = Default::default();
+        for l in &all {
+            let vi = l.id >> 56;
+            let e = by.entry((vi, format!("{:?}", l.kind))).or_default();
+            e.0 += 1;
+            e.1 += l.length;
+        }
+        for ((vi, kind), (n, len)) in &by {
+            println!("episode {vi} {kind}: {n} cracks, {:.0} km", len / 1e3);
+        }
+        println!(
+            "radius {:.0} km, {} episodes, {} cracks",
+            r / 1e3,
+            cracks.episodes.len(),
+            all.len()
+        );
+        if let Ok(path) = std::env::var("EXOGEN_CRACK_DUMP") {
+            let mut text = String::from("[");
+            for (i, l) in all.iter().filter(|l| l.id >> 56 == 0).enumerate() {
+                if i > 0 {
+                    text.push(',');
+                }
+                let bin = (l.id >> 32) & 0xFFFF;
+                let pts: Vec<String> = l
+                    .points
+                    .iter()
+                    .map(|p| format!("[{:.6},{:.6},{:.6}]", p[0], p[1], p[2]))
+                    .collect();
+                text.push_str(&format!(
+                    "{{\"kind\":\"{:?}\",\"bin\":{bin},\"width\":{:.0},\"points\":[{}]}}",
+                    l.kind,
+                    l.width,
+                    pts.join(",")
+                ));
+            }
+            text.push(']');
+            std::fs::write(path, text).unwrap();
+        }
+    }
+
     /// Under a plume the vents of the thinned zone come in a cascade (F57): a parallel
     /// set a quarter flexural parameter apart, each long enough to cross the core, and
     /// each running its whole length.
@@ -2025,7 +2348,11 @@ mod tests {
         let all = cracks.generate(present, &CubeSphere::new(FINISHING_FACE_SIZE[1]), seed);
         let stripes: Vec<&Linea> = all
             .iter()
-            .filter(|l| l.kind == LineaKind::Vent && l.time_gyr > present - 0.01)
+            .filter(|l| {
+                l.kind == LineaKind::Vent
+                    && l.time_gyr > present - 0.01
+                    && (l.id >> 32) & 0xFFFF == VENT_CASCADE_BIN
+            })
             .collect();
         let r = cracks.body_radius;
         let longest = stripes.iter().map(|l| l.length).fold(0.0, f64::max);

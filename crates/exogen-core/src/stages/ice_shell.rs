@@ -1008,11 +1008,16 @@ impl FabricIndex {
 
     /// The fissures' direction about a direction: their tangents within a bucket's reach,
     /// carried to the point's tangent plane and averaged as doubled angles with a
-    /// Gaussian weight of `sigma` rad, so that the field turns smoothly between fissures.
-    fn orientation(&self, d: [f64; 3], sigma: f64) -> Option<[f64; 3]> {
+    /// Gaussian weight of `sigma` rad, so that the field turns smoothly between fissures,
+    /// and each weighted by its fissure's stress about it, which falls as the inverse
+    /// square of the distance beyond `near` rad (an opened crack's far field): the nearest
+    /// fissure sets the direction, so that the fabric contours the fissures and the cells
+    /// between them (F193).
+    fn orientation(&self, d: [f64; 3], sigma: f64, near: f64) -> Option<[f64; 3]> {
         let (i, j, k) = self.key(d);
         let (east, north) = crate::geom::local_basis(d);
         let inv = 1.0 / (sigma.max(1e-9) * sigma.max(1e-9));
+        let inv_near = 1.0 / (near.max(1e-9) * near.max(1e-9));
         let (mut c2, mut s2) = (0.0f64, 0.0f64);
         for di in -1..=1 {
             for dj in -1..=1 {
@@ -1027,7 +1032,7 @@ impl FabricIndex {
                         if chord2 * inv > 18.42 {
                             continue;
                         }
-                        let w = count * (-0.5 * chord2 * inv).exp();
+                        let w = count * (-0.5 * chord2 * inv).exp() / (1.0 + chord2 * inv_near);
                         let (a, b) = (dot(t, east), dot(t, north));
                         let r2 = a * a + b * b;
                         if r2 <= 0.0 {
@@ -1175,6 +1180,7 @@ impl FoldKernels {
                     .orientation(
                         center,
                         POLAR_FOLD_ORIENTATION_SHARE * POLAR_FABRIC_RANGE / body_radius,
+                        spacing / body_radius,
                     )
                     .unwrap_or(t);
                 let radial = dot(field, center);
@@ -3717,7 +3723,7 @@ pub fn polar_compute(
         };
         DeepSite {
             direction: fabric
-                .orientation(p, sigma)
+                .orientation(p, sigma, spacing / body_radius)
                 .or(nearest.map(|(_, t)| t))
                 .map(|t| tangential(p, t)),
             strength: fabric_strength(dist, halo) * near,

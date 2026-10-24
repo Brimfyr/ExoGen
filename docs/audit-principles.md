@@ -307,6 +307,8 @@ The user's note (2026-10-19): the height map draws Enceladus's polar terrain as 
 
 Direction: the stripes as one network of fractures across the terrain the plume's heat renews, linking, branching and ending where the stress does; their relief at the canyons' scale rather than a fingerprint's; their colour their ice's.
 
+Closed in part by F193, the hundred-and-seventh milestone: each terrain's fissures are one network, the stripes its greatest, saturated at the shell's thickness and linked by branches that leave fissures as the stripes' forks do, each past episode's meeting one another as the present's do; the folds take their strike from the nearest fissures and stand at the funiscular terrain's 100 m, their depth rising and falling along them; the false colour is gone. Still open: the network reads faintly at a global view, where the reference's dominant belts are Enceladus's sulci, whose relief is T6's open part.
+
 When: with T6 and the user's further notes.
 
 ## Calibrations on one body (principle 15)

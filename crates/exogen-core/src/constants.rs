@@ -2513,7 +2513,7 @@ pub const POLAR_RENEWAL_GYR: f64 = 0.002;
 pub const POLAR_HALO_PEAK: f64 = 0.5;
 pub const POLAR_HALO_SHELLS: f64 = 1.0;
 pub const POLAR_DEPRESSION_FRACTION: f64 = 0.6;
-pub const POLAR_FOLD_AMPLITUDE: f64 = 250.0;
+pub const POLAR_FOLD_AMPLITUDE: f64 = 100.0;
 pub const POLAR_FOLD_SPACING: f64 = 2.5e3;
 /// The folds' spacing varies by this share with the set field, and their amplitude runs
 /// from this share of the full in the slack of a set to the full at its heart (the set
@@ -2555,10 +2555,11 @@ pub const POLAR_PULSE_LEVEL: f64 = 0.35;
 pub const POLAR_PULSE_PATCH: f64 = 3.0;
 pub const POLAR_PULSE_TURN_DEG: f64 = 25.0;
 pub const POLAR_PULSE_RELIEF: f64 = 0.7;
-/// A kernel of the fold fabric is a packet of about three folds, and the mean depth of
-/// three varies less than the depth of one: the packet's depth is a fold's (the heavy
-/// tail of F63) to this power, one over the root of three.
-pub const POLAR_FOLD_PACKET_SPREAD: f64 = 0.58;
+/// A kernel of the fold fabric is a stretch of a fold, whose depth is a fold's (the heavy
+/// tail of F63) to this power: low most of its length, rising now and then (F193; was one
+/// over the root of three, a packet of three folds' mean, which held the folds nearly
+/// level along their length where Enceladus's rise and fall).
+pub const POLAR_FOLD_PACKET_SPREAD: f64 = 1.0;
 pub const POLAR_FOLD_ORIENTATION_SHARE: f64 = 0.5;
 /// Deep folds (F65). A renewed plain's fold fabric rides on a first-order train of deep
 /// folds, its wavelength this many times the fabric's (the highest known ridge on
@@ -3036,9 +3037,6 @@ pub const MANTLE_SPREAD: f64 = 2.0;
 pub const PLUME_FALLOUT_FAR: f64 = 0.01;
 pub const PLUME_BURIAL_DEPTH: f64 = 1e-3;
 pub const PLUME_FROST_RATE: f64 = 1e3;
-/// The warm fissures a plume vents from sinter the ice to coarse grains, darker and bluer
-/// than the frost round them (Enceladus's tiger stripes): the tint at the pole.
-pub const VENT_ICE_TINT: [f32; 3] = [0.66, 0.78, 0.92];
 /// The fissures under a plume are widened and deepened by the venting: troughs this deep,
 /// m, this wide, m, with flanking ridges this share of the depth (Enceladus's tiger
 /// stripes: 500 m troughs 2 km wide with 100 m flanks).
@@ -3058,6 +3056,11 @@ pub const VENT_TIP_DEPTH: f64 = 0.4;
 pub const VENT_CASCADE_FIRST_OFFSET: f64 = 0.5;
 pub const VENT_CASCADE_MAX: usize = 8;
 pub const VENT_CASCADE_BIN: u64 = 0xFFFF;
+/// The thinned zone's cracking saturates (F193): this many sites are tried over the zone,
+/// a new fissure opening at each that lies beyond every open fissure's stress shadow, and
+/// the time-bin tag the saturating fissures carry in their ids.
+pub const POLAR_SATURATION_TRIES: usize = 4000;
+pub const VENT_SATURATION_BIN: u64 = 0xFFFE;
 /// A plume's fissures wander by this many radians over this length, m, more than the
 /// lesser cracks do (the stripes' sinuous traces), and each ends in a fork: from each tip
 /// a branch leaves at this angle, degrees, and bends back to the field over this length,

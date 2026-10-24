@@ -2555,3 +2555,18 @@ How it went:
 - **Aligned lines.** The graben were continuous, smooth and nearly evenly spaced, where the model's graben elsewhere are segments that step, throw unevenly and wander, a set's spacing log-normal: with that form the crests' graben break up among the fold belts.
 
 Still to do: the plateaus' broad internal relief; the strain after the event; the fabric under the cells, for the artistic pass.
+
+## The hundred-and-seventh milestone: the polar terrains' fissures as one network
+
+The user asked for T7: the tiger stripes, decent in size and shape, stood disconnected, and a fine fingerprint covered each polar terrain; real images show one big continuous crack network with fold terrain following it, the folds overlapping, contouring and varying in height along their length, the stripes blending in without their false blue.
+
+- **F193.** Each terrain's fissures meet one another (past episodes' too), saturate at the shell's thickness and are linked by branches that leave them as the stripes' forks do; the folds take their strike from the nearest fissures, stand at the measured 100 m and rise and fall along their length; the blue tint is gone.
+
+How it went:
+
+- **Missing troughs, or not.** With the tint gone the stripes vanished, and the first measurement found no troughs; it was taken where the tint lay, not along the troughs. Sampled along the stripes themselves, they stand some 260 m deep: the folds, as steep at 250 m and 2.5 km apart, swamped them, and the measured 100 m lets them stand above the folds.
+- **A parallel network.** Saturation alone drew a dense parallel set, the tide's field being nearly uniform over the zone; cross-fissures across the nearest fissure linked it but made a wall of bricks (the user's word), and branches by the stripes' fork rule braid it instead.
+- **Local strikes.** Taking the folds' strike over 4 km instead of 20, and their segments 5 km long instead of 10, changed little and nearly doubled the pass's time: set back.
+- **The reference.** The user's global image shows long branching belts dominating Enceladus: its sulci, whose relief the model's lanes give as tens of metres where they stand 1 to 1.5 km (T6, next).
+
+Still to do: the sulci's relief (T6); the network's prominence at a global view.

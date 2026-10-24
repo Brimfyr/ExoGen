@@ -814,20 +814,6 @@ pub fn albedo(
                             }
                             _ => colour,
                         };
-                        // A plume's warm vents sinter the ice in the fissures to coarse
-                        // grains, darker and bluer than the frost round them.
-                        let colour = match &fallout {
-                            Some(fall) if units[k] == UNIT_LINEA || units[k] == UNIT_BAND => {
-                                let w = (cover_f[k] as f64 * fall.vent_weight(d)) as f32;
-                                let coarse = [
-                                    colour[0] * VENT_ICE_TINT[0],
-                                    colour[1] * VENT_ICE_TINT[1],
-                                    colour[2] * VENT_ICE_TINT[2],
-                                ];
-                                lerp3(colour, coarse, w.clamp(0.0, 1.0))
-                            }
-                            _ => colour,
-                        };
                         // The trailing hemisphere's plasma darkens and reddens the ice
                         // in the time it takes to process the optical surface (F58); a
                         // plume's fallout that buries that surface first hides the
