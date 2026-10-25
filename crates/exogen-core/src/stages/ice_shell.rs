@@ -131,6 +131,11 @@ pub(crate) struct GrooveSet {
     pub(crate) shape: f64,
     /// The level the set's troughs cut down from, in units of the middling amplitude (F132).
     pub(crate) plateau: f64,
+    /// The same segments as folds of a shortened layer at their bound (F194): each a
+    /// narrow crest 1 high with a trough each side that takes up what it stands above,
+    /// as ejective folds are (F65), naught at its sides and tips; none deeper than the
+    /// bound, a shallower one less.
+    pub(crate) folds: f64,
 }
 
 /// A fault's depth against the middling one of its population, from a uniform draw
@@ -219,6 +224,7 @@ pub(crate) fn fault_set(
     };
     let (s0, j0) = (turns.floor() as i64, (along / slot).floor() as i64);
     let mut troughs = 0.0;
+    let mut folds = 0.0;
     // The segment that holds the cell most: its stripe, where across its trough the
     // cell lies, its taper, its depth and its hollow there.
     let mut best = (0.0, s0, 0.0, 0.0, 1.0, 0.0);
@@ -246,6 +252,7 @@ pub(crate) fn fault_set(
             let taper = 1.0 - t * t;
             let depth = fault_depth(draw(4).max(1e-3));
             troughs += (1.0 + depth) * hollow * taper;
+            folds += hollow * (4.0 * hollow - 3.0) * taper * (0.5 * (1.0 + depth)).min(1.0);
             if hollow * taper > best.0 {
                 best = (hollow * taper, stripe, x, taper, depth, hollow);
             }
@@ -264,6 +271,7 @@ pub(crate) fn fault_set(
         depth,
         shape: plateau - troughs,
         plateau,
+        folds,
     }
 }
 
@@ -3542,22 +3550,77 @@ pub fn lay_lane_floor(
     }
 }
 
+/// A renewed terrain's margin belt (F194), where the old ground takes up the terrain's
+/// spreading: the brittle layer at the margin buckles at its wavelength, as the
+/// tesserae's short folds do (F187), over as far as the margin's lid carries a load at
+/// its edge, its flexural parameter; and the spreading of an episode, the terrain renewed
+/// many times over, is far more than the folds can take up, so that they grow until their
+/// limbs dip as steeply as the ice's friction lets them slip, or their relief weighs on
+/// the layer as much as its strength holds.
+pub struct MarginBelt {
+    /// The brittle layer at the margin, m.
+    pub layer: f64,
+    /// The folds' spacing, m.
+    pub spacing: f64,
+    /// How far the folds spread from the edge, m: they decay over this.
+    pub width: f64,
+    /// The folds' relief, m.
+    pub height: f64,
+}
+
+impl MarginBelt {
+    /// The belt of a terrain on its shell map, under an elastic lid `elastic` m thick at
+    /// the terrain's time, on a body of this gravity, m/s², and radius, m.
+    pub fn new(shell: &ShellMap, elastic: f64, gravity: f64, body_radius: f64) -> Self {
+        let margin_factor = (1.0 - shell.thinning * POLAR_CORE_PROFILE).max(0.05);
+        let layer = GROOVE_RIFT_LID_SHARE * elastic * margin_factor;
+        let spacing = TESSERA_BUCKLING_RATIO * layer;
+        let width = flexural_parameter(elastic * margin_factor, gravity);
+        let renewals = FOCUSING_EPISODE_DURATION_GYR / POLAR_RENEWAL_GYR;
+        let shortening = renewals * shell.radius_rad * body_radius / width;
+        let k = ((1.0 + ICE_FRICTION.powi(2)).sqrt() + ICE_FRICTION).powi(2);
+        let yield_compression = (k - 1.0) * FAULT_LAYER_PRESSURE;
+        let height = ((spacing / std::f64::consts::PI) * shortening.sqrt())
+            .min(ICE_FRICTION * spacing / std::f64::consts::TAU)
+            .min(yield_compression / (DENSITY_ICE * gravity.max(1e-3) * TESSERA_BUCKLING_RATIO));
+        MarginBelt {
+            layer,
+            spacing,
+            width,
+            height,
+        }
+    }
+
+    /// How far in from the edge the belt reaches, m: a few of its widths and no farther,
+    /// so that the terrain's middle holds none of it.
+    pub fn reach(&self) -> f64 {
+        2.0 * self.width
+    }
+}
+
 /// A renewed polar terrain on the resolved grid, the present one or a past episode's:
 /// its outline drawn at this resolution from its shell map and the fissures, as the
-/// signed distance to its edge, m, out to the halo's reach.
+/// signed distance to its edge, m, out to the halo's reach or its margin belt's, the
+/// farther.
 pub fn polar_edge(
     grid: &CubeSphere,
     body_radius: f64,
     shell: &ShellMap,
     cracks: &[Linea],
     halo: f64,
+    belt: &MarginBelt,
 ) -> Vec<f32> {
     let mask = polar_mask(grid, body_radius, shell, cracks);
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         let inside = mask.iter().filter(|&&m| m).count();
         eprintln!("polar terrain on the fine grid: {inside} cells inside");
     }
-    edge_distance_m(grid, body_radius, &mask, polar_reach(halo))
+    edge_distance_m(
+        grid,
+        body_radius,
+        &mask,
+        polar_reach(halo).max(belt.reach()),
+    )
 }
 
 fn write(idx: usize, bedrock: f64) -> CellWrite {
@@ -3655,6 +3718,7 @@ pub fn polar_compute(
     renewed: &[f32],
     base: &[f32],
     fine: Option<&[f32]>,
+    belt: &MarginBelt,
     stamper: &mut Stamper,
 ) -> StampOutput {
     let Some(pole) = shell.pole else {
@@ -3664,7 +3728,19 @@ pub fn polar_compute(
     let limit = polar_reach(halo);
     let reach = shell.radius_rad;
     let spacing = POLAR_FOLD_SPACING.max(GROOVE_MIN_CELLS * cell);
-    let belt_spacing = POLAR_BELT_SPACING.max(3.0 * cell);
+    // The margin belt takes up the terrain's spreading (F194), its folds drawn no closer
+    // than the grid holds.
+    let belt_spacing = belt.spacing.max(3.0 * cell);
+    let belt_height = belt.height;
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "polar terrain at {time_gyr:.3} Gyr: margin belt {:.0} km wide, folds {:.1} km apart, {:.0} m high, on a brittle layer {:.2} km thick",
+            belt.width / 1e3,
+            belt_spacing / 1e3,
+            belt_height,
+            belt.layer / 1e3
+        );
+    }
     let fabric = FabricIndex::new(cracks, POLAR_FABRIC_RANGE / body_radius);
     // The terrain's own vents, which opened in its episode, bound its deep folds (F65).
     let vents = FabricIndex::new(
@@ -3688,10 +3764,37 @@ pub fn polar_compute(
         / DeepFolds::STEEPEST;
     let noise = GradientNoise::new(0x5027_F01D);
     let belt_noise = GradientNoise::new(0x5027_BE17);
+    // The belt's folds as the lanes' and coronae's faults are drawn (F132, F133): in
+    // segments along the edge that come and go, step across and taper, each its own
+    // depth, swaying and wandering, round the terrain without a seam (F194).
+    let belt_grooves = GradientNoise::new(0x5027_BE18 ^ time_gyr.to_bits());
+    let belt_draws = Rng::new(0x5027_BE19 ^ time_gyr.to_bits());
+    let (pole_east, pole_north) = crate::geom::local_basis(pole);
+    let belt_sets = body_radius / (GROOVE_SET_SPACINGS * belt_spacing);
     let rough_noise = GradientNoise::new(0x5027_0C4A);
     let rough_gain = 2f64.powf(-ROUGHNESS_HURST);
     let set_frequency = body_radius / GROOVE_SET_LENGTH.min(0.2 * body_radius);
     stamper.gather(grid, body_radius, pole, reach * body_radius);
+    // The belt's slots run round the edge itself, as far from the pole as its cells lie
+    // on average, the thinned zone reaching farther.
+    let belt_period = {
+        let (sum, count) = stamper
+            .footprint
+            .iter()
+            .filter(|&&(k, _, _)| f64::from(edge[k]).abs() < cell)
+            .fold((0.0, 0usize), |(sum, count), &(k, _, _)| {
+                (sum + angle_between(grid.center(grid.cell(k)), pole), count + 1)
+            });
+        let radius = if count > 0 { sum / count as f64 } else { reach };
+        std::f64::consts::TAU * body_radius * radius.sin()
+    };
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "polar terrain at {time_gyr:.3} Gyr: margin belt round an edge {:.0} km long, the thinned zone's {:.0} km",
+            belt_period / 1e3,
+            std::f64::consts::TAU * body_radius * reach.sin() / 1e3
+        );
+    }
     let gathered = clock.elapsed().as_secs_f64();
     let kernels = FoldKernels::new(
         &fabric,
@@ -3856,21 +3959,45 @@ pub fn polar_compute(
             } else {
                 (0.0, 0.0)
             };
-            // The belt where the spreading is taken up, about the edge and decaying from
-            // it: its folds parallel the edge in segments that shift against their
-            // neighbours, en echelon, never as concentric rings; the fissures' folds give
-            // way to it there.
+            // The belt where the spreading is taken up, about the edge and reaching a few
+            // flexural parameters in from it and no farther, so that the terrain's middle,
+            // where every azimuth meets, holds none of it: its folds parallel the edge in
+            // segments that come and go and step across, never as concentric rings, fewer
+            // the farther in and between the arcs, so that it thins by losing folds rather
+            // than lowering them all alike; the fissures' folds give way to it as it stands.
             let inside = margin_coverage(dist);
-            let belt_w = (-dist.abs() / POLAR_BELT_WIDTH).exp();
-            let belt = POLAR_BELT_HEIGHT
-                * belt_keep
-                * belt_w
-                * inside
-                * arc
-                * (2.0 * std::f64::consts::PI * dist / belt_spacing + POLAR_BELT_OFFSET * seg)
-                    .sin();
+            let hold = arc * (1.0 - (dist.abs() / belt.reach()).powi(2)).max(0.0);
+            let belt_relief = if inside > 0.0 && hold > 1e-3 {
+                let phi = dot(d, pole_north).atan2(dot(d, pole_east));
+                let along = (phi + std::f64::consts::PI) / std::f64::consts::TAU * belt_period;
+                let sets = belt_grooves.fbm(d, belt_sets, 2, 2.0, 0.5);
+                let set = fault_set(
+                    dist,
+                    along,
+                    d,
+                    body_radius,
+                    belt_spacing,
+                    sets,
+                    GROOVE_SEGMENT_LEVEL * hold,
+                    0,
+                    0.0,
+                    &belt_grooves,
+                    &belt_draws,
+                    Some(belt_period),
+                    0.0,
+                );
+                // A fold's profile spans 25/16 from crest to trough: scaled to span twice
+                // the amplitude, as a sine fold does, and no more where two overlap.
+                let crest = 32.0 / 25.0;
+                belt_height
+                    * belt_keep
+                    * inside
+                    * (crest * set.folds).clamp(-9.0 / 16.0 * crest, crest)
+            } else {
+                0.0
+            };
             let relief =
-                folds * (1.0 - belt_w * arc * (2.0 * inside).min(1.0)) + rough + belt + ridge;
+                folds * (1.0 - hold * (2.0 * inside).min(1.0)) + rough + belt_relief + ridge;
             let weight = margin_coverage(dist);
             let h = bedrock[k] as f64;
             let floor = base[k] as f64 + fine.map_or(0.0, |f| f[k] as f64);

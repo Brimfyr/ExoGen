@@ -2650,12 +2650,11 @@ pub const HETEROGENEITY_SHARE: f64 = 0.2;
 pub const HETEROGENEITY_RENEWAL_GYR: f64 = 0.005;
 pub const POLAR_FABRIC_RANGE: f64 = 40e3;
 /// The margin belt: the spreading is taken up in folds parallel to the renewed terrain's
-/// edge, decaying inward over this distance, m, at this spacing, m, this high, m, broken
-/// into segments this long, m, along the edge that shift against their neighbours by up
-/// to this phase, rad, as the folds of a thrust belt do: en echelon, not concentric rings.
-pub const POLAR_BELT_WIDTH: f64 = 15e3;
-pub const POLAR_BELT_SPACING: f64 = 12e3;
-pub const POLAR_BELT_HEIGHT: f64 = 300.0;
+/// edge, decaying from it over the margin lid's flexural parameter, their spacing and
+/// relief the margin's brittle layer's as it takes up the spreading (F194), drawn as the
+/// lanes' faults are, in segments that come and go and step across (F132, F133), not as
+/// concentric rings; the belt and the margin ridge stand in arcs about this long, m,
+/// along the edge.
 pub const POLAR_BELT_SEGMENT: f64 = 25e3;
 /// The belt and the margin ridge come in arcs: they stand where the segment field is
 /// high and are absent where it is low, this sharply; between the arcs the fabric's
@@ -2665,7 +2664,6 @@ pub const POLAR_BELT_ARC_CONTRAST: f64 = 1.5;
 /// A past episode's fissures vented until it ended: they take a time this long after
 /// its end, Gyr, so that they stand on the last surface its terrain renewed.
 pub const FOSSIL_VENT_LAG_GYR: f64 = 1e-5;
-pub const POLAR_BELT_OFFSET: f64 = 2.5;
 /// A shell renews its whole surface within the retention age only when it is thin
 /// against the body, under this share of the radius; a thick shell keeps its old craters
 /// and renews only where it is thin. A fit between Europa's 0.019 (its measured 30 km

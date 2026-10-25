@@ -2570,3 +2570,18 @@ How it went:
 - **The reference.** The user's global image shows long branching belts dominating Enceladus: its sulci, whose relief the model's lanes give as tens of metres where they stand 1 to 1.5 km (T6, next).
 
 Still to do: the sulci's relief (T6); the network's prominence at a global view.
+
+## The hundred-and-eighth milestone: the polar terrains' margin belts from the spreading
+
+The user agreed to the sulci's relief, T6's open part, next. The dominant belts in the user's Cassini view are the margins of Enceladus's tectonized terrains, Samarkand Sulci about Sarandib, and the model's lanes are not them: their grooves stand as the ridged plains do, the relief share holding on a second body.
+
+- **F194.** The margin belt is the margin's brittle layer buckling under the terrain's spreading: its folds as far apart as that layer buckles, spreading over the margin lid's flexural parameter, at the tesserae's fold relief, drawn in the lanes' segments.
+
+How it went:
+
+- **Two laws set aside.** The relaxation since spares the lanes' grooves whole at their wavelength, so a tilt that relaxed would not lower them; a gravity and cohesion bound on the grooves would have contradicted the ridged plains' measured relief.
+- **Ripples.** With the fold law and the flexural width the belt stood at the right height but read as ripples, too even and set one inside another (the user's word); the lanes' and Miranda's coronae's segments break it up, as they did those.
+- **A star.** The terrain's edge distance stopped at 32 km, short of the belt's 86, so the whole interior read as the belt's edge and its azimuth met at the centre in a star; the edge distance now runs out to the belt's reach.
+- **Short deep cuts.** The user found many very short cross-fissures digging deeper than the folds about them: the segments were the lanes' troughs, cut below the ground and as deep as a fault's heavy tail lets a trough be, some past 900 m, and drawn round the thinned zone's circle, 1.7 times the edge's, so a segment came out that much shorter. Each is now a fold at its bound, drawn round the edge itself: bundles of two to four ridges stepping en echelon. The user accepted it for now, to revisit if the global look falls short: the reference's sulci run longer and more continuous.
+
+Still to do: Miranda; the network's and the belts' prominence at a global view.

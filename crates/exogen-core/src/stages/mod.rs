@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 143;
+pub const FINISH_VERSION: u64 = 144;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1311,12 +1311,28 @@ pub fn finish(
     };
     let loose_before = cover_on(&layers);
     let mut renewal = ice_shell::Renewal::new(grid.cell_count());
+    // Each terrain's margin belt (F194), under the lid of its time.
+    let belt_of = |map: &ice::ShellMap, time: f64| {
+        ice_shell::MarginBelt::new(
+            map,
+            loop_output.thermal.at(time).elastic,
+            graph.f64("body.gravity"),
+            body_radius,
+        )
+    };
+    let fossil_belts: Vec<ice_shell::MarginBelt> = episode_maps
+        .iter()
+        .zip(&episodes)
+        .map(|(map, e)| belt_of(map, e.end))
+        .collect();
+    let polar_belt = belt_of(&shell_map, polar_time);
     let fossil_edges: Vec<Vec<f32>> = episode_maps
         .iter()
-        .map(|map| ice_shell::polar_edge(&grid, body_radius, map, &lineae, halo))
+        .zip(&fossil_belts)
+        .map(|(map, belt)| ice_shell::polar_edge(&grid, body_radius, map, &lineae, halo, belt))
         .collect();
     let polar_edge: Vec<f32> = if polar && shell_map.pole.is_some() {
-        ice_shell::polar_edge(&grid, body_radius, &shell_map, &lineae, halo)
+        ice_shell::polar_edge(&grid, body_radius, &shell_map, &lineae, halo, &polar_belt)
     } else {
         Vec::new()
     };
@@ -2336,6 +2352,7 @@ pub fn finish(
                             renewed,
                             &base,
                             fine_below_loop.as_deref(),
+                            &polar_belt,
                             stamper,
                         );
                         Some((out, None, None))
@@ -2360,6 +2377,7 @@ pub fn finish(
                             renewed,
                             &base,
                             fine_below_loop.as_deref(),
+                            &fossil_belts[*k],
                             stamper,
                         );
                         Some((out, None, None))
@@ -4605,6 +4623,56 @@ mod tests {
             .run(&preset_graph("Moon", "preview"), &NoProgress)
             .unwrap();
         assert!(moon.loop_output.rises.is_empty() && moon.loop_output.shields.is_empty());
+    }
+
+    /// T6 diagnostic: how much of a lane's grooves' relief the shell's relaxation lets
+    /// survive from the lane's time to the present, at the groove spacing; run with
+    /// `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_lane_relaxation() {
+        for name in ["Ganymede", "Enceladus", "Miranda"] {
+            let g = preset_graph(name, "standard");
+            let thermal = ThermalHistory::from_graph(&g);
+            let Some(shell_at) = ice_shell_history(&g, &thermal) else {
+                continue;
+            };
+            let grid = CubeSphere::new(64);
+            let Some(p) = ice_shell::IceShellProcess::new(&g, grid) else {
+                continue;
+            };
+            let age = g.f64("body.age");
+            let mut kept: Vec<(f64, f64, f64)> = p
+                .lanes
+                .iter()
+                .map(|l| {
+                    let s = relaxation::survival_since(
+                        l.groove_spacing,
+                        l.time_gyr,
+                        age,
+                        &*shell_at,
+                        1.0,
+                    );
+                    (s, l.groove_spacing, l.time_gyr)
+                })
+                .collect();
+            kept.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let n = kept.len();
+            if n == 0 {
+                println!("{name}: no lanes");
+                continue;
+            }
+            let q = |f: f64| kept[((n - 1) as f64 * f) as usize];
+            println!(
+                "{name}: {n} lanes, gravity {:.3}; survival p10 {:.3} p50 {:.3} p90 {:.3}; spacing p50 {:.0} m; time p50 {:.2} Gyr of {age:.2}",
+                g.f64("body.gravity"),
+                q(0.1).0,
+                q(0.5).0,
+                q(0.9).0,
+                q(0.5).1,
+                q(0.5).2
+            );
+        }
     }
 
     /// F187 diagnostic: the strain the tesserae's lid took from the flow, set by set, over
