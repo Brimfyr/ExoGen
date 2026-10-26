@@ -166,6 +166,12 @@ Direction: each terrain's roughness follows its own age, and the contact's width
 
 When: the earlier-phases revisit.
 
+### W9. Renewed ground carries a noise unlike its surroundings (closed by F196)
+
+The user's note (2026-10-26): on Enceladus's height map the polar and fossil terrains show a finer noise than the ground about them, which looks smoother; they should take the noise that would be in their place, or have it worked as the cratered ground's is. The renewals laid the base relief as the body formed with it (F141), where the ground about them held it relaxed and levelled by its craters' ejecta. Only the ice shell's renewals do this: lanes, coronae, polar and fossil terrains, on every icy body that has them; no rocky process lays the base relief again.
+
+Closed by F196, the hundred-and-tenth milestone: the loop keeps the base relief as it stands, relaxed and levelled by each crater as the ground is, and the renewals take it so.
+
 ### W3. Tessera outlines
 
 `TESSERA_SMOOTHING_PASSES` (20 passes on the loop grid) smooths the old crust's height before the tesserae are chosen as its highest share. The smoothing is about two cells, so on Venus it is about 80 km at standard quality and 170 km at preview: the tesserae's outlines change with the quality.

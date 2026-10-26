@@ -552,6 +552,7 @@ pub fn resurfacing_compute(
             stain: None,
             steep: None,
             ejecta_age: None,
+            base: None,
             compositions: Some(compositions),
         },
         taken,
@@ -618,6 +619,7 @@ pub fn dome_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        base: None,
         compositions: None,
     }
 }

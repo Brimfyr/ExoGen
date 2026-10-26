@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 145;
+pub const FINISH_VERSION: u64 = 146;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -522,9 +522,12 @@ pub fn run_coarse_loop(
     // The relief the ice shell holds, band by band, from step to step (F134).
     let mut relax_bands = relaxation::Bands::default();
     let mut ice_shell_process = ice_shell::IceShellProcess::new(graph, grid);
-    // The renewals keep the base relief's texture under the new terrain (F141).
-    if let Some(p) = &mut ice_shell_process {
-        p.set_primordial(layers.bedrock.as_slice());
+    // The renewals keep the base relief's texture under the new terrain (F141), as it
+    // stands: the relief the body formed with, relaxed as the ground relaxes and levelled
+    // by its craters' ejecta as the ground is (F196), its own bands held as the surface's.
+    let mut base_bands = relaxation::Bands::default();
+    if ice_shell_process.is_some() {
+        layers.base = Some(layers.bedrock.clone());
     }
     // The shields grow from the lava their rises' eruptions bring them, scheduled against
     // the ground the loop begins on; the floods lose what they take (F164).
@@ -571,8 +574,20 @@ pub fn run_coarse_loop(
             }
         }
         // An ice shell relaxes what it carries, the longest wavelengths first, with the
-        // shell as the thermal history has it now.
+        // shell as the thermal history has it now; the base relief kept under the
+        // renewals relaxes with it, and the renewals take it as it then stands (F196).
         if let Some(shell_at) = &ice_shell {
+            if let (Some(p), Some(base)) = (&mut ice_shell_process, layers.base.as_mut()) {
+                relaxation::relax(
+                    &mut base_bands,
+                    base,
+                    graph.f64("body.radius"),
+                    dt,
+                    &shell_at(t1),
+                    &relaxation::Local::default(),
+                );
+                p.set_base(base.as_slice());
+            }
             let local = ice_shell_process
                 .as_mut()
                 .map_or(relaxation::Local::default(), |p| p.relaxation(t0, t1));
@@ -1201,6 +1216,9 @@ pub fn finish(
         message: format!("resampling to face size {face}"),
     });
     let mut layers = kf.layers.resample(grid);
+    // The base relief as the loop left it (F196), for the floors laid here; the finish's
+    // craters, laid after, have no renewal to keep it for.
+    let kept_base = layers.base.take();
     // The coarse bedrock resampled bilinearly carries the facets of the loop's cells on
     // every slope the loop relaxed or built; smoothed over the loop's cell it carries the
     // same relief without them, and the passes lay their resolved detail on it after.
@@ -1394,6 +1412,7 @@ pub fn finish(
             core.as_deref(),
             &renewal,
             Some(&crust),
+            kept_base.as_ref(),
         );
     }
     renewal.apply(&mut layers);

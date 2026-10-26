@@ -2605,3 +2605,17 @@ How it went:
 - **The bound.** Enceladus's relief halves (-3.2 to +2.8 km) and its broad swells go; Mimas keeps its craters and loses its swells; the other icy bodies change little. The craters stay deep: they lie in cold ice that does not flow.
 
 Still to do: Enceladus's heat history (M3: Goldreich et al. 2025's limit cycle); Io; the Moon's maria, rays and highlands.
+
+## The hundred-and-tenth milestone: the renewed ground keeps the base relief as it stands
+
+Starting on the heat history, the user saw on Enceladus's height map that its polar and fossil terrains carried a finer noise than the smoother ground about them, asked that they take the noise that would be in their place or have it worked as the cratered ground's is, and that no other process on other bodies do the same unintentionally (audit W9).
+
+- **F196.** The loop keeps the base relief as it stands, relaxed as the ground relaxes and levelled by each crater's ejecta and floor as the ground is, and every renewal takes it so; the finish lays the lanes' and coronae's floors from it.
+
+How it went:
+
+- **Where the noise came from.** Every renewal took the base relief as the body formed with it: the present terrain, renewed at every step, held 1.6 times the plains' relief at 100 to 200 km since the lid's bound relaxed the plains' (F195), and every terrain a granular noise at 5 to 50 km that the plains' craters' ejecta had worn down. Only the ice shell's renewals reuse the base relief: lanes, coronae, polar and fossil terrains; no rocky process does.
+- **Discs.** Setting the kept base to the floor's mean inside each rim left flat discs, edged at the rim, wherever a terrain renewed over an old crater; the floor now buries it as the deposit at the rim does, and the discs are gone.
+- **Other bodies.** Miranda's coronae lose their excess at 80 to 300 km; Ganymede's lanes change by little.
+
+Still to do: Enceladus's heat history (M3); Io; the Moon's maria, rays and highlands.

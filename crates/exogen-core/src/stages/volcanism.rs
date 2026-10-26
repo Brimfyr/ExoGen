@@ -1966,6 +1966,7 @@ pub fn flood_compute(
             stain: None,
             steep: None,
             ejecta_age: None,
+            base: None,
             compositions: Some(compositions),
         },
         taken,

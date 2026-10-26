@@ -332,6 +332,7 @@ pub fn scarp_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        base: None,
         compositions: None,
     }
 }

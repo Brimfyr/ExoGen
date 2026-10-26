@@ -35,7 +35,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 21;
+pub const VERSION: u64 = 22;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -2362,14 +2362,15 @@ pub struct IceShellProcess {
     /// episodes' terrains renewed between them, by area: what is not old cratered ground,
     /// whatever craters it has taken since.
     pub renewed_fraction: f64,
-    /// The relief the body formed with, on the loop's grid, with its low-passes (F141):
-    /// what a renewed cell keeps of it under the new terrain, below the length the terrain
-    /// levels over; and that below the polar zone's radius, once asked for.
-    primordial: Option<BaseRelief>,
+    /// The base relief as it stands at the step (F196), on the loop's grid, with its
+    /// low-passes (F141): what a renewed cell keeps of it under the new terrain, below the
+    /// length the terrain levels over; and that below the polar zone's radius, once asked
+    /// for at the step.
+    base: Option<BaseRelief>,
     polar_fine: Option<Vec<f32>>,
 }
 
-/// The relief the body formed with, on the loop's grid, and its low-passes over every
+/// The base relief as it stands (F196), on the loop's grid, and its low-passes over every
 /// length the pyramid holds (F141).
 struct BaseRelief {
     relief: Vec<f32>,
@@ -2934,21 +2935,22 @@ impl IceShellProcess {
             thinned_now: vec![1.0; n],
             thinned_for: 0.0,
             renewed_fraction,
-            primordial: None,
+            base: None,
             polar_fine: None,
         })
     }
 
-    /// The relief the body formed with (F141), which the renewals keep under the new
-    /// terrain, with its low-passes over every length the pyramid holds.
-    pub fn set_primordial(&mut self, bedrock: &[f32]) {
+    /// The base relief as it stands (F141, F196), which the renewals keep under the new
+    /// terrain, with its low-passes over every length the pyramid holds: the relief the
+    /// body formed with, as the loop has relaxed it and its craters' ejecta levelled it.
+    pub fn set_base(&mut self, bedrock: &[f32]) {
         let cell = self.grid.delta() * self.body_radius;
         let levels = crate::stages::relaxation::low_passes(
             &field_from(self.grid, bedrock),
             cell,
             8.0 * self.body_radius,
         );
-        self.primordial = Some(BaseRelief {
+        self.base = Some(BaseRelief {
             relief: bedrock.to_vec(),
             levels,
         });
@@ -2959,7 +2961,7 @@ impl IceShellProcess {
     /// `length` m (F141): the relief less its low-pass over that length, the pyramid's
     /// levels blended by the logarithm of the length.
     fn base_below(&self, k: usize, length: f64) -> f32 {
-        match &self.primordial {
+        match &self.base {
             Some(base) => {
                 base.relief[k] - crate::stages::relaxation::blend_levels(&base.levels, length, k)
             }
@@ -3016,7 +3018,7 @@ impl IceShellProcess {
         let length = self
             .smooth_length()
             .max(self.shell.radius_rad * self.body_radius);
-        if self.renewing && self.polar_fine.is_none() && self.primordial.is_some() {
+        if self.renewing && self.polar_fine.is_none() && self.base.is_some() {
             self.polar_fine = Some(
                 (0..grid.cell_count())
                     .map(|k| self.base_below(k, length))
@@ -3466,13 +3468,16 @@ pub fn lane_smooth_length(body_radius: f64) -> f64 {
 /// levels, a lane's width or a corona's, and under it the base relief below that length
 /// is kept (F141): all of it where the floor is laid here, and only its octaves below the
 /// loop's cells, which the loop's grid could not hold, where the loop laid it
-/// (`crust`: the relief the body formed with).
+/// (`crust`: the relief the body formed with). At the loop's scales the base relief is
+/// the loop's as it stands (`base`, F196), relaxed and levelled as the ground about the
+/// floor was; below them the body's own, which nothing there has worked.
 pub fn lay_lane_floor(
     layers: &mut LayerSet,
     body_radius: f64,
     renewed: Option<&[f32]>,
     renewal: &Renewal,
     crust: Option<&crate::stages::primordial_crust::PrimordialCrust>,
+    base: Option<&Field<f32>>,
 ) {
     let grid = layers.grid;
     let n = grid.cell_count();
@@ -3516,6 +3521,7 @@ pub fn lay_lane_floor(
         .fold(lane_smooth_length(body_radius), f64::max);
     let sums = crate::stages::relaxation::low_passes(&field_from(grid, &relief), cell, longest);
     let shares = crate::stages::relaxation::low_passes(&field_from(grid, &counted), cell, longest);
+    let base_levels = base.map(|b| crate::stages::relaxation::low_passes(b, cell, longest));
     let finest = crust.map_or(0, |c| c.finest_on(&grid));
     let loop_finest = crust.map_or(0, |c| c.loop_finest());
     let floors: Vec<(usize, f32)> = (0..n)
@@ -3530,9 +3536,19 @@ pub fn lay_lane_floor(
                 let sum = crate::stages::relaxation::blend_levels(&sums, length, k);
                 let share = crate::stages::relaxation::blend_levels(&shares, length, k);
                 if share > 0.05 {
-                    let below = crust.map_or(0.0, |c| {
-                        c.texture_at(d, length, fabric, body_radius, 0, finest)
-                    }) as f32;
+                    let octaves = |first: u32| -> f32 {
+                        crust.map_or(0.0, |c| {
+                            c.texture_at(d, length, fabric, body_radius, first, finest)
+                        }) as f32
+                    };
+                    let below = match (base, &base_levels) {
+                        (Some(b), Some(levels)) => {
+                            b.as_slice()[k]
+                                - crate::stages::relaxation::blend_levels(levels, length, k)
+                                + octaves(loop_finest + 1)
+                        }
+                        _ => octaves(0),
+                    };
                     h += (sum / share + below - h) * weight[k];
                 }
             }
@@ -3687,6 +3703,7 @@ pub fn groove_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        base: None,
         compositions: None,
     }
 }
@@ -4019,6 +4036,7 @@ pub fn polar_compute(
         stain: None,
         steep: None,
         ejecta_age: None,
+        base: None,
         compositions: None,
     }
 }
@@ -4314,7 +4332,7 @@ mod tests {
         let young = cell_at(0, 16, 16);
         layers.unit_id.as_mut_slice()[young] = UNIT_CRATER_FLOOR;
         layers.surface_age.as_mut_slice()[young] = 3.0;
-        lay_lane_floor(&mut layers, 252e3, None, &renewal, None);
+        lay_lane_floor(&mut layers, 252e3, None, &renewal, None, None);
         let h = layers.bedrock.as_slice();
         let inside = cell_at(0, 8, 8);
         let outside = cell_at(3, 16, 16);
@@ -4325,7 +4343,7 @@ mod tests {
         let mut again = LayerSet::new(grid);
         again.bedrock.as_mut_slice().copy_from_slice(&before);
         let taken = vec![1.0f32; n];
-        lay_lane_floor(&mut again, 252e3, Some(&taken), &renewal, None);
+        lay_lane_floor(&mut again, 252e3, Some(&taken), &renewal, None, None);
         assert_eq!(again.bedrock.as_slice()[inside], before[inside]);
     }
 

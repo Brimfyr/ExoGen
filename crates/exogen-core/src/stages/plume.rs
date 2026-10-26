@@ -3969,6 +3969,7 @@ pub fn trough_compute(
         stain: None,
         steep: if faulted { Some(faces) } else { None },
         ejecta_age: None,
+        base: None,
         compositions: None,
     }
 }
@@ -4122,6 +4123,7 @@ pub fn shield_compute(
     StampOutput {
         cells,
         composition: None,
+        base: None,
         compositions: Some(compositions),
         stain: None,
         steep: None,

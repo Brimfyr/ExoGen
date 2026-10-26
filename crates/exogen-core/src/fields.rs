@@ -271,6 +271,12 @@ pub struct LayerSet {
     /// the present: laid by each crack as it forms and faded since; a renewed surface
     /// carries none.
     pub stain: Field<f32>,
+    /// The base relief as it stands (F196): the relief the body formed with, worked by what
+    /// works the ground about it but the features' own forms, relaxed as the ground relaxes
+    /// and levelled by each crater's ejecta as the ground is, the crater's floor taking its
+    /// place inside the rim; what a renewed terrain keeps under its new ground (F141). Kept
+    /// only where the surface renews itself.
+    pub base: Option<Field<f32>>,
 }
 
 impl LayerSet {
@@ -295,6 +301,7 @@ impl LayerSet {
             steep: Field::new(grid),
             ejecta_age: Field::new(grid),
             stain: Field::new(grid),
+            base: None,
         }
     }
 
@@ -337,6 +344,7 @@ impl LayerSet {
             steep: self.steep.resample(target),
             ejecta_age: self.ejecta_age.resample_nearest(target),
             stain: self.stain.resample(target),
+            base: self.base.as_ref().map(|b| b.resample(target)),
         }
     }
 

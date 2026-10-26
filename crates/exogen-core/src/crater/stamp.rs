@@ -251,11 +251,21 @@ pub struct StampOutput {
     /// Per cell, the maturity age of a crater's thin ejecta (F100); none for any other
     /// stamp.
     pub ejecta_age: Option<Vec<f32>>,
+    /// Per cell, the base relief as a crater leaves it (F196): levelled by its ejecta as
+    /// the ground is, its floor in its place inside the rim; none for any other stamp, or
+    /// where no base relief is kept.
+    pub base: Option<Vec<f32>>,
 }
 
 impl StampOutput {
     /// Write the cells into the layers.
     pub fn apply(&self, layers: &mut LayerSet) {
+        if let (Some(written), Some(base)) = (&self.base, layers.base.as_mut()) {
+            let base = base.as_mut_slice();
+            for (c, &b) in self.cells.iter().zip(written) {
+                base[c.idx as usize] = b;
+            }
+        }
         let bedrock = layers.bedrock.as_mut_slice();
         let ages = layers.surface_age.as_mut_slice();
         let units = layers.unit_id.as_mut_slice();
@@ -527,6 +537,11 @@ pub fn stamp_compute(
     };
     let mut sector_sum = vec![0.0f64; BINS * SECTORS];
     let mut sector_area = vec![0.0f64; BINS * SECTORS];
+    // The base relief where it is kept (F196), with its own means as the ground's.
+    let base = layers.base.as_ref().filter(|_| p.bury).map(|b| b.as_slice());
+    let mut base_sum = 0.0;
+    let mut base_ring = [0.0f64; BINS];
+    let mut base_sectors = vec![0.0f64; if base.is_some() { BINS * SECTORS } else { 0 }];
     for &(idx, r, phi) in &stamper.footprint {
         let re = elliptical_radius(r, phi, p.azimuth, p.ellipticity) * shape.factor(phi);
         if re <= dim.radius {
@@ -534,12 +549,19 @@ pub fn stamp_compute(
             sum += bedrock[idx] as f64 * a;
             deep_sum += deep[idx] as f64 * a;
             wsum += a;
+            if let Some(b) = base {
+                base_sum += b[idx] as f64 * a;
+            }
         } else if p.bury && re < dim.ejecta_radius {
             let (b, s) = slot_of(re, phi);
             ring_sum[b] += bedrock[idx] as f64;
             ring_area[b] += 1.0;
             sector_sum[b * SECTORS + s] += bedrock[idx] as f64;
             sector_area[b * SECTORS + s] += 1.0;
+            if let Some(kept) = base {
+                base_ring[b] += kept[idx] as f64;
+                base_sectors[b * SECTORS + s] += kept[idx] as f64;
+            }
         }
     }
     let h_ref = if wsum > 0.0 {
@@ -547,36 +569,43 @@ pub fn stamp_compute(
     } else {
         bedrock[stamper.footprint[0].0] as f64
     };
+    let base_ref = match base {
+        Some(_) if wsum > 0.0 => base_sum / wsum,
+        Some(b) => b[stamper.footprint[0].0] as f64,
+        None => 0.0,
+    };
     // The level the ejecta bury the old relief against at a point: the means of the sectors
     // about it, interpolated round each ring between the sectors' middles and across the rings
     // between theirs, so that the level has no steps at the sectors' edges, which beneath a
     // thick deposit would stand as flat patches stepping along straight radial lines; a
     // sector that holds no cell takes its ring's mean, a ring that holds none the floor's.
-    let mean_of = |b: usize, s: usize| -> f64 {
-        let i = b * SECTORS + s;
-        if sector_area[i] > 0.0 {
-            sector_sum[i] / sector_area[i]
-        } else if ring_area[b] > 0.0 {
-            ring_sum[b] / ring_area[b]
-        } else {
-            h_ref
-        }
-    };
-    let around = |b: usize, turn: f64| -> f64 {
-        let n = sectors[b];
-        let f = turn * n as f64 - 0.5;
-        let lower = f.floor();
-        let t = f - lower;
-        let s0 = (lower as i64).rem_euclid(n as i64) as usize;
-        (1.0 - t) * mean_of(b, s0) + t * mean_of(b, (s0 + 1) % n)
-    };
-    let level_of = |re: f64, phi: f64| -> f64 {
+    // The same level for the kept base relief reads its own means (F196).
+    let level_in = |sums: &[f64], rings: &[f64; BINS], floor: f64, re: f64, phi: f64| -> f64 {
+        let mean_of = |b: usize, s: usize| -> f64 {
+            let i = b * SECTORS + s;
+            if sector_area[i] > 0.0 {
+                sums[i] / sector_area[i]
+            } else if ring_area[b] > 0.0 {
+                rings[b] / ring_area[b]
+            } else {
+                floor
+            }
+        };
+        let around = |b: usize, turn: f64| -> f64 {
+            let n = sectors[b];
+            let f = turn * n as f64 - 0.5;
+            let lower = f.floor();
+            let t = f - lower;
+            let s0 = (lower as i64).rem_euclid(n as i64) as usize;
+            (1.0 - t) * mean_of(b, s0) + t * mean_of(b, (s0 + 1) % n)
+        };
         let turn = phi.rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU;
         let f = ((re / dim.radius - 1.0) / span * BINS as f64 - 0.5).clamp(0.0, (BINS - 1) as f64);
         let b0 = f.floor() as usize;
         let t = f - b0 as f64;
         (1.0 - t) * around(b0, turn) + t * around((b0 + 1).min(BINS - 1), turn)
     };
+    let level_of = |re: f64, phi: f64| level_in(&sector_sum, &ring_sum, h_ref, re, phi);
     // The material the crater excavated: the deep bedrock, or what was already there.
     let source_deep = if p.deep {
         1.0
@@ -637,25 +666,9 @@ pub fn stamp_compute(
         };
         own.max(steeps[idx] as f64 * kept) as f32
     };
-    let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
-        // A cell whose substrate was renewed from below after this crater, the clean ice
-        // of a lane or a polar terrain, holds nothing of its deposit; nor of its relief,
-        // where the renewal is not to take that at its own turn.
-        let renewed_later = cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6;
-        if p.renewal_guard && renewed_later {
-            return CellWrite {
-                idx: idx as u32,
-                bedrock: bedrock[idx],
-                surface: false,
-                age: 0.0,
-                unit: 0,
-                deep: 0.0,
-                melt: 0.0,
-                cover: 0.0,
-            };
-        }
-        let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
-        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+    // The crater's own relief at a point: its radius on the profile, as its terraces bend
+    // it, and its height there.
+    let relief_at = |re0: f64, re: f64, phi: f64| -> (f64, f64) {
         let rw = terraces
             .as_ref()
             .map_or(re, |t| t.radius(re, phi, dim, profile.sigma));
@@ -683,18 +696,43 @@ pub fn stamp_compute(
         if let Some(pt) = &pit {
             v += pt.relief(re0 / dim.radius, phi, profile.sigma / dim.radius) * p.feature_amplitude;
         }
+        (rw, v)
+    };
+    // How much the crater's floor takes the place of the ground: 1 inside 0.95 R, 0
+    // outside 1.05 R.
+    let floor_share = |re: f64| -> f64 {
+        if p.replace_floor {
+            ((1.05 - re / dim.radius) / 0.10).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
+    let compute = |&(idx, r, phi): &(usize, f64, f64)| -> CellWrite {
+        // A cell whose substrate was renewed from below after this crater, the clean ice
+        // of a lane or a polar terrain, holds nothing of its deposit; nor of its relief,
+        // where the renewal is not to take that at its own turn.
+        let renewed_later = cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6;
+        if p.renewal_guard && renewed_later {
+            return CellWrite {
+                idx: idx as u32,
+                bedrock: bedrock[idx],
+                surface: false,
+                age: 0.0,
+                unit: 0,
+                deep: 0.0,
+                melt: 0.0,
+                cover: 0.0,
+            };
+        }
+        let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+        let (rw, v) = relief_at(re0, re, phi);
         let mut old = bedrock[idx] as f64;
         if p.bury && re > dim.radius && v > 0.0 {
             let mean = level_of(re, phi);
             old = mean + (old - mean) * burial_factor(old - mean, v);
         }
-        let w = if p.replace_floor {
-            // 1 inside 0.95 R, 0 outside 1.05 R.
-            let t = (1.05 - re / dim.radius) / 0.10;
-            t.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let w = floor_share(re);
         let mut write = CellWrite {
             idx: idx as u32,
             bedrock: (v + w * h_ref + (1.0 - w) * old) as f32,
@@ -759,12 +797,44 @@ pub fn stamp_compute(
     } else {
         stamper.footprint.iter().map(ejecta_of).collect()
     };
+    // The kept base relief as the crater leaves it (F196): buried under its ejecta against
+    // its own level by the deposit's thickness, as the ground is; inside the rim the floor's
+    // breccia and fallback bury it as the deposit at the rim does, so that a terrain renewed
+    // over the crater later finds it levelled as the rim's surroundings are, with no edge at
+    // the rim. A cell renewed after the crater keeps it.
+    let base = base.map(|kept| {
+        let base_of = |&(idx, r, phi): &(usize, f64, f64)| -> f32 {
+            if p.renewal_guard && cleans[idx] > 0.0 && ages[idx] > p.time_gyr + 1e-6 {
+                return kept[idx];
+            }
+            let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+            let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+            let (at, v) = if re > dim.radius {
+                (re, relief_at(re0, re, phi).1)
+            } else {
+                let rim = dim.radius * (1.0 + 1e-6);
+                (rim, relief_at(rim, rim, phi).1)
+            };
+            let mut old = kept[idx] as f64;
+            if v > 0.0 {
+                let mean = level_in(&base_sectors, &base_ring, base_ref, at, phi);
+                old = mean + (old - mean) * burial_factor(old - mean, v);
+            }
+            old as f32
+        };
+        if stamper.footprint.len() >= PARALLEL_FOOTPRINT {
+            stamper.footprint.par_iter().map(base_of).collect()
+        } else {
+            stamper.footprint.iter().map(base_of).collect()
+        }
+    });
     StampOutput {
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
         stain: None,
         steep: Some(steep),
         ejecta_age: Some(ejecta_age),
+        base,
         compositions: None,
     }
 }
@@ -2083,6 +2153,7 @@ pub fn restore_compute(
         stain: None,
         steep: Some(steep),
         ejecta_age: Some(ejecta_age),
+        base: None,
         compositions: None,
     }
 }
@@ -2322,6 +2393,89 @@ mod tests {
             lost > 0.2 * draped_before && lost < 0.8 * draped_before,
             "buried {buried_before} -> {buried_after}, draped -> {draped_after}"
         );
+    }
+
+    /// F196: a crater levels the base relief kept under the ground as it levels the ground,
+    /// and leaves the ground as it would without it: under its continuous ejecta the base
+    /// loses a good part of its relief, inside the rim, buried as at the rim, nearly all of
+    /// it, and far away none.
+    #[test]
+    fn a_crater_levels_the_kept_base_as_it_levels_the_ground() {
+        let grid = CubeSphere::new(256);
+        let body_radius = 1.7374e6;
+        let s = Scaling {
+            simple_complex: 16_500.0,
+            peak_ring: 140_000.0,
+            multi_ring: 330_000.0,
+            gravity: 1.62,
+            icy: false,
+        };
+        let big = dimensions(200_000.0, &s);
+        let center = [0.0, 0.0, 1.0];
+        let mut rough = Field::<f32>::new(grid);
+        for (k, v) in rough.as_mut_slice().iter_mut().enumerate() {
+            let d = grid.center(grid.cell(k));
+            *v = (300.0 * (d[0] * body_radius / 20e3).sin()) as f32;
+        }
+        let params = StampParams {
+            time_gyr: 2.0,
+            unit_floor: 4,
+            unit_ejecta: 5,
+            azimuth: 0.0,
+            angle: std::f64::consts::FRAC_PI_2,
+            ellipticity: 1.0,
+            amplitude: 1.0,
+            feature_amplitude: 1.0,
+            replace_floor: true,
+            set_age: true,
+            bury: true,
+            levelling: Levelling::rings(),
+            seed: 0,
+            deep: false,
+            maturity_timescale: 0.5,
+            renewal_guard: true,
+            terraced: false,
+            shed: (
+                SLOPE_SHED_START_DEG.to_radians(),
+                REPOSE_SLOPE_DEG.to_radians(),
+            ),
+        };
+        let layers = |kept: bool| {
+            let mut l = LayerSet::new(grid);
+            l.bedrock = rough.clone();
+            l.base = kept.then(|| rough.clone());
+            let mut stamper = Stamper::new(&grid);
+            stamp(
+                &mut l,
+                &grid,
+                body_radius,
+                center,
+                &ProfileTable::new(big, 0.0),
+                &params,
+                &mut stamper,
+            );
+            l
+        };
+        let (kept, plain) = (layers(true), layers(false));
+        assert_eq!(kept.bedrock.as_slice(), plain.bedrock.as_slice());
+        let base = kept.base.unwrap();
+        let spread = |field: &Field<f32>, lo: f64, hi: f64| -> f64 {
+            let values: Vec<f64> = (0..grid.cell_count())
+                .filter(|&k| {
+                    let r = angle_between(grid.center(grid.cell(k)), center) * body_radius;
+                    r > lo * big.radius && r < hi * big.radius
+                })
+                .map(|k| field.as_slice()[k] as f64)
+                .collect();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64).sqrt()
+        };
+        let (under, before) = (spread(&base, 1.2, 1.6), spread(&rough, 1.2, 1.6));
+        assert!(under < 0.8 * before, "{under} against {before}");
+        let (floor, was) = (spread(&base, 0.0, 0.9), spread(&rough, 0.0, 0.9));
+        assert!(floor < 0.2 * was, "{floor} against {was}");
+        let far = grid.index(grid.locate(crate::geom::normalize([0.9, 0.1, -0.4])).0);
+        assert_eq!(base.as_slice()[far], rough.as_slice()[far]);
     }
 
     /// Oblique ejecta is thicker downrange, nearly absent uprange and raised to the sides;
