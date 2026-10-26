@@ -501,14 +501,16 @@ impl ShellMap {
         }
     }
 
-    /// The taper's radius in a direction, rad: the mean, wobbled round the pole.
+    /// The taper's radius in a direction, rad: the mean, wobbled round the pole from two
+    /// cycles down to sixteen, so that the outline drawn from it is neither a circle nor
+    /// an oval.
     pub fn radius_at(&self, d: [f64; 3]) -> f64 {
         self.radius_rad
             * (1.0
                 + POLAR_MARGIN_WOBBLE
                     * self
                         .noise
-                        .fbm(d, 2.0 / (2.0 * std::f64::consts::PI), 2, 2.0, 0.5))
+                        .fbm(d, 2.0 / (2.0 * std::f64::consts::PI), 4, 2.0, 0.5))
     }
 
     /// The same shell map centred elsewhere: a past episode's, whose terrain the body's
@@ -533,7 +535,8 @@ impl ShellMap {
             return 0.0;
         }
         let taper = 0.5 * (1.0 + (std::f64::consts::PI * x).cos());
-        let structure = self.noise.fbm(d, self.structure_frequency, 2, 2.0, 0.5);
+        // The cells cluster: from twice their width down to half of it.
+        let structure = self.noise.fbm(d, 0.5 * self.structure_frequency, 3, 2.0, 0.5);
         (taper * (1.0 + CONVECTION_STRUCTURE * structure)).clamp(0.0, 1.0)
     }
 

@@ -172,6 +172,14 @@ The user's note (2026-10-26): on Enceladus's height map the polar and fossil ter
 
 Closed by F196, the hundred-and-tenth milestone: the loop keeps the base relief as it stands, relaxed and levelled by each crater as the ground is, and the renewals take it so.
 
+### W10. Renewed terrains outlined by their margins
+
+The user's note (2026-10-26): each of Enceladus's terrains has folds or cracks running round its perimeter that trace its exact shape, the terrains are near circles and ovals, the cross-folds stand out against the other folds, and the terrains do not meet one another to make a network as Enceladus's do. The fissures turned round the margin about the pole (F43), the outline was a taper about the pole, the margin belt's folds are a set of their own along the edge (F194), and each terrain's fissures stay within its own thinned zone.
+
+Direction: the user chose three steps: the outlines and the fissures from the field; the margin's folds from the fold fabric, turned and raised by the spreading; the fissures running on between the terrains, the younger cutting the older.
+
+Closed in part by F198, the hundred-and-twelfth milestone: the fissures run on until the thick shell stops them and the outline is warped at every scale, so that no ring of fissures traces a terrain. Still open: the folds and the belt along the margin; the network.
+
 ### W3. Tessera outlines
 
 `TESSERA_SMOOTHING_PASSES` (20 passes on the loop grid) smooths the old crust's height before the tesserae are chosen as its highest share. The smoothing is about two cells, so on Venus it is about 80 km at standard quality and 170 km at preview: the tesserae's outlines change with the quality.

@@ -389,8 +389,8 @@ impl CrackIndex {
 
 /// What a trace answers to besides the field.
 struct TraceRules<'a> {
-    /// The crack belongs to the thinned polar zone: it refracts round the margin and
-    /// stops in the thick shell.
+    /// The crack belongs to the thinned polar zone: it runs on with the field into the
+    /// thicker shell and stops where the tension no longer opens it (F198).
     polar: bool,
     /// The cracks already open, if the trace is to answer them.
     index: Option<&'a CrackIndex>,
@@ -1076,7 +1076,7 @@ impl Cracks {
     /// side, where the next fissure opens, and so on outward while the site is still in
     /// the thinned core and the bending and tidal tensions together exceed the strength.
     /// Each fissure runs along the field while the thin shell lets it, as a polar crack
-    /// does, and refracts round the margin. The fissures are the vents of the present
+    /// does, and stops in the thick shell. The fissures are the vents of the present
     /// episode, or the healed vents of a past one carried to where the body left its
     /// terrain.
     #[allow(clippy::too_many_arguments)]
@@ -1361,9 +1361,10 @@ impl Cracks {
 
     /// A crack along the slowly turning field: from the start in both directions,
     /// perpendicular to the most tensile stress at the phase it opened, while the
-    /// tension holds, with a little wander. A crack of the thinned polar zone refracts
-    /// round the zone's margin and stops in the thick shell beyond; a branch runs one
-    /// way, outward from the tip it starts at, for the whole length.
+    /// tension holds, with a little wander. A crack of the thinned polar zone runs on
+    /// with the field into the thicker shell and stops where the tension no longer opens
+    /// it (F198); a branch runs one way, outward from the tip it starts at, for the whole
+    /// length.
     #[allow(clippy::too_many_arguments)]
     fn ridge_trace(
         &self,
@@ -1432,33 +1433,18 @@ impl Cracks {
                 // A running crack turns toward the heading it seeks only as the field
                 // shears it (`kinked`), so it does not turn at right angles where the
                 // field's principal directions swap.
-                let mut d = match along {
+                let d = match along {
                     Some(prev) => kinked(prev, sought, p, s1, s2, &mut kink_sense),
                     None => sought,
                 };
                 if polar {
-                    // Leaving the thinned core, the crack meets a thicker, stiffer shell
-                    // and refracts along the contrast: it turns to run round the margin,
-                    // and in the thick shell beyond the tension no longer opens it.
+                    // Leaving the thinned core, the crack runs into a thicker, stiffer
+                    // shell, where the same load stresses it less: it runs on with the
+                    // field until the tension no longer opens it, and stops there, each
+                    // where its own course takes it (F198).
                     let profile = self.shell_map.profile(p);
                     if profile < CRACK_STOP_PROFILE && i > 2 {
                         break;
-                    }
-                    let w = ((POLAR_CORE_PROFILE - profile)
-                        / (POLAR_CORE_PROFILE - POLAR_OUTER_PROFILE))
-                        .clamp(0.0, 1.0);
-                    if w > 0.0
-                        && let Some(pole) = self.shell_map.pole
-                    {
-                        let mut t = normalize(cross(pole, p));
-                        if dot(t, d) < 0.0 {
-                            t = [-t[0], -t[1], -t[2]];
-                        }
-                        d = normalize([
-                            d[0] + (t[0] - d[0]) * w,
-                            d[1] + (t[1] - d[1]) * w,
-                            d[2] + (t[2] - d[2]) * w,
-                        ]);
                     }
                 }
                 // The cracks already open: a turn toward an open fissure's perpendicular,

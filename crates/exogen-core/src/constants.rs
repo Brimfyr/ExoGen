@@ -2471,7 +2471,8 @@ pub const FABRIC_STEP_CELLS: f64 = 4.0;
 /// lies about a kilometre low over a shell a few kilometres thick under a mean of
 /// twenty); its folds between the cracks, m and m; the margin ridge where the spreading
 /// terrain meets the old, m and m; and the wobble of the thinning's edge round the pole
-/// as a share of its radius, by a two-cycle field.
+/// as a share of its radius, by a field from two cycles round the pole down to sixteen
+/// (F198).
 pub const POLAR_THINNING_MAX: f64 = 0.8;
 pub const POLAR_FOCUS_FLUX: f64 = 0.02;
 pub const POLAR_FOCUS_SHELL_RATIO: f64 = 0.03;
@@ -2481,10 +2482,9 @@ pub const POLAR_ACTIVE_PROFILE: f64 = 0.5;
 /// round the fissures that opened in the thinned zone: within this distance, m, of them
 /// in the core, narrowing to nothing where the taper falls to this outer profile, so
 /// that the terrain follows the fissures out as tongues; its folds fade over this
-/// distance, m, from its edge. A fissure leaving the core meets a thicker, stiffer shell
-/// and refracts along the contrast, turning to run round the margin between the core
-/// and the outer profile, and stops in the thick shell where the taper falls below the
-/// last value.
+/// distance, m, from its edge. A fissure leaving the core runs on with the field into
+/// the thicker, stiffer shell, where the same load stresses it less, and stops where the
+/// taper falls below the last value, each where its own course takes it (F198).
 pub const POLAR_CORE_PROFILE: f64 = 0.75;
 pub const POLAR_SPREAD_WIDTH: f64 = 30e3;
 pub const POLAR_OUTER_PROFILE: f64 = 0.5;
@@ -2634,8 +2634,9 @@ pub const POLAR_MARGIN_RAMP: f64 = 15e3;
 /// The focused heating is a field, not a shape: the thinning varies across the zone by
 /// this share between the upwellings and downwellings of the shell's convection, in
 /// cells this many shell thicknesses wide (a layer's cells are about as wide as it is
-/// deep), so the thinned zone's outline, its depression and its renewed terrain are
-/// lobate rather than circular. The polar folds follow the nearest fissure within this
+/// deep), clustering over twice that and resolved down to half of it (F198), so the
+/// thinned zone's outline, its depression and its renewed terrain are lobate rather than
+/// circular. The polar folds follow the nearest fissure within this
 /// distance, m, and only beyond it the field's direction.
 pub const CONVECTION_STRUCTURE: f64 = 0.3;
 pub const CONVECTION_CELL_SHELLS: f64 = 2.0;

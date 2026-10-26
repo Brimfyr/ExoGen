@@ -2633,3 +2633,16 @@ How it went:
 - **Where it leaves Enceladus.** Its relief eases to -2.6 to +2.2 km and its longest wavelengths sit at its measured figure's; its plains' craters, under a lid near 7 km all its life, want heat flows the porous core never gives them outside the episodes' zones.
 
 Still to do: Enceladus's plains' heat history (M3); Io; the Moon's maria, rays and highlands.
+
+## The hundred-and-twelfth milestone: a thinned zone's fissures run on until the thick shell stops them
+
+The user saw each of Enceladus's terrains outlined by folds and cracks running round its perimeter, the terrains near circles and ovals, the cross-folds standing out and the terrains not meeting in a network (audit W10), and chose three steps, this the first.
+
+- **F198.** A polar fissure runs on with the field into the thicker shell and stops where the tension no longer opens it, rather than turning round the margin; the zone's edge is warped at every scale from two cycles round the pole to half a convection cell.
+
+How it went:
+
+- **Circles.** The fissures that reached the margin turned toward the direction round the pole itself, so each ran along a circle about it: the rings the user saw. Turning along the zone's own contours, which its convection structures, made them wander but still trace the perimeter, and cost 80 s.
+- **Arrest.** A crack running into a stiffer shell slows and stops rather than following the contrast; with no turn the rings are gone, and each terrain's edge is ragged where its fissures run out, its tongues following them.
+
+Still to do: the margin's folds and belt (W10); the network (W10); Enceladus's plains' heat history (M3); Io; the Moon.
