@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 146;
+pub const FINISH_VERSION: u64 = 147;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2939,7 +2939,15 @@ fn ice_shell_history(
         let state = thermal.at(t);
         relaxation::Shell {
             thickness: state.lithosphere,
-            elastic: state.elastic,
+            // The lid that holds the relief up is the one that keeps its stress for as
+            // long as the relief stands (F197).
+            elastic: relaxation::load_lid(
+                state.lithosphere,
+                surface_temperature,
+                state.mantle_temperature,
+                viscosity_scale,
+                t,
+            ),
             surface_temperature,
             basal_temperature: state.mantle_temperature,
             gravity,
@@ -4646,6 +4654,49 @@ mod tests {
             .run(&preset_graph("Moon", "preview"), &NoProgress)
             .unwrap();
         assert!(moon.loop_output.rises.is_empty() && moon.loop_output.shields.is_empty());
+    }
+
+    /// F197 diagnostic: the lid that holds an icy body's relief up through its life against
+    /// the tectonic lid, and how much of a crater's relief its shell lets survive from its
+    /// time to the present, at twice its diameter; run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn print_crater_relaxation() {
+        for name in ["Ganymede", "Callisto", "Europa", "Enceladus", "Mimas", "Miranda"] {
+            let g = preset_graph(name, "standard");
+            let thermal = ThermalHistory::from_graph(&g);
+            let Some(shell_at) = ice_shell_history(&g, &thermal) else {
+                continue;
+            };
+            let age = g.f64("body.age");
+            let lids: Vec<String> = [0.5, 2.0, age]
+                .iter()
+                .map(|&t| {
+                    format!(
+                        "{t:.1} Gyr {:.1} km (tectonic {:.1})",
+                        shell_at(t).elastic / 1e3,
+                        thermal.at(t).elastic / 1e3
+                    )
+                })
+                .collect();
+            println!("{name}: load lid {}", lids.join(", "));
+            for before in [4.0, 3.0, 1.0] {
+                let kept: Vec<String> = [5e3, 10e3, 20e3, 40e3, 80e3]
+                    .iter()
+                    .map(|&d| {
+                        let s = relaxation::survival_since(
+                            2.0 * d,
+                            (age - before).max(0.0),
+                            age,
+                            &*shell_at,
+                            1.0,
+                        );
+                        format!("{:.0} km {s:.2}", d / 1e3)
+                    })
+                    .collect();
+                println!("  formed {before} Ga, kept at twice the diameter: {}", kept.join(", "));
+            }
+        }
     }
 
     /// T6 diagnostic: how much of a lane's grooves' relief the shell's relaxation lets

@@ -2619,3 +2619,17 @@ How it went:
 - **Other bodies.** Miranda's coronae lose their excess at 80 to 300 km; Ganymede's lanes change by little.
 
 Still to do: Enceladus's heat history (M3); Io; the Moon's maria, rays and highlands.
+
+## The hundred-and-eleventh milestone: the lid that holds a load is as old as the load
+
+The user agreed to the heat history next (M3), with Goldreich, Lithwick and Luan (2025)'s limit cycle as the candidate: Enceladus's eccentricity rising while its shell freezes, its shell melting and then librating near 3 km at some 290 mW/m2 for a third of each 13 Myr cycle.
+
+- **F197.** The ice lid that holds a load up reaches down to where the ice's Maxwell time equals the load's age, the time the surface has stood, rather than to the 170 K isotherm the faults break.
+
+How it went:
+
+- **No cycle.** The model makes Enceladus's heat in its porous core (F68), some 45 times its shell's per unit of eccentricity squared, and the core's dissipation does not fall as the shell thickens: driven by a resonance's supply over its whole life it settles at once, 116 GW holding a steady 5.7 km shell, 29 GW today's 22.6 km. The limit cycle wants its heat made in the shell; the user chose to keep the porous core and look at the craters and the lid's law instead.
+- **The lid's law.** At crater scales the law held everything a lid of the 170 K isotherm could carry, for ever: Ganymede's craters of 10 km and more, which Bland et al. (2017) relax to their measured depths at 40 to 50 mW/m2 over a billion years, kept theirs. A load's age sets how deep the ice holds it.
+- **Where it leaves Enceladus.** Its relief eases to -2.6 to +2.2 km and its longest wavelengths sit at its measured figure's; its plains' craters, under a lid near 7 km all its life, want heat flows the porous core never gives them outside the episodes' zones.
+
+Still to do: Enceladus's plains' heat history (M3); Io; the Moon's maria, rays and highlands.

@@ -28,7 +28,7 @@
 use crate::constants::*;
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 use crate::fields::Field;
 use crate::grid::{Cell, CubeSphere};
@@ -40,6 +40,33 @@ pub fn ice_viscosity(t: f64, melting_point: f64) -> f64 {
     let t = t.max(ICE_VISCOSITY_FLOOR_K);
     ICE_VISCOSITY_MELT
         * (ICE_CREEP_ACTIVATION / GAS_CONSTANT * (1.0 / t - 1.0 / melting_point.max(t))).exp()
+}
+
+/// The lid of an ice shell that holds a load up, m (F197): as deep as its ice keeps an
+/// elastic stress for as long as the load stands, where its Maxwell time η / E reaches the
+/// load's age (the elastic thickness falls with the load's age; Watts 2001), along the
+/// shell's conductive profile as the thermal history's lid is taken. The relief a surface
+/// carries stands for as long as the surface has, so the load's age is the time since
+/// formation; the faults that break the lid, quick against that, break the thermal
+/// history's lid instead.
+pub fn load_lid(
+    thickness: f64,
+    surface_temperature: f64,
+    melting_point: f64,
+    viscosity_scale: f64,
+    age_gyr: f64,
+) -> f64 {
+    let ts = surface_temperature;
+    let tm = melting_point.max(ts + 1.0);
+    let held = ICE_YOUNG_MODULUS * age_gyr.max(1e-3) * SECONDS_PER_GYR
+        / (ICE_VISCOSITY_MELT * viscosity_scale.max(1.0));
+    // Where η_m e^{Q/R (1/T - 1/T_m)} = E t.
+    let base = if held > 1.0 {
+        1.0 / (1.0 / tm + GAS_CONSTANT / ICE_CREEP_ACTIVATION * held.ln())
+    } else {
+        tm
+    };
+    thickness * ((base.max(ICE_VISCOSITY_FLOOR_K) - ts) / (tm - ts)).clamp(0.0, 1.0)
 }
 
 /// The shell as relaxation sees it at a time: its thickness, the temperatures at its
@@ -1222,5 +1249,19 @@ mod tests {
             ..enceladus
         };
         assert!(lid_relief(200e3, &rock).is_infinite());
+    }
+
+    /// F197: the lid that holds a load reaches down to where the ice's Maxwell time is the
+    /// load's age: some 131 K under a billion-year load with the model's creep law, thinner
+    /// than the faults' 170 K lid, and thicker under a younger load or a stiffer ice.
+    #[test]
+    fn the_lid_that_holds_a_load_is_as_old_as_the_load() {
+        let (ts, tm, d) = (75.0, 273.0, 22e3);
+        let at = |t_k: f64| d * (t_k - ts) / (tm - ts);
+        let gyr = load_lid(d, ts, tm, 1.0, 1.0);
+        assert!((gyr - at(131.0)).abs() < at(2.0) - at(0.0), "{gyr}");
+        assert!(gyr < at(ELASTIC_ISOTHERM_ICE));
+        assert!(load_lid(d, ts, tm, 1.0, 0.05) > gyr);
+        assert!(load_lid(d, ts, tm, 1e3, 1.0) > gyr);
     }
 }
