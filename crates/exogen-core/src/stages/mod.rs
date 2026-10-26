@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 144;
+pub const FINISH_VERSION: u64 = 145;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2915,6 +2915,7 @@ fn ice_shell_history(
     let rock = crate::stages::materials::Library::from_graph(graph)
         .non_ice(graph.str("materials.deep_bedrock"));
     let viscosity_scale = 10f64.powf(ICE_ROCK_VISCOSITY_DECADES * rock);
+    let strength = graph.f64("interior.crust_strength");
     Some(Box::new(move |t: f64| {
         let state = thermal.at(t);
         relaxation::Shell {
@@ -2925,6 +2926,7 @@ fn ice_shell_history(
             gravity,
             viscosity_scale,
             rock: false,
+            strength,
         }
     }))
 }
@@ -2953,6 +2955,7 @@ fn rock_crust_history(
     let thermal = thermal.clone();
     let surface_temperature = graph.f64("atmosphere.surface_temperature_mean");
     let gravity = graph.f64("body.gravity");
+    let strength = graph.f64("interior.crust_strength");
     Some(Box::new(move |t: f64, crust: f64| {
         let state = thermal.at(t);
         let share = (crust / state.lithosphere.max(1.0)).min(1.0);
@@ -2965,6 +2968,7 @@ fn rock_crust_history(
             gravity,
             viscosity_scale: 1.0,
             rock: true,
+            strength,
         }
     }))
 }

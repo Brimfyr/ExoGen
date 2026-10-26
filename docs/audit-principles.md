@@ -447,6 +447,8 @@ In the sixty-sixth milestone (F135) the outer system's own comets strike the icy
 
 In the sixty-ninth milestone (F138) the moons' eccentricities and interiors evolve together, and the episodes of Mimas's and Miranda's heating emerge from their resonances and their ice; Enceladus's do not. Held in its resonance with Dione, its heating stays at the equilibrium the process finds for it, 29 GW, from its warm start to the present: the published dynamics give it no excursion above equilibrium in its past resonances (Meyer and Wisdom 2008 find its capture into the 2:1 e-Enceladus resonance close to equilibrium after a brief capture into the 4:2 mixed resonance, and exclude its having occupied the 3:2 with Mimas), and Goldreich et al. (2025)'s limit cycle, which heats it to some 290 mW/m² every 13 Myr, would relax its plains throughout their history. A past resonance stated for it would heat its plains as Miranda's heats its terrain, but none is known to the dynamics. Since F139 its relaxation also wants lids of a kilometre or two, as Bland et al.'s heat flows give, and the ground beside its terrains, under an episode's thinned shell, relaxes less than F66 made it: its plains keep sharper craters than its map, until a heat history that reaches those flows is found.
 
+Closed in part by F195, the hundred-and-ninth milestone: the Phase 4F gate check found Enceladus's relief at four times the measured, its primordial relief held whole by a lid that held any load shorter than its support, whatever its size; a lid now holds no more than its strength bears, and the warm ice under it flows from under the rest, which halves the relief (-3.2 to +2.8 km) and takes the broad swells. Still open: its craters and its bands under 80 km, in cold ice, which want the heat history; Goldreich et al. (2025)'s limit cycle is the candidate the dynamics give.
+
 ### M3b. The coronae's dark belts
 
 Voyager's coronae on Miranda are darker outside and bright within: Inverness's banded outer material and Arden's dark bands are the darkest ground on the moon, and the USGS map splits the coronae into an outer and an inner material. Since F143 the belt keeps the old crust's tone with clean ice on its scarps and the core is clean, so the belt is as dark as the cratered plains and no darker.
@@ -770,6 +772,14 @@ Direction: the plume's melt under its head builds the rise: the intrusions it ma
 When: the next milestone (the user's choice, 2026-10-22).
 
 Closed in the ninetieth milestone (F174): the melt is one budget, what stays below intruding the crust beneath where it rose from and the full edifices' surplus beneath their rises, the ground rising as the crust thickens and the intrusions' weight bending the lid. 3.2 × 10⁸ km³ intrudes beneath Mars's rise, its flanks some 2 km higher and the old basin raised some 2.5 km. The lavas ponding in a rise's own lows followed in the ninety-second milestone (F176): the vents read the ground less what the plumes and the mantle's flow hold up, and the rise draws some two fifths more of the floods, the basin beneath it taking a kilometre more of lava, which the lid's sagging under a load so wide leaves raising its floor some 0.2 km, as Mars's filled basins still stand deep. Still open: the dome's height, still the share Tharsis's whole height was fitted to (RISE_HEIGHT_FRACTION), which its plume head's buoyancy should give now that the pile stands beside it.
+
+### M36. The Moon's highlands stand too dark against its rays
+
+The user's note at the Phase 4F gate check (2026-10-26): the contrast between the Moon's highlands and its rayed ejecta is too strong; the reference map shows the highlands a lighter shade. The bright rims of its fresh craters, which the reference shows too, stay.
+
+Direction: the highlands' mature albedo and the rays' fresh one against the measured, from the maturing of the regolith rather than a tone.
+
+When: with the Moon's gate items.
 
 ### V1. Interpolated bodies in validation
 

@@ -2585,3 +2585,23 @@ How it went:
 - **Short deep cuts.** The user found many very short cross-fissures digging deeper than the folds about them: the segments were the lanes' troughs, cut below the ground and as deep as a fault's heavy tail lets a trough be, some past 900 m, and drawn round the thinned zone's circle, 1.7 times the edge's, so a segment came out that much shorter. Each is now a fold at its bound, drawn round the edge itself: bundles of two to four ridges stepping en echelon. The user accepted it for now, to revisit if the global look falls short: the reference's sulci run longer and more continuous.
 
 Still to do: Miranda; the network's and the belts' prominence at a global view.
+
+## The hundred-and-ninth milestone: the gate check, and a lid holds no more than its strength bears
+
+The user asked for the Phase 4F gate check: on crops of Enceladus, the Moon and Io, no analytic outline, no one-cell contact, no single-scale repetition; the Moon's maria embaying the highlands and mixing across the contact; Enceladus's terrains and sulci reading as terrain; Io's flows and deposits grading into their surroundings. Renders at 4,096 pixels against the user's reference maps. None passes yet:
+
+- **Enceladus.** Its relief, its figure removed, spanned -6.0 to +5.7 km between the 5th and 95th percentiles, four times the measured (Schenk and McKinnon 2024), most of it at 80 to 300 km and there from 0.12 Gyr: the primordial relief, never relaxed (audit M3). It buried the margin belts' kilometre at a global view and kept the craters deep. Its albedo, subtle, shows analytic outlines when stretched: a lane drawn as a straight-edged wedge, spiky halos about craters, stepped bands.
+- **The Moon.** Its relief is about right. Its maria are soft patches spread over the globe rather than gathered in its province (audit M33), their contacts graded over tens of kilometres rather than embaying the highlands; some twenty ray systems read as straight spokes at a global view; its highlands stand too dark against its rays (the user's note, audit M36). The bright rims of its fresh craters, which the user's reference shows too, stay.
+- **Io.** It fails most: flat dark flows with crisp white outlines on smooth yellow plains, white plume deposits as repeated rings, red ones as smooth loops, plains with no structure at any scale (audits M7, M8, M20).
+
+The user agreed that the small icy moons carry too much relief and that Enceladus is smoother than its size suggests, and chose to start there: a lid's strength first, then the heat history.
+
+- **F195.** An ice lid holds a band's relief only up to what bends it to its strength (F15's), the warm ice under it flowing from under the rest; a rocky lid's relief stands on its crust's compensation and is not bounded.
+
+How it went:
+
+- **Where the relief came from.** Enceladus's 11.5 km lid held every load shorter than 247 km, so the loop's bands from 6 to 198 km kept all their relief for 4.5 Gyr; only the 397 km band relaxed. The episodes thin the lid to 2.6 km only near their poles, inside the terrains they renew; the plains never see a lid under about 5 km, where the flexure of Enceladus's chasmata and dorsae gives past heat flows of 125 to 200 mW/m², lids of one to three kilometres.
+- **Two routes.** A lid's strength bound, a missing half of F139's "the loads its flexure can carry", and the heat history the record wants (M3); the user chose the bound first. The ice lid's isotherm, 170 K, stands: the rock's criterion (F144), creep at 1e-17 /s under the loads' stress, gives 155 to 163 K for ice under the model's own creep law.
+- **The bound.** Enceladus's relief halves (-3.2 to +2.8 km) and its broad swells go; Mimas keeps its craters and loses its swells; the other icy bodies change little. The craters stay deep: they lie in cold ice that does not flow.
+
+Still to do: Enceladus's heat history (M3: Goldreich et al. 2025's limit cycle); Io; the Moon's maria, rays and highlands.

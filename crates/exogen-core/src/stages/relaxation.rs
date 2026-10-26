@@ -28,7 +28,7 @@
 use crate::constants::*;
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 use crate::fields::Field;
 use crate::grid::{Cell, CubeSphere};
@@ -57,6 +57,9 @@ pub struct Shell {
     /// A rocky lid's crust (F170): `thickness` is the crust's, `basal_temperature` its
     /// base's, and the relief relaxes by the flow of its lower crust.
     pub rock: bool,
+    /// The stress at which the lid breaks in bending, Pa, the crust's strength (F15): it
+    /// holds up no more of a load than bends it that far (F195).
+    pub strength: f64,
 }
 
 /// The viscosity of a rocky lid's lower crust at a temperature, Pa s, under the stress a
@@ -139,23 +142,58 @@ pub fn ductile_share(wavelength: f64, shell: &Shell) -> f64 {
     x * x * (3.0 - 2.0 * x)
 }
 
+/// The share of a wavelength's relief riding on the ductile ice or lower crust that is
+/// still there after a time: what the flow has not yet carried away.
+pub fn unflowed(wavelength: f64, dt_gyr: f64, shell: &Shell) -> f64 {
+    let tau = if shell.rock {
+        rock_relaxation_time_gyr(wavelength, shell)
+    } else {
+        relaxation_time_gyr(wavelength, shell)
+    };
+    if tau <= 0.0 {
+        0.0
+    } else {
+        (-dt_gyr / tau).exp()
+    }
+}
+
 /// The fraction of a wavelength's relief that survives a time on a shell.
 pub fn survival(wavelength: f64, dt_gyr: f64, shell: &Shell) -> f64 {
     let ductile = ductile_share(wavelength, shell);
     if ductile <= 0.0 {
         return 1.0;
     }
-    let tau = if shell.rock {
-        rock_relaxation_time_gyr(wavelength, shell)
-    } else {
-        relaxation_time_gyr(wavelength, shell)
-    };
-    let flowed = if tau <= 0.0 {
+    1.0 - ductile * (1.0 - unflowed(wavelength, dt_gyr, shell))
+}
+
+/// The most relief of a wavelength an ice lid holds up, m (F195): the weight of a
+/// sinusoidal load h bends the lid by a moment ρ g h / k², which brings its surface to a
+/// stress 6 M / Tₑ²; past the lid's strength it breaks, and what it cannot hold rides on
+/// the ice below and flows away as that ice does. A rocky lid's relief stands on its
+/// crust's compensation (F170), not on the lid's bending, so none is bounded there.
+pub fn lid_relief(wavelength: f64, shell: &Shell) -> f64 {
+    if shell.rock {
+        return f64::INFINITY;
+    }
+    let k = std::f64::consts::TAU / wavelength.max(1.0);
+    shell.strength * (shell.elastic * k).powi(2)
+        / (6.0 * DENSITY_CRUST_ICE * shell.gravity.max(1e-9))
+}
+
+/// A band's relief at a cell after a time on a shell (F195): the lid holds its share up
+/// (`1 - ductile`), no more than its strength bears, approached softly as a layer's relief
+/// is (F189); the rest rides on the ductile ice and keeps what the flow leaves
+/// (`unflowed`). With a strength past any load this is `survival` times the relief.
+pub fn kept_relief(relief: f32, held_share: f64, unflowed: f64, most: f64) -> f32 {
+    let held = held_share * relief as f64;
+    let carried = if most.is_finite() && most > 0.0 {
+        most * (held / most).tanh()
+    } else if most.is_finite() {
         0.0
     } else {
-        (-dt_gyr / tau).exp()
+        held
     };
-    1.0 - ductile * (1.0 - flowed)
+    (carried + (relief as f64 - carried) * unflowed) as f32
 }
 
 /// The share of a wavelength's relief that a thinned shell, `factor` of the shell's
@@ -412,15 +450,14 @@ impl Bands {
         }
     }
 
-    /// Scale the bands held by each band's factor, times a cell's own for the bands that
-    /// have one (`own(l, k)`), and write their sum back to `height`, which the next step
-    /// measures its change from.
+    /// Relax the bands held, each cell's relief in a band to what `keep(l, shape, k,
+    /// relief)` leaves of it, `shape` for the last band, the global shape, and write their
+    /// sum back to `height`, which the next step measures its change from.
     fn decay(
         &mut self,
         height: &mut Field<f32>,
-        factors: &[f32],
         lengths: &[f64],
-        own: impl Fn(usize, usize) -> f32,
+        keep: impl Fn(usize, bool, usize, f32) -> f32,
     ) {
         let count = self.bands.len();
         let h = height.as_mut_slice();
@@ -435,10 +472,9 @@ impl Bands {
             let mut v = 0.0f32;
             let mut potential = 0.0f32;
             for (l, band) in self.bands.iter_mut().enumerate() {
-                let f =
-                    factors[l.min(factors.len() - 1)] * if l + 1 < count { own(l, k) } else { 1.0 };
-                potential += band[k] * (f - 1.0) * reach[l];
-                band[k] *= f;
+                let kept = keep(l, l + 1 == count, k, band[k]);
+                potential += (kept - band[k]) * reach[l];
+                band[k] = kept;
                 v += band[k];
             }
             *cell = v;
@@ -501,6 +537,14 @@ pub fn rock_survival(wavelength: f64, rock: &RockCrust, thickness: f64) -> f64 {
         .product()
 }
 
+/// Whether a shell leaves a wavelength's relief as it is over a time, whatever the relief:
+/// it keeps all of it, and the ice under the lid would not flow from under what the lid
+/// could not hold (F195).
+fn band_still(wavelength: f64, dt_gyr: f64, shell: &Shell) -> bool {
+    survival(wavelength, dt_gyr, shell) as f32 > 0.999
+        && unflowed(wavelength, dt_gyr, shell) as f32 > 0.999
+}
+
 /// The step, on the bands the surface holds (F134). Returns the relaxed surface, which is
 /// the renewed terrain's floor where it is renewed, when there is such a terrain.
 pub fn relax(
@@ -527,11 +571,12 @@ pub fn relax(
             .map(|r| r.crust.iter().fold(0.0f32, |m, &c| m.max(c)) as f64);
         let still = (0..=levels).all(|l| {
             let w = 2.0 * cell * (2u32.pow(l as u32 + 1) as f64);
-            let kept = match (&local.rock, thickest) {
-                (Some(r), Some(c)) => rock_survival(w, r, c),
-                _ => survival(w, dt_gyr, shell),
-            };
-            kept as f32 > 0.999
+            match (&local.rock, thickest) {
+                (Some(r), Some(c)) => rock_survival(w, r, c) as f32 > 0.999,
+                // An ice lid holds a load only up to its strength (F195): still only where
+                // the ice below would not flow from under what the lid cannot hold.
+                _ => band_still(w, dt_gyr, shell),
+            }
         });
         if still {
             return None;
@@ -644,9 +689,24 @@ fn relax_deviation(
             .map(|&w| survival(w, dt_gyr, shell) as f32)
             .collect(),
     };
+    // An ice lid holds each band's share up to its strength and lets the rest ride on the
+    // ice below (F195): per band, the share the lid holds, what the flow leaves of the rest
+    // and the most relief the lid holds.
+    let lid: Option<Vec<(f64, f64, f64)>> = local.rock.is_none().then(|| {
+        wavelengths
+            .iter()
+            .map(|&w| {
+                (
+                    1.0 - ductile_share(w, shell),
+                    unflowed(w, dt_gyr, shell),
+                    lid_relief(w, shell),
+                )
+            })
+            .collect()
+    });
     let still = match &tables {
         Some((tables, _, _)) => tables.iter().all(|t| t.iter().all(|&f| f > 0.999)),
-        None => factors.iter().all(|&f| f > 0.999),
+        None => wavelengths.iter().all(|&w| band_still(w, dt_gyr, shell)),
     };
     if local.renew.is_none() && still {
         return None;
@@ -664,13 +724,18 @@ fn relax_deviation(
     });
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         eprintln!(
-            "relax shell {:.0} m elastic {:.0} m survival by band {:?}",
+            "relax shell {:.0} m elastic {:.0} m survival by band {:?}, the lid holding at most {:?} m",
             shell.thickness,
             shell.elastic,
             factors
                 .iter()
                 .map(|f| (f * 100.0).round() / 100.0)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            lid.as_ref().map(|lid| {
+                lid.iter()
+                    .map(|&(_, _, most)| most.min(1e6).round())
+                    .collect::<Vec<_>>()
+            })
         );
     }
     // What a cell keeps of the bands shorter than the renewal length: none inside a
@@ -710,13 +775,32 @@ fn relax_deviation(
     // from step to step. A renewed cell gives up the bands shorter than its renewal length
     // by its weight and relaxes the rest like its neighbours, so that it never stands apart
     // from them.
+    // Under an ice lid each band keeps what the lid holds of it and what the flow leaves of
+    // the rest (F195), beside a renewing terrain under the episode's thinner lid, which
+    // holds as the square of its thickness.
     held.absorb(height, depth);
-    held.decay(height, &factors, &wavelengths, |l, k| {
+    held.decay(height, &wavelengths, |l, shape, k, relief| {
+        let b = l.min(factors.len() - 1);
         let (level, keep) = kept(k);
-        let own = if l < level { keep * beside(l, k) } else { 1.0 };
+        let thin = l < level && !shape;
+        let relaxed = match &lid {
+            Some(lid) => {
+                let (share, unflowed, most) = lid[b];
+                let lid_factor = match local.halo {
+                    Some((thinning, _)) if thin => thinning[k].clamp(0.0, 1.0) as f64,
+                    _ => 1.0,
+                };
+                kept_relief(relief, share, unflowed, most * lid_factor * lid_factor)
+            }
+            None => relief * factors[b],
+        };
+        if shape {
+            return relaxed;
+        }
+        let own = if thin { keep * beside(l, k) } else { 1.0 };
         match &local.rock {
-            Some(r) => own * under(l, r.crust[k]),
-            None => own,
+            Some(r) => relaxed * own * under(l, r.crust[k]),
+            None => relaxed * own,
         }
     });
     // What a renewed cell gave up of the short bands it takes back from the base relief
@@ -763,7 +847,7 @@ mod tests {
             ..Default::default()
         };
         held.absorb(&h, depth);
-        held.decay(&mut h, &vec![0.5; levels + 1], &lengths, |_, _| 1.0);
+        held.decay(&mut h, &lengths, |_, _, _, v| 0.5 * v);
         let flow = held.flow.unwrap();
         for (i, j) in [(32, 32), (38, 32), (32, 41)] {
             let c = grid.cell(grid.index(crate::grid::Cell { face: 0, i, j }));
@@ -828,6 +912,7 @@ mod tests {
             gravity: 3.71,
             viscosity_scale: 1.0,
             rock: true,
+            strength: STRENGTH_ROCK,
         };
         assert!(survival(1_000e3, 0.1, &hot) < 0.5, "{}", survival(1_000e3, 0.1, &hot));
         assert!(survival(10_000e3, 0.1, &hot) > 0.95, "{}", survival(10_000e3, 0.1, &hot));
@@ -862,6 +947,7 @@ mod tests {
                 gravity,
                 viscosity_scale: 1.0,
                 rock: true,
+                strength: STRENGTH_ROCK,
             }
         };
         let overturn = crate::thermal::ThermalHistory::from_graph(&g)
@@ -905,6 +991,7 @@ mod tests {
             gravity: 0.113,
             viscosity_scale: 1.0,
             rock: false,
+            strength: STRENGTH_ICE,
         };
         let flexural = flexural_wavelength(&shell);
         assert!((330e3..410e3).contains(&flexural), "{flexural}");
@@ -932,6 +1019,7 @@ mod tests {
             gravity: 0.064,
             viscosity_scale: 1.0,
             rock: false,
+            strength: STRENGTH_ICE,
         };
         let flexural = flexural_wavelength(&mimas);
         assert!((400e3..500e3).contains(&flexural), "{flexural}");
@@ -970,7 +1058,7 @@ mod tests {
                     held = Bands::default();
                 }
                 held.absorb(&h, depth);
-                held.decay(&mut h, &factors, &[], |_, _| 1.0);
+                held.decay(&mut h, &[], |l, _, _, v| v * factors[l.min(factors.len() - 1)]);
             }
             h.as_slice().to_vec()
         };
@@ -1026,6 +1114,7 @@ mod tests {
             gravity: 1.43,
             viscosity_scale: 1.0,
             rock: false,
+            strength: STRENGTH_ICE,
         };
         assert!(relaxation_time_gyr(300e3, &ganymede) < 1e-3);
         assert!(relaxation_time_gyr(20e3, &ganymede) > 100.0);
@@ -1040,6 +1129,7 @@ mod tests {
             gravity: 1.31,
             viscosity_scale: 1.0,
             rock: false,
+            strength: STRENGTH_ICE,
         };
         assert!(relaxation_time_gyr(30e3, &europa) < 0.05);
         assert!(survival_since(30e3, 4.0, 4.5, &|_| europa, 1.0) > 0.95);
@@ -1095,5 +1185,42 @@ mod tests {
         let (after, kept) = measure(&h);
         assert!(after < 0.5 * before, "{after} vs {before}");
         assert!((kept - mean).abs() < 1.0, "{kept} vs {mean}");
+    }
+
+    /// F195: an ice lid holds a band's relief only up to what bends it to its strength, and
+    /// the warm ice under it flows from under the rest; a relief well within the bound, or
+    /// a lid of no bound, keeps its survival.
+    #[test]
+    fn an_ice_lid_holds_no_more_relief_than_its_strength_bears() {
+        let enceladus = Shell {
+            thickness: 22e3,
+            elastic: 11.5e3,
+            surface_temperature: 75.0,
+            basal_temperature: 273.0,
+            gravity: 0.113,
+            viscosity_scale: 1.0,
+            rock: false,
+            strength: STRENGTH_ICE,
+        };
+        // About a kilometre at 200 km on Enceladus, four times that at half the wavelength.
+        let most = lid_relief(200e3, &enceladus);
+        assert!(most > 0.8e3 && most < 1.3e3, "{most}");
+        assert!((lid_relief(100e3, &enceladus) / most - 4.0).abs() < 1e-9);
+        let share = 1.0 - ductile_share(200e3, &enceladus);
+        let flow = unflowed(200e3, 0.05, &enceladus);
+        let kept = kept_relief(4e3, share, flow, most) as f64;
+        assert!(kept > 0.0 && kept <= most, "{kept}");
+        let survives = survival(200e3, 0.05, &enceladus);
+        let small = kept_relief(10.0, share, flow, most) as f64;
+        assert!((small / 10.0 - survives).abs() < 0.01, "{small}");
+        let free = kept_relief(4e3, share, flow, f64::INFINITY) as f64;
+        assert!((free / 4e3 - survives).abs() < 1e-6, "{free}");
+        // A rocky lid's relief stands on its crust's compensation: no bound.
+        let rock = Shell {
+            rock: true,
+            strength: STRENGTH_ROCK,
+            ..enceladus
+        };
+        assert!(lid_relief(200e3, &rock).is_infinite());
     }
 }
