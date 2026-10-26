@@ -2650,12 +2650,12 @@ pub const FREEZE_RESPONSE_GYR: f64 = 0.001;
 pub const HETEROGENEITY_SHARE: f64 = 0.2;
 pub const HETEROGENEITY_RENEWAL_GYR: f64 = 0.005;
 pub const POLAR_FABRIC_RANGE: f64 = 40e3;
-/// The margin belt: the spreading is taken up in folds parallel to the renewed terrain's
-/// edge, decaying from it over the margin lid's flexural parameter, their spacing and
-/// relief the margin's brittle layer's as it takes up the spreading (F194), drawn as the
-/// lanes' faults are, in segments that come and go and step across (F132, F133), not as
-/// concentric rings; the belt and the margin ridge stand in arcs about this long, m,
-/// along the edge.
+/// The margin belt: the spreading is taken up in folds where it meets the renewed
+/// terrain's edge, decaying from it over the margin lid's flexural parameter, their spacing and
+/// relief the margin's brittle layer's as it takes up the spreading (F194), its folds the
+/// fabric's own, raised and widened where the edge faces the terrain's spreading across
+/// its fissures and running along them still (F199); the belt and the margin ridge stand
+/// in arcs about this long, m, along the edge.
 pub const POLAR_BELT_SEGMENT: f64 = 25e3;
 /// The belt and the margin ridge come in arcs: they stand where the segment field is
 /// high and are absent where it is low, this sharply; between the arcs the fabric's

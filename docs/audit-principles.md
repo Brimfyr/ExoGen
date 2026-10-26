@@ -180,6 +180,8 @@ Direction: the user chose three steps: the outlines and the fissures from the fi
 
 Closed in part by F198, the hundred-and-twelfth milestone: the fissures run on until the thick shell stops them and the outline is warped at every scale, so that no ring of fissures traces a terrain. Still open: the folds and the belt along the margin; the network.
 
+Closed further by F199, the hundred-and-thirteenth milestone: the margin's folds are the fabric's own, raised and widened where the edge faces the terrain's spreading across its fissures, so that no set of folds crosses the fabric or runs round the edge. Still open: the network.
+
 ### W3. Tessera outlines
 
 `TESSERA_SMOOTHING_PASSES` (20 passes on the loop grid) smooths the old crust's height before the tesserae are chosen as its highest share. The smoothing is about two cells, so on Venus it is about 80 km at standard quality and 170 km at preview: the tesserae's outlines change with the quality.

@@ -2646,3 +2646,15 @@ How it went:
 - **Arrest.** A crack running into a stiffer shell slows and stops rather than following the contrast; with no turn the rings are gone, and each terrain's edge is ragged where its fissures run out, its tongues following them.
 
 Still to do: the margin's folds and belt (W10); the network (W10); Enceladus's plains' heat history (M3); Io; the Moon.
+
+## The hundred-and-thirteenth milestone: the margin's folds are the fabric's, raised where the spreading is taken up
+
+The second of the user's three steps for the terrains (audit W10): the cross-folds, the margin belt's ridges laid along the edge over the fabric, stood out from the fabric's folds and traced the terrain's shape.
+
+- **F199.** The terrain spreads across its fissures, so its margin shortens across them and folds along them, as the fabric does: the belt's folds are the fabric's own, taking the belt's spacing and relief where the edge faces the spreading; the separate belt is gone.
+
+How it went:
+
+- **Turning or not.** The plan was to turn the fabric toward the edge near the margin; the spreading's direction says otherwise, the shortening at a margin running across the fissures, so the folds keep their strike and only grow, as much as the edge faces the spreading. Where the edge runs along the spreading the margin shears and folds nothing, so the belt comes and goes round each terrain with its fissures' strike.
+
+Still to do: the network (W10); Enceladus's plains' heat history (M3); Io; the Moon.
