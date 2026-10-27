@@ -1290,7 +1290,6 @@ pub const IO_RING_INNER_PELE: f64 = 0.15;
 pub const IO_RING_INNER_PROMETHEUS: f64 = 0.03;
 pub const IO_PELE_FROST: f64 = 0.25;
 pub const IO_PROMETHEUS_RED: f64 = 0.15;
-pub const IO_RING_EDGE_WOBBLE: f64 = 0.08;
 pub const IO_DEPOSIT_MOTTLING: f64 = 0.35;
 pub const IO_RED_FADE_YR: f64 = 2.0;
 /// The plains' age, Gyr; and the plains are buried as fast as the regime renews them
@@ -1325,7 +1324,7 @@ pub const IO_PLUME_MASS_PELE: f64 = 3.0e3;
 pub const IO_PLUME_MASS_PROMETHEUS: f64 = 1.0e5;
 pub const IO_PLUME_MASS_SCATTER: f64 = 0.5;
 pub const IO_PROMETHEUS_FROST: (f64, f64) = (0.4, 0.95);
-pub const IO_VENT_ELONGATION: (f64, f64) = (0.3, 0.1);
+pub const IO_VENT_ELONGATION: f64 = 0.1;
 pub const IO_DARK_PELE: f64 = 0.5;
 pub const IO_DARK_PROMETHEUS: f64 = 0.3;
 pub const IO_DARK_CONTAMINATED: f64 = 0.25;
@@ -1386,6 +1385,26 @@ pub const IO_FROST_ALBEDO: f64 = 0.75;
 /// grains this many times a fine frost's, scattering as many times less for its mass.
 pub const IO_FROST_COARSENING_YR: f64 = 3.0;
 pub const IO_FROST_COARSE_GRAIN: f64 = 20.0;
+/// A Pele-class plume rises from the cracks along its lava lake's margin (F208; McDoniel
+/// et al. 2015: gas erupting from cracks and holes in the lake makes Pele's plume and
+/// its ring, a curved line source along the lake's edge its ring's asymmetries): each
+/// piece of the margin throws its gas out across itself, spread over this angle, rad (a
+/// stated choice), from this many cracks to an eruption along the margin, log-uniform,
+/// drawn by length (a stated choice), so that the ring reaches farther where more of the
+/// gas faces, by this share of its range for the gas's full departure from even (a
+/// stated choice: Pele's ring some 1,200 by 1,000 km, Geissler et al. 2004; McDoniel et
+/// al. 2015: the lake's small features shape its ring's asymmetries); this share of its
+/// pyroclasts jet along the cracks, each within this angle, rad, the dark fans about
+/// Pele's vent, the rest falling evenly (stated choices); and
+/// the plasma's heating inflates the canopy and softens the ring's outer edge to this
+/// share of the range (McDoniel et al., Physics of Fluids: a fuzzier ring; a stated
+/// width), where a Prometheus-class ring ends at IO_RING_OUTER_WIDTH.
+pub const IO_PELE_GAS_SPREAD: f64 = 0.52;
+pub const IO_PELE_MARGIN_SHAPE: f64 = 0.2;
+pub const IO_PELE_JETS: (f64, f64) = (10.0, 20.0);
+pub const IO_PELE_JET_SHARE: f64 = 0.6;
+pub const IO_PELE_JET_WIDTH: f64 = 0.18;
+pub const IO_RING_OUTER_WIDTH_PELE: f64 = 0.2;
 /// The plasma alters what lies on top to red-brown in this many years where nothing
 /// shields it (F207, a stated choice: within months, faster than a plume's red sulfur
 /// reverts to yellow, IO_RED_FADE_YR, so that a deposit fading at the high latitudes

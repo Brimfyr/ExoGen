@@ -2738,3 +2738,16 @@ Still to do: the flows' and floors' colours (Io's green material); the frost fie
 - **F207.** The yellow about the high-latitude rings was fresh sulfur the plasma had not yet altered, its red reverting in two years and the alteration taking ten: the plasma now alters within half a year where unshielded, the shielding calibrated again so that the red-brown still begins at about 30 degrees, and the rings there lie salmon on it, as Io's ephemeral red deposits at Surt and Tvashtar went back to the red-brown.
 
 Still to do: the Pele-class rings' shapes; the flows' and floors' colours; the frost fields' fine structure.
+
+## The hundred-and-twenty-first milestone: a Pele-class plume rises from the cracks along its lava lake
+
+The third of the user's steps for Io: the Pele-class rings were smooth loops with random wobbles.
+
+- **F208.** Each eruption cracks its lava lake's margin at ten to twenty places along the patera's own outline; the ring reaches farther where more of the cracks' gas faces, its pyroclasts jet along the cracks in soft dark fans, and the plasma softens its outer edge (McDoniel et al. 2015).
+
+How it went:
+
+- **Ovals.** The facing of the whole margin made smooth ovals; the lake's small features, its discrete cracks, give each eruption's ring its own asymmetry.
+- **Propellers.** Jets of five degrees carrying all the pyroclasts drew black blades about the vents; ten degrees, with four tenths of the pyroclasts falling evenly, draw soft fans.
+
+Still to do: the flows' and floors' colours (Io's green material); the frost fields' fine structure.

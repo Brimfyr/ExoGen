@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 23;
+pub const VERSION: u64 = 24;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -152,6 +152,9 @@ pub struct PlumeEpisode {
     range: [[f64; 2]; RANGE_ORDERS.1 - RANGE_ORDERS.0 + 1],
     /// Where its mottling lies in the noise.
     mottle: [f64; 3],
+    /// The azimuths its pyroclasts jet along from the cracks, rad (F208); none for an
+    /// even fall.
+    jets: Vec<f64>,
     /// One of the small eruptions that lay the background fallout (F89).
     pub small: bool,
     pub id: u64,
@@ -213,6 +216,9 @@ impl Mountain {
 struct Plume {
     cos_cap: f64,
     reach: f64,
+    /// The ring's width beyond its crest, as a share of the range.
+    outer: f64,
+    jets: Vec<f64>,
     radius: f64,
     axis: (f64, f64),
     aspect: f64,
@@ -230,10 +236,14 @@ struct Plume {
 
 impl Plume {
     fn new(e: &PlumeEpisode, body_radius: f64, window: f64) -> Self {
-        let (red, inner) = if e.pele {
-            (1.0, IO_RING_INNER_PELE)
+        let (red, inner, outer) = if e.pele {
+            (1.0, IO_RING_INNER_PELE, IO_RING_OUTER_WIDTH_PELE)
         } else {
-            (IO_PROMETHEUS_RED, IO_RING_INNER_PROMETHEUS)
+            (
+                IO_PROMETHEUS_RED,
+                IO_RING_INNER_PROMETHEUS,
+                IO_RING_OUTER_WIDTH,
+            )
         };
         let (start, end) = (-e.start_yr.min(window), -e.end_yr);
         // The deposit reaches as far as its ring's tail lays a fall that could show over
@@ -243,13 +253,15 @@ impl Plume {
         let reach = if e.small {
             1.0
         } else {
-            (1.0 + IO_RING_OUTER_WIDTH * total.max(1.0).ln().sqrt()).min(1.5)
+            (1.0 + outer * total.max(1.0).ln().sqrt()).min(1.5)
         };
         let wobble: f64 = e.range.iter().map(|h| h[0].hypot(h[1])).sum();
         let cap = reach * e.radius * e.aspect.sqrt() * (1.0 + wobble) / body_radius;
         Self {
             cos_cap: cap.min(std::f64::consts::PI).cos(),
             reach,
+            outer,
+            jets: e.jets.clone(),
             radius: e.radius,
             axis: (e.axis.cos(), e.axis.sin()),
             aspect: e.aspect,
@@ -265,6 +277,27 @@ impl Plume {
             start,
             end,
         }
+    }
+
+    /// The share of the pyroclasts at an azimuth (F208): IO_PELE_JET_SHARE along the
+    /// cracks' jets, the rest even, the mean of all azimuths one; even where there are no
+    /// jets.
+    fn jet_at(&self, azimuth: f64) -> f64 {
+        if self.jets.is_empty() {
+            return 1.0;
+        }
+        let tau = std::f64::consts::TAU;
+        let w = IO_PELE_JET_WIDTH;
+        let sum: f64 = self
+            .jets
+            .iter()
+            .map(|&j| {
+                let d = (azimuth - j + 0.5 * tau).rem_euclid(tau) - 0.5 * tau;
+                (-(d / w).powi(2)).exp()
+            })
+            .sum();
+        let jetted = sum * tau / (self.jets.len() as f64 * w * std::f64::consts::PI.sqrt());
+        1.0 - IO_PELE_JET_SHARE + IO_PELE_JET_SHARE * jetted
     }
 
     /// The deposit's range at an azimuth, as a share of the ballistic range, from the
@@ -701,15 +734,11 @@ pub fn history_years() -> f64 {
 }
 
 /// Fallout of a plume at a fraction `x` of its range (F84), as the crest's share: the
-/// ring where the gas condenses at the canopy and falls back, ending steeply beyond the
-/// range of the fastest and rising gently within; and, as a share of `inner`, the
-/// pyroclasts' thinner fall within it.
-pub fn deposit_profile(x: f64) -> (f64, f64) {
-    let width = if x < 1.0 {
-        IO_RING_WIDTH
-    } else {
-        IO_RING_OUTER_WIDTH
-    };
+/// ring where the gas condenses at the canopy and falls back, ending beyond the range of
+/// the fastest over `outer` of the range (F208) and rising gently within; and, as a share
+/// of `inner`, the pyroclasts' thinner fall within it.
+pub fn deposit_profile(x: f64, outer: f64) -> (f64, f64) {
+    let width = if x < 1.0 { IO_RING_WIDTH } else { outer };
     let ring = (-((x - 1.0) / width).powi(2)).exp();
     let fill = ((1.0 - x) / 0.5).clamp(0.0, 1.0);
     (ring, fill)
@@ -723,16 +752,77 @@ pub fn small_profile(x: f64) -> f64 {
 
 /// The area under a deposit's profile, as the integral of the profile times x over x: a
 /// deposit of range R spreads its mass over 2π R² times this.
-pub fn profile_moment(inner: f64) -> f64 {
+pub fn profile_moment(inner: f64, outer: f64) -> f64 {
     let n = 4000;
     let dx = 1.5 / n as f64;
     (0..n)
         .map(|i| {
             let x = (i as f64 + 0.5) * dx;
-            let (ring, fill) = deposit_profile(x);
+            let (ring, fill) = deposit_profile(x, outer);
             (ring + inner * fill) * x * dx
         })
         .sum()
+}
+
+/// Where a Pele-class eruption's gas rises from its lava lake (F208): `count` cracks
+/// along the margin, drawn by length, each facing out across the margin there; the
+/// share of the gas facing each azimuth, each crack's spread over the angle its gas
+/// covers, as the harmonics of orders RANGE_ORDERS of its departure from even; and the
+/// cracks' azimuths, along which the pyroclasts jet.
+fn margin_facing(p: &Patera, count: usize, rng: &Rng, draw: u64) -> MarginFacing {
+    let n = 360;
+    let tau = std::f64::consts::TAU;
+    let points: Vec<(f64, f64)> = (0..n)
+        .map(|i| {
+            let phi = tau * i as f64 / n as f64;
+            let r = patera_radius(phi, p);
+            (r * phi.cos(), r * phi.sin())
+        })
+        .collect();
+    let pieces: Vec<(f64, f64)> = (0..n)
+        .map(|i| {
+            let (x0, y0) = points[i];
+            let (x1, y1) = points[(i + 1) % n];
+            let (dx, dy) = (x1 - x0, y1 - y0);
+            (dx.hypot(dy), (-dx).atan2(dy))
+        })
+        .collect();
+    let total: f64 = pieces
+        .iter()
+        .map(|p| p.0)
+        .sum::<f64>()
+        .max(f64::MIN_POSITIVE);
+    let jets: Vec<f64> = (0..count.max(1) as u64)
+        .map(|c| {
+            let mut at = rng.uniform(draw, c) * total;
+            let mut psi = pieces[0].1;
+            for &(ds, normal) in &pieces {
+                psi = normal;
+                if at < ds {
+                    break;
+                }
+                at -= ds;
+            }
+            psi
+        })
+        .collect();
+    let mut range = [[0.0; 2]; RANGE_ORDERS.1 - RANGE_ORDERS.0 + 1];
+    for (j, h) in range.iter_mut().enumerate() {
+        let k = (RANGE_ORDERS.0 + j) as f64;
+        let (a, b) = jets.iter().fold((0.0, 0.0), |(a, b), &psi| {
+            (a + (k * psi).cos(), b + (k * psi).sin())
+        });
+        let spread = (-0.5 * (k * IO_PELE_GAS_SPREAD).powi(2)).exp();
+        let scale = 2.0 / jets.len() as f64 * spread * IO_PELE_MARGIN_SHAPE;
+        // The range harmonics' convention: h[0] cos kφ − h[1] sin kφ.
+        *h = [scale * a, -scale * b];
+    }
+    MarginFacing { range, jets }
+}
+
+struct MarginFacing {
+    range: [[f64; 2]; RANGE_ORDERS.1 - RANGE_ORDERS.0 + 1],
+    jets: Vec<f64>,
 }
 
 /// The plumes of the Pele-class paterae over the history the surface remembers (F84;
@@ -741,25 +831,20 @@ pub fn profile_moment(inner: f64) -> f64 {
 /// and its class's share of active centres throws a plume, part way through; then quiet
 /// spells and eruptions alternating at the duty its class keeps, the spells memoryless
 /// and the eruptions from a few months to decades long. Each eruption has its own speed
-/// and so its range, its own mass and its vent's elongation.
+/// and so its range and its own mass; its gas rises from the cracks along its lava
+/// lake's margin, so that its ring reaches farther where more of the margin faces and
+/// its pyroclasts jet from the cracks (F208).
 pub fn plume_history(paterae: &[Patera], gravity: f64, seed: u64) -> Vec<PlumeEpisode> {
     let rng = Rng::new(seed ^ 0x0E91_5DE5_0000_0084);
     let (d_lo, d_hi) = IO_PLUME_DURATION_YR;
     let mean_duration = (d_hi - d_lo) / (d_hi / d_lo).ln();
-    let moments = [
-        profile_moment(IO_RING_INNER_PROMETHEUS),
-        profile_moment(IO_RING_INNER_PELE),
-    ];
+    let moment = profile_moment(IO_RING_INNER_PELE, IO_RING_OUTER_WIDTH_PELE);
     let tau = 2.0 * std::f64::consts::PI;
     let window = history_years();
     let mut out = Vec::new();
     for p in paterae.iter().filter(|p| p.pele) {
         let idx = p.id;
-        let share = if p.pele {
-            IO_PLUME_FRACTION_PELE
-        } else {
-            IO_PLUME_FRACTION_PROMETHEUS
-        };
+        let share = IO_PLUME_FRACTION_PELE;
         let duty = IO_PATERA_ACTIVE_FRACTION * share;
         let quiet = mean_duration * (1.0 - duty) / duty;
         let duration = |draw: u64| d_lo * (d_hi / d_lo).powf(rng.uniform(idx, draw));
@@ -783,65 +868,34 @@ pub fn plume_history(paterae: &[Patera], gravity: f64, seed: u64) -> Vec<PlumeEp
         }
         for (j, &(start, end)) in spans.iter().enumerate() {
             let base = 1_000 + 64 * j as u64;
-            let (speed, mass, elongation) = if p.pele {
-                (
-                    IO_PLUME_SPEED_PELE,
-                    IO_PLUME_MASS_PELE,
-                    IO_VENT_ELONGATION.0,
-                )
-            } else {
-                (
-                    IO_PLUME_SPEED_PROMETHEUS,
-                    IO_PLUME_MASS_PROMETHEUS,
-                    IO_VENT_ELONGATION.1,
-                )
-            };
-            let speed = speed * (IO_PLUME_SPEED_SCATTER * rng.normal(idx, base)).exp();
+            let speed =
+                IO_PLUME_SPEED_PELE * (IO_PLUME_SPEED_SCATTER * rng.normal(idx, base)).exp();
             let radius = speed * speed / gravity.max(0.01);
-            let mass = mass * (IO_PLUME_MASS_SCATTER * rng.normal(idx, base + 2)).exp();
-            let crest = mass * YEAR
-                / (tau * radius * radius * moments[p.pele as usize] * IO_DEPOSIT_OPTICAL_MASS);
-            let dark = if p.pele {
-                IO_DARK_PELE
-            } else if rng.uniform(idx, base + 4) < IO_DARK_CONTAMINATED {
-                IO_DARK_PROMETHEUS
-            } else {
-                0.0
-            };
-            let harmonic = |amplitude: f64, draw: u64| {
-                let phase = tau * rng.uniform(idx, draw);
-                [amplitude * phase.cos(), amplitude * phase.sin()]
-            };
-            let n_range = RANGE_ORDERS.1 - RANGE_ORDERS.0 + 1;
-            let a_range = IO_RING_EDGE_WOBBLE * (2.0 / n_range as f64).sqrt();
-            let mut range = [[0.0; 2]; RANGE_ORDERS.1 - RANGE_ORDERS.0 + 1];
-            for (k, h) in range.iter_mut().enumerate() {
-                *h = harmonic(a_range, base + 10 + k as u64);
-            }
+            let mass =
+                IO_PLUME_MASS_PELE * (IO_PLUME_MASS_SCATTER * rng.normal(idx, base + 2)).exp();
+            let crest = mass * YEAR / (tau * radius * radius * moment * IO_DEPOSIT_OPTICAL_MASS);
+            // Each eruption cracks the lake's margin afresh.
+            let (j_lo, j_hi) = IO_PELE_JETS;
+            let count = (j_lo * (j_hi / j_lo).powf(rng.uniform(idx, base + 7))).round() as usize;
+            let facing = margin_facing(p, count, &rng, idx ^ (base << 20));
             out.push(PlumeEpisode {
                 center: p.center,
                 radius,
-                pele: p.pele,
+                pele: true,
                 start_yr: start,
                 end_yr: end,
                 crest,
-                aspect: 1.0 + elongation * rng.uniform(idx, base + 5),
-                // The deposit reaches farthest across the vent, which runs along the
-                // patera's long side.
-                axis: p.axis + 0.5 * std::f64::consts::PI,
-                dark,
-                frost: if p.pele {
-                    IO_PELE_FROST
-                } else {
-                    let (lo, hi) = IO_PROMETHEUS_FROST;
-                    lo + (hi - lo) * rng.uniform(idx, base + 6)
-                },
-                range,
+                aspect: 1.0,
+                axis: 0.0,
+                dark: IO_DARK_PELE,
+                frost: IO_PELE_FROST,
+                range: facing.range,
                 mottle: [
                     1e3 * rng.uniform(idx, base + 40),
                     1e3 * rng.uniform(idx, base + 41),
                     1e3 * rng.uniform(idx, base + 42),
                 ],
+                jets: facing.jets,
                 small: false,
                 id: idx ^ (base << 32),
             });
@@ -911,7 +965,7 @@ pub fn small_eruptions(seed: u64, cell: f64) -> Vec<PlumeEpisode> {
             start_yr: start,
             end_yr: end,
             crest,
-            aspect: 1.0 + IO_VENT_ELONGATION.1 * rng.uniform(idx, 7),
+            aspect: 1.0 + IO_VENT_ELONGATION * rng.uniform(idx, 7),
             axis: tau * rng.uniform(idx, 8),
             dark: if rng.uniform(idx, 9) < IO_DARK_CONTAMINATED {
                 IO_DARK_PROMETHEUS
@@ -925,6 +979,7 @@ pub fn small_eruptions(seed: u64, cell: f64) -> Vec<PlumeEpisode> {
                 1e3 * rng.uniform(idx, 21),
                 1e3 * rng.uniform(idx, 22),
             ],
+            jets: Vec::new(),
             small: true,
             id: 0x5_0000_0000_0000 + idx,
         });
@@ -1023,7 +1078,7 @@ fn front_falls(
 ) -> Vec<FrontFall> {
     let coarse = CubeSphere::new(grid.face_size().min(128));
     let range = IO_PLUME_SPEED_PROMETHEUS * IO_PLUME_SPEED_PROMETHEUS / gravity.max(0.01);
-    let moment = profile_moment(IO_RING_INNER_PROMETHEUS);
+    let moment = profile_moment(IO_RING_INNER_PROMETHEUS, IO_RING_OUTER_WIDTH);
     // Each piece of a source erupts at the speed its place draws, with the class's
     // scatter, a unit spread of the noise; the range goes as the speed squared.
     let speeds = GradientNoise::new(0xF207_5EED);
@@ -1082,7 +1137,7 @@ fn front_falls(
                     if x >= farthest {
                         continue;
                     }
-                    let (crest, within) = deposit_profile(x);
+                    let (crest, within) = deposit_profile(x, IO_RING_OUTER_WIDTH);
                     let within = IO_RING_INNER_PROMETHEUS * within;
                     ring[idx] += per * crest;
                     fill[idx] += per * within;
@@ -1575,7 +1630,7 @@ pub fn deposit_history(
                         if x >= e.reach {
                             continue;
                         }
-                        let (ring, fill) = deposit_profile(x);
+                        let (ring, fill) = deposit_profile(x, e.outer);
                         // A small eruption rises too low for a canopy: its fall is a smooth
                         // bump about the vent, frost and sulfur together (F89).
                         let (ring, fill) = if is_small {
@@ -1594,7 +1649,8 @@ pub fn deposit_history(
                         // sulfur; the pyroclasts within, sulfur and silicate.
                         let ring = mass * ring;
                         let fill = mass * fill;
-                        let dark = e.dark * (-(x / IO_DARK_REACH).powi(2)).exp();
+                        let dark =
+                            e.dark * (-(x / IO_DARK_REACH).powi(2)).exp() * e.jet_at(s1.atan2(c1));
                         let fall = if is_small {
                             let solid = fill * (1.0 - e.frost);
                             Fall {
@@ -2847,13 +2903,14 @@ mod tests {
         // The ring peaks at the range and ends more steeply outside than it rises
         // inside; the pyroclasts fall within.
         let total = |x: f64| {
-            let (ring, fill) = deposit_profile(x);
+            let (ring, fill) = deposit_profile(x, IO_RING_OUTER_WIDTH);
             ring + 0.3 * fill
         };
         assert!(total(1.0) > total(0.5) && total(0.5) > total(1.3));
-        assert!(deposit_profile(1.15).0 < deposit_profile(0.85).0);
-        assert!(deposit_profile(1.1).1 == 0.0 && deposit_profile(0.2).1 == 1.0);
-        let moment = profile_moment(0.3);
+        let w = IO_RING_OUTER_WIDTH;
+        assert!(deposit_profile(1.15, w).0 < deposit_profile(0.85, w).0);
+        assert!(deposit_profile(1.1, w).1 == 0.0 && deposit_profile(0.2, w).1 == 1.0);
+        let moment = profile_moment(0.3, w);
         assert!(moment > 0.2 && moment < 0.6, "{moment}");
     }
 
@@ -3391,6 +3448,71 @@ mod tests {
             crest_r > 0.5 * range && crest_r < 1.8 * range,
             "crest at {crest_r} m, range {range} m"
         );
+    }
+
+    /// A Pele-class plume rises from the cracks along its lava lake's margin (F208): an
+    /// elongated patera's cracks face across its long axis, so its ring reaches farther
+    /// across than along; and its pyroclasts jet along the cracks, their mean over every
+    /// azimuth kept.
+    #[test]
+    fn a_pele_class_ring_follows_its_lake_s_margin() {
+        let patera = Patera {
+            center: [1.0, 0.0, 0.0],
+            radius: 20e3,
+            depth: 1e3,
+            active: true,
+            floor_age_yr: 1.0,
+            pele: true,
+            axis: 0.0,
+            ellipticity: 4.0,
+            collapses: vec![[0.0, 0.0, 20e3]],
+            faults: Vec::new(),
+            abuts: None,
+            birth_gyr: 0.0,
+            death_gyr: 10.0,
+            id: 11,
+        };
+        let rng = Rng::new(5);
+        let facing = margin_facing(&patera, 400, &rng, 3);
+        let range = |phi: f64| {
+            1.0 + facing
+                .range
+                .iter()
+                .enumerate()
+                .map(|(j, h)| {
+                    let k = (RANGE_ORDERS.0 + j) as f64;
+                    h[0] * (k * phi).cos() - h[1] * (k * phi).sin()
+                })
+                .sum::<f64>()
+        };
+        let (along, across) = (range(0.0), range(0.5 * std::f64::consts::PI));
+        assert!(across > along + 0.1, "across {across:.3}, along {along:.3}");
+        let episode = PlumeEpisode {
+            center: patera.center,
+            radius: 500e3,
+            pele: true,
+            start_yr: 10.0,
+            end_yr: 0.0,
+            crest: 1.0,
+            aspect: 1.0,
+            axis: 0.0,
+            dark: IO_DARK_PELE,
+            frost: IO_PELE_FROST,
+            range: facing.range,
+            mottle: [0.0; 3],
+            jets: facing.jets[..12].to_vec(),
+            small: false,
+            id: 1,
+        };
+        let plume = Plume::new(&episode, 1.82e6, history_years());
+        let n = 3600;
+        let shares: Vec<f64> = (0..n)
+            .map(|i| plume.jet_at(std::f64::consts::TAU * i as f64 / n as f64))
+            .collect();
+        let mean = shares.iter().sum::<f64>() / n as f64;
+        let peak = shares.iter().cloned().fold(0.0, f64::max);
+        assert!((mean - 1.0).abs() < 0.02, "mean {mean:.3}");
+        assert!(peak > 1.3, "peak {peak:.3}");
     }
 
     /// The history of a patera's plumes (F84): an active Pele-class patera with a plume
