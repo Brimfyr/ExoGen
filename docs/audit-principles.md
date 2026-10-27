@@ -182,6 +182,8 @@ Closed in part by F198, the hundred-and-twelfth milestone: the fissures run on u
 
 Closed further by F199, the hundred-and-thirteenth milestone: the margin's folds are the fabric's own, raised and widened where the edge faces the terrain's spreading across its fissures, so that no set of folds crosses the fabric or runs round the edge. Still open: the network.
 
+Closed further by F200, the hundred-and-fourteenth milestone: each reorientation fractures the plains, and the terrains' fissures running out of their zones end against the fractures, a network that links the terrains. Still open: the fractures are narrow and shallow, faint at 4,096 pixels; the belts that link Enceladus's terrains on its images, kilometres in relief, want a shell thinner where they formed (audit M3).
+
 ### W3. Tessera outlines
 
 `TESSERA_SMOOTHING_PASSES` (20 passes on the loop grid) smooths the old crust's height before the tesserae are chosen as its highest share. The smoothing is about two cells, so on Venus it is about 80 km at standard quality and 170 km at preview: the tesserae's outlines change with the quality.
@@ -482,6 +484,8 @@ Direction: the stresses that crack a shell beyond the diurnal tide: the tension 
 Since F82 (2026-10-15, the twenty-fourth milestone) a shell that thickens stands at the cracking stress in tension. Enceladus's mean shell, held by its porous core's steady heat (F68), thickens by only 0.6 km over its life, some 650 Pa of tension, so its plains still do not crack; the thickening that would crack them is local, the zone refreezing at each focusing episode's end, which F82's global history of the shell does not see.
 
 When: with a local history of the shell under the focusing episodes.
+
+Closed in part by F200, the hundred-and-fourteenth milestone: each reorientation to a new episode's pole stresses the shell by its figure's change, some hundreds of kilopascals, and its first fractures cut the plains, a few long ones to each reorientation, narrow and shallow for the small strain they take up. Still open: the local refreezing's tension at each episode's end.
 
 ### M5. Europa's old bands are bright
 

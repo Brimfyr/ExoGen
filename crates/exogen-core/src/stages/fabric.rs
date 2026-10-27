@@ -88,7 +88,7 @@ pub fn drawn_coverage(lineae: &[Linea], body_radius: f64) -> f64 {
         .map(|l| {
             let width = match l.kind {
                 LineaKind::Band => 2.0 / 3.0 * l.width,
-                LineaKind::Vent => l.width,
+                LineaKind::Vent | LineaKind::Fracture => l.width,
                 _ => OPENING_MEAN * l.width,
             };
             width * trace_length(&l.points, body_radius)

@@ -2658,3 +2658,17 @@ How it went:
 - **Turning or not.** The plan was to turn the fabric toward the edge near the margin; the spreading's direction says otherwise, the shortening at a margin running across the fissures, so the folds keep their strike and only grow, as much as the edge faces the spreading. Where the edge runs along the spreading the margin shears and folds nothing, so the belt comes and goes round each terrain with its fissures' strike.
 
 Still to do: the network (W10); Enceladus's plains' heat history (M3); Io; the Moon.
+
+## The hundred-and-fourteenth milestone: each reorientation fractures the shell
+
+The third of the user's three steps for the terrains (audit W10): the terrains met no other to make a network. The plan was for the fissures to run on across the plains along the tide's field, but the tide stresses Enceladus's uniform shell under the cracking stress (audit M4); the user chose the stress M4 names instead, the reorientation to each episode's pole.
+
+- **F200.** Each reorientation stresses the shell by its figure's change, the tidal bulge and the spin's flattening turned against a shell relaxed to the old axes, and its first fractures cut the plains, each relieving about half its length; later cracks meet them where they still stand, beyond the thinned zone.
+
+How it went:
+
+- **A mesh.** Saturating each reorientation at the shell's thickness drew 211,000 km of faint, criss-crossing troughs, a mesh rather than a network, and doubled the pass's time; the user chose the first fractures only.
+- **Faint.** The stress, some 360 kPa for a 30-degree turn, is many times the ice's strength, but the strain it relieves is small, so the fractures are narrow and shallow: they show at export resolutions, not at 4,096 pixels. The user chose to keep them.
+- **Within the zones.** The fractures first ended the thinned zone's fissures within the zone, halving them; the zone renews itself over the old ground, so the fissures meet the fractures only beyond it.
+
+Still to do: the belts that link the terrains, which want the plains' heat history (M3); Io; the Moon.

@@ -44,6 +44,9 @@ pub enum LineaKind {
     /// A fissure under a plume: a trough widened and deepened by the venting, with low
     /// flanks.
     Vent,
+    /// A fracture a stress beyond the tide's opened across the shell, a reorientation's
+    /// (F200): a trough with soft walls, in segments as a ridge's crack, with no stain.
+    Fracture,
 }
 
 /// A crack in the shell and what grew along it.
@@ -644,6 +647,39 @@ impl Cracks {
             .iter()
             .map(|_| CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius))
             .collect();
+        // Each reorientation fractures the shell across its figure's change first (F200),
+        // and the cracks that open after meet its fractures as they meet one another
+        // where the fractures still stand, in the old ground beyond the thinned zone, which
+        // renews itself over them: the present episode's in the body's frame, a past
+        // episode's those older than it in its own frame, the pole's.
+        let beyond = |points: &[[f64; 3]]| -> Vec<Vec<[f64; 3]>> {
+            let mut runs: Vec<Vec<[f64; 3]>> = vec![Vec::new()];
+            for &q in points {
+                if self.shell_map.thin(q) {
+                    if runs.last().is_some_and(|r| !r.is_empty()) {
+                        runs.push(Vec::new());
+                    }
+                } else if let Some(run) = runs.last_mut() {
+                    run.push(q);
+                }
+            }
+            runs.into_iter().filter(|r| r.len() >= 2).collect()
+        };
+        for f in self.reorientations(present, spacing, cell, &rng) {
+            let id = out.len();
+            for run in beyond(&f.points) {
+                index.insert(id, &run, true);
+            }
+            for (e, crack) in self.episodes.iter().zip(past.iter_mut()) {
+                if f.time_gyr < e.start {
+                    let points: Vec<[f64; 3]> = f.points.iter().map(|q| e.uncarry(*q)).collect();
+                    for run in beyond(&points) {
+                        crack.insert(id, &run, true);
+                    }
+                }
+            }
+            out.push(f);
+        }
         // Under a plume the vents of the thinned zone come first, in their cascade (F57),
         // for the present episode and for each past one; the zone's other cracks are its
         // lesser fractures.
@@ -1067,6 +1103,188 @@ impl Cracks {
                 id,
             });
         }
+    }
+
+    /// The fractures each reorientation opens across the shell (F200). The body turns at
+    /// each episode's start to bring its thinned zone to the pole (F53), and its figure,
+    /// the tide's bulge and the spin's flattening, turns with its axes against a shell
+    /// that had relaxed to the old ones: some hundreds of kilopascals on Enceladus, many
+    /// times the ice's strength wherever the two figures differ (Matsuyama and Nimmo
+    /// 2008). In the body's frame each episode's spin axis stands where its terrain lies,
+    /// its tidal axis carried with it, and the present episode's at the pole. The stress
+    /// grows as the body turns, and the first fractures open where it is greatest, across
+    /// the most tensile stress, running on until it no longer opens them or they meet
+    /// another; a fracture through the whole shell relieves the membrane stress about it
+    /// for about half its length (a long crack in a plate in tension), so the next opens
+    /// only beyond every open one's reach, and a few long fractures take the
+    /// reorientation up. Each is as old as its reorientation, within the surface's
+    /// retention age, in the body's frame as it stands: later terrains renew over the
+    /// older fractures and later fractures cut the older terrains, in the order they
+    /// formed.
+    fn reorientations(
+        &self,
+        present: f64,
+        spacing: f64,
+        cell: f64,
+        rng: &Rng,
+    ) -> Vec<Linea> {
+        let mut out = Vec::new();
+        let Some(pole) = self.shell_map.pole else {
+            return out;
+        };
+        if self.episodes.is_empty() || !self.shell_map.has_active_terrain() {
+            return out;
+        }
+        let mut axes: Vec<(f64, [f64; 3], [f64; 3])> = self
+            .episodes
+            .iter()
+            .filter(|e| e.start <= present)
+            .map(|e| {
+                let mid = 0.5 * (e.start + e.end);
+                let tidal = mean_axis_at(mid, present, self.nsr_period_gyr);
+                (e.start, e.center, e.carry(tidal))
+            })
+            .collect();
+        let present_start = (self.age - FOCUSING_EPISODE_DURATION_GYR).max(0.0);
+        if present_start <= present {
+            axes.push((
+                present_start,
+                pole,
+                mean_axis_at(present, present, self.nsr_period_gyr),
+            ));
+        }
+        let window_start = (present - self.retention.min(self.floated)).max(0.0);
+        let l_max = LINEA_LENGTH_RAD.1 * self.body_radius;
+        let (w_lo, w_hi) = LINEA_WIDTH_RANGE;
+        let k = 1.0 - LINEA_WIDTH_EXPONENT;
+        for (r, pair) in axes.windows(2).enumerate() {
+            let ((_, s0, q0), (time, s1, q1)) = (pair[0], pair[1]);
+            if time < window_start {
+                continue;
+            }
+            let field = |p: [f64; 3]| self.shell.reorientation((s0, q0), (s1, q1), p);
+            let bin = u64::MAX - 4096 - r as u64;
+            // Where the stress is greatest first.
+            let mut sites: Vec<(f64, u64, [f64; 3])> = (0..REORIENTATION_TRIES as u64)
+                .filter_map(|n| {
+                    let p = rng.unit_direction(bin, 4 * n);
+                    let tension = field(p).principal().0;
+                    (tension >= ICE_CRACK_STRESS).then_some((tension, n, p))
+                })
+                .collect();
+            sites.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+            let mut index =
+                CrackIndex::new(CRACK_SHADOW_SHELLS * self.mean_shell / self.body_radius);
+            // Each open fracture's points, every few steps, and its reach, rad.
+            let mut opened: Vec<(Vec<[f64; 3]>, f64)> = Vec::new();
+            for (_, n, p) in sites {
+                let relieved = opened.iter().any(|(points, reach)| {
+                    points.iter().any(|q| angle_between(*q, p) < *reach)
+                });
+                if relieved {
+                    continue;
+                }
+                // A heavy tail of widths (F78), as deep for its width as a ridge stands.
+                let u = rng.uniform(bin, 4 * n + 1);
+                let width = (w_lo.powf(k) + u * (w_hi.powf(k) - w_lo.powf(k))).powf(1.0 / k);
+                let relief =
+                    LINEA_RELIEF_SHARE * width * (0.6 + 0.8 * rng.uniform(bin, 4 * n + 2));
+                let id = (FRACTURE_BIN << 32) | n | ((r as u64) << 48);
+                let rules = TraceRules {
+                    polar: false,
+                    index: Some(&index),
+                    exclude: None,
+                    one_way: None,
+                    junction: (0.5 * width).max(cell),
+                    wobble: (LINEA_WOBBLE_RAD, LINEA_WOBBLE_LENGTH),
+                    bias: (0.0, 1.0),
+                    held_open: true,
+                    time: None,
+                };
+                let points = self.stress_trace(&field, p, spacing, l_max, id, &rules);
+                if points.len() < 3 {
+                    continue;
+                }
+                let length = (points.len() - 1) as f64 * spacing;
+                index.insert(out.len(), &points, true);
+                let every = ((self.mean_shell / spacing).ceil() as usize).max(1);
+                opened.push((
+                    points.iter().step_by(every).copied().collect(),
+                    0.5 * length / self.body_radius,
+                ));
+                out.push(Linea {
+                    length,
+                    points,
+                    spacing,
+                    width,
+                    relief,
+                    kind: LineaKind::Fracture,
+                    phase: 0.0,
+                    time_gyr: time,
+                    id,
+                });
+            }
+        }
+        out
+    }
+
+    /// A fracture across a standing stress (F200): from the start both ways, across the
+    /// most tensile stress, while that passes the cracking stress, wandering a little,
+    /// turning to meet the fractures already open and ending against them.
+    #[allow(clippy::too_many_arguments)]
+    fn stress_trace(
+        &self,
+        field: &dyn Fn([f64; 3]) -> crate::stages::tidal::Stress,
+        p0: [f64; 3],
+        spacing: f64,
+        l_max: f64,
+        id: u64,
+        rules: &TraceRules,
+    ) -> Vec<[f64; 3]> {
+        let noise = GradientNoise::new(id ^ 0xF4AC_7E00);
+        let across = |p: [f64; 3]| -> Option<[f64; 3]> {
+            let (s1, _, psi) = field(p).principal();
+            if s1 < ICE_CRACK_STRESS {
+                return None;
+            }
+            let (east, north) = local_basis(p);
+            let (sin, cos) = (psi + std::f64::consts::FRAC_PI_2).sin_cos();
+            Some(normalize([
+                east[0] * cos + north[0] * sin,
+                east[1] * cos + north[1] * sin,
+                east[2] * cos + north[2] * sin,
+            ]))
+        };
+        let Some(d0) = across(p0) else {
+            return Vec::new();
+        };
+        let steps = (0.5 * l_max / spacing).ceil() as usize;
+        let (wobble, wobble_length) = rules.wobble;
+        let mut sides: [Vec<[f64; 3]>; 2] = [Vec::new(), Vec::new()];
+        for (side, sign) in [(0usize, 1.0f64), (1, -1.0)] {
+            let mut p = p0;
+            let mut along = [sign * d0[0], sign * d0[1], sign * d0[2]];
+            for i in 0..steps {
+                let Some(mut d) = across(p) else {
+                    break;
+                };
+                if dot(d, along) < 0.0 {
+                    d = [-d[0], -d[1], -d[2]];
+                }
+                let x = i as f64 * spacing / wobble_length;
+                let d = rotate(d, p, wobble * noise.fbm([x, side as f64, 0.5], 1.0, 2, 2.0, 0.5));
+                let Some(d) = self.steer(p, d, rules) else {
+                    break;
+                };
+                p = step(p, d, spacing, self.body_radius);
+                along = d;
+                sides[side].push(p);
+            }
+        }
+        let mut points: Vec<[f64; 3]> = sides[1].iter().rev().copied().collect();
+        points.push(p0);
+        points.extend(sides[0].iter().copied());
+        points
     }
 
     /// The fissures of a plume's thinned zone form in a cascade (F57; Hemingway, Rudolph
@@ -1561,6 +1779,13 @@ pub fn linea_profile(kind: LineaKind, d: f64, width: f64, relief: f64, blur: f64
             let flanks = VENT_RIDGE_SHARE * relief * (-((x - crest) / (0.5 * sigma)).powi(2)).exp();
             trough + flanks
         }
+        LineaKind::Fracture => {
+            // Degraded or drawn wider than it is, a trough keeps the area of its
+            // cross-section.
+            let w = width.hypot(2.0 * blur).max(1.0);
+            let sigma = (w / 4.0).max(1.0);
+            -relief * width / w * (-(x / sigma).powi(2)).exp()
+        }
         _ => {
             // Degraded or drawn wider than it is, a ridge keeps the area of its
             // cross-section: its height falls as its width grows.
@@ -1972,7 +2197,7 @@ pub fn linea_compute(
                 (1.0 - (from_trace / core).powi(2)).clamp(0.0, 1.0)
             };
             let laid = match rec.kind {
-                LineaKind::Vent => 0.0,
+                LineaKind::Vent | LineaKind::Fracture => 0.0,
                 LineaKind::Band => stain_now * cut,
                 // A ridge narrower than the grid lays its stain by its share (F81).
                 _ if ridged && !drawn => {

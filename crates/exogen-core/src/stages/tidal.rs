@@ -359,6 +359,23 @@ impl TidalShell {
         self.uniform_about(shifted, p, 1.0) - self.uniform_about(mean_axis, p, 1.0)
     }
 
+    /// The stress of a reorientation at a point (F200): the figure a locked moon holds,
+    /// its tidal bulge toward the planet and its rotational flattening about its spin
+    /// axis, a third of the tide's in the degree-2 term with its sign turned, as it stands
+    /// after the body turned, against the figure the shell had relaxed to before; each as
+    /// (spin axis, tidal axis) in the body's frame.
+    pub fn reorientation(
+        &self,
+        before: ([f64; 3], [f64; 3]),
+        after: ([f64; 3], [f64; 3]),
+        p: [f64; 3],
+    ) -> Stress {
+        let figure = |(spin, tidal): ([f64; 3], [f64; 3])| {
+            self.uniform_about(tidal, p, 1.0) + self.uniform_about(spin, p, -1.0 / 3.0)
+        };
+        (figure(after) - figure(before)).scaled(self.amplification(p))
+    }
+
     /// The whole field at a point and phase.
     pub fn total(&self, mean_axis: [f64; 3], p: [f64; 3], phase: f64) -> Stress {
         (self.uniform_diurnal(mean_axis, p, phase) + self.uniform_nsr(mean_axis, p))
@@ -838,5 +855,30 @@ mod tests {
         // Non-synchronous rotation by a degree stresses the shell as much again.
         let (n1, _, _) = e.nsr(axis, p).principal();
         assert!(n1.abs() > 1e4, "{n1}");
+    }
+
+    /// F200: a reorientation stresses the shell by the change of its figure: nothing where
+    /// the axes stay, and, turning Enceladus's spin axis 30 degrees about its tidal axis,
+    /// some hundreds of kilopascals, many times the 40 kPa at which ice cracks.
+    #[test]
+    fn a_reorientation_stresses_the_shell_by_its_figure_s_change() {
+        let (g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
+        let e = TidalShell::new(&g).unwrap();
+        let tidal = [1.0, 0.0, 0.0];
+        let spin = [0.0, 0.0, 1.0];
+        let turned = rotate(spin, tidal, 30f64.to_radians());
+        let p = normalize([0.3, 0.6, 0.7]);
+        let still = e.reorientation((spin, tidal), (spin, tidal), p);
+        assert!(still.ee.abs() + still.nn.abs() + still.en.abs() < 1e-6);
+        let mut most: f64 = 0.0;
+        for i in 0..12 {
+            for j in 0..24 {
+                let lat = -1.5 + 3.0 * (i as f64 + 0.5) / 12.0;
+                let lon = std::f64::consts::PI * (j as f64 + 0.5) / 12.0;
+                let q = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+                most = most.max(e.reorientation((spin, tidal), (turned, tidal), q).principal().0);
+            }
+        }
+        assert!(most > 5.0 * ICE_CRACK_STRESS, "{most}");
     }
 }

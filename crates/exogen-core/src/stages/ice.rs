@@ -404,6 +404,11 @@ impl FocusEpisode {
     pub fn carry(&self, p: [f64; 3]) -> [f64; 3] {
         rotate(rotate(p, self.axis, self.angle), self.center, self.spin)
     }
+
+    /// A direction in the present frame carried back to the episode's own frame.
+    pub fn uncarry(&self, p: [f64; 3]) -> [f64; 3] {
+        rotate(rotate(p, self.center, -self.spin), self.axis, -self.angle)
+    }
 }
 
 /// The past episodes of focused heating (F53), oldest first: one every

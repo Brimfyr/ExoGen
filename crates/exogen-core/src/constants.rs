@@ -3059,6 +3059,11 @@ pub const VENT_CASCADE_BIN: u64 = 0xFFFF;
 /// a new fissure opening at each that lies beyond every open fissure's stress shadow, and
 /// the time-bin tag the saturating fissures carry in their ids.
 pub const POLAR_SATURATION_TRIES: usize = 4000;
+/// Each reorientation fractures the shell until it is saturated (F200): this many sites
+/// are tried over the body, a fracture opening at each that lies beyond every open
+/// fracture's shadow, and the time-bin tag its fractures carry in their ids.
+pub const REORIENTATION_TRIES: usize = 6000;
+pub const FRACTURE_BIN: u64 = 0xFFFD;
 pub const VENT_SATURATION_BIN: u64 = 0xFFFE;
 /// A plume's fissures wander by this many radians over this length, m, more than the
 /// lesser cracks do (the stripes' sinuous traces), and each ends in a fork: from each tip

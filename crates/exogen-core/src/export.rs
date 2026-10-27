@@ -905,6 +905,7 @@ pub fn export(
                             crate::stages::lineae::LineaKind::Cycloid => "cycloid",
                             crate::stages::lineae::LineaKind::Band => "band",
                             crate::stages::lineae::LineaKind::Vent => "vent",
+                            crate::stages::lineae::LineaKind::Fracture => "fracture",
                         }
                         .to_string(),
                         age_gyr: out.epoch_time_gyr - l.time_gyr,

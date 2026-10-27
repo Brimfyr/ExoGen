@@ -35,7 +35,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 24;
+pub const VERSION: u64 = 25;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -2206,7 +2206,11 @@ pub fn polar_mask(
         .map(|k| shell.profile(grid.center(grid.cell(k))) > POLAR_CORE_PROFILE)
         .collect();
     with_stamper(grid, |stamper| {
-        for l in cracks.iter().filter(|l| shell.thin(l.midpoint())) {
+        // The zone's own fissures; a reorientation's fractures cross it from without (F200).
+        for l in cracks
+            .iter()
+            .filter(|l| l.kind != LineaKind::Fracture && shell.thin(l.midpoint()))
+        {
             let every = ((0.25 * POLAR_SPREAD_WIDTH / l.spacing.max(1.0)) as usize).max(1);
             for p in l.points.iter().step_by(every) {
                 // The terrain follows the fissure out of the core as a tongue that
@@ -3767,7 +3771,12 @@ pub fn polar_compute(
             belt.layer / 1e3
         );
     }
-    let fabric = FabricIndex::new(cracks, POLAR_FABRIC_RANGE / body_radius);
+    // The folds follow the terrain's own cracks; the fractures a reorientation opened
+    // across the shell are older than the spreading that folds it, or cut it after (F200).
+    let fabric = FabricIndex::new(
+        cracks.iter().filter(|l| l.kind != LineaKind::Fracture),
+        POLAR_FABRIC_RANGE / body_radius,
+    );
     // The terrain's own vents, which opened in its episode, bound its deep folds (F65).
     let vents = FabricIndex::new(
         cracks.iter().filter(|l| {
