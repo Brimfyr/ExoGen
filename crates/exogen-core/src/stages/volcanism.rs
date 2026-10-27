@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 25;
+pub const VERSION: u64 = 26;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -119,6 +119,9 @@ pub struct FloodEvent {
     pub id: u64,
     /// How fast it pours out, m³/s (F117).
     pub effusion: f64,
+    /// The years its lava came out over, its field growing lobe by lobe to `time_gyr`
+    /// (F201): Io's long-lived fields; none for a flood laid at once.
+    pub span_yr: f64,
     /// A volcano's own lava keeps its composition (F163); none for a flood, whose batch is
     /// its own.
     pub composition: Option<f32>,
@@ -152,6 +155,8 @@ pub struct FloodRecord {
     pub id: u64,
     /// How fast it poured out, m³/s, which sets the form of its flows (F117).
     pub effusion: f64,
+    /// The years its lava came out over, ending at `time_gyr` (F201).
+    pub span_yr: f64,
 }
 
 /// How compound a lava's flows are for how fast it pours out (F117): 1 at or below the
@@ -537,11 +542,21 @@ impl FloodProcess {
         let mut v = 0.0;
         for i in 0..n {
             let t = t0 + (i as f64 + 0.5) * dt;
-            let s = self.thermal.at(t);
-            let melts = s.ambient + (1.0 - s.ambient) * self.plume_area;
-            v += s.magma_rate * melts * share(t) * dt * GYR;
+            v += self.melt_rate(t) * share(t) * dt * GYR;
         }
         v * self.flood_share
+    }
+
+    /// The melt the mantle makes at a time where it melts, m³/s.
+    fn melt_rate(&self, t: f64) -> f64 {
+        let s = self.thermal.at(t);
+        s.magma_rate * (s.ambient + (1.0 - s.ambient) * self.plume_area)
+    }
+
+    /// The lava erupting at a time, m³ a year (F201): the melt's eruptive share, as the
+    /// budget reads it.
+    pub fn extrusion_rate(&self, t: f64) -> f64 {
+        self.melt_rate(t) * self.eruptive_fraction(t) * YEAR * self.flood_share
     }
 
     /// The overturn's own lava, m³ (audit M29): what the mantle erupts from the event while its
@@ -810,6 +825,7 @@ impl FloodProcess {
                 time_gyr,
                 id: (step_index << 32) | j,
                 effusion: e_lo * (e_hi / e_lo).powf(self.rng.uniform(step_index, draw + 3)),
+                span_yr: 0.0,
                 composition: None,
             });
             budget -= volume;
@@ -829,6 +845,7 @@ impl FloodProcess {
             ev.composition,
         );
         rec.effusion = ev.effusion;
+        rec.span_yr = ev.span_yr;
         if !rec.ponds.is_empty() {
             self.records.push(rec);
         }
@@ -1159,6 +1176,7 @@ impl FloodProcess {
             composition: drift,
             id,
             effusion: FLOOD_EFFUSION_RATE.0,
+            span_yr: 0.0,
         };
         // Summed in the cells' order, so that the area does not depend on the map's.
         let mut keys: Vec<u32> = rec.cells().keys().copied().collect();
@@ -1311,18 +1329,22 @@ pub fn flood_compute(
     // the ground from where its lava came in, lay its sheet, and where they do not reach
     // the ground keeps the surface it had, unless it lies so far below the level that the
     // lava ponds there. A buried flood keeps the coarse outline its successors hide.
-    let lobed: Option<HashMap<usize, f32>> = flows.map(|f| {
-        let lobes = flood_lobes(
-            rec,
-            coarse,
-            grid,
-            f.body_radius,
-            f.ground,
-            f.seed,
-            compound_share(rec.effusion),
-        );
-        lobe_cover(&lobes, grid, f.body_radius, rec.id, stamper)
-    });
+    let (lobed, laid) = match flows {
+        Some(f) => {
+            let lobes = flood_lobes(
+                rec,
+                coarse,
+                grid,
+                f.body_radius,
+                f.ground,
+                f.seed,
+                compound_share(rec.effusion),
+            );
+            let (cover, laid) = lobe_cover_laid(&lobes, grid, f.body_radius, rec.id, stamper);
+            (Some(cover), Some(laid))
+        }
+        None => (None, None),
+    };
     let soft = flows.is_some_and(|f| f.soft);
     let hollow_steps = flows.map_or(0, |f| {
         (f.hollow_reach / (grid.delta() * f.body_radius)).ceil() as usize
@@ -1438,6 +1460,9 @@ pub fn flood_compute(
         reached: bool,
         ponded: bool,
         lobe: f32,
+        // When its top lobe was laid, as a share of the field's growth (F201); a lake
+        // fills to the last.
+        laid: f32,
         // The level the loop's pond stood at in the cell's coarse cell, if any, and whether
         // the cell lies in one of a soft flood's lakes.
         pond: f32,
@@ -1468,6 +1493,9 @@ pub fn flood_compute(
                 lobe: lobed
                     .as_ref()
                     .map_or(0.0, |l| l.get(&idx).copied().unwrap_or(0.0)),
+                laid: laid
+                    .as_ref()
+                    .map_or(1.0, |l| l.get(&idx).copied().unwrap_or(1.0)),
                 pond: level,
                 lake: false,
                 share: 1.0,
@@ -1777,6 +1805,7 @@ pub fn flood_compute(
                         reached: true,
                         ponded: true,
                         lobe: 0.0,
+                        laid: 1.0,
                         pond: level,
                         lake: false,
                         share: 1.0,
@@ -1803,6 +1832,7 @@ pub fn flood_compute(
             reached,
             ponded,
             lobe,
+            laid,
             lake,
             share: margin_share,
             margin,
@@ -1918,7 +1948,13 @@ pub fn flood_compute(
                 age: if held { time } else { ages[idx] },
                 unit: if held { UNIT_LAVA } else { units[idx] },
                 deep: deep[idx],
-                melt: if held { 0.0 } else { melt[idx] * (1.0 - share) },
+                // A soft flood's held cell keeps when its top lobe was laid, which the
+                // regime's colours read (F201).
+                melt: match (held, soft) {
+                    (true, true) => laid,
+                    (true, false) => 0.0,
+                    _ => melt[idx] * (1.0 - share),
+                },
                 cover: if soft {
                     share
                 } else {
@@ -2379,10 +2415,35 @@ pub(crate) fn lobe_cover(
     id: u64,
     stamper: &mut Stamper,
 ) -> HashMap<usize, f32> {
+    lobe_cover_laid(lobes, grid, body_radius, id, stamper).0
+}
+
+/// The lobes' cover (`lobe_cover`) and, at each cell, when its top lobe was laid, as the
+/// share of the field's lobes laid by then (F201): a field grows lobe by lobe in the
+/// order they were traced, each taking its share of the field's area, and a lobe lies on
+/// those laid before it, so a cell shows the last lobe that covers half of it, or the
+/// one that covers the most of it if none does.
+pub(crate) fn lobe_cover_laid(
+    lobes: &[Lobe],
+    grid: &CubeSphere,
+    body_radius: f64,
+    id: u64,
+    stamper: &mut Stamper,
+) -> (HashMap<usize, f32>, HashMap<usize, f32>) {
     let cell = grid.delta() * body_radius;
     let noise = GradientNoise::new(id ^ 0xF10D_0000);
     let mut cover: HashMap<usize, f32> = HashMap::new();
+    let mut laid: HashMap<usize, (f32, bool)> = HashMap::new();
+    let total: f64 = lobes
+        .iter()
+        .map(lobe_area)
+        .sum::<f64>()
+        .max(f64::MIN_POSITIVE);
+    let mut before = 0.0;
     for lobe in lobes {
+        let area = lobe_area(lobe);
+        let when = ((before + 0.5 * area) / total) as f32;
+        before += area;
         if lobe.points.len() < 2 {
             continue;
         }
@@ -2404,13 +2465,19 @@ pub(crate) fn lobe_cover(
             let c = ((hw * lobing - r) / edge).clamp(0.0, 1.0) as f32;
             if c > 0.0 {
                 let e = cover.entry(idx).or_insert(0.0);
+                let l = laid.entry(idx).or_insert((when, false));
+                if c >= 0.5 {
+                    *l = (when, true);
+                } else if c > *e && !l.1 {
+                    l.0 = when;
+                }
                 if c > *e {
                     *e = c;
                 }
             }
         }
     }
-    cover
+    (cover, laid.into_iter().map(|(k, (w, _))| (k, w)).collect())
 }
 
 /// Area fraction of the surface carrying a lava unit.
@@ -2853,6 +2920,7 @@ mod tests {
             composition: 0.0,
             id,
             effusion: FLOOD_EFFUSION_RATE.0,
+            span_yr: 0.0,
         }
     }
 
@@ -3069,6 +3137,74 @@ mod tests {
     }
 
     #[test]
+    fn a_field_s_lobes_keep_the_times_they_were_laid() {
+        // F201: a field grows lobe by lobe in the order they were traced, each taking its
+        // share of the field's area, and a cell shows the last lobe that covers half of
+        // it: under the first lobe alone, its time; where the second crosses it, the
+        // second's.
+        let grid = CubeSphere::new(128);
+        let body_radius = 1_000e3;
+        let lobe = |heading: f64, start: f64| {
+            let center = normalize([1.0, 0.1, 0.2]);
+            let (east, north) = crate::geom::local_basis(center);
+            let spacing = 4e3;
+            let points: Vec<[f64; 3]> = (0..60)
+                .map(|k| {
+                    let along = (start + k as f64 * spacing) / body_radius;
+                    crate::geom::offset(center, east, north, along, heading)
+                })
+                .collect();
+            Lobe {
+                widths: vec![1.0; points.len()],
+                points,
+                spacing,
+                half_width: 40e3,
+                age_yr: 0.0,
+            }
+        };
+        let lobes = [lobe(0.0, -120e3), lobe(1.5, -120e3)];
+        let (a, b) = (lobe_area(&lobes[0]), lobe_area(&lobes[1]));
+        let first = (0.5 * a / (a + b)) as f32;
+        let second = ((a + 0.5 * b) / (a + b)) as f32;
+        let mut stamper = Stamper::new(&grid);
+        let (cover, laid) = lobe_cover_laid(&lobes, &grid, body_radius, 5, &mut stamper);
+        let center = normalize([1.0, 0.1, 0.2]);
+        let (east, north) = crate::geom::local_basis(center);
+        let at = |along: f64, heading: f64| {
+            grid.index(
+                grid.locate(crate::geom::offset(
+                    center,
+                    east,
+                    north,
+                    along / body_radius,
+                    heading,
+                ))
+                .0,
+            )
+        };
+        // Along the first lobe, away from the crossing; at the crossing; along the second.
+        let (alone, crossing, later) = (at(100e3, 0.0), at(0.0, 0.0), at(100e3, 1.5));
+        for k in [alone, crossing, later] {
+            assert!(cover[&k] >= 0.5, "cell {k} covered {}", cover[&k]);
+        }
+        assert!(
+            (laid[&alone] - first).abs() < 1e-6,
+            "{} against {first}",
+            laid[&alone]
+        );
+        assert!(
+            (laid[&crossing] - second).abs() < 1e-6,
+            "{} against {second}",
+            laid[&crossing]
+        );
+        assert!(
+            (laid[&later] - second).abs() < 1e-6,
+            "{} against {second}",
+            laid[&later]
+        );
+    }
+
+    #[test]
     fn a_cascade_s_flows_cover_its_runs() {
         // F110: a flood running as a sheet from its vent down to a lake draws flows over
         // both runs, each from its cell nearest the vent, and they stay within two coarse
@@ -3118,6 +3254,7 @@ mod tests {
             composition: 0.0,
             id: 9,
             effusion: FLOOD_EFFUSION_RATE.0,
+            span_yr: 0.0,
         };
         flood.area = flood
             .cells()

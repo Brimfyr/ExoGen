@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 150;
+pub const FINISH_VERSION: u64 = 151;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -739,7 +739,16 @@ pub fn run_coarse_loop(
             // Io's lava in the surface the step keeps: its paterae's eruptions of the last
             // few centuries of millennia, floods as on any body (F117).
             if lay && let Some(f) = &mut io_floods {
-                let eruptions = io::eruptions(graph, &i.paterae, &layers.bedrock, t1);
+                let rate = f.extrusion_rate(t1);
+                let eruptions = io::eruptions(graph, &i.paterae, &layers.bedrock, t1, rate);
+                if s == steps && std::env::var_os("EXOGEN_DEBUG").is_some() {
+                    eprintln!(
+                        "io eruptions: {:.1} km³ a year, {} fields, {:.0} km³",
+                        rate * 1e-9,
+                        eruptions.len(),
+                        eruptions.iter().map(|e| e.volume).sum::<f64>() * 1e-9
+                    );
+                }
                 for (n, e) in eruptions.into_iter().enumerate() {
                     f.apply(
                         &mut layers,
@@ -749,6 +758,7 @@ pub fn run_coarse_loop(
                             time_gyr: t1 - e.age_yr * 1e-9,
                             id: ((s as u64) << 32) | n as u64,
                             effusion: e.effusion,
+                            span_yr: e.span_yr,
                             composition: None,
                         },
                     );
@@ -2246,6 +2256,7 @@ pub fn finish(
                                 body_radius,
                                 floods[*k].id,
                                 (present - floods[*k].time_gyr) * 1e9,
+                                floods[*k].span_yr,
                             );
                         }
                         Some((out, None, Some((taken, stats))))
@@ -5320,8 +5331,9 @@ mod tests {
         assert!(large < 0.25 * small, "large {large} vs small {small}");
     }
 
-    /// Io keeps no craters, carries hundreds of paterae and dozens of mountains, and its
-    /// plains are sulfur yellow.
+    /// Io keeps no craters, carries hundreds of paterae and dozens of mountains, its flow
+    /// fields cover about the share Williams et al. (2011) map (27.8 percent; F201), and
+    /// its plains are sulfur yellow.
     #[test]
     fn io_is_craterless_with_paterae_and_mountains() {
         let mut r = Runner::new();
@@ -5342,7 +5354,7 @@ mod tests {
             .filter(|&&u| u == crate::units::UNIT_IO_FLOW)
             .count() as f64
             / units.len() as f64;
-        assert!(flows > 0.005 && flows < 0.3, "flow share {flows}");
+        assert!(flows > 0.15 && flows < 0.4, "flow share {flows}");
         let albedo = out.finish.albedo.as_slice();
         let mean: [f64; 3] = albedo.iter().fold([0.0; 3], |a, c| {
             [a[0] + c[0] as f64, a[1] + c[1] as f64, a[2] + c[2] as f64]

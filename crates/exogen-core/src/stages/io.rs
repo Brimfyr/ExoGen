@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 17;
+pub const VERSION: u64 = 18;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -118,8 +118,10 @@ pub struct IoEruption {
     pub volume: f64,
     pub age_yr: f64,
     pub id: u64,
-    /// How fast it poured out, m³/s: its volume over the span its field grew over.
+    /// How fast its lava poured out while it erupted, m³/s (F117, F201).
     pub effusion: f64,
+    /// The years its field grew over, its last lava `age_yr` years ago (F201).
+    pub span_yr: f64,
 }
 
 /// The orders of the harmonics of a plume deposit's range with azimuth.
@@ -156,6 +158,10 @@ pub struct PlumeEpisode {
 }
 
 impl Patera {
+    /// Its floor's area, m²: its collapses' areas, overlapping where they coalesced.
+    pub fn floor_area(&self) -> f64 {
+        std::f64::consts::PI * self.collapses.iter().map(|c| c[2] * c[2]).sum::<f64>()
+    }
     /// The farthest its outline reaches from its centre, m.
     pub fn extent(&self) -> f64 {
         let long = self.ellipticity.sqrt();
@@ -939,37 +945,12 @@ pub fn background_fall(
         return uniform;
     }
     // The far fallout varies over hundreds of kilometres: drawn on a coarse grid.
-    let coarse = CubeSphere::new(grid.face_size().min(64));
-    let g = gravity.max(0.01);
-    let sources: Vec<([f64; 3], f64, f64)> = paterae
-        .iter()
-        .map(|p| {
-            let (share, mass, speed) = if p.pele {
-                (
-                    IO_PLUME_FRACTION_PELE,
-                    IO_PLUME_MASS_PELE,
-                    IO_PLUME_SPEED_PELE,
-                )
-            } else {
-                (
-                    IO_PLUME_FRACTION_PROMETHEUS,
-                    IO_PLUME_MASS_PROMETHEUS,
-                    IO_PLUME_SPEED_PROMETHEUS,
-                )
-            };
-            let reach = IO_FAR_FALLOUT_REACH * speed * speed / g;
-            (p.center, IO_PATERA_ACTIVE_FRACTION * share * mass, reach)
-        })
-        .collect();
-    let far = Field::from_fn(coarse, |_, d| {
-        sources
-            .iter()
-            .map(|&(c, w, reach)| {
-                let r = angle_between(c, d) * body_radius;
-                w * (-r / reach).exp() / (reach * reach)
-            })
-            .sum::<f64>() as f32
-    });
+    let far = far_fallout(
+        CubeSphere::new(grid.face_size().min(64)),
+        body_radius,
+        gravity,
+        paterae,
+    );
     let mean = far.area_mean();
     if mean <= 0.0 {
         return uniform;
@@ -1001,6 +982,42 @@ pub fn background_fall(
         .iter()
         .map(|&v| (v as f64 * scale) as f32)
         .collect()
+}
+
+/// The far fallout of the plumes on a grid, in proportion (F89): about each volcanic
+/// centre over IO_FAR_FALLOUT_REACH of its class's range, weighted by its plumes' output,
+/// the share of the time it throws one times their mass.
+fn far_fallout(grid: CubeSphere, body_radius: f64, gravity: f64, paterae: &[Patera]) -> Field<f32> {
+    let g = gravity.max(0.01);
+    let sources: Vec<([f64; 3], f64, f64)> = paterae
+        .iter()
+        .map(|p| {
+            let (share, mass, speed) = if p.pele {
+                (
+                    IO_PLUME_FRACTION_PELE,
+                    IO_PLUME_MASS_PELE,
+                    IO_PLUME_SPEED_PELE,
+                )
+            } else {
+                (
+                    IO_PLUME_FRACTION_PROMETHEUS,
+                    IO_PLUME_MASS_PROMETHEUS,
+                    IO_PLUME_SPEED_PROMETHEUS,
+                )
+            };
+            let reach = IO_FAR_FALLOUT_REACH * speed * speed / g;
+            (p.center, IO_PATERA_ACTIVE_FRACTION * share * mass, reach)
+        })
+        .collect();
+    Field::from_fn(grid, |_, d| {
+        sources
+            .iter()
+            .map(|&(c, w, reach)| {
+                let r = angle_between(c, d) * body_radius;
+                w * (-r / reach).exp() / (reach * reach)
+            })
+            .sum::<f64>() as f32
+    })
 }
 
 /// How the top layer of a cell ages, per year (F84): red sulfur's reversion to yellow,
@@ -1581,6 +1598,25 @@ pub fn deposit_history(
         eprintln!(
             "io deposit history: the cells {:.1} s",
             clock.elapsed().as_secs_f64()
+        );
+        // The lava still showing, by area: what Williams et al. (2011) would map as flows.
+        let mut shares = [0.0f64; 4];
+        let mut total = 0.0;
+        for (k, top) in tops.iter().enumerate() {
+            let a = grid.cell_area(grid.cell(k));
+            total += a;
+            for (s, lim) in shares.iter_mut().zip([0.05, 0.2, 0.5, 0.8]) {
+                if top.lava > lim {
+                    *s += a;
+                }
+            }
+        }
+        eprintln!(
+            "io deposit history: lava showing over 0.05/0.2/0.5/0.8 of the ground: {:.3} {:.3} {:.3} {:.3}",
+            shares[0] / total,
+            shares[1] / total,
+            shares[2] / total,
+            shares[3] / total
         );
     }
     let deep = layers.deep.as_mut_slice();
@@ -2228,20 +2264,30 @@ pub fn trace_flow(
     )
 }
 
-/// The eruptions of the paterae alive at a time, the lava of the last few centuries of
-/// millennia (F117, audit M20): the active paterae's now and a few quiet ones', and
-/// every patera's earlier generations, each a flood from its rim where the ground falls
+/// The flow fields of the paterae alive at a time, over the years their lava can show
+/// (F117, F201, audits M8 and M20): the lava the heat budget erupts, `rate` m³ a year,
+/// shared among the paterae by their floors' areas (a stated choice: Veeder et al. 2012
+/// read the paterae's heat from their dark floors, Loki's the largest), each erupting a
+/// share IO_PATERA_ACTIVE_FRACTION of the time at the rate that keeps its share. Each
+/// patera builds its fields one after another back from the present, a field taking as
+/// many years of its share as its volume needs and growing lobe by lobe through them
+/// (`volcanism::lobe_cover_laid`): its last lava an active patera's erupting now, a
+/// quiet one's a quiet spell ago, memoryless at the duty its eruptions keep, each lasting
+/// IO_FLOW_SPAN_YR; until its fields are older than the fallout about the patera takes
+/// to hide rough lava IO_FLOW_SHOW_DEPTHS times over, or than the plains, at most
+/// IO_FLOW_FIELDS_MAX. Each field is a flood from the patera's rim where the ground falls
 /// away, run down over the ground, filling and spilling over the lows it comes to as a
-/// flood does on any body (F107, F109) and drawn as its flows at the finish (F94, F110).
-/// Each is as large as lays a flood's sheet over the share of its reach squared that a
-/// compound field covers (F85), the reach log-uniform (IO_FLOW_REACH); its vent stands
-/// past the pit's wall as the loop draws it, so that the lava runs away from the patera
-/// rather than back into it. Oldest first.
+/// flood does on any body (F107, F109) and drawn as its flows at the finish (F94, F110),
+/// as large as lays a flood's sheet over the share of its reach squared that a compound
+/// field covers (F85), the reach log-uniform (IO_FLOW_REACH); its vent stands past the
+/// pit's wall as the loop draws it, so that the lava runs away from the patera rather
+/// than back into it. Oldest first.
 pub fn eruptions(
     graph: &ParamGraph,
     paterae: &[Patera],
     bedrock: &Field<f32>,
     t: f64,
+    rate: f64,
 ) -> Vec<IoEruption> {
     let grid = bedrock.grid();
     let body_radius = graph.f64("body.radius");
@@ -2252,24 +2298,49 @@ pub fn eruptions(
     let cell = grid.delta() * body_radius;
     let smoothed = crate::stages::relaxation::low_pass(bedrock, cell, IO_FLOW_GROUND_SMOOTH);
     let ground = PaddedField::new(&grid, &smoothed);
+    let alive: Vec<&Patera> = paterae.iter().filter(|p| p.alive(t)).collect();
+    let floors: f64 = alive.iter().map(|p| p.floor_area()).sum();
+    if alive.is_empty() || floors <= 0.0 || rate <= 0.0 {
+        return Vec::new();
+    }
+    // The fallout about each patera, which hides its old flows.
+    let far = far_fallout(
+        CubeSphere::new(grid.face_size().min(64)),
+        body_radius,
+        graph.f64("body.gravity"),
+        &alive.iter().map(|p| (*p).clone()).collect::<Vec<_>>(),
+    );
+    let far_mean = far.area_mean();
+    let (s_lo, s_hi) = IO_FLOW_SPAN_YR;
+    let mean_span = (s_hi - s_lo) / (s_hi / s_lo).ln();
+    let duty = IO_PATERA_ACTIVE_FRACTION;
+    let quiet = mean_span * (1.0 - duty) / duty;
     let mut out = Vec::new();
-    for p in paterae.iter().filter(|p| p.alive(t)) {
+    for p in alive {
         let idx = p.id;
-        for g in 0..IO_FLOW_GENERATIONS {
-            let current = g == 0;
-            if current && !(p.active || rng.uniform(idx, 47) < IO_QUIET_FLOW_FRACTION) {
-                continue;
+        // Its share of the budget, m³ a year, and the rate it pours out while it erupts.
+        let output = rate * p.floor_area() / floors;
+        let effusion = output / (duty * YEAR);
+        let fall = if far_mean > 0.0 {
+            let c = far.grid().locate(p.center).0;
+            IO_BACKGROUND_FALLOUT * far.get(c) as f64 / far_mean
+        } else {
+            IO_BACKGROUND_FALLOUT
+        };
+        let window = (IO_FLOW_SHOW_DEPTHS * IO_LAVA_COAT_DEPTHS / fall.max(1e-12))
+            .min(IO_SURFACE_AGE_GYR * 1e9);
+        // Its last lava: an active patera's erupting now, a quiet one's a quiet spell ago.
+        let mut age_yr = if p.active {
+            log_uniform(idx, 46, IO_FLOW_ACTIVE_YR)
+        } else {
+            -quiet * (1.0 - rng.uniform(idx, 46)).ln()
+        };
+        for g in 0..IO_FLOW_FIELDS_MAX as u64 {
+            if age_yr >= window {
+                break;
             }
-            let reach = log_uniform(idx, 49 + 90 * g as u64, IO_FLOW_REACH).max(2.0 * p.extent());
-            let field = idx ^ ((g as u64 + 1) << 48);
-            // When it erupted: an active patera's now, the rest some years ago.
-            let age_yr = if p.active && current {
-                log_uniform(field, 1, IO_FLOW_ACTIVE_YR)
-            } else if current {
-                log_uniform(field, 1, IO_FLOW_AGE_YR)
-            } else {
-                log_uniform(field, 1, (IO_FLOW_EARLIER_YR, IO_FLOW_AGE_YR.1))
-            };
+            let reach = log_uniform(idx, 49 + 90 * g, IO_FLOW_REACH).max(2.0 * p.extent());
+            let field = idx ^ ((g + 1) << 48);
             // Its vent on the rim where the ground falls away, past the pit's wall.
             let (east, north) = local_basis(p.center);
             let delta = 0.5 * p.radius / body_radius;
@@ -2292,15 +2363,17 @@ pub fn eruptions(
             let azimuth = downhill + IO_FLOW_SOURCE_SPREAD * rng.normal(field, 4);
             let out_to = p.extent() + patera_wall(p.depth, 2.0 * cell) + cell;
             let volume = IO_FLOW_FIELD_AREA * reach * reach * FLOOD_SHEET_THICKNESS;
-            // It pours out its volume over the span its field grows over (F85).
-            let span = log_uniform(field, 2, IO_FLOW_SPAN_YR);
+            // It grows over as many years of the patera's share as its volume needs.
+            let span_yr = volume / output;
             out.push(IoEruption {
                 vent: crate::geom::offset(p.center, east, north, out_to / body_radius, azimuth),
                 volume,
                 age_yr,
                 id: field,
-                effusion: volume / (span * YEAR),
+                effusion,
+                span_yr,
             });
+            age_yr += span_yr;
         }
     }
     out.sort_by(|a, b| b.age_yr.total_cmp(&a.age_yr).then(a.id.cmp(&b.id)));
@@ -2311,8 +2384,10 @@ pub fn eruptions(
 /// it ponded on one (Williams et al. 2011 map a patera's floor as one unit, its lavas
 /// with it); its coverage varying with the flow units within its lobes (F85); dark
 /// silicate as far as it covers; and its age in years, from which the plumes' fallout
-/// coats it (F84). Over lava already laid the stronger coverage wins, and the younger
-/// age where the new lava covers the cell well.
+/// coats it (F84): its field's last lava `age_yr` years ago, the field growing over
+/// `span_yr` years before, each cell's lobe laid when the flood's pass says (F201). Over
+/// lava already laid the stronger coverage wins, and the younger age where the new lava
+/// covers the cell well.
 pub fn as_io_flow(
     out: &mut StampOutput,
     layers: &LayerSet,
@@ -2320,6 +2395,7 @@ pub fn as_io_flow(
     body_radius: f64,
     id: u64,
     age_yr: f64,
+    span_yr: f64,
 ) {
     let units = layers.unit_id.as_slice();
     let covered = layers.cover.as_slice();
@@ -2336,6 +2412,7 @@ pub fn as_io_flow(
                 * 0.5
                 * (1.0 + noise.fbm(d, body_radius / IO_FLOW_TEXTURE_LENGTH, 2, 2.0, 0.5));
         let cover = (c.cover as f64 * texture).clamp(0.0, 1.0) as f32;
+        let age_yr = age_yr + span_yr * (1.0 - (c.melt as f64).clamp(0.0, 1.0));
         let floor = units[idx] == UNIT_PATERA_FLOOR;
         let (cover, age) = if matches!(units[idx], UNIT_IO_FLOW | UNIT_PATERA_FLOOR) {
             (
@@ -2863,14 +2940,17 @@ mod tests {
         let long = lasting(10.0, warm);
         assert!(long > 3.0 * short && long > 5.0, "{short} vs {long}");
         assert!(lasting(1.0, cold) > 10.0 * short.max(1.0));
-        // Lava hides under its coat, slower than a smooth plain.
+        // Lava hides under its coat, slower than a smooth plain: once its hollows fill,
+        // some IO_LAVA_COAT_DEPTHS of fall (F201).
         let mut lava = Top {
             lava: 1.0,
             ..Top::default()
         };
         lava.age(1.0, red_fall, warm);
         assert!(lava.lava > 0.8, "{}", lava.lava);
-        lava.age(500.0, red_fall, warm);
+        lava.age(0.5 * IO_LAVA_COAT_DEPTHS / red_fall.solid, red_fall, warm);
+        assert!(lava.lava > 0.5, "{}", lava.lava);
+        lava.age(5.0 * IO_LAVA_COAT_DEPTHS / red_fall.solid, red_fall, warm);
         assert!(lava.lava < 0.01, "{}", lava.lava);
         // A fall of nothing but rounding leaves the cover over the frost as it was.
         let mut covered = Top {
@@ -2917,9 +2997,11 @@ mod tests {
         assert!(close(one.lava, many.lava) && close(one.dark, many.dark));
     }
 
-    /// Io's eruptions (F117): oldest first, each from past its patera's pit on the side
-    /// the ground falls away, as large as a flood's sheet over the field's share of its
-    /// reach squared, an active patera's within its first years.
+    /// Io's eruptions (F117, F201): oldest first, each from past its patera's pit on the
+    /// side the ground falls away, as large as a flood's sheet over the field's share of
+    /// its reach squared; each patera's fields back to back from its last lava, an active
+    /// patera's within its first years, each growing over the years its share of the
+    /// budget takes to erupt it, at the rate that keeps the share at the paterae's duty.
     #[test]
     fn io_s_eruptions_leave_their_paterae_downhill() {
         let (g, _) = crate::presets::preset("Io").unwrap().to_graph();
@@ -2945,8 +3027,33 @@ mod tests {
             id,
         };
         let paterae: Vec<Patera> = (0..40).map(|k| patera(k % 2 == 0, 7 + k)).collect();
-        let all = eruptions(&g, &paterae, &bedrock, 4.5);
+        let rate = 4.8e10;
+        let all = eruptions(&g, &paterae, &bedrock, 4.5, rate);
         assert!(all.len() > 60, "{} eruptions", all.len());
+        // Each patera's share, the same floors here, and its fields back to back.
+        let output = rate / paterae.len() as f64;
+        let mut by_patera: std::collections::HashMap<u64, Vec<&IoEruption>> =
+            std::collections::HashMap::new();
+        for e in &all {
+            assert!((e.span_yr - e.volume / output).abs() < 1e-6 * e.span_yr);
+            assert!((e.effusion - output / (IO_PATERA_ACTIVE_FRACTION * YEAR)).abs() < 1e-6);
+            by_patera.entry(e.id & 0xFFFF_FFFF).or_default().push(e);
+        }
+        for (id, mut fields) in by_patera {
+            fields.sort_by(|a, b| a.age_yr.total_cmp(&b.age_yr));
+            if id % 2 == 1 {
+                assert!(fields[0].age_yr <= IO_FLOW_ACTIVE_YR.1);
+            }
+            for w in fields.windows(2) {
+                let end = w[0].age_yr + w[0].span_yr;
+                assert!(
+                    (w[1].age_yr - end).abs() < 1e-6 * end,
+                    "{id}: {end} then {}",
+                    w[1].age_yr
+                );
+            }
+            assert!(fields.len() <= IO_FLOW_FIELDS_MAX);
+        }
         for w in all.windows(2) {
             assert!(w[0].age_yr >= w[1].age_yr);
         }
@@ -2961,7 +3068,7 @@ mod tests {
                 downhill += 1;
             }
             assert!(e.volume >= per_area * lo * lo * 0.99 && e.volume <= per_area * hi * hi * 1.01);
-            assert!(e.age_yr >= IO_FLOW_ACTIVE_YR.0 && e.age_yr <= IO_FLOW_AGE_YR.1);
+            assert!(e.age_yr >= 0.0 && e.age_yr <= IO_SURFACE_AGE_GYR * 1e9);
         }
         assert!(
             downhill as f64 > 0.8 * all.len() as f64,

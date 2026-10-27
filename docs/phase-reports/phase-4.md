@@ -2672,3 +2672,16 @@ How it went:
 - **Within the zones.** The fractures first ended the thinned zone's fissures within the zone, halving them; the zone renews itself over the old ground, so the fissures meet the fractures only beyond it.
 
 Still to do: the belts that link the terrains, which want the plains' heat history (M3); Io; the Moon.
+
+## The hundred-and-fifteenth milestone: Io's lava from its heat budget
+
+Io failed the gate check worst: flat dark flows with crisp white outlines on smooth plains, identical white rings, smooth red loops. Against the USGS map's unit table (Williams et al. 2011) its flows covered 15 percent of the surface where Io's cover 27.8, most of them coated whole where Io's are mantled to middling albedos, and its white 2.8 percent where Io's is some 16. The user chose the order: the flows first, then the Prometheus-class plumes at the flow fronts (Kieffer et al. 2000: Prometheus's plume wandered 75 to 95 km with its flows while its vent stayed), then the Pele-class rings from the cracks along their lava lakes' margins (McDoniel 2015).
+
+- **F201.** The lava the heat budget erupts, shared among the paterae by their floors' areas, each field growing over the years its patera's share takes to erupt it and its lobes laid through them; rough lava hidden once fines fill its hollows.
+
+How it went:
+
+- **No fields.** The regime draws its paterae afresh at each step, born at the step's time, so bounding a patera's fields by its age left none.
+- **Hidden.** With the fields spread over the time their lava can show, most of each field is old, and F84's centimetre of fines, laid within a few centuries by the plumes about the paterae, hid them: lava showed over 3 percent of the surface. Rough lava hides once its hollows fill, some 20 cm of fines; it now shows over 15 percent, dark over 3.8 (Io's dark flows and floors 3.4).
+
+Still to do: the Prometheus-class plumes at the flow fronts, which take up the flows' white halos and the identical rings; the Pele-class rings; Io's bright sulfur flows and its floors' colours; the plains.

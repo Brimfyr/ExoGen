@@ -523,6 +523,8 @@ Direction: the fields' areas from the lava erupted over their lives, the eruptiv
 
 When: with S3, the regime's switch.
 
+Closed in part by F201, the hundred-and-fifteenth milestone: the fields' lava is the heat budget's eruptive share, shared among the paterae by their floors' areas, each field growing over the years its patera's share takes to erupt it; they cover 27.4 percent of the surface, lava showing over 15 percent of it. Still open: a field's area for its volume is the floods' 50 m sheet (M20), and the eruptive share the floods' one in ten (Crisp 1984), not Io's own (Spencer et al. 2020).
+
 ### M9. A rise stays where its plume rose
 
 Mars's rise came out at 83 degrees south, its shields round the pole. A load the size of Tharsis turns the body until it lies on the equator, which is why Tharsis does (true polar wander: Bouley et al. 2016). ExoGen turns a body for a light terrain, Enceladus's thinned pole going to the pole (F53), but not for a heavy one.
@@ -644,6 +646,8 @@ Direction: Io's eruptions as floods from its paterae, by its heat budget's magma
 When: its own milestone, after this one.
 
 Closed in part in the forty-ninth milestone (F117): Io's eruptions are floods from its paterae's rims, filling and spilling over its lows and the paterae they reach, laying their sheets and lobes as every body's floods do, the paterae cut through them after; and the form of every flood's flows follows how fast its lava poured out, compound fields where slow, sheet lobes where fast, so that one process gives Io's compound fields and the maria's and Tharsis's sheets alike. Still open: the eruptions' volumes and number are the old fields' shares of their reach, not Io's heat budget's magma (the direction's "by its heat budget's magma", with audit M8); the flood model's sheet is 50 m thick on every body, where a compound field's flow units are a few metres; and one eruption's lobes keep its one age.
+
+Closed further by F201, the hundred-and-fifteenth milestone: the fields' number and times follow the heat budget's lava (M8), and each field's lobes keep the times they were laid through its growth. Still open: the 50 m sheet against Io's flow units of metres.
 
 ### M21. A lid's extension is not one budget
 

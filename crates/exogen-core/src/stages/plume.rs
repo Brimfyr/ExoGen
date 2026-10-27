@@ -2315,6 +2315,7 @@ impl PlumeProcess {
                     time_gyr,
                     id,
                     effusion: e_lo * (e_hi / e_lo).powf(rng.uniform(key, draw + 5)),
+                    span_yr: 0.0,
                     composition: Some(shield_composition(shield, time_gyr, Some(id >> 33))),
                 });
                 self.foot[si] -= volume;
