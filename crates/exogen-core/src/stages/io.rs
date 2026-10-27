@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 25;
+pub const VERSION: u64 = 26;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -1045,6 +1045,39 @@ pub fn background_fall(
         .collect()
 }
 
+/// How a deposit's mass clumps where it lands, unresolved (F89, F211): a log-normal
+/// factor whose logarithm spreads by IO_FAR_FALLOUT_SPREAD, from IO_FAR_FALLOUT_MOTTLE
+/// down to the grid's cells, its mean over the surface one.
+fn clumping(grid: CubeSphere, body_radius: f64, seed: u64) -> Vec<f32> {
+    let cell = grid.delta() * body_radius;
+    let octaves = ((IO_FAR_FALLOUT_MOTTLE / cell).log2().ceil() as u32).clamp(1, 8);
+    let noise = GradientNoise::new(seed);
+    let frequency = body_radius / IO_FAR_FALLOUT_MOTTLE;
+    let field = Field::from_fn(grid, |_, d| {
+        noise.fbm(d, frequency, octaves, 2.0, 0.6) as f32
+    });
+    let values = field.as_slice();
+    let n = values.len() as f64;
+    let mean = values.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let spread = (values
+        .iter()
+        .map(|&v| (v as f64 - mean).powi(2))
+        .sum::<f64>()
+        / n)
+        .sqrt()
+        .max(1e-9);
+    let factor = Field::from_fn(grid, |c, _| {
+        let unit = (values[grid.index(c)] as f64 - mean) / spread;
+        (IO_FAR_FALLOUT_SPREAD * unit).exp() as f32
+    });
+    let scale = 1.0 / factor.area_mean().max(1e-12);
+    factor
+        .as_slice()
+        .iter()
+        .map(|&v| (v as f64 * scale) as f32)
+        .collect()
+}
+
 /// The fall of the plumes at the flows' fronts over one bin of years (F202), optical
 /// depths a year at each cell, from `start` to `end` years from the present (negative):
 /// the ring's condensate, the pyroclasts within it, and their silicate.
@@ -1546,6 +1579,9 @@ pub fn deposit_history(
     let front_clock = std::time::Instant::now();
     let fronts = front_falls(grid, body_radius, gravity, units, coverage, laid_yr, window);
     let front_frost = 0.5 * (IO_PROMETHEUS_FROST.0 + IO_PROMETHEUS_FROST.1);
+    // The plumes' gas settles as the atmosphere collapses each night, unevenly, its mass
+    // clumped as the far fallout's is (F211).
+    let gas_clumps = clumping(grid, body_radius, 0x6A5_C10B_0211);
     let front_mottle = body_radius
         / (0.15 * IO_PLUME_SPEED_PROMETHEUS * IO_PLUME_SPEED_PROMETHEUS / gravity.max(0.01));
     let debug = std::env::var_os("EXOGEN_DEBUG").is_some();
@@ -1718,7 +1754,7 @@ pub fn deposit_history(
                 for front in &fronts {
                     let ring = front.ring[k] as f64 * mottle;
                     let fill = front.fill[k] as f64 * mottle;
-                    let gas = front.gas[k] as f64;
+                    let gas = front.gas[k] as f64 * gas_clumps[k] as f64;
                     if (ring + fill + gas) * (front.end - front.start) < NEGLIGIBLE_FALL {
                         continue;
                     }

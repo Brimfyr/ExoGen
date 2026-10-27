@@ -815,6 +815,14 @@ Direction: the highlands' mature albedo and the rays' fresh one against the meas
 
 When: with the Moon's gate items.
 
+### M37. Io's layered plains
+
+Some 4 percent of Io's surface is layered plains, layers of the plains isolated from those beneath them by bounding scarps, irregular and fretted (Williams et al. 2011; McCauley et al. 1979), which sapping by liquid SO2 erodes back, with lobed deposits at their feet (Moore et al. 2001); Io's colour mosaics show them as plateaus with bright rims. The model's plains are one surface, buried smooth (F86), its plateaus only the mountains' layered form (F87).
+
+Direction: the plains' layers stripped back from their scarps by sapping, the SO2 within them escaping where a scarp exposes it and the debris spreading in lobes at its foot, from the scarps that the paterae's walls, the mountains' feet and the flows' fronts start, with frost at the scarps' feet; the scarps' heights and their rates of retreat from Io's imagery.
+
+When: with Phase 5's erosion, its mass wasting and sublimation textures (decided 2026-10-27, against building it with every number stated).
+
 ### V1. Interpolated bodies in validation
 
 `exogen validate` checks the reference bodies only. Principle 15 asks for bodies between them as well. The first sweeps to carry:

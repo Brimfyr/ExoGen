@@ -2765,3 +2765,9 @@ How it went:
 - **Time.** Two passes of the history and the jets of the Pele-class pyroclasts at every cell their rings reach doubled the pass; a first pass over a ninth of the cells, unchanged in the map, and the jets only within the third of the range their pyroclasts fall in bring it to 17 s.
 
 Still to do: the frost fields' fine structure; the layered plains.
+
+## The hundred-and-twenty-third milestone: the plumes' gas settles unevenly
+
+- **F211.** The plumes' gas settling across their regions lands unevenly, clumped as their far fallout is (F89), so that the frost fields break up at every scale, the sulfur and the flows between; frost shows over 27 percent of the surface, Io's figure.
+
+The layered plains, Io's plateaus behind fretted scarps that sapping by liquid SO2 erodes back, wait for Phase 5's erosion (audit M37): no heights nor rates of retreat were to be had, and the process is the erosion and mass wasting that phase brings.
