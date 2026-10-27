@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 18;
+pub const VERSION: u64 = 19;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -685,9 +685,14 @@ fn fabric_strike(
 /// A fall too thin to show over its whole eruption, optical depths.
 const NEGLIGIBLE_FALL: f64 = 0.02;
 
-/// Bins of a young flow's age as shares of the history, for its frost halo: each bin's
-/// halo takes the release-weighted mean age of the lava in it.
-const HALO_AGE_BINS: [f64; 4] = [0.0, 0.02, 0.1, 1.0];
+/// Bins of the years a flow's lava was laid, as shares of the history, for the plumes at
+/// its fronts (F202): finer towards the present, where the frost they lay still shows.
+const FRONT_AGE_BINS: [f64; 8] = [0.0, 0.002, 0.006, 0.02, 0.06, 0.2, 0.6, 1.0];
+
+/// The length over which the plumes at the flows' fronts share their eruption speed, m
+/// (F202): a plume keeps its form as its source wanders with its front (Kieffer et al.
+/// 2000), and a field's pieces erupt alike, its neighbours' differently.
+const FRONT_SPEED_LENGTH: f64 = 600e3;
 
 /// How far back the history reaches, years (F84): a few burial times of the background
 /// fallout, past which nothing a plume laid can still show.
@@ -730,12 +735,13 @@ pub fn profile_moment(inner: f64) -> f64 {
         .sum()
 }
 
-/// The plumes of every patera over the history the surface remembers (F84). Each
-/// patera's eruptions are drawn from the present back: one erupting now if the patera is
-/// active and its class's share of active centres throws a plume, part way through; then
-/// quiet spells and eruptions alternating at the duty its class keeps, the spells
-/// memoryless and the eruptions from a few months to decades long. Each eruption has its
-/// own speed and so its range, its own mass and its vent's elongation.
+/// The plumes of the Pele-class paterae over the history the surface remembers (F84;
+/// the Prometheus class rise at the flows' fronts, `front_falls`, F202). Each patera's
+/// eruptions are drawn from the present back: one erupting now if the patera is active
+/// and its class's share of active centres throws a plume, part way through; then quiet
+/// spells and eruptions alternating at the duty its class keeps, the spells memoryless
+/// and the eruptions from a few months to decades long. Each eruption has its own speed
+/// and so its range, its own mass and its vent's elongation.
 pub fn plume_history(paterae: &[Patera], gravity: f64, seed: u64) -> Vec<PlumeEpisode> {
     let rng = Rng::new(seed ^ 0x0E91_5DE5_0000_0084);
     let (d_lo, d_hi) = IO_PLUME_DURATION_YR;
@@ -747,7 +753,7 @@ pub fn plume_history(paterae: &[Patera], gravity: f64, seed: u64) -> Vec<PlumeEp
     let tau = 2.0 * std::f64::consts::PI;
     let window = history_years();
     let mut out = Vec::new();
-    for p in paterae {
+    for p in paterae.iter().filter(|p| p.pele) {
         let idx = p.id;
         let share = if p.pele {
             IO_PLUME_FRACTION_PELE
@@ -981,6 +987,117 @@ pub fn background_fall(
         .as_slice()
         .iter()
         .map(|&v| (v as f64 * scale) as f32)
+        .collect()
+}
+
+/// The fall of the plumes at the flows' fronts over one bin of years (F202), optical
+/// depths a year at each cell, from `start` to `end` years from the present (negative):
+/// the ring's condensate, the pyroclasts within it, and their silicate.
+struct FrontFall {
+    start: f64,
+    end: f64,
+    ring: Vec<f32>,
+    fill: Vec<f32>,
+    dark: Vec<f32>,
+}
+
+/// The plumes at the young flows' fronts (F202). A Prometheus-class plume rises where a
+/// flow runs over the plains' SO2, not at its vent (Kieffer et al. 2000: Prometheus's
+/// plume wandered 75 to 95 km west with its flow field over twenty years while its vent
+/// stayed, its form unchanged; Milazzo et al. 2001), so its source is the lava laid in
+/// each bin of years, IO_FRONT_SO2 of SO2 for each cubic metre, thrown at the class's
+/// speed with its scatter and falling in the class's ring about each piece of the
+/// source: the deposits wrap the flows and trail their growth, as Io's white diffuse
+/// deposits surround its flows in irregular units (Williams et al. 2011). The rings are
+/// broad and drawn on a coarse grid.
+fn front_falls(
+    grid: CubeSphere,
+    body_radius: f64,
+    gravity: f64,
+    units: &[u16],
+    coverage: &[f32],
+    laid_yr: &[f32],
+    window: f64,
+) -> Vec<FrontFall> {
+    let coarse = CubeSphere::new(grid.face_size().min(128));
+    let range = IO_PLUME_SPEED_PROMETHEUS * IO_PLUME_SPEED_PROMETHEUS / gravity.max(0.01);
+    let moment = profile_moment(IO_RING_INNER_PROMETHEUS);
+    // Each piece of a source erupts at the speed its place draws, with the class's
+    // scatter, a unit spread of the noise; the range goes as the speed squared.
+    let speeds = GradientNoise::new(0xF207_5EED);
+    let frequency = body_radius / FRONT_SPEED_LENGTH;
+    let radius_at = |d: [f64; 3]| {
+        let z = (2.5 * speeds.fbm(d, frequency, 2, 2.0, 0.5)).clamp(-2.0, 2.0);
+        range * (2.0 * IO_PLUME_SPEED_SCATTER * z).exp()
+    };
+    let farthest = 1.4;
+    let bins: Vec<(f64, f64)> = FRONT_AGE_BINS
+        .windows(2)
+        .map(|b| (b[0] * window, b[1] * window))
+        .collect();
+    // Each bin's lava, m², in each coarse cell.
+    let mut lava = vec![vec![0.0f64; coarse.cell_count()]; bins.len()];
+    for k in 0..units.len() {
+        if units[k] != UNIT_IO_FLOW {
+            continue;
+        }
+        let age = laid_yr[k] as f64;
+        let Some(b) = bins.iter().position(|&(lo, hi)| age >= lo && age < hi) else {
+            continue;
+        };
+        let c = grid.cell(k);
+        let area = grid.cell_area(c) * body_radius * body_radius;
+        lava[b][coarse.index(coarse.locate(grid.center(c)).0)] +=
+            area * coverage[k].clamp(0.0, 1.0) as f64;
+    }
+    let tau = std::f64::consts::TAU;
+    let dark_share = IO_DARK_CONTAMINATED * IO_DARK_PROMETHEUS;
+    bins.par_iter()
+        .zip(lava.par_iter())
+        .map(|(&(lo, hi), lava)| {
+            let n = coarse.cell_count();
+            let (mut ring, mut fill, mut dark) =
+                (vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]);
+            let mut stamper = Stamper::new(&coarse);
+            let years = (hi - lo).max(1e-9);
+            for (s, &area) in lava.iter().enumerate() {
+                if area <= 0.0 {
+                    continue;
+                }
+                // Its SO2 a year over the bin, in optical depths over a square metre.
+                let rate =
+                    area * FLOOD_SHEET_THICKNESS * IO_FRONT_SO2 / (years * IO_DEPOSIT_OPTICAL_MASS);
+                let center = coarse.center(coarse.cell(s));
+                let radius = radius_at(center);
+                let per = rate / (tau * radius * radius * moment);
+                stamper.gather(&coarse, body_radius, center, farthest * radius);
+                for &(idx, r, _) in &stamper.footprint {
+                    let x = r / radius;
+                    if x >= farthest {
+                        continue;
+                    }
+                    let (crest, within) = deposit_profile(x);
+                    let within = IO_RING_INNER_PROMETHEUS * within;
+                    ring[idx] += per * crest;
+                    fill[idx] += per * within;
+                    dark[idx] += per * within * dark_share * (-(x / IO_DARK_REACH).powi(2)).exp();
+                }
+            }
+            let fine = |v: Vec<f64>| {
+                let mut f = Field::<f32>::new(coarse);
+                for (o, x) in f.as_mut_slice().iter_mut().zip(v) {
+                    *o = x as f32;
+                }
+                f.resample(grid).as_slice().to_vec()
+            };
+            FrontFall {
+                start: -hi,
+                end: -lo,
+                ring: fine(ring),
+                fill: fine(fill),
+                dark: fine(dark),
+            }
+        })
         .collect()
 }
 
@@ -1237,6 +1354,7 @@ fn search_bin(d: [f64; 3]) -> usize {
 pub fn deposit_history(
     layers: &mut LayerSet,
     body_radius: f64,
+    gravity: f64,
     insolation: f64,
     episodes: &[PlumeEpisode],
     small: &[PlumeEpisode],
@@ -1312,38 +1430,17 @@ pub fn deposit_history(
     let tilts = slope.map(|s| smoothed_over(s, FROST_SLOPE_LENGTH, body_radius));
     let coverage = layers.cover.as_slice();
     let laid_yr = layers.melt.as_slice();
-    // The young flows' halos: their release in bins of age, and the release-weighted
-    // age, each spread over the halo's reach; the lava itself in each bin takes no halo
-    // of its own.
-    let halo_clock = std::time::Instant::now();
-    let halos: Vec<(Vec<f32>, Vec<f32>, Vec<f32>)> = HALO_AGE_BINS
-        .windows(2)
-        .map(|bin| {
-            let mut lava = Field::<f32>::new(grid);
-            let mut aged = Field::<f32>::new(grid);
-            {
-                let (l, a) = (lava.as_mut_slice(), aged.as_mut_slice());
-                for k in 0..l.len() {
-                    let age = laid_yr[k] as f64 / window;
-                    if units[k] == UNIT_IO_FLOW && age >= bin[0] && age < bin[1] {
-                        l[k] = coverage[k].clamp(0.0, 1.0);
-                        a[k] = l[k] * laid_yr[k];
-                    }
-                }
-            }
-            (
-                smoothed_over(&lava, IO_HALO_RANGE, body_radius),
-                smoothed_over(&aged, IO_HALO_RANGE, body_radius),
-                lava.as_slice().to_vec(),
-            )
-        })
-        .collect();
-    let halo_rate = IO_HALO_RELEASE / (IO_HALO_DURATION_YR * IO_DEPOSIT_OPTICAL_MASS);
+    // The plumes at the young flows' fronts (F202).
+    let front_clock = std::time::Instant::now();
+    let fronts = front_falls(grid, body_radius, gravity, units, coverage, laid_yr, window);
+    let front_frost = 0.5 * (IO_PROMETHEUS_FROST.0 + IO_PROMETHEUS_FROST.1);
+    let front_mottle = body_radius
+        / (0.15 * IO_PLUME_SPEED_PROMETHEUS * IO_PLUME_SPEED_PROMETHEUS / gravity.max(0.01));
     let debug = std::env::var_os("EXOGEN_DEBUG").is_some();
     if debug {
         eprintln!(
-            "io deposit history: the halos and the slopes {:.1} s",
-            halo_clock.elapsed().as_secs_f64()
+            "io deposit history: the fronts' plumes and the slopes {:.1} s",
+            front_clock.elapsed().as_secs_f64()
         );
     }
     let clock = std::time::Instant::now();
@@ -1482,28 +1579,35 @@ pub fn deposit_history(
                         falls.push((e.start, e.end, fall, is_small));
                     }
                 }
-                // The halos of the young flows about the cell.
-                // Frost does not lie on the young lava itself.
-                let young: f64 = halos.iter().map(|(_, _, l)| l[k] as f64).sum();
-                for (spread, spread_age, _) in &halos {
-                    let s = spread[k] as f64;
-                    let rate = halo_rate * s * (1.0 - young).max(0.0);
-                    if rate * IO_HALO_DURATION_YR < NEGLIGIBLE_FALL {
+                // The plumes at the young flows' fronts about the cell (F202), their mass
+                // mottled as an eruption's is.
+                let mottle = 1.0
+                    - IO_DEPOSIT_MOTTLING
+                        * (0.5
+                            + 0.5
+                                * noise.sample([
+                                    d[0] * front_mottle + 37.0,
+                                    d[1] * front_mottle + 11.0,
+                                    d[2] * front_mottle + 5.0,
+                                ]));
+                for front in &fronts {
+                    let ring = front.ring[k] as f64 * mottle;
+                    let fill = front.fill[k] as f64 * mottle;
+                    if (ring + fill) * (front.end - front.start) < NEGLIGIBLE_FALL {
                         continue;
                     }
-                    let start = -(spread_age[k] as f64 / s).clamp(0.0, window);
-                    let end = (start + IO_HALO_DURATION_YR).min(0.0);
-                    if end > start {
-                        falls.push((
-                            start,
-                            end,
-                            Fall {
-                                frost: rate,
-                                ..Fall::default()
-                            },
-                            false,
-                        ));
-                    }
+                    let condensed = ring * (1.0 - front_frost);
+                    falls.push((
+                        front.start,
+                        front.end,
+                        Fall {
+                            solid: condensed + fill,
+                            red: condensed * IO_PROMETHEUS_RED,
+                            dark: front.dark[k] as f64 * mottle,
+                            frost: ring * front_frost,
+                        },
+                        false,
+                    ));
                 }
                 // Where the cell stood when the history began: what fell before has aged,
                 // its red reverted and its frost gone or covered, and it was buried at the
@@ -1579,10 +1683,10 @@ pub fn deposit_history(
                             "io trace:   fall {start:.1} to {end:.1} yr (small {small}): {fall:?}"
                         );
                     }
-                    for (b, (spread, spread_age, lava)) in halos.iter().enumerate() {
+                    for (b, front) in fronts.iter().enumerate() {
                         eprintln!(
-                            "io trace:   halo bin {b}: spread {:.3e} age sum {:.3e} own {:.3}",
-                            spread[k], spread_age[k], lava[k]
+                            "io trace:   front bin {b}: ring {:.3e} fill {:.3e} a year",
+                            front.ring[k], front.fill[k]
                         );
                     }
                     eprintln!(
@@ -3114,8 +3218,78 @@ mod tests {
         assert!(broad > 2000.0, "{broad}");
     }
 
+    /// The plumes at the flows' fronts (F202): lava laid some years ago throws its SO2 in
+    /// a ring about it, within the bin of years it was laid in, the mass kept, the fall
+    /// heaviest near the class's range from the lava rather than on it.
+    #[test]
+    fn a_young_flow_throws_its_so2_in_a_ring() {
+        let grid = CubeSphere::new(128);
+        let r = 1_821.6e3;
+        let g = 1.796;
+        let n = grid.cell_count();
+        let source = normalize([1.0, 0.2, 0.1]);
+        let (mut units, mut coverage, mut laid) = (vec![0u16; n], vec![0f32; n], vec![0f32; n]);
+        let mut area = 0.0;
+        for k in 0..n {
+            let d = grid.center(grid.cell(k));
+            if angle_between(d, source) * r < 20e3 {
+                units[k] = UNIT_IO_FLOW;
+                coverage[k] = 1.0;
+                laid[k] = 5.0;
+                area += grid.cell_area(grid.cell(k)) * r * r;
+            }
+        }
+        let window = history_years();
+        let fronts = front_falls(grid, r, g, &units, &coverage, &laid, window);
+        let bin = fronts
+            .iter()
+            .position(|f| -f.start > 5.0 && -f.end <= 5.0)
+            .unwrap();
+        let mut fallen = 0.0;
+        for (b, f) in fronts.iter().enumerate() {
+            let years = f.end - f.start;
+            let sum: f64 = (0..n)
+                .map(|k| (f.ring[k] + f.fill[k]) as f64 * grid.cell_area(grid.cell(k)) * r * r)
+                .sum();
+            if b != bin {
+                assert!(sum == 0.0, "bin {b} took {sum}");
+            }
+            fallen += sum * years * IO_DEPOSIT_OPTICAL_MASS;
+        }
+        let thrown = area * FLOOD_SHEET_THICKNESS * IO_FRONT_SO2;
+        assert!(
+            (fallen / thrown - 1.0).abs() < 0.1,
+            "{fallen:e} of {thrown:e} kg"
+        );
+        // The ring's crest lies near the range, the lava itself under the thin fill.
+        let range = IO_PLUME_SPEED_PROMETHEUS * IO_PLUME_SPEED_PROMETHEUS / g;
+        let f = &fronts[bin];
+        let (mut at_source, mut crest, mut crest_r) = (0.0f32, 0.0f32, 0.0);
+        for k in 0..n {
+            let d = angle_between(grid.center(grid.cell(k)), source) * r;
+            let fall = f.ring[k] + f.fill[k];
+            if d < 10e3 {
+                at_source = at_source.max(fall);
+            }
+            if fall > crest {
+                crest = fall;
+                crest_r = d;
+            }
+        }
+        assert!(
+            crest > 5.0 * at_source,
+            "crest {crest} at the source {at_source}"
+        );
+        assert!(
+            crest_r > 0.5 * range && crest_r < 1.8 * range,
+            "crest at {crest_r} m, range {range} m"
+        );
+    }
+
     /// The history of a patera's plumes (F84): an active Pele-class patera with a plume
-    /// erupting now, the rest at their class's duty, every eruption within the history.
+    /// erupting now, the rest at their class's duty, every eruption within the history;
+    /// the Prometheus class throws none from its centre, its plumes rising at the flows'
+    /// fronts (F202).
     #[test]
     fn plumes_erupt_at_their_class_duty() {
         let mut paterae = Vec::new();
@@ -3152,26 +3326,15 @@ mod tests {
         }
         let duty = |class: usize, count: f64| busy[class] / (count * window);
         let pele = duty(1, 20.0);
-        let prometheus = duty(0, 380.0);
         let want = IO_PATERA_ACTIVE_FRACTION;
         assert!(
             (pele / (want * IO_PLUME_FRACTION_PELE) - 1.0).abs() < 0.5,
             "Pele-class duty {pele}"
         );
-        assert!(
-            (prometheus / (want * IO_PLUME_FRACTION_PROMETHEUS) - 1.0).abs() < 0.3,
-            "Prometheus-class duty {prometheus}"
-        );
-        assert!(erupting[0] + erupting[1] > 3, "{erupting:?}");
-        // Pele-class rings are far wider than Prometheus-class ones.
-        let mean = |pele: bool| {
-            let r: Vec<f64> = episodes
-                .iter()
-                .filter(|e| e.pele == pele)
-                .map(|e| e.radius)
-                .collect();
-            r.iter().sum::<f64>() / r.len() as f64
-        };
-        assert!(mean(true) > 2.5 * mean(false));
+        assert_eq!(busy[0], 0.0, "Prometheus-class plumes at their centres");
+        assert!(erupting[1] > 3, "{erupting:?}");
+        // Pele-class rings reach hundreds of kilometres (Geissler et al. 2004).
+        let mean = episodes.iter().map(|e| e.radius).sum::<f64>() / episodes.len() as f64;
+        assert!(mean > 400e3, "{mean}");
     }
 }

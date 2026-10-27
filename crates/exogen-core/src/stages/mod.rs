@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 151;
+pub const FINISH_VERSION: u64 = 152;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2775,6 +2775,7 @@ pub fn finish(
         io::deposit_history(
             &mut layers,
             body_radius,
+            graph.f64("body.gravity"),
             graph.f64("orbit.insolation"),
             &plume_episodes,
             &small_eruptions,

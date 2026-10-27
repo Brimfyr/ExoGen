@@ -1389,14 +1389,15 @@ pub const IO_FROST_ALBEDO: f64 = 0.75;
 /// Dott et al. 2025).
 pub const IO_ALTERATION_YR: f64 = 10.0;
 pub const IO_SHIELD_COLUMNS: f64 = 10.0;
-/// A flow spreading over the plains drives off this much SO2 from the ground beneath,
-/// kg per square metre of lava (a stated choice: some 5 cm of SO2 ice), over this many
-/// years as it spreads and cools (a stated choice), which condenses again round it over
-/// this reach, m, hugging its margins (a stated choice: Williams et al. 2011's white
-/// diffuse deposits often surround the flows' boundaries).
-pub const IO_HALO_RELEASE: f64 = 100.0;
-pub const IO_HALO_DURATION_YR: f64 = 3.0;
-pub const IO_HALO_RANGE: f64 = 8e3;
+/// A flow running over the plains drives off the SO2 beneath it, which rises in a
+/// Prometheus-class plume at its front (F202): this much SO2, kg, for each cubic metre of
+/// lava, the mean over Io's ground (a calibration on Prometheus, over SO2-rich plains:
+/// Jessup et al. 2004 model its volcanic SO2 at 10^5 kg/s, which Davies 2003's 49 m³/s
+/// of lava feed, 2,000 kg/m³, a fifth of the lava's heat, some 4.5 GJ/m³, against the
+/// 0.5 MJ/kg that warms and sublimes the frost; times the share of Io's surface as rich
+/// in SO2, its white plains and white diffuse deposits, 16 percent, Williams et al.
+/// 2011). Prometheus's own ratio on every flow buried the flows under discs of frost.
+pub const IO_FRONT_SO2: f64 = 320.0;
 /// Slack on a feature's birth and death against the step times' rounding, Gyr.
 pub const IO_ALIVE_TOLERANCE_GYR: f64 = 1e-6;
 /// Colours, linear reflectance: sulfur, sulfur altered by the plasma, SO2 frost, dark

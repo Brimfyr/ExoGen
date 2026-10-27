@@ -2685,3 +2685,16 @@ How it went:
 - **Hidden.** With the fields spread over the time their lava can show, most of each field is old, and F84's centimetre of fines, laid within a few centuries by the plumes about the paterae, hid them: lava showed over 3 percent of the surface. Rough lava hides once its hollows fill, some 20 cm of fines; it now shows over 15 percent, dark over 3.8 (Io's dark flows and floors 3.4).
 
 Still to do: the Prometheus-class plumes at the flow fronts, which take up the flows' white halos and the identical rings; the Pele-class rings; Io's bright sulfur flows and its floors' colours; the plains.
+
+## The hundred-and-sixteenth milestone: the Prometheus-class plumes rise at the flows' fronts
+
+The second of the user's three steps for Io: the white rings were one lobed flower repeated at the paterae's centres, and every young flow wore a white line one or two cells wide.
+
+- **F202.** The Prometheus class throws nothing from its paterae's centres; the lava laid over the history drives off its SO2, which rises at the front and falls in the class's ring about the lava, each field's plume at its own speed.
+
+How it went:
+
+- **Discs.** Prometheus's own ratio of SO2 to lava on every flow buried the flows under white discs; the mean over Io's ground, Prometheus's ratio over the share of Io rich in SO2, keeps the flows showing.
+- **Smeared.** The class's scatter of range averaged at every source made each ring a disc; a plume keeps its form as it wanders (Kieffer et al. 2000), so each field's pieces now share one speed.
+
+The user chose to commit it and take up the frost's look next: the rings are crisp white annuli, some 35 where Io shows a handful, the frost opaque wherever its fall outpaces the sublimation (M7).
