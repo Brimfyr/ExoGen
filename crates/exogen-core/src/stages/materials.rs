@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 29;
+pub const VERSION: u64 = 30;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -707,6 +707,8 @@ pub fn albedo(
                 );
                 let ground = lerp3(sulfur, IO_FLOW_DARK, deep_f[k].clamp(0.0, 1.0));
                 let frost = cover_f[k].clamp(0.0, 1.0);
+                // The plasma alters the frost on top as it alters the sulfur (F205).
+                let frost_colour = lerp3(IO_FROST, IO_POLAR, stain_f[k].clamp(0.0, 1.0));
                 return match units[k] {
                     UNIT_MOUNTAIN => {
                         // Steep flanks shed their coat and show the rock.
@@ -720,9 +722,9 @@ pub fn albedo(
                         let (lo, hi) = IO_MOUNTAIN_BARE_SLOPE_DEG;
                         let bare =
                             ((slope.atan().to_degrees() - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
-                        lerp3(lerp3(ground, IO_FROST, frost), IO_MOUNTAIN_ROCK, bare)
+                        lerp3(lerp3(ground, frost_colour, frost), IO_MOUNTAIN_ROCK, bare)
                     }
-                    _ => lerp3(ground, IO_FROST, frost),
+                    _ => lerp3(ground, frost_colour, frost),
                 };
             }
             if liquid[k] > 0.0 {

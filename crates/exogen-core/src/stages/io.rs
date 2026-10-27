@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 20;
+pub const VERSION: u64 = 21;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -999,6 +999,8 @@ struct FrontFall {
     ring: Vec<f32>,
     fill: Vec<f32>,
     dark: Vec<f32>,
+    /// The plumes' gas settling across their regions (F205).
+    gas: Vec<f32>,
 }
 
 /// The plumes at the young flows' fronts (F202). A Prometheus-class plume rises where a
@@ -1035,8 +1037,9 @@ fn front_falls(
         .windows(2)
         .map(|b| (b[0] * window, b[1] * window))
         .collect();
-    // Each bin's lava, m², in each coarse cell.
+    // Each bin's lava, m², in each coarse cell, and the share of each cell it covers.
     let mut lava = vec![vec![0.0f64; coarse.cell_count()]; bins.len()];
+    let mut laid: Vec<Field<f32>> = bins.iter().map(|_| Field::<f32>::new(grid)).collect();
     for k in 0..units.len() {
         if units[k] != UNIT_IO_FLOW {
             continue;
@@ -1046,15 +1049,17 @@ fn front_falls(
             continue;
         };
         let c = grid.cell(k);
+        let share = coverage[k].clamp(0.0, 1.0);
         let area = grid.cell_area(c) * body_radius * body_radius;
-        lava[b][coarse.index(coarse.locate(grid.center(c)).0)] +=
-            area * coverage[k].clamp(0.0, 1.0) as f64;
+        lava[b][coarse.index(coarse.locate(grid.center(c)).0)] += area * share as f64;
+        laid[b].as_mut_slice()[k] = share;
     }
     let tau = std::f64::consts::TAU;
     let dark_share = IO_DARK_CONTAMINATED * IO_DARK_PROMETHEUS;
     bins.par_iter()
         .zip(lava.par_iter())
-        .map(|(&(lo, hi), lava)| {
+        .zip(laid.par_iter())
+        .map(|((&(lo, hi), lava), laid)| {
             let n = coarse.cell_count();
             let (mut ring, mut fill, mut dark) =
                 (vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]);
@@ -1064,9 +1069,10 @@ fn front_falls(
                 if area <= 0.0 {
                     continue;
                 }
-                // Its SO2 a year over the bin, in optical depths over a square metre.
-                let rate =
-                    area * FLOOD_SHEET_THICKNESS * IO_FRONT_SO2 / (years * IO_DEPOSIT_OPTICAL_MASS);
+                // Its SO2 a year over the bin that condenses in the canopy, in optical
+                // depths over a square metre.
+                let rate = area * FLOOD_SHEET_THICKNESS * IO_FRONT_SO2 * IO_RING_GAS_SHARE
+                    / (years * IO_DEPOSIT_OPTICAL_MASS);
                 let center = coarse.center(coarse.cell(s));
                 let radius = radius_at(center);
                 let per = rate / (tau * radius * radius * moment);
@@ -1090,12 +1096,21 @@ fn front_falls(
                 }
                 f.resample(grid).as_slice().to_vec()
             };
+            // The rest of the gas settles across the region, its mass kept by the
+            // smoothing.
+            let settles = FLOOD_SHEET_THICKNESS * IO_FRONT_SO2 * (1.0 - IO_RING_GAS_SHARE)
+                / (years * IO_DEPOSIT_OPTICAL_MASS);
+            let gas = smoothed_over(laid, IO_PLUME_GAS_LENGTH, body_radius)
+                .into_iter()
+                .map(|v| (v as f64 * settles) as f32)
+                .collect();
             FrontFall {
                 start: -hi,
                 end: -lo,
                 ring: fine(ring),
                 fill: fine(fill),
                 dark: fine(dark),
+                gas,
             }
         })
         .collect()
@@ -1186,9 +1201,13 @@ const LAG_CAP: f64 = 30.0;
 /// day, and so of its sublimation, over these factors of the mean rate (stated choices:
 /// a few kelvin either way, the plains' slopes of a few degrees over their relief of a
 /// few tens of kilometres), which blends a frost line across the width its ground gives
-/// it; longer slopes, a mountain's flanks, it reads one by one.
+/// it, in steps fine enough not to show where a broad fall crosses them (F205); longer
+/// slopes, a mountain's flanks, it reads one by one.
 const FROST_SLOPE_LENGTH: f64 = 30e3;
-const FROST_SPREAD: [f64; 6] = [0.333, 0.517, 0.803, 1.246, 1.934, 3.0];
+const FROST_SPREAD: [f64; 16] = [
+    0.333, 0.386, 0.447, 0.517, 0.599, 0.693, 0.803, 0.929, 1.076, 1.246, 1.442, 1.670, 1.933,
+    2.238, 2.591, 3.000,
+];
 
 /// A field smoothed over a length, m: averaged onto coarser grids until their cells are
 /// half the length, blurred there, and brought back grid by grid with a blur at each, so
@@ -1224,7 +1243,7 @@ struct Top {
     dark: f64,
     red: f64,
     altered: f64,
-    frost: [f64; 6],
+    frost: [f64; 16],
     lag: f64,
     fine: f64,
 }
@@ -1610,7 +1629,8 @@ pub fn deposit_history(
                 for front in &fronts {
                     let ring = front.ring[k] as f64 * mottle;
                     let fill = front.fill[k] as f64 * mottle;
-                    if (ring + fill) * (front.end - front.start) < NEGLIGIBLE_FALL {
+                    let gas = front.gas[k] as f64;
+                    if (ring + fill + gas) * (front.end - front.start) < NEGLIGIBLE_FALL {
                         continue;
                     }
                     let condensed = ring * (1.0 - front_frost);
@@ -1621,7 +1641,7 @@ pub fn deposit_history(
                             solid: condensed + fill,
                             red: condensed * IO_PROMETHEUS_RED,
                             dark: front.dark[k] as f64 * mottle,
-                            frost: ring * front_frost,
+                            frost: ring * front_frost + gas,
                         },
                         false,
                     ));
@@ -1756,6 +1776,40 @@ pub fn deposit_history(
         melt[k] = top.red as f32;
         stain[k] = top.altered as f32;
         cover[k] = (top.visible_frost() * (1.0 - warm)) as f32;
+    }
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        // The frost showing by band of latitude, and over the whole (Geissler et al.
+        // 1999: white and grey SO2 over 27 percent of Io, mostly at low latitudes).
+        let edges = [0.0, 10.0, 20.0, 30.0, 45.0, 60.0, 90.0];
+        let mut sums = [[0.0f64; 2]; 6];
+        let mut all = [0.0f64; 2];
+        for (k, &c) in cover.iter().enumerate() {
+            let cell = grid.cell(k);
+            let a = grid.cell_area(cell);
+            let lat = grid.center(cell)[2]
+                .clamp(-1.0, 1.0)
+                .asin()
+                .to_degrees()
+                .abs();
+            let b = edges
+                .windows(2)
+                .position(|e| lat >= e[0] && lat < e[1])
+                .unwrap_or(5);
+            sums[b][0] += c as f64 * a;
+            sums[b][1] += a;
+            all[0] += c as f64 * a;
+            all[1] += a;
+        }
+        let bands: Vec<String> = sums
+            .iter()
+            .zip(edges.windows(2))
+            .map(|(s, e)| format!("{}-{}: {:.3}", e[0], e[1], s[0] / s[1]))
+            .collect();
+        eprintln!(
+            "io frost showing {:.3}; by latitude {}",
+            all[0] / all[1],
+            bands.join(", ")
+        );
     }
 }
 
@@ -3104,7 +3158,7 @@ mod tests {
             dark: 0.2,
             red: 0.1,
             altered: 0.4,
-            frost: [3.0; 6],
+            frost: [3.0; 16],
             lag: 2.0,
             fine: 1.0,
         };
@@ -3288,7 +3342,9 @@ mod tests {
         for (b, f) in fronts.iter().enumerate() {
             let years = f.end - f.start;
             let sum: f64 = (0..n)
-                .map(|k| (f.ring[k] + f.fill[k]) as f64 * grid.cell_area(grid.cell(k)) * r * r)
+                .map(|k| {
+                    (f.ring[k] + f.fill[k] + f.gas[k]) as f64 * grid.cell_area(grid.cell(k)) * r * r
+                })
                 .sum();
             if b != bin {
                 assert!(sum == 0.0, "bin {b} took {sum}");
@@ -3296,6 +3352,19 @@ mod tests {
             fallen += sum * years * IO_DEPOSIT_OPTICAL_MASS;
         }
         let thrown = area * FLOOD_SHEET_THICKNESS * IO_FRONT_SO2;
+        // The gas that does not condense in the canopy settles across the region (F205).
+        let settled: f64 = fronts[bin]
+            .gas
+            .iter()
+            .enumerate()
+            .map(|(k, &g)| g as f64 * grid.cell_area(grid.cell(k)) * r * r)
+            .sum::<f64>()
+            * (fronts[bin].end - fronts[bin].start)
+            * IO_DEPOSIT_OPTICAL_MASS;
+        assert!(
+            (settled / thrown - (1.0 - IO_RING_GAS_SHARE)).abs() < 0.05,
+            "{settled:e} of {thrown:e} kg settled"
+        );
         assert!(
             (fallen / thrown - 1.0).abs() < 0.1,
             "{fallen:e} of {thrown:e} kg"

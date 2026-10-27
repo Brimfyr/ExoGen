@@ -1408,24 +1408,34 @@ pub const IO_SHIELD_COLUMNS: f64 = 10.0;
 /// in SO2, its white plains and white diffuse deposits, 16 percent, Williams et al.
 /// 2011). Prometheus's own ratio on every flow buried the flows under discs of frost.
 pub const IO_FRONT_SO2: f64 = 320.0;
+/// Of the SO2 a plume carries, this share condenses in its canopy and falls in its ring
+/// (a stated choice); the rest joins the atmosphere about it, which the plume's SO2
+/// thickens over hundreds of kilometres (Jessup et al. 2004 over Prometheus), and
+/// settles across the region the day's sublimation-driven winds spread it over, this
+/// long, m (a stated choice, Ingersoll et al. 1985), as the atmosphere collapses each
+/// night (F205).
+pub const IO_RING_GAS_SHARE: f64 = 0.3;
+pub const IO_PLUME_GAS_LENGTH: f64 = 400e3;
 /// Slack on a feature's birth and death against the step times' rounding, Gyr.
 pub const IO_ALIVE_TOLERANCE_GYR: f64 = 1e-6;
 /// Colours, linear reflectance on the maps' scale (the Moon's map averages its geometric
-/// albedo, 0.12) (F204): sulfur, the plains' yellow, set so that the body's mean as seen
-/// from its equator is Io's measured colour, its geometric albedo 0.74 at 557 nm and
-/// 0.28 at 404 nm (Spencer et al. 1995), so blue at 455 nm some 0.72 of green, and 0.62
-/// in V, red a little over green as Io's colour mosaics show it; sulfur altered by the
-/// plasma, the red-brown of the high latitudes (Geissler et al. 1999), a third darker
-/// and a little redder than the low latitudes (a stated choice, as Io's colour mosaics
-/// show its high latitudes against its low); SO2 frost; dark silicate (fresh lava and
-/// its pyroclasts); a plume's red sulfur, a muted reddening, red raised over green by
+/// albedo, 0.12) (F204, F205): sulfur, the plains' yellow, set so that the body's mean
+/// as seen from its equator, its frost with it, is Io's measured colour, its geometric
+/// albedo 0.74 at 557 nm and 0.28 at 404 nm (Spencer et al. 1995), so blue at 455 nm
+/// some 0.72 of green, and 0.62 in V, red a little over green as Io's true-colour
+/// mosaics show it; sulfur altered by the plasma, the red-brown of the high latitudes
+/// (Geissler et al. 1999), three quarters as bright as the low latitudes and a little
+/// redder, as Io's true-colour mosaics show its high latitudes against its low; SO2
+/// frost, a warm white, its SO2 contaminated with sulfur (Douté et al. 2001), as the
+/// brightest ground of Io's true-colour mosaics; dark silicate (fresh lava and its
+/// pyroclasts); a plume's red sulfur, a muted reddening, red raised over green by
 /// the 0.55 to 0.7 µm absorption edge of the short-chain sulfur in Pele's ring (Spencer
 /// et al. 1997), not the saturated red of composites that put Galileo's violet in place
 /// of the blue it lacked; and bare mountain rock; and the slopes between which a
 /// mountain sheds its coat, degrees, its gentler ground coated as the plains are (F87).
-pub const IO_SULFUR: [f32; 3] = [0.84, 0.76, 0.54];
-pub const IO_POLAR: [f32; 3] = [0.55, 0.45, 0.31];
-pub const IO_FROST: [f32; 3] = [0.86, 0.86, 0.88];
+pub const IO_SULFUR: [f32; 3] = [0.84, 0.76, 0.50];
+pub const IO_POLAR: [f32; 3] = [0.64, 0.54, 0.41];
+pub const IO_FROST: [f32; 3] = [0.89, 0.84, 0.71];
 pub const IO_FLOW_DARK: [f32; 3] = [0.05, 0.05, 0.05];
 pub const IO_PLUME_RED: [f32; 3] = [0.82, 0.55, 0.34];
 pub const IO_MOUNTAIN_ROCK: [f32; 3] = [0.32, 0.28, 0.22];

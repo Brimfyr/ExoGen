@@ -2710,3 +2710,17 @@ How it went:
 - **The colours.** The user saw the plains and poles darker and more saturated than Io's, the frost standing out from them too far: the body averaged 0.44 in green with blue 0.52 of green, where Io's measured albedo is 0.62 to 0.74 with blue 0.72 of green. The user chose Io's measured brightness over the colour mosaic's, which stands a third darker.
 
 Still to do: the frost cycle (M7), which the rings' crispness and the plains' missing white want; the Pele-class rings.
+
+## The hundred-and-eighteenth milestone: a plume's gas settles across its region
+
+The user asked to tackle the frost: the rings were crisp, some 35 of them, and the plains had no white of their own.
+
+- **F205.** Three tenths of a front's SO2 falls in its ring; the rest settles across 400 km about the lava as the atmosphere collapses each night, and broad, soft frost fields form where the fronts gather. The plasma alters the frost on top beyond 30 degrees; the frost is Io's warm white; the colours are set again so the body's mean stays Io's measured one.
+
+How it went:
+
+- **A frost cycle without the gas.** Each frost subliming against the atmosphere its region's frost holds up changed the frost from 4.4 to 4.6 percent of the surface: away from the rings nothing laid frost for the atmosphere to keep.
+- **Too much white.** Laid across the region, the gas whitened the middle and high latitudes, where it sublimes slowly; Io holds SO2 there, masked (Douté et al. 2001), and the plasma's alteration of the frost on top now masks it here. The broad fall also crossed the six steps of the slopes' sublimation in terraces, now sixteen.
+- **The colours.** With the frost ten times as widespread, the frost took Io's warm white and the sulfur a little less blue to keep the measured mean; the user then supplied a true-colour map of Io, whose hue agrees at every latitude and whose high latitudes, three quarters as bright as the low, set the polar colour.
+
+Still to do: the frost fields' fine structure; the Pele-class rings.
