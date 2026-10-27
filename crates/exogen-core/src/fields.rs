@@ -271,6 +271,9 @@ pub struct LayerSet {
     /// the present: laid by each crack as it forms and faded since; a renewed surface
     /// carries none.
     pub stain: Field<f32>,
+    /// The share of the dark ground that is lava whose surface reacted with what fell on
+    /// it while it was warm, 0 to 1 (F209: Io's green material).
+    pub reacted: Field<f32>,
     /// The base relief as it stands (F196): the relief the body formed with, worked by what
     /// works the ground about it but the features' own forms, relaxed as the ground relaxes
     /// and levelled by each crater's ejecta as the ground is, the crater's floor taking its
@@ -301,6 +304,7 @@ impl LayerSet {
             steep: Field::new(grid),
             ejecta_age: Field::new(grid),
             stain: Field::new(grid),
+            reacted: Field::new(grid),
             base: None,
         }
     }
@@ -344,6 +348,7 @@ impl LayerSet {
             steep: self.steep.resample(target),
             ejecta_age: self.ejecta_age.resample_nearest(target),
             stain: self.stain.resample(target),
+            reacted: self.reacted.resample(target),
             base: self.base.as_ref().map(|b| b.resample(target)),
         }
     }
@@ -374,6 +379,7 @@ impl LayerSet {
             self.steep.hash(),
             self.ejecta_age.hash(),
             self.stain.hash(),
+            self.reacted.hash(),
         ];
         crate::rng::hash_words(&parts)
     }

@@ -25,7 +25,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 30;
+pub const VERSION: u64 = 31;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -586,6 +586,7 @@ pub fn albedo(
     let melt_f = layers.melt.as_slice();
     let cover_f = layers.cover.as_slice();
     let clean_f = layers.clean.as_slice();
+    let reacted_f = layers.reacted.as_slice();
     let m = maturity.as_slice();
     // On an airless surface small impacts mix the regolith sideways, and a contact
     // between lava and its substrate blurs in colour as it ages.
@@ -705,7 +706,10 @@ pub fn albedo(
                     IO_PLUME_RED,
                     melt_f[k].clamp(0.0, 1.0),
                 );
-                let ground = lerp3(sulfur, IO_FLOW_DARK, deep_f[k].clamp(0.0, 1.0));
+                // Dark silicate, greened where lava reacted with the sulfur that fell on
+                // it while warm (F209).
+                let dark = lerp3(IO_FLOW_DARK, IO_GREEN, reacted_f[k].clamp(0.0, 1.0));
+                let ground = lerp3(sulfur, dark, deep_f[k].clamp(0.0, 1.0));
                 let frost = cover_f[k].clamp(0.0, 1.0);
                 // The plasma alters the frost on top as it alters the sulfur (F205).
                 let frost_colour = lerp3(IO_FROST, IO_POLAR, stain_f[k].clamp(0.0, 1.0));

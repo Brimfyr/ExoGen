@@ -1406,18 +1406,27 @@ pub const IO_PELE_JET_SHARE: f64 = 0.6;
 pub const IO_PELE_JET_WIDTH: f64 = 0.18;
 pub const IO_RING_OUTER_WIDTH_PELE: f64 = 0.2;
 /// The plasma alters what lies on top to red-brown in this many years where nothing
-/// shields it (F207, a stated choice: within months, faster than a plume's red sulfur
-/// reverts to yellow, IO_RED_FADE_YR, so that a deposit fading at the high latitudes
-/// goes back to their red-brown, as Surt's and Tvashtar's ephemeral red deposits did,
-/// Geissler et al. 2004, and no yellow shows about Io's high-latitude centres on its
-/// true-colour mosaics), and the sublimation atmosphere shields the ground by its
-/// column, which the frost's vapour pressure sets: the column at the equator is this
-/// many times the one that stops the plasma (a calibration: alteration takes over beyond
-/// about 30 degrees of latitude, where Io's red-brown plains begin, Geissler et al. 1999
-/// and Williams et al. 2011; the column falls tenfold from the equator to the poles,
-/// Dott et al. 2025).
-pub const IO_ALTERATION_YR: f64 = 0.5;
-pub const IO_SHIELD_COLUMNS: f64 = 21.0;
+/// shields it (F207, F210, a stated choice: as fast as a plume's red sulfur reverts to
+/// yellow, IO_RED_FADE_YR, so that a deposit fading at the high latitudes goes back to
+/// their red-brown, as Surt's and Tvashtar's ephemeral red deposits did, Geissler et al.
+/// 2004, and no yellow shows about Io's high-latitude centres on its true-colour
+/// mosaics; faster, with the steeper shielding it wants, it drew the red-brown's onset
+/// as a line of latitude), and the sublimation atmosphere shields the ground by its
+/// column (IO_ATMOSPHERE_FLOOR): the column of a frost-covered region at the equator is
+/// this many times the one that stops the plasma (a calibration: alteration takes over
+/// beyond about 30 degrees of latitude where the frost is as it is there on average,
+/// where Io's red-brown plains begin, Geissler et al. 1999 and Williams et al. 2011).
+pub const IO_ALTERATION_YR: f64 = 2.0;
+pub const IO_SHIELD_COLUMNS: f64 = 23.0;
+/// The atmosphere that shields the ground is held up by the frost's sublimation (F210):
+/// densest over Io's SO2 frost, its equatorial column some ten times greater over the
+/// frost-rich anti-Jovian longitudes than elsewhere (Feaga et al. 2009), so the column
+/// at a place is its latitude's frost vapour pressure times its region's frost cover,
+/// spread over IO_PLUME_GAS_LENGTH by the day's winds, over ground bare of frost this
+/// share of a frost-covered region's (a stated choice: the volcanic gas the plumes add);
+/// IO_SHIELD_COLUMNS is calibrated again so that the alteration takes over at about 30
+/// degrees where the frost is as it is there on average.
+pub const IO_ATMOSPHERE_FLOOR: f64 = 0.2;
 /// A flow running over the plains drives off the SO2 beneath it, which rises in a
 /// Prometheus-class plume at its front (F202): this much SO2, kg, for each cubic metre of
 /// lava, the mean over Io's ground (a calibration on Prometheus, over SO2-rich plains:
@@ -1455,6 +1464,17 @@ pub const IO_ALIVE_TOLERANCE_GYR: f64 = 1e-6;
 pub const IO_SULFUR: [f32; 3] = [0.84, 0.76, 0.50];
 pub const IO_POLAR: [f32; 3] = [0.64, 0.54, 0.41];
 pub const IO_FROST: [f32; 3] = [0.89, 0.84, 0.71];
+/// Lava whose surface reacted with the sulfur that fell on it while warm (F209): the
+/// green material on Io's caldera floors and dark flows, its edges sharp, apparently a
+/// sulfur-rich coating formed on warm silicate lava (Geissler et al. 1999; NASA PIA02535,
+/// Culann Patera), the colour of the dark green ground about the paterae on Io's
+/// true-colour mosaics; a lava's surface stays warm enough for this many years, fading
+/// (a stated choice: Io's flows glow in the infrared for years to decades), and reacts
+/// whole under this many optical depths of sulfur falling on it while warm (a stated
+/// choice: the fall that hides the ground, IO_DEPOSIT_OPTICAL_MASS).
+pub const IO_GREEN: [f32; 3] = [0.11, 0.13, 0.10];
+pub const IO_LAVA_WARM_YR: f64 = 20.0;
+pub const IO_GREEN_DEPTHS: f64 = 1.0;
 pub const IO_FLOW_DARK: [f32; 3] = [0.05, 0.05, 0.05];
 pub const IO_PLUME_RED: [f32; 3] = [0.82, 0.55, 0.34];
 pub const IO_MOUNTAIN_ROCK: [f32; 3] = [0.32, 0.28, 0.22];

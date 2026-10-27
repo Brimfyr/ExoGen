@@ -2751,3 +2751,17 @@ How it went:
 - **Propellers.** Jets of five degrees carrying all the pyroclasts drew black blades about the vents; ten degrees, with four tenths of the pyroclasts falling evenly, draw soft fans.
 
 Still to do: the flows' and floors' colours (Io's green material); the frost fields' fine structure.
+
+## The hundred-and-twenty-second milestone: sulfur on warm lava greens it, and the atmosphere is held up over the frost
+
+The user asked for the rest of Io's open items.
+
+- **F209.** Sulfur falling on lava still warm from its eruption greens its surface, Io's green material: the young flows and the floors under the plumes' fall are dark green, the older flows olive.
+- **F210.** The atmosphere that shields the ground from the plasma is held up over the frost: the red-brown reaches toward the equator over bare ground and holds off poleward under the frost fields, where F207's steep shielding had drawn it at a line of latitude.
+
+How it went:
+
+- **A line of latitude.** The global view after F207, not looked at when it was made, showed the low latitudes' yellow ending at a line: a fast alteration wanted a steep shielding. Held up over the frost and taking two years, the shielding fades over some 15 degrees and follows the frost fields.
+- **Time.** Two passes of the history and the jets of the Pele-class pyroclasts at every cell their rings reach doubled the pass; a first pass over a ninth of the cells, unchanged in the map, and the jets only within the third of the range their pyroclasts fall in bring it to 17 s.
+
+Still to do: the frost fields' fine structure; the layered plains.

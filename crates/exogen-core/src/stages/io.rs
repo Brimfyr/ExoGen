@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 24;
+pub const VERSION: u64 = 25;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -1301,6 +1301,9 @@ struct Top {
     frost: [f64; 16],
     lag: f64,
     fine: f64,
+    /// The share of the lava whose surface reacted with the sulfur that fell on it while
+    /// it was warm (F209).
+    greened: f64,
 }
 
 impl Top {
@@ -1329,6 +1332,7 @@ impl Top {
                 LAG_CAP
             },
             fine: fall.frost * IO_FROST_COARSENING_YR,
+            greened: 0.0,
         }
     }
 
@@ -1358,9 +1362,25 @@ impl Top {
         self.fine = relax(self.fine, fall.frost, 1.0 / IO_FROST_COARSENING_YR, dt);
     }
 
+    /// The sulfur `solid` optical depths a year fell on the lava while it was warm for
+    /// `warm_years`, the warmth integrated over the time (F209), and the share of the lava
+    /// it greened.
+    fn react(&mut self, solid: f64, warm_years: f64) {
+        if warm_years > 0.0 && solid > 0.0 {
+            self.greened =
+                1.0 - (1.0 - self.greened) * (-solid * warm_years / IO_GREEN_DEPTHS).exp();
+        }
+    }
+
     /// Fresh lava laid over a share of the cell.
     fn lava_laid(&mut self, share: f64) {
         let keep = 1.0 - share;
+        let old = self.lava * keep;
+        self.greened = if old + share > 0.0 {
+            self.greened * old / (old + share)
+        } else {
+            0.0
+        };
         self.lava = self.lava * keep + share;
         self.dark *= keep;
         self.red *= keep;
@@ -1380,6 +1400,7 @@ impl Top {
             frost: std::array::from_fn(|i| mix(self.frost[i], other.frost[i])),
             lag: mix(self.lag, other.lag),
             fine: mix(self.fine, other.fine),
+            greened: mix(self.greened, other.greened),
         }
     }
 
@@ -1557,7 +1578,10 @@ pub fn deposit_history(
                 .collect()
         })
         .unwrap_or_default();
-    let tops: Vec<Top> = (0..grid.cell_count())
+    // The history of every cell's top layer, its shielding atmosphere a share `held` of a
+    // frost-covered region's (F210).
+    let history = |held: &[f32], every: usize| -> Vec<Top> {
+        (0..grid.cell_count())
         .into_par_iter()
         .map_init(
             || {
@@ -1568,6 +1592,9 @@ pub fn deposit_history(
                 )
             },
             |(falls, marks, active), k| {
+                if k % every != 0 {
+                    return Top::default();
+                }
                 let d = grid.center(grid.cell(k));
                 // The far fallout of the plumes about the volcanic centres (F89).
                 let background = Fall {
@@ -1588,7 +1615,8 @@ pub fn deposit_history(
                     revert: 1.0 / IO_RED_FADE_YR,
                     sublime: sublime_equator
                         * pressure(tilts.as_ref().map_or(0.0, |t| t[k] as f64)),
-                    alter: (-IO_SHIELD_COLUMNS * pressure(0.0)).exp() / IO_ALTERATION_YR,
+                    alter: (-IO_SHIELD_COLUMNS * pressure(0.0) * held[k] as f64).exp()
+                        / IO_ALTERATION_YR,
                 };
                 // The eruptions whose fallout reached the cell, and when.
                 falls.clear();
@@ -1649,8 +1677,13 @@ pub fn deposit_history(
                         // sulfur; the pyroclasts within, sulfur and silicate.
                         let ring = mass * ring;
                         let fill = mass * fill;
-                        let dark =
-                            e.dark * (-(x / IO_DARK_REACH).powi(2)).exp() * e.jet_at(s1.atan2(c1));
+                        // The pyroclasts fall within a third of the range or so: the
+                        // jets matter only there.
+                        let dark = if x < 3.0 * IO_DARK_REACH {
+                            e.dark * (-(x / IO_DARK_REACH).powi(2)).exp() * e.jet_at(s1.atan2(c1))
+                        } else {
+                            0.0
+                        };
                         let fall = if is_small {
                             let solid = fill * (1.0 - e.frost);
                             Fall {
@@ -1732,6 +1765,11 @@ pub fn deposit_history(
                         lava: 1.0,
                         ..Top::default()
                     };
+                    // Its warmth while the mean fall coated it (F209).
+                    fresh.react(
+                        mean.solid,
+                        IO_LAVA_WARM_YR * (1.0 - ((laid + window) / IO_LAVA_WARM_YR).exp()),
+                    );
                     fresh.age(-window - laid, mean, kinetics);
                     top = top.blend(&fresh, share);
                 }
@@ -1750,8 +1788,19 @@ pub fn deposit_history(
                 // cell, summed afresh at each start and end.
                 let mut fall = background;
                 active.clear();
+                // The warmth of the lava laid in the history, integrated from one time to
+                // the next, years (F209).
+                let warmth = |t0: f64, t1: f64| {
+                    if share <= 0.0 || laid <= -window || t1 <= laid {
+                        return 0.0;
+                    }
+                    let from = t0.max(laid) - laid;
+                    IO_LAVA_WARM_YR
+                        * ((-from / IO_LAVA_WARM_YR).exp() - (-(t1 - laid) / IO_LAVA_WARM_YR).exp())
+                };
                 for &(t, kind, n) in marks.iter() {
                     top.age(t - now, fall, kinetics);
+                    top.react(fall.solid, warmth(now, t));
                     now = now.max(t);
                     match kind {
                         0 => active.push(n),
@@ -1766,6 +1815,7 @@ pub fn deposit_history(
                     }
                 }
                 top.age(-now, fall, kinetics);
+                top.react(fall.solid, warmth(now, 0.0));
                 if traced.contains(&k) {
                     eprintln!(
                         "io trace: cell {k} unit {} coverage {:.3} laid {:.1} yr, {kinetics:?}",
@@ -1790,7 +1840,37 @@ pub fn deposit_history(
                 top
             },
         )
-        .collect();
+        .collect()
+    };
+    // The atmosphere over the frost the plumes leave (F210): the frost's cover over its
+    // region, the bare ground's floor beneath.
+    // The frost's cover over a region wants no more than a sample of its cells.
+    let every = 9;
+    let first = history(&vec![1.0f32; grid.cell_count()], every);
+    let held: Vec<f32> = {
+        let mut f = Field::<f32>::new(grid);
+        let mut sampled = Field::<f32>::new(grid);
+        for (k, top) in first.iter().enumerate() {
+            if k % every == 0 {
+                f.as_mut_slice()[k] = top.visible_frost() as f32;
+                sampled.as_mut_slice()[k] = 1.0;
+            }
+        }
+        let f = smoothed_over(&f, IO_PLUME_GAS_LENGTH, body_radius);
+        let sampled = smoothed_over(&sampled, IO_PLUME_GAS_LENGTH, body_radius);
+        f.iter()
+            .zip(&sampled)
+            .map(|(&c, &n)| {
+                let c = if n > 0.0 {
+                    (c / n).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                } as f64;
+                (IO_ATMOSPHERE_FLOOR + (1.0 - IO_ATMOSPHERE_FLOOR) * c) as f32
+            })
+            .collect()
+    };
+    let tops = history(&held, 1);
     if debug {
         eprintln!(
             "io deposit history: the cells {:.1} s",
@@ -1820,6 +1900,7 @@ pub fn deposit_history(
     let melt = layers.melt.as_mut_slice();
     let cover = layers.cover.as_mut_slice();
     let stain = layers.stain.as_mut_slice();
+    let reacted = layers.reacted.as_mut_slice();
     for (k, top) in tops.iter().enumerate() {
         // Frost does not hold on the lava still showing (F206): dark ground takes in some
         // three times the sunlight the frost and the plains do and stands tens of kelvin
@@ -1828,6 +1909,12 @@ pub fn deposit_history(
         // has mantled the lava bright does the frost lie.
         let bare = top.lava;
         deep[k] = (top.lava + (1.0 - top.lava) * top.dark) as f32;
+        // The share of the dark ground that is greened lava (F209).
+        reacted[k] = if deep[k] > 0.0 {
+            (top.lava * top.greened / deep[k] as f64).min(1.0) as f32
+        } else {
+            0.0
+        };
         melt[k] = top.red as f32;
         stain[k] = top.altered as f32;
         cover[k] = (top.visible_frost() * (1.0 - bare)) as f32;
@@ -3217,6 +3304,7 @@ mod tests {
             frost: [3.0; 16],
             lag: 2.0,
             fine: 1.0,
+            greened: 0.0,
         };
         let mut many = one;
         one.age(5.0, fall, k);
@@ -3228,6 +3316,25 @@ mod tests {
         assert!(close(one.frost[1], many.frost[1]) && close(one.lag, many.lag));
         assert!(close(one.lava, many.lava) && close(one.dark, many.dark));
         assert!(close(one.fine, many.fine));
+        // Sulfur falling on warm lava greens it (F209): over the whole warm time as the
+        // fall over it says, in one step or many; new lava laid over it fresh.
+        let mut green = Top {
+            lava: 1.0,
+            ..Top::default()
+        };
+        green.react(0.1, IO_LAVA_WARM_YR);
+        let expect = 1.0 - (-0.1 * IO_LAVA_WARM_YR / IO_GREEN_DEPTHS).exp();
+        assert!((green.greened - expect).abs() < 1e-9);
+        let mut steps = Top {
+            lava: 1.0,
+            ..Top::default()
+        };
+        for _ in 0..10 {
+            steps.react(0.1, 0.1 * IO_LAVA_WARM_YR);
+        }
+        assert!((steps.greened - expect).abs() < 1e-9);
+        green.lava_laid(0.5);
+        assert!((green.greened - 0.5 * expect).abs() < 1e-9);
         // A frost coarsens as it ages and shows less for its mass (F203): a thick column
         // laid in the cold shows whole while it is fresh, and decades later, unsublimed,
         // lets the ground through.
