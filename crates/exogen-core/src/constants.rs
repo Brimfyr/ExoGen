@@ -1346,10 +1346,6 @@ pub const IO_DARK_REACH: f64 = 0.35;
 /// whose logarithm spreads by this from this length, m, down (stated choices; F89).
 pub const IO_DEPOSIT_OPTICAL_MASS: f64 = 0.03;
 pub const IO_LAVA_COAT_DEPTHS: f64 = 10_000.0;
-/// Frost does not settle on lava that is still warm: a flow's surface stays too warm
-/// for it for about this many years after it is laid (a stated choice: Io's flows glow
-/// in the infrared for years to decades).
-pub const IO_LAVA_COOL_YR: f64 = 20.0;
 pub const IO_BACKGROUND_FALLOUT: f64 = 0.01;
 pub const IO_FAR_FALLOUT_REACH: f64 = 2.0;
 pub const IO_FAR_FALLOUT_SPREAD: f64 = 0.5;

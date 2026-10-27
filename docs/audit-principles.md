@@ -521,6 +521,8 @@ Since F203 the frost coarsens as it ages and an old frost lets the ground throug
 
 Closed in part by F205, the hundred-and-eighteenth milestone: the first of the missing pieces above, SO2 laid broader than a plume's ring, its gas settling across its region as the atmosphere collapses each night. Frost shows over 40 percent of the surface, in broad soft fields where the fronts gather and most rings merge with them, and beyond 30 degrees under the plasma's alteration; the body's mean stays Io's measured colour. Tried first and not kept (2026-10-27): each frost subliming against the atmosphere its region's frost holds up, without the albedo feedback; frost rose from 4.4 to 4.6 percent, the gas the model then laid being far under the sublimation away from the rings. Still open: the frost's temperature through the day and the condensation that goes to the coldest ground, and the fields' fine structure.
 
+Since F206 the frost does not hold on the dark lava still showing, which the sun warms far above it, so the flows stand out within the frost fields; the frost's temperature over the bright ground is still its latitude's and slope's alone.
+
 ### M8. Io's flow coverage
 
 Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al. 2011). F85's fields cover 20 percent and the plains 70: the fields' areas are stated shares of their reach, and the number of fields three generations a patera. Since F87 and F88, with the lava that ponds in a patera counted as its floor, the fields cover 16 percent and the plains 79. Since F117, the flows floods from the paterae's rims that run down and pond in the closed lows they reach, they cover 19.9 percent and the plains 74.5, the patera floors 2.3.

@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 154;
+pub const FINISH_VERSION: u64 = 155;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -5371,6 +5371,13 @@ mod tests {
             bb / gg > 0.62 && bb / gg < 0.82,
             "mean colour {rr:.2} {gg:.2} {bb:.2}"
         );
+        // Frost does not hold on the dark lava still showing (F206).
+        let layers = &out.finish.layers;
+        let (deep, cover) = (layers.deep.as_slice(), layers.cover.as_slice());
+        let dark: Vec<usize> = (0..deep.len()).filter(|&k| deep[k] > 0.9).collect();
+        assert!(!dark.is_empty());
+        let frosted = dark.iter().map(|&k| cover[k] as f64).sum::<f64>() / dark.len() as f64;
+        assert!(frosted < 0.1, "frost over the dark lava {frosted:.3}");
     }
 
     /// Diagnostic (F170): the share of each wavelength's relief a rocky lid's lower crust

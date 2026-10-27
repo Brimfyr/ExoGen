@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 21;
+pub const VERSION: u64 = 22;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -1765,17 +1765,16 @@ pub fn deposit_history(
     let cover = layers.cover.as_mut_slice();
     let stain = layers.stain.as_mut_slice();
     for (k, top) in tops.iter().enumerate() {
-        // Frost does not settle on lava still warm from its eruption: the share of the
-        // cell that is warm lava shows none.
-        let warm = if matches!(units[k], UNIT_IO_FLOW | UNIT_PATERA_FLOOR) {
-            top.lava * (-(melt[k] as f64).max(0.0) / IO_LAVA_COOL_YR).exp()
-        } else {
-            0.0
-        };
+        // Frost does not hold on the lava still showing (F206): dark ground takes in some
+        // three times the sunlight the frost and the plains do and stands tens of kelvin
+        // warmer by day, where the frost's vapour pressure is thousands of times its own,
+        // so the frost that falls on it by night is gone by noon; only where the fallout
+        // has mantled the lava bright does the frost lie.
+        let bare = top.lava;
         deep[k] = (top.lava + (1.0 - top.lava) * top.dark) as f32;
         melt[k] = top.red as f32;
         stain[k] = top.altered as f32;
-        cover[k] = (top.visible_frost() * (1.0 - warm)) as f32;
+        cover[k] = (top.visible_frost() * (1.0 - bare)) as f32;
     }
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         // The frost showing by band of latitude, and over the whole (Geissler et al.

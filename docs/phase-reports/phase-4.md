@@ -2724,3 +2724,11 @@ How it went:
 - **The colours.** With the frost ten times as widespread, the frost took Io's warm white and the sulfur a little less blue to keep the measured mean; the user then supplied a true-colour map of Io, whose hue agrees at every latitude and whose high latitudes, three quarters as bright as the low, set the polar colour.
 
 Still to do: the frost fields' fine structure; the Pele-class rings.
+
+## The hundred-and-nineteenth milestone: frost does not hold on dark lava
+
+The user saw Io's frost fields broken by lobate grey-green forms, the flows standing out among them, where ours lay under the frost.
+
+- **F206.** Dark lava takes in some three times the sunlight the frost does and stands tens of kelvin warmer by day: the frost shows only on the share of a cell that is not lava still showing, in place of the twenty years that kept it off young lava alone.
+
+Still to do: the flows' and floors' colours (Io's green material); the frost fields' fine structure; the Pele-class rings, with their fringe of yellow where they meet the altered high latitudes (the user's note).
