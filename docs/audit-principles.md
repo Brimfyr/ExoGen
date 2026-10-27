@@ -517,6 +517,8 @@ Tried after F89 and not kept (2026-10-16; the experiment is not on main): the al
 
 Since F202 the young flows' SO2 rises in a plume at their fronts and falls in the Prometheus class's ring about them, in place of the halo that hugged their margins; the rings are white wherever their fall outpaces the sublimation, crisp and opaque, the frost's look this entry names.
 
+Since F203 the frost coarsens as it ages and an old frost lets the ground through; since F204 the plains are Io's measured pale yellow rather than a mustard, so the frost stands out from them by what Io's does. Still open: the fed rings are crisp, white wherever their fall outpaces the sublimation, some 35 of them, and the plains carry no white of their own: the frost cycle this entry's direction names.
+
 ### M8. Io's flow coverage
 
 Io's flow fields cover 28 percent of its surface, its plains 66 (Williams et al. 2011). F85's fields cover 20 percent and the plains 70: the fields' areas are stated shares of their reach, and the number of fields three generations a patera. Since F87 and F88, with the lava that ponds in a patera counted as its floor, the fields cover 16 percent and the plains 79. Since F117, the flows floods from the paterae's rims that run down and pond in the closed lows they reach, they cover 19.9 percent and the plains 74.5, the patera floors 2.3.

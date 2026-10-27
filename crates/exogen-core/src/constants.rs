@@ -1380,6 +1380,16 @@ pub const IO_SMALL_ERUPTIONS_PER_YR: f64 = 10.0;
 pub const IO_FROST_SUBLIMATION: f64 = 1.9;
 pub const SO2_SUBLIMATION_K: f64 = 4_510.0;
 pub const IO_FROST_ALBEDO: f64 = 0.75;
+/// A plume's frost falls fine-grained and bright and coarsens as it ages, its grains
+/// growing from the vapour about them, so that an old frost of the same mass scatters
+/// less and lets the ground show through (F203; Geissler et al. 2001: thin frosts
+/// transparent under normal light; Douté et al. 2001: Io's coarse SO2 at low latitudes,
+/// 250 µm to over a millimetre, where a fresh plume deposit's grains are tens of
+/// microns, IO_DEPOSIT_OPTICAL_MASS): the frost that fell within about this many years
+/// is fine (a stated choice: a few years, no rate measured), the rest coarse, its
+/// grains this many times a fine frost's, scattering as many times less for its mass.
+pub const IO_FROST_COARSENING_YR: f64 = 3.0;
+pub const IO_FROST_COARSE_GRAIN: f64 = 20.0;
 /// The plasma alters what lies on top to red-brown in this many years where nothing
 /// shields it (a stated choice), and the sublimation atmosphere shields the ground by
 /// its column, which the frost's vapour pressure sets: the column at the equator is this
@@ -1400,15 +1410,24 @@ pub const IO_SHIELD_COLUMNS: f64 = 10.0;
 pub const IO_FRONT_SO2: f64 = 320.0;
 /// Slack on a feature's birth and death against the step times' rounding, Gyr.
 pub const IO_ALIVE_TOLERANCE_GYR: f64 = 1e-6;
-/// Colours, linear reflectance: sulfur, sulfur altered by the plasma, SO2 frost, dark
-/// silicate (fresh lava and its pyroclasts), a plume's red sulfur and bare mountain
-/// rock; and the slopes between which a mountain sheds its coat, degrees, its gentler
-/// ground coated as the plains are (F87).
-pub const IO_SULFUR: [f32; 3] = [0.65, 0.55, 0.25];
-pub const IO_POLAR: [f32; 3] = [0.38, 0.24, 0.13];
+/// Colours, linear reflectance on the maps' scale (the Moon's map averages its geometric
+/// albedo, 0.12) (F204): sulfur, the plains' yellow, set so that the body's mean as seen
+/// from its equator is Io's measured colour, its geometric albedo 0.74 at 557 nm and
+/// 0.28 at 404 nm (Spencer et al. 1995), so blue at 455 nm some 0.72 of green, and 0.62
+/// in V, red a little over green as Io's colour mosaics show it; sulfur altered by the
+/// plasma, the red-brown of the high latitudes (Geissler et al. 1999), a third darker
+/// and a little redder than the low latitudes (a stated choice, as Io's colour mosaics
+/// show its high latitudes against its low); SO2 frost; dark silicate (fresh lava and
+/// its pyroclasts); a plume's red sulfur, a muted reddening, red raised over green by
+/// the 0.55 to 0.7 µm absorption edge of the short-chain sulfur in Pele's ring (Spencer
+/// et al. 1997), not the saturated red of composites that put Galileo's violet in place
+/// of the blue it lacked; and bare mountain rock; and the slopes between which a
+/// mountain sheds its coat, degrees, its gentler ground coated as the plains are (F87).
+pub const IO_SULFUR: [f32; 3] = [0.84, 0.76, 0.54];
+pub const IO_POLAR: [f32; 3] = [0.55, 0.45, 0.31];
 pub const IO_FROST: [f32; 3] = [0.86, 0.86, 0.88];
 pub const IO_FLOW_DARK: [f32; 3] = [0.05, 0.05, 0.05];
-pub const IO_PLUME_RED: [f32; 3] = [0.55, 0.20, 0.08];
+pub const IO_PLUME_RED: [f32; 3] = [0.82, 0.55, 0.34];
 pub const IO_MOUNTAIN_ROCK: [f32; 3] = [0.32, 0.28, 0.22];
 pub const IO_MOUNTAIN_BARE_SLOPE_DEG: (f64, f64) = (5.0, 15.0);
 /// Magma production (F17): fraction of the heat flux carried by magma, by regime, with a

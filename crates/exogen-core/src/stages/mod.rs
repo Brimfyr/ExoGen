@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 152;
+pub const FINISH_VERSION: u64 = 153;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -5334,7 +5334,8 @@ mod tests {
 
     /// Io keeps no craters, carries hundreds of paterae and dozens of mountains, its flow
     /// fields cover about the share Williams et al. (2011) map (27.8 percent; F201), and
-    /// its plains are sulfur yellow.
+    /// its surface is as bright and as pale a yellow as Io's measured colour (F204: green
+    /// albedo 0.62 to 0.74, blue some 0.72 of green).
     #[test]
     fn io_is_craterless_with_paterae_and_mountains() {
         let mut r = Runner::new();
@@ -5363,7 +5364,11 @@ mod tests {
         let n = albedo.len() as f64;
         let (rr, gg, bb) = (mean[0] / n, mean[1] / n, mean[2] / n);
         assert!(
-            rr > gg && gg > bb && rr > 0.3,
+            rr > gg && gg > bb && gg > 0.5 && gg < 0.8,
+            "mean colour {rr:.2} {gg:.2} {bb:.2}"
+        );
+        assert!(
+            bb / gg > 0.62 && bb / gg < 0.82,
             "mean colour {rr:.2} {gg:.2} {bb:.2}"
         );
     }

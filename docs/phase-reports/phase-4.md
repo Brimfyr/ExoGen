@@ -2698,3 +2698,15 @@ How it went:
 - **Smeared.** The class's scatter of range averaged at every source made each ring a disc; a plume keeps its form as it wanders (Kieffer et al. 2000), so each field's pieces now share one speed.
 
 The user chose to commit it and take up the frost's look next: the rings are crisp white annuli, some 35 where Io shows a handful, the frost opaque wherever its fall outpaces the sublimation (M7).
+
+## The hundred-and-seventeenth milestone: Io's frost ages, and its colours are its measured ones
+
+- **F203.** A frost coarsens as it ages and shows less for its mass: what fell within about three years is fine, the rest scatters twenty times less.
+- **F204.** Io's sulfur, its polar red-brown and its plumes' red are set from its measured colour: the body's mean is Io's albedo and hue, where it had been darker and a more saturated yellow.
+
+How it went:
+
+- **Ageing alone.** The frost's coarsening changed a tenth of a percent of the map: the rings are fed now, their frost young. Sharing each front's SO2 between a plume and the ground about it by the front's vigour, tried next, left some 30 rings and laid small white spots at the young lobes' ends; it is not kept.
+- **The colours.** The user saw the plains and poles darker and more saturated than Io's, the frost standing out from them too far: the body averaged 0.44 in green with blue 0.52 of green, where Io's measured albedo is 0.62 to 0.74 with blue 0.72 of green. The user chose Io's measured brightness over the colour mosaic's, which stands a third darker.
+
+Still to do: the frost cycle (M7), which the rings' crispness and the plains' missing white want; the Pele-class rings.

@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 19;
+pub const VERSION: u64 = 20;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).
@@ -1214,8 +1214,10 @@ fn smoothed_over(field: &Field<f32>, length: f64, body_radius: f64) -> Vec<f32> 
 
 /// The top layer of a cell (F84): the share of the ground that is still bare lava; the
 /// dark silicate, red and altered shares of the sulfur over it; and the frost column
-/// over all, optical depths, at each of the cell's spread of sublimation rates, under
-/// the cover of sulfur and radiation products laid on it since it fell.
+/// over all, optical depths as it fell, at each of the cell's spread of sublimation
+/// rates, under the cover of sulfur and radiation products laid on it since it fell;
+/// and how much of the frost fell within about IO_FROST_COARSENING_YR, still fine, the
+/// rest coarse (F203).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Top {
     lava: f64,
@@ -1224,6 +1226,7 @@ struct Top {
     altered: f64,
     frost: [f64; 6],
     lag: f64,
+    fine: f64,
 }
 
 impl Top {
@@ -1251,6 +1254,7 @@ impl Top {
             } else {
                 LAG_CAP
             },
+            fine: fall.frost * IO_FROST_COARSENING_YR,
         }
     }
 
@@ -1276,6 +1280,8 @@ impl Top {
             }
         }
         self.lag = relax(self.lag, s + k.alter, fall.frost, dt).min(LAG_CAP);
+        // Fresh frost falls fine and coarsens (F203).
+        self.fine = relax(self.fine, fall.frost, 1.0 / IO_FROST_COARSENING_YR, dt);
     }
 
     /// Fresh lava laid over a share of the cell.
@@ -1287,6 +1293,7 @@ impl Top {
         self.altered *= keep;
         self.frost = self.frost.map(|f| f * keep);
         self.lag *= keep;
+        self.fine *= keep;
     }
 
     fn blend(&self, other: &Top, share: f64) -> Top {
@@ -1298,12 +1305,22 @@ impl Top {
             altered: mix(self.altered, other.altered),
             frost: std::array::from_fn(|i| mix(self.frost[i], other.frost[i])),
             lag: mix(self.lag, other.lag),
+            fine: mix(self.fine, other.fine),
         }
     }
 
-    /// The share of the ground the frost hides, over the cell's spread of sublimation.
+    /// The share of the ground the frost hides, over the cell's spread of sublimation:
+    /// its fine frost in full, its coarse as many times less as its grains are larger,
+    /// the column subliming its coarse frost first (F203).
     fn visible_frost(&self) -> f64 {
-        let columns: f64 = self.frost.iter().map(|f| 1.0 - (-f).exp()).sum();
+        let columns: f64 = self
+            .frost
+            .iter()
+            .map(|&f| {
+                let fine = self.fine.min(f);
+                1.0 - (-(fine + (f - fine) / IO_FROST_COARSE_GRAIN)).exp()
+            })
+            .sum();
         columns / self.frost.len() as f64 * (-self.lag).exp()
     }
 }
@@ -3089,6 +3106,7 @@ mod tests {
             altered: 0.4,
             frost: [3.0; 6],
             lag: 2.0,
+            fine: 1.0,
         };
         let mut many = one;
         one.age(5.0, fall, k);
@@ -3099,6 +3117,27 @@ mod tests {
         assert!(close(one.red, many.red) && close(one.altered, many.altered));
         assert!(close(one.frost[1], many.frost[1]) && close(one.lag, many.lag));
         assert!(close(one.lava, many.lava) && close(one.dark, many.dark));
+        assert!(close(one.fine, many.fine));
+        // A frost coarsens as it ages and shows less for its mass (F203): a thick column
+        // laid in the cold shows whole while it is fresh, and decades later, unsublimed,
+        // lets the ground through.
+        let frozen = Kinetics {
+            sublime: 0.0,
+            ..warm
+        };
+        let mut aged = Top::default();
+        aged.age(
+            1.0,
+            Fall {
+                frost: 5.0,
+                ..Fall::default()
+            },
+            frozen,
+        );
+        let fresh = aged.visible_frost();
+        aged.age(30.0, Fall::default(), frozen);
+        assert!(fresh > 0.95, "{fresh}");
+        assert!(aged.visible_frost() < 0.4, "{}", aged.visible_frost());
     }
 
     /// Io's eruptions (F117, F201): oldest first, each from past its patera's pit on the
