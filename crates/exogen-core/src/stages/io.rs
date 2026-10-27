@@ -38,7 +38,7 @@ use crate::rng::Rng;
 use crate::units::*;
 use rayon::prelude::*;
 
-pub const VERSION: u64 = 22;
+pub const VERSION: u64 = 23;
 
 /// A patera: a volcano-tectonic depression with a flat floor, its outline the collapses
 /// that made it and the faults that cut it (F88).

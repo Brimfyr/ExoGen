@@ -1387,14 +1387,18 @@ pub const IO_FROST_ALBEDO: f64 = 0.75;
 pub const IO_FROST_COARSENING_YR: f64 = 3.0;
 pub const IO_FROST_COARSE_GRAIN: f64 = 20.0;
 /// The plasma alters what lies on top to red-brown in this many years where nothing
-/// shields it (a stated choice), and the sublimation atmosphere shields the ground by
-/// its column, which the frost's vapour pressure sets: the column at the equator is this
+/// shields it (F207, a stated choice: within months, faster than a plume's red sulfur
+/// reverts to yellow, IO_RED_FADE_YR, so that a deposit fading at the high latitudes
+/// goes back to their red-brown, as Surt's and Tvashtar's ephemeral red deposits did,
+/// Geissler et al. 2004, and no yellow shows about Io's high-latitude centres on its
+/// true-colour mosaics), and the sublimation atmosphere shields the ground by its
+/// column, which the frost's vapour pressure sets: the column at the equator is this
 /// many times the one that stops the plasma (a calibration: alteration takes over beyond
 /// about 30 degrees of latitude, where Io's red-brown plains begin, Geissler et al. 1999
 /// and Williams et al. 2011; the column falls tenfold from the equator to the poles,
 /// Dott et al. 2025).
-pub const IO_ALTERATION_YR: f64 = 10.0;
-pub const IO_SHIELD_COLUMNS: f64 = 10.0;
+pub const IO_ALTERATION_YR: f64 = 0.5;
+pub const IO_SHIELD_COLUMNS: f64 = 21.0;
 /// A flow running over the plains drives off the SO2 beneath it, which rises in a
 /// Prometheus-class plume at its front (F202): this much SO2, kg, for each cubic metre of
 /// lava, the mean over Io's ground (a calibration on Prometheus, over SO2-rich plains:

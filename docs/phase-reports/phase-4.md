@@ -2732,3 +2732,9 @@ The user saw Io's frost fields broken by lobate grey-green forms, the flows stan
 - **F206.** Dark lava takes in some three times the sunlight the frost does and stands tens of kelvin warmer by day: the frost shows only on the share of a cell that is not lava still showing, in place of the twenty years that kept it off young lava alone.
 
 Still to do: the flows' and floors' colours (Io's green material); the frost fields' fine structure; the Pele-class rings, with their fringe of yellow where they meet the altered high latitudes (the user's note).
+
+## The hundred-and-twentieth milestone: the plasma alters fresh sulfur within months
+
+- **F207.** The yellow about the high-latitude rings was fresh sulfur the plasma had not yet altered, its red reverting in two years and the alteration taking ten: the plasma now alters within half a year where unshielded, the shielding calibrated again so that the red-brown still begins at about 30 degrees, and the rings there lie salmon on it, as Io's ephemeral red deposits at Surt and Tvashtar went back to the red-brown.
+
+Still to do: the Pele-class rings' shapes; the flows' and floors' colours; the frost fields' fine structure.
