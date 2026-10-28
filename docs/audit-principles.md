@@ -785,13 +785,26 @@ Direction: the rise's stresses solved through a lid whose stiffness follows the 
 
 The Procellarum KREEP Terrane covers some 16 percent of the Moon and holds more than 60 percent of its maria by area (Jolliff et al. 2000). The model's Moon (seed 10) lays lava over 30 percent of its surface (its maria cover some 17) with 20 to 28 percent of it within its province's radius, which covers 12 percent, at any weight the province is given (F171): its basins' thin crust decides where its lava lies.
 
-Direction: the province as the heat its enriched cumulates make, raising the mantle's melting beneath it in the thermal history (F123's crustal heat, by region), rather than a weight on the vents; and the maria's extent against the measured.
+Tried, not kept (2026-10-28, measured on the Moon's preset at 2,048 pixels):
+
+- **The province as a mantle of its own.** The magma ocean's last liquid, a share of the crust's heat-producing elements, heated a second mantle history beneath a Gaussian province. Its mantle ran only 50 to 60 K hotter, convection being a thermostat, and melted 1.5 to 3 times what the rest did; 16 percent of the lava lay within the province's radius.
+- **The heat taken from the cumulates, the liquid gathered.** The last liquid took its heat from the mantle's share rather than the crust's, so that the mantle elsewhere, depleted, stopped melting at about 1.5 Gyr rather than 3.4, as Laneuville et al. (2013) find for the Moon. After the first step the liquid gathered beneath the crust the mantle's flow had thinned (M35's degree one), filling the crust's base as an inverted lake up to its share of the surface: an irregular province like the terrane, and every eruption after 1.5 Gyr within it. But the province's melt, seven parts in eight of it intruding (F174), laid 25 to 35 km of rock beneath the province and raised it 11 km above the rest, even with its loads laid on its own thinner lid. Its lava ran off the plateau, and 17 to 19 percent of the lava lay within it. With the vents' paths read over a reach about the melt's depth instead of the whole body, every region erupted its own melt into its own lows and the maria covered the far side.
+- **The liquid's heat in the lid** (Wieczorek and Phillips 2000). The layer's heat bent the lid's conductive profile and thinned it, the mantle beneath no hotter. The volumes were the Moon's (8.6 × 10⁶ km³, lava over 18.6 percent of the surface) and the province melted a billion years longer than the rest, but no more, so 13 percent of the lava lay within it, and the province still stood 3.7 km high. The general form had large side effects. Every crust's heat thinning its lid, and a lid no thicker than its crust not foundering (the province's thin lid otherwise foundered 219 times and froze its mantle), doubled Venus's and Earth's overturns and stopped Io's.
+- **The gathering alone,** the province still a weight on the vents: 7.5 percent.
+
+What blocks it:
+
+1. **The hot start.** For its first 1.3 to 1.5 Gyr the mantle melts everywhere, making 40 to 90 percent of all the lava, which floods the far side and its megabasin. The magma ocean whose freezing would set the early mantle is not modelled (M35).
+2. **The intrusive share.** A province hot enough to make Procellarum's lava intrudes tens of kilometres of rock beneath itself, as a plateau its lid holds up; the terrane is low ground.
+3. **The megabasin's crust.** The megabasin thins the crust to some 5 km, against some 20 km beneath the South Pole–Aitken basin (Wieczorek et al. 2013), and draws every stream's lava.
+
+Direction: the magma ocean's freezing first (M35), setting the early mantle cool and stratified, with the fusible late cumulates gathered with the last liquid; then the province's heat shared between its lid and its mantle as the layer's profile shares it, the intrusions' share and weight where the magma is denser than the crust, and the megabasin's crust against the measured. The tries' code is kept outside the repository; its pieces worth keeping are the gathering beneath the thinned crust, the depleted mantle elsewhere, and the loads laid on the lid they lie on.
 
 ### M35. The starting state: a finished crust on a mantle with no lid
 
 A rocky body starts with its crust whole, tectonics.initial_crust_thickness (40 km on every rocky body, S2), on a mantle at its starting temperature with no lid, which then grows as a stagnant lid does (F121). For its first 30 Myr the stiff lid is thinner than the crust, so the mantle's flow carries the crust (F184) and piles it over the downwellings by ±3 km of relief at the cells' wavelengths, which a cold crust holds for the age of the solar system: on Mars at degree 2.4, on the Moon at degree 1, on Mercury at degree 9. A magma ocean's crust and its lid form together as it solidifies, over a time the model does not hold, and the Moon's and Mars's degree-one crusts have been laid to such a flow; the amount is uncalibrated.
 
-Direction: the magma ocean's solidification, which sets the crust's thickness by class (S2) and the first lid together; until then the starting crust and lid are inputs.
+Direction: the magma ocean's solidification, which sets the crust's thickness by class (S2) and the first lid together; until then the starting crust and lid are inputs. M33's tries (2026-10-28) found the hot start the main thing keeping the Moon's maria from gathering in its province: the mantle melts everywhere for its first 1.3 to 1.5 Gyr, making 40 to 90 percent of the lava, where a frozen magma ocean leaves cool, stratified cumulates, its fusible late ones with its last liquid.
 
 When: with the crust by class (S2), the earlier-phases revisit.
 
