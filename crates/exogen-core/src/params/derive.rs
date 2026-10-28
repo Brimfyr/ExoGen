@@ -1651,12 +1651,18 @@ pub fn atmosphere_bond_albedo(c: &Ctx) -> Value {
     }
     // An airless surface is gardened, its basalt with the mantle's iron (F125) and its dirty
     // ice with its crust's rock (F126).
-    use crate::stages::materials::{Library, end_member, is_ice, mixture_luminance};
+    use crate::stages::materials::{
+        Library, end_member, is_ice, mixture_luminance, weathering_intensity,
+    };
     let library = Library {
         feo: c.f64("body.mantle_feo"),
         gardened: true,
         impurity: c.f64("body.crust_impurity"),
         lag_depth: 0.0,
+        weathering: weathering_intensity(
+            c.f64("surface.space_weathering_timescale"),
+            c.f64("cratering.diffusivity"),
+        ),
     };
     let mature = mixture_luminance(&library, c.map("materials.regolith_mix")).1;
     let ice = end_member("water_ice").unwrap();
@@ -2604,6 +2610,7 @@ pub fn materials_regolith_mix(c: &Ctx) -> Value {
             gardened: true,
             impurity: c.f64("body.crust_impurity"),
             lag_depth: 0.0,
+            weathering: 0.0,
         };
         if let (Some(crust), Some(lag)) = (library.member(bedrock), library.member(LAG_MATERIAL)) {
             let lum = |x: [f32; 3]| (x[0] + x[1] + x[2]) as f64 / 3.0;
@@ -2697,6 +2704,7 @@ pub fn materials_lag_depth_share(c: &Ctx) -> Value {
         gardened: true,
         impurity: c.f64("body.crust_impurity"),
         lag_depth: 0.0,
+        weathering: 0.0,
     };
     let (Some(crust), Some(lag)) = (library.member(bedrock), library.member(LAG_MATERIAL)) else {
         return 0.0.into();

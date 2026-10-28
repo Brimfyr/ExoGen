@@ -1534,6 +1534,15 @@ pub const FEO_REDUCED: f64 = 0.02;
 pub const FEO_REDUCED_K: f64 = 449.0;
 pub const FEO_OXIDIZED: f64 = 0.18;
 pub const FEO_OXIDIZED_K: f64 = 226.0;
+/// The FeO, mass fraction, of the silicate end-members' regoliths, which their space
+/// weathering reduces (F213): the lunar feldspathic highlands' and South Pole-Aitken's
+/// noritic floor's (Jolliff et al. 2000), the lunar maria's (Lawrence et al. 2002), and
+/// Mercury's surface, some 1.5 percent iron (Weider et al. 2014), its lavas and its
+/// graphite-bearing crust alike.
+pub const ANORTHOSITE_FEO: f64 = 0.045;
+pub const NORITE_FEO: f64 = 0.10;
+pub const MARE_BASALT_FEO: f64 = 0.18;
+pub const REDUCED_CRUST_FEO: f64 = 0.02;
 /// A basalt's colour follows its iron (F125): the iron-poor end-member at or below this FeO
 /// (Mercury's lavas), the iron-rich at or above the second (the lunar maria's mantle).
 pub const BASALT_IRON_POOR_FEO: f64 = 0.03;
@@ -3178,6 +3187,49 @@ pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;
 /// Cap on the optical maturation timescale: far from the Sun, radiolysis, sputtering and
 /// lag accumulation still darken old surfaces relative to fresh ejecta within a few Gyr.
 pub const SPACE_WEATHERING_MAX_GYR: f64 = 4.0;
+/// Space weathering on silicates (F213): micrometeorite vapour and the solar wind reduce a
+/// regolith's iron to nanophase metal in its grains' rims, which absorbs light as
+/// 36 pi z / lambda by its volume share (Hapke 2001). A mature soil's nanophase iron grows
+/// with its FeO: Morris (1978) finds it 3.2e-4 of the FeO for each unit of the maturity
+/// index Is/FeO, which passes 60 in mature soils. This share, the mass of nanophase iron
+/// per mass of FeO when fully mature on the Moon, is set against its reference map's three
+/// terrains together: its farside highlands, South Pole-Aitken's noritic floor and its
+/// maria (0.13 to 0.14, 0.080 and 0.053 there; 0.151, 0.081 and 0.052 here). It is
+/// Morris's at an Is/FeO of 140, beyond the most mature soils' 110, the rest standing for
+/// the larger microphase iron his resonance does not count, which darkens as well (Lucey
+/// and Riner 2011; Trang and Lucey 2019 find as much of it as of the nanophase).
+pub const NPFE_PER_FEO: f64 = 0.045;
+/// The iron in a mass of FeO, which the weathering can reduce no more than.
+pub const IRON_PER_FEO: f64 = 0.777;
+/// The grains the iron lies in: their real refractive index (Hapke 2001's silicate) and
+/// size, m (Trang and Lucey 2019's lunar host grains).
+pub const NPFE_HOST_INDEX: f64 = 1.7;
+pub const NPFE_GRAIN_SIZE: f64 = 15e-6;
+/// The wavelengths, m, a colour's red, green and blue stand for when a reflectance spectrum
+/// is drawn through them (the sRGB primaries' dominant wavelengths), and the white a
+/// spectrum's colour is taken under, K (sRGB's D65 as a blackbody at its colour
+/// temperature).
+pub const CHANNEL_WAVELENGTHS: [f64; 3] = [611e-9, 549e-9, 464e-9];
+pub const WHITE_TEMPERATURE: f64 = 6504.0;
+/// Iron's optical constants n and k by wavelength, m (Johnson and Christy 1974).
+pub const IRON_OPTICAL_CONSTANTS: [(f64, f64, f64); 16] = [
+    (368e-9, 2.02, 2.43),
+    (381e-9, 2.12, 2.50),
+    (397e-9, 2.24, 2.58),
+    (413e-9, 2.35, 2.65),
+    (431e-9, 2.48, 2.71),
+    (451e-9, 2.59, 2.77),
+    (471e-9, 2.67, 2.82),
+    (496e-9, 2.74, 2.88),
+    (521e-9, 2.86, 2.91),
+    (549e-9, 2.95, 2.93),
+    (582e-9, 2.94, 2.99),
+    (617e-9, 2.88, 3.05),
+    (659e-9, 2.92, 3.10),
+    (704e-9, 2.86, 3.19),
+    (756e-9, 2.87, 3.28),
+    (821e-9, 2.94, 3.39),
+];
 /// Lunar topographic diffusivity at the present impact flux, m²/Myr (Fassett and Thomson
 /// 2014, whose fit spans the last 3 Gyr, over which the flux varied little). The flux
 /// history scales it back in time, so a crater's degradation follows the impacts that

@@ -5,7 +5,9 @@
 //! a space-weathered colour, blended by optical maturity and brightened by rays. Colours
 //! are linear reflectance. The spectral library and the integration against colour
 //! matching functions arrive with the colour-management work in Phase 7; the colours here
-//! are the integrated values of typical published spectra.
+//! are the integrated values of typical published spectra, and a silicate's mature colour
+//! is its fresh one space-weathered by its iron, the weathering's absorption run through
+//! the visible spectrum (F213).
 //!
 //! Two controls shape a surface: the bedrock is what impacts excavate, so a fresh surface
 //! shows its fresh colour; the regolith mix is the weathered surface, so a mature surface
@@ -25,7 +27,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 31;
+pub const VERSION: u64 = 32;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -37,81 +39,102 @@ pub struct EndMember {
     /// regolith is brighter than its rock (F125). None where the two are alike.
     pub rock: Option<[f32; 3]>,
     pub roughness: f32,
+    /// The FeO of a silicate whose space weathering reduces it, mass fraction (F213).
+    pub iron: Option<f64>,
+}
+
+/// How a material's colour matures.
+#[derive(Clone, Copy, Debug)]
+enum Maturing {
+    /// A silicate's space weathering reduces its iron, FeO mass fraction, to nanophase
+    /// metal, which darkens and reddens it (F213).
+    Iron(f64),
+    /// A colour stated for the ices, salts and deposits, the carbonaceous rock, the melt
+    /// that gardening buries, and the felsic crust under its air.
+    Colour([f32; 3]),
+}
+
+struct Material {
+    id: &'static str,
+    fresh: [f32; 3],
+    mature: Maturing,
+    rock: Option<[f32; 3]>,
+    roughness: f32,
 }
 
 /// The library, by what the materials are and the processes that make them (F125). Fresh
-/// colours are immature regolith or clean deposits; mature colours are after space
-/// weathering (darkened and reddened on silicates).
-pub const END_MEMBERS: &[EndMember] = &[
+/// colours are immature regolith or clean deposits; a silicate's mature colour is its
+/// fresh one space-weathered by its iron (F213).
+const MATERIALS: &[Material] = &[
     // A flotation crust: plagioclase risen through an iron-rich magma ocean.
-    EndMember {
+    Material {
         id: "anorthosite",
         fresh: [0.34, 0.34, 0.35],
-        mature: [0.150, 0.138, 0.125],
+        mature: Maturing::Iron(ANORTHOSITE_FEO),
         rock: None,
         roughness: 0.85,
     },
     // The mafic lower crust under a flotation crust: noritic, darker than the anorthositic
     // highlands even when fresh.
-    EndMember {
+    Material {
         id: "norite",
         fresh: [0.24, 0.23, 0.22],
-        mature: [0.11, 0.10, 0.09],
+        mature: Maturing::Iron(NORITE_FEO),
         rock: None,
         roughness: 0.85,
     },
     // Basalt from an oxidized mantle, iron-rich: dark and faintly blue-grey when mature,
     // brighter where fresh craters turn it over (the lunar maria); as rock or coarse sand
     // under an atmosphere, dark.
-    EndMember {
+    Material {
         id: "basalt_iron_rich",
         fresh: [0.19, 0.18, 0.165],
-        mature: [0.075, 0.072, 0.070],
+        mature: Maturing::Iron(MARE_BASALT_FEO),
         rock: Some([0.100, 0.090, 0.085]),
         roughness: 0.55,
     },
     // Basalt from a reduced mantle, iron-poor: a shade brighter and redder than the crust
     // around it (Mercury's smooth plains, Denevi et al. 2013); its rock a stated estimate,
     // the iron-rich rock brightened as its regolith is.
-    EndMember {
+    Material {
         id: "basalt_iron_poor",
         fresh: [0.27, 0.255, 0.235],
-        mature: [0.125, 0.112, 0.098],
+        mature: Maturing::Iron(REDUCED_CRUST_FEO),
         rock: Some([0.142, 0.134, 0.124]),
         roughness: 0.55,
     },
     // Granitic crust, from recycling with water.
-    EndMember {
+    Material {
         id: "felsic",
         fresh: [0.26, 0.23, 0.19],
-        mature: [0.24, 0.21, 0.17],
+        mature: Maturing::Colour([0.24, 0.21, 0.17]),
         rock: None,
         roughness: 0.75,
     },
     // The crust of a reduced body, carrying the graphite its magma ocean floated (Vander
     // Kaaden and McCubbin 2015), mixed through the lavas over it: Mercury's intermediate
     // terrain.
-    EndMember {
+    Material {
         id: "graphite_bearing_crust",
         fresh: [0.17, 0.17, 0.17],
-        mature: [0.085, 0.085, 0.085],
+        mature: Maturing::Iron(REDUCED_CRUST_FEO),
         rock: None,
         roughness: 0.85,
     },
     // The graphite flotation crust itself, excavated by basins and large craters: Mercury's
     // low-reflectance material.
-    EndMember {
+    Material {
         id: "graphite_rich_crust",
         fresh: [0.11, 0.11, 0.12],
-        mature: [0.065, 0.065, 0.07],
+        mature: Maturing::Iron(REDUCED_CRUST_FEO),
         rock: None,
         roughness: 0.85,
     },
     // Clean water ice: frozen from an ocean, renewed from below, or frost.
-    EndMember {
+    Material {
         id: "water_ice",
         fresh: [0.80, 0.82, 0.86],
-        mature: [0.64, 0.65, 0.68],
+        mature: Maturing::Colour([0.64, 0.65, 0.68]),
         rock: None,
         roughness: 0.55,
     },
@@ -119,65 +142,214 @@ pub const END_MEMBERS: &[EndMember] = &[
     // resolves through the library, the intimate mixture of clean ice and carbonaceous
     // rock at the rock's share of the crust; these colours are the mixture at 30 percent,
     // for a library without a body.
-    EndMember {
+    Material {
         id: "water_ice_dirty",
         fresh: [0.389, 0.386, 0.385],
-        mature: [0.340, 0.338, 0.340],
+        mature: Maturing::Colour([0.340, 0.338, 0.340]),
         rock: None,
         roughness: 0.70,
     },
     // Carbonaceous rock: hydrated silicates darkened by carbon, the stuff of a carbonaceous
     // body, and what an icy crust's lag is made of once its ice has sublimed.
-    EndMember {
+    Material {
         id: "carbonaceous",
         fresh: [0.120, 0.115, 0.110],
-        mature: [0.090, 0.085, 0.080],
+        mature: Maturing::Colour([0.090, 0.085, 0.080]),
         rock: None,
         roughness: 0.85,
     },
-    EndMember {
+    Material {
         id: "ammonia_water_ice",
         fresh: [0.70, 0.72, 0.75],
-        mature: [0.50, 0.50, 0.52],
+        mature: Maturing::Colour([0.50, 0.50, 0.52]),
         rock: None,
         roughness: 0.55,
     },
     // What a tidally heated body's plumes lay over everything: sulfur and its frosts.
-    EndMember {
+    Material {
         id: "sulfur_deposit",
         fresh: [0.65, 0.55, 0.25],
-        mature: [0.50, 0.42, 0.20],
+        mature: Maturing::Colour([0.50, 0.42, 0.20]),
         rock: None,
         roughness: 0.70,
     },
     // Hydrated salts and sulfuric acid hydrates from an ocean, brown-red when fresh,
     // paling as frost settles on them.
-    EndMember {
+    Material {
         id: "hydrated_salt",
         fresh: [0.40, 0.26, 0.17],
-        mature: [0.52, 0.42, 0.34],
+        mature: Maturing::Colour([0.52, 0.42, 0.34]),
         rock: None,
         roughness: 0.6,
     },
     // Sodium carbonates and chlorides from an ocean where no magnetosphere irradiates
     // them: white, greying as they take dust (Ceres's faculae, Enceladus's stripes).
-    EndMember {
+    Material {
         id: "carbonate_salt",
         fresh: [0.86, 0.85, 0.80],
-        mature: [0.72, 0.70, 0.66],
+        mature: Maturing::Colour([0.72, 0.70, 0.66]),
         rock: None,
         roughness: 0.6,
     },
     // Glassy impact melt on silicate bodies: distinctly dark when fresh, buried by regolith
     // with age.
-    EndMember {
+    Material {
         id: "impact_melt",
         fresh: [0.10, 0.095, 0.09],
-        mature: [0.07, 0.065, 0.06],
+        mature: Maturing::Colour([0.07, 0.065, 0.06]),
         rock: None,
         roughness: 0.60,
     },
 ];
+
+/// The end-members, each silicate's mature colour its fresh one space-weathered as on the
+/// Moon; a body's library weathers them as intensely as its own regolith weathers (F213).
+static END_MEMBERS: std::sync::LazyLock<Vec<EndMember>> = std::sync::LazyLock::new(|| {
+    MATERIALS
+        .iter()
+        .map(|m| {
+            let (mature, iron) = match m.mature {
+                Maturing::Iron(feo) => (weathered(m.fresh, feo, 1.0), Some(feo)),
+                Maturing::Colour(c) => (c, None),
+            };
+            EndMember {
+                id: m.id,
+                fresh: m.fresh,
+                mature,
+                rock: m.rock,
+                roughness: m.roughness,
+                iron,
+            }
+        })
+        .collect()
+});
+
+/// How intensely a body's regolith weathers against the Moon's (F213), from its weathering
+/// timescale, Gyr, and its gardening diffusivity, m²/Myr. A mature soil's nanophase iron is
+/// a steady state: the solar wind and micrometeorite vapour reduce its iron as fast as the
+/// weathering runs, and gardening dilutes it with the fresh soil it brings up as fast as it
+/// turns the surface over (the gardening that blurs its contacts, F95). Mercury's runs
+/// some four times the Moon's, its weathering under a sun seven times as bright against
+/// gardening half as fast again; the asteroid belt's a third.
+pub fn weathering_intensity(timescale: f64, diffusivity: f64) -> f64 {
+    SPACE_WEATHERING_GYR_1AU / timescale.max(1e-9) * DIFFUSIVITY_LUNAR / diffusivity.max(1e-9)
+}
+
+/// The colour a silicate's fresh regolith weathers to when mature (F213), at a weathering
+/// intensity against the Moon's. The nanophase iron its weathering makes, NPFE_PER_FEO of
+/// its FeO times the intensity and no more than all its iron, absorbs within each grain as
+/// 36 pi z / lambda by its volume share, z from iron's optical constants in the host
+/// (Hapke 2001), most in the blue. Hapke's equivalent slab gives a grain's single-scattering
+/// albedo from its surface's reflections, external and internal, and the light that
+/// crosses its mean path; the fresh reflectance gives the host's own absorption through
+/// the albedo (r = (1 - g) / (1 + g), g = (1 - w)^(1/2), as `intimate_mixture`), and
+/// the iron's adds to it. The same iron darkens a bright regolith by more than a dark one,
+/// and an iron-poor one barely. The absorption runs through the spectrum, the fresh colour
+/// drawn through its channels' wavelengths, and each channel darkens as its response to
+/// the weathered spectrum does to the fresh one: the channels overlap, so the reddening
+/// lifts the red against the green as well as lowering the blue.
+pub fn weathered(fresh: [f32; 3], feo: f64, intensity: f64) -> [f32; 3] {
+    let n = NPFE_HOST_INDEX;
+    let outside = (n - 1.0).powi(2) / (n + 1.0).powi(2) + 0.05;
+    let inside = 1.0 - 4.0 / (n * (n + 1.0).powi(2));
+    let path = 2.0 / 3.0 * (n * n - (n * n - 1.0).powf(1.5) / n) * NPFE_GRAIN_SIZE;
+    let share = (NPFE_PER_FEO * intensity).min(IRON_PER_FEO) * feo * DENSITY_ROCK / DENSITY_IRON;
+    let (before, after) = CHANNEL_RESPONSE.iter().fold(
+        ([0.0f64; 3], [0.0f64; 3]),
+        |(mut before, mut after), &(lambda, weight)| {
+            let (m, k) = iron_optical_constants(lambda);
+            let z =
+                n.powi(3) * m * k / ((m * m - k * k + 2.0 * n * n).powi(2) + (2.0 * m * k).powi(2));
+            let absorbed = 36.0 * std::f64::consts::PI * z / lambda * share * path;
+            let r = drawn(fresh, lambda);
+            let g = (1.0 - r) / (1.0 + r);
+            let x = ((1.0 - g * g - outside) / (1.0 - outside)).max(0.0);
+            let crossed = x / (1.0 - inside + inside * x) * (-absorbed).exp();
+            let x = (1.0 - inside) * crossed / (1.0 - inside * crossed);
+            let g = (1.0 - outside - (1.0 - outside) * x).sqrt();
+            let weathered = (1.0 - g) / (1.0 + g);
+            for c in 0..3 {
+                before[c] += weight[c] * r;
+                after[c] += weight[c] * weathered;
+            }
+            (before, after)
+        },
+    );
+    std::array::from_fn(|c| {
+        ((fresh[c] as f64 * after[c] / before[c].max(1e-12)) as f32).clamp(0.0, fresh[c])
+    })
+}
+
+/// A colour drawn as a reflectance spectrum: through its blue, green and red at their
+/// wavelengths, flat beyond.
+fn drawn(colour: [f32; 3], lambda: f64) -> f64 {
+    let knots = [
+        (CHANNEL_WAVELENGTHS[2], colour[2] as f64),
+        (CHANNEL_WAVELENGTHS[1], colour[1] as f64),
+        (CHANNEL_WAVELENGTHS[0], colour[0] as f64),
+    ];
+    if lambda <= knots[0].0 {
+        return knots[0].1;
+    }
+    for w in knots.windows(2) {
+        if lambda <= w[1].0 {
+            let t = (lambda - w[0].0) / (w[1].0 - w[0].0);
+            return w[0].1 + (w[1].1 - w[0].1) * t;
+        }
+    }
+    knots[2].1
+}
+
+fn iron_optical_constants(lambda: f64) -> (f64, f64) {
+    let table = &IRON_OPTICAL_CONSTANTS;
+    let i = table
+        .partition_point(|row| row.0 < lambda)
+        .clamp(1, table.len() - 1);
+    let (a, b) = (table[i - 1], table[i]);
+    let t = ((lambda - a.0) / (b.0 - a.0)).clamp(0.0, 1.0);
+    (a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t)
+}
+
+/// The linear sRGB channels' responses to reflectance over the visible, by wavelength, m,
+/// each summing to one, so a flat spectrum's colour is its reflectance (F213): the CIE 1931
+/// colour matching functions (Wyman, Sloan and Shirley 2013's fit) under the white, taken
+/// to sRGB (IEC 61966-2-1).
+static CHANNEL_RESPONSE: std::sync::LazyLock<Vec<(f64, [f64; 3])>> =
+    std::sync::LazyLock::new(|| {
+        let lobe = |x: f64, mu: f64, below: f64, above: f64| {
+            let s = if x < mu { below } else { above };
+            (-0.5 * ((x - mu) / s).powi(2)).exp()
+        };
+        const TO_SRGB: [[f64; 3]; 3] = [
+            [3.2406, -1.5372, -0.4986],
+            [-0.9689, 1.8758, 0.0415],
+            [0.0557, -0.2040, 1.0570],
+        ];
+        let (h, c, k) = (6.626e-34, 2.998e8, 1.381e-23);
+        let mut rows: Vec<(f64, [f64; 3])> = (0..=80)
+            .map(|i| {
+                let nm = 380.0 + 5.0 * i as f64;
+                let lambda = nm * 1e-9;
+                let xyz = [
+                    1.056 * lobe(nm, 599.8, 37.9, 31.0) + 0.362 * lobe(nm, 442.0, 16.0, 26.7)
+                        - 0.065 * lobe(nm, 501.1, 20.4, 26.2),
+                    0.821 * lobe(nm, 568.8, 46.9, 40.5) + 0.286 * lobe(nm, 530.9, 16.3, 31.1),
+                    1.217 * lobe(nm, 437.0, 11.8, 36.0) + 0.681 * lobe(nm, 459.0, 26.0, 13.8),
+                ];
+                let white =
+                    lambda.powi(-5) / ((h * c / (lambda * k * WHITE_TEMPERATURE)).exp() - 1.0);
+                let rgb = TO_SRGB.map(|row| white * (0..3).map(|j| row[j] * xyz[j]).sum::<f64>());
+                (lambda, rgb)
+            })
+            .collect();
+        let total: [f64; 3] = std::array::from_fn(|c| rows.iter().map(|r| r.1[c]).sum());
+        for row in &mut rows {
+            for (v, t) in row.1.iter_mut().zip(total) {
+                *v /= t;
+            }
+        }
+        rows
+    });
 
 /// What an icy crust's lag is made of: its rock, left behind as its ice sublimes (F126).
 pub const LAG_MATERIAL: &str = "carbonaceous";
@@ -211,6 +383,8 @@ pub struct Library {
     pub impurity: f64,
     /// The share of the surface layer its lag has taken (F126).
     pub lag_depth: f64,
+    /// How intensely its regolith weathers against the Moon's (F213).
+    pub weathering: f64,
 }
 
 impl Library {
@@ -221,6 +395,10 @@ impl Library {
                 && graph.str("materials.bedrock") != "sulfur_deposit",
             impurity: graph.f64("body.crust_impurity"),
             lag_depth: graph.f64("materials.lag_depth_share"),
+            weathering: weathering_intensity(
+                graph.f64("surface.space_weathering_timescale"),
+                graph.f64("cratering.diffusivity"),
+            ),
         }
     }
 
@@ -250,12 +428,16 @@ impl Library {
             );
             let w = self.basalt_iron() as f32;
             let rock = |e: &EndMember| e.rock.unwrap_or(e.fresh);
+            // Its regolith weathers by its own iron (F213).
+            let fresh = lerp3(poor.fresh, rich.fresh, w);
+            let iron = poor.iron? + (rich.iron? - poor.iron?) * w as f64;
             EndMember {
                 id: "basalt",
-                fresh: lerp3(poor.fresh, rich.fresh, w),
-                mature: lerp3(poor.mature, rich.mature, w),
+                fresh,
+                mature: weathered(fresh, iron, self.weathering),
                 rock: Some(lerp3(rock(poor), rock(rich), w)),
                 roughness: poor.roughness + (rich.roughness - poor.roughness) * w,
+                iron: Some(iron),
             }
         } else if id == "water_ice_dirty" {
             let (ice, rock) = (end_member("water_ice")?, end_member(LAG_MATERIAL)?);
@@ -279,9 +461,17 @@ impl Library {
                 mature: mix(ice.mature, rock.mature),
                 rock: None,
                 roughness: ice.roughness + (rock.roughness - ice.roughness) * f as f32,
+                iron: None,
             }
         } else {
-            *end_member(id)?
+            let e = *end_member(id)?;
+            match e.iron {
+                Some(iron) => EndMember {
+                    mature: weathered(e.fresh, iron, self.weathering),
+                    ..e
+                },
+                None => e,
+            }
         };
         Some(match (self.gardened, base.rock) {
             (false, Some(rock)) => EndMember {
@@ -314,7 +504,7 @@ pub fn end_member(id: &str) -> Option<&'static EndMember> {
 }
 
 pub fn end_member_ids() -> Vec<&'static str> {
-    END_MEMBERS.iter().map(|e| e.id).collect()
+    MATERIALS.iter().map(|e| e.id).collect()
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -958,6 +1148,7 @@ mod tests {
                 gardened: true,
                 impurity,
                 lag_depth: 0.0,
+                weathering: 1.0,
             }
             .member("water_ice_dirty")
             .unwrap()
@@ -978,17 +1169,76 @@ mod tests {
                 gardened,
                 impurity: 0.0,
                 lag_depth: 0.0,
+                weathering: 1.0,
             }
             .member("basalt")
             .unwrap()
         };
         let (poor, mid, rich) = (basalt(0.02, true), basalt(0.08, true), basalt(0.15, true));
-        assert_eq!(poor.mature, end_member("basalt_iron_poor").unwrap().mature);
-        assert_eq!(rich.mature, end_member("basalt_iron_rich").unwrap().mature);
+        let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|c| (a[c] - b[c]).abs() < 1e-6);
+        assert!(near(
+            poor.mature,
+            end_member("basalt_iron_poor").unwrap().mature
+        ));
+        assert!(near(
+            rich.mature,
+            end_member("basalt_iron_rich").unwrap().mature
+        ));
         assert!(lum(poor.mature) > lum(mid.mature) && lum(mid.mature) > lum(rich.mature));
         let rock = basalt(0.15, false);
         assert!(lum(rock.fresh) < lum(rich.fresh));
         assert_eq!(rock.mature, rich.mature);
+    }
+
+    #[test]
+    fn a_silicate_weathers_by_its_iron() {
+        // F213: nanophase iron darkens a silicate and reddens it by its FeO (Hapke 2001);
+        // without iron it keeps its fresh colour, and the weathering reduces no more than
+        // all its iron. The Moon's highlands, South Pole-Aitken's noritic floor and its
+        // maria mature to about its reference map's 0.13 to 0.14, 0.080 and 0.053. Mercury's
+        // regolith weathers some four times as intensely, so its crust, with less than half
+        // the highlands' iron, matures to about half their reflectance, as its fresh ground
+        // is half theirs (Braden et al. 2011: 0.06 against 0.11 mature).
+        let fresh = [0.3f32, 0.3, 0.3];
+        let same = weathered(fresh, 0.0, 1.0);
+        assert!(
+            (0..3).all(|c| (same[c] - fresh[c]).abs() < 1e-6),
+            "{same:?}"
+        );
+        let w = weathered(fresh, 0.1, 1.0);
+        assert!(
+            w[1] < 0.7 * fresh[1] && w[2] / w[1] < 0.9 && w[0] / w[1] > 1.05,
+            "{w:?}"
+        );
+        let all = weathered(fresh, 0.1, 1e9);
+        assert!(all[1] > 0.0 && all[1] < w[1], "{all:?}");
+        let mature = |id: &str, intensity: f64| {
+            let e = end_member(id).unwrap();
+            weathered(e.fresh, e.iron.unwrap(), intensity)[1]
+        };
+        let (highlands, floor, maria) = (
+            mature("anorthosite", 1.0),
+            mature("norite", 1.0),
+            mature("basalt_iron_rich", 1.0),
+        );
+        assert!(
+            highlands > 0.13 && highlands < 0.16,
+            "highlands {highlands}"
+        );
+        assert!(floor > 0.07 && floor < 0.09, "noritic floor {floor}");
+        assert!(maria > 0.045 && maria < 0.06, "maria {maria}");
+        let intensity = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            Library::from_graph(&g).weathering
+        };
+        let (moon, mercury) = (intensity("Moon"), intensity("Mercury"));
+        assert!((moon - 1.0).abs() < 0.01, "Moon {moon}");
+        assert!(mercury > 3.0 && mercury < 6.0, "Mercury {mercury}");
+        let crust = mature("graphite_bearing_crust", mercury);
+        assert!(
+            crust / highlands > 0.4 && crust / highlands < 0.65,
+            "Mercury's crust {crust} against the highlands {highlands}"
+        );
     }
 
     #[test]

@@ -563,6 +563,8 @@ Direction: the weathering and transport processes of Phase 5 (oxidation, dust, m
 
 When: Phase 5, or a colour pass the user asks for.
 
+The silicates' maturing done (F213, 2026-10-28): a silicate's mature colour is its fresh one weathered by its iron, as intensely as its body's weathering runs against its gardening, which darkens and reddens Mercury's iron-poor crust as far as the Moon's highlands, by the measured amounts. Mars's oxidation and dust, Titan's haze fallout, the tholins of the outer bodies and Miranda's darkening wait for Phase 5.
+
 ### M12. Rayed craters on the icy moons
 
 With F91's rays, Ganymede has 111 craters young enough to keep rays (under the 1.5 Gyr ray lifetime), twelve of them over 86 km, and its rays brighten 28 percent of its surface by more than a tenth of the fresh contrast, densest at middle and high latitudes where its lag is thin. Callisto's thick low-latitude lag hides its rays there, but poleward of about 55 degrees its lag thinned and rays from craters far away appeared across the cold ground, switching on across a line. Since F93 the lag is summed over unresolved facets whose spread follows the surface's roughness, and the rays come in over 30 to 50 degrees, patchy at first. Since F96 a young crater's discontinuous ejecta run out along its jets, so its spikes go on into its rays with no grey disc between; the high latitudes' rays still lie long and bright over the dark lag, where the real ones would lie on frost (the direction's last point).
@@ -830,6 +832,10 @@ When: with the Moon's gate items.
 
 The rays' half done (F212, 2026-10-28): what a ray's secondaries throw out far from its crater is mostly the skin's mature soil, so the rays fade from their crater to the ground, the brightest half percent of the Moon at 0.228 against the reference's 0.195 (0.254 before) and its 95th percentile at 0.153 against 0.163. The highlands' own albedo, the median 0.105 against the reference's 0.116, waits for the silicates' space-weathered colours. The rays still read as smooth spokes from a bright disc near their craters, where Tycho's are fans of fine streaks: where the jets excavate more than RAY_CLUSTER_CAP the ray is drawn smooth (F128), and the clusters that would streak it lie farther out, now faint.
 
+The highlands' colours done (F213, 2026-10-28): the mature colours are weathered by each material's iron, the farside highlands' pure mature ground at 0.149 against the reference's 0.13 to 0.14, South Pole-Aitken's noritic floor at 0.080 against 0.080 and the maria at 0.052 against 0.053. The brightest half percent, the rays' near parts, stands at 0.197 against the reference's 0.195 (0.228 before). The highlands now read darker as a whole for another reason, the median 0.089 against the reference's 0.109: the model carries more of the intermediate shades, 36 percent of its surface between 0.065 and 0.10 against the reference's 24 and 17 percent between 0.10 and 0.13 against 36, the noritic deep material its basins excavate from below 25 km (materials.deep_bedrock_depth, provisional) lying in wide dark halos about them and its megabasin, and the lava mixed sideways about its maria. On the real Moon the basins' ejecta are mostly feldspathic and South Pole-Aitken's floor is the noritic province.
+
+Direction: the deep material's depth from the crust's structure (the upper crust's feldspathic thickness over a noritic lower crust) and the basins' ejecta from the depths their excavation reaches, with M33's megabasin.
+
 ### M37. Io's layered plains
 
 Some 4 percent of Io's surface is layered plains, layers of the plains isolated from those beneath them by bounding scarps, irregular and fretted (Williams et al. 2011; McCauley et al. 1979), which sapping by liquid SO2 erodes back, with lobed deposits at their feet (Moore et al. 2001); Io's colour mosaics show them as plateaus with bright rims. The model's plains are one surface, buried smooth (F86), its plateaus only the mountains' layered form (F87).
@@ -845,6 +851,8 @@ Mercury's reference map shows its young craters' rays across the planet, Hokusai
 Direction: the rays' fading on Mercury from its regolith's maturing (its micrometeorite and solar-wind fluxes against the gardening that brings fresh soil up) and its fresh contrast, with its albedo (the colours step: the model's 0.083 against 0.142).
 
 When: with the colours step of the Moon's gate items.
+
+The fresh contrast done (F213, 2026-10-28): Mercury's regolith weathers 4.4 times as intensely as the Moon's, so its crust matures from 0.17 to 0.077 and a fresh exposure stands 2.2 times as bright as the ground, as on the Moon; its mean albedo is 0.073, the measured comparison on one photometric standard (Braden et al. 2011) putting its mature ground at 0.55 of the lunar highlands', where the geometric albedo of 0.142 holds its opposition surge. Its rays still fade in 0.15 Gyr, 0.1 percent of its surface brightened past a tenth of the fresh contrast, where Braden and Robinson (2013) find its optical maturation up to four times as fast as the Moon's, not the 6.7 the solar flux gives.
 
 ### V1. Interpolated bodies in validation
 

@@ -2786,3 +2786,15 @@ How it went:
 - **Mercury.** Its rays were all but gone before, fading in 0.15 Gyr, against a reference that shows them across the planet; recorded with its albedo for the colours step (audit M38).
 
 Still to do: the rays' near parts are drawn smooth where the jets saturate, spokes about a bright disc where Tycho's are fans of fine streaks (audit M36); the colours.
+
+## The hundred-and-twenty-fifth milestone: a silicate's mature colour is its fresh one weathered by its iron
+
+- **F213.** The silicates' mature colours, set by hand, are now their fresh colours weathered by the nanophase iron their weathering makes from their FeO (Hapke 2001; Morris 1978), as intensely as the body's weathering runs against its gardening. The Moon's maria fall to its reference map's darkness and its colour reddens; Mercury's crust, with half the highlands' iron and four times their weathering, darkens as far as they do, as MESSENGER and LRO measure, and turns from olive to brown.
+
+How it went:
+
+- **Iron alone.** The law with the Moon's share of nanophase iron per FeO brightened Mercury to 0.126, near its geometric albedo of 0.142, and failed its Bond albedo (0.131 against 0.088). Braden et al. (2011) compared the two bodies on one photometric standard: Mercury's mature ground at 0.06 against the lunar highlands' 0.11 and its fresh at 0.09 against 0.15, darkening as far with half the iron; its geometric albedo holds its strong opposition surge. A mature soil's iron is a steady state between the weathering and the gardening, and Mercury's weathering runs 4.4 times as intensely.
+- **The channels.** Three sampled wavelengths gave the weathered colours an olive cast, the blue cut deeply and the red barely lifted; run through the colour matching functions, the overlapping channels lift the red as well.
+- **The highlands.** The pure terrains meet the reference, but the Moon's median falls to 0.089 against 0.109: its noritic deep material, darker now as South Pole-Aitken's floor is, lies in wide halos about its basins (audit M36).
+
+Still to do: the deep material's spread over the Moon's highlands (audit M36); Mercury's rays' fading (audit M38); the colours of Phase 5's weathering (audit M11).
