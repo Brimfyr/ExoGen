@@ -828,6 +828,8 @@ Direction: the highlands' mature albedo and the rays' fresh one against the meas
 
 When: with the Moon's gate items.
 
+The rays' half done (F212, 2026-10-28): what a ray's secondaries throw out far from its crater is mostly the skin's mature soil, so the rays fade from their crater to the ground, the brightest half percent of the Moon at 0.228 against the reference's 0.195 (0.254 before) and its 95th percentile at 0.153 against 0.163. The highlands' own albedo, the median 0.105 against the reference's 0.116, waits for the silicates' space-weathered colours. The rays still read as smooth spokes from a bright disc near their craters, where Tycho's are fans of fine streaks: where the jets excavate more than RAY_CLUSTER_CAP the ray is drawn smooth (F128), and the clusters that would streak it lie farther out, now faint.
+
 ### M37. Io's layered plains
 
 Some 4 percent of Io's surface is layered plains, layers of the plains isolated from those beneath them by bounding scarps, irregular and fretted (Williams et al. 2011; McCauley et al. 1979), which sapping by liquid SO2 erodes back, with lobed deposits at their feet (Moore et al. 2001); Io's colour mosaics show them as plateaus with bright rims. The model's plains are one surface, buried smooth (F86), its plateaus only the mountains' layered form (F87).
@@ -835,6 +837,14 @@ Some 4 percent of Io's surface is layered plains, layers of the plains isolated 
 Direction: the plains' layers stripped back from their scarps by sapping, the SO2 within them escaping where a scarp exposes it and the debris spreading in lobes at its foot, from the scarps that the paterae's walls, the mountains' feet and the flows' fronts start, with frost at the scarps' feet; the scarps' heights and their rates of retreat from Io's imagery.
 
 When: with Phase 5's erosion, its mass wasting and sublimation textures (decided 2026-10-27, against building it with every number stated).
+
+### M38. Mercury's rays
+
+Mercury's reference map shows its young craters' rays across the planet, Hokusai's and Debussy's the longest, and bright halos about many craters. The model's Mercury has all but none: its rays fade in 0.15 Gyr (RAY_FADING_GYR_1AU over its solar flux), and after F212 0.1 percent of its surface is brightened past a tenth of the fresh contrast. Braden and Robinson (2013) compared the maturing of Mercury's and the Moon's regolith; its darker, iron-poor surface may also lower the contrast a fresh exposure has.
+
+Direction: the rays' fading on Mercury from its regolith's maturing (its micrometeorite and solar-wind fluxes against the gardening that brings fresh soil up) and its fresh contrast, with its albedo (the colours step: the model's 0.083 against 0.142).
+
+When: with the colours step of the Moon's gate items.
 
 ### V1. Interpolated bodies in validation
 

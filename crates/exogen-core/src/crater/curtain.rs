@@ -371,6 +371,15 @@ impl Rays {
         1.0 - (-area * self.curtain.clumping(launch, x)).exp()
     }
 
+    /// The distance, m, beyond which no jet's fragments dig below the Moon's skin
+    /// (`fresh_share`), so that no ray shows; a thicker skin ends them sooner.
+    pub fn fresh_reach(&self) -> f64 {
+        self.radius
+            * (self.scale * self.curtain.peak_reach / std::f64::consts::LN_2)
+                .max(1.0)
+                .powf(1.0 / RAY_DENSITY_SLOPE)
+    }
+
     /// The distance, m, beyond which no jet excavates RAY_VISIBLE of the ground even in
     /// its strongest burst.
     pub fn reach(&self) -> f64 {
@@ -395,6 +404,25 @@ impl Rays {
         }
         let launch = self.curtain.launch_azimuth(phi, (r / self.radius).ln());
         self.launch_area(r, launch)
+    }
+
+    /// The share of what the secondaries excavate at distance `r`, m, and azimuth `phi`
+    /// that comes from beneath the weathered skin (F212 rays): a secondary digging to a depth d
+    /// through a skin h throws out its column, h / d of it the skin's own mature soil, so
+    /// that the fresh share is 1 - h / d. The depth falls with distance as the largest
+    /// secondary does (SECONDARY_SIZE_FALL) while the area they excavate falls as the
+    /// RAY_DENSITY_SLOPE, and the ray ends where they no longer dig below the skin, where
+    /// half the ground is excavated (Elliott et al. 2018's P = 0.5): along a jet h / d is
+    /// the excavated area against that end's to -SECONDARY_SIZE_FALL / RAY_DENSITY_SLOPE,
+    /// so that a ray is bright near its crater and fades to the ground at its end, "the
+    /// fresh material diluted by the weathered material" (Elliott et al. 2018). `skin` is
+    /// the share of the Moon's area a thicker skin leaves (F91).
+    pub fn fresh_share(&self, r: f64, phi: f64, skin: f64) -> f64 {
+        let area = self.area(r, phi) * skin;
+        if area <= std::f64::consts::LN_2 {
+            return 0.0;
+        }
+        1.0 - (area / std::f64::consts::LN_2).powf(-SECONDARY_SIZE_FALL / RAY_DENSITY_SLOPE)
     }
 
     /// The footprint, m across and along the radial, of a cluster of secondaries at

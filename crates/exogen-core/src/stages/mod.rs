@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 159;
+pub const FINISH_VERSION: u64 = 160;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2862,6 +2862,26 @@ pub fn finish(
         skin.as_ref(),
         &thrown,
     );
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        // The share of the surface the rays brighten past a tenth and a half of the fresh
+        // contrast.
+        let (mut tenth, mut half, mut whole) = (0.0, 0.0, 0.0);
+        for (k, &v) in rays.as_slice().iter().enumerate() {
+            let a = grid.cell_area(grid.cell(k));
+            whole += a;
+            if v > 0.1 {
+                tenth += a;
+            }
+            if v > 0.5 {
+                half += a;
+            }
+        }
+        eprintln!(
+            "rays brighten {:.1}% of the surface past a tenth of the fresh contrast, {:.2}% past a half",
+            100.0 * tenth / whole,
+            100.0 * half / whole
+        );
+    }
 
     sink.report(Progress {
         stage: "finishing",
@@ -3164,9 +3184,10 @@ fn throw(
     let thinnest = -(1.0 - RAY_VISIBLE).log2();
     let halo = (EJECTA_RADIUS_MULTIPLE * radius)
         .max(CONTINUOUS_EJECTA_MULTIPLE * radius * (edge.strongest_jet() / thinnest).cbrt());
-    // No ray reaches past a quarter of the way round (F127).
+    // No ray reaches past where its fragments still dig below the skin (F212), nor past a
+    // quarter of the way round (F127).
     let reach = rays
-        .reach()
+        .fresh_reach()
         .min(std::f64::consts::FRAC_PI_2 * inputs.body_radius)
         .max(halo);
     let least = RAY_CLUSTER_DRAW_CELLS * cell;
@@ -3569,7 +3590,8 @@ impl RaySystem {
         // the rest is a solid ray (F128).
         let landing = ray_coherence(r / self.body_radius);
         let solid = (landing * self.rays.area(r, phi) - RAY_CLUSTER_CAP).max(0.0);
-        let ray = 1.0 - (-(solid + clustered) * skin).exp();
+        // What they excavate is fresh by the share of it from beneath the skin.
+        let ray = (1.0 - (-(solid + clustered) * skin).exp()) * self.rays.fresh_share(r, phi, skin);
         ((1.0 - (1.0 - blanket) * (1.0 - ray)) * self.freshness) as f32
     }
 

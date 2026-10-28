@@ -2771,3 +2771,18 @@ Still to do: the frost fields' fine structure; the layered plains.
 - **F211.** The plumes' gas settling across their regions lands unevenly, clumped as their far fallout is (F89), so that the frost fields break up at every scale, the sulfur and the flows between; frost shows over 27 percent of the surface, Io's figure.
 
 The layered plains, Io's plateaus behind fretted scarps that sapping by liquid SO2 erodes back, wait for Phase 5's erosion (audit M37): no heights nor rates of retreat were to be had, and the process is the erosion and mass wasting that phase brings.
+
+## The Moon's maria: what the province tried
+
+The user chose the Moon next, in the order maria, rays, colours. Four ways of gathering the maria in the province were tried and none kept; audit M33 records them and the three things that block them: the mantle's hot start melting the whole body for its first billion and a half years (audit M35), the seven parts in eight of a province's melt that intrude and raise it as a plateau, and the megabasin's crust thinned to 5 km. The user chose to record them and go on to the rays.
+
+## The hundred-and-twenty-fourth milestone: a ray's secondaries throw out mostly the skin far from its crater
+
+- **F212.** A ray freshens the ground its secondaries excavate by the share of what they throw out that comes from beneath the weathered skin, which falls to nothing where the ray ends (Elliott et al. 2018's own account of where a ray ends), so that the Moon's rays are bright near their craters and fade to the ground, its brightest half percent at 0.228 against the reference's 0.195 (0.254 before); and the rays are worked out only as far as they show, a third of the time.
+
+How it went:
+
+- **Elliott et al.'s P.** The half excavated at a ray's end was theirs, read on stretched images and stated as uncertain; the excavated share keeps it, and the fresh share takes what their account of the ray's end says about the material.
+- **Mercury.** Its rays were all but gone before, fading in 0.15 Gyr, against a reference that shows them across the planet; recorded with its albedo for the colours step (audit M38).
+
+Still to do: the rays' near parts are drawn smooth where the jets saturate, spokes about a bright disc where Tycho's are fans of fine streaks (audit M36); the colours.
