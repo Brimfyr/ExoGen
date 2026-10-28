@@ -2085,6 +2085,16 @@ pub const TEXTURE_FADE_RADII: (f64, f64) = (1.3, 2.0);
 /// thick (Lark et al. 2023), or the dirty surface layer of an ice shell. Provisional: Phase
 /// 4 for ice, Phase 7 for the material library.
 pub const EXCAVATION_DEPTH_FRACTION: f64 = 0.1;
+/// The transient cavity's depth as a fraction of its diameter, the excavated zone its top
+/// third (Melosh 1989): a crater's floor, its melt and breccia and the uplift under them,
+/// is made of the cavity's whole depth, so it shows the deep bedrock by the share of the
+/// cavity below it (F216).
+pub const TRANSIENT_DEPTH_FRACTION: f64 = 0.3;
+/// The deep bedrock lands in a ring inside the ejecta, the deepest excavated material
+/// launched last and slowest (F216); the layers are not planes nor the cavity a true
+/// paraboloid, so the ring's outer edge is soft over this share of its radius either way
+/// (stated choice).
+pub const DEEP_RING_SOFTNESS: f64 = 0.15;
 pub const DEEP_BEDROCK_DEPTH_ROCK: f64 = 25_000.0;
 pub const DEEP_BEDROCK_DEPTH_GRAPHITE: f64 = 10_000.0;
 pub const DEEP_BEDROCK_DEPTH_ICE: f64 = 500.0;

@@ -10,6 +10,7 @@
 //! the continuous ejecta have their surface age reset to the impact time.
 
 use super::morphology::{CraterClass, Dimensions, Levelling, ProfileTable};
+use crate::constants::DEEP_RING_SOFTNESS;
 use crate::constants::{
     BASIN_SCULPTURE, BURIAL_FACTOR_HIGH, BURIAL_FACTOR_LOW, CONTINUOUS_EJECTA_MULTIPLE,
     EJECTA_LOBE_MIN_CELLS, EJECTA_TEXTURE, FLOOR_TEXTURE, OBLIQUE_ASYMMETRY_DEG,
@@ -411,6 +412,60 @@ pub fn elliptical_radius(r: f64, phi: f64, azimuth: f64, ellipticity: f64) -> f6
     r * ((c * c) / ellipticity + (s * s) * ellipticity).sqrt()
 }
 
+/// What a crater brings up from the deep bedrock (F215, F216): its floor's share, from its
+/// transient cavity's whole depth, and its ejecta's, from its excavation cavity.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DeepShare {
+    pub floor: f64,
+    pub ejecta: f64,
+}
+
+impl DeepShare {
+    pub const NONE: Self = Self {
+        floor: 0.0,
+        ejecta: 0.0,
+    };
+
+    /// The share of the ejecta landing at `rho` crater radii from the centre that is deep
+    /// bedrock (F216). The ejecta thins as the cube of the range (McGetchin et al. 1973), so
+    /// the share of it landing beyond `rho` is 1 / rho; the deepest excavated material is
+    /// launched last and slowest and lands nearest the rim, on top (Melosh 1989), so the
+    /// excavated deep share lands within 1 / (1 - share) radii, its edge soft by
+    /// DEEP_RING_SOFTNESS.
+    pub fn ejecta_at(&self, rho: f64) -> f64 {
+        if self.ejecta <= 0.0 {
+            return 0.0;
+        }
+        if self.ejecta >= 1.0 {
+            return 1.0;
+        }
+        let ring = 1.0 / (1.0 - self.ejecta);
+        let x = ((ring * (1.0 + DEEP_RING_SOFTNESS) - rho) / (2.0 * DEEP_RING_SOFTNESS * ring))
+            .clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    }
+
+    /// The share of the deep bedrock at `rho` crater radii from the centre (F216): the
+    /// floor's inside the floor's edge at `floor` radii; up the wall it grades to the
+    /// ring's at the rim, where the overturned flap caps the wall with the ejecta's deepest
+    /// material and slumped terraces carry it down; beyond the rim the ring, its width
+    /// following the blanket's own extent beyond the rim at that azimuth by the factor
+    /// `lobe` (F91), so that floor, wall and collar meet without a step and the collar
+    /// frays as the blanket does.
+    pub fn at(&self, rho: f64, floor: f64, lobe: f64) -> f64 {
+        if rho > 1.0 {
+            return self.ejecta_at(1.0 + (rho - 1.0) / lobe.max(0.1));
+        }
+        let rim = self.ejecta_at(1.0);
+        let edge = floor.clamp(0.0, 0.95);
+        if rho <= edge {
+            return self.floor;
+        }
+        let t = ((rho - edge) / (1.0 - edge)).clamp(0.0, 1.0);
+        self.floor + (rim - self.floor) * t * t * (3.0 - 2.0 * t)
+    }
+}
+
 pub struct StampParams {
     pub time_gyr: f32,
     pub unit_floor: u16,
@@ -436,10 +491,9 @@ pub struct StampParams {
     pub levelling: Levelling,
     /// Seed of the crater's rim scalloping and texture; zero for a smooth stamp.
     pub seed: u64,
-    /// The share of what the crater excavated that came from the deep bedrock (F215): its
-    /// floor and near ejecta carry it, with what the rest of its cavity dug from the
-    /// ground's own.
-    pub deep: f64,
+    /// What the crater brought up from the deep bedrock (F215, F216): its floor and its
+    /// ejecta carry it, with what the rest of its cavity dug from the ground's own.
+    pub deep: DeepShare,
     /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
     /// ejecta with the ground it covers (F51).
     pub maturity_timescale: f64,
@@ -610,7 +664,14 @@ pub fn stamp_compute(
     let level_of = |re: f64, phi: f64| level_in(&sector_sum, &ring_sum, h_ref, re, phi);
     // The material the crater excavated: the deep bedrock, or what was already there.
     let ground_deep = if wsum > 0.0 { deep_sum / wsum } else { 0.0 };
-    let source_deep = p.deep + (1.0 - p.deep) * ground_deep;
+    let floor_edge = dim.floor_radius / dim.radius.max(1e-9);
+    let source_deep = |rho: f64, phi: f64| {
+        // The blanket's extent beyond the rim at this azimuth against its mean (F91).
+        let lobe = (CONTINUOUS_EJECTA_MULTIPLE * edge.factor(phi) - 1.0)
+            / (CONTINUOUS_EJECTA_MULTIPLE - 1.0);
+        let share = p.deep.at(rho, floor_edge, lobe);
+        share + (1.0 - share) * ground_deep
+    };
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
@@ -755,7 +816,8 @@ pub fn stamp_compute(
             };
             let thick = re <= dim.radius || cover >= 0.5;
             // Deep material by ballistic mixing: all ejecta near the rim, all local at the
-            // continuous edge. Fresh ejecta covers older melt.
+            // continuous edge, the deep bedrock in its ring (F216). Fresh ejecta covers older
+            // melt.
             let edge_x = cont / dim.radius;
             let mix = ((edge_x - re / dim.radius) / (edge_x - EJECTA_PURE_RADII)).clamp(0.0, 1.0);
             write.surface = true;
@@ -767,7 +829,8 @@ pub fn stamp_compute(
             } else {
                 units[idx]
             };
-            write.deep = deep[idx] + ((source_deep - deep[idx] as f64) * mix) as f32;
+            write.deep =
+                deep[idx] + ((source_deep(re / dim.radius, phi) - deep[idx] as f64) * mix) as f32;
             write.melt = if thick {
                 texture.as_ref().map_or(0.0, |t| t.melt_fraction(rw, phi)) as f32
             } else {
@@ -2237,7 +2300,7 @@ mod tests {
             bury: true,
             levelling: Levelling::rings(),
             seed: 0,
-            deep: 0.0,
+            deep: DeepShare::NONE,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2345,7 +2408,7 @@ mod tests {
                 bury,
                 levelling: Levelling::rings(),
                 seed: 0,
-                deep: 0.0,
+                deep: DeepShare::NONE,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
@@ -2428,7 +2491,7 @@ mod tests {
             bury: true,
             levelling: Levelling::rings(),
             seed: 0,
-            deep: 0.0,
+            deep: DeepShare::NONE,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2518,7 +2581,7 @@ mod tests {
                 bury: true,
                 levelling: Levelling::rings(),
                 seed: 0,
-                deep: 0.0,
+                deep: DeepShare::NONE,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
@@ -2635,7 +2698,7 @@ mod tests {
             bury: true,
             levelling: Levelling::rings(),
             seed: 0,
-            deep: 0.0,
+            deep: DeepShare::NONE,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2807,7 +2870,7 @@ mod tests {
             bury: true,
             levelling: Levelling::new(&scaling),
             seed: 0,
-            deep: 0.0,
+            deep: DeepShare::NONE,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,

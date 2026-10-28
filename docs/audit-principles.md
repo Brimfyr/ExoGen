@@ -840,6 +840,8 @@ The halos done (F215, 2026-10-28): a crater brings up the deep bedrock by the sh
 
 Direction: the maria's ejecta spread over the highlands about them, with M33's maria; the upper crust's own variation in iron (the outer feldspathic highlands' FeO above the core's).
 
+The rings and floors done (F216, 2026-10-28): the deep share lands nearest the rim and floors the crater, so the basins wear collars of norite and the larger craters noritic floors; the median is 0.114 against the reference's 0.109 and the farside highlands' 0.127 against 0.125. The user's note (2026-10-28): the darker material about the maria, grading into the highlands, gave a natural transition that the real Moon's map shows and that F215 took away; the nearside highlands still stand at 0.147 against 0.114, the shades at 0.10 to 0.13 over 16 percent of the surface against 36. That transition is the maria's own basalt thrown onto the highlands by the impacts in them, the direction above.
+
 ### M37. Io's layered plains
 
 Some 4 percent of Io's surface is layered plains, layers of the plains isolated from those beneath them by bounding scarps, irregular and fretted (Williams et al. 2011; McCauley et al. 1979), which sapping by liquid SO2 erodes back, with lobed deposits at their feet (Moore et al. 2001); Io's colour mosaics show them as plateaus with bright rims. The model's plains are one surface, buried smooth (F86), its plateaus only the mountains' layered form (F87).
@@ -863,6 +865,8 @@ The fading done (F214, 2026-10-28): a fresh surface matures by its weathering, t
 Direction: the deep crust's halos on Mercury: its depth and share against the measured low-reflectance material's extent (Denevi et al. 2009), and their mixing into the ground by later ejecta and gardening, as the Moon's noritic halos (M36).
 
 The blots done (F215, 2026-10-28): a crater brings up the deep crust by the share of its cavity below it, so Mercury's halos are partial and fade into its ground, the surface at least half deep material 14 percent against Denevi et al.'s (2009) 15 (51 before), and its rays and bright craters catch the eye. Its bright young craters smaller than the map's cells stay open.
+
+The detail back (F216, 2026-10-28): the user saw Mercury lose its contrast and detail under F215, its map 1.26 from its darkest tenth to its brightest against 1.46 on the user's true-colour map, which shows it brown-grey as the Moon and of low contrast. With the deep share landing nearest the rim and flooring the larger craters its contrast is 1.37, 1.23 at some 90 km against 1.33, its larger craters dark-floored and dark-rimmed.
 
 ### V1. Interpolated bodies in validation
 

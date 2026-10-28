@@ -12,8 +12,8 @@ use crate::crater::morphology::transient_diameter;
 use crate::crater::production::{Oblique, Target, expected_count_above, poisson};
 use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
-    Bombardment, BombardmentParams, CraterRecord, ProfileTable, Scaling, StampParams, Stamper,
-    dimensions, hold_diameter, impact_angle, stamp,
+    Bombardment, BombardmentParams, CraterRecord, DeepShare, ProfileTable, Scaling, StampParams,
+    Stamper, dimensions, hold_diameter, impact_angle, stamp,
 };
 use crate::fields::LayerSet;
 use crate::grid::CubeSphere;
@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 31;
+pub const VERSION: u64 = 32;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -80,21 +80,24 @@ pub fn excavated_below(excavation_depth: f64, layer_depth: f64) -> f64 {
 }
 
 impl CraterInputs {
-    /// The share of what a crater of this diameter, m, excavates that comes from the deep
-    /// bedrock (F215), where the crust under its centre is this thick, m: its excavation
-    /// reaches EXCAVATION_DEPTH_FRACTION of its transient cavity's diameter (Melosh 1989),
-    /// and a deep bedrock that is the crust's own lower layer lies as deep as the crust
-    /// there is thick against the reference (the lunar central peaks more mafic where the
-    /// crust is thinner, Cahill et al. 2009); an ice shell's dirty skin is its own depth.
-    pub fn deep_share(&self, diameter: f64, crust: f64) -> f64 {
+    /// What a crater of this diameter, m, brings up from the deep bedrock (F215, F216),
+    /// where the crust under its centre is this thick, m: its ejecta by the share of its
+    /// excavation cavity below it, the cavity reaching EXCAVATION_DEPTH_FRACTION of its
+    /// transient cavity's diameter, and its floor by the share of the transient cavity's
+    /// whole depth below it, TRANSIENT_DEPTH_FRACTION (Melosh 1989). A deep bedrock that is
+    /// the crust's own lower layer lies as deep as the crust there is thick against the
+    /// reference (the lunar central peaks more mafic where the crust is thinner, Cahill et
+    /// al. 2009); an ice shell's dirty skin is its own depth.
+    pub fn deep_share(&self, diameter: f64, crust: f64) -> DeepShare {
         let depth = match self.deep_crust_reference {
             Some(reference) => self.deep_bedrock_depth * crust.max(0.0) / reference.max(1.0),
             None => self.deep_bedrock_depth,
         };
-        excavated_below(
-            EXCAVATION_DEPTH_FRACTION * transient_diameter(diameter, &self.scaling),
-            depth,
-        )
+        let transient = transient_diameter(diameter, &self.scaling);
+        DeepShare {
+            floor: excavated_below(TRANSIENT_DEPTH_FRACTION * transient, depth),
+            ejecta: excavated_below(EXCAVATION_DEPTH_FRACTION * transient, depth),
+        }
     }
 }
 
@@ -391,8 +394,8 @@ impl ImpactProcess {
             let table = ProfileTable::new(dim, 0.0);
             let params = StampParams {
                 time_gyr: rec.time_gyr as f32,
-                unit_floor: floor_unit(dim.class, deep > 0.0, rec.on_lava),
-                unit_ejecta: ejecta_unit(deep > 0.0, rec.on_lava),
+                unit_floor: floor_unit(dim.class, deep.floor > 0.0, rec.on_lava),
+                unit_ejecta: ejecta_unit(deep.ejecta > 0.0, rec.on_lava),
                 azimuth: rec.azimuth,
                 angle: rec.angle,
                 ellipticity: rec.ellipticity,
@@ -470,11 +473,13 @@ mod tests {
     use crate::presets::preset;
     use crate::stages::primordial_crust::PrimordialCrust;
 
-    /// F215: a crater brings up the deep bedrock by the share of its excavation cavity
-    /// below it, none until it reaches it. The Moon's basins throw out mostly its upper
-    /// crust, Orientale's size a third or so of its lower, and more where the crust is
-    /// thinner; Mercury's craters of 150 km none of its deep graphite crust and Caloris's
-    /// size most; an ice shell's craters of 20 km about half their clean ice.
+    /// F215, F216: a crater brings up the deep bedrock by the share of its excavation cavity
+    /// below it, none until it reaches it, and shows it in its floor by the share of its
+    /// transient cavity below it, sooner. The Moon's basins throw out mostly its upper crust,
+    /// Orientale's size a quarter or so of its lower, and more where the crust is thinner;
+    /// Mercury's craters of 150 km none of its deep graphite crust but floor themselves in
+    /// it, and Caloris's size throws out most; an ice shell's craters of 20 km about two
+    /// fifths of their clean ice. The deep share lands in a ring nearest the rim.
     #[test]
     fn a_crater_brings_up_the_deep_bedrock_by_the_cavity_below_it() {
         assert_eq!(excavated_below(10.0, 20.0), 0.0);
@@ -487,18 +492,48 @@ mod tests {
             )
         };
         let (moon, crust) = inputs("Moon");
-        assert_eq!(moon.deep_share(300e3, crust), 0.0);
+        assert_eq!(moon.deep_share(300e3, crust).ejecta, 0.0);
+        assert!(moon.deep_share(300e3, crust).floor > 0.2);
         let orientale = moon.deep_share(930e3, crust);
-        assert!(orientale > 0.25 && orientale < 0.5, "Orientale {orientale}");
-        assert!(moon.deep_share(930e3, 0.75 * crust) > orientale);
+        assert!(
+            orientale.ejecta > 0.2 && orientale.ejecta < 0.5,
+            "Orientale {orientale:?}"
+        );
+        assert!(orientale.floor > orientale.ejecta);
+        assert!(moon.deep_share(930e3, 0.75 * crust).ejecta > orientale.ejecta);
         let (mercury, crust) = inputs("Mercury");
-        assert_eq!(mercury.deep_share(150e3, crust), 0.0);
-        let caloris = mercury.deep_share(1550e3, crust);
+        let crater = mercury.deep_share(150e3, crust);
+        assert!(
+            crater.ejecta == 0.0 && crater.floor > 0.3,
+            "150 km {crater:?}"
+        );
+        let caloris = mercury.deep_share(1550e3, crust).ejecta;
         assert!(caloris > 0.6, "Caloris {caloris}");
         let (ganymede, crust) = inputs("Ganymede");
         let twenty = ganymede.deep_share(20e3, crust);
-        assert!(twenty > 0.3 && twenty < 0.55, "a 20 km crater {twenty}");
+        assert!(
+            twenty.ejecta > 0.3 && twenty.ejecta < 0.55,
+            "a 20 km crater {twenty:?}"
+        );
         assert_eq!(ganymede.deep_share(20e3, 0.5 * crust), twenty);
+        // Half the excavated volume deep: it lands within two radii, all of it near the rim
+        // and none past the ring's soft edge.
+        let half = DeepShare {
+            floor: 0.8,
+            ejecta: 0.5,
+        };
+        assert_eq!(half.ejecta_at(1.2), 1.0);
+        assert!((half.ejecta_at(2.0) - 0.5).abs() < 1e-9);
+        assert_eq!(half.ejecta_at(2.5), 0.0);
+        assert_eq!(DeepShare::NONE.ejecta_at(1.0), 0.0);
+        // The floor's share inside its edge grades up the wall to the ring's at the rim,
+        // with no step there, and the ring follows the ejecta's lobes.
+        assert_eq!(half.at(0.3, 0.5, 1.0), 0.8);
+        assert!((half.at(1.0, 0.5, 1.0) - half.at(1.0 + 1e-9, 0.5, 1.0)).abs() < 1e-6);
+        let wall = half.at(0.75, 0.5, 1.0);
+        assert!(wall > 0.8 && wall < 1.0, "the wall {wall}");
+        assert!(half.at(2.0, 0.5, 1.2) > half.at(2.0, 0.5, 1.0));
+        assert!(half.at(2.0, 0.5, 0.8) < half.at(2.0, 0.5, 1.0));
     }
 
     /// Over many seeds the loop population must follow the production function: the share

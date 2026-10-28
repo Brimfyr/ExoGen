@@ -2822,3 +2822,15 @@ How it went:
 - **The Moon's nearside.** With the halos partial, its nearside highlands stand at pure anorthosite, 0.150 against the reference's 0.114: its maria are not gathered on its nearside and its highlands take none of their basalt (audit M33, M36).
 
 Still to do: the maria's ejecta over the Moon's highlands, with its maria (audit M33, M36); Mercury's bright young craters smaller than the map's cells (audit M38); the colours of Phase 5's weathering (audit M11).
+
+## The hundred-and-twenty-eighth milestone: the deep bedrock lands nearest the rim and floors the crater
+
+- **F216.** F215 spread a crater's deep share evenly, so its halos were faint and uniform; the user saw Mercury lose its contrast and the Moon the darker ground about its maria. The deepest excavated material lands last and nearest the rim, so a crater lays its deep share in a ring out to 1 / (1 - share) radii, and its floor, made of its transient cavity's whole depth, shows the deep bedrock sooner than its ejecta. The Moon's median comes to 0.114 against 0.109 and its farside highlands to 0.127 against 0.125, its basins collared; Mercury's contrast to 1.37 against 1.46 on the user's true-colour map, its larger craters dark-floored.
+
+How it went:
+
+- **The user's map.** The user replaced Mercury's reference with a true-colour map: brown-grey as the Moon (B/G 0.87, R/G 1.10), its contrast 1.46 and 1.33 at some 90 km, which F214's map nearly had and F215's lost.
+- **The band.** The user saw a lighter band along a flooded basin's mare, with a hard edge to a darker collar that faded out cleanly: the wall took the floor's share up to the rim, where the ring was pure. The wall now grades from the floor's share to the ring's at the rim, the flap's deepest material capping it, and the ring's width follows the blanket's lobes.
+- **The maria's surroundings.** The collars restore the basins' darker ground, but not the gradual darkening of the highlands about the maria, which the impacts in the maria throw there (audit M36).
+
+Still to do: the maria's basalt over the highlands about them (audit M36), with the maria themselves (audit M33); Mercury's bright young craters smaller than the map's cells (audit M38); the colours of Phase 5's weathering (audit M11).

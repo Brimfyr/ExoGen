@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 161;
+pub const FINISH_VERSION: u64 = 162;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2180,14 +2180,15 @@ pub fn finish(
                                 *v -= s;
                             }
                         }
-                        let deep = inputs.deep_share(
+                        let shares = inputs.deep_share(
                             c.diameter,
                             impacts::crust_at(&layers, &grid, c.center),
-                        ) > 0.0;
+                        );
+                        let deep = shares.floor > 0.0;
                         let params = RestoreParams {
                             time_gyr: c.time_gyr as f32,
                             unit_floor: impacts::floor_unit(dim.class, deep, c.on_lava),
-                            unit_ejecta: impacts::ejecta_unit(deep, c.on_lava),
+                            unit_ejecta: impacts::ejecta_unit(shares.ejecta > 0.0, c.on_lava),
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,
@@ -2581,7 +2582,7 @@ pub fn finish(
                             1.0
                         };
                         let deep = if *secondary {
-                            0.0
+                            crate::crater::DeepShare::NONE
                         } else {
                             inputs.deep_share(
                                 c.diameter,
@@ -2594,9 +2595,9 @@ pub fn finish(
                             unit_floor: if *secondary && !on_lava {
                                 UNIT_SECONDARY_FIELD
                             } else {
-                                impacts::floor_unit(dim.class, deep > 0.0, on_lava)
+                                impacts::floor_unit(dim.class, deep.floor > 0.0, on_lava)
                             },
-                            unit_ejecta: impacts::ejecta_unit(deep > 0.0, on_lava),
+                            unit_ejecta: impacts::ejecta_unit(deep.ejecta > 0.0, on_lava),
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,
