@@ -8,6 +8,7 @@
 
 use crate::constants::*;
 use crate::crater::Levelling;
+use crate::crater::morphology::transient_diameter;
 use crate::crater::production::{Oblique, Target, expected_count_above, poisson};
 use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
@@ -23,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 30;
+pub const VERSION: u64 = 31;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -50,8 +51,11 @@ pub struct CraterInputs {
     pub loop_retention_age: f64,
     pub diffusivity_m2_per_myr: f64,
     pub ray_lifetime: f64,
-    /// Thickness of the surface layer above the deep bedrock, metres.
+    /// Thickness of the surface layer above the deep bedrock, metres; and, where the deep
+    /// bedrock is a layer of the crust, the crust's thickness at which it lies that deep, m
+    /// (F215).
     pub deep_bedrock_depth: f64,
+    pub deep_crust_reference: Option<f64>,
     /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
     /// ejecta with the ground it covers (F51).
     pub maturity_timescale: f64,
@@ -64,9 +68,39 @@ pub struct CraterInputs {
     pub levelling: Levelling,
 }
 
-/// Whether a crater's excavation reaches below the surface layer into the deep bedrock.
-pub fn reaches_deep_bedrock(diameter: f64, deep_bedrock_depth: f64) -> bool {
-    EXCAVATION_DEPTH_FRACTION * diameter > deep_bedrock_depth
+/// The share of an excavation cavity of this depth, m, that lies below a layer this deep,
+/// m (F215): the cavity a paraboloid, the share of its volume below the layer the square
+/// of the share of its depth.
+pub fn excavated_below(excavation_depth: f64, layer_depth: f64) -> f64 {
+    if excavation_depth <= layer_depth.max(0.0) {
+        return 0.0;
+    }
+    let x = 1.0 - layer_depth.max(0.0) / excavation_depth;
+    x * x
+}
+
+impl CraterInputs {
+    /// The share of what a crater of this diameter, m, excavates that comes from the deep
+    /// bedrock (F215), where the crust under its centre is this thick, m: its excavation
+    /// reaches EXCAVATION_DEPTH_FRACTION of its transient cavity's diameter (Melosh 1989),
+    /// and a deep bedrock that is the crust's own lower layer lies as deep as the crust
+    /// there is thick against the reference (the lunar central peaks more mafic where the
+    /// crust is thinner, Cahill et al. 2009); an ice shell's dirty skin is its own depth.
+    pub fn deep_share(&self, diameter: f64, crust: f64) -> f64 {
+        let depth = match self.deep_crust_reference {
+            Some(reference) => self.deep_bedrock_depth * crust.max(0.0) / reference.max(1.0),
+            None => self.deep_bedrock_depth,
+        };
+        excavated_below(
+            EXCAVATION_DEPTH_FRACTION * transient_diameter(diameter, &self.scaling),
+            depth,
+        )
+    }
+}
+
+/// The crust's thickness under a point, m.
+pub fn crust_at(layers: &LayerSet, grid: &CubeSphere, center: [f64; 3]) -> f64 {
+    layers.crust_thickness.as_slice()[grid.index(grid.locate(center).0)] as f64
 }
 
 /// Unit of a crater floor by class, excavation and target.
@@ -155,6 +189,10 @@ impl CraterInputs {
             diffusivity_m2_per_myr: graph.f64("cratering.diffusivity"),
             ray_lifetime: graph.f64("cratering.ray_fading_timescale"),
             deep_bedrock_depth: graph.f64("materials.deep_bedrock_depth"),
+            deep_crust_reference: (!crate::stages::materials::is_ice(
+                graph.str("materials.deep_bedrock"),
+            ))
+            .then(|| graph.f64("tectonics.initial_crust_thickness")),
             maturity_timescale: crate::stages::ice::maturity_timescale(graph),
             shed: if crate::stages::ice::is_ice_surface(graph) {
                 (
@@ -348,13 +386,13 @@ impl ImpactProcess {
         }
         {
             let dim = dimensions(rec.diameter, &inp.scaling);
-            let deep = reaches_deep_bedrock(rec.diameter, inp.deep_bedrock_depth);
+            let deep = inp.deep_share(rec.diameter, crust_at(layers, &self.grid, rec.center));
             rec.on_lava = target_is_lava(layers, &self.grid, rec.center);
             let table = ProfileTable::new(dim, 0.0);
             let params = StampParams {
                 time_gyr: rec.time_gyr as f32,
-                unit_floor: floor_unit(dim.class, deep, rec.on_lava),
-                unit_ejecta: ejecta_unit(deep, rec.on_lava),
+                unit_floor: floor_unit(dim.class, deep > 0.0, rec.on_lava),
+                unit_ejecta: ejecta_unit(deep > 0.0, rec.on_lava),
                 azimuth: rec.azimuth,
                 angle: rec.angle,
                 ellipticity: rec.ellipticity,
@@ -431,6 +469,37 @@ mod tests {
     use super::*;
     use crate::presets::preset;
     use crate::stages::primordial_crust::PrimordialCrust;
+
+    /// F215: a crater brings up the deep bedrock by the share of its excavation cavity
+    /// below it, none until it reaches it. The Moon's basins throw out mostly its upper
+    /// crust, Orientale's size a third or so of its lower, and more where the crust is
+    /// thinner; Mercury's craters of 150 km none of its deep graphite crust and Caloris's
+    /// size most; an ice shell's craters of 20 km about half their clean ice.
+    #[test]
+    fn a_crater_brings_up_the_deep_bedrock_by_the_cavity_below_it() {
+        assert_eq!(excavated_below(10.0, 20.0), 0.0);
+        assert!((excavated_below(20.0, 10.0) - 0.25).abs() < 1e-12);
+        let inputs = |name: &str| {
+            let (g, _) = preset(name).unwrap().to_graph();
+            (
+                CraterInputs::from_graph(&g),
+                g.f64("tectonics.initial_crust_thickness"),
+            )
+        };
+        let (moon, crust) = inputs("Moon");
+        assert_eq!(moon.deep_share(300e3, crust), 0.0);
+        let orientale = moon.deep_share(930e3, crust);
+        assert!(orientale > 0.25 && orientale < 0.5, "Orientale {orientale}");
+        assert!(moon.deep_share(930e3, 0.75 * crust) > orientale);
+        let (mercury, crust) = inputs("Mercury");
+        assert_eq!(mercury.deep_share(150e3, crust), 0.0);
+        let caloris = mercury.deep_share(1550e3, crust);
+        assert!(caloris > 0.6, "Caloris {caloris}");
+        let (ganymede, crust) = inputs("Ganymede");
+        let twenty = ganymede.deep_share(20e3, crust);
+        assert!(twenty > 0.3 && twenty < 0.55, "a 20 km crater {twenty}");
+        assert_eq!(ganymede.deep_share(20e3, 0.5 * crust), twenty);
+    }
 
     /// Over many seeds the loop population must follow the production function: the share
     /// of craters above twice the threshold, the number formed in the last 1 Gyr, and the

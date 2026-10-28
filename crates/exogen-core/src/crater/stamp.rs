@@ -436,8 +436,10 @@ pub struct StampParams {
     pub levelling: Levelling,
     /// Seed of the crater's rim scalloping and texture; zero for a smooth stamp.
     pub seed: u64,
-    /// The crater excavated the deep bedrock: its floor and near ejecta are deep material.
-    pub deep: bool,
+    /// The share of what the crater excavated that came from the deep bedrock (F215): its
+    /// floor and near ejecta carry it, with what the rest of its cavity dug from the
+    /// ground's own.
+    pub deep: f64,
     /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
     /// ejecta with the ground it covers (F51).
     pub maturity_timescale: f64,
@@ -607,13 +609,8 @@ pub fn stamp_compute(
     };
     let level_of = |re: f64, phi: f64| level_in(&sector_sum, &ring_sum, h_ref, re, phi);
     // The material the crater excavated: the deep bedrock, or what was already there.
-    let source_deep = if p.deep {
-        1.0
-    } else if wsum > 0.0 {
-        deep_sum / wsum
-    } else {
-        0.0
-    };
+    let ground_deep = if wsum > 0.0 { deep_sum / wsum } else { 0.0 };
+    let source_deep = p.deep + (1.0 - p.deep) * ground_deep;
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let ages = layers.surface_age.as_slice();
     let units = layers.unit_id.as_slice();
@@ -2240,7 +2237,7 @@ mod tests {
             bury: true,
             levelling: Levelling::rings(),
             seed: 0,
-            deep: false,
+            deep: 0.0,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2348,7 +2345,7 @@ mod tests {
                 bury,
                 levelling: Levelling::rings(),
                 seed: 0,
-                deep: false,
+                deep: 0.0,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
@@ -2431,7 +2428,7 @@ mod tests {
             bury: true,
             levelling: Levelling::rings(),
             seed: 0,
-            deep: false,
+            deep: 0.0,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2521,7 +2518,7 @@ mod tests {
                 bury: true,
                 levelling: Levelling::rings(),
                 seed: 0,
-                deep: false,
+                deep: 0.0,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
@@ -2638,7 +2635,7 @@ mod tests {
             bury: true,
             levelling: Levelling::rings(),
             seed: 0,
-            deep: false,
+            deep: 0.0,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2810,7 +2807,7 @@ mod tests {
             bury: true,
             levelling: Levelling::new(&scaling),
             seed: 0,
-            deep: false,
+            deep: 0.0,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,

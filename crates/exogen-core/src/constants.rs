@@ -2076,11 +2076,14 @@ pub const TEXTURE_MIN_CELLS: usize = 1800;
 /// The ejecta texture fades out between these radii, in crater radii, where the ejecta is
 /// too thin for it to show.
 pub const TEXTURE_FADE_RADII: (f64, f64) = (1.3, 2.0);
-/// Deep bedrock: what craters excavate from below the surface layer. A crater reaches it
-/// when its excavation depth, this fraction of its diameter (Melosh 1989), exceeds the
-/// layer thickness: the anorthositic upper crust of a Moon-like body, the depth of
-/// Mercury's low-reflectance material, or the dirty surface layer of an ice shell.
-/// Provisional: Phase 4 for ice, Phase 7 for the material library.
+/// Deep bedrock: what craters excavate from below the surface layer. A crater's excavation
+/// reaches this fraction of its transient cavity's diameter (Melosh 1989), and it brings up
+/// the deep bedrock by the share of its paraboloid cavity's volume below the layer (F215):
+/// the anorthositic upper crust of a Moon-like body under a crust of
+/// tectonics.initial_crust_thickness, thinner where the crust is (Cahill et al. 2009), the
+/// depth of Mercury's low-reflectance material, whose layer under its basins is 4 to 15 km
+/// thick (Lark et al. 2023), or the dirty surface layer of an ice shell. Provisional: Phase
+/// 4 for ice, Phase 7 for the material library.
 pub const EXCAVATION_DEPTH_FRACTION: f64 = 0.1;
 pub const DEEP_BEDROCK_DEPTH_ROCK: f64 = 25_000.0;
 pub const DEEP_BEDROCK_DEPTH_GRAPHITE: f64 = 10_000.0;

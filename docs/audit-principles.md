@@ -836,6 +836,10 @@ The highlands' colours done (F213, 2026-10-28): the mature colours are weathered
 
 Direction: the deep material's depth from the crust's structure (the upper crust's feldspathic thickness over a noritic lower crust) and the basins' ejecta from the depths their excavation reaches, with M33's megabasin.
 
+The halos done (F215, 2026-10-28): a crater brings up the deep bedrock by the share of its excavation cavity below it, at a depth that follows the crust under it, so the basins' ejecta are mostly upper crust, Orientale's size a quarter norite, and South Pole-Aitken's province a partial share. The farside highlands' median is 0.133 against the reference's 0.125 (0.114 before). The nearside highlands now stand too bright, 0.150 against 0.114, and the median at 0.130 against 0.109: the model's maria are not gathered on one hemisphere (M33), and its highlands take none of the basalt that impacts in the maria throw onto them, which darkens the real nearside's highlands and its intermediate shades (24 percent of the reference's surface at 0.065 to 0.10, 6 percent of the model's).
+
+Direction: the maria's ejecta spread over the highlands about them, with M33's maria; the upper crust's own variation in iron (the outer feldspathic highlands' FeO above the core's).
+
 ### M37. Io's layered plains
 
 Some 4 percent of Io's surface is layered plains, layers of the plains isolated from those beneath them by bounding scarps, irregular and fretted (Williams et al. 2011; McCauley et al. 1979), which sapping by liquid SO2 erodes back, with lobed deposits at their feet (Moore et al. 2001); Io's colour mosaics show them as plateaus with bright rims. The model's plains are one surface, buried smooth (F86), its plateaus only the mountains' layered form (F87).
@@ -857,6 +861,8 @@ The fresh contrast done (F213, 2026-10-28): Mercury's regolith weathers 4.4 time
 The fading done (F214, 2026-10-28): a fresh surface matures by its weathering, the solar wind and micrometeorite melt, and by its gardening, Mercury's 2.4 times as fast as the Moon's where the sunlight alone gave 6.7; its rays last 0.42 Gyr and its ground matures in 0.12 Gyr, so it carries 0.58 of the Moon's young craters per area against the measured half (Braden et al. 2012; Chabot et al. 2009), 20 rayed craters at a 2048-pixel map where it had 5, its colours unchanged. Two things still keep its map from the reference's look. Its bright young craters are mostly smaller than the cells of a map at that width (7.5 km), so they show only at higher resolution. And the dark halos its craters dig from its graphite-bearing deep crust stand out as round blots with ragged edges across its map, where on the reference the low-reflectance material is diffuse, about some basins and craters, and the bright craters and rays catch the eye.
 
 Direction: the deep crust's halos on Mercury: its depth and share against the measured low-reflectance material's extent (Denevi et al. 2009), and their mixing into the ground by later ejecta and gardening, as the Moon's noritic halos (M36).
+
+The blots done (F215, 2026-10-28): a crater brings up the deep crust by the share of its cavity below it, so Mercury's halos are partial and fade into its ground, the surface at least half deep material 14 percent against Denevi et al.'s (2009) 15 (51 before), and its rays and bright craters catch the eye. Its bright young craters smaller than the map's cells stay open.
 
 ### V1. Interpolated bodies in validation
 

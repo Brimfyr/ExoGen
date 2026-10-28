@@ -3413,8 +3413,8 @@ static NODES: &[NodeDef] = &[
             "body.core_mass_fraction",
         ],
         d::materials_deep_bedrock_depth,
-        "Thickness of the surface layer: 10 km over a reduced body's graphite flotation crust, 25 km over other rocky crusts, 0.5 km on ice shells (F125). A crater that excavates a tenth of its diameter deeper than this exposes the deep bedrock.",
-        "Melosh 1989; provisional",
+        "Thickness of the surface layer: 10 km over a reduced body's graphite flotation crust, 25 km over other rocky crusts, 0.5 km on ice shells (F125); in a crust, at its initial thickness, thinner as the crust under a crater is (F215). A crater excavates to a tenth of its transient cavity's diameter and brings up the deep bedrock by the share of its paraboloid cavity below this depth.",
+        "Melosh 1989; F215; provisional",
     ),
     root(
         "materials.colour_space",

@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 160;
+pub const FINISH_VERSION: u64 = 161;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2180,8 +2180,10 @@ pub fn finish(
                                 *v -= s;
                             }
                         }
-                        let deep =
-                            impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
+                        let deep = inputs.deep_share(
+                            c.diameter,
+                            impacts::crust_at(&layers, &grid, c.center),
+                        ) > 0.0;
                         let params = RestoreParams {
                             time_gyr: c.time_gyr as f32,
                             unit_floor: impacts::floor_unit(dim.class, deep, c.on_lava),
@@ -2578,17 +2580,23 @@ pub fn finish(
                         } else {
                             1.0
                         };
-                        let deep = !*secondary
-                            && impacts::reaches_deep_bedrock(c.diameter, inputs.deep_bedrock_depth);
+                        let deep = if *secondary {
+                            0.0
+                        } else {
+                            inputs.deep_share(
+                                c.diameter,
+                                impacts::crust_at(&layers, &grid, c.center),
+                            )
+                        };
                         let on_lava = impacts::target_is_lava(&layers, &grid, c.center);
                         let params = StampParams {
                             time_gyr: c.time_gyr as f32,
                             unit_floor: if *secondary && !on_lava {
                                 UNIT_SECONDARY_FIELD
                             } else {
-                                impacts::floor_unit(dim.class, deep, on_lava)
+                                impacts::floor_unit(dim.class, deep > 0.0, on_lava)
                             },
-                            unit_ejecta: impacts::ejecta_unit(deep, on_lava),
+                            unit_ejecta: impacts::ejecta_unit(deep > 0.0, on_lava),
                             azimuth: c.azimuth,
                             angle: c.angle,
                             ellipticity: c.ellipticity,

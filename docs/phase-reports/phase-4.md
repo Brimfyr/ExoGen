@@ -2810,3 +2810,15 @@ How it went:
 - **The Moon.** Its maturing rate moves in the fourth digit, and its history ran differently in its details from that; its basins, maria and large rayed craters hold.
 
 Still to do: Mercury's bright young craters smaller than the map's cells, and the dark halos of its deep crust (audit M38); the deep material's spread over the Moon's highlands (audit M36); the colours of Phase 5's weathering (audit M11).
+
+## The hundred-and-twenty-seventh milestone: a crater brings up the deep bedrock by the share of its cavity below it
+
+- **F215.** A crater that reached the deep bedrock threw out nothing else, and its halo stayed pure: Mercury wore round dark blots over half its surface, the Moon's basins wide norite halos. Now a crater brings up the deep bedrock by the share of its paraboloid excavation cavity below it, at a depth that follows the crust under it on a layered crust, so the halos are partial and fade into the ground. Mercury's surface at least half deep material falls from 51 to 14 percent, against the measured 15, and its bright craters and rays catch the eye; the Moon's farside highlands stand at 0.133 against 0.125.
+
+How it went:
+
+- **Every body.** The user asked whether it would apply to every body. It does: the deep bedrock differs from the surface on the Moon, Mercury, Earth, Io and the ice shells over clean ice (Europa, Ganymede, Callisto, Titan, Enceladus, Mimas, Triton), and is the same material on Mars, Venus, Miranda, Pluto, Charon and Ceres. Callisto's small fresh craters bring up less clean ice, their brightest percent at 0.45 against 0.53; Ganymede's distribution does not move.
+- **No fading with time.** Basin ejecta keeps its composition for billions of years under the gardening (Imbrium's Fra Mauro Formation), so a halo is as faint as its share, not as old as its crater.
+- **The Moon's nearside.** With the halos partial, its nearside highlands stand at pure anorthosite, 0.150 against the reference's 0.114: its maria are not gathered on its nearside and its highlands take none of their basalt (audit M33, M36).
+
+Still to do: the maria's ejecta over the Moon's highlands, with its maria (audit M33, M36); Mercury's bright young craters smaller than the map's cells (audit M38); the colours of Phase 5's weathering (audit M11).
