@@ -27,7 +27,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 32;
+pub const VERSION: u64 = 33;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -224,15 +224,34 @@ static END_MEMBERS: std::sync::LazyLock<Vec<EndMember>> = std::sync::LazyLock::n
         .collect()
 });
 
-/// How intensely a body's regolith weathers against the Moon's (F213), from its weathering
-/// timescale, Gyr, and its gardening diffusivity, m²/Myr. A mature soil's nanophase iron is
-/// a steady state: the solar wind and micrometeorite vapour reduce its iron as fast as the
-/// weathering runs, and gardening dilutes it with the fresh soil it brings up as fast as it
-/// turns the surface over (the gardening that blurs its contacts, F95). Mercury's runs
-/// some four times the Moon's, its weathering under a sun seven times as bright against
-/// gardening half as fast again; the asteroid belt's a third.
-pub fn weathering_intensity(timescale: f64, diffusivity: f64) -> f64 {
-    SPACE_WEATHERING_GYR_1AU / timescale.max(1e-9) * DIFFUSIVITY_LUNAR / diffusivity.max(1e-9)
+/// How fast a body's regolith weathers against the Moon's (F214), from its distance from
+/// its star, m: the solar wind as its sunlight and micrometeorite vapour and melt, which
+/// rise more steeply toward the star (WEATHERING_WIND_SHARE). Mercury's is ten times the
+/// Moon's, its sunlight 6.7 times as bright and its dust's melt 14 times as much.
+pub fn weathering_rate(distance: f64) -> f64 {
+    let x = AU / distance.max(1.0);
+    WEATHERING_WIND_SHARE * x * x
+        + (1.0 - WEATHERING_WIND_SHARE) * x.powf(MICROMETEORITE_WEATHERING_POWER)
+}
+
+/// How fast a body's fresh regolith matures against the Moon's (F214), from its distance
+/// from its star, m, and its gardening diffusivity, m²/Myr: its weathering, which
+/// saturates as it reduces the grains' iron, and its gardening, which mixes a fresh
+/// deposit into the mature soil beneath (the gardening that blurs its contacts, F95), each
+/// by its share of the Moon's maturing (MATURING_WEATHERING_SHARE). Mercury's is 2.4, its
+/// weathering ten times the Moon's and its gardening half as fast again.
+pub fn maturing_rate(distance: f64, diffusivity: f64) -> f64 {
+    MATURING_WEATHERING_SHARE * weathering_rate(distance)
+        + (1.0 - MATURING_WEATHERING_SHARE) * diffusivity.max(0.0) / DIFFUSIVITY_LUNAR
+}
+
+/// How intensely a body's regolith weathers against the Moon's (F213, F214), from its
+/// distance from its star, m, and its gardening diffusivity, m²/Myr. A mature soil's
+/// nanophase iron is a steady state, made as fast as its weathering runs for as long as its
+/// maturing takes (`maturing_rate`). Mercury's is 4.3, its weathering ten times the Moon's
+/// over a maturing 2.4 times as fast.
+pub fn weathering_intensity(distance: f64, diffusivity: f64) -> f64 {
+    weathering_rate(distance) / maturing_rate(distance, diffusivity).max(1e-9)
 }
 
 /// The colour a silicate's fresh regolith weathers to when mature (F213), at a weathering
@@ -395,10 +414,15 @@ impl Library {
                 && graph.str("materials.bedrock") != "sulfur_deposit",
             impurity: graph.f64("body.crust_impurity"),
             lag_depth: graph.f64("materials.lag_depth_share"),
-            weathering: weathering_intensity(
-                graph.f64("surface.space_weathering_timescale"),
-                graph.f64("cratering.diffusivity"),
-            ),
+            weathering: if graph.f64("atmosphere.surface_pressure") < SPACE_WEATHERING_MAX_PRESSURE
+            {
+                weathering_intensity(
+                    graph.f64("orbit.star_distance"),
+                    graph.f64("cratering.diffusivity"),
+                )
+            } else {
+                0.0
+            },
         }
     }
 
@@ -1196,9 +1220,9 @@ mod tests {
         // without iron it keeps its fresh colour, and the weathering reduces no more than
         // all its iron. The Moon's highlands, South Pole-Aitken's noritic floor and its
         // maria mature to about its reference map's 0.13 to 0.14, 0.080 and 0.053. Mercury's
-        // regolith weathers some four times as intensely, so its crust, with less than half
-        // the highlands' iron, matures to about half their reflectance, as its fresh ground
-        // is half theirs (Braden et al. 2011: 0.06 against 0.11 mature).
+        // regolith weathers some four times as intensely (F214), so its crust, with less than
+        // half the highlands' iron, matures to about half their reflectance, as its fresh
+        // ground is half theirs (Braden et al. 2011: 0.06 against 0.11 mature).
         let fresh = [0.3f32, 0.3, 0.3];
         let same = weathered(fresh, 0.0, 1.0);
         assert!(
@@ -1238,6 +1262,31 @@ mod tests {
         assert!(
             crust / highlands > 0.4 && crust / highlands < 0.65,
             "Mercury's crust {crust} against the highlands {highlands}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_surface_matures_by_its_weathering_and_its_gardening() {
+        // F214: the Moon matures at its own rate, and Mercury, weathering ten times as fast
+        // with gardening 1.5 times as fast, no more than four times as fast (Braden and
+        // Robinson 2013), so that its rays last a few hundred million years.
+        let rate = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            (
+                maturing_rate(g.f64("orbit.star_distance"), g.f64("cratering.diffusivity")),
+                g.f64("cratering.ray_fading_timescale"),
+            )
+        };
+        let ((moon, moon_rays), (mercury, mercury_rays)) = (rate("Moon"), rate("Mercury"));
+        assert!((moon - 1.0).abs() < 0.01, "Moon {moon}");
+        assert!(
+            (moon_rays - 1.0).abs() < 0.01,
+            "the Moon's rays {moon_rays}"
+        );
+        assert!(mercury > 2.0 && mercury < 4.0, "Mercury {mercury}");
+        assert!(
+            mercury_rays > 0.25 && mercury_rays < 0.5,
+            "Mercury's rays {mercury_rays}"
         );
     }
 

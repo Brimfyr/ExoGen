@@ -854,6 +854,10 @@ When: with the colours step of the Moon's gate items.
 
 The fresh contrast done (F213, 2026-10-28): Mercury's regolith weathers 4.4 times as intensely as the Moon's, so its crust matures from 0.17 to 0.077 and a fresh exposure stands 2.2 times as bright as the ground, as on the Moon; its mean albedo is 0.073, the measured comparison on one photometric standard (Braden et al. 2011) putting its mature ground at 0.55 of the lunar highlands', where the geometric albedo of 0.142 holds its opposition surge. Its rays still fade in 0.15 Gyr, 0.1 percent of its surface brightened past a tenth of the fresh contrast, where Braden and Robinson (2013) find its optical maturation up to four times as fast as the Moon's, not the 6.7 the solar flux gives.
 
+The fading done (F214, 2026-10-28): a fresh surface matures by its weathering, the solar wind and micrometeorite melt, and by its gardening, Mercury's 2.4 times as fast as the Moon's where the sunlight alone gave 6.7; its rays last 0.42 Gyr and its ground matures in 0.12 Gyr, so it carries 0.58 of the Moon's young craters per area against the measured half (Braden et al. 2012; Chabot et al. 2009), 20 rayed craters at a 2048-pixel map where it had 5, its colours unchanged. Two things still keep its map from the reference's look. Its bright young craters are mostly smaller than the cells of a map at that width (7.5 km), so they show only at higher resolution. And the dark halos its craters dig from its graphite-bearing deep crust stand out as round blots with ragged edges across its map, where on the reference the low-reflectance material is diffuse, about some basins and craters, and the bright craters and rays catch the eye.
+
+Direction: the deep crust's halos on Mercury: its depth and share against the measured low-reflectance material's extent (Denevi et al. 2009), and their mixing into the ground by later ejecta and gardening, as the Moon's noritic halos (M36).
+
 ### V1. Interpolated bodies in validation
 
 `exogen validate` checks the reference bodies only. Principle 15 asks for bodies between them as well. The first sweeps to carry:

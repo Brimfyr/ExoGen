@@ -3181,9 +3181,25 @@ pub const FROST_COVER_MAX: f64 = 0.45;
 pub const FROST_HALF_K: f64 = 105.0;
 pub const FROST_WIDTH_K: f64 = 3.0;
 pub const FROST_SUPPLY_KG_M2: f64 = 500.0;
-/// Space weathering timescale at 1 AU, Gyr, and the pressure above which it is off.
+/// Space weathering timescale on the Moon, Gyr, a body's the Moon's over its maturing rate
+/// (F214), and the pressure above which it is off.
 pub const SPACE_WEATHERING_GYR_1AU: f64 = 0.3;
 pub const SPACE_WEATHERING_MAX_PRESSURE: f64 = 100.0;
+/// A regolith's weathering (F214): the solar wind's share of the Moon's, its flux as the
+/// sunlight's, the two agents taken as comparable (Pieters and Noble 2016, stated choice);
+/// and the rest micrometeorite vapour and melt, which rise toward the star by this power
+/// of the distance: the dust's flux 5.5 times the Moon's at Mercury's 0.387 AU and its
+/// speed 1.6 times, the melt as its square, 14 times (Cintala 1992).
+pub const WEATHERING_WIND_SHARE: f64 = 0.5;
+pub const MICROMETEORITE_WEATHERING_POWER: f64 = 2.8;
+/// A fresh regolith matures toward its steady state as its weathering saturates and as
+/// gardening mixes it into the mature soil beneath (F214): the share of the Moon's
+/// maturing the weathering sets, the rest the gardening's. Set against Mercury's young
+/// craters, its rayed and bright-haloed ones half as many per area as the Moon's (Braden et
+/// al. 2012; 50 to 60 percent of rayed craters of 20 km and more, Chabot et al. 2009) where
+/// it makes 1.4 times as many large craters, so that its fresh ground matures 2.4 times as
+/// fast where its weathering alone gave ten (Braden and Robinson 2013: up to four times).
+pub const MATURING_WEATHERING_SHARE: f64 = 0.1;
 /// Cap on the optical maturation timescale: far from the Sun, radiolysis, sputtering and
 /// lag accumulation still darken old surfaces relative to fresh ejecta within a few Gyr.
 pub const SPACE_WEATHERING_MAX_GYR: f64 = 4.0;
@@ -3237,7 +3253,8 @@ pub const IRON_OPTICAL_CONSTANTS: [(f64, f64, f64); 16] = [
 pub const DIFFUSIVITY_LUNAR: f64 = 5.5;
 pub const DIFFUSIVITY_ATMOSPHERE_MULTIPLE: f64 = 10.0;
 pub const DIFFUSIVITY_ATMOSPHERE_PRESSURE: f64 = 1.0e3;
-/// Ray fading timescale at 1 AU, Gyr, airless; and under an atmosphere. Provisional, Phase 2.
+/// Ray fading timescale on the Moon, Gyr, airless, a body's the Moon's over its maturing
+/// rate (F214); and under an atmosphere. Provisional, Phase 2.
 pub const RAY_FADING_GYR_1AU: f64 = 1.0;
 pub const RAY_FADING_GYR_ATMOSPHERE: f64 = 0.05;
 /// Cap on the ray lifetime: far from the Sun, sputtering and regolith gardening still erase

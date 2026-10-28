@@ -1660,7 +1660,7 @@ pub fn atmosphere_bond_albedo(c: &Ctx) -> Value {
         impurity: c.f64("body.crust_impurity"),
         lag_depth: 0.0,
         weathering: weathering_intensity(
-            c.f64("surface.space_weathering_timescale"),
+            c.f64("orbit.star_distance"),
             c.f64("cratering.diffusivity"),
         ),
     };
@@ -2165,10 +2165,19 @@ pub fn cratering_ray_fading_timescale(c: &Ctx) -> Value {
     if c.f64("atmosphere.surface_pressure") > DIFFUSIVITY_ATMOSPHERE_PRESSURE {
         RAY_FADING_GYR_ATMOSPHERE
     } else {
-        let d = c.f64("orbit.star_distance") / AU;
-        (RAY_FADING_GYR_1AU * d * d).min(RAY_FADING_MAX_GYR)
+        (RAY_FADING_GYR_1AU / maturing_rate(c)).min(RAY_FADING_MAX_GYR)
     }
     .into()
+}
+
+/// F214: how fast a fresh surface matures against the Moon's, by its weathering and its
+/// gardening.
+fn maturing_rate(c: &Ctx) -> f64 {
+    crate::stages::materials::maturing_rate(
+        c.f64("orbit.star_distance"),
+        c.f64("cratering.diffusivity"),
+    )
+    .max(1e-9)
 }
 
 fn production_function(c: &Ctx) -> crate::crater::ProductionFunction {
@@ -2531,8 +2540,7 @@ pub fn surface_space_weathering_timescale(c: &Ctx) -> Value {
     if c.f64("atmosphere.surface_pressure") > SPACE_WEATHERING_MAX_PRESSURE {
         1.0e6
     } else {
-        let d = c.f64("orbit.star_distance") / AU;
-        (SPACE_WEATHERING_GYR_1AU * d * d).min(SPACE_WEATHERING_MAX_GYR)
+        (SPACE_WEATHERING_GYR_1AU / maturing_rate(c)).min(SPACE_WEATHERING_MAX_GYR)
     }
     .into()
 }

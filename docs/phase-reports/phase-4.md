@@ -2798,3 +2798,15 @@ How it went:
 - **The highlands.** The pure terrains meet the reference, but the Moon's median falls to 0.089 against 0.109: its noritic deep material, darker now as South Pole-Aitken's floor is, lies in wide halos about its basins (audit M36).
 
 Still to do: the deep material's spread over the Moon's highlands (audit M36); Mercury's rays' fading (audit M38); the colours of Phase 5's weathering (audit M11).
+
+## The hundred-and-twenty-sixth milestone: a fresh surface matures by its weathering and by its gardening
+
+- **F214.** A fresh regolith matures by its weathering, which saturates, and by its gardening, which mixes it into the mature soil beneath; the weathering is the solar wind as the sunlight and micrometeorite melt, which rises more steeply toward the star. Mercury's fresh ground and rays mature 2.4 times as fast as the Moon's, not 6.7, so it keeps about half the Moon's young bright craters per area, as measured, and carries 20 rayed craters where it had 5. A mature soil's iron is made as fast as the weathering runs for as long as the maturing takes, which leaves Mercury's colours where F213 put them.
+
+How it went:
+
+- **The colour first.** The user asked whether Mercury's colour was right against its greyer true-colour images. Its measured band albedos (Mallama et al. 2017) give B/G 0.76 to 0.81, as red as the Moon or redder; the model's 0.81 stands at the grey end, so the colours stayed.
+- **The sunlight alone.** With the weathering as the sunlight, the maturing that fits the craters left Mercury's mature crust at 0.66 of the lunar highlands against the measured 0.55, and its colour greyer than its spectrum allows; the micrometeorite melt Braden et al. (2012) implicate holds both.
+- **The Moon.** Its maturing rate moves in the fourth digit, and its history ran differently in its details from that; its basins, maria and large rayed craters hold.
+
+Still to do: Mercury's bright young craters smaller than the map's cells, and the dark halos of its deep crust (audit M38); the deep material's spread over the Moon's highlands (audit M36); the colours of Phase 5's weathering (audit M11).
