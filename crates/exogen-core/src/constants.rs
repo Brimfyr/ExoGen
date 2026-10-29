@@ -1865,6 +1865,10 @@ pub const LAVA_BATCH_SHARE: f64 = 0.2;
 pub const LAVA_SOURCE_ORDER: f64 = 3.0;
 pub const SLOPE_SHED_START_DEG: f64 = 20.0;
 pub const SLOPE_FRESHNESS: f64 = 0.3;
+/// The craters too small to draw shed on their walls from this diameter, m, read in this
+/// many size bins a decade (F219; stated choices).
+pub const FINE_WALLS_SMALLEST: f64 = 10.0;
+pub const FINE_WALLS_BINS_PER_DECADE: f64 = 24.0;
 /// An icy surface's lag is loose dust the ice left as it sublimed, which cannot rest on a
 /// slope past its angle of repose: such a slope stays as clean as the ice, by this share
 /// at the angle of repose (F98; Moore et al. 1999 on Callisto's bright crests with the dark

@@ -775,6 +775,130 @@ fn stirred(graph: &ParamGraph, layers: &LayerSet, present: f64) -> Vec<f32> {
     out
 }
 
+/// The share of each cell's ground on the walls of the craters too small to draw that
+/// stand steep enough to shed (F219). The craters smaller than the finish draws, from the
+/// body's production by size, survive since the surface formed as the finish's own
+/// population does: at most the equilibrium the craters reach, the survivors the younger
+/// where they near it. Each sheds over the area its walls stand steep after the gardening
+/// since it formed, and their walls take the cell's ground as 1 - e^-cover does.
+pub fn fine_walls(graph: &ParamGraph, layers: &LayerSet, present: f64) -> Vec<f32> {
+    let grid = layers.grid;
+    let inputs = crate::stages::impacts::CraterInputs::from_graph(graph);
+    let flux = &inputs.bombardment;
+    let cell = grid.delta() * inputs.body_radius;
+    let drawn = graph
+        .f64("cratering.min_diameter")
+        .max(FINISHING_MIN_CELLS * cell);
+    let smallest = FINE_WALLS_SMALLEST.max(graph.f64("atmosphere.crater_cutoff_diameter"));
+    if drawn <= smallest || flux.steady_1gyr(drawn / 1e3) <= 0.0 {
+        return vec![0.0; grid.cell_count()];
+    }
+    // The size bins, and the gardening's equivalent time since a crater formed, from a
+    // millionth of the longest record to it.
+    let decades = (drawn / smallest).log10();
+    let bins = ((decades * FINE_WALLS_BINS_PER_DECADE).ceil() as usize).max(1);
+    let size = |i: usize| smallest * (drawn / smallest).powf(i as f64 / bins as f64);
+    let longest = flux.equivalent_gyr((present - inputs.retention_age).max(0.0), present);
+    if longest <= 0.0 {
+        return vec![0.0; grid.cell_count()];
+    }
+    const TIMES: usize = 96;
+    let time_at = |i: usize| longest * 1e-6f64.powf(1.0 - i as f64 / (TIMES - 1) as f64);
+    // Per bin, the walls' cover per km² gathered by each time: craters per km² per Gyr p
+    // coming, those that formed e ago surviving as e^(-p e / n_eq), each shedding over
+    // its degraded walls' area.
+    let gathered: Vec<Vec<f64>> = (0..bins)
+        .into_par_iter()
+        .map(|i| {
+            let (lo, hi) = (size(i), size(i + 1));
+            let p = flux.steady_1gyr(lo / 1e3) - flux.steady_1gyr(hi / 1e3);
+            let n_eq = crate::crater::production::bin_equilibrium(
+                lo / 1e3,
+                hi / 1e3,
+                inputs.saturation_fraction,
+            );
+            let dim = crate::crater::dimensions((lo * hi).sqrt(), &inputs.scaling);
+            let rate = |e: f64| {
+                let kappa_t = inputs.diffusivity_m2_per_myr * e * 1e3;
+                let kept = if n_eq > 0.0 {
+                    (-p * e / n_eq).exp()
+                } else {
+                    1.0
+                };
+                p * kept * crate::crater::shed_area(&dim, kappa_t, inputs.shed) / 1e6
+            };
+            let mut out = Vec::with_capacity(TIMES);
+            let (mut sum, mut before, mut at) = (0.0, rate(0.0), 0.0);
+            for j in 0..TIMES {
+                let e = time_at(j);
+                let here = rate(e);
+                sum += 0.5 * (before + here) * (e - at);
+                out.push(sum);
+                (before, at) = (here, e);
+            }
+            out
+        })
+        .collect();
+    let cover: Vec<f64> = (0..TIMES)
+        .map(|j| gathered.iter().map(|g| g[j]).sum())
+        .collect();
+    let cover_at = |e: f64| {
+        if e <= time_at(0) {
+            return cover[0] * e.max(0.0) / time_at(0);
+        }
+        let x = ((e / time_at(0)).ln() / 1e6f64.ln() * (TIMES - 1) as f64)
+            .clamp(0.0, (TIMES - 1) as f64);
+        let j = (x.floor() as usize).min(TIMES - 2);
+        let f = x - j as f64;
+        cover[j] * (1.0 - f) + cover[j + 1] * f
+    };
+    // The equivalent time since a surface formed, by its time, a hundredth of a Gyr apart.
+    let since: Vec<f64> = (0..=(present * 100.0).ceil() as usize)
+        .map(|j| {
+            let start = (j as f64 / 100.0)
+                .min(present)
+                .max(present - inputs.retention_age);
+            flux.equivalent_gyr(start, present)
+        })
+        .collect();
+    let ages = layers.surface_age.as_slice();
+    let out: Vec<f32> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|k| {
+            let j = ((ages[k].max(0.0) as f64 * 100.0).round() as usize).min(since.len() - 1);
+            (1.0 - (-cover_at(since[j])).exp()) as f32
+        })
+        .collect();
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let area = |k: usize| grid.cell_area(grid.cell(k));
+        let whole: f64 = (0..grid.cell_count()).map(area).sum();
+        let mean: f64 = (0..grid.cell_count())
+            .map(|k| out[k] as f64 * area(k))
+            .sum::<f64>()
+            / whole;
+        // By decade of size, over the longest record.
+        let by_decade: Vec<String> = (0..decades.ceil() as usize)
+            .map(|d| {
+                let part: f64 = (0..bins)
+                    .filter(|&i| ((size(i) / smallest).log10().floor() as usize) == d)
+                    .map(|i| gathered[i][TIMES - 1])
+                    .sum();
+                format!("{:.0} m {:.4}", smallest * 10f64.powi(d as i32), part)
+            })
+            .collect();
+        eprintln!(
+            "fine walls: the craters from {:.0} m to {:.2} km shed on {:.2}% of the surface (mean), {:.2}% over the longest record ({:.2} equivalent Gyr); cover by decade: {}",
+            smallest,
+            drawn / 1e3,
+            100.0 * mean,
+            100.0 * (1.0 - (-cover[TIMES - 1]).exp()),
+            longest,
+            by_decade.join(", ")
+        );
+    }
+    out
+}
+
 /// The luminance of a regolith mixture when fresh and when mature, for the body's own
 /// albedo (F52), its basalt with the mantle's iron.
 pub fn mixture_luminance(library: &Library, map: &BTreeMap<String, f64>) -> (f64, f64) {

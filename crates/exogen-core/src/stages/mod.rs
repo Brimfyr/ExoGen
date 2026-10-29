@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 164;
+pub const FINISH_VERSION: u64 = 165;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2845,9 +2845,12 @@ pub fn finish(
     // surface's lag sheds from gentler slopes, the ice subliming from under it, and a
     // slope that has shed it is as clean as the ice; a silicate regolith matures in place
     // and stays only a share fresher.
+    // The craters too small to draw shed on their walls as well, over the ground the
+    // others leave (F219).
     let maturity = {
         let steep = ice::slope_magnitude(&height, body_radius);
         let walls = layers.steep.as_slice();
+        let fine = materials::fine_walls(graph, &layers, present);
         let (start, repose) = inputs.shed;
         let freshness = if ice::is_ice_surface(graph) {
             SLOPE_FRESHNESS_ICE
@@ -2859,10 +2862,12 @@ pub fn finish(
             .par_iter_mut()
             .zip(steep.as_slice())
             .zip(walls)
-            .for_each(|((v, &s), &w)| {
-                let shed = ((s as f64 - start) / (repose - start))
+            .zip(&fine)
+            .for_each(|(((v, &s), &w), &f)| {
+                let drawn = ((s as f64 - start) / (repose - start))
                     .clamp(0.0, 1.0)
                     .max(w as f64);
+                let shed = drawn + (1.0 - drawn) * f as f64;
                 *v *= 1.0 - (freshness * shed) as f32;
             });
         m

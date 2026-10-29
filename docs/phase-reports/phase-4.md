@@ -2857,3 +2857,14 @@ How it went:
 - **The user's question.** Mercury's mid-sized craters showed small on the comparison: they are there, 63 per million km² from 30 km against the Moon's 69, and in its relief, but its albedo marks them little, its walls under the slope that sheds. Its finish draws no simple craters at the standard resolution (from 7.5 km, its transition 7.2 km), where the Moon's simple craters from 5.3 to 16.5 km make the small bright-walled craters of its map; its measured transition is 10 to 12 km.
 
 Still to do: Mercury's transition against the measured and the walls of the craters smaller than the finish draws (audit M38); the Moon's maria gathered in their province (audit M33, M35); the colours of Phase 5's weathering (audit M11).
+
+## The hundred-and-thirty-first milestone: the craters too small to draw shed on their walls
+
+- **F219.** Only the craters the finish draws shed on their walls, and it draws them from two cells of its grid, so the steep ground depended on the quality: Mercury's drawn walls cover 1.08 percent of its surface at the standard resolution and 1.24 at the high. Now the craters smaller than it shed as well, from the body's production down to 10 m, surviving since the surface formed as the finish's own population does and each shedding over its walls as the gardening since has left them. They shed on 0.56 percent of the Moon's and Mercury's surface, 0.96 of Callisto's and 0.69 of Ganymede's, brightening the mean albedo by 0.1 to 0.4 percent, too little to see; Mercury's walls, drawn and not, cover 1.64 percent at the standard resolution and 1.55 at the high.
+
+How it went:
+
+- **Mercury's transition (M38).** Tried and not adopted by the user: Silber et al.'s (2017) impact speed, the transition growing as the speed to the 0.47, gives Mercury 11.2 km against the measured 11.7 (Susorney et al. 2016) and Ceres 9.3 against 7.5 to 12, but Pluto and Charon, struck at 2 km/s, 2.5 and 5.0 km against 11 to 12.5 and 13.5 to 16. Recorded in audit M38.
+- **What the walls show.** The craters too small to draw shed mostly from those of 1 km up to the drawn size, so the smallest diameter counted hardly matters, and the statistical walls give the band Mercury draws only at the high resolution, 3.7 to 7.5 km, 0.25 percent of its surface where the drawn ones shed on 0.16.
+
+Still to do: Mercury's drawn simple craters, which its transition by gravity alone keeps under the size the finish draws (audit M38); the Moon's maria gathered in their province (audit M33, M35); the colours of Phase 5's weathering (audit M11).

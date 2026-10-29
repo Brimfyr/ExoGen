@@ -893,6 +893,8 @@ Mercury's transition tried (2026-10-29), not adopted. Susorney et al. (2016) put
 
 The icy bodies' transitions show no sign of the speed: Charon's, scaled by gravity, is Ganymede's at a tenth of the speed. A second law to save the rule, colder ice standing stronger, has no measurement to set it by, and the targets' strength (Pike 1980, 1988; Barnouin et al. 2012) has none for Mercury against Mars. The user chose to record it and keep the transition by gravity alone. Still open: the walls of the craters smaller than the finish draws.
 
+The fine walls done (F219, 2026-10-29): the craters too small to draw shed on 0.56 percent of Mercury's surface and the Moon's, brightening the mean albedo by about 0.1 percent, too little to see, and Mercury's walls, drawn and not, cover 1.64 percent at the standard resolution and 1.55 at the high. What Mercury's map lacks against the Moon's is drawn simple craters, whose walls shed in full: its transition by gravity alone, 7.2 km, keeps them under the 7.5 km the finish draws at the standard resolution, where the Moon's run from 5.3 to 16.5 km. That stays with the transition, tried above and not adopted.
+
 The detail back (F216, 2026-10-28): the user saw Mercury lose its contrast and detail under F215, its map 1.26 from its darkest tenth to its brightest against 1.46 on the user's true-colour map, which shows it brown-grey as the Moon and of low contrast. With the deep share landing nearest the rim and flooring the larger craters its contrast is 1.37, 1.23 at some 90 km against 1.33, its larger craters dark-floored and dark-rimmed.
 
 ### V1. Interpolated bodies in validation

@@ -470,6 +470,40 @@ impl WallShed {
         }
         ((at(b) - at(a)) / (b - a)).clamp(0.0, 1.0)
     }
+
+    /// The area of the ground the walls shed on, m², round a crater whose profile reaches
+    /// out to `outer` m by `step` (F219).
+    fn area(&self, outer: f64, step: f64) -> f64 {
+        let n = (outer / step).ceil() as usize;
+        (0..n)
+            .map(|k| {
+                let (a, b) = (k as f64 * step, ((k + 1) as f64 * step).min(outer));
+                self.share(a, b) * std::f64::consts::PI * (b * b - a * a)
+            })
+            .sum()
+    }
+}
+
+/// The area of a crater's ground that sheds, m², as its walls stand after the gardening's
+/// `kappa_t`, m² (F219): a complex crater's along its terraces, the mean of a few draws of
+/// them, as F218 reads a drawn crater's.
+pub fn shed_area(dim: &Dimensions, kappa_t: f64, shed: (f64, f64)) -> f64 {
+    let profile = ProfileTable::new(*dim, kappa_t);
+    if profile.is_erased() {
+        return 0.0;
+    }
+    let draws: Vec<f64> = (1..=SHED_AREA_TERRACE_DRAWS)
+        .filter_map(|seed| Terraces::new(seed, dim))
+        .map(|t| {
+            WallShed::new(&profile, 1.0, shed, Some((&t, dim, profile.sigma)))
+                .area(dim.ejecta_radius, profile.step)
+        })
+        .collect();
+    if draws.is_empty() {
+        WallShed::new(&profile, 1.0, shed, None).area(dim.ejecta_radius, profile.step)
+    } else {
+        draws.iter().sum::<f64>() / draws.len() as f64
+    }
 }
 
 /// Effective radius for an elliptical crater: scaled so the long axis lies along `azimuth`
@@ -1727,6 +1761,10 @@ const TERRACE_BINS: usize = 256;
 /// The azimuths at which a terraced wall's shedding is read (F218).
 const WALL_SHED_AZIMUTHS: usize = 16;
 
+/// The draws of a complex crater's terraces whose shedding is averaged where no crater is
+/// drawn (F219).
+const SHED_AREA_TERRACE_DRAWS: u64 = 4;
+
 /// The wall of a complex crater as it collapsed (F67): the transient cavity's rim slumped
 /// inward on inward-facing normal faults in rings of blocks, terrace after terrace from
 /// the rim inward, each narrower than the one outside it (Pearce and Melosh 1986). A ring
@@ -2475,6 +2513,26 @@ mod tests {
             degraded < 0.7 * fresh,
             "degraded {degraded:.3} against {fresh:.3}"
         );
+    }
+
+    #[test]
+    fn a_crater_too_small_to_draw_sheds_until_the_gardening_softens_its_walls() {
+        // F219: a fresh lunar crater of 1 km sheds over much of its bowl; softened by the
+        // gardening, less; worn away, not at all.
+        let regolith = (
+            SLOPE_SHED_START_DEG.to_radians(),
+            REPOSE_SLOPE_DEG.to_radians(),
+        );
+        let dim = dimensions(1e3, &lunar());
+        let r2 = dim.radius * dim.radius;
+        let bowl = std::f64::consts::PI * r2;
+        let share = |kappa_t: f64| shed_area(&dim, kappa_t, regolith) / bowl;
+        // Softened by a blur of 0.3 radii, sigma² = 4 kappa t, as F218 degrades a wall.
+        let (fresh, softened, gone) = (share(0.0), share(0.0225 * r2), share(1.1 * r2));
+        eprintln!("a 1 km crater sheds {fresh:.3} of its bowl fresh, {softened:.3} softened");
+        assert!(fresh > 0.3, "fresh {fresh:.3}");
+        assert!(softened < 0.7 * fresh, "softened {softened:.3}");
+        assert_eq!(gone, 0.0);
     }
 
     #[test]
