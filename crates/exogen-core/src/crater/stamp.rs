@@ -397,7 +397,10 @@ where
 /// Where a crater's walls are steep enough to shed their regolith, by radius (F98): from
 /// its own profile, tabulated finer than the grid, so that the walls shed at the scale
 /// they are steep whatever the cell, by how far past the start of shedding toward where
-/// it is complete they stand, as the resolved slopes do.
+/// it is complete they stand, as the resolved slopes do. A complex crater's wall is read
+/// along its terraces (F218): their benches keep a little of the wall's slope and their
+/// scarps stand far steeper than it, so that a shallow crater's wall sheds on its scarps
+/// where its mean slope would not, whether or not the grid draws them.
 pub struct WallShed {
     /// The shed integrated over radius from the centre, m, at each of the profile's
     /// samples.
@@ -406,13 +409,45 @@ pub struct WallShed {
 }
 
 impl WallShed {
-    pub fn new(profile: &ProfileTable, amplitude: f64, shed: (f64, f64)) -> Self {
+    /// `terraced`: the crater's terraces, its dimensions and the blur that softens their
+    /// scarps as it degrades, m.
+    pub fn new(
+        profile: &ProfileTable,
+        amplitude: f64,
+        shed: (f64, f64),
+        terraced: Option<(&Terraces, &Dimensions, f64)>,
+    ) -> Self {
         let (start, repose) = shed;
+        let sheds = |rise: f64, run: f64| {
+            let slope = (rise.abs() * amplitude.abs() / run).atan();
+            ((slope - start) / (repose - start)).clamp(0.0, 1.0)
+        };
         let mut cumulative = vec![0.0; profile.values.len()];
         for k in 1..profile.values.len() {
-            let rise = (profile.values[k] - profile.values[k - 1]).abs() * amplitude.abs();
-            let slope = (rise / profile.step).atan();
-            let shed = ((slope - start) / (repose - start)).clamp(0.0, 1.0);
+            let a = (k - 1) as f64 * profile.step;
+            let shed = match terraced {
+                // Within the rim, along the terraced wall at a few azimuths, finer than its
+                // narrowest scarp.
+                Some((t, dim, blur)) if a < dim.radius => {
+                    let fine = (t.narrowest() * dim.radius).hypot(blur) / 3.0;
+                    let m = ((profile.step / fine.max(1e-9)).ceil() as usize).clamp(1, 64);
+                    let run = profile.step / m as f64;
+                    let mut sum = 0.0;
+                    for az in 0..WALL_SHED_AZIMUTHS {
+                        let phi =
+                            (az as f64 + 0.5) / WALL_SHED_AZIMUTHS as f64 * std::f64::consts::TAU;
+                        let at = |r: f64| profile.height(t.radius(r, phi, dim, blur));
+                        let mut before = at(a);
+                        for j in 1..=m {
+                            let here = at(a + j as f64 * run);
+                            sum += sheds(here - before, run);
+                            before = here;
+                        }
+                    }
+                    sum / (WALL_SHED_AZIMUTHS * m) as f64
+                }
+                _ => sheds(profile.values[k] - profile.values[k - 1], profile.step),
+            };
             cumulative[k] = cumulative[k - 1] + shed * profile.step;
         }
         Self {
@@ -652,7 +687,11 @@ pub fn stamp_compute(
     let mut sector_sum = vec![0.0f64; BINS * SECTORS];
     let mut sector_area = vec![0.0f64; BINS * SECTORS];
     // The base relief where it is kept (F196), with its own means as the ground's.
-    let base = layers.base.as_ref().filter(|_| p.bury).map(|b| b.as_slice());
+    let base = layers
+        .base
+        .as_ref()
+        .filter(|_| p.bury)
+        .map(|b| b.as_slice());
     let mut base_sum = 0.0;
     let mut base_ring = [0.0f64; BINS];
     let mut base_sectors = vec![0.0f64; if base.is_some() { BINS * SECTORS } else { 0 }];
@@ -752,7 +791,21 @@ pub fn stamp_compute(
     let melts = layers.melt.as_slice();
     let covers = layers.cover.as_slice();
     let cleans = layers.clean.as_slice();
-    let walls = WallShed::new(profile, p.amplitude, p.shed);
+    // The wall sheds on its terraces' scarps whether or not the grid draws them (F218).
+    let wall_terraces = match &terraces {
+        Some(_) => None,
+        None if p.seed != 0 => Terraces::new(p.seed, dim),
+        None => None,
+    };
+    let walls = WallShed::new(
+        profile,
+        p.amplitude,
+        p.shed,
+        terraces
+            .as_ref()
+            .or(wall_terraces.as_ref())
+            .map(|t| (t, dim, profile.sigma)),
+    );
     let half_cell = 0.5 * grid.delta() * body_radius;
     let steeps = layers.steep.as_slice();
     let ejecta_ages = layers.ejecta_age.as_slice();
@@ -1671,6 +1724,9 @@ impl Rings {
 /// Azimuth bins of a crater's terrace tables.
 const TERRACE_BINS: usize = 256;
 
+/// The azimuths at which a terraced wall's shedding is read (F218).
+const WALL_SHED_AZIMUTHS: usize = 16;
+
 /// The wall of a complex crater as it collapsed (F67): the transient cavity's rim slumped
 /// inward on inward-facing normal faults in rings of blocks, terrace after terrace from
 /// the rim inward, each narrower than the one outside it (Pearce and Melosh 1986). A ring
@@ -1681,7 +1737,7 @@ const TERRACE_BINS: usize = 256;
 /// the crater collapsed (T2): a crater just past the transition slumps a few blocks of
 /// its outermost terrace, a deeper collapse brings the inner terraces in, and blocks that
 /// stand off their neighbours far enough merge with the terrace inside or outside them.
-struct Terraces {
+pub struct Terraces {
     /// Per terrace, from the rim inward, by azimuth: its inner scarp's radius, whether the
     /// terrace stands there and its scarp's width, in crater radii.
     levels: Vec<(Vec<f32>, Vec<f32>, Vec<f32>)>,
@@ -1893,6 +1949,14 @@ impl Terraces {
             outer_w = w;
         }
         value * r
+    }
+
+    /// The narrowest of the wall's scarps, crater radii (F218).
+    fn narrowest(&self) -> f64 {
+        self.levels
+            .iter()
+            .flat_map(|(_, _, width)| width.iter())
+            .fold(self.head, |m, &w| m.min(w as f64))
     }
 
     /// The broken surface of the slumped blocks at the elliptical radius `re`, m, and
@@ -2146,7 +2210,21 @@ pub fn restore_compute(
     let units = layers.unit_id.as_slice();
     let melts = layers.melt.as_slice();
     let covers = layers.cover.as_slice();
-    let shed = WallShed::new(walls, 1.0, p.shed);
+    // The wall sheds on its terraces' scarps whether or not the grid draws them (F218).
+    let wall_terraces = match &terraces {
+        Some(_) => None,
+        None if p.seed != 0 => Terraces::new(p.seed, dim),
+        None => None,
+    };
+    let shed = WallShed::new(
+        walls,
+        1.0,
+        p.shed,
+        terraces
+            .as_ref()
+            .or(wall_terraces.as_ref())
+            .map(|t| (t, dim, p.fine_blur)),
+    );
     let half_cell = 0.5 * grid.delta() * body_radius;
     let steeps = layers.steep.as_slice();
     let ejecta_ages = layers.ejecta_age.as_slice();
@@ -2348,7 +2426,7 @@ mod tests {
             ICE_LAG_SHED_FULL_DEG.to_radians(),
         );
         let moon = ProfileTable::new(dimensions(10e3, &lunar()), 0.0);
-        let wall = WallShed::new(&moon, 1.0, regolith).share(0.2 * 5e3, 1.0 * 5e3);
+        let wall = WallShed::new(&moon, 1.0, regolith, None).share(0.2 * 5e3, 1.0 * 5e3);
         assert!(wall > 0.5, "the Moon's wall sheds {wall:.2}");
         let callisto = Scaling {
             simple_complex: 3_244.0,
@@ -2359,9 +2437,44 @@ mod tests {
         };
         let crater = ProfileTable::new(dimensions(40e3, &callisto), 0.0);
         let r = 20e3;
-        let dry = WallShed::new(&crater, 1.0, regolith).share(0.3 * r, 1.0 * r);
-        let wet = WallShed::new(&crater, 1.0, lag).share(0.3 * r, 1.0 * r);
+        let dry = WallShed::new(&crater, 1.0, regolith, None).share(0.3 * r, 1.0 * r);
+        let wet = WallShed::new(&crater, 1.0, lag, None).share(0.3 * r, 1.0 * r);
         assert!(dry < 0.01 && wet > 0.1, "regolith {dry:.3}, lag {wet:.3}");
+    }
+
+    #[test]
+    fn a_terraced_wall_sheds_on_its_scarps() {
+        // F218: a fresh 40 km crater on Mercury, shallow, its plain wall under the
+        // regolith's stable slope, sheds nothing read along its plain profile and on its
+        // terraces' scarps read along them; a crater degraded until its scarps have softened
+        // past the angle of repose sheds less.
+        let regolith = (
+            SLOPE_SHED_START_DEG.to_radians(),
+            REPOSE_SLOPE_DEG.to_radians(),
+        );
+        let mercury = Scaling {
+            simple_complex: 7_221.0,
+            gravity: 3.70,
+            ..lunar()
+        };
+        let dim = dimensions(40e3, &mercury);
+        let r = dim.radius;
+        let table = ProfileTable::new(dim, 0.0);
+        let t = Terraces::new(7, &dim).expect("a terraced wall");
+        let wall = |blur: f64, terraced: bool| {
+            WallShed::new(&table, 1.0, regolith, terraced.then_some((&t, &dim, blur)))
+                .share(dim.floor_radius, r)
+        };
+        let (plain, fresh, degraded) = (wall(0.0, false), wall(0.0, true), wall(0.3 * r, true));
+        eprintln!(
+            "Mercury's 40 km wall sheds {plain:.3} plain, {fresh:.3} terraced, {degraded:.3} degraded"
+        );
+        assert!(plain < 0.02, "plain {plain:.3}");
+        assert!(fresh > 0.05, "terraced {fresh:.3}");
+        assert!(
+            degraded < 0.7 * fresh,
+            "degraded {degraded:.3} against {fresh:.3}"
+        );
     }
 
     #[test]

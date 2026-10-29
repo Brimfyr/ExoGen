@@ -2846,3 +2846,14 @@ How it went:
 - **The gradient.** The darkening toward the maria on the reference map is most likely the nearside's crust itself, richer in iron about the maria gathered there; it waits on M33's province and M35's start.
 
 Still to do: the Moon's maria gathered in their province (audit M33), which waits on the magma ocean's start (audit M35); Mercury's bright young craters smaller than the map's cells (audit M38); the colours of Phase 5's weathering (audit M11).
+
+## The hundred-and-thirtieth milestone: a terraced wall sheds on its scarps
+
+- **F218.** A crater's walls shed their regolith where they are steep, but read along the plain profile, the wall's mean slope; a complex crater's wall is terraced, gentle benches and scarps some 3.6 times as steep as the mean. Mercury's complex craters, shallower than the Moon's, stand near 19 degrees, under the regolith's 20, and shed nothing. Now the wall sheds as read along its terraces, whether or not the grid draws them: Mercury's steep share rises from 0.74 to 1.11 percent, its complex craters faintly bright-walled, and the Moon's from 3.03 to 3.28 percent, its look kept.
+
+How it went:
+
+- **The magma ocean's start (M35).** Tried and parked by the user: a cool start where the ocean floated a crust and the province's own heat gathered 94 percent of the Moon's lava on the province's hemisphere, but held 16 km of its intrusions up as a plateau; the heat in its lid left 4.6 percent of the surface lava. Recorded in audit M35.
+- **The user's question.** Mercury's mid-sized craters showed small on the comparison: they are there, 63 per million km² from 30 km against the Moon's 69, and in its relief, but its albedo marks them little, its walls under the slope that sheds. Its finish draws no simple craters at the standard resolution (from 7.5 km, its transition 7.2 km), where the Moon's simple craters from 5.3 to 16.5 km make the small bright-walled craters of its map; its measured transition is 10 to 12 km.
+
+Still to do: Mercury's transition against the measured and the walls of the craters smaller than the finish draws (audit M38); the Moon's maria gathered in their province (audit M33, M35); the colours of Phase 5's weathering (audit M11).
