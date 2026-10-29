@@ -783,7 +783,7 @@ Valles Marineris stands some 7 to 10 km below the plateau about it. Its faults d
 
 Direction: the rise's stresses solved through a lid whose stiffness follows the crust's thickness, so that the boundary focuses them (part 2); the troughs where the dikes cut the lid, subsiding as their blocks lose its support and sink under their fill (part 3), with the sediments and their erosion of Phase 5; the fabric of their walls with M23. Deferred by the user to be done with Phase 5.
 
-### M33. The Moon's maria do not gather in its province
+### M33. The Moon's maria do not gather in its province (a known limitation)
 
 The Procellarum KREEP Terrane covers some 16 percent of the Moon and holds more than 60 percent of its maria by area (Jolliff et al. 2000). The model's Moon (seed 10) lays lava over 30 percent of its surface (its maria cover some 17) with 20 to 28 percent of it within its province's radius, which covers 12 percent, at any weight the province is given (F171): its basins' thin crust decides where its lava lies.
 
@@ -801,6 +801,8 @@ What blocks it:
 3. **The megabasin's crust.** The megabasin thins the crust to some 5 km, against some 20 km beneath the South Pole–Aitken basin (Wieczorek et al. 2013), and draws every stream's lava.
 
 Direction: the magma ocean's freezing first (M35), setting the early mantle cool and stratified, with the fusible late cumulates gathered with the last liquid; then the province's heat shared between its lid and its mantle as the layer's profile shares it, the intrusions' share and weight where the magma is denser than the crust, and the megabasin's crust against the measured. The tries' code is kept outside the repository; its pieces worth keeping are the gathering beneath the thinned crust, the depleted mantle elsewhere, and the loads laid on the lid they lie on.
+
+A known limitation (the user, 2026-10-29): every physical route tried here and under M35 has failed, so the Moon's maria lying on both hemispheres is recorded as a limitation of the model and not pursued further; it is not a major concern for the Moon's look. The nearside highlands' darkening toward the maria (M36) goes with it.
 
 ### M35. The starting state: a finished crust on a mantle with no lid
 
@@ -820,6 +822,8 @@ Tried on the Moon's preset (2026-10-29), none kept; the code is kept outside the
 - **The giant basin.** On the preset's seed the 2,576 km basin strikes at 0.415 Gyr, 71 degrees from the province gathered at 0.05 Gyr, and its ejecta raises the province's centre 8 km whichever way the heat lies; the South Pole–Aitken basin lies some 120 degrees from the Procellarum KREEP Terrane.
 
 Direction: the province's loads laid on its own hotter, thinner lid, so that the intrusions beneath it sink as the terrane's low ground has them, or the lid's heat warming the mantle beneath it (a stagnant lid whose flux reads the heat within it). The cool start, the depleted mantle elsewhere, the regional histories foundering with the body's, and the melts taken into one vent weight are the pieces worth keeping.
+
+The Moon's part closed with M33 as a known limitation (2026-10-29); the starting state stays an input until the crust by class (S2).
 
 ## Validation (principle 15)
 
@@ -856,6 +860,8 @@ The rings and floors done (F216, 2026-10-28): the deep share lands nearest the r
 Tried, not kept (2026-10-29): the basalt sprayed by the craters smaller than the finish draws. The impacts in the maria throw basalt onto the highlands by the production of craters too small to draw, each spreading its ejecta as the cube of its range: some 0.003 on the highlands near the contacts, the production function run past its measured sizes to reach even that.
 
 The buried maria done (F217, 2026-10-29): lava a crater's ejecta covers is buried, and later craters dig it up by the share of their cavities below it, the drawn ones as dark-haloed craters over 1.55 percent of the Moon's surface about its maria and the smaller ones stirring up 0.07 percent; the burials lie deep, half below 1.1 km. The highlands' profile toward the maria moves by 0.003 (0.133, 0.138 and 0.138 at 25 to 200 km against the reference's 0.102, 0.112 and 0.120). Neither the spray nor the buried maria makes the gradient: cryptomaria are hidden by definition, and the darkening most likely is the nearside's crust itself, richer in iron (Jolliff et al. 2000) about the maria gathered there, so that the distance from a mare largely measures the nearside against the farside. That waits on M33's province and M35's start.
+
+The gate's re-check (the user, 2026-10-29): the rays still stand brighter against the ground than the reference's; the maria's interiors show flows of different ages with mottled contacts, as they should. The highlands' even tone lacks the reference's mottle, which does not follow their height on the real maps: it is to come from noise modulated by a physical field (principle 16; M41), later. The nearside's darkening toward the maria is closed with M33.
 
 ### M37. Io's layered plains
 
@@ -896,6 +902,28 @@ The icy bodies' transitions show no sign of the speed: Charon's, scaled by gravi
 The fine walls done (F219, 2026-10-29): the craters too small to draw shed on 0.56 percent of Mercury's surface and the Moon's, brightening the mean albedo by about 0.1 percent, too little to see, and Mercury's walls, drawn and not, cover 1.64 percent at the standard resolution and 1.55 at the high. What Mercury's map lacks against the Moon's is drawn simple craters, whose walls shed in full: its transition by gravity alone, 7.2 km, keeps them under the 7.5 km the finish draws at the standard resolution, where the Moon's run from 5.3 to 16.5 km. That stays with the transition, tried above and not adopted.
 
 The detail back (F216, 2026-10-28): the user saw Mercury lose its contrast and detail under F215, its map 1.26 from its darkest tenth to its brightest against 1.46 on the user's true-colour map, which shows it brown-grey as the Moon and of low contrast. With the deep share landing nearest the rim and flooring the larger craters its contrast is 1.37, 1.23 at some 90 km against 1.33, its larger craters dark-floored and dark-rimmed.
+
+### M39. Enceladus's fractures do not form a global network
+
+The gate's re-check (2026-10-29), the user's verdict: Enceladus is near passing. Its terrains blend into one seamless look (their ridged margins were taken out because they drew the terrains' outlines), and each terrain's fractures and grooves look right on their own. But they stay within their own terrain: on the reference map they cross from one terrain into the next and join into a network over the whole body. That alone would make Enceladus pass.
+
+Direction: the fractures and grooves read from one global stress and strain history, so that a set that forms in one terrain carries on into the next where the stress allows, thinning out over ground that resists it, and crosses or meets the sets of other episodes.
+
+When: before Phase 4F closes.
+
+### M40. Io's flow fields do not merge
+
+The gate's re-check (2026-10-29), the user's verdict: Io passes. The flows' shapes are among the model's strongest results and are to stay. But each lobe stands apart from the next, where on the reference the flows of a field join into broad regions of graded tone. Pele's red rings are a little fainter than the reference's, and clear features of the albedo; strengthening them is optional.
+
+Direction: the lobes of a field connecting where they meet, as later flows spread over and between earlier ones, keeping each lobe's shape.
+
+### M41. The regional variation the physics does not make
+
+Principle 16 (the user, 2026-10-29): where the modelled physics has gone as far as it can, the rest of the variation a real surface shows comes from noise modulated by a physical field, at every scale up to the global look. Two cases at the gate: the lunar highlands' mottle of shades, which on the real maps does not follow their height, and Io's grey-green regions. The user's suggestion for the Moon: a field of the crust's buried composition beside a global noise field, so that the pattern convinces without being uniform; for Io, a field such as the density of its flows.
+
+Direction: one mechanism for every body, a noise field whose amplitude and tone a named physical field modulates, applied to the materials' colours.
+
+When: later, after Phase 4F's last checks (the user, 2026-10-29).
 
 ### V1. Interpolated bodies in validation
 
