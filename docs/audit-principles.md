@@ -903,13 +903,22 @@ The fine walls done (F219, 2026-10-29): the craters too small to draw shed on 0.
 
 The detail back (F216, 2026-10-28): the user saw Mercury lose its contrast and detail under F215, its map 1.26 from its darkest tenth to its brightest against 1.46 on the user's true-colour map, which shows it brown-grey as the Moon and of low contrast. With the deep share landing nearest the rim and flooring the larger craters its contrast is 1.37, 1.23 at some 90 km against 1.33, its larger craters dark-floored and dark-rimmed.
 
-### M39. Enceladus's fractures do not form a global network
+### M39. Enceladus's fractures do not form a global network (a known limitation)
 
 The gate's re-check (2026-10-29), the user's verdict: Enceladus is near passing. Its terrains blend into one seamless look (their ridged margins were taken out because they drew the terrains' outlines), and each terrain's fractures and grooves look right on their own. But they stay within their own terrain: on the reference map they cross from one terrain into the next and join into a network over the whole body. That alone would make Enceladus pass.
 
 Direction: the fractures and grooves read from one global stress and strain history, so that a set that forms in one terrain carries on into the next where the stress allows, thinning out over ground that resists it, and crosses or meets the sets of other episodes.
 
 When: before Phase 4F closes.
+
+Tried (2026-10-29), not kept; a known limitation (the user's choice beforehand: try it, and mark it a known limitation if it does not work). A zone's fissure stopped where its zone's taper fell to 0.3, and every crack ran only while the stress across it passed the 40 kPa that starts one, where Enceladus's tide stresses its thick shell by some 20 kPa. A crack that has started runs on while the stress intensity at its tip passes the ice's fracture toughness, some 0.1 MPa m^0.5 (Schulson and Duval 2009): an edge crack opening down against the overburden feels at its tip K = sqrt(pi d) (1.1215 s - 0.683 rho g d) (Tada, Paris and Irwin 2000), at most 0.98 s^1.5 / sqrt(rho g), so a running crack needs some 10 kPa on Enceladus and 23 on Europa. With that, the zones' fissures ran on beyond them as fractures of the tide, each relieving the membrane stress for half its length as F200's do: 153 of them, 20,300 km in all, about 130 km each, linking the terrains in the data. But it changed nothing visible:
+
+- 143 of the 153 are dated to past episodes, and their troughs, 100 to 350 m deep, lie under the plume's fallout laid since (334 m at the median, F74), as the order of events has it;
+- the present episode's 10 do not stand out among the terrains' own lineations;
+- the reorientations' fractures, run on to half the body round, relieved the shell in three (some 20 to a reorientation before);
+- Enceladus's finish took some 400 s more (931 s against 520).
+
+The network the reference shows wants troughs whose relief outlasts the fallout, kilometres wide and hundreds of metres deep, and so a stretch of the shell of about a percent, where the model's stresses stretch it by some 0.04 percent. Kept outside the repository with the measurements, for when the physics is final and principle 16 decides what noise may carry.
 
 ### M40. Io's flow fields do not merge
 
