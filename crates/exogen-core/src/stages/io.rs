@@ -2922,6 +2922,7 @@ pub fn patera_compute(
         })
         .collect();
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,
@@ -2974,6 +2975,7 @@ pub fn mountain_compute(
         })
         .collect();
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,

@@ -174,6 +174,7 @@ pub fn emplace(
         })
         .collect();
     StampOutput {
+        deposit: None,
         cells,
         ..Default::default()
     }
@@ -252,6 +253,7 @@ pub fn renew_compute(
         })
         .collect();
     StampOutput {
+        deposit: None,
         cells,
         ..Default::default()
     }

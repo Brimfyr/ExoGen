@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 162;
+pub const FINISH_VERSION: u64 = 163;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2609,6 +2609,11 @@ pub fn finish(
                             levelling: inputs.levelling,
                             seed: c.key,
                             deep,
+                            cavity: {
+                                let (excavation, cavity) = inputs.cavity(c.diameter);
+                                (excavation * depth_factor, cavity * depth_factor)
+                            },
+                            exhume: true,
                             maturity_timescale: inputs.maturity_timescale,
                             renewal_guard: false,
                             terraced: true,

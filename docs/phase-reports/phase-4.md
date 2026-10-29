@@ -2834,3 +2834,15 @@ How it went:
 - **The maria's surroundings.** The collars restore the basins' darker ground, but not the gradual darkening of the highlands about the maria, which the impacts in the maria throw there (audit M36).
 
 Still to do: the maria's basalt over the highlands about them (audit M36), with the maria themselves (audit M33); Mercury's bright young craters smaller than the map's cells (audit M38); the colours of Phase 5's weathering (audit M11).
+
+## The hundred-and-twenty-ninth milestone: the lava a crater buries, a later crater digs up
+
+- **F217.** Lava under a crater's ejecta was lost from the map. Now it is recorded as buried, with its depth and time, and later craters dig it up by the share of their cavities below it, the drawn ones as dark-haloed craters, the smaller ones stirring it into the regolith. On the Moon lava lies buried under 18 percent of the surface about its maria, half of it below 1.1 km, and the craters bring it up over 1.55 percent of the surface; the profile toward the maria moves by 0.003. On Mercury, whose lavas are brighter than its crust, lava lies buried under 25.9 percent of the surface, shallower, at 0.29, 0.61 and 1.08 km, the small craters stirring up 0.28 percent of it and the drawn craters, from 7.5 km, bringing it up in 286 patches over 0.18 percent, brightening them.
+
+How it went:
+
+- **The spray.** Basalt thrown onto the highlands by the craters too small to draw came to some 0.003 near the contacts, the production function run past its measured sizes to reach it; not kept.
+- **The buried maria.** Kept by the user as a real process that does no harm: the cryptomaria are hidden by definition, found by their dark-halo craters, and the model now makes them. The burials lie deep under the basins' ejecta, so the small craters reach little of them.
+- **The gradient.** The darkening toward the maria on the reference map is most likely the nearside's crust itself, richer in iron about the maria gathered there; it waits on M33's province and M35's start.
+
+Still to do: the Moon's maria gathered in their province (audit M33), which waits on the magma ocean's start (audit M35); Mercury's bright young craters smaller than the map's cells (audit M38); the colours of Phase 5's weathering (audit M11).

@@ -13,7 +13,7 @@ use crate::crater::production::{Oblique, Target, expected_count_above, poisson};
 use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
     Bombardment, BombardmentParams, CraterRecord, DeepShare, ProfileTable, Scaling, StampParams,
-    Stamper, dimensions, hold_diameter, impact_angle, stamp,
+    Stamper, dimensions, excavated_below, hold_diameter, impact_angle, stamp,
 };
 use crate::fields::LayerSet;
 use crate::grid::CubeSphere;
@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 32;
+pub const VERSION: u64 = 33;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -68,17 +68,6 @@ pub struct CraterInputs {
     pub levelling: Levelling,
 }
 
-/// The share of an excavation cavity of this depth, m, that lies below a layer this deep,
-/// m (F215): the cavity a paraboloid, the share of its volume below the layer the square
-/// of the share of its depth.
-pub fn excavated_below(excavation_depth: f64, layer_depth: f64) -> f64 {
-    if excavation_depth <= layer_depth.max(0.0) {
-        return 0.0;
-    }
-    let x = 1.0 - layer_depth.max(0.0) / excavation_depth;
-    x * x
-}
-
 impl CraterInputs {
     /// What a crater of this diameter, m, brings up from the deep bedrock (F215, F216),
     /// where the crust under its centre is this thick, m: its ejecta by the share of its
@@ -93,11 +82,21 @@ impl CraterInputs {
             Some(reference) => self.deep_bedrock_depth * crust.max(0.0) / reference.max(1.0),
             None => self.deep_bedrock_depth,
         };
-        let transient = transient_diameter(diameter, &self.scaling);
+        let (excavation, cavity) = self.cavity(diameter);
         DeepShare {
-            floor: excavated_below(TRANSIENT_DEPTH_FRACTION * transient, depth),
-            ejecta: excavated_below(EXCAVATION_DEPTH_FRACTION * transient, depth),
+            floor: excavated_below(cavity, depth),
+            ejecta: excavated_below(excavation, depth),
         }
+    }
+
+    /// The depths a crater of this diameter, m, excavates to and its transient cavity
+    /// reaches, m (Melosh 1989).
+    pub fn cavity(&self, diameter: f64) -> (f64, f64) {
+        let transient = transient_diameter(diameter, &self.scaling);
+        (
+            EXCAVATION_DEPTH_FRACTION * transient,
+            TRANSIENT_DEPTH_FRACTION * transient,
+        )
     }
 }
 
@@ -407,6 +406,8 @@ impl ImpactProcess {
                 levelling: inp.levelling,
                 seed: rec.id,
                 deep,
+                cavity: inp.cavity(rec.diameter),
+                exhume: false,
                 maturity_timescale: inp.maturity_timescale,
                 renewal_guard: true,
                 terraced: false,

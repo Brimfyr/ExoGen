@@ -3711,6 +3711,7 @@ pub fn groove_compute(
         .collect();
     cells.sort_by_key(|c| c.idx);
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,
@@ -4025,6 +4026,7 @@ pub fn polar_compute(
         );
     }
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,

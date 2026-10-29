@@ -274,6 +274,12 @@ pub struct LayerSet {
     /// The share of the dark ground that is lava whose surface reacted with what fell on
     /// it while it was warm, 0 to 1 (F209: Io's green material).
     pub reacted: Field<f32>,
+    /// The share of the ground under the surface deposit that is lava a crater's ejecta
+    /// buried, 0 to 1, how deep it lies, m, and when it was buried, Gyr since formation
+    /// (F217): the buried maria, which later craters dig back up.
+    pub buried: Field<f32>,
+    pub burial: Field<f32>,
+    pub buried_age: Field<f32>,
     /// The base relief as it stands (F196): the relief the body formed with, worked by what
     /// works the ground about it but the features' own forms, relaxed as the ground relaxes
     /// and levelled by each crater's ejecta as the ground is, the crater's floor taking its
@@ -305,6 +311,9 @@ impl LayerSet {
             ejecta_age: Field::new(grid),
             stain: Field::new(grid),
             reacted: Field::new(grid),
+            buried: Field::new(grid),
+            burial: Field::new(grid),
+            buried_age: Field::new(grid),
             base: None,
         }
     }
@@ -349,6 +358,9 @@ impl LayerSet {
             ejecta_age: self.ejecta_age.resample_nearest(target),
             stain: self.stain.resample(target),
             reacted: self.reacted.resample(target),
+            buried: self.buried.resample(target),
+            burial: self.burial.resample(target),
+            buried_age: self.buried_age.resample_nearest(target),
             base: self.base.as_ref().map(|b| b.resample(target)),
         }
     }
@@ -380,6 +392,9 @@ impl LayerSet {
             self.ejecta_age.hash(),
             self.stain.hash(),
             self.reacted.hash(),
+            self.buried.hash(),
+            self.burial.hash(),
+            self.buried_age.hash(),
         ];
         crate::rng::hash_words(&parts)
     }

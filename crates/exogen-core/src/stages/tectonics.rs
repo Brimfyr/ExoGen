@@ -327,6 +327,7 @@ pub fn scarp_compute(
         .collect();
     cells.sort_by_key(|c| c.idx);
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,

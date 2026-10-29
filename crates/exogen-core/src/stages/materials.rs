@@ -27,7 +27,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 33;
+pub const VERSION: u64 = 34;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -667,6 +667,114 @@ fn garden_mix(
     state.into_iter().map(|(c, t, _)| (c, t)).unzip()
 }
 
+/// The share of each cell's surface that the craters too small to draw have brought up of
+/// the lava buried under it since it was buried (F217): the buried maria about the visible
+/// ones, mixed into the regolith over them. A crater throws out the buried lava by the share
+/// of its excavation cavity below it and covers its continuous ejecta's disc, two radii
+/// across its centre; the craters smaller than the finish draws, from the body's
+/// production by size over the equivalent time since the burial, cover the cell so many
+/// times over, and what they throw out takes the cell's surface as 1 - e^-cover does. The
+/// drawn craters dig up what lies deeper themselves.
+fn stirred(graph: &ParamGraph, layers: &LayerSet, present: f64) -> Vec<f32> {
+    let grid = layers.grid;
+    let (buried, burial, buried_age) = (
+        layers.buried.as_slice(),
+        layers.burial.as_slice(),
+        layers.buried_age.as_slice(),
+    );
+    if buried.iter().all(|&b| b <= 0.0) {
+        return vec![0.0; grid.cell_count()];
+    }
+    let inputs = crate::stages::impacts::CraterInputs::from_graph(graph);
+    let flux = &inputs.bombardment;
+    let cell = grid.delta() * inputs.body_radius;
+    let drawn = graph
+        .f64("cratering.min_diameter")
+        .max(FINISHING_MIN_CELLS * cell);
+    // The cover per equivalent Gyr by the depth of the burial, from 0.1 m to 10 km.
+    const DEPTHS: usize = 64;
+    let depth_at = |i: usize| 0.1 * 1e5f64.powf(i as f64 / (DEPTHS - 1) as f64);
+    let smallest = 10.0;
+    let steps = 200;
+    let sizes: Vec<(f64, f64, f64)> = (0..steps)
+        .filter_map(|i| {
+            let d0 = smallest * (drawn / smallest).powf(i as f64 / steps as f64);
+            let d1 = smallest * (drawn / smallest).powf((i + 1) as f64 / steps as f64);
+            (d1 > d0).then(|| {
+                let born = flux.steady_1gyr(d0 / 1e3) - flux.steady_1gyr(d1 / 1e3);
+                let d = (d0 * d1).sqrt();
+                let disc = std::f64::consts::PI * (d / 1e3).powi(2);
+                (born * disc, inputs.cavity(d).0, d)
+            })
+        })
+        .collect();
+    let per_gyr: Vec<f64> = (0..DEPTHS)
+        .map(|i| {
+            let z = depth_at(i);
+            sizes
+                .iter()
+                .map(|&(cover, excavation, _)| {
+                    cover * crate::crater::excavated_below(excavation, z)
+                })
+                .sum()
+        })
+        .collect();
+    let at_depth = |z: f64| {
+        let x = ((z.max(0.1) / 0.1).ln() / 1e5f64.ln() * (DEPTHS - 1) as f64)
+            .clamp(0.0, (DEPTHS - 1) as f64);
+        let i = (x.floor() as usize).min(DEPTHS - 2);
+        let f = x - i as f64;
+        per_gyr[i] * (1.0 - f) + per_gyr[i + 1] * f
+    };
+    // The equivalent time since a burial, by its time, a hundredth of a Gyr apart.
+    let since: Vec<f64> = (0..=(present * 100.0).ceil() as usize)
+        .map(|j| flux.equivalent_gyr((j as f64 / 100.0).min(present), present))
+        .collect();
+    let out: Vec<f32> = (0..grid.cell_count())
+        .into_par_iter()
+        .map(|k| {
+            if buried[k] <= 0.0 {
+                return 0.0;
+            }
+            let j = ((buried_age[k] as f64 * 100.0).round() as usize).min(since.len() - 1);
+            let cover = at_depth(burial[k] as f64) * since[j];
+            buried[k] * (1.0 - (-cover).exp()) as f32
+        })
+        .collect();
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let area = |k: usize| grid.cell_area(grid.cell(k));
+        let whole: f64 = (0..grid.cell_count()).map(area).sum();
+        let under: f64 = (0..grid.cell_count())
+            .filter(|&k| buried[k] > 0.0)
+            .map(area)
+            .sum();
+        let up: f64 = (0..grid.cell_count())
+            .map(|k| out[k] as f64 * area(k))
+            .sum();
+        let mut depths: Vec<f32> = (0..grid.cell_count())
+            .filter(|&k| buried[k] > 0.0)
+            .map(|k| burial[k])
+            .collect();
+        depths.sort_by(|a, b| a.total_cmp(b));
+        let q = |f: f64| {
+            depths
+                .get(((depths.len() as f64 - 1.0) * f) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
+        eprintln!(
+            "buried maria: lava under {:.1}% of the surface, at {:.0} / {:.0} / {:.0} m (quartiles), the small craters stir up {:.2}% of the surface's area; drawn from {:.1} km",
+            100.0 * under / whole,
+            q(0.25),
+            q(0.5),
+            q(0.75),
+            100.0 * up / whole,
+            drawn / 1e3
+        );
+    }
+    out
+}
+
 /// The luminance of a regolith mixture when fresh and when mature, for the body's own
 /// albedo (F52), its basalt with the mantle's iron.
 pub fn mixture_luminance(library: &Library, map: &BTreeMap<String, f64>) -> (f64, f64) {
@@ -846,21 +954,25 @@ pub fn albedo(
     };
     // The cover a salted unit or a crater floor holds is its salts, not lava: it is neither
     // coloured nor mixed sideways as a flow (F127).
-    let lava_f: Vec<f32> = (0..grid.cell_count())
+    // On an airless surface, the buried lava the small craters have stirred up (F217),
+    // of the mean tint.
+    let stir = if gardened {
+        stirred(graph, layers, present)
+    } else {
+        vec![0.0; grid.cell_count()]
+    };
+    let (lava_f, tinted): (Vec<f32>, Vec<f32>) = (0..grid.cell_count())
         .into_par_iter()
         .map(|k| {
             let u = units[k];
             if salted(u) || u == UNIT_CRATER_FLOOR || u == UNIT_DEEP_FLOOR {
-                0.0
+                (0.0, 0.0)
             } else {
-                cover_f[k]
+                let dug = (1.0 - cover_f[k]) * stir[k];
+                (cover_f[k] + dug, cover_f[k] * tint(k) + dug)
             }
         })
-        .collect();
-    let tinted: Vec<f32> = (0..grid.cell_count())
-        .into_par_iter()
-        .map(|k| lava_f[k] * tint(k))
-        .collect();
+        .unzip();
     let (mixed, mixed_tinted) = if gardened {
         // Each lava cell's gardening since its lava erupted, relative to the lunar maria's
         // at the reference age (F95).

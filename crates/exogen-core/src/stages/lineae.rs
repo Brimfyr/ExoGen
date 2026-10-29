@@ -1926,6 +1926,7 @@ fn band_compute(
     cells.sort_by_key(|c| c.0.idx);
     let (cells, stain): (Vec<CellWrite>, Vec<[f32; 2]>) = cells.into_iter().unzip();
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: Some(stain),
@@ -2216,6 +2217,7 @@ pub fn linea_compute(
     cells.sort_by_key(|c| c.0.idx);
     let stain = (rec.kind != LineaKind::Vent).then(|| cells.iter().map(|c| c.1).collect());
     StampOutput {
+        deposit: None,
         cells: cells.into_iter().map(|c| c.0).collect(),
         composition: None,
         stain,

@@ -419,6 +419,7 @@ pub fn fabric_compute(
         .collect();
     let (cells, stain): (Vec<CellWrite>, Vec<[f32; 2]>) = writes.into_iter().unzip();
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: Some(stain),

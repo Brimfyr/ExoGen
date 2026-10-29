@@ -3965,6 +3965,7 @@ pub fn trough_compute(
         })
         .collect();
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,
@@ -4122,6 +4123,7 @@ pub fn shield_compute(
         compositions.push(composition);
     }
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         base: None,

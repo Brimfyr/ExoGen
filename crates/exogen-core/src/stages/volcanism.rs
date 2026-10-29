@@ -1997,6 +1997,7 @@ pub fn flood_compute(
     debug_assert_eq!(cells.len(), compositions.len());
     (
         StampOutput {
+            deposit: None,
             cells,
             composition: Some(rec.composition),
             stain: None,

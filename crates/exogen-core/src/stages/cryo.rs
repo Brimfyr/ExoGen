@@ -664,6 +664,7 @@ pub fn chaos_compute(
         .collect();
     let (cells, stain): (Vec<CellWrite>, Vec<[f32; 2]>) = writes.into_iter().unzip();
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: Some(stain),
@@ -795,6 +796,7 @@ pub fn cryodome_compute(
         .collect();
     cells.sort_by_key(|c| c.idx);
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,

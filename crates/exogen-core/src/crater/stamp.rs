@@ -256,6 +256,11 @@ pub struct StampOutput {
     /// the ground is, its floor in its place inside the rim; none for any other stamp, or
     /// where no base relief is kept.
     pub base: Option<Vec<f32>>,
+    /// The crater's time, Gyr since formation, and per cell the thickness of the deposit
+    /// it lays beyond its rim, m, and inside it the depth its transient cavity reaches,
+    /// negative (F217): what buries the lava erupted before it under its ejecta and digs
+    /// out what was buried before it within its cavity's reach; none for any other stamp.
+    pub deposit: Option<(f32, Vec<f32>)>,
 }
 
 impl StampOutput {
@@ -278,8 +283,39 @@ impl StampOutput {
         let steep = layers.steep.as_mut_slice();
         let ejecta_age = layers.ejecta_age.as_mut_slice();
         let stain = layers.stain.as_mut_slice();
+        let buried = layers.buried.as_mut_slice();
+        let burial = layers.burial.as_mut_slice();
+        let buried_age = layers.buried_age.as_mut_slice();
         for (j, c) in self.cells.iter().enumerate() {
             let i = c.idx as usize;
+            // The buried maria (F217): a deposit over lava buries what it covers of it,
+            // and deepens what lies buried already; a cavity that reaches the buried lava
+            // digs it out.
+            if let (Some((time, d)), true) = (&self.deposit, c.surface) {
+                let t = d[j];
+                let before = buried_age[i] <= *time + 1e-6;
+                if t < 0.0 {
+                    if before && -t >= burial[i] {
+                        buried[i] = 0.0;
+                        burial[i] = 0.0;
+                    }
+                } else if t > 0.0 {
+                    let lost = if crate::stages::volcanism::is_lava_unit(units[i])
+                        && lava_age[i] <= *time + 1e-6
+                    {
+                        (cover[i] - c.cover).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    if lost > 0.0 && lost >= buried[i] {
+                        buried[i] = lost;
+                        burial[i] = t;
+                        buried_age[i] = *time;
+                    } else if buried[i] > 0.0 && before {
+                        burial[i] += t;
+                    }
+                }
+            }
             bedrock[i] = c.bedrock;
             if c.surface {
                 ages[i] = c.age;
@@ -412,6 +448,17 @@ pub fn elliptical_radius(r: f64, phi: f64, azimuth: f64, ellipticity: f64) -> f6
     r * ((c * c) / ellipticity + (s * s) * ellipticity).sqrt()
 }
 
+/// The share of an excavation cavity of this depth, m, that lies below a layer this deep,
+/// m (F215): the cavity a paraboloid, the share of its volume below the layer the square
+/// of the share of its depth.
+pub fn excavated_below(excavation_depth: f64, layer_depth: f64) -> f64 {
+    if excavation_depth <= layer_depth.max(0.0) {
+        return 0.0;
+    }
+    let x = 1.0 - layer_depth.max(0.0) / excavation_depth;
+    x * x
+}
+
 /// What a crater brings up from the deep bedrock (F215, F216): its floor's share, from its
 /// transient cavity's whole depth, and its ejecta's, from its excavation cavity.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -494,6 +541,11 @@ pub struct StampParams {
     /// What the crater brought up from the deep bedrock (F215, F216): its floor and its
     /// ejecta carry it, with what the rest of its cavity dug from the ground's own.
     pub deep: DeepShare,
+    /// The depths its excavation and its transient cavity reach, m, and whether it throws
+    /// out what it digs of the lava buried under the ground (F217): the loop's craters
+    /// clear it from their cavities, the finish redrawing them without it.
+    pub cavity: (f64, f64),
+    pub exhume: bool,
     /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin
     /// ejecta with the ground it covers (F51).
     pub maturity_timescale: f64,
@@ -573,6 +625,12 @@ pub fn stamp_compute(
     let mut sum = 0.0;
     let mut wsum = 0.0;
     let mut deep_sum = 0.0;
+    // The lava buried within the cavity's reach (F217), by the share of its excavation
+    // and of its transient cavity below it.
+    let buried_f = layers.buried.as_slice();
+    let burial_f = layers.burial.as_slice();
+    let buried_ages = layers.buried_age.as_slice();
+    let (mut lava_ejecta, mut lava_floor) = (0.0, 0.0);
     // Ring means are plain cell averages: cell areas differ by at most 40% on the grid,
     // and the mean only serves as a local reference.
     let mut ring_sum = [0.0f64; BINS];
@@ -604,6 +662,11 @@ pub fn stamp_compute(
             let a = grid.cell_area(grid.cell(idx));
             sum += bedrock[idx] as f64 * a;
             deep_sum += deep[idx] as f64 * a;
+            if p.exhume && buried_f[idx] > 0.0 && buried_ages[idx] <= p.time_gyr + 1e-6 {
+                let (b, z) = (buried_f[idx] as f64, burial_f[idx] as f64);
+                lava_ejecta += b * excavated_below(p.cavity.0, z) * a;
+                lava_floor += b * excavated_below(p.cavity.1, z) * a;
+            }
             wsum += a;
             if let Some(b) = base {
                 base_sum += b[idx] as f64 * a;
@@ -665,12 +728,23 @@ pub fn stamp_compute(
     // The material the crater excavated: the deep bedrock, or what was already there.
     let ground_deep = if wsum > 0.0 { deep_sum / wsum } else { 0.0 };
     let floor_edge = dim.floor_radius / dim.radius.max(1e-9);
+    // The blanket's extent beyond the rim at an azimuth against its mean (F91).
+    let lobe = |phi: f64| {
+        (CONTINUOUS_EJECTA_MULTIPLE * edge.factor(phi) - 1.0) / (CONTINUOUS_EJECTA_MULTIPLE - 1.0)
+    };
     let source_deep = |rho: f64, phi: f64| {
-        // The blanket's extent beyond the rim at this azimuth against its mean (F91).
-        let lobe = (CONTINUOUS_EJECTA_MULTIPLE * edge.factor(phi) - 1.0)
-            / (CONTINUOUS_EJECTA_MULTIPLE - 1.0);
-        let share = p.deep.at(rho, floor_edge, lobe);
+        let share = p.deep.at(rho, floor_edge, lobe(phi));
         share + (1.0 - share) * ground_deep
+    };
+    // The buried lava the crater digs up lies below the ground's own as the deep bedrock
+    // does, and lands as the deep bedrock does, nearest the rim and in the floor (F217).
+    let exhumed = if wsum > 0.0 {
+        DeepShare {
+            floor: lava_floor / wsum,
+            ejecta: lava_ejecta / wsum,
+        }
+    } else {
+        DeepShare::NONE
     };
     let continuous = CONTINUOUS_EJECTA_MULTIPLE * dim.radius;
     let ages = layers.surface_age.as_slice();
@@ -836,17 +910,37 @@ pub fn stamp_compute(
             } else {
                 melts[idx]
             };
-            // A crater in lava is made of lava through and through.
+            // A crater in lava is made of lava through and through; one that digs into
+            // buried lava throws it out (F217).
+            let dug = (exhumed.at(re / dim.radius, floor_edge, lobe(phi)) * mix) as f32;
             write.cover = if !thick {
-                covers[idx]
+                covers[idx].max(dug)
             } else if crate::stages::volcanism::is_lava_unit(write.unit) {
                 1.0
             } else {
-                0.0
+                dug
             };
         }
         write
     };
+    // What the crater lays over each cell beyond its rim, and how deep its cavity reaches
+    // inside it (F217).
+    let deposit_of = |&(_, r, phi): &(usize, f64, f64)| -> f32 {
+        let re0 = elliptical_radius(r, phi, p.azimuth, p.ellipticity);
+        let re = re0 * shape.stretch(re0 / dim.radius, phi, dim);
+        if re <= dim.radius {
+            -(p.cavity.1 as f32)
+        } else {
+            (profile.height(re)
+                * p.amplitude
+                * ejecta_factor(re, dim.radius, phi, p.azimuth, p.angle))
+            .max(0.0) as f32
+        }
+    };
+    let deposit = (
+        p.time_gyr,
+        stamper.footprint.iter().map(deposit_of).collect(),
+    );
     let steep = if stamper.footprint.len() >= PARALLEL_FOOTPRINT {
         stamper.footprint.par_iter().map(steep_of).collect()
     } else {
@@ -889,6 +983,7 @@ pub fn stamp_compute(
         }
     });
     StampOutput {
+        deposit: Some(deposit),
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
         stain: None,
@@ -2208,6 +2303,7 @@ pub fn restore_compute(
         stamper.footprint.iter().map(ejecta_of).collect()
     };
     StampOutput {
+        deposit: None,
         cells: map_footprint(&stamper.footprint, compute),
         composition: None,
         stain: None,
@@ -2301,6 +2397,8 @@ mod tests {
             levelling: Levelling::rings(),
             seed: 0,
             deep: DeepShare::NONE,
+            cavity: (0.0, 0.0),
+            exhume: false,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2409,6 +2507,8 @@ mod tests {
                 levelling: Levelling::rings(),
                 seed: 0,
                 deep: DeepShare::NONE,
+                cavity: (0.0, 0.0),
+                exhume: false,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
@@ -2492,6 +2592,8 @@ mod tests {
             levelling: Levelling::rings(),
             seed: 0,
             deep: DeepShare::NONE,
+            cavity: (0.0, 0.0),
+            exhume: false,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2582,6 +2684,8 @@ mod tests {
                 levelling: Levelling::rings(),
                 seed: 0,
                 deep: DeepShare::NONE,
+                cavity: (0.0, 0.0),
+                exhume: false,
                 maturity_timescale: 0.5,
                 renewal_guard: true,
                 terraced: false,
@@ -2699,6 +2803,8 @@ mod tests {
             levelling: Levelling::rings(),
             seed: 0,
             deep: DeepShare::NONE,
+            cavity: (0.0, 0.0),
+            exhume: false,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2871,6 +2977,8 @@ mod tests {
             levelling: Levelling::new(&scaling),
             seed: 0,
             deep: DeepShare::NONE,
+            cavity: (0.0, 0.0),
+            exhume: false,
             maturity_timescale: 0.5,
             renewal_guard: true,
             terraced: false,
@@ -2909,6 +3017,93 @@ mod tests {
             println!("ring {ring}: largest step {step:.1} m, allowed {allowed:.1} m");
             assert!(step < allowed, "ring {ring}: {step} against {allowed}");
         }
+    }
+
+    #[test]
+    fn ejecta_buries_the_lava_and_a_later_crater_digs_it_up() {
+        // F217: a basin's thick ejecta over lava buries it; a later crater in the blanket
+        // whose cavity reaches it brings it up in its floor and clears it there; a crater
+        // older than the burial finds nothing buried.
+        let grid = CubeSphere::new(256);
+        let body_radius = 1.7374e6;
+        let mut layers = LayerSet::new(grid);
+        layers.bedrock = Field::filled(grid, 0.0);
+        layers.unit_id = Field::filled(grid, crate::units::UNIT_LAVA);
+        layers.cover = Field::filled(grid, 1.0);
+        layers.lava_age = Field::filled(grid, 1.0);
+        let s = lunar();
+        let params = |time_gyr, diameter: f64, exhume| {
+            let transient = crate::crater::morphology::transient_diameter(diameter, &s);
+            StampParams {
+                time_gyr,
+                unit_floor: 3,
+                unit_ejecta: 4,
+                azimuth: 0.0,
+                angle: std::f64::consts::FRAC_PI_2,
+                ellipticity: 1.0,
+                amplitude: 1.0,
+                feature_amplitude: 1.0,
+                replace_floor: true,
+                set_age: true,
+                bury: true,
+                levelling: Levelling::rings(),
+                seed: 0,
+                deep: DeepShare::NONE,
+                cavity: (
+                    crate::constants::EXCAVATION_DEPTH_FRACTION * transient,
+                    crate::constants::TRANSIENT_DEPTH_FRACTION * transient,
+                ),
+                exhume,
+                maturity_timescale: 0.5,
+                renewal_guard: true,
+                terraced: false,
+                shed: (
+                    SLOPE_SHED_START_DEG.to_radians(),
+                    REPOSE_SLOPE_DEG.to_radians(),
+                ),
+            }
+        };
+        let mut stamper = Stamper::new(&grid);
+        let basin = dimensions(200e3, &s);
+        let centre = [0.0, 0.0, 1.0];
+        let p = params(2.0, 200e3, false);
+        stamp(
+            &mut layers,
+            &grid,
+            body_radius,
+            centre,
+            &ProfileTable::new(basin, 0.0),
+            &p,
+            &mut stamper,
+        );
+        let a = 1.5 * basin.radius / body_radius;
+        let site = [a.sin(), 0.0, a.cos()];
+        let cell = grid.locate(site).0;
+        let (buried, burial) = (layers.buried.get(cell), layers.burial.get(cell));
+        assert!(
+            buried > 0.9 && burial > 10.0,
+            "buried {buried} at {burial} m"
+        );
+        assert_eq!(layers.buried_age.get(cell), 2.0);
+        assert_eq!(layers.cover.get(cell), 0.0);
+        let crater = dimensions(40e3, &s);
+        let mut dig = |time_gyr| {
+            let mut later = layers.clone();
+            stamp(
+                &mut later,
+                &grid,
+                body_radius,
+                site,
+                &ProfileTable::new(crater, 0.0),
+                &params(time_gyr, 40e3, true),
+                &mut stamper,
+            );
+            (later.cover.get(cell), later.buried.get(cell))
+        };
+        let (cover, left) = dig(3.0);
+        assert!(cover > 0.5 && left == 0.0, "dug {cover}, left {left}");
+        let (cover, left) = dig(1.5);
+        assert!(cover == 0.0 && left > 0.9, "dug {cover}, left {left}");
     }
 
     /// The lunar scaling of the terrace tests.

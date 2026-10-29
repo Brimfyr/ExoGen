@@ -547,6 +547,7 @@ pub fn resurfacing_compute(
     }
     (
         StampOutput {
+            deposit: None,
             cells,
             composition: None,
             stain: None,
@@ -614,6 +615,7 @@ pub fn dome_compute(
         })
         .collect();
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,

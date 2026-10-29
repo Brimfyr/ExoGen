@@ -1430,6 +1430,7 @@ pub fn corona_compute(
         );
     }
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,

@@ -342,6 +342,7 @@ pub fn system_compute(
         .collect();
     cells.sort_by_key(|w| w.idx);
     StampOutput {
+        deposit: None,
         cells,
         composition: None,
         stain: None,
