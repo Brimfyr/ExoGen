@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 35;
+pub const VERSION: u64 = 34;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -107,12 +107,10 @@ pub fn crust_at(layers: &LayerSet, grid: &CubeSphere, center: [f64; 3]) -> f64 {
 
 /// Unit of a crater floor by class, excavation and target.
 pub fn floor_unit(class: crate::crater::CraterClass, deep: bool, on_lava: bool) -> u16 {
-    // A crater in lava is a lava crater whatever it brings up from the deep bedrock, which
-    // shows by its share (F222).
-    if on_lava {
-        UNIT_LAVA_CRATER_FLOOR
-    } else if deep {
+    if deep {
         UNIT_DEEP_FLOOR
+    } else if on_lava {
+        UNIT_LAVA_CRATER_FLOOR
     } else if class == crate::crater::CraterClass::MultiRing {
         UNIT_BASIN_FLOOR
     } else {
@@ -122,10 +120,10 @@ pub fn floor_unit(class: crate::crater::CraterClass, deep: bool, on_lava: bool) 
 
 /// Unit of continuous ejecta by excavation and target.
 pub fn ejecta_unit(deep: bool, on_lava: bool) -> u16 {
-    if on_lava {
-        UNIT_LAVA_EJECTA
-    } else if deep {
+    if deep {
         UNIT_DEEP_EJECTA
+    } else if on_lava {
+        UNIT_LAVA_EJECTA
     } else {
         UNIT_EJECTA
     }

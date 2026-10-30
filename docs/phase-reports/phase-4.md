@@ -2883,13 +2883,8 @@ How it went:
 
 Still to do: the near ring at 1.70 against the reference's median of 1.37; the maria's bright rims (audit M36); the switch audit, then Phase 4F's close.
 
-## The hundred-and-thirty-third milestone: a crater in lava stays lava
+## The hundred-and-thirty-third milestone, reverted: a crater in lava stays lava
 
-- **F222.** The Moon's maria stood with bright rings in them, four times the reference's share of their ground standing 50 percent brighter than the ground about it. A crater in lava that brought up any of the deep bedrock lost its lava entirely, its walls and blanket showing the crust beneath. Now it keeps its lava but for its deep share: the rings in the maria are faint outlines, the maria's bright share falls from 1.29 to 1.02 percent against the reference's 0.30, and the craters older than the lava keep their highland rims above it.
+- **F222, reverted.** A crater in lava that brought up any of the deep bedrock lost its lava entirely, its walls and blanket showing the crust beneath as bright rings in the maria. It kept its lava but for its deep share, and the maria's ground standing 50 percent brighter than the ground about it fell from 1.29 to 1.02 percent against the reference's 0.30. The user found the terrain on the Moon and Mercury more cohesive without it, and it was reverted the same day (audit M36).
 
-How it went:
-
-- **The user's question.** The user, happy with the rays, asked whether the near ring and the maria's rims would improve the rays' look: the near ring would only dim the halos a little, within the reference's spread; the maria's rims were not rays but the craters in the lava.
-- **What the rings were.** Not the rays and not the deep ring: the walls that shed (F98, F218), bright because the crater's cavity had become the deep units.
-
-Still to do: the maria's bright ground at 1.02 percent against 0.30 (the rims older than the lava and the shedding walls); the switch audit, then Phase 4F's close.
+Still to do: the near ring at 1.70 against the reference's median of 1.37; the maria's bright rims (audit M36); the switch audit, then Phase 4F's close.
