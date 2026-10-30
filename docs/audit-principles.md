@@ -30,7 +30,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | Entry | Outcome | Note |
 |---|---|---|
 | S1 | Closed in part (F121 to F123, F185) | the episodic lid breaks by its own friction; the plates' rule goes with Phase 6; the melt efficiency by name and the ice shells' names: **short list** |
-| S2 | **Short list** | the moment of inertia from the density profile, an ice shell wherever the ice layer has a thickness |
+| S2 | Known limitation (checked) | an ice shell by the ice layer wants Io dry, its water lost with Mars's in Phase 5 (Io to Europa waits on it); a layered moment of inertia at uncompressed densities gives the rocky bodies closer factors and the icy ones far lower, so the class's stand (below) |
 | S3 | **Short list** | paterae, plumes and mountains switch on at 0.5 W/m²; with V1's Moon-to-Io sweep |
 | S4 | **Short list** | chaos or lanes at a shell 0.025 of the radius; with V1's Ganymede-to-Europa sweep |
 | S5 | **Short list** | focusing, plumes and fallout at a thinning of 0.3 of the shell |
@@ -140,6 +140,8 @@ Direction: the moment of inertia from the layered density profile the compositio
 When: the earlier-phases revisit.
 
 The fractions themselves were wrong for the bodies formed inside the snow line: a density below the chondritic mix was taken for ice wherever a body formed, so that the Moon carried 8 percent ice and a 30 percent core. Since the fifty-third milestone (F122) a body takes up ice by the temperature where it formed, and one formed too warm for it lacks iron instead: the Moon is all rock, Mars carries a 16 percent core and no ice. The cuts on the fractions are still open.
+
+Checked (2026-10-30): an ice shell wherever the ice layer has a thickness would make Io icy, its density giving it 5.9 percent ice and a layer 136 km thick where the real moon is dry; it waits on Io's water lost, with Mars's, in Phase 5's volatile histories (the user: Io to Europa then). A moment of inertia from layers of iron, rock and ice at their uncompressed densities gives Mars 0.369 against 0.364, the Moon 0.400 against 0.393, but Earth 0.342 against 0.331 (its compression), Io 0.318 against 0.378 (its inferred ice outermost) and the icy moons far lower, Ganymede 0.280 against 0.311, Europa 0.298 against 0.346, Callisto 0.283 against its partly differentiated 0.355; tried and not kept, the class's constants standing until the compression, the high-pressure ices, the core's composition and a partial differentiation are modelled: a known limitation.
 
 ### S3. The Io regime
 
