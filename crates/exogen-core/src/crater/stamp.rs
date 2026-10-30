@@ -997,13 +997,14 @@ pub fn stamp_compute(
             } else {
                 melts[idx]
             };
-            // A crater in lava is made of lava through and through; one that digs into
-            // buried lava throws it out (F217).
+            // A crater in lava is made of lava through and through but for what it brought
+            // up from the deep bedrock, which shows under it by its share (F222); one that
+            // digs into buried lava throws it out (F217).
             let dug = (exhumed.at(re / dim.radius, floor_edge, lobe(phi)) * mix) as f32;
             write.cover = if !thick {
                 covers[idx].max(dug)
             } else if crate::stages::volcanism::is_lava_unit(write.unit) {
-                1.0
+                (1.0 - write.deep.clamp(0.0, 1.0)).max(dug)
             } else {
                 dug
             };
@@ -2401,7 +2402,7 @@ pub fn restore_compute(
             write.cover = if !thick {
                 covers[idx]
             } else if crate::stages::volcanism::is_lava_unit(write.unit) {
-                1.0
+                1.0 - write.deep.clamp(0.0, 1.0)
             } else {
                 0.0
             };
