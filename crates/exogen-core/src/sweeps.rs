@@ -91,6 +91,67 @@ mod tests {
         assert!(began, "the sweep never let the ocean through");
     }
 
+    /// A crater's target goes from ice to rock by degrees as its crust's share of rock grows
+    /// (audit S9): along Callisto made denser, its ice degree falls from one to none, and with
+    /// it the transition's ice factor, the largest crater it holds and, in a crater at one
+    /// and a half times its peak-ring onset, the central pit gives way to a peak ring, none of
+    /// them by a step.
+    #[test]
+    fn craters_go_from_ice_to_rock_by_degrees() {
+        use crate::crater::{Scaling, dimensions, hold_diameter};
+        let (callisto, _) = preset("Callisto").unwrap().to_graph();
+        let rho0 = callisto.f64("body.density");
+        let mut last: Option<[f64; 5]> = None;
+        for k in 0..=32 {
+            let g = swept("Callisto", "body.density", rho0 + 50.0 * k as f64);
+            let ice = g.f64("cratering.target_ice");
+            let scaling = Scaling {
+                simple_complex: g.f64("cratering.simple_complex_transition"),
+                peak_ring: g.f64("cratering.peak_ring_onset"),
+                multi_ring: g.f64("cratering.multiring_onset"),
+                gravity: g.f64("body.gravity"),
+                ice,
+            };
+            // The transition with the body's gravity taken out, and the largest crater
+            // against the radius.
+            let strength = scaling.simple_complex * scaling.gravity;
+            let hold = hold_diameter(g.f64("body.radius"), ice) / g.f64("body.radius");
+            let dim = dimensions(1.5 * scaling.peak_ring, &scaling);
+            let ring = if dim.ring_count > 0 {
+                dim.rings[0].1 / dim.depth
+            } else {
+                0.0
+            };
+            eprintln!(
+                "{:.0} kg/m3: {} {}, rock {:.3}, ice degree {ice:.3}, transition {:.2} km (x g {strength:.0}), holds {hold:.3} R, {}: pit {:.3} of it, ring {ring:.3} of the depth",
+                g.f64("body.density"),
+                g.str("body.composition_class"),
+                g.str("materials.bedrock"),
+                g.f64("body.crust_impurity"),
+                scaling.simple_complex / 1e3,
+                dim.class.name(),
+                dim.pit_radius / dim.radius,
+            );
+            let pit = dim.pit_radius / dim.radius;
+            // Before F229 the transition stepped by 6.7 times and the largest crater by pi.
+            if let Some([ice0, strength0, hold0, pit0, ring0]) = last {
+                assert!(ice <= ice0 + 1e-12 && ice0 - ice < 0.15, "{ice0} to {ice}");
+                let step = |a: f64, b: f64| (a / b).max(b / a);
+                assert!(step(strength, strength0) < 1.3, "{strength0} to {strength}");
+                assert!(step(hold, hold0) < 1.2, "{hold0} to {hold}");
+                assert!(pit <= pit0 + 1e-12 && pit0 - pit < 0.05, "{pit0} to {pit}");
+                assert!(
+                    ring >= ring0 - 1e-12 && ring - ring0 < 0.05,
+                    "{ring0} to {ring}"
+                );
+            }
+            last = Some([ice, strength, hold, pit, ring]);
+        }
+        let first = swept("Callisto", "body.density", rho0);
+        assert_eq!(first.f64("cratering.target_ice"), 1.0);
+        assert_eq!(last.unwrap()[0], 0.0);
+    }
+
     /// Prints the derived nodes the switches read along each sweep.
     #[test]
     #[ignore]

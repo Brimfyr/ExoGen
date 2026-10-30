@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 35;
+pub const VERSION: u64 = 36;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -141,11 +141,11 @@ pub fn oblique(graph: &ParamGraph) -> Oblique {
     Oblique::new(&Target {
         gravity: graph.f64("body.gravity"),
         speed: graph.f64("cratering.impact_velocity"),
-        strength: if crate::stages::materials::is_ice(graph.str("materials.bedrock")) {
-            TARGET_STRENGTH_ICE
-        } else {
-            TARGET_STRENGTH_ROCK
-        },
+        strength: crate::crater::by_ice(
+            TARGET_STRENGTH_ROCK,
+            TARGET_STRENGTH_ICE,
+            graph.f64("cratering.target_ice"),
+        ),
         density: graph.f64("cratering.target_density"),
         simple_complex: graph.f64("cratering.simple_complex_transition"),
     })
@@ -156,7 +156,7 @@ pub fn bombardment(graph: &ParamGraph) -> Bombardment {
     BombardmentParams::from_nodes(
         |id| graph.f64(id),
         graph.str("cratering.production_function"),
-        crate::stages::materials::is_ice(graph.str("materials.bedrock")),
+        graph.f64("cratering.target_ice"),
         graph.f64("cratering.record_start"),
         true,
     )
@@ -172,7 +172,7 @@ impl CraterInputs {
                 peak_ring: graph.f64("cratering.peak_ring_onset"),
                 multi_ring: graph.f64("cratering.multiring_onset"),
                 gravity: graph.f64("body.gravity"),
-                icy: crate::stages::materials::is_ice(graph.str("materials.bedrock")),
+                ice: graph.f64("cratering.target_ice"),
             },
             body_radius: graph.f64("body.radius"),
             age: graph.f64("body.age"),
@@ -243,7 +243,7 @@ impl ImpactProcess {
         let d_loop = graph.f64("cratering.loop_threshold");
         // The largest crater the body holds (F135), any larger impact having come before its
         // record; those wider than the stamp draws are mega-impacts (F168).
-        let d_max = hold_diameter(inputs.body_radius, inputs.scaling.icy);
+        let d_max = hold_diameter(inputs.body_radius, inputs.scaling.ice);
         Self {
             rng: Rng::new(inputs.seed ^ 0x1D2A_9F0B),
             stamper: Stamper::new(&grid),

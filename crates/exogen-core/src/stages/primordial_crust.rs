@@ -25,7 +25,7 @@ use crate::spharm::Harmonics;
 use crate::units::{UNIT_CONTINENTAL, UNIT_OCEANIC, UNIT_PRIMORDIAL};
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 6;
+pub const VERSION: u64 = 7;
 
 /// Two-level crust for mobile-lid bodies: thin oceanic crust and thick continental crust
 /// covering a fraction of the area, which gives the bimodal hypsometry that lets an ocean
@@ -83,10 +83,10 @@ impl PrimordialCrust {
             peak_ring: graph.f64("cratering.peak_ring_onset"),
             multi_ring: graph.f64("cratering.multiring_onset"),
             gravity: graph.f64("body.gravity"),
-            icy: crate::stages::materials::is_ice(graph.str("materials.bedrock")),
+            ice: graph.f64("cratering.target_ice"),
         };
         let radius = graph.f64("body.radius");
-        let largest = crate::crater::hold_diameter(radius, scaling.icy)
+        let largest = crate::crater::hold_diameter(radius, scaling.ice)
             .min(2.0 * MAX_CRATER_RADIUS_FRACTION * radius);
         let relief = ROUGHNESS_RMS_SHARE
             * crate::crater::dimensions(largest, &scaling).depth

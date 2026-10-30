@@ -2963,4 +2963,15 @@ How it went:
 - **The lane tests' body.** The tests of the lanes in the episodes (F61) took an Enceladus at 0.8, later 0.9, of its tides, its plumes' frost keeping its surface cold and its lid too thick for any lane on the lid of the time. Since F228 the fallout fades as the reach nears one, the surface darkens and warms, and the lid thins: along Enceladus's radius from 0.6 to 1 and its tides from 0.85 to 1.2 of its own, no body both erupts and keeps a lid too thick for lanes. The tests now take one three times as far from the Sun at 0.95 of its tides (reach 1.20, lid 16.7 km against the 15.8 km a lane needs), its lanes opening in its episodes on a lid 0.72 of the mean. The tests had also counted every lane of a body without episodes as in one; they now count the present episode only on an active body.
 - **Every preset as it was.** Europa's chaos 0.3 and retention 0.1 Gyr, Ganymede's lanes 0.69, Enceladus's eight episodes and full fallout.
 
-Still to do: S9, the central pits; S1, the episodic lid's name.
+Still to do: S1, the episodic lid's name.
+
+## The hundred-and-thirty-seventh milestone: craters on rock and ice
+
+- **F229.** A crater's target is ice by degrees, by its bedrock's share of ice between 0.3 and 0.5: the transition, the target's strength and the largest crater the body holds go between rock's and ice's, and past the peak-ring onset a crater has a central pit by the degree and its rings by the rest (audit S9). Along Callisto made denser the pit gives way to a peak ring with no step.
+
+How it went:
+
+- **Every preset outside the width.** Every icy crust is ice above half, Ceres's the least at 0.62 of it, so every preset is as it was: the renders of the Moon, Callisto, Ceres and Mimas are identical.
+- **Mars's pits.** Mars has central pits in a rocky crust holding ground ice, which a bedrock's ice share gives none; they want the pit from the melt's volume, with Phase 5's ground ice (recorded under S9).
+
+Still to do: S1, the episodic lid's name.

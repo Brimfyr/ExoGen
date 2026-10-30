@@ -10,7 +10,7 @@ pub mod stamp;
 
 pub use curtain::{Curtain, Rays};
 pub use morphology::{
-    CraterClass, Dimensions, Levelling, ProfileTable, Scaling, dimensions, ellipticity_for,
+    CraterClass, Dimensions, Levelling, ProfileTable, Scaling, by_ice, dimensions, ellipticity_for,
     impact_angle,
 };
 pub use production::{

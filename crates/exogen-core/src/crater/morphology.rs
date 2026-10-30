@@ -42,23 +42,38 @@ pub struct Scaling {
     pub peak_ring: f64,
     pub multi_ring: f64,
     pub gravity: f64,
-    /// The target is ice: its larger complex craters have central pits and domes (F72).
-    pub icy: bool,
+    /// How far the target is ice rather than rock (audit S9): its larger complex craters
+    /// have central pits and domes by this much (F72), peak rings and multi-ring basins by
+    /// the rest.
+    pub ice: f64,
+}
+
+/// A quantity between its value on rock and on ice by the target's ice degree (audit S9),
+/// geometrically, as for a scale or a strength.
+pub fn by_ice(rock: f64, ice: f64, degree: f64) -> f64 {
+    if degree <= 0.0 {
+        rock
+    } else if degree >= 1.0 {
+        ice
+    } else {
+        rock * (ice / rock).powf(degree)
+    }
 }
 
 impl Scaling {
+    /// The crater's class, a target of rock and ice's by its larger share.
     pub fn classify(&self, diameter: f64) -> CraterClass {
         if diameter < self.simple_complex {
             CraterClass::Simple
         } else if diameter < self.peak_ring {
             CraterClass::Complex
         } else if diameter < self.multi_ring {
-            if self.icy {
+            if self.ice >= 0.5 {
                 CraterClass::CentralPit
             } else {
                 CraterClass::PeakRing
             }
-        } else if self.icy {
+        } else if self.ice >= 0.5 {
             CraterClass::CentralDome
         } else {
             CraterClass::MultiRing
@@ -92,6 +107,9 @@ pub struct Dimensions {
     pub ring_count: usize,
     pub ejecta_radius: f64,
     pub ejecta_exponent: f64,
+    /// The share of a multi-ring basin's own features, its outer ring, its sculpture and
+    /// its ejecta's reach: a rock target's in the multi-ring range, none on ice (audit S9).
+    pub basin: f64,
 }
 
 fn pow_law(law: (f64, f64), d_km: f64) -> f64 {
@@ -127,6 +145,7 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
             ring_count: 0,
             ejecta_radius: EJECTA_RADIUS_MULTIPLE * radius,
             ejecta_exponent: EJECTA_EXPONENT,
+            basin: 0.0,
         },
         _ => {
             let depth = lunar(PIKE_COMPLEX_DEPTH).min(MAX_BASIN_DEPTH_LUNAR * strength);
@@ -148,54 +167,58 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
                 (0.0, 0.0)
             };
             // On ice the uplift collapsed into a pit, and in the largest craters a dome
-            // rose in it (F72).
-            let pitted = matches!(class, CraterClass::CentralPit | CraterClass::CentralDome);
-            let (pit_radius, pit_rim_radius, pit_depth, pit_rim_height) = if pitted {
+            // rose in it (F72); a target of rock and ice pits its craters by its ice
+            // degree and raises their rings by the rest (audit S9).
+            let ringed = diameter >= s.peak_ring;
+            let ice = if ringed { s.ice.clamp(0.0, 1.0) } else { 0.0 };
+            let rock = 1.0 - ice;
+            let (pit_radius, pit_rim_radius, pit_depth, pit_rim_height) = if ice > 0.0 {
                 let share = (PIT_DIAMETER_SHARE
                     * (diameter / s.peak_ring.max(1.0)).max(1.0).powf(PIT_GROWTH))
                 .min(PIT_SHARE_MAX);
                 (
-                    0.5 * share * diameter,
-                    0.5 * (PIT_RIM_DIAMETER_SHARE * diameter).max(1.5 * share * diameter),
-                    PIT_DEPTH_SHARE * depth,
-                    uplift,
+                    0.5 * share * diameter * ice,
+                    0.5 * (PIT_RIM_DIAMETER_SHARE * diameter).max(1.5 * share * diameter) * ice,
+                    PIT_DEPTH_SHARE * depth * ice,
+                    uplift * ice,
                 )
             } else {
                 (0.0, 0.0, 0.0, 0.0)
             };
-            let (dome_radius, dome_height) = if class == CraterClass::CentralDome {
-                (DOME_PIT_SHARE * pit_radius, pit_depth + DOME_RISE * depth)
+            let (dome_radius, dome_height) = if diameter >= s.multi_ring && ice > 0.0 {
+                (
+                    DOME_PIT_SHARE * pit_radius,
+                    pit_depth + DOME_RISE * depth * ice,
+                )
             } else {
                 (0.0, 0.0)
             };
             // A peak ring at half the radius; multi-ring basins add a ring for each
             // sqrt(2) of diameter above the onset, each at 1/sqrt(2) of the last.
             let mut rings = [(0.0, 0.0); MAX_RINGS];
-            let ring_count = match class {
-                CraterClass::PeakRing => {
-                    rings[0] = (0.5 * radius, RING_HEIGHT_FRACTION * depth);
-                    1
-                }
-                CraterClass::MultiRing => {
-                    let extra = ((diameter / s.multi_ring).ln() / std::f64::consts::SQRT_2.ln())
-                        .floor()
-                        .max(0.0) as usize;
-                    let n = (1 + extra).min(MAX_RINGS);
-                    for (k, ring) in rings.iter_mut().enumerate().take(n) {
-                        *ring = (
-                            radius / std::f64::consts::SQRT_2.powi(k as i32 + 1),
-                            RING_HEIGHT_FRACTION * depth * RING_HEIGHT_DECAY.powi(k as i32),
-                        );
-                    }
-                    n
-                }
-                _ => 0,
-            };
-            let (ejecta_radius, ejecta_exponent) = if class == CraterClass::MultiRing {
-                (BASIN_EJECTA_RADIUS_MULTIPLE * radius, BASIN_EJECTA_EXPONENT)
+            let ring_count = if !ringed || rock <= 0.0 {
+                0
+            } else if diameter < s.multi_ring {
+                rings[0] = (0.5 * radius, RING_HEIGHT_FRACTION * depth * rock);
+                1
             } else {
-                (EJECTA_RADIUS_MULTIPLE * radius, EJECTA_EXPONENT)
+                let extra = ((diameter / s.multi_ring).ln() / std::f64::consts::SQRT_2.ln())
+                    .floor()
+                    .max(0.0) as usize;
+                let n = (1 + extra).min(MAX_RINGS);
+                for (k, ring) in rings.iter_mut().enumerate().take(n) {
+                    *ring = (
+                        radius / std::f64::consts::SQRT_2.powi(k as i32 + 1),
+                        RING_HEIGHT_FRACTION * depth * RING_HEIGHT_DECAY.powi(k as i32) * rock,
+                    );
+                }
+                n
             };
+            let basin = if diameter >= s.multi_ring { rock } else { 0.0 };
+            let ejecta_radius = (EJECTA_RADIUS_MULTIPLE * (1.0 - basin)
+                + BASIN_EJECTA_RADIUS_MULTIPLE * basin)
+                * radius;
+            let ejecta_exponent = EJECTA_EXPONENT * (1.0 - basin) + BASIN_EJECTA_EXPONENT * basin;
             Dimensions {
                 class,
                 radius,
@@ -215,6 +238,7 @@ pub fn dimensions(diameter: f64, s: &Scaling) -> Dimensions {
                 ring_count,
                 ejecta_radius,
                 ejecta_exponent,
+                basin,
             }
         }
     }
@@ -485,7 +509,7 @@ mod tests {
             peak_ring: 27_577.0,
             multi_ring: 64_887.0,
             gravity: 1.235,
-            icy: true,
+            ice: 1.0,
         };
         for (name, s, kappa) in [("callisto", callisto, 4.8), ("moon", lunar(), 5.5)] {
             for d in [5e3, 10e3, 20e3, 40e3, 80e3] {
@@ -522,7 +546,7 @@ mod tests {
             peak_ring: 25_922.0,
             multi_ring: 60_993.0,
             gravity: 1.315,
-            icy: true,
+            ice: 1.0,
         };
         let tyre = transient_diameter(38e3, &europa);
         assert!((21e3..26e3).contains(&tyre), "{tyre}");
@@ -569,7 +593,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         }
     }
 
@@ -727,14 +751,14 @@ mod tests {
             peak_ring: 23_904.0,
             multi_ring: 56_246.0,
             gravity: 1.428,
-            icy: true,
+            ice: 1.0,
         };
         let moon = Scaling {
             simple_complex: TERRACE_REFERENCE_TRANSITION,
             peak_ring: 139_900.0,
             multi_ring: 329_100.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let g40 = dimensions(40e3, &ganymede);
         let m40 = dimensions(40e3, &moon);
@@ -769,7 +793,7 @@ mod tests {
             peak_ring: 535e3,
             multi_ring: 1_260e3,
             gravity: 0.064,
-            icy: true,
+            ice: 1.0,
         };
         let herschel = dimensions(139e3, &mimas);
         assert!((9e3..13e3).contains(&herschel.depth), "{}", herschel.depth);
@@ -782,14 +806,14 @@ mod tests {
             peak_ring: 24_650.0,
             multi_ring: 58_000.0,
             gravity: 9.2,
-            icy: false,
+            ice: 0.0,
         };
         let small = Scaling {
             simple_complex: 19_400.0,
             peak_ring: 164_900.0,
             multi_ring: 388_000.0,
             gravity: 1.38,
-            icy: false,
+            ice: 0.0,
         };
         let d = 12_000.0;
         assert_eq!(dimensions(d, &small).class, CraterClass::Simple);

@@ -1784,6 +1784,13 @@ pub const VOLATILES: [Volatile; 7] = [
 pub const TRANSITION_LUNAR_KM: f64 = 16.5;
 pub const GRAVITY_MOON: f64 = 1.62;
 pub const TRANSITION_ICE_FACTOR: f64 = 0.15;
+/// The ice shares by volume between which a crater's target goes from rock to ice (audit
+/// S9): ice carries the stress while it is the matrix its rock grains sit in, its strength
+/// rising little with them until they touch and lock into a framework near the packing
+/// limit (Durham et al. 1992), so a target is rock below the first share and ice above the
+/// second (a stated width about the packing limit). Every icy preset's crust is ice above
+/// it, Ceres's the least at 0.62.
+pub const TARGET_ICE_SHARE: (f64, f64) = (0.3, 0.5);
 pub const PEAK_RING_MULTIPLE: f64 = 8.5;
 pub const MULTIRING_MULTIPLE: f64 = 20.0;
 

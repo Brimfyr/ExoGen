@@ -1292,7 +1292,7 @@ impl CraterTexture {
             lattice(&rng, 0, TEXTURE_AZIMUTH_CELLS, TEXTURE_RADIAL_CELLS),
             lattice(&rng, 1, TEXTURE_AZIMUTH_CELLS, TEXTURE_RADIAL_CELLS),
         ];
-        let sculpture = (dim.class == CraterClass::MultiRing).then(|| {
+        let sculpture = (dim.basin > 0.0).then(|| {
             let rng = Rng::new(seed ^ 0x5C0_1F7E);
             [
                 lattice(&rng, 0, SCULPTURE_AZIMUTH_CELLS, SCULPTURE_RADIAL_CELLS),
@@ -1400,7 +1400,7 @@ impl CraterTexture {
             let mut f = 1.0 + EJECTA_TEXTURE * taper * self.noise(phi, x);
             if let Some(s) = &self.sculpture {
                 let n = (s[0].sample(t, l) + 0.5 * s[1].sample(t, l)) / 1.5;
-                f *= 1.0 + BASIN_SCULPTURE * taper * n;
+                f *= 1.0 + BASIN_SCULPTURE * self.dim.basin * taper * n;
             }
             v * f.max(0.0)
         } else if re < dim.floor_radius && dim.class != CraterClass::Simple {
@@ -1696,10 +1696,10 @@ struct Rings {
 impl Rings {
     fn new(seed: u64, dim: &Dimensions) -> Option<Self> {
         let mut specs: Vec<(f64, f64)> = dim.rings[..dim.ring_count].to_vec();
-        if dim.class == CraterClass::MultiRing {
+        if dim.basin > 0.0 {
             specs.push((
                 std::f64::consts::SQRT_2 * dim.radius,
-                OUTER_RING_HEIGHT_FRACTION * dim.rim_height,
+                OUTER_RING_HEIGHT_FRACTION * dim.rim_height * dim.basin,
             ));
         }
         if specs.is_empty() {
@@ -2471,7 +2471,7 @@ mod tests {
             peak_ring: 27_577.0,
             multi_ring: 64_887.0,
             gravity: 1.235,
-            icy: true,
+            ice: 1.0,
         };
         let crater = ProfileTable::new(dimensions(40e3, &callisto), 0.0);
         let r = 20e3;
@@ -2547,7 +2547,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let dim = dimensions(200_000.0, &s);
         let table = ProfileTable::new(dim, 0.0);
@@ -2640,7 +2640,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let small = dimensions(20_000.0, &s);
         let big = dimensions(200_000.0, &s);
@@ -2739,7 +2739,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let big = dimensions(200_000.0, &s);
         let center = [0.0, 0.0, 1.0];
@@ -2823,7 +2823,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let dim = dimensions(200_000.0, &s);
         let table = ProfileTable::new(dim, 0.0);
@@ -2900,7 +2900,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let dim = dimensions(90_000.0, &s);
         let tex = CraterTexture::new(0x5EED, &dim, 1e9);
@@ -2952,7 +2952,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let dim = dimensions(60_000.0, &s);
         assert!(dim.peak_height > 500.0);
@@ -3037,7 +3037,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         };
         let dim = dimensions(93e3, &moon);
         // The outermost terrace is Pearce and Melosh's 0.09 D^0.87 km.
@@ -3284,7 +3284,7 @@ mod tests {
             peak_ring: 140_000.0,
             multi_ring: 330_000.0,
             gravity: 1.62,
-            icy: false,
+            ice: 0.0,
         }
     }
 

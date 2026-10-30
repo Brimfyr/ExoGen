@@ -36,7 +36,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | S5 | Closed (F228) | the episodes and plumes begin where the ocean reaches the surface through the thinned shell, the fallout growing from there; the sweep a test |
 | S6 | Closed (F227) | the retention from the renewal's rate, by the thin shell's degree and the tides; the regolith's clean ice by the same degree |
 | S7, S8 | Closed | F126; the eighteenth milestone |
-| S9 | **Short list** | central pits by the target's material |
+| S9 | Closed (F229) | the target ice by degrees from its ice share: the transition, the strength, the largest crater, the pits and rings between rock's and ice's; the sweep a test |
 | S10 | **Short list** | a rocky interior's tides by its class, not its temperature |
 | W1 | Closed (F94) | the lobes' sizes stated shares: known limitation, with M16 |
 | W2 | Closed (F224) | the roughness ramps over the anchor crater's radius |
@@ -229,7 +229,7 @@ Direction: a rocky interior's imaginary Love number from its Maxwell or Andrade 
 
 When: the Io milestone.
 
-### S9. Central pits by the target's material
+### S9. Central pits by the target's material (closed by F229)
 
 A crater on a target `is_ice` reads has a central pit from 8.5 transitions and a dome in it from 20 (F72); on any other, a peak ring and a multi-ring basin. A crust of rock and ice, Ceres's or Callisto's dirty ice, gets one or the other whole. The same switch picks the transition's ice factor (S7).
 
@@ -238,6 +238,8 @@ Since F135 the same switch picks the largest crater a body holds, as wide as its
 Direction: the pit from the impact melt's volume against the crater's, the melt-drainage model Alzate and Barlow (2011) and Elder et al. (2012) favour; ice melts under a far lower shock pressure than rock (Pierazzo et al. 1997), so a target's ice share would pit its craters by degrees. Since F126 the crust's share of rock is a node of its own (body.crust_impurity), which such a model would read.
 
 When: the earlier-phases revisit, with S7.
+
+Closed by F229 (2026-10-30): the target is ice by degrees, by its bedrock's ice share by volume between 0.3 and 0.5 (TARGET_ICE_SHARE, a stated width about where the rock grains lock into a framework, Durham et al. 1992): the transition's factor, the strength and the largest crater go between rock's and ice's, a crater past the peak-ring onset has its pit by the degree and its rings by the rest, and its class is named by the larger share; the sweep along Callisto's density is a test. Still open, as the direction asks: the pit from the impact melt's volume (Elder et al. 2012) rather than from the rheology's width. Mars has central pits in a rocky crust holding ground ice (Barlow 2010), which an ice share of the bedrock gives none: they want the melt's share, with Phase 5's ground ice. Where a body's class turns to rock (S2) its degree is already 0.05 or less.
 
 ## Widths and scales in grid cells (principle 13)
 

@@ -516,12 +516,13 @@ pub mod physics {
 
     // ---------------------------------------------------------------- cratering
 
-    /// F30: simple-to-complex transition diameter, metres.
-    pub fn transition_diameter(g: f64, icy: bool) -> f64 {
+    /// F30: simple-to-complex transition diameter, metres, on a target `ice` of the way
+    /// from rock to ice (audit S9).
+    pub fn transition_diameter(g: f64, ice: f64) -> f64 {
         TRANSITION_LUNAR_KM
             * 1e3
             * (GRAVITY_MOON / g)
-            * if icy { TRANSITION_ICE_FACTOR } else { 1.0 }
+            * crate::crater::by_ice(1.0, TRANSITION_ICE_FACTOR, ice)
     }
 }
 
@@ -2100,11 +2101,11 @@ fn crater_target(c: &Ctx, speed: f64) -> crate::crater::Target {
     crate::crater::Target {
         gravity: c.f64("body.gravity"),
         speed,
-        strength: if crate::stages::materials::is_ice(c.str("materials.bedrock")) {
-            TARGET_STRENGTH_ICE
-        } else {
-            TARGET_STRENGTH_ROCK
-        },
+        strength: crate::crater::by_ice(
+            TARGET_STRENGTH_ROCK,
+            TARGET_STRENGTH_ICE,
+            c.f64("cratering.target_ice"),
+        ),
         density: c.f64("cratering.target_density"),
         simple_complex: c.f64("cratering.simple_complex_transition"),
     }
@@ -2162,7 +2163,7 @@ fn bombardment_from(c: &Ctx, record_start: f64, with_debris: bool) -> crate::cra
     crate::crater::BombardmentParams::from_nodes(
         |id| c.f64(id),
         c.str("cratering.production_function"),
-        crate::stages::materials::is_ice(c.str("materials.bedrock")),
+        c.f64("cratering.target_ice"),
         record_start,
         with_debris,
     )
@@ -2178,8 +2179,7 @@ pub fn cratering_record_start(c: &Ctx) -> Value {
     let start = c.f64("surface.solidification_time");
     let age = c.f64("body.age");
     let radius = c.f64("body.radius");
-    let icy = crate::stages::materials::is_ice(c.str("materials.bedrock"));
-    let hold = crate::crater::hold_diameter(radius, icy) / 1e3;
+    let hold = crate::crater::hold_diameter(radius, c.f64("cratering.target_ice")) / 1e3;
     let area = 4.0 * PI * radius * radius / 1e6;
     let b = bombardment_from(c, 0.0, false);
     let after = |t: f64| b.density_above(hold, t, age) * area;
@@ -2199,14 +2199,29 @@ pub fn cratering_record_start(c: &Ctx) -> Value {
     (0.5 * (lo + hi)).into()
 }
 
+/// Audit S9: how far the target a crater forms in behaves as ice rather than rock, by the
+/// share of its bedrock that is ice: rock below TARGET_ICE_SHARE's first share, ice above
+/// its second, by degrees between (Durham et al. 1992). A body's dirty ice is its crust's
+/// rock and ice (F126); its clean ice a trace of rock; anything else rock.
+pub fn cratering_target_ice(c: &Ctx) -> Value {
+    let bedrock = c.str("materials.bedrock");
+    if !crate::stages::materials::is_ice(bedrock) {
+        return 0.0.into();
+    }
+    let rock = if bedrock == "water_ice_dirty" {
+        c.f64("body.crust_impurity")
+    } else {
+        crate::stages::materials::non_ice_fraction(bedrock)
+    };
+    let x = ((1.0 - rock - TARGET_ICE_SHARE.0) / (TARGET_ICE_SHARE.1 - TARGET_ICE_SHARE.0))
+        .clamp(0.0, 1.0);
+    (x * x * (3.0 - 2.0 * x)).into()
+}
+
 pub fn cratering_simple_complex_transition(c: &Ctx) -> Value {
     // The transition is a property of the target the crater forms in: the surface
     // material, not the bulk composition.
-    transition_diameter(
-        c.f64("body.gravity"),
-        crate::stages::materials::is_ice(c.str("materials.bedrock")),
-    )
-    .into()
+    transition_diameter(c.f64("body.gravity"), c.f64("cratering.target_ice")).into()
 }
 
 pub fn cratering_peak_ring_onset(c: &Ctx) -> Value {

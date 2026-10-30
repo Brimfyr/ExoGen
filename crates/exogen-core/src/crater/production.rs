@@ -747,23 +747,19 @@ pub struct BombardmentParams {
 
 impl BombardmentParams {
     /// From the graph's nodes, read by `f64_of`: the rocky leftovers' production function
-    /// by name, whether the bedrock is ice, when the record starts, and whether a moon's
+    /// by name, how far its target is ice (audit S9), when the record starts, and whether a moon's
     /// debris is counted (not when the record's start is being found, which it follows).
     pub fn from_nodes(
         f64_of: impl Fn(&str) -> f64,
         production: &str,
-        icy_bedrock: bool,
+        target_ice: f64,
         record_start: f64,
         with_debris: bool,
     ) -> Self {
         let target = |speed: f64| Target {
             gravity: f64_of("body.gravity"),
             speed,
-            strength: if icy_bedrock {
-                TARGET_STRENGTH_ICE
-            } else {
-                TARGET_STRENGTH_ROCK
-            },
+            strength: super::by_ice(TARGET_STRENGTH_ROCK, TARGET_STRENGTH_ICE, target_ice),
             density: f64_of("cratering.target_density"),
             simple_complex: f64_of("cratering.simple_complex_transition"),
         };
@@ -854,14 +850,10 @@ impl BombardmentParams {
 }
 
 /// The diameter of the largest crater a body holds, m (F135): an icy body's radius, a rocky
-/// body's diameter. A larger impact shatters and resurfaces it.
-pub fn hold_diameter(radius: f64, icy: bool) -> f64 {
-    2.0 * radius
-        * if icy {
-            ICE_HOLD_RADIUS_FRACTION
-        } else {
-            ROCK_HOLD_RADIUS_FRACTION
-        }
+/// body's diameter, a body of rock and ice between them by its target's ice degree (audit
+/// S9). A larger impact shatters and resurfaces it.
+pub fn hold_diameter(radius: f64, ice: f64) -> f64 {
+    2.0 * radius * super::by_ice(ROCK_HOLD_RADIUS_FRACTION, ICE_HOLD_RADIUS_FRACTION, ice)
 }
 
 /// Inputs to the statistical population sampler.
