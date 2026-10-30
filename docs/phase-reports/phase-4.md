@@ -2947,3 +2947,20 @@ How it went:
 - **Where the line stands.** A lid in any compression opening no lane would take Ganymede's: its lid stands some 5 MPa in elastic compression through its episode. The line stands at the lid's compressive strength, and Mimas keeps the lanes of its ocean's first part.
 
 Still to do: the switches with their sweeps, M16, M21's single budget and T3's bands (known limitations), for the user's choice.
+
+## The switches
+
+The user chose the switches of the closing audit's short list (2026-10-30). A diagnostic sweeps continuous inputs between reference bodies on the parameter graph and prints what the switches read (`sweeps.rs`). S2 stays a known limitation (an ice shell by the ice layer wants Io dry; a layered moment of inertia tried and not kept), S3, the Io regime, moved to Phase 5 with its survey, and S10 a known limitation.
+
+## The hundred-and-thirty-sixth milestone: the ice shell by degrees
+
+- **F227.** A shell over an ocean is thin by degrees about 0.025 of its radius: chaos and lanes take their shares by the degree, the craters' retention follows the renewal's rate, and the regolith takes the renewed clean ice by the same degree (audit S4, S6). Along Europa's tides the chaos comes in and the lanes rise and go with no step.
+- **F228.** The focusing's episodes and the plumes begin where the ocean's water reaches the surface through the thinned shell, the tides' cracks reaching the water a crack from the ocean holds, and the fallout grows from there (audit S5): Enceladus 1.74, Mimas 0.86, Europa 0.04.
+
+How it went:
+
+- **The reach and the terrain.** Where the reach passes one on Enceladus is the inner tenth of its thinning, narrower than the zone its terrain renews; the reach sets when the episodes begin and the zone keeps its profile.
+- **The lane tests' body.** The tests of the lanes in the episodes (F61) took an Enceladus at 0.8, later 0.9, of its tides, its plumes' frost keeping its surface cold and its lid too thick for any lane on the lid of the time. Since F228 the fallout fades as the reach nears one, the surface darkens and warms, and the lid thins: along Enceladus's radius from 0.6 to 1 and its tides from 0.85 to 1.2 of its own, no body both erupts and keeps a lid too thick for lanes. The tests now take one three times as far from the Sun at 0.95 of its tides (reach 1.20, lid 16.7 km against the 15.8 km a lane needs), its lanes opening in its episodes on a lid 0.72 of the mean. The tests had also counted every lane of a body without episodes as in one; they now count the present episode only on an active body.
+- **Every preset as it was.** Europa's chaos 0.3 and retention 0.1 Gyr, Ganymede's lanes 0.69, Enceladus's eight episodes and full fallout.
+
+Still to do: S9, the central pits; S1, the episodic lid's name.

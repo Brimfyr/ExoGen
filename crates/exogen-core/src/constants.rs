@@ -2272,8 +2272,10 @@ pub const MAX_CRATER_RADIUS_FRACTION: f64 = 0.75;
 pub const RETENTION_MOBILE_LID_GYR: f64 = 0.1;
 pub const RETENTION_THIN_ATMOSPHERE_GYR: f64 = 3.5;
 pub const RETENTION_ICE_OCEAN_GYR: f64 = 0.1;
-/// Tidal flux above which an ice shell over an ocean is treated as actively resurfacing
-/// (Europa 0.014 W/m², Enceladus 0.037) rather than ancient (Callisto, Ganymede 0.0001).
+/// The tidal flux at which a thin shell over an ocean renews itself at the full rate,
+/// W/m², in proportion below it (Europa 0.014 W/m², Enceladus 0.037; Callisto and Ganymede
+/// 0.0001), its surface renewed within RETENTION_ICE_OCEAN_GYR over its renewal's degree
+/// (audit S6).
 pub const ICE_RESURFACING_TIDAL_FLUX: f64 = 0.01;
 /// Burial depth that erases the replayed craters, metres, against the volcanic
 /// resurfacing rate, applied only above the Io-regime tidal flux where volcanism
@@ -2582,7 +2584,14 @@ pub const POLAR_SPREAD_WIDTH: f64 = 30e3;
 pub const POLAR_OUTER_PROFILE: f64 = 0.5;
 pub const POLAR_FOLD_TAPER: f64 = 10e3;
 pub const CRACK_STOP_PROFILE: f64 = 0.3;
-pub const POLAR_ACTIVE_THINNING: f64 = 0.3;
+/// The ocean reaches the surface through the thinned shell (audit S5): the water a crack
+/// from the ocean holds stands below the surface by the shell's thickness there times one
+/// less the ice's density over the water's, and the tides open cracks from above to the
+/// depth their stress at the thinned shell bears against the ice's weight (Crawford and
+/// Stevenson 1988); where the second reaches the first, ocean water erupts. The focusing's
+/// episodes and the plumes begin there, the plumes' fallout growing over this much more of
+/// the reach (a stated width).
+pub const CRACK_REACH_WIDTH: f64 = 0.5;
 /// The focusing comes and goes (F53; O'Neill and Nimmo 2010: overturns every 0.1 to 1
 /// Gyr, each active about 10 Myr): episodes recur every this many conductive times of
 /// the shell, d² / κ (a fit in their range, so that Enceladus's come about 0.5 Gyr apart
@@ -2757,12 +2766,13 @@ pub const POLAR_BELT_ARC_CONTRAST: f64 = 1.5;
 /// A past episode's fissures vented until it ended: they take a time this long after
 /// its end, Gyr, so that they stand on the last surface its terrain renewed.
 pub const FOSSIL_VENT_LAG_GYR: f64 = 1e-5;
-/// A shell renews its whole surface within the retention age only when it is thin
-/// against the body, under this share of the radius; a thick shell keeps its old craters
-/// and renews only where it is thin. A fit between Europa's 0.019 (its measured 30 km
-/// shell, F75) and Ganymede's 0.031, refitted from 0.02 when Europa's shell came to 30
-/// km; a switch the audit records (S4).
+/// A shell renews its whole surface by chaos and cracking where it is thin against the
+/// body, and in lanes where it is thick (audit S4, S6): it is thin by degrees about this
+/// share of the radius, wholly so this share of it below and not at all this share above,
+/// smoothly between (a stated width; the threshold a fit between Europa's 0.019, its
+/// measured 30 km shell, F75, and Ganymede's 0.031, the two outside the band).
 pub const WHOLESALE_SHELL_RATIO: f64 = 0.025;
+pub const THIN_SHELL_WIDTH: f64 = 0.2;
 /// Grooved terrain (F44): lanes of new ice drawn as great-circle swaths, their lengths
 /// log-uniform between these angles, rad, their widths between these shares of the
 /// radius (Ganymede 30 to 250 km, Enceladus 3 to 24 km, its ridged belts), wobbling along

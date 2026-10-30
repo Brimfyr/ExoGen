@@ -17,6 +17,80 @@ mod tests {
         g
     }
 
+    /// Between Ganymede's thick shell and Europa's thin one a shell renews itself by degrees
+    /// (audit S4, S6): as Europa's tides weaken and its shell thickens against its radius,
+    /// chaos gives way to lanes and the craters' retention grows, with no step between
+    /// neighbouring bodies of the sweep.
+    #[test]
+    fn a_shell_renews_itself_by_degrees_between_europa_and_ganymede() {
+        let (europa, _) = preset("Europa").unwrap().to_graph();
+        let e0 = europa.f64("orbit.eccentricity");
+        let mut last: Option<(f64, f64, f64)> = None;
+        for k in 0..=24 {
+            let f = 0.3 + 0.05 * k as f64;
+            let g = swept("Europa", "orbit.eccentricity", e0 * f);
+            let (chaos, lanes, retention) = (
+                g.f64("tectonics.chaos_fraction"),
+                g.f64("tectonics.ice_resurfaced_fraction"),
+                g.f64("cratering.retention_age"),
+            );
+            eprintln!(
+                "{f:.2}: shell {:.4} of the radius, tide {:.1} mW/m2, chaos {chaos:.3}, lanes {lanes:.3}, retention {retention:.3} Gyr",
+                g.f64("interior.ice_shell_thickness") / g.f64("body.radius"),
+                1e3 * g.f64("interior.tidal_flux"),
+            );
+            if let Some((c0, l0, r0)) = last {
+                assert!((chaos - c0).abs() < 0.12, "chaos {c0} to {chaos} at {f}");
+                assert!((lanes - l0).abs() < 0.3, "lanes {l0} to {lanes} at {f}");
+                assert!(
+                    retention / r0 < 3.0 && r0 / retention < 3.0,
+                    "retention {r0} to {retention} at {f}"
+                );
+            }
+            last = Some((chaos, lanes, retention));
+        }
+        let europa_now = swept("Europa", "orbit.eccentricity", e0);
+        assert!((europa_now.f64("tectonics.chaos_fraction") - 0.3).abs() < 1e-9);
+        assert!((europa_now.f64("cratering.retention_age") - 0.1).abs() < 1e-9);
+    }
+
+    /// The focusing's episodes and the plumes begin where the thinned shell lets the ocean
+    /// reach the surface, and the plumes' fallout grows from there (audit S5): as
+    /// Enceladus's tides are turned up from a fifth of its own, the cracks' reach passes one
+    /// and the fallout comes in by degrees.
+    #[test]
+    fn plumes_begin_where_the_ocean_reaches_the_surface() {
+        let (enceladus, _) = preset("Enceladus").unwrap().to_graph();
+        let e0 = enceladus.f64("orbit.eccentricity");
+        let mut last_fallout = 0.0;
+        let mut began = false;
+        for k in 0..=16 {
+            let f = 0.2 + 0.05 * k as f64;
+            let g = swept("Enceladus", "orbit.eccentricity", e0 * f);
+            let reach = g.f64("tectonics.crack_reach");
+            let fallout = g.f64("volcanism.plume_fallout_rate");
+            let period = g.f64("tectonics.focusing_period");
+            eprintln!(
+                "{f:.2}: thinning {:.3}, reach {reach:.3}, fallout {fallout:.0} m/Gyr, focusing every {period:.3} Gyr",
+                g.f64("tectonics.polar_thinning")
+            );
+            assert_eq!(
+                fallout > 0.0,
+                reach > 1.0 && g.f64("tectonics.ice_crack_density") > 0.0
+            );
+            assert_eq!(period > 0.0, reach >= 1.0);
+            began |= reach > 1.0;
+            if fallout > 0.0 && last_fallout > 0.0 {
+                assert!(
+                    fallout <= 2.5 * last_fallout + 1.0,
+                    "fallout {last_fallout} to {fallout} at {f}"
+                );
+            }
+            last_fallout = fallout;
+        }
+        assert!(began, "the sweep never let the ocean through");
+    }
+
     /// Prints the derived nodes the switches read along each sweep.
     #[test]
     #[ignore]

@@ -963,10 +963,31 @@ pub fn tectonics_polar_thinning(c: &Ctx) -> Value {
         .into()
 }
 
+/// Audit S5: how far the cracks the tides open from above at the thinnest shell reach
+/// toward the water a crack from the ocean holds there, which stands below the surface by
+/// the share of the shell the ice's buoyancy leaves dry (CRACK_REACH_WIDTH): ocean water
+/// reaches the surface past one.
+pub fn tectonics_crack_reach(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
+        return 0.0.into();
+    }
+    let d = c.f64("interior.ice_shell_thickness");
+    let thinnest = 1.0 - c.f64("tectonics.polar_thinning");
+    let love = crate::stages::tidal::ShellLove::new(
+        c.f64("body.radius"),
+        c.f64("body.gravity"),
+        c.f64("body.density"),
+    );
+    let stress = c.f64("tectonics.tidal_stress") * love.local_amplification(d, thinnest);
+    let opened = stress / (DENSITY_CRUST_ICE * c.f64("body.gravity").max(1e-3));
+    let standing = d * thinnest * (1.0 - DENSITY_CRUST_ICE / DENSITY_OCEAN);
+    (opened / standing.max(1.0)).into()
+}
+
 /// F53: the focused heating returns every so many conductive times of the shell, where
-/// the thinning is deep enough to renew terrain.
+/// it thins the shell enough for the ocean to reach the surface (audit S5).
 pub fn tectonics_focusing_period(c: &Ctx) -> Value {
-    if c.f64("tectonics.polar_thinning") <= POLAR_ACTIVE_THINNING {
+    if c.f64("tectonics.crack_reach") < 1.0 {
         return 0.0.into();
     }
     let d = c.f64("interior.ice_shell_thickness");
@@ -988,9 +1009,9 @@ pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
         return 0.0.into();
     }
-    let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
-    if ratio < WHOLESALE_SHELL_RATIO {
-        // A thin shell renews itself by cracking everywhere instead.
+    // A thin shell renews itself by chaos and cracking instead, by its degree (audit S4).
+    let thick = 1.0 - thin_shell(c);
+    if thick <= 0.0 {
         return 0.0.into();
     }
     // What the focusing takes to the pole does not spread as lanes.
@@ -1015,7 +1036,27 @@ pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
         .map(|w| 0.5 * (w[0].1 + w[1].1) * (w[1].0 - w[0].0))
         .sum();
     let renewal = (carried / (ICE_RESURFACING_FLUX * LANE_RENEWAL_GYR)).clamp(0.0, 1.0);
-    (renewal * diffuse).clamp(0.0, 0.95).into()
+    (renewal * diffuse * thick).clamp(0.0, 0.95).into()
+}
+
+/// How far a shell over an ocean is thin against its body (audit S4): wholly below
+/// 1 - THIN_SHELL_WIDTH of WHOLESALE_SHELL_RATIO of the radius, not at all above
+/// 1 + THIN_SHELL_WIDTH of it, smoothly between.
+fn thin_shell(c: &Ctx) -> f64 {
+    if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
+        return 0.0;
+    }
+    let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
+    let x = ((1.0 + THIN_SHELL_WIDTH) * WHOLESALE_SHELL_RATIO - ratio)
+        / (2.0 * THIN_SHELL_WIDTH * WHOLESALE_SHELL_RATIO);
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// How far a shell renews its whole surface (audit S6): as far as it is thin, at a rate in
+/// proportion to its tides up to ICE_RESURFACING_TIDAL_FLUX.
+fn wholesale_renewal(c: &Ctx) -> f64 {
+    thin_shell(c) * (c.f64("interior.tidal_flux") / ICE_RESURFACING_TIDAL_FLUX).clamp(0.0, 1.0)
 }
 
 /// The lid's strain from the body's change of radius (F147), from the nodes a derivation
@@ -1040,11 +1081,8 @@ pub fn tectonics_chaos_fraction(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "ice_shell_ocean" {
         return 0.0.into();
     }
-    let ratio = c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0);
-    if ratio >= WHOLESALE_SHELL_RATIO {
-        return 0.0.into();
-    }
-    (CHAOS_FRACTION_MAX * (c.f64("interior.tidal_flux") / CHAOS_FLUX).min(1.0)).into()
+    (CHAOS_FRACTION_MAX * (c.f64("interior.tidal_flux") / CHAOS_FLUX).min(1.0) * thin_shell(c))
+        .into()
 }
 
 pub fn volcanism_cryodome_count(c: &Ctx) -> Value {
@@ -1064,12 +1102,16 @@ pub fn volcanism_cryodome_count(c: &Ctx) -> Value {
 }
 
 pub fn volcanism_plume_fallout_rate(c: &Ctx) -> Value {
-    if c.f64("tectonics.polar_thinning") <= POLAR_ACTIVE_THINNING
-        || c.f64("tectonics.ice_crack_density") <= 0.0
-    {
+    // The plumes erupt where the ocean reaches the surface, the more the farther the
+    // cracks reach past it (audit S5).
+    let reach = c.f64("tectonics.crack_reach");
+    if reach < 1.0 || c.f64("tectonics.ice_crack_density") <= 0.0 {
         return 0.0.into();
     }
-    (PLUME_FALLOUT_RATE * (c.f64("interior.tidal_flux") / POLAR_FOCUS_FLUX).min(1.0)).into()
+    (PLUME_FALLOUT_RATE
+        * (c.f64("interior.tidal_flux") / POLAR_FOCUS_FLUX).min(1.0)
+        * ((reach - 1.0) / CRACK_REACH_WIDTH).min(1.0))
+    .into()
 }
 
 pub fn materials_salt(c: &Ctx) -> Value {
@@ -2517,14 +2559,11 @@ pub fn cratering_min_diameter(c: &Ctx) -> Value {
         .into()
 }
 
-/// Whether an ice shell renews its whole surface: a thin shell over an ocean, kept warm by
-/// the tides, renews itself everywhere; a thick one keeps its craters and renews only where
-/// it is thin.
+/// Whether an ice shell's bedrock is its ocean's clean ice: where it renews its whole
+/// surface more than half over (audit S6); its regolith takes the renewed ice by the
+/// renewal's degree (`materials_regolith_mix`).
 fn shell_renews_everywhere(c: &Ctx) -> bool {
-    c.str("interior.tectonic_regime") == "ice_shell_ocean"
-        && c.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX
-        && c.f64("interior.ice_shell_thickness") / c.f64("body.radius").max(1.0)
-            < WHOLESALE_SHELL_RATIO
+    wholesale_renewal(c) > 0.5
 }
 
 pub fn cratering_retention_age(c: &Ctx) -> Value {
@@ -2535,13 +2574,9 @@ pub fn cratering_retention_age(c: &Ctx) -> Value {
         "mobile_lid" => RETENTION_MOBILE_LID_GYR,
         // The surface the lid's last overturn laid (F121).
         "episodic_lid" => c.f64("tectonics.resurfacing_event_age"),
-        "ice_shell_ocean" => {
-            if shell_renews_everywhere(c) {
-                RETENTION_ICE_OCEAN_GYR
-            } else {
-                age
-            }
-        }
+        // A thin shell renews its surface within RETENTION_ICE_OCEAN_GYR over the degree
+        // of its renewal (audit S6).
+        "ice_shell_ocean" => (RETENTION_ICE_OCEAN_GYR / wholesale_renewal(c).max(1e-9)).min(age),
         _ => {
             if p > SPACE_WEATHERING_MAX_PRESSURE {
                 RETENTION_THIN_ATMOSPHERE_GYR
@@ -2655,7 +2690,10 @@ pub fn materials_regolith_mix(c: &Ctx) -> Value {
                 c.f64("cratering.retention_age"),
                 (lum(crust.fresh), lum(crust.mature), lum(lag.mature)),
             );
-            let renewed = REGOLITH_EXCHANGE * c.f64("tectonics.ice_resurfaced_fraction");
+            // The ice the lanes renewed, traded onto the old crust, and the ice a thin
+            // shell renews everywhere, by its degree (audit S6).
+            let renewed = REGOLITH_EXCHANGE * c.f64("tectonics.ice_resurfaced_fraction")
+                + wholesale_renewal(c);
             let cover = if cover > 1e-4 { cover } else { 0.0 };
             let renewed = if renewed > 1e-4 {
                 renewed.min(1.0)

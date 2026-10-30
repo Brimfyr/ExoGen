@@ -470,6 +470,9 @@ pub fn focusing_episodes(graph: &ParamGraph, shell: &ShellMap) -> Vec<FocusEpiso
 pub struct ShellMap {
     pub pole: Option<[f64; 3]>,
     pub thinning: f64,
+    /// How far the tides' cracks reach toward the ocean's water at the thinnest shell
+    /// (audit S5).
+    pub reach: f64,
     pub radius_rad: f64,
     /// The field that wobbles the thinning's edge round the pole and structures the
     /// thinning with the shell's convection.
@@ -481,6 +484,7 @@ pub struct ShellMap {
 impl ShellMap {
     pub fn new(graph: &ParamGraph) -> Self {
         let thinning = graph.f64("tectonics.polar_thinning").clamp(0.0, 0.95);
+        let reach = graph.f64("tectonics.crack_reach");
         let seed = graph.f64("seed.tectonics") as u64;
         let noise = GradientNoise::new(seed ^ 0x5027_B0B1);
         let structure_frequency = graph.f64("body.radius")
@@ -489,6 +493,7 @@ impl ShellMap {
             return Self {
                 pole: None,
                 thinning: 0.0,
+                reach,
                 radius_rad: 0.0,
                 noise,
                 structure_frequency,
@@ -500,6 +505,7 @@ impl ShellMap {
         Self {
             pole: Some([0.0, 0.0, if south { -1.0 } else { 1.0 }]),
             thinning,
+            reach,
             radius_rad: POLAR_TERRAIN_RADIUS_DEG.to_radians(),
             noise,
             structure_frequency,
@@ -550,9 +556,10 @@ impl ShellMap {
         1.0 - self.thinning * self.profile(d)
     }
 
-    /// Whether the thinning is deep enough for the terrain over it to renew itself.
+    /// Whether the thinning lets the ocean reach the surface, so that the terrain over it
+    /// renews itself (audit S5).
     pub fn has_active_terrain(&self) -> bool {
-        self.pole.is_some() && self.thinning > POLAR_ACTIVE_THINNING
+        self.pole.is_some() && self.reach >= 1.0
     }
 
     /// Whether the shell at a direction is in the thinned zone whose fissures renew the

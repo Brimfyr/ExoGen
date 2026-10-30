@@ -32,9 +32,9 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | S1 | Closed in part (F121 to F123, F185) | the episodic lid breaks by its own friction; the plates' rule goes with Phase 6; the melt efficiency by name and the ice shells' names: **short list** |
 | S2 | Known limitation (checked) | an ice shell by the ice layer wants Io dry, its water lost with Mars's in Phase 5 (Io to Europa waits on it); a layered moment of inertia at uncompressed densities gives the rocky bodies closer factors and the icy ones far lower, so the class's stand (below) |
 | S3 | Phase 5 | Io's surface a second pipeline laid afresh each step; one accumulating pipeline with Io's activity by the heat-pipe share wants the volatile inventories and Io's water lost (the survey's findings under S3) |
-| S4 | **Short list** | chaos or lanes at a shell 0.025 of the radius; with V1's Ganymede-to-Europa sweep |
-| S5 | **Short list** | focusing, plumes and fallout at a thinning of 0.3 of the shell |
-| S6 | **Short list** | the retention age's step |
+| S4 | Closed (F227) | the shell thin by degrees over a stated width about the threshold, chaos and lanes by its degree; the sweep a test |
+| S5 | Closed (F228) | the episodes and plumes begin where the ocean reaches the surface through the thinned shell, the fallout growing from there; the sweep a test |
+| S6 | Closed (F227) | the retention from the renewal's rate, by the thin shell's degree and the tides; the regolith's clean ice by the same degree |
 | S7, S8 | Closed | F126; the eighteenth milestone |
 | S9 | **Short list** | central pits by the target's material |
 | S10 | **Short list** | a rocky interior's tides by its class, not its temperature |
@@ -161,7 +161,7 @@ Moved to Phase 5 by the user (2026-10-30), with Io's volatiles and its water los
 - **The sweep** (`sweeps.rs`): by Io's eccentricity, its paterae 0 to 145, mountains 0 to 54 and bedrock anorthosite to sulfur between 0.45 and 0.65 W/m², its regime episodic from 0.16 W/m² (the mantle's model, with the tides) and back to stagnant past the threshold.
 - **Direction.** One accumulating pipeline; Io's paterae, plumes, flows and mountains by the heat-pipe share, the part of the heat the eruptions carry (already continuous, MAGMA_EFFICIENCY_TIDAL_MAX), their fallout and small eruptions by the activity; burial taking what is older than the surface's age; the mantle's model with the heat pipe, the lid conducting only what the eruptions do not carry, so that a strongly heated lid stands thick and unbroken as Io's does; the sulfur and SO2 from the body's volatile inventory and the plasma's alteration from its parent's magnetosphere; and Io's water lost, so that the Moon to Io and Io to Europa sweeps come together.
 
-### S4. The thin-shell rule
+### S4. The thin-shell rule (closed by F227)
 
 WHOLESALE_SHELL_RATIO (a shell under 0.025 of the radius; 0.02 until Europa's shell came to its measured 30 km, F75, which put it at 0.019) is read in `tectonics_ice_resurfaced_fraction` (no lanes under it), `tectonics_chaos_fraction` (no chaos over it), `cratering_retention_age` (wholesale renewal under it, with S6) and the impacts stage.
 
@@ -171,7 +171,9 @@ Direction: the share of the renewal that goes to chaos from the processes that m
 
 When: the Europa milestone.
 
-### S5. Active thinning
+Closed by F227 (2026-10-30): the shell is thin by degrees, wholly at 0.8 of WHOLESALE_SHELL_RATIO and not at all at 1.2 of it (THIN_SHELL_WIDTH, a stated width), the chaos by its degree and the lanes by what is left. Along Europa's tides from 0.3 to 1.5 of its own, chaos comes in from 0.001 to 0.3 and the lanes rise to 0.37 and go, with no step between neighbours (the sweep a test). Still open, as the direction asks: the shares from the processes, melt-through and diapirs for chaos and the lid's extension for the lanes (M21), rather than a width about the threshold.
+
+### S5. Active thinning (closed by F228)
 
 POLAR_ACTIVE_THINNING (0.3 of the shell) is read in `tectonics_focusing_period`, `volcanism_plume_fallout_rate` and the ice stage's activity test. Under it a body has no focusing episodes, no plumes and no fallout; over it, all three. Enceladus (0.76) is the only reference body over it; Europa is at 0.27 (0.12 until F75 brought its tidal flux to 14 mW/m² and its shell to 30 km, which focus more).
 
@@ -181,7 +183,9 @@ Direction: the event is a crack that reaches the ocean. Tidal stress opens a dry
 
 When: the Europa milestone, whose plumes are the test.
 
-### S6. Wholesale renewal of a thin shell
+Closed by F228 (2026-10-30): the episodes and plumes begin where the ocean reaches the surface, the cracks the tides open from above at the thinnest shell reaching the water a crack from the ocean holds (`tectonics.crack_reach`: Enceladus 1.74, Mimas 0.86, Europa 0.04), the fallout growing over CRACK_REACH_WIDTH more of the reach; the sweep of Enceladus's tides is a test. The zone the episodes renew keeps its profile (POLAR_ACTIVE_PROFILE): where the reach passes one on Enceladus, under 7.2 km of shell, is the inner tenth of the thinning, narrower than the terrain the user passed at the gate.
+
+### S6. Wholesale renewal of a thin shell (closed by F227)
 
 `cratering_retention_age` gives a thin shell (S4) over ICE_RESURFACING_TIDAL_FLUX (0.01 W/m²) a retention of RETENTION_ICE_OCEAN_GYR, and any other shell the body's age: a step in the crater count.
 
@@ -192,6 +196,8 @@ Since F81 (2026-10-15, the twenty-third milestone) the plains' ages come from wh
 Direction: the retention age from the rate at which cracks, lanes and chaos form, so that it follows the same quantities they do. The freezing stresses (F82) now bend and cross the cracks but do not yet set how many form: a thickening shell's strain, accommodated by the cracks' opening, is the measure of that rate they offer.
 
 When: the earlier-phases revisit, with the crack population's rate.
+
+Closed by F227 (2026-10-30): the whole surface renews within RETENTION_ICE_OCEAN_GYR over the degree of its renewal, the thin shell's degree times the tides' share of ICE_RESURFACING_TIDAL_FLUX, at most the body's age; the loop keeps its craters for that retention, and the regolith takes the renewed clean ice by the same degree (S7's last switch). Still open, as the direction asks: the rate from the cracks', lanes' and chaos's own rates of formation.
 
 ### S7. Materials by name
 
@@ -1065,3 +1071,5 @@ Each sweep prints the count or share of each feature class along the path and fa
 When: each milestone adds the sweep for what it touches.
 
 The sweeps on the parameter graph (2026-10-30, `sweeps.rs`, `print_switch_sweeps`): Io by its eccentricity, its paterae 0 to 145, mountains 0 to 54 and bedrock anorthosite to sulfur between 0.45 and 0.65 W/m² (S3), its regime episodic from 0.16 W/m² and back to stagnant past Io's threshold, and anorthosite on an Io-like body below it; Europa by its eccentricity, lanes 0.74 to none and chaos none to 0.24 where its shell crosses 0.025 of its radius (S4), its retention 4.5 to 0.1 Gyr where its tide crosses 10 mW/m² (S6), its thinning never reaching the 0.3 its plumes want (S5); Mars by its radius, the episodic regime from 1.6 times it by the lid's friction (F121, a physical threshold), and with the name tesserae 0 to 0.08, domes 0 to 122 and the magma's rate fivefold (S1), and 1,403 coronae on a stagnant lid at 1.4 times; Callisto by its density, at 3,300 kg/m³ and 9 percent ice its shell 40 km to none, its moment of inertia 0.35 to 0.33 and its bedrock ice to anorthosite (S2).
+
+Two sweeps are tests since F227 and F228: Europa's tides from 0.3 to 1.5 of its own, the shell renewing itself by degrees (S4, S6), and Enceladus's from 0.2, its plumes beginning where the ocean reaches the surface (S5).

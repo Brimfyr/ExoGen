@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 34;
+pub const VERSION: u64 = 35;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -220,11 +220,9 @@ impl CraterInputs {
 pub fn wholesale_resurfacing(graph: &ParamGraph) -> bool {
     match graph.str("interior.tectonic_regime") {
         "mobile_lid" | "episodic_lid" => true,
-        "ice_shell_ocean" => {
-            graph.f64("interior.tidal_flux") > ICE_RESURFACING_TIDAL_FLUX
-                && graph.f64("interior.ice_shell_thickness") / graph.f64("body.radius").max(1.0)
-                    < WHOLESALE_SHELL_RATIO
-        }
+        // A shell that renews itself by degrees keeps its craters for its retention age
+        // (audit S6).
+        "ice_shell_ocean" => graph.f64("cratering.retention_age") < graph.f64("body.age") - 1e-9,
         _ => crate::stages::io::is_io_regime(graph),
     }
 }

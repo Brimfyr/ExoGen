@@ -35,7 +35,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 26;
+pub const VERSION: u64 = 27;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -4374,16 +4374,18 @@ mod tests {
         assert!(lane.half_width_at(0.0) > 0.5 * lane.half_width);
     }
 
-    /// A lane takes the lid where and when it opens (F61). On Enceladus the lid of the
-    /// time is too thick for any lane, so every lane opens in a zone a focusing episode
-    /// has thinned, during that episode, on a lid thinner than the mean; and none is
-    /// wider than a lane can be.
+    /// A lane takes the lid where and when it opens (F61). On a colder Enceladus the lid
+    /// of the time is too thick for any lane, so every lane opens in a zone a focusing
+    /// episode has thinned, during that episode, on a lid thinner than the mean; and none
+    /// is wider than a lane can be.
     #[test]
     fn a_lane_opens_where_the_lid_lets_it() {
-        // A less heated Enceladus, its eccentricity 0.8 of the real one's, has a lid too
-        // thick for any lane on the lid of the time: its lanes open only where and when its
-        // episodes thinned the shell, on the thinned lid.
-        let (g, p) = enceladus_heated(0.8, 64);
+        // A less heated Enceladus three times as far from the Sun, its eccentricity 0.95
+        // of the real one's, erupts (F228) and its colder surface keeps a lid too thick for
+        // any lane on the lid of the time: its lanes open only where and when its episodes
+        // thinned the shell, on the thinned lid. (Nearer the Sun a less heated one's ocean
+        // no longer reaches the surface before its lid is thin enough for lanes.)
+        let (g, p) = enceladus_heated(0.95, 3.0, 64);
         assert!(!p.lanes.is_empty());
         let widest = GROOVE_LANE_MAX_LENGTH_RAD * g.f64("body.radius") / GROOVE_LANE_ASPECT.0;
         let mean_lid = g.f64("interior.elastic_thickness");
@@ -4392,7 +4394,8 @@ mod tests {
             "{mean_lid}"
         );
         let in_episode = |p: &IceShellProcess, t: f64| {
-            p.episodes.iter().any(|e| t >= e.start && t <= e.end) || t >= p.present_start
+            p.episodes.iter().any(|e| t >= e.start && t <= e.end)
+                || (p.shell.has_active_terrain() && t >= p.present_start)
         };
         for l in &p.lanes {
             assert!(2.0 * l.half_width <= widest * 1.0001, "{}", l.half_width);
@@ -4412,7 +4415,7 @@ mod tests {
         }
         // The real one's lid, over the shell its porous core keeps thin (F68), lets lanes
         // open on the lid of the time too, each as wide as its own lid makes it.
-        let (g1, p1) = enceladus_heated(1.0, 64);
+        let (g1, p1) = enceladus_heated(1.0, 1.0, 64);
         let mean1 = g1.f64("interior.elastic_thickness");
         assert!(GROOVE_LANE_WIDTH_ELASTIC.0 * mean1 < widest, "{mean1}");
         assert!(p1.lanes.iter().any(|l| !in_episode(&p1, l.time_gyr)));
@@ -4447,36 +4450,52 @@ mod tests {
         }
     }
 
-    /// Enceladus with its eccentricity scaled, and so its tides by the square: a body less
-    /// or more heated than the real one, on the path between them.
-    fn enceladus_heated(eccentricity: f64, face: u32) -> (ParamGraph, IceShellProcess) {
+    /// Enceladus with its eccentricity scaled, and so its tides by the square, and its
+    /// planet's distance from the Sun: a body less or more heated than the real one, on
+    /// the path between them.
+    fn enceladus_heated(
+        eccentricity: f64,
+        distance: f64,
+        face: u32,
+    ) -> (ParamGraph, IceShellProcess) {
         let (mut g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
         let e = g.f64("orbit.eccentricity") * eccentricity;
         g.set("orbit.eccentricity", e).unwrap();
+        let a = g.f64("parent.semi_major_axis") * distance;
+        g.set("parent.semi_major_axis", a).unwrap();
         let p = IceShellProcess::new(&g, CubeSphere::new(face)).unwrap();
         (g, p)
     }
 
     /// Between a body whose lid lets no lane form outside its thinned zones and one whose
     /// lid lets every lane form lie bodies that get some of each (principle 15): as a less
-    /// heated Enceladus (its eccentricity 0.8 of the real one's) is made larger its lid
-    /// takes up less of it, and lanes open on the lid of the time, outside any focusing
-    /// episode, a few and then many; a fully heated one half again as large makes most of
-    /// its lanes on the lid of the time and some in its episodes.
+    /// heated Enceladus three times as far from the Sun (its eccentricity 0.95 of the real
+    /// one's, as in `a_lane_opens_where_the_lid_lets_it`) is made larger its lid takes up
+    /// less of it, and lanes open on the lid of the time, outside any focusing episode, a
+    /// few and then many; a fully heated one half again as large, where it is, makes most
+    /// of its lanes on the lid of the time and some in its episodes.
     #[test]
     fn lanes_come_in_by_degrees_as_the_lid_thins_against_the_body() {
         let mut outside_counts = Vec::new();
         let mut inside_counts = Vec::new();
-        for (scale, heat) in [(1.0, 0.8), (1.2, 0.8), (1.5, 0.8), (1.5, 1.0)] {
+        for (scale, heat, distance) in [
+            (1.0, 0.95, 3.0),
+            (1.2, 0.95, 3.0),
+            (1.5, 0.95, 3.0),
+            (1.5, 1.0, 1.0),
+        ] {
             let (mut g, _) = crate::presets::preset("Enceladus").unwrap().to_graph();
             let e = g.f64("orbit.eccentricity") * heat;
             g.set("orbit.eccentricity", e).unwrap();
+            let a = g.f64("parent.semi_major_axis") * distance;
+            g.set("parent.semi_major_axis", a).unwrap();
             let r = g.f64("body.radius") * scale;
             g.set("body.radius", r).unwrap();
             g.set("detail.quality", "preview").unwrap();
             let p = IceShellProcess::new(&g, CubeSphere::new(48)).unwrap();
             let in_episode = |t: f64| {
-                p.episodes.iter().any(|e| t >= e.start && t <= e.end) || t >= p.present_start
+                p.episodes.iter().any(|e| t >= e.start && t <= e.end)
+                    || (p.shell.has_active_terrain() && t >= p.present_start)
             };
             let outside = p.lanes.iter().filter(|l| !in_episode(l.time_gyr)).count();
             let widest = GROOVE_LANE_MAX_LENGTH_RAD * r / GROOVE_LANE_ASPECT.0;
@@ -4503,7 +4522,7 @@ mod tests {
         }
         assert_eq!(outside_counts[0], 0);
         assert!(inside_counts[0] > 0);
-        // A few, then more than twice as many (12 and 34 with the ends tapering, F142).
+        // A few, then more than twice as many (13 and 44 with the ends tapering, F142).
         assert!(outside_counts[1] > 0 && outside_counts[2] > 2 * outside_counts[1]);
         // The fully heated one is a world in between: lanes of both kinds.
         assert!(
@@ -4634,10 +4653,10 @@ mod tests {
             v
         };
         let ganymede = turns_of("Ganymede");
-        // A less heated Enceladus's lanes all open in its episodes, within which its tidal
-        // field barely turns.
+        // A less heated, colder Enceladus's lanes all open in its episodes, within which its
+        // tidal field barely turns.
         let enceladus: Vec<f64> = {
-            let (_, p) = enceladus_heated(0.8, 64);
+            let (_, p) = enceladus_heated(0.95, 3.0, 64);
             assert!(p.lanes.iter().all(|l| l.turns.len() == GROOVE_PULSES - 1));
             let mut v: Vec<f64> = p
                 .lanes
