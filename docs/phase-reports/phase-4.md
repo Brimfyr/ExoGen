@@ -2888,3 +2888,12 @@ Still to do: the near ring at 1.70 against the reference's median of 1.37; the m
 - **F222, reverted.** A crater in lava that brought up any of the deep bedrock lost its lava entirely, its walls and blanket showing the crust beneath as bright rings in the maria. It kept its lava but for its deep share, and the maria's ground standing 50 percent brighter than the ground about it fell from 1.29 to 1.02 percent against the reference's 0.30. The user found the terrain on the Moon and Mercury more cohesive without it, and it was reverted the same day (audit M36).
 
 Still to do: the near ring at 1.70 against the reference's median of 1.37; the maria's bright rims (audit M36); the switch audit, then Phase 4F's close.
+
+## The gate passed
+
+The user's verdict (2026-10-30): all three test bodies pass the gate. Io passed at the re-check (2026-10-29); Enceladus passes with its fractures' global network a known limitation (audit M39); the Moon passes with its maria on both hemispheres a known limitation (audit M33) and the near ring and the maria's bright rims of audit M36 standing.
+
+- **Every preset rendered.** All seventeen presets at 4,096 pixels against their last renders: no regression. Io and Enceladus are as at the gate, Mercury and the Moon as at the hundred-and-thirty-second milestone, Venus's albedo as it was; the rays are softer on Callisto, Ganymede, Ceres, Mimas and Triton, as F220 and F221 meant, Triton losing the ray systems that covered it (its mean albedo 15 percent lower); Mars at its old resolution shows a few craters and wrinkle ridges moved by its history's changed course. Miranda's global canyons, which the user asked about, are the extension of its freezing ocean (F147, the seventy-second milestone), narrowed by F149.
+- **Principle 16 waits for the end of the surface phases.** The regional variation (audit M41) and the tone within Io's flow fields (audit M40) are one pass over every body after Phase 6, calibrated against many bodies at once once their looks are final, not a step of Phase 4F (the user).
+
+Still to do: compression's mountain belts (PLAN.md, Phase 4F: a range like Phlegra Montes or the Thaumasia highlands where the strain concentrates, and Venus's belts round Lakshmi Planum with the episodic regime); the closing audit, the switches with the sweeps of interpolated bodies that validate them, and every open entry of docs/audit-principles.md given its outcome.
