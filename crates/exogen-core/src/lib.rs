@@ -28,6 +28,7 @@ pub mod stages;
 pub mod thermal;
 pub mod units;
 pub mod validate;
+mod sweeps;
 
 /// Version of the engine, written into project files and sidecars.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

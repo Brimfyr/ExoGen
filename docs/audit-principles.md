@@ -78,7 +78,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | M11 | Closed in part (F213) | Mars, Titan, the tholins and Miranda with Phase 5 |
 | M12 | Known limitation (checked) | Ganymede's rayed craters within the estimate, Callisto's between its rayed and bright-rimmed counts; the ray lifetime and the high latitudes' skin stand |
 | M14, M15 | Closed (F119, F109) | their residuals with W1 and M16: known limitation |
-| M16 | **Short list** | the finish's floods keep four fifths of the loop's lava |
+| M16 | Known limitation | the finish's floods keep part of the loop's lava, showing as gaps between flows within the maria; the Moon's lava units now cover 25.5 percent against the maria's 17 (with the lava-floored craters and M33), so the shortfall it once made is gone; flows covering their runs with lobes sized by supply and slope (W1) left for later, the user's choice (2026-10-30) |
 | M17 | Closed in part (F113) | pit chains and dikes off the rises: known limitation |
 | M18 | Known limitation | a rise's axis drawn |
 | M21 | Closed in part (F225) | the lanes read the lid's strain, opening none while it yields in compression; one budget spent once on graben, lanes and bands: known limitation |
@@ -1053,3 +1053,5 @@ Moved by the user (2026-10-30): Venus's belts with Phase 6, Mars's with Phase 5 
 Each sweep prints the count or share of each feature class along the path and fails on a step where no named threshold is crossed.
 
 When: each milestone adds the sweep for what it touches.
+
+The sweeps on the parameter graph (2026-10-30, `sweeps.rs`, `print_switch_sweeps`): Io by its eccentricity, its paterae 0 to 145, mountains 0 to 54 and bedrock anorthosite to sulfur between 0.45 and 0.65 W/m² (S3), its regime episodic from 0.16 W/m² and back to stagnant past Io's threshold, and anorthosite on an Io-like body below it; Europa by its eccentricity, lanes 0.74 to none and chaos none to 0.24 where its shell crosses 0.025 of its radius (S4), its retention 4.5 to 0.1 Gyr where its tide crosses 10 mW/m² (S6), its thinning never reaching the 0.3 its plumes want (S5); Mars by its radius, the episodic regime from 1.6 times it by the lid's friction (F121, a physical threshold), and with the name tesserae 0 to 0.08, domes 0 to 122 and the magma's rate fivefold (S1), and 1,403 coronae on a stagnant lid at 1.4 times; Callisto by its density, at 3,300 kg/m³ and 9 percent ice its shell 40 km to none, its moment of inertia 0.35 to 0.33 and its bedrock ice to anorthosite (S2).
