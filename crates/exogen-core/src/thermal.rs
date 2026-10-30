@@ -142,6 +142,21 @@ impl MeltClock {
     }
 }
 
+/// The share of a mantle's heat that goes into melt by its regime: a rocky lid's between the
+/// stagnant lid's and the episodic lid's, geometrically by its episodic degree (audit S1).
+pub fn magma_efficiency(regime: &str, episodic: f64) -> f64 {
+    match regime {
+        "mobile_lid" => MAGMA_EFFICIENCY_MOBILE,
+        "ice_shell_ocean" | "ice_shell_rock" => MAGMA_EFFICIENCY_ICE,
+        _ if episodic <= 0.0 => MAGMA_EFFICIENCY_STAGNANT,
+        _ if episodic >= 1.0 => MAGMA_EFFICIENCY_EPISODIC,
+        _ => {
+            MAGMA_EFFICIENCY_STAGNANT
+                * (MAGMA_EFFICIENCY_EPISODIC / MAGMA_EFFICIENCY_STAGNANT).powf(episodic)
+        }
+    }
+}
+
 impl ThermalInputs {
     pub fn from_graph(graph: &ParamGraph) -> Self {
         let icy = matches!(
@@ -154,12 +169,7 @@ impl ThermalInputs {
         let mantle = (matches!(regime, "stagnant_lid" | "episodic_lid")
             && graph.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX)
             .then(|| crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph)));
-        let base = match regime {
-            "mobile_lid" => MAGMA_EFFICIENCY_MOBILE,
-            "episodic_lid" => MAGMA_EFFICIENCY_EPISODIC,
-            "ice_shell_ocean" | "ice_shell_rock" => MAGMA_EFFICIENCY_ICE,
-            _ => MAGMA_EFFICIENCY_STAGNANT,
-        };
+        let base = magma_efficiency(regime, graph.f64("interior.episodic_degree"));
         let melting_point = if graph
             .get("volatiles.inventory")
             .as_map()

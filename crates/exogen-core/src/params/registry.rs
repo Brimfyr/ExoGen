@@ -340,6 +340,7 @@ const LANE_DEPS: &[&str] = &[
     "tectonics.polar_thinning",
     "cratering.record_start",
     "cratering.retention_age",
+    "interior.episodic_degree",
 ];
 
 const THERMAL_DEPS: &[&str] = &[
@@ -371,6 +372,7 @@ const THERMAL_DEPS: &[&str] = &[
     "volatiles.working_liquid",
     "tectonics.plume_rise_count",
     "interior.core_porosity",
+    "interior.episodic_degree",
 ];
 
 /// What a rock lid's coronae read (F145): the thermal history, the rises and the mantle.
@@ -413,6 +415,7 @@ const CORONA_DEPS: &[&str] = &[
     "rotation.angular_velocity",
     "body.moment_of_inertia_factor",
     "cratering.record_start",
+    "interior.episodic_degree",
 ];
 
 static NODES: &[NodeDef] = &[
@@ -1571,7 +1574,7 @@ static NODES: &[NodeDef] = &[
             "tectonics.initial_crust_thickness",
         ],
         d::interior_tectonic_regime,
-        "Mobile lid needs surface water, 50 mW/m² and 4000 km; episodic lid where its mantle broke a dry rocky lid in the last half of its life (F121); ice shells by ocean presence; else stagnant lid.",
+        "Mobile lid needs surface water, 50 mW/m² and 4000 km; episodic lid where its mantle has broken a dry rocky lid, however long ago (F121, audit S1), its episodic constants by interior.episodic_degree; ice shells by ocean presence; else stagnant lid.",
         "F19",
     ),
     derived(
@@ -1582,6 +1585,7 @@ static NODES: &[NodeDef] = &[
         KM3_PER_YEAR,
         f(0.0, 1e9),
         &[
+            "interior.episodic_degree",
             "interior.tectonic_regime",
             "body.composition_class",
             "interior.tidal_flux",
@@ -2690,6 +2694,22 @@ static NODES: &[NodeDef] = &[
         "PLAN.md 4.4",
     ),
     derived(
+        "interior.episodic_degree",
+        "interior",
+        "Episodic degree",
+        "",
+        1.0,
+        f(0.0, 1.0),
+        &[
+            "interior.tectonic_regime",
+            "tectonics.resurfacing_event_age",
+            "body.age",
+        ],
+        d::interior_episodic_degree,
+        "How far a lid that has broken is episodic now (audit S1): 1 while its last overturn lies within 0.4 of the body's age, 0 past 0.6 or on a lid that never broke, by degrees between. Sets the mantle's melt efficiency, geometrically from the stagnant lid's 0.01 to the episodic lid's 0.05, the rises' width and the domes. Venus 1.",
+        "stated width",
+    ),
+    derived(
         "tectonics.resurfacing_event_age",
         "tectonics",
         "Resurfacing event age",
@@ -2760,6 +2780,7 @@ static NODES: &[NodeDef] = &[
         1e3,
         f(0.0, 1e8),
         &[
+            "interior.episodic_degree",
             "tectonics.plume_rise_count",
             "body.radius",
             "interior.tectonic_regime",
@@ -3235,7 +3256,11 @@ static NODES: &[NodeDef] = &[
         "",
         1.0,
         f(0.0, 5000.0),
-        &["interior.tectonic_regime", "body.radius"],
+        &[
+            "interior.episodic_degree",
+            "interior.tectonic_regime",
+            "body.radius",
+        ],
         d::volcanism_dome_count,
         "Steep-sided flat-topped domes on an episodic lid's plains, 20 to 60 km across: about 150 on Venus. Pin to choose.",
         "PLAN.md 4.4",

@@ -1613,7 +1613,13 @@ pub const CONVECTION_MAX_DRAWS: usize = 4_000;
 pub const SOLIDUS_C0: f64 = 1_120.661;
 pub const SOLIDUS_C1: f64 = 132.899;
 pub const SOLIDUS_C2: f64 = -5.104;
-pub const EPISODIC_RECENT_SHARE: f64 = 0.5;
+/// The shares of a body's age since its lid's last overturn between which it goes from an
+/// episodic lid to a stagnant one (audit S1): its mantle melts at the episodic lid's
+/// efficiency, its rises are as narrow and its domes as many while its lid overturned
+/// within the first share of its age, a stagnant lid's past the second, by degrees between
+/// (a stated width about half its life, where F121 had drawn a cut). What an overturn does,
+/// the resurfacing, the tesserae and the craters kept, follows the overturns themselves.
+pub const EPISODIC_RECENT_SHARE: (f64, f64) = (0.4, 0.6);
 pub const MANTLE_STEPS: usize = 4_000;
 
 // ---------------------------------------------------------------- atmosphere and climate

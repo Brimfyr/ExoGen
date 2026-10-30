@@ -1347,16 +1347,23 @@ fn mantle_keeps_heat(c: &Ctx) -> bool {
         && c.f64("interior.tidal_flux") <= IO_REGIME_TIDAL_FLUX
 }
 
-/// Whether a dry rocky lid has broken lately (F121): its mantle broke it within
-/// EPISODIC_RECENT_SHARE of its life before the present.
-fn lid_breaks_lately(c: &Ctx) -> bool {
-    if !mantle_keeps_heat(c) {
-        return false;
+/// Whether a dry rocky lid has broken (F121): its mantle's convective stress has passed the
+/// lid's friction at least once, however long ago (audit S1).
+fn lid_has_broken(c: &Ctx) -> bool {
+    mantle_keeps_heat(c) && mantle_history(c).last_overturn().is_some()
+}
+
+/// Audit S1: how far a lid that has broken is episodic now, 1 while it last overturned
+/// within EPISODIC_RECENT_SHARE's first share of the body's age, none past its second or
+/// on a lid that never broke, by degrees between.
+pub fn interior_episodic_degree(c: &Ctx) -> Value {
+    if c.str("interior.tectonic_regime") != "episodic_lid" {
+        return 0.0.into();
     }
-    let age = c.f64("body.age");
-    mantle_history(c)
-        .last_overturn()
-        .is_some_and(|t| t > age * (1.0 - EPISODIC_RECENT_SHARE))
+    let since = c.f64("tectonics.resurfacing_event_age") / c.f64("body.age").max(1e-9);
+    let (a, b) = EPISODIC_RECENT_SHARE;
+    let x = ((b - since) / (b - a)).clamp(0.0, 1.0);
+    (x * x * (3.0 - 2.0 * x)).into()
 }
 
 pub fn interior_surface_heat_flux(c: &Ctx) -> Value {
@@ -1401,12 +1408,10 @@ fn thermal_inputs(c: &Ctx) -> crate::thermal::ThermalInputs {
         surface_temperature: c.f64("atmosphere.surface_temperature_mean"),
         melting_point: ice_melting_point(c),
         crust_strength: c.f64("interior.crust_strength"),
-        magma_efficiency_base: match regime {
-            "mobile_lid" => MAGMA_EFFICIENCY_MOBILE,
-            "episodic_lid" => MAGMA_EFFICIENCY_EPISODIC,
-            "ice_shell_ocean" | "ice_shell_rock" => MAGMA_EFFICIENCY_ICE,
-            _ => MAGMA_EFFICIENCY_STAGNANT,
-        },
+        magma_efficiency_base: crate::thermal::magma_efficiency(
+            regime,
+            c.f64("interior.episodic_degree"),
+        ),
     }
 }
 
@@ -1617,8 +1622,8 @@ pub fn interior_tectonic_regime(c: &Ctx) -> Value {
         }
     } else if plates(c) {
         "mobile_lid"
-    } else if lid_breaks_lately(c) {
-        // A dry rocky lid that its mantle has broken lately (F121).
+    } else if lid_has_broken(c) {
+        // A dry rocky lid that its mantle has broken (F121, audit S1).
         "episodic_lid"
     } else {
         "stagnant_lid"
@@ -1630,12 +1635,7 @@ pub fn interior_magma_production_rate(c: &Ctx) -> Value {
     let r = c.f64("body.radius");
     let regime = c.str("interior.tectonic_regime");
     let icy = is_icy(c.str("body.composition_class"));
-    let base = match regime {
-        "mobile_lid" => MAGMA_EFFICIENCY_MOBILE,
-        "episodic_lid" => MAGMA_EFFICIENCY_EPISODIC,
-        "ice_shell_ocean" | "ice_shell_rock" => MAGMA_EFFICIENCY_ICE,
-        _ => MAGMA_EFFICIENCY_STAGNANT,
-    };
+    let base = crate::thermal::magma_efficiency(regime, c.f64("interior.episodic_degree"));
     // The tidal boost is a silicate mantle's heat pipe (Io), its melt lighter than its
     // lid; an ice mantle's melt is denser than the ice over it (F133).
     let tidal = if icy {
@@ -2479,8 +2479,11 @@ pub fn volcanism_dome_count(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "episodic_lid" {
         return 0.0.into();
     }
+    // The domes stand on an episodic lid's young plains, by its degree (audit S1).
     let r = c.f64("body.radius");
-    (DOMES_PER_AREA * 4.0 * PI * r * r).round().into()
+    (DOMES_PER_AREA * 4.0 * PI * r * r * c.f64("interior.episodic_degree"))
+        .round()
+        .into()
 }
 
 pub fn tectonics_plume_count(c: &Ctx) -> Value {
@@ -2509,10 +2512,15 @@ pub fn tectonics_rise_diameter(c: &Ctx) -> Value {
     if c.f64("tectonics.plume_rise_count") < 1.0 {
         return 0.0.into();
     }
-    let fraction = if c.str("interior.tectonic_regime") == "episodic_lid" {
+    // An episodic lid's narrower rises by its degree (audit S1).
+    let episodic = c.f64("interior.episodic_degree");
+    let fraction = if episodic <= 0.0 {
+        PLUME_RISE_DIAMETER_FRACTION
+    } else if episodic >= 1.0 {
         PLUME_RISE_DIAMETER_FRACTION_EPISODIC
     } else {
         PLUME_RISE_DIAMETER_FRACTION
+            * (PLUME_RISE_DIAMETER_FRACTION_EPISODIC / PLUME_RISE_DIAMETER_FRACTION).powf(episodic)
     };
     (fraction * c.f64("body.radius")).into()
 }
@@ -2585,20 +2593,20 @@ pub fn cratering_retention_age(c: &Ctx) -> Value {
     let age = c.f64("body.age");
     let regime = c.str("interior.tectonic_regime");
     let p = c.f64("atmosphere.surface_pressure");
+    let stagnant = if p > SPACE_WEATHERING_MAX_PRESSURE {
+        RETENTION_THIN_ATMOSPHERE_GYR
+    } else {
+        age
+    };
     let mut retention = match regime {
         "mobile_lid" => RETENTION_MOBILE_LID_GYR,
-        // The surface the lid's last overturn laid (F121).
-        "episodic_lid" => c.f64("tectonics.resurfacing_event_age"),
+        // The surface the lid's last overturn laid (F121), within what the lid would keep
+        // without it (audit S1).
+        "episodic_lid" => c.f64("tectonics.resurfacing_event_age").min(stagnant),
         // A thin shell renews its surface within RETENTION_ICE_OCEAN_GYR over the degree
         // of its renewal (audit S6).
         "ice_shell_ocean" => (RETENTION_ICE_OCEAN_GYR / wholesale_renewal(c).max(1e-9)).min(age),
-        _ => {
-            if p > SPACE_WEATHERING_MAX_PRESSURE {
-                RETENTION_THIN_ATMOSPHERE_GYR
-            } else {
-                age
-            }
-        }
+        _ => stagnant,
     };
     // Volcanic burial applies only where volcanism resurfaces the whole body, which the
     // tidal flux threshold of the Io regime marks; elsewhere flows are local and the

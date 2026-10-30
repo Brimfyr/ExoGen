@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 36;
+pub const VERSION: u64 = 37;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -183,7 +183,11 @@ impl CraterInputs {
             secondary_fraction: graph.f64("cratering.secondary_fraction"),
             saturation_fraction: graph.f64("cratering.empirical_saturation"),
             retention_age: graph.f64("cratering.retention_age"),
-            loop_retention_age: if wholesale_resurfacing(graph) {
+            // An episodic lid's loop keeps the craters since its last overturn, however
+            // long ago (F121, audit S1).
+            loop_retention_age: if graph.str("interior.tectonic_regime") == "episodic_lid" {
+                graph.f64("tectonics.resurfacing_event_age")
+            } else if wholesale_resurfacing(graph) {
                 graph.f64("cratering.retention_age")
             } else {
                 graph.f64("body.age")

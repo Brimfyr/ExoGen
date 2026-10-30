@@ -2975,3 +2975,14 @@ How it went:
 - **Mars's pits.** Mars has central pits in a rocky crust holding ground ice, which a bedrock's ice share gives none; they want the pit from the melt's volume, with Phase 5's ground ice (recorded under S9).
 
 Still to do: S1, the episodic lid's name.
+
+## The hundred-and-thirty-eighth milestone: the episodic lid by its overturns
+
+- **F230.** What an overturn does, the resurfacing, the tesserae and the craters kept, follows the overturns on any lid that has broken, and the episodic lid's constants, the melt efficiency, the rises' width and the domes, go by how lately it broke over a stated width (audit S1). Along Venus's radius the magma no longer steps fivefold where the last overturn passes half the body's life.
+
+How it went:
+
+- **Venus as it was.** Its last overturn 0.66 Gyr ago, 0.15 of its age, holds it at degree one; Mars, the Moon and Mercury never broke their lids; every preset is as it was, Venus, Mars and Mercury rendering identically.
+- **The coronae swing.** Along Venus's radius the rock coronae go between none and some three thousand from one body to the next, every diapir reading one mantle's state: recorded under V1 as a known limitation.
+
+Still to do: the ice shells' names (S1: the cryodomes and the deep ice step where an ocean forms), for the user's choice; then the phase's close.
