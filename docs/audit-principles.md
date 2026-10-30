@@ -23,6 +23,81 @@ Which reference bodies trigger which switch today (from `exogen derive` on the p
 
 A rule that one body alone triggers is the first place to look for a per-body tuning.
 
+## Closing audit (2026-10-30)
+
+Phase 4F closes with every entry given an outcome: closed, with what closed it; a known limitation, the model's as it stands; moved to the phase whose physics it wants (Phase 5's volatiles and materials, Phase 6's plates, Phase 7's detail pass below the grid); the noise pass after Phase 6 (principle 16); or the short list, work the user chooses to do before Phase 4F closes or to move.
+
+| Entry | Outcome | Note |
+|---|---|---|
+| S1 | Closed in part (F121 to F123, F185) | the episodic lid breaks by its own friction; the plates' rule goes with Phase 6; the melt efficiency by name and the ice shells' names: **short list** |
+| S2 | **Short list** | the moment of inertia from the density profile, an ice shell wherever the ice layer has a thickness |
+| S3 | **Short list** | paterae, plumes and mountains switch on at 0.5 W/m²; with V1's Moon-to-Io sweep |
+| S4 | **Short list** | chaos or lanes at a shell 0.025 of the radius; with V1's Ganymede-to-Europa sweep |
+| S5 | **Short list** | focusing, plumes and fallout at a thinning of 0.3 of the shell |
+| S6 | **Short list** | the retention age's step |
+| S7, S8 | Closed | F126; the eighteenth milestone |
+| S9 | **Short list** | central pits by the target's material |
+| S10 | **Short list** | a rocky interior's tides by its class, not its temperature |
+| W1 | Closed (F94) | the lobes' sizes stated shares: known limitation, with M16 |
+| W2 | **Short list** (small) | a young deposit's roughness ramps over two cells |
+| W3 | **Short list** (small) | the tesserae chosen on a height smoothed over two cells |
+| W4 | Closed (F95) | the diffusivity by gravity alone goes with Phase 5's creep |
+| W5, W6 | Phase 7 | ridge crests and flows finer than the grid, for the detail pass |
+| W7 | Closed (F107) | the graben's blockiness at the standard grid goes to Phase 7 |
+| W8, W9 | Closed | F131; F196 |
+| W10 | Closed in part (F198 to F200) | the faint fractures: known limitation, with M39 |
+| T1, chaos | Closed (F80) | the warmth thinning the shell the cracks read goes with S4 |
+| T1, cryodomes, rises, shields, canyons, Io's mountains, paterae | Known limitation | their outlines and profiles drawn from measured statistics where their processes are not modelled at that scale (M18, M23; Io's with S3) |
+| T1, Io's plume deposits | Closed in part (F84, F202, F208) | the profiles within a ring stated shapes: known limitation |
+| T1, coronae, tessera texture, crater walls | Closed | F145, F146; F187; F67 |
+| T2 | Closed (F92) | TERRACE_FULL_COLLAPSE a stated choice |
+| T3 | **Short list**, with M21 | bands from the lid's strain |
+| T4 | Closed (F91, F214 to F221) | rays by composition go with Phase 5 (M11); the herringbone with Phase 7; other rock bodies' skin depth: known limitation |
+| T5 | Closed in part (F168) | the scarp's wear and the lowlands' sediments go with Phase 5; the endogenic route, a locked moon's near side and the giant basins held by the user |
+| T6 | **Short list** | one law for the grooves' relief, with the user's note that they are too regular (Miranda) |
+| T7 | Known limitation | with M39 |
+| Calibrations, checks passed | Closed | the eleven rows whose checks pass |
+| Calibrations, a direction only | Known limitation | stated choices of their processes, each in docs/parameters.md, revisited when their processes are |
+| Calibrations, checks failed | **Short list** | GROOVE_RELIEF_SHARE (Miranda), CRATER_PI_SCALING and TARGET_STRENGTH (Ganymede's and Callisto's counts twice), ROUGHNESS_RMS_SHARE (Mercury 0.56 against 0.39), LANE_RENEWAL_GYR (Mimas's lanes, one a hexagon) |
+| Calibrations, sources unverified | **Short list** (small) | AUREOLE_MOBILITY, ELLIPTICAL_THRESHOLD_EXPONENT against their papers |
+| Calibrations, tied to other entries | With their entries | chaos (S4), IO_PATERAE_PER_TW (S3), MAGMA_PROVINCE_FLOOR (M33), the plains at strength (Phase 5), the plates' keels (Phase 6) |
+| RISE_HEIGHT_FRACTION | Known limitation | fitted to Tharsis's height (M34), set aside by the user |
+| M1, M19, M24, M28 | Closed |  |
+| M2, M3b, M5, M13, M32, M37 | Phase 5 | materials, erosion and volatiles |
+| M3 | Known limitation | the plains' craters want a heat history |
+| M4 | Known limitation | the refreezing's tension wants a local history of the shell |
+| M6 | Closed | the look accepted by the user (2026-10-15) |
+| M7 | Closed in part (F205, F206, F211) | the frost's temperature through the day goes with Phase 5 |
+| M8, M20 | Closed in part (F117, F201) | the flow units' metres against the 50 m sheet: known limitation, with M40's relief and S3 |
+| M9 | Closed in part (F104) | the negative loads and the shields' and floods' mass: known limitation; the climate's latitudes with Phase 5 |
+| M10 | Closed in part | Venus's mountain belts with Phase 6 (M42); its lowland ridge belts and Mercury's domes: known limitation |
+| M11 | Closed in part (F213) | Mars, Titan, the tholins and Miranda with Phase 5 |
+| M12 | **Short list** (small) | the icy moons' rayed craters counted against Voyager and Galileo |
+| M14, M15 | Closed (F119, F109) | their residuals with W1 and M16: known limitation |
+| M16 | **Short list** | the finish's floods keep four fifths of the loop's lava |
+| M17 | Closed in part (F113) | pit chains and dikes off the rises: known limitation |
+| M18 | Known limitation | a rise's axis drawn |
+| M21 | **Short list**, with T3 | a lid's extension spent once, on the structures its state favours |
+| M22 | Known limitation | the oceans' histories wait on the thermal model's revisit (with LANE_RENEWAL_GYR on Mimas) |
+| M23 | Closed in part (F149, F152) | the belts' tilted blocks: known limitation |
+| M25 | Closed in part (F183) | known limitation |
+| M26 | Closed in part (F157, F158) | Venus's climate drive with Phase 5; the rest: known limitation |
+| M27 | Closed in part (F160, F182) | the despinning wants the rotation's history, an input held constant: known limitation |
+| M29, M30 | Closed (F165, F172) | EPISODIC_FILL_FRACTION set aside (milestone 99) and the flanks' residuals: known limitation |
+| M31 | Closed in part (to F192) | the plateaus' internal relief, the strain after the event, the lid's thickening where shortened and the plains' strain: known limitation |
+| M33, M39 | Known limitation |  |
+| M34 | Closed (F174) | the dome's height with RISE_HEIGHT_FRACTION above |
+| M35 | Parked | the starting state stays an input, with S2 |
+| M36 | Closed in part (F212 to F221) | the near ring (1.70 against 1.37) and the maria's bright rims (1.29 percent against 0.30 on the maria's mask; 0.84 against 0.23 on F221's) stand, the gate passed: known limitation; the highlands' mottle with the noise pass |
+| M38 | Closed | the rays done; the transition recorded, not adopted |
+| M40, M41 | Noise pass | one pass over every body after Phase 6 (principle 16); Pele's rings left as they are |
+| M42 | Phases 5 and 6 |  |
+| V1 | **Short list** | the sweeps Moon to Io (S3), Ganymede to Europa (S4 to S6), Mars to Venus and dry to wet (S1), with their switches |
+| The fabric under the cells (phase report, milestones 104 to 109) | Phase 7 | for the detail pass's shader |
+| The ropy terrain between the stripe ridges (PLAN.md, Phase 4F) | Known limitation | the grain too laminar at the resolved scale; finer, with Phase 7 |
+| The icy lids' faults on the same field; Venus's subdued arc | Known limitation | dropped from the milestones' lists without a record; the icy lids' with M21 |
+
+
 ## Switches (principle 15)
 
 ### S1. The tectonic regime is a name
@@ -258,7 +333,7 @@ These features take a fixed profile, with noise for variety, rather than a form 
 | Shields | `shield_height`, `shield_flows` (stages/plume.rs) | partly by F101 and F102, the thirty-fifth milestone: the surface is the eruptions since the edifice last grew by three sheets, compound flow fields from fissures round the caldera, on the flanks and on the rift zone, whose eruptions run the farthest and spread as aprons, the flows narrowing on the steep flanks; the summit sinks in collapses that wander, shrink and deepen; the edifice stretches along its rift and its foot is lobed. Partly by F115, the forty-eighth: its lava buries the ground it grows over, craters and all, as a deposit buries what it falls on. Still drawn: the edifice's profile, one power law at five degrees on every body, where its flows' lengths and the lithosphere's support would set it (Venus's large volcanoes are broad and gentle); the foot's lobing; the vents' shares and the run-outs, where the supply and the effusion rates would set them; the edifice's outline its own rule, where its lava would pond in the depressions at its foot (audit M19) |
 | Canyons | `trough_depth_at`, `stress_trace`, `trough_throw` (stages/plume.rs) | partly by F105, the thirty-eighth milestone: the faults start where the rise's stress is tensile, strike across its most tensile direction and die out where the tension fades, so the flanks carry radial graben, the crest a maze and the canyons run out from it; they form as the rise's load grows. Partly by F111, the forty-fourth: a fault grows in straight segments that link, turning toward the stress field and stepping en-echelon where they meet; a graben is as wide as its faulted layer sets it, its throw peaking in each segment and dipping where they link; a fault whose throw would exceed the layer is a rift, its segments half-graben whose master side flips. Partly by F112, the forty-fifth: a graben keeps its throw along its length, a confined fault's flat-topped profile; its walls are rough fault traces, so it pinches and swells, and every fault's trace wanders, self-affine; parallel graben stand apart by a few thicknesses of their faulted layer. Partly by F113, the forty-sixth: dike swarms radiate from the rise and its volcanoes, a graben above each dike. Partly by F114, the forty-seventh: a rise grows along an axis, its volcanoes on it and its stress a pure shear about it added to the load's, so the faults beyond its foot gather along the axis and spare the ground across it. Partly by F116, the forty-eighth: the faults form as the dome rises, the dike swarms with the magma that feeds them. Partly by F147 and F148, the seventy-second: the faults a lid's own strain opens, from its change of radius, are drawn by the same generator, and a wide trough keeps its floor across the turns of its trace. Still drawn: the profile across a trough (a flat floor between tanh walls, no step faults, tilted blocks or raised flanks, audit M23); the faulted layer drawn per fault rather than as a field over the rise; the rise's axis drawn (audit M18); a rift's depth and width from its length, not the strain where it runs, so a long fault far out along a rise's axis can open a canyon alone on the plains; and the stress field's shape, a dome's bending and a load's hoop tension rather than a thin shell solved for the rise's load and support |
 | Io's mountains | `mountain_height`, `raise_mountains` (stages/io.rs) | partly by F87, the twenty-eighth milestone: each a block thrust up along a fault striking with the tide's compression, its uplift the throw tapering to the fault's tips times its fall across the block, buried by the plains so that its back and tips are where it dips under them, its trace bowed by the heave and its scarp cut back by landslides. Its sizes, its form's shares and its relief and ridges are still drawn, where the compression of the burial against the lithosphere's strength would set them (Schenk and Bulmer 1998; McKinnon et al. 2001) |
-| Io's plume deposits | `deposit_profile`, `plume_history` (stages/io.rs) | partly by F84, the twenty-sixth milestone: each eruption's range from its speed (v²/g), its oval from its vent's elongation, its range scattered with azimuth, its gas condensing in a ring and its pyroclasts falling within; the ring's radial profile is still a fixed Gaussian each side and the fall within a fixed ramp, where the canopy shock and the particles' sizes would set them (Zhang et al. 2003's DSMC plumes) |
+| Io's plume deposits | `deposit_profile`, `plume_history` (stages/io.rs) | partly by F84, the twenty-sixth milestone: each eruption's range from its speed (v²/g), its oval from its vent's elongation, its range scattered with azimuth, its gas condensing in a ring and its pyroclasts falling within; the ring's radial profile is still a fixed Gaussian each side and the fall within a fixed ramp, where the canopy shock and the particles' sizes would set them (Zhang et al. 2003's DSMC plumes); since F202 the Prometheus class rises at its flows' fronts and since F208 the Pele class from the cracks along its lava lake, its ring shaped by its gas's facing |
 | Paterae | `patera_radius`, `foot_edges`, `populate` (stages/io.rs) | partly by F88 and F90: the outline is a chain of nested collapses along the crust's fabric, elongated as Radebaugh et al. measured, cut straight by its faults, and ending at the foot of a mountain it abuts. Partly by F118, the forty-ninth: it collapses piecemeal, more collapses of comparable size breaking out of the first, its margin wanders at every scale, and its floor lies in patches of different ages. The sizes, shapes and shares are Radebaugh et al.'s counts, not yet read from the magma reservoirs beneath; the faults that cut a patera show nowhere outside it |
 | Crater walls and rims | `fresh_height` (crater/morphology.rs), `RimShape` (crater/stamp.rs) | closed by F67, the sixteenth milestone: the wall is made by its collapse, terraces of slump blocks on arcuate faults whose widths follow Pearce and Melosh (1986) and the strength length, a scalloped rim and the floor's edge at the blocks' toes |
 
@@ -293,7 +368,7 @@ Direction: rays from the ejecta curtain: clumps of ejecta thrown along paths who
 
 When: the earlier-phases revisit.
 
-Closed in the thirtieth milestone (F91). A crater's ejecta curtain gathers its mass into some thirteen jets; beyond the blanket a ray is the share of the ground the jets' secondaries excavate from under the weathered skin, falling with distance by Elliott et al. (2018)'s secondary-crater model and scaled to their lunar ray lengths, so it narrows to its jet's midline, breaks into segments and fades. Noise bends the jets' paths and bunches their fragments. The blanket's lobes and the loop craters' secondaries follow the same jets. An icy surface's lag sets the skin the secondaries dig through where it is thicker than the Moon's, so Callisto's rays are short or absent under its thick low-latitude lag. Still open: rays bright by composition, where a crater throws one unit's material over another (Lichtenberg's highland rays over mare, Hawke et al. 2004), which needs the primary ejecta's share along the ray; the secondaries' herringbone chevrons, below the grid at the map scales; the skin depth of rock bodies other than the Moon and every body's fragment population, which set their rays' reach (the lunar ray lengths are the calibration, below); the rays' fading, still the provisional ray lifetime rather than the maturing of the ground the secondaries dug, which waits on Mercury's weathering timescales; and the deep material a crater digs up, which lies in a soft ramp to the blanket's edge (Mercury's dark halos).
+Closed in the thirtieth milestone (F91). A crater's ejecta curtain gathers its mass into some thirteen jets; beyond the blanket a ray is the share of the ground the jets' secondaries excavate from under the weathered skin, falling with distance by Elliott et al. (2018)'s secondary-crater model and scaled to their lunar ray lengths, so it narrows to its jet's midline, breaks into segments and fades. Noise bends the jets' paths and bunches their fragments. The blanket's lobes and the loop craters' secondaries follow the same jets. An icy surface's lag sets the skin the secondaries dig through where it is thicker than the Moon's, so Callisto's rays are short or absent under its thick low-latitude lag. Still open: rays bright by composition, where a crater throws one unit's material over another (Lichtenberg's highland rays over mare, Hawke et al. 2004), which needs the primary ejecta's share along the ray; the secondaries' herringbone chevrons, below the grid at the map scales; the skin depth of rock bodies other than the Moon and every body's fragment population, which set their rays' reach (the lunar ray lengths are the calibration, below); the rays' fading, still the provisional ray lifetime rather than the maturing of the ground the secondaries dug, which waits on Mercury's weathering timescales; and the deep material a crater digs up, which lies in a soft ramp to the blanket's edge (Mercury's dark halos). Since done: the fading by the ground's maturing (F214) and the deep material's ring and floors (F215, F216).
 
 ### T5. The dichotomy as a hyperbolic tangent (closed in part by F168)
 
@@ -495,7 +570,7 @@ Direction: the brightening of old band ice from what it is made of and how it we
 
 When: Phase 5's materials work.
 
-### M6. Europa's cracks follow the tide closely
+### M6. Europa's cracks follow the tide closely (closed: the look accepted by the user, 2026-10-15)
 
 Europa's cracks, under the tide, the shell's freezing and its heterogeneity (F82), still trace the tidal field's great arcs more plainly than the real moon's, whose lineae cross more and undulate more at every scale. The user found the look acceptable (2026-10-15).
 
@@ -519,7 +594,7 @@ Since F202 the young flows' SO2 rises in a plume at their fronts and falls in th
 
 Since F203 the frost coarsens as it ages and an old frost lets the ground through; since F204 the plains are Io's measured pale yellow rather than a mustard, so the frost stands out from them by what Io's does. Still open: the fed rings are crisp, white wherever their fall outpaces the sublimation, some 35 of them, and the plains carry no white of their own: the frost cycle this entry's direction names.
 
-Closed in part by F205, the hundred-and-eighteenth milestone: the first of the missing pieces above, SO2 laid broader than a plume's ring, its gas settling across its region as the atmosphere collapses each night. Frost shows over 40 percent of the surface, in broad soft fields where the fronts gather and most rings merge with them, and beyond 30 degrees under the plasma's alteration; the body's mean stays Io's measured colour. Tried first and not kept (2026-10-27): each frost subliming against the atmosphere its region's frost holds up, without the albedo feedback; frost rose from 4.4 to 4.6 percent, the gas the model then laid being far under the sublimation away from the rings. Still open: the frost's temperature through the day and the condensation that goes to the coldest ground, and the fields' fine structure.
+Closed in part by F205, the hundred-and-eighteenth milestone: the first of the missing pieces above, SO2 laid broader than a plume's ring, its gas settling across its region as the atmosphere collapses each night. Frost shows over 40 percent of the surface, in broad soft fields where the fronts gather and most rings merge with them, and beyond 30 degrees under the plasma's alteration; the body's mean stays Io's measured colour. Tried first and not kept (2026-10-27): each frost subliming against the atmosphere its region's frost holds up, without the albedo feedback; frost rose from 4.4 to 4.6 percent, the gas the model then laid being far under the sublimation away from the rings. Still open: the frost's temperature through the day and the condensation that goes to the coldest ground, and the fields' fine structure (since done by F211).
 
 Since F206 the frost does not hold on the dark lava still showing, which the sun warms far above it, so the flows stand out within the frost fields; the frost's temperature over the bright ground is still its latitude's and slope's alone.
 
@@ -875,7 +950,7 @@ Direction: the plains' layers stripped back from their scarps by sapping, the SO
 
 When: with Phase 5's erosion, its mass wasting and sublimation textures (decided 2026-10-27, against building it with every number stated).
 
-### M38. Mercury's rays
+### M38. Mercury's rays (closed: the rays done, the transition recorded and not adopted)
 
 Mercury's reference map shows its young craters' rays across the planet, Hokusai's and Debussy's the longest, and bright halos about many craters. The model's Mercury has all but none: its rays fade in 0.15 Gyr (RAY_FADING_GYR_1AU over its solar flux), and after F212 0.1 percent of its surface is brightened past a tenth of the fresh contrast. Braden and Robinson (2013) compared the maturing of Mercury's and the Moon's regolith; its darker, iron-poor surface may also lower the contrast a fresh exposure has.
 

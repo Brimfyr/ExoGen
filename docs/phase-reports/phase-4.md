@@ -2905,3 +2905,9 @@ Still to do: compression's mountain belts (PLAN.md, Phase 4F: a range like Phleg
 - **Moved.** Venus's belts go with Phase 6's lid that makes and recycles crust, Mars's Thaumasia highlands with Phase 5's salt and ice beneath a spreading plateau (the user).
 
 Still to do: the closing audit.
+
+## The closing audit
+
+Every entry of docs/audit-principles.md now has an outcome (its closing audit, 2026-10-30): closed, a known limitation, moved to Phase 5, 6 or 7, the noise pass after Phase 6, or the short list. Three records were brought up to date (Io's plume deposits since F202 and F208, the rays' fading and deep material since F214 to F216, the frost fields' fine structure since F211), and M6 and M38 are marked closed.
+
+The short list, for the user to do before Phase 4F closes or to move: the switches S1 (the melt efficiency by name and the ice shells' names), S2, S3, S4 to S6, S9 and S10 with V1's sweeps of interpolated bodies; the small fixes W2, W3, M12 and the two unverified sources; the four failed calibration checks; and M16, M21 with T3, and T6.
