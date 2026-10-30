@@ -2897,3 +2897,11 @@ The user's verdict (2026-10-30): all three test bodies pass the gate. Io passed 
 - **Principle 16 waits for the end of the surface phases.** The regional variation (audit M41) and the tone within Io's flow fields (audit M40) are one pass over every body after Phase 6, calibrated against many bodies at once once their looks are final, not a step of Phase 4F (the user).
 
 Still to do: compression's mountain belts (PLAN.md, Phase 4F: a range like Phlegra Montes or the Thaumasia highlands where the strain concentrates, and Venus's belts round Lakshmi Planum with the episodic regime); the closing audit, the switches with the sweeps of interpolated bodies that validate them, and every open entry of docs/audit-principles.md given its outcome.
+
+## The mountain belts, moved
+
+- **Measured.** The shortening the lid's thrusts take up reaches 3.2 percent at most, on Mars at its rise's foot, 1.2 on Mercury and half a percent on Venus and the Moon: scarps and ridges, not ranges (audit M42).
+- **Tried.** The lid going with the mantle's flow where its drag breaks it, at the flow's speed and then at the rate its strength allows, swept Venus's crust into its downwellings to founder, nothing making new crust where the lid stretched.
+- **Moved.** Venus's belts go with Phase 6's lid that makes and recycles crust, Mars's Thaumasia highlands with Phase 5's salt and ice beneath a spreading plateau (the user).
+
+Still to do: the closing audit.

@@ -940,6 +940,16 @@ Direction: one mechanism for every body, a noise field whose amplitude and tone 
 
 When: one pass over every body at the end of the surface phases, after Phase 6, calibrated against many bodies at once, where other bodies' own regional variation joins Io's (the user, 2026-10-30; first set after Phase 4F's last checks, 2026-10-29).
 
+### M42. Compression's mountain belts (moved to Phases 5 and 6)
+
+PLAN.md's Phase 4F asks compression to run as one process from wrinkle ridges through lobate scarps to thrust-bounded mountain belts where the shortening is largest: a range like Phlegra Montes or the Thaumasia highlands on Mars, and Venus's belts round Lakshmi Planum with the episodic regime.
+
+Measured (2026-10-30, at 1,024 pixels): the shortening the lid's thrusts take up, twice its overstress over its stiffness (F155), reaches 3.2 percent at most, on Mars at its rise's foot, past 1 percent over 0.3 percent of its area; Mercury 1.2 percent, all of it about 0.3 to 1.2 from its contraction; Venus and the Moon half a percent. That thickens a crust 50 km thick by a few hundred metres, scarps and ridges, not ranges. Venus's highest ground, 10.2 km, is a volcano; its plateaus, piled over the downwellings by the flow (F184), stand 2 to 5 km. A belt needs a push that goes on after the lid breaks, so that the shortening piles into the broken zone.
+
+Tried, not kept (2026-10-30): the lid goes with the flow where the drag breaks it (F185, F187), its crust with it, first at the flow's speed and then as fast as keeps its stress at its strength, the drag being what the lid bears standing still. Both swept Venus's crust into its downwellings, where it piled past the eclogite cap and foundered: its mean crust fell from 35 km to under one within 0.4 Gyr, most of it in the first 50 Myr while the young lid was thin. Over the upwellings the broken lid stretches and gives up its crust, and nothing makes new crust there from the melt the stretching brings up: a lid that moves with the flow wants crust made at its rifts and lost at its convergence, the machinery of Phase 6. Mars's Tharsis is held up by its plume and does not spread; the Thaumasia highlands as the toe of a spreading plateau want the weak layer beneath it, the salt and ice of Montgomery et al. (2009), Phase 5's volatiles; Phlegra Montes's origin is debated. The plateaus' own collapse after each overturn (F188) presses their feet smoothly; concentrating it into belts would be a new process of the strain's localisation, and is not the leading account of Lakshmi's belts.
+
+Moved by the user (2026-10-30): Venus's belts with Phase 6, Mars's with Phase 5 (PLAN.md).
+
 ### V1. Interpolated bodies in validation
 
 `exogen validate` checks the reference bodies only. Principle 15 asks for bodies between them as well. The first sweeps to carry:
