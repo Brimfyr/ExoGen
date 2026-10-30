@@ -2911,3 +2911,12 @@ Still to do: the closing audit.
 Every entry of docs/audit-principles.md now has an outcome (its closing audit, 2026-10-30): closed, a known limitation, moved to Phase 5, 6 or 7, the noise pass after Phase 6, or the short list. Three records were brought up to date (Io's plume deposits since F202 and F208, the rays' fading and deep material since F214 to F216, the frost fields' fine structure since F211), and M6 and M38 are marked closed.
 
 The short list, for the user to do before Phase 4F closes or to move: the switches S1 (the melt efficiency by name and the ice shells' names), S2, S3, S4 to S6, S9 and S10 with V1's sweeps of interpolated bodies; the small fixes W2, W3, M12 and the two unverified sources; the four failed calibration checks; and M16, M21 with T3, and T6.
+
+## The hundred-and-thirty-fourth milestone: the closing audit's small fixes
+
+- **F223.** Venus's tesserae were chosen on a height smoothed over two grid cells, 80 km at the standard quality and 170 at the preview; it is now smoothed over the flexural parameter of the elastic lid the last overturn broke, 38 km, so their outlines no longer change with the quality (audit W3).
+- **F224.** The unresolved craters' roughness ramped over two cells at a young deposit's edge; it now ramps over the anchor crater's radius, the craters that make it at its largest scale lying partly on each side (audit W2).
+- **Two sources.** Scheidegger's run-out trend (AUREOLE_MOBILITY) checks against the paper's abstract; the elliptical craters' threshold (ELLIPTICAL_THRESHOLD_EXPONENT) checks as far as the sources reach, Collins et al. giving the trend only as their figure.
+- **The icy moons' rayed craters** (audit M12). Ganymede's 33 over 30 km against an estimate of 20 to 40 from Xu et al.'s counts; Callisto's 42 against 8 to 15, from more young craters on Callisto than on Ganymede though Ganymede's flux is higher: a known limitation with the crater population's failed check.
+
+Still to do: the closing audit's short list, the switches with their sweeps, the failed calibration checks, M16, M21 with T3, and T6, for the user's choice.

@@ -73,8 +73,11 @@ pub fn apply(
         .max(1e-9);
     let amplitude = ROUGHNESS_RMS_SHARE * depth / rms;
     let ages = layers.surface_age.as_slice();
-    // The strength from each cell's age, then smoothed over a cell or so: the edge of a
-    // young deposit on old ground is a short ramp of roughness, not a staircase of cells.
+    // The strength from each cell's age, then blended over the anchor crater's radius: the
+    // roughness at its largest scale is craters `d_min` across, and those about the edge of
+    // a young deposit on old ground lie partly on each, so the edge is a ramp as wide as
+    // they are (audit W2), the kernel's passes spreading by half their square root in
+    // cells.
     let shares: Vec<f32> = (0..grid.cell_count())
         .into_par_iter()
         .map(|k| {
@@ -85,7 +88,8 @@ pub fn apply(
             (table[i] + (table[i + 1] - table[i]) * f) as f32 * keep.map_or(1.0, |v| v[k])
         })
         .collect();
-    let shares = crate::stages::episodic::smooth(&grid, &shares, ROUGHNESS_BLEND_PASSES);
+    let passes = (d_min / cell).powi(2).round().max(1.0) as usize;
+    let shares = crate::stages::episodic::smooth(&grid, &shares, passes);
     layers
         .bedrock
         .as_mut_slice()

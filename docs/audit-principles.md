@@ -39,8 +39,8 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | S9 | **Short list** | central pits by the target's material |
 | S10 | **Short list** | a rocky interior's tides by its class, not its temperature |
 | W1 | Closed (F94) | the lobes' sizes stated shares: known limitation, with M16 |
-| W2 | **Short list** (small) | a young deposit's roughness ramps over two cells |
-| W3 | **Short list** (small) | the tesserae chosen on a height smoothed over two cells |
+| W2 | Closed (F224) | the roughness ramps over the anchor crater's radius |
+| W3 | Closed (F223) | the tesserae chosen on a height smoothed over the broken lid's flexural parameter |
 | W4 | Closed (F95) | the diffusivity by gravity alone goes with Phase 5's creep |
 | W5, W6 | Phase 7 | ridge crests and flows finer than the grid, for the detail pass |
 | W7 | Closed (F107) | the graben's blockiness at the standard grid goes to Phase 7 |
@@ -59,7 +59,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | Calibrations, checks passed | Closed | the eleven rows whose checks pass |
 | Calibrations, a direction only | Known limitation | stated choices of their processes, each in docs/parameters.md, revisited when their processes are |
 | Calibrations, checks failed | **Short list** | GROOVE_RELIEF_SHARE (Miranda), CRATER_PI_SCALING and TARGET_STRENGTH (Ganymede's and Callisto's counts twice), ROUGHNESS_RMS_SHARE (Mercury 0.56 against 0.39), LANE_RENEWAL_GYR (Mimas's lanes, one a hexagon) |
-| Calibrations, sources unverified | **Short list** (small) | AUREOLE_MOBILITY, ELLIPTICAL_THRESHOLD_EXPONENT against their papers |
+| Calibrations, sources unverified | Closed (checked) | AUREOLE_MOBILITY against Scheidegger's abstract; ELLIPTICAL_THRESHOLD_EXPONENT as far as the sources reach |
 | Calibrations, tied to other entries | With their entries | chaos (S4), IO_PATERAE_PER_TW (S3), MAGMA_PROVINCE_FLOOR (M33), the plains at strength (Phase 5), the plates' keels (Phase 6) |
 | RISE_HEIGHT_FRACTION | Known limitation | fitted to Tharsis's height (M34), set aside by the user |
 | M1, M19, M24, M28 | Closed |  |
@@ -72,7 +72,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | M9 | Closed in part (F104) | the negative loads and the shields' and floods' mass: known limitation; the climate's latitudes with Phase 5 |
 | M10 | Closed in part | Venus's mountain belts with Phase 6 (M42); its lowland ridge belts and Mercury's domes: known limitation |
 | M11 | Closed in part (F213) | Mars, Titan, the tholins and Miranda with Phase 5 |
-| M12 | **Short list** (small) | the icy moons' rayed craters counted against Voyager and Galileo |
+| M12 | Known limitation (checked) | Ganymede's rayed craters within the estimate, Callisto's three to five times it, with the crater population's failed check |
 | M14, M15 | Closed (F119, F109) | their residuals with W1 and M16: known limitation |
 | M16 | **Short list** | the finish's floods keep four fifths of the loop's lava |
 | M17 | Closed in part (F113) | pit chains and dikes off the rises: known limitation |
@@ -233,13 +233,15 @@ On Io, F85 makes a field's margins its breakouts' lobes, each traced over the gr
 
 Closed in the thirty-first milestone (F94) for the floods that can show at the end: each is drawn as its flows, a trunk, branches and breakouts traced over the ground from where its lava came into its low, so its margin and the gaps it leaves are its lobes', at the finish's resolution, and a mare is a mosaic of flow units. A flood buried under four or more successors at every coarse cell of its low keeps the coarse outline, hidden. Still open: the lobes' sizes are stated shares of the low's reach, not the lava's yield strength and effusion rate (Hulme 1974), and a flood's extent is still the coarse low the loop filled, compact on flat ground, so Imbrium's 1,200 km flows cannot form; the loop's own spreading would have to follow the flows for that. Since F109 the loop's lava leaves its sheets down the slopes it runs over, a large flood's for hundreds of kilometres in a swath as wide as its volume spreads it, which is the loop's spreading following the flows in outline; on flat ground the sheet still ends where its low does.
 
-### W2. The roughness blend
+### W2. The roughness blend (closed by F224)
 
 ROUGHNESS_BLEND_PASSES (12 passes of the one-cell kernel, about two cells) makes the edge of a young deposit on old ground a ramp of roughness two cells wide whatever the cell.
 
 Direction: each terrain's roughness follows its own age, and the contact's width comes from the process that laid the younger terrain, as the regolith mixing already does with a width in metres (REGOLITH_MIXING_LENGTH).
 
 When: the earlier-phases revisit.
+
+Closed by F224 (2026-10-30): the strength blends over the anchor crater's radius, the roughness at its largest scale being craters of that size, which lie partly on each side of an edge.
 
 ### W9. Renewed ground carries a noise unlike its surroundings (closed by F196)
 
@@ -259,13 +261,15 @@ Closed further by F199, the hundred-and-thirteenth milestone: the margin's folds
 
 Closed further by F200, the hundred-and-fourteenth milestone: each reorientation fractures the plains, and the terrains' fissures running out of their zones end against the fractures, a network that links the terrains. Still open: the fractures are narrow and shallow, faint at 4,096 pixels; the belts that link Enceladus's terrains on its images, kilometres in relief, want a shell thinner where they formed (audit M3).
 
-### W3. Tessera outlines
+### W3. Tessera outlines (closed by F223)
 
 `TESSERA_SMOOTHING_PASSES` (20 passes on the loop grid) smooths the old crust's height before the tesserae are chosen as its highest share. The smoothing is about two cells, so on Venus it is about 80 km at standard quality and 170 km at preview: the tesserae's outlines change with the quality.
 
 Direction: smooth over a physical length, such as the lithosphere's flexural wavelength or the scale of the mantle's convection. The tessera texture is the lid's strain since the hundred-and-first milestone (F187, T1).
 
 When: the earlier-phases revisit.
+
+Closed by F223 (2026-10-30): the height is smoothed over the flexural parameter of the elastic lid the overturn broke, 38 km on Venus, four passes on the standard grid where there were twenty.
 
 ### W4. The cap on regolith mixing (closed by F95)
 
@@ -477,7 +481,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | CONVECTIVE_TOPOGRAPHY (F173) | the mean of Guimond, Rudge and Shorttle 2022's eleven stagnant-lid simulations, 1.5 to 3.2, applied beyond their Rayleigh numbers in the boundary-layer form that held across them | the support from the flow's own buoyancy through the layer |
 | CONVECTION_CELL_WAVELENGTH, CONVECTION_SPECTRUM_WIDTH, CONVECTION_ONSET (F173) | stated choices: the cells as wide as convection's onset wavelength between free-slip boundaries, their power spread about their degree, a layer convecting once several sublayers deep | the planform from the mantle's own heating, rheology and geometry, rolls in a thin shell and plumes in a thick one |
 | the convection's pattern (F173) | a draw from the body's seed: the flow is chaotic, its scale, strength and renewal the mantle's | the pattern from the mantle's evolution itself |
-| AUREOLE_MOBILITY (F172) | Scheidegger 1973's trend of a rock avalanche's run against its volume as it is quoted, unverified against the paper | a run-out from the slide's flow over its base |
+| AUREOLE_MOBILITY (F172) | Scheidegger 1973's trend of a rock avalanche's run against its volume, checked against the paper's abstract (2026-10-30): log₁₀ f = −0.15666 log₁₀ V + 0.62419, V in m³, f = H/L, its correlation 0.82 | a run-out from the slide's flow over its base |
 | MAGMA_PROVINCE_FLOOR (F171) | Mars's Early Hesperian plains, some 800 to 1,000 m over most of its northern lowlands (Head, Kreslavsky and Pratt 2002): a province's centre four times the rest | the province as its cumulates' heat in the thermal history (M33) |
 | CRUST_FLOW_RELIEF, CRUST_FLOW_MIN_VISCOSITY (F170) | stated choices: the lower crust's viscosity read at the stress a kilometre of relief drives, and never below 10¹⁸ Pa s, a lower crust near its solidus | the stress each band's relief drives in the power-law creep, and the crust's melt |
 | CRUST_MAX_THICKNESS (F184) | a stated choice, 65 km, the most a basaltic crust stands before its base turns to eclogite and founders | the transition's depth on the crust's own geotherm, from the gabbro-eclogite phase boundary and its kinetics (Semprich et al. 2025; Namiki and Solomon 1993) |
@@ -487,7 +491,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | MEGA_FLOOR_CRUST_SHARE (F168) | a stated choice: the crust a mega-basin's melt sheet makes, half the starting crust, between Mars's northern lowlands (some 32 km against 58, Neumann et al. 2004) and South Pole–Aitken's thinner floor | the crust the melt sheet's volume and differentiation make |
 | MEGA_WALL_SHARE (F168) | a stated choice: a mega-basin's wall, the outer twentieth of its radius, a boundary scarp a few loop cells wide | the wall's collapse at the crust's strength |
 | a mega-impact's ejecta (F168) | stated choices: all the excavated crust lands beyond the rim, as a basin's ejecta thins with distance, with no convergence at the antipode; the relief it buries measured against the ground low-passed over the basin's radius | the ejecta's ballistic ranges on a sphere |
-| ELLIPTICAL_THRESHOLD_EXPONENT (F167) | the line of Collins et al. (2011)'s Figure 1 as digitised: the threshold angle 90° times the cratering efficiency to the power of −0.73 | the paper's own fit, if it states one |
+| ELLIPTICAL_THRESHOLD_EXPONENT (F167) | the line of Collins et al. (2011)'s Figure 1 as digitised: the threshold angle 90° times the cratering efficiency to the power of −0.73; checked (2026-10-30) as far as the sources reach: the efficiency is theirs, the crater a vertical impact makes over the impactor's diameter, and their 2010 abstract shows the trend only as the figure, the 2011 paper's text not reachable | the paper's own fit, if it states one |
 | ELLIPTICITY_AT_THRESHOLD, ELLIPTICITY_GROWTH (F167) | the elongation's growth below the threshold angle in one suite of simulations on a flat aluminium target (Collins, Miljković and Davison 2013) | a growth law across efficiencies and materials |
 | one impact speed for the efficiency (F167) | a stated choice: every population's craters read their efficiency at the body's mean impact speed, though comets strike faster and a moon's debris slower | the efficiency by population, once a crater records the population it came from |
 | ROOT_MIN_CONTRAST (F166) | a stated floor: the least density contrast the mantle pushes back with beneath an edifice filling its sag, 100 kg/m³, below any lava a rocky crust buoys up | none needed while lavas stay lighter than the rock beneath |
@@ -647,6 +651,8 @@ With F91's rays, Ganymede has 111 craters young enough to keep rays (under the 1
 Direction: check the counts of rayed craters on Ganymede and Callisto, and their rays' reach, against the Voyager and Galileo maps; the ray lifetime from the maturing of the dug-up ice (gardening, lag, sputtering) rather than RAY_FADING_MAX_GYR; and the skin at high latitudes, where frost and the gardened regolith, not a lag, mature the surface.
 
 When: with the icy moons' crater population, or a colour pass.
+
+Checked (2026-10-30, the final renders at 4,096 pixels): Xu et al. (2017) map 202 rayed craters larger than 10 km on Ganymede among 5,335, and Xu et al. (2019) 57 on Callisto between 70°N and 70°S, their populations beyond 30 km falling as D^−2.0 and D^−1.7, which puts some 20 to 40 over 30 km on Ganymede and 8 to 15 on Callisto. The model's craters over 30 km within 70 degrees of the equator, younger than the ray lifetime, whose ring from 1.5 to 3 radii stands 20 percent brighter than the ground 6 to 8 radii out: 33 on Ganymede, within the estimate, and 42 on Callisto, three to five times it, so that Callisto has more where it has a quarter of Ganymede's. Callisto's young craters are the cause as much as its rays: the model has more craters over 30 km younger than a gigayear per area on Callisto than on Ganymede, 9.6 against 5.6 per million km², though Ganymede's comet flux is 1.6 times Callisto's, and on both some 2.4 times as many in the last 0.5 Gyr as in the 0.5 Gyr before. That belongs with the crater population's failed check (CRATER_PI_SCALING and TARGET_STRENGTH, the counts twice the measured) and the high latitudes' skin (above); a known limitation.
 
 ### M13. Callisto's troughs and rims stand undegraded
 

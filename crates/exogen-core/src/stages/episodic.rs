@@ -32,7 +32,7 @@ use crate::stages::tessera::TesseraFabric;
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 13;
+pub const VERSION: u64 = 14;
 
 /// The resurfacing event, kept for the finishing pass.
 #[derive(Clone, Debug)]
@@ -179,6 +179,9 @@ pub struct EpisodicProcess {
     /// The surface age the tessera keep, Gyr since formation (F121).
     tessera_age: f64,
     tessera_fraction: f64,
+    /// The passes of the one-cell kernel that smooth the old crust's height over the
+    /// flexural parameter of the elastic lid the overturn broke (audit W3).
+    tessera_smoothing: usize,
     gravity: f64,
     done: bool,
     pub resurfacing: Option<Resurfacing>,
@@ -273,12 +276,24 @@ impl EpisodicProcess {
                 });
             }
         }
+        // The relief the lid held up on its strength, shorter than its flexural parameter,
+        // is not the plateaus of crust that stand on their roots (audit W3): the elastic
+        // lid the overturn broke, down to ELASTIC_ISOTHERM_ROCK, and the passes whose
+        // spread, half the square root of their number in cells, reaches its parameter.
+        let before = (event_time - 1e-3).max(0.0);
+        let ts = mantle.surface_temperature;
+        let elastic = mantle.lid_at(before)
+            * ((ELASTIC_ISOTHERM_ROCK - ts) / (mantle.temperature_at(before) - ts).max(1.0))
+                .clamp(0.0, 1.0);
+        let parameter = crate::stages::load::flexural_parameter(elastic, graph.f64("body.gravity"));
+        let tessera_smoothing = (4.0 * (parameter / cell).powi(2)).round().max(1.0) as usize;
         Some(Self {
             grid,
             body_radius,
             event_time,
             tessera_age,
             tessera_fraction: graph.f64("tectonics.tessera_fraction"),
+            tessera_smoothing,
             gravity: graph.f64("body.gravity"),
             done: false,
             resurfacing: None,
@@ -315,7 +330,7 @@ impl EpisodicProcess {
                 Some(l) => heights.iter().zip(l).map(|(h, l)| h - l).collect(),
                 None => heights.clone(),
             };
-            let score = smooth(&grid, &old_crust, TESSERA_SMOOTHING_PASSES);
+            let score = smooth(&grid, &old_crust, self.tessera_smoothing);
             let threshold = upper_quantile(&grid, &score, self.tessera_fraction);
             let filled = fill_depressions(&grid, &heights);
             let n = grid.cell_count();

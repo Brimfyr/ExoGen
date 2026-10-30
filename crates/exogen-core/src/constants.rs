@@ -897,13 +897,13 @@ pub const LANDSLIDE_REACH: (f64, f64) = (7.0, 14.0);
 pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// The episodic lid (PLAN.md 4.3, Venus). The event fills every depression this far
 /// towards its spill point and lays this veneer everywhere else on the plains, m; the
-/// tessera are the highest-standing fraction of the surface by a height smoothed this
-/// many passes, less what the plumes and the mantle's flow hold up, which is the crust the
-/// flow thickened over its downwellings (F184), and keep the surface the overturn before the
+/// tessera are the highest-standing fraction of the surface by a height smoothed over the
+/// flexural parameter of the elastic lid the overturn broke (audit W3), less what the plumes
+/// and the mantle's flow hold up, which is the crust the flow thickened over its
+/// downwellings (F184), and keep the surface the overturn before the
 /// event laid (F121), or one this much older than the event where there was none, Gyr.
 /// After the event the eruptions follow the mantle's history (F165).
 pub const TESSERA_FRACTION: f64 = 0.08;
-pub const TESSERA_SMOOTHING_PASSES: usize = 20;
 pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
 /// The tesserae's fabric from the strain their lid took (F187). A strong layer shortened
 /// over a weaker one buckles at this many times its thickness (a stated choice within
@@ -1835,11 +1835,6 @@ pub const EMPIRICAL_SATURATION_FRACTION: f64 = 0.05;
 /// relief falls toward finer scales (Rosenburg et al. 2011: 0.76 to 0.96 on the Moon).
 pub const ROUGHNESS_RMS_SHARE: f64 = 0.35;
 pub const ROUGHNESS_HURST: f64 = 0.8;
-/// The roughness's strength follows the surface age smoothed over this many passes of
-/// the one-cell kernel (a sigma of half the square root of that in cells, about two
-/// cells), so that the edge of a young deposit on old ground is a short ramp of roughness
-/// and never a staircase of cells.
-pub const ROUGHNESS_BLEND_PASSES: usize = 12;
 /// Variation within units (F55): a body's lavas drift in composition over its eruptive
 /// history, so a flow unit's reflectance departs from the mean by up to this share,
 /// drifting over this period, Gyr, and written by the eruption into the surface's
