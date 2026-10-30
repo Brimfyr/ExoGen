@@ -2934,3 +2934,16 @@ The user asked to look at the crater population after the hundred-and-thirty-fou
 - **The proposal.** Scale the base relief's largest octave by the share of saturation the body's craters reach at that size, as the sub-grid roughness is scaled (F54).
 - **Why not.** Over their lives the bodies come to 0.74 (Mercury) to 0.99 (Mars) of saturation at their largest craters: Mercury's largest octave would fall by a seventh, Mimas's, which matches its map, by three tenths, and Callisto's by four fifths. At that scale each body expects under one such basin.
 - **What carries it.** Mercury's base relief is 990 m of the 1,000 m beyond two radii (360 m without it), its map's shares halfway between; what flattened the real Mercury's largest scales, its early volcanic plains or its warm early lithosphere, the model has not got: a known limitation (audit, calibrations).
+
+## The hundred-and-thirty-fifth milestone: the lanes and the lid's strain
+
+- **F225.** A lane is a rift, and a lid yielding in compression breaks in none: Mimas's young ocean melts, its body shrinks by 3.5 km, and its lanes fall from 10.3 to 5.5 percent of it, the hexagon gone. Ganymede's, Enceladus's and Europa's are unchanged.
+- **F226.** Every set of tilt blocks tilts to lock-up: the lanes' fine set on the same law as a corona's belts, about 200 m on Ganymede's 1.2 km blocks; the grooves are necks and keep their share (audit T6, GROOVE_RELIEF_SHARE).
+
+How it went:
+
+- **The lanes from the radius alone.** The plan was to open lanes from the lid's extension by the body's change of radius. Ganymede's lid stretches 0.27 percent over its record, all of it after its lanes formed, its ocean melting through its episode; its 69 percent wants some 8 percent. Enceladus's lanes have 0.02 percent behind them. The lanes' renewal stays the heat's, the stretching above the convection its episode drives, and the lid's strain stops it where it yields in compression.
+- **One law for the grooves.** Read as tilt blocks, Ganymede's 7 km grooves would stand 1.1 km at the 51 to 58 percent Collins et al. (1998) find in Uruk Sulcus; they read the grooves as necks and the fine ridges as the tilt blocks, so the law joins the tilt blocks, and the grooves keep theirs.
+- **Where the line stands.** A lid in any compression opening no lane would take Ganymede's: its lid stands some 5 MPa in elastic compression through its episode. The line stands at the lid's compressive strength, and Mimas keeps the lanes of its ocean's first part.
+
+Still to do: the switches with their sweeps, M16, M21's single budget and T3's bands (known limitations), for the user's choice.

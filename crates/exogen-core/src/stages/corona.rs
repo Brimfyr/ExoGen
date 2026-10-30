@@ -262,10 +262,18 @@ impl CoronaNoise {
 /// trough, which is the middling fault's trough below its plateau (one and the mean
 /// depth, F132).
 pub fn relief_share() -> f64 {
-    (CORONA_FAULT_DIP_DEG - CORONA_LOCKUP_DIP_DEG)
-        .to_radians()
-        .sin()
-        / (1.0 + GROOVE_DEPTH_MEAN)
+    lockup_relief(1.0) / (1.0 + GROOVE_DEPTH_MEAN)
+}
+
+/// The relief from crest to trough of tilt blocks this wide, m, tilted until their faults
+/// lock: the width times the sine of the tilt from the dip they broke at to the dip at
+/// which friction locks them. One law for every set of tilt blocks, a corona's belts and
+/// the fine set on a lane's grooves (audit T6).
+pub fn lockup_relief(width: f64) -> f64 {
+    width
+        * (CORONA_FAULT_DIP_DEG - CORONA_LOCKUP_DIP_DEG)
+            .to_radians()
+            .sin()
 }
 
 fn smoothstep(x: f64) -> f64 {

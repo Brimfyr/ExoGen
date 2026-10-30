@@ -303,6 +303,45 @@ const BEDROCK: &[&str] = &[
 const END_MEMBER_IDS: &[&str] = BEDROCK;
 const COLOUR_SPACE: &[&str] = &["linear_srgb", "acescg"];
 /// What the thermal evolution reads (`thermal::ThermalInputs`).
+/// The lanes' renewal (F44, F140) and the lid's strain it reads (F147): the thermal history's
+/// nodes and the record's start.
+const LANE_DEPS: &[&str] = &[
+    "body.age",
+    "body.radius",
+    "body.gravity",
+    "body.uncompressed_density",
+    "body.mass",
+    "body.rock_mass_fraction",
+    "body.core_mass_fraction",
+    "interior.secular_cooling_fraction",
+    "interior.tidal_flux",
+    "orbit.eccentricity",
+    "orbit.eccentricity_history",
+    "tectonics.initial_crust_thickness",
+    "body.composition_class",
+    "atmosphere.surface_temperature_mean",
+    "volatiles.inventory",
+    "interior.crust_strength",
+    "interior.tectonic_regime",
+    "interior.core_tidal_power",
+    "orbit.primary",
+    "orbit.primary_mass",
+    "orbit.semi_major_axis",
+    "orbit.mean_motion",
+    "rotation.mode",
+    "body.density",
+    "body.ice_layer_thickness",
+    "volatiles.working_liquid",
+    "tectonics.plume_rise_count",
+    "interior.core_porosity",
+    "interior.ice_shell_thickness",
+    "interior.tidal_flux_history",
+    "interior.heat_flux_history",
+    "tectonics.polar_thinning",
+    "cratering.record_start",
+    "cratering.retention_age",
+];
+
 const THERMAL_DEPS: &[&str] = &[
     "body.age",
     "body.radius",
@@ -2886,17 +2925,9 @@ static NODES: &[NodeDef] = &[
         "",
         1.0,
         f(0.0, 1.0),
-        &[
-            "interior.tectonic_regime",
-            "interior.ice_shell_thickness",
-            "body.radius",
-            "interior.tidal_flux",
-            "interior.tidal_flux_history",
-            "interior.heat_flux_history",
-            "tectonics.polar_thinning",
-        ],
+        LANE_DEPS,
         d::tectonics_ice_resurfaced_fraction,
-        "Share of a thick shell over an ocean renewed as lanes of grooved terrain (F44): the peak tidal flux of the body's history above 5 mW/m² over 4.5 mW/m², less the share the focusing takes to the pole, clipped; a thin shell cracks everywhere instead. Ganymede's two thirds come from the heating pulse of its resonance episode (F50), 8 mW/m².",
+        "Share of a thick shell over an ocean renewed as lanes of grooved terrain (F44): the peak tidal flux of the body's history above 5 mW/m² over 4.5 mW/m², less the share the focusing takes to the pole, clipped, and none while the body's change of radius has the lid yielding in compression (F225); a thin shell cracks everywhere instead. Ganymede's two thirds come from the heating pulse of its resonance episode (F50), 8 mW/m².",
         "PLAN.md 4.3",
     ),
     derived(

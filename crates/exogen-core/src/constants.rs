@@ -2864,12 +2864,14 @@ pub const GROOVE_LANE_DROP: f64 = 200.0;
 /// instability to Ganymede's ice), and that layer in a rift, hot as a rift is, is this
 /// share of the elastic lid. The product is what is calibrated, once, on Ganymede's
 /// grooves, 7 km apart on a lid the thermal history makes 11 km thick, and applied to
-/// every body. Their relief is this share of their spacing (Ganymede's, 250 m at 7 km,
-/// Squyres 1981; Enceladus's ridged plains, 100 to 400 m at 3 to 4 km, Bland et al.
-/// 2007, fall in the same ratio). On the necks ride the tilted fault blocks of the fine
-/// set, this many to a groove spacing and this share of the grooves' relief
-/// (Pappalardo et al. 1998 and Patel et al. 1999: necks about 8 km apart and fault
-/// blocks 1 to 2 km apart on Ganymede), each a long back slope and a short scarp,
+/// every body. Their relief, a neck's and not a tilt block's (Collins et al. 1998 read the
+/// two scales so), is this share of their spacing (Ganymede's, 250 m at 7 km, Squyres
+/// 1981; Enceladus's ridged plains, 100 to 400 m at 3 to 4 km, Bland et al. 2007, fall in
+/// the same ratio). On the necks ride the tilted fault blocks of the fine set, this many
+/// to a groove spacing, tilted to lock-up as a corona's blocks are
+/// (`corona::lockup_relief`; Pappalardo et al. 1998 and Patel et al. 1999: necks about 8
+/// km apart and fault blocks 1 to 2 km apart on Ganymede), each a long back slope and a
+/// short scarp,
 /// skewed by this much of a radian; a grid draws them where they span this many cells,
 /// and draws nothing closer. A lane meets the old ground across a border zone this
 /// many lid thicknesses wide, since its bounding faults cut the whole lid: a physical
@@ -2879,7 +2881,6 @@ pub const GROOVE_NECKING_WAVELENGTH: f64 = 3.5;
 pub const GROOVE_RIFT_LID_SHARE: f64 = 0.18;
 pub const GROOVE_RELIEF_SHARE: f64 = 0.036;
 pub const GROOVE_FINE_RATIO: f64 = 6.0;
-pub const GROOVE_FINE_RELIEF: f64 = 0.4;
 pub const GROOVE_FINE_SKEW: f64 = 0.6;
 pub const GROOVE_BORDER_LIDS: f64 = 1.0;
 /// The finish completes a lane's renewal in full where the loop left more than this

@@ -1000,13 +1000,40 @@ pub fn tectonics_ice_resurfaced_fraction(c: &Ctx) -> Value {
     // heat F44 was calibrated on, Ganymede's two thirds renewed over its episode. A shell
     // renews itself at most once over: the renewal share saturates at one, and the
     // focusing's share is taken from that.
+    // A lane is a rift, which the lid breaks in tension: while the body's change of radius
+    // has the lid yielding in compression, its thrusts taking up the shortening (F147), as
+    // a melting ocean's shrinking does, the heat opens no lane.
     let excess = renewing_excess(c);
+    let lid = lid_strain(c);
+    let squeezed = |t: f64| -> bool {
+        let i = lid.times.partition_point(|&x| x < t);
+        i > 0 && i < lid.times.len() && lid.shortening[i] > lid.shortening[i - 1]
+    };
     let carried: f64 = excess
         .windows(2)
+        .filter(|w| !squeezed(0.5 * (w[0].0 + w[1].0)))
         .map(|w| 0.5 * (w[0].1 + w[1].1) * (w[1].0 - w[0].0))
         .sum();
     let renewal = (carried / (ICE_RESURFACING_FLUX * LANE_RENEWAL_GYR)).clamp(0.0, 1.0);
     (renewal * diffuse).clamp(0.0, 0.95).into()
+}
+
+/// The lid's strain from the body's change of radius (F147), from the nodes a derivation
+/// declares.
+fn lid_strain(c: &Ctx) -> crate::stages::strain::LidStrain {
+    let age = c.f64("body.age");
+    let inputs = crate::stages::strain::LidInputs {
+        radius: c.f64("body.radius"),
+        ice: c.f64("body.ice_layer_thickness"),
+        age,
+        start: c
+            .f64("cratering.record_start")
+            .max(age - c.f64("cratering.retention_age"))
+            .clamp(0.0, age),
+        gravity: c.f64("body.gravity"),
+    };
+    let thermal = crate::thermal::ThermalHistory::new(&thermal_inputs(c));
+    crate::stages::strain::LidStrain::from_inputs(&inputs, &thermal)
 }
 
 pub fn tectonics_chaos_fraction(c: &Ctx) -> Value {

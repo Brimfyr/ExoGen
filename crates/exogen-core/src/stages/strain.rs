@@ -43,7 +43,12 @@ pub struct LidMaterial {
 impl LidMaterial {
     /// Ice over an icy body's mantle, rock over a rocky one's.
     pub fn of(graph: &ParamGraph) -> Self {
-        if graph.f64("body.ice_layer_thickness") > 0.0 {
+        Self::icy(graph.f64("body.ice_layer_thickness") > 0.0)
+    }
+
+    /// Ice or rock.
+    pub fn icy(icy: bool) -> Self {
+        if icy {
             LidMaterial {
                 density: DENSITY_ICE,
                 modulus: ICE_YOUNG_MODULUS,
@@ -91,9 +96,16 @@ pub fn brittle_bound(graph: &ParamGraph, thermal: &ThermalHistory, t: f64) -> f6
 /// The deepest any of the lid's faults reach, m: within its ice and a thin shell's share of
 /// the radius.
 pub fn shell_bound(graph: &ParamGraph) -> f64 {
-    let ice = graph.f64("body.ice_layer_thickness");
-    let within = if ice > 0.0 { ice } else { f64::INFINITY };
-    within.min(LID_LAYER_RADIUS_SHARE * graph.f64("body.radius"))
+    within(
+        graph.f64("body.ice_layer_thickness"),
+        graph.f64("body.radius"),
+    )
+}
+
+/// Within an ice layer this thick, m, and a thin shell's share of a radius, m.
+fn within(ice: f64, radius: f64) -> f64 {
+    let layer = if ice > 0.0 { ice } else { f64::INFINITY };
+    layer.min(LID_LAYER_RADIUS_SHARE * radius)
 }
 
 /// The lid's strain from the body's change of radius (F147): the extension and the
@@ -110,21 +122,50 @@ pub struct LidStrain {
     pub radius_change: Vec<f64>,
 }
 
+/// What the lid's strain reads of the body: its radius, m, its ice layer, m, its age and
+/// the start of its record, Gyr, and its gravity, m/s², from the parameter graph or, in a
+/// derivation, from the nodes it declares.
+#[derive(Clone, Copy, Debug)]
+pub struct LidInputs {
+    pub radius: f64,
+    pub ice: f64,
+    pub age: f64,
+    pub start: f64,
+    pub gravity: f64,
+}
+
+impl LidInputs {
+    pub fn from_graph(graph: &ParamGraph) -> Self {
+        let age = graph.f64("body.age");
+        Self {
+            radius: graph.f64("body.radius"),
+            ice: graph.f64("body.ice_layer_thickness"),
+            age,
+            start: graph
+                .f64("cratering.record_start")
+                .max(age - graph.f64("cratering.retention_age"))
+                .clamp(0.0, age),
+            gravity: graph.f64("body.gravity"),
+        }
+    }
+}
+
 impl LidStrain {
     pub fn from_graph(graph: &ParamGraph, thermal: &ThermalHistory) -> Self {
-        let r = graph.f64("body.radius");
-        let ice = graph.f64("body.ice_layer_thickness");
-        let age = graph.f64("body.age");
-        let start = graph
-            .f64("cratering.record_start")
-            .max(age - graph.f64("cratering.retention_age"))
-            .clamp(0.0, age);
+        Self::from_inputs(&LidInputs::from_graph(graph), thermal)
+    }
+
+    pub fn from_inputs(inputs: &LidInputs, thermal: &ThermalHistory) -> Self {
+        let r = inputs.radius;
+        let ice = inputs.ice;
+        let age = inputs.age;
+        let start = inputs.start;
         if age <= 1e-6 {
             return Self::default();
         }
-        let material = LidMaterial::of(graph);
-        let gravity = graph.f64("body.gravity").max(1e-3);
-        let deepest = closure_depth(graph);
+        let material = LidMaterial::icy(ice > 0.0);
+        let gravity = inputs.gravity.max(1e-3);
+        let deepest = FAULT_LAYER_PRESSURE / (material.density * gravity);
         // The ice frozen at a time: the solid shell over the ocean, the whole layer once the
         // ocean is gone; as ice I down to where the pressure reaches its limit, and as the
         // denser high-pressure ices below.
@@ -153,7 +194,7 @@ impl LidStrain {
                 / area
                 - thermal.at(t).contraction;
             let strain = change / r;
-            let layer = deepest.min(brittle_bound(graph, thermal, t));
+            let layer = deepest.min(thermal.at(t).elastic.min(within(ice, r)).max(1e3));
             let (tension, compression) = material.breaking(material.density * gravity * layer);
             let recorded = t >= start;
             let stretch = strain - relaxed - tension / stiffness;

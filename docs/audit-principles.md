@@ -51,14 +51,15 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | T1, Io's plume deposits | Closed in part (F84, F202, F208) | the profiles within a ring stated shapes: known limitation |
 | T1, coronae, tessera texture, crater walls | Closed | F145, F146; F187; F67 |
 | T2 | Closed (F92) | TERRACE_FULL_COLLAPSE a stated choice |
-| T3 | **Short list**, with M21 | bands from the lid's strain |
+| T3 | Known limitation | bands from the lid's strain, with M21's single budget |
 | T4 | Closed (F91, F214 to F221) | rays by composition go with Phase 5 (M11); the herringbone with Phase 7; other rock bodies' skin depth: known limitation |
 | T5 | Closed in part (F168) | the scarp's wear and the lowlands' sediments go with Phase 5; the endogenic route, a locked moon's near side and the giant basins held by the user |
-| T6 | **Short list** | one law for the grooves' relief, with the user's note that they are too regular (Miranda) |
+| T6 | Closed (F132, F133, F226) | the grooves as segments (F132), the spacing checked on Miranda (F133), one law for every set of tilt blocks (F226) |
 | T7 | Known limitation | with M39 |
 | Calibrations, checks passed | Closed | the eleven rows whose checks pass |
 | Calibrations, a direction only | Known limitation | stated choices of their processes, each in docs/parameters.md, revisited when their processes are |
-| Calibrations, checks failed | **Short list** | GROOVE_RELIEF_SHARE (Miranda), LANE_RENEWAL_GYR (Mimas's lanes, one a hexagon), with M21 |
+| GROOVE_RELIEF_SHARE (Miranda) | Closed (F226) | the grooves are necks, their share checked on Enceladus; Miranda's belts are tilt blocks, on one law with the lanes' fine set |
+| LANE_RENEWAL_GYR (Mimas) | Closed in part (F225) | Mimas's lanes from 10.3 to 5.5 percent, the hexagon gone; the rest open before its shrinking passes the lid's compressive strength: known limitation |
 | ROUGHNESS_RMS_SHARE at the largest scale (Mercury) | Known limitation (checked) | Mercury's base relief at the hemispheric scale twice the map's share; a share of saturation does not separate it, and what flattened the real one the model has not got |
 | CRATER_PI_SCALING and TARGET_STRENGTH (Ganymede's and Callisto's counts) | Known limitation (checked) | the counts set by the record's start, Ganymede's wanting its differentiation's heat, which the thermal history lacks |
 | SOLIDIFICATION_* (the crater record's start) | Known limitation | a provisional scaling with the radius, calibrated on the Moon; the thermal history's lithosphere would give it |
@@ -80,7 +81,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | M16 | **Short list** | the finish's floods keep four fifths of the loop's lava |
 | M17 | Closed in part (F113) | pit chains and dikes off the rises: known limitation |
 | M18 | Known limitation | a rise's axis drawn |
-| M21 | **Short list**, with T3 | a lid's extension spent once, on the structures its state favours |
+| M21 | Closed in part (F225) | the lanes read the lid's strain, opening none while it yields in compression; one budget spent once on graben, lanes and bands: known limitation |
 | M22 | Known limitation | the oceans' histories wait on the thermal model's revisit (with LANE_RENEWAL_GYR on Mimas) |
 | M23 | Closed in part (F149, F152) | the belts' tilted blocks: known limitation |
 | M25 | Closed in part (F183) | known limitation |
@@ -389,7 +390,7 @@ When: the earlier-phases revisit, with Mars.
 
 Closed in part in the eighty-fourth milestone (F168): the crust starts without a dichotomy and the amplitude by name is gone. A rocky body holds a basin as wide as a hemisphere, as Mars kept Borealis, and the impacts wider than the stamp draws take a form of their own: the crust excavated inside an elliptical rim down to what the melt sheet makes, the excavated crust thickening the crust beyond the rim, the ground where the crust's buoyancy holds it, the floor level, the older relief under the ejecta buried. Some bodies take one, some none, some several, some a basin short of a hemisphere. Still open: the boundary scarp worn by the surface processes (Phase 5), the lowlands' sediments; the endogenic route, degree-one convection, once the interior model resolves the mantle's planform; a locked moon's near side heated by its hot planet while its crust forms (Roy et al. 2014), which the Moon's near and far sides need (deferred by the user); the giant basins' outlines broken up, held back by the user until the processes that wear them are in.
 
-### T6. Grooves as regular troughs
+### T6. Grooves as regular troughs (closed by F132, F133 and F226)
 
 The user's note (2026-10-19): Ganymede's and Enceladus's grooves are troughs too regular to read as faulted ground, and should be more broken up, undulating and organic. The same process should show on Miranda, as a check on the model. Miranda's coronae are belts of subparallel ridges and troughs that Pappalardo et al. (1997) read as tilt blocks from extension and normal faulting above an upwelling (Arden Corona, local extension near 70 percent; warm buoyant ice in Hammond and Barr's convection): the faulting that makes Ganymede's grooves, concentric about the upwelling where Ganymede's follow its lanes. So one process, and Miranda the second body GROOVE_RIFT_LID_SHARE needs.
 
@@ -402,6 +403,8 @@ Closed in part by F132, the sixty-third milestone: a groove is a chain of fault 
 Closed in part by F194, the hundred-and-eighth milestone: the check holds, the lanes' grooves standing as Enceladus's ridged plains do (Bland et al. 2007); the sulci of the reference are the margins of its tectonized terrains, and the margin belt is now the margin's brittle layer buckling under the terrain's spreading, as wide as the margin's lid's flexural parameter, at F187's relief (about a kilometre crest to trough), drawn in the lanes' segments rather than rings. Still open: Miranda.
 
 Miranda closed in part by F133, the sixty-fourth milestone: a Miranda preset, and its coronae over the upwellings of the convection its resonance's tidal heating drove in its ice, their belts of the same fault segments concentric with outlines the convection's cells give. The spacing passes its check on a second body: Miranda's coronae's faults come out 4.9 to 5.3 km apart on the lid of its episode, against Arden's 5 km and the 5 to 10 km Hammond and Barr (2014) tabulate for its coronae. The relief does not, under the lanes' law: a share of the spacing gives the belts a few hundred metres where Arden's ridges and troughs stand up to 2 km, the 70 percent extension Pappalardo et al. (1997) find in its tilt blocks. A corona's blocks tilt instead until their faults lock, from the 50 degrees Arden's broke at to the 30 at which friction locks a normal fault, which gives Miranda's belts 1.7 km. The lanes keep their share, calibrated on Ganymede. Still open: one law for both, the relief from the strain the faults take up, a corona's to lock-up and a lane's what its rift opens, with Enceladus's grooves' relief.
+
+Closed by F226 (2026-10-30): every set of tilt blocks tilts to lock-up, a corona's belts and the lanes' fine set alike; the grooves themselves are necks of the brittle layer, as Collins et al. (1998) read Uruk Sulcus's two scales, their share of their spacing checked on Enceladus (F194).
 
 ### T7. Tiger stripes as a set per region
 
@@ -432,7 +435,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | IO_PELE_CLASS_FRACTION | about six large plumes at a time on Io (Geissler et al. 2004) | the share of centres whose magma comes up gas-rich, from the depth and temperature of their sources |
 | IO_SHIELD_COLUMNS | Io's red-brown plains beginning near 30 degrees (Geissler et al. 1999; Williams et al. 2011) | the column that stops the plasma, from its ions' energies and the gas's stopping power |
 | GROOVE_RIFT_LID_SHARE | Ganymede's 7 km grooves | a process constant, calibrated once; checked on a second body (F133): Miranda's coronae's faults 4.9 to 5.3 km apart on the lid of its episode against Arden's 5 km and 5 to 10 km for its coronae (Hammond and Barr 2014) |
-| GROOVE_RELIEF_SHARE | Ganymede's grooves, 250 m at 7 km (Squyres 1981) | fails its check on Miranda (F133): a few hundred metres where Arden's tilt blocks stand up to 2 km at 70 percent extension; the coronae take their relief from their blocks' tilt at lock-up instead, and a lane's wants the strain its rift opens |
+| GROOVE_RELIEF_SHARE | Ganymede's grooves, 250 m at 7 km (Squyres 1981) | fails its check on Miranda (F133): a few hundred metres where Arden's tilt blocks stand up to 2 km at 70 percent extension; the coronae take their relief from their blocks' tilt at lock-up instead, and a lane's wants the strain its rift opens; closed by F226 (2026-10-30): the grooves are necks (Collins et al. 1998), their share checked on Enceladus, and every set of tilt blocks tilts to lock-up on one law |
 | CENTRAL_PEAK_HEIGHT | Copernicus | check how it scales with gravity |
 | GRABEN_WALL_SEGMENT_WIDTHS, GRABEN_WALL_JOG, GRABEN_WALL_RAMP_WIDTHS, GRABEN_WALL_ROUGH | a wall's straight pieces, their jogs and roughness (F149): Pluto's and Charon's chasmata run straight for a few widths between jogs | the bounding fault's own segments and relays, from the fault's growth by linking (F111), rather than a second set drawn along the wall |
 | RAY_LENGTH_COEFF_KM, RAY_LENGTH_EXPONENT, RAY_SKIN_DEPTH_M | Elliott et al. (2018)'s median lunar ray lengths, 6.59 R^1.27 km, for their 10 cm skin (F91) | the skin and fragment population per body: the length goes as the skin depth to about -1.16, which an icy surface's lag already sets |
@@ -453,7 +456,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | WARM_START_SHELL | a stated choice: an icy moon's H2O layer liquid after accretion under a crust of 1 km where a warm moon's heat would hold no floating shell (F138) | the early thermal state from the accretion's heat, the short-lived isotopes and the moon's time of forming; Enceladus keeps its ocean only from a warm start, its eccentricity of 0.0047 never melting it frozen through |
 | CORE_THERMAL_DIFFUSIVITY | rock's k / ρ c_p, 2.5 W/m/K over 2.5 MJ/m³/K (F138) | the porous interior's own thermal history, its pore water's latent heat and the hydrothermal circulation that carries Enceladus's heat (Choblet et al. 2017), for the time a thawing interior takes |
 | PUMPED_ECCENTRICITY_MAX | a safety cap: 0.2, near where Nakajima et al. (2019) find Enceladus's orbit crossing Tethys's (F138) | each resonance's own largest eccentricity, from the dynamics of its pair |
-| LANE_RENEWAL_GYR | Ganymede's two thirds renewed by its resonance episode (F140), as ICE_RESURFACING_FLUX was calibrated | a renewal by the heat the lid carries above the floor, linear in time; fails its check on Mimas: its young ocean's 13 mW/m² over 33 Myr renew a tenth of it in lanes, where Lainey et al. 2024 find no surface expression; the lanes want the strain of the lid, and a melting ocean contracts the body |
+| LANE_RENEWAL_GYR | Ganymede's two thirds renewed by its resonance episode (F140), as ICE_RESURFACING_FLUX was calibrated | a renewal by the heat the lid carries above the floor, linear in time; fails its check on Mimas: its young ocean's 13 mW/m² over 33 Myr renew a tenth of it in lanes, where Lainey et al. 2024 find no surface expression; the lanes want the strain of the lid, and a melting ocean contracts the body; closed in part by F225 (2026-10-30): no lane while the lid yields in compression, Mimas's lanes from 10.3 to 5.5 percent, the rest opening before its shrinking passes the lid's compressive strength |
 | Flexural support (F139) | a thin plate's flexural wavelength 2π (D / ρ g)^¼ (Turcotte and Schubert 2002), the share settling from two thirds to four thirds of it | the viscoelastic relaxation of a lid whose viscosity falls with depth, which a sharp elastic thickness stands for; Enceladus's relaxed craters (Bland et al. 2012) want lids of a kilometre or two |
 | Resonance supplies | the heat stated for the episode, or what its eccentricity gives a warm moon (F138): Mimas's 16 GW from Meyer and Wisdom 2008's equilibrium heating scaled to Lainey et al. 2017's Saturn, Miranda's 42 GW and Ganymede's 0.67 TW from their eccentricities | the planet's tidal torque on the moons of the resonance chain, the supply each resonance can deliver; Uranus's torque at a Q of 17,500 delivers Ariel and Umbriel some 6.5 GW, a sixth of Miranda's |
 | FINE_TEXTURE_SHARE | a stated choice: a renewed terrain keeps the base relief below the length it levels over, and below its fabric's spacing 0.4 of its amplitude, the fabric overprinting what is finer (F141); chosen by eye with the user for the smoother look of new ice between its grooves | the roughness of new ice at scales below the fabric, from the fabric's own process; checked on Mimas, Enceladus and Miranda against the Gaussian look it replaces |
@@ -751,6 +754,8 @@ The lid's change of radius stretches it (F147), and its faults take that strain 
 Direction: the lanes and bands from the lid's strain with the tide's and the heat's, the graben taking what they do not.
 
 When: with the lanes' revisit (the M72 design's fifth item).
+
+Closed in part by F225 (2026-10-30): the lanes read the lid's strain from the body's change of radius, and open none while it yields in compression, as Mimas's shrinking has it. Still open: one budget, the radius's extension spent once on the graben, lanes and bands its lid's state favours; the lanes' renewal stays the heat's, since Ganymede's lid stretches only 0.27 percent by its radius over its record, all of it after its lanes, where its 69 percent at the fine blocks' lock-up would want some 8 percent; a known limitation.
 
 ### M22. Pluto's and Mimas's oceans in their histories
 

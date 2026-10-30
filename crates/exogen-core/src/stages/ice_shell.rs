@@ -35,7 +35,7 @@ use crate::stages::ice::{FocusEpisode, ShellMap};
 use crate::stages::lineae::{Cracks, Linea, LineaKind, crack_direction, mean_axis_at};
 use crate::units::*;
 
-pub const VERSION: u64 = 25;
+pub const VERSION: u64 = 26;
 
 /// A lane of renewed terrain (F44, F61): a swath about a centre line traced across the
 /// shell, along the tidal field where the shell cracks, so that it curves as the field
@@ -744,8 +744,11 @@ impl Lane {
                 0.5,
             );
             let x = (level + run).clamp(0.0, 1.0);
-            GROOVE_FINE_RELIEF
-                * amplitude
+            // Tilt blocks stretched to lock-up, as a corona's are: a rift stretches far
+            // longer than its faults take to rotate (Collins et al. 1998 read at least 51
+            // to 58 percent in Uruk Sulcus's blocks), half the crest-to-trough relief on
+            // either side of the profile's mean.
+            0.5 * crate::stages::corona::lockup_relief(self.groove_spacing / GROOVE_FINE_RATIO)
                 * margin
                 * top.1
                 * x
