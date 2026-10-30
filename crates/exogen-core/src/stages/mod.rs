@@ -5376,7 +5376,9 @@ mod tests {
         // body (Schenk 2002), a depth ratio near 0.012: relaxed, not flattened. The median
         // of some sixty craters moves by a tenth with which craters the history leaves:
         // 0.0085 in the fifty-sixth milestone and 0.0072 in the fifty-seventh, whose colder
-        // surface left 54 of the same craters at the same median depth.
+        // surface left 54 of the same craters at the same median depth; 0.017 since the
+        // comets' craters under strength and the thermal-orbital history (the sixty-seventh
+        // and sixty-ninth), the 60 to 100 km craters at 0.014 at 4,096 pixels.
         assert!(small > 0.006, "small craters keep their depth: {small}");
         assert!(large < 0.25 * small, "large {large} vs small {small}");
     }
