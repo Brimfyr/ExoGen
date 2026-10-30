@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 165;
+pub const FINISH_VERSION: u64 = 166;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3597,21 +3597,29 @@ impl RaySystem {
         }
         let edge = self.ejecta_edge * self.edge.factor_at(phi, r / self.radius);
         // The blanket is bright where its deposit covers the ground (F51), fading with the
-        // cover past its lobed edge rather than ending there, mottled.
-        let blanket = (ejecta_coverage(r, self.radius, edge, self.halo, self.edge.jet(phi))
+        // cover past its lobed edge rather than ending there, mottled; and fresh by the share
+        // of it that is the crater's own ejecta (F221): ballistic sedimentation takes up the
+        // ground it lands on, from none at EJECTA_PURE_RADII to all of it at the continuous
+        // edge (Oberbeck 1975, as F216 mixes the deep bedrock), the ground taken up keeping
+        // its own maturity (a stated choice).
+        let primary = ((edge - r) / (edge - EJECTA_PURE_RADII * self.radius).max(1.0))
+            .clamp(0.0, 1.0);
+        let cover = (ejecta_coverage(r, self.radius, edge, self.halo, self.edge.jet(phi))
             * ejecta_modulation(phi, self.azimuth, self.angle).min(1.0)
             * self.texture.as_ref().map_or(1.0, |t| {
                 1.0 + EJECTA_BRIGHTNESS_TEXTURE * t.noise_floor(phi, r / self.radius)
             }))
-        .clamp(0.0, 1.0)
-            * skin;
+        .clamp(0.0, 1.0);
+        let blanket = cover * primary * skin;
         // The rays are their clusters; where the jets excavate more than clusters carry,
         // the rest is a solid ray (F128).
         let landing = ray_coherence(r / self.body_radius);
         let solid = (landing * self.rays.area(r, phi) - RAY_CLUSTER_CAP).max(0.0);
         // What they excavate is fresh by the share of it from beneath the skin.
         let ray = (1.0 - (-(solid + clustered) * skin).exp()) * self.rays.fresh_share(r, phi, skin);
-        ((1.0 - (1.0 - blanket) * (1.0 - ray)) * self.freshness) as f32
+        // The fragments dig secondaries only where they land apart, on the ground the
+        // continuous deposit leaves (F221).
+        ((blanket + (1.0 - cover) * ray) * self.freshness) as f32
     }
 
     /// The cells the system brightens, gathered within its reach.

@@ -310,6 +310,8 @@ pub struct Rays {
     /// The area below which a jet leaves less than RAY_VISIBLE of the ground excavated
     /// even in its strongest burst.
     least: f64,
+    /// The median ray length, m (`ray_length`).
+    length: f64,
 }
 
 /// The median ray length, m, of a crater of radius `radius`, m: Elliott et al. (2018)'s
@@ -341,6 +343,7 @@ impl Rays {
             radius,
             scale,
             least: -(1.0 - RAY_VISIBLE).ln() / strongest_burst(),
+            length,
         }
     }
 
@@ -372,12 +375,15 @@ impl Rays {
     }
 
     /// The distance, m, beyond which no jet's fragments dig below the Moon's skin
-    /// (`fresh_share`), so that no ray shows; a thicker skin ends them sooner.
+    /// (`fresh_share`), so that no ray shows: the fastest jet's end.
     pub fn fresh_reach(&self) -> f64 {
-        self.radius
-            * (self.scale * self.curtain.peak_reach / std::f64::consts::LN_2)
-                .max(1.0)
-                .powf(1.0 / RAY_DENSITY_SLOPE)
+        let fastest = (0..TABLE)
+            .map(|b| {
+                self.curtain
+                    .speed(b as f64 / TABLE as f64 * std::f64::consts::TAU)
+            })
+            .fold(1.0, f64::max);
+        self.length * fastest * fastest
     }
 
     /// The distance, m, beyond which no jet excavates RAY_VISIBLE of the ground even in
@@ -409,20 +415,24 @@ impl Rays {
     /// The share of what the secondaries excavate at distance `r`, m, and azimuth `phi`
     /// that comes from beneath the weathered skin (F212 rays): a secondary digging to a depth d
     /// through a skin h throws out its column, h / d of it the skin's own mature soil, so
-    /// that the fresh share is 1 - h / d. The depth falls with distance as the largest
-    /// secondary does (SECONDARY_SIZE_FALL) while the area they excavate falls as the
-    /// RAY_DENSITY_SLOPE, and the ray ends where they no longer dig below the skin, where
-    /// half the ground is excavated (Elliott et al. 2018's P = 0.5): along a jet h / d is
-    /// the excavated area against that end's to -SECONDARY_SIZE_FALL / RAY_DENSITY_SLOPE,
-    /// so that a ray is bright near its crater and fades to the ground at its end, "the
-    /// fresh material diluted by the weathered material" (Elliott et al. 2018). `skin` is
-    /// the share of the Moon's area a thicker skin leaves (F91).
+    /// that the fresh share is 1 - h / d, "the fresh material diluted by the weathered
+    /// material" (Elliott et al. 2018). The depth goes as the secondaries' size, and that
+    /// as the speed their fragments left at (F220): it falls with distance as the largest
+    /// secondary does (SECONDARY_SIZE_FALL), a faster jet carrying the same fragments
+    /// farther by its speed squared, however many fragments the jet throws, so that a sparse
+    /// cluster digs as deep as a dense one at the same distance. A jet of the mean speed digs
+    /// only the skin at the median ray length (`ray_length`, where Elliott et al.'s median
+    /// jet excavates half the ground), so that a ray is bright near its crater and fades to
+    /// the ground at its end. `skin` is the share of the Moon's area a thicker skin leaves
+    /// (F91), which ends the rays sooner as it lowers the area they excavate.
     pub fn fresh_share(&self, r: f64, phi: f64, skin: f64) -> f64 {
-        let area = self.area(r, phi) * skin;
-        if area <= std::f64::consts::LN_2 {
+        if r <= self.radius || skin <= 0.0 {
             return 0.0;
         }
-        1.0 - (area / std::f64::consts::LN_2).powf(-SECONDARY_SIZE_FALL / RAY_DENSITY_SLOPE)
+        let launch = self.curtain.launch_azimuth(phi, (r / self.radius).ln());
+        let end =
+            self.length * self.curtain.speed(launch).powi(2) * skin.powf(1.0 / RAY_DENSITY_SLOPE);
+        (1.0 - (r / end).powf(SECONDARY_SIZE_FALL)).max(0.0)
     }
 
     /// The footprint, m across and along the radial, of a cluster of secondaries at
@@ -636,6 +646,43 @@ mod tests {
                 m > 1.0 && m > c.mass[(b + TABLE - 1) % TABLE] && m >= c.mass[(b + 1) % TABLE]
             })
             .count()
+    }
+
+    #[test]
+    fn a_sparse_cluster_digs_as_deep_as_a_dense_one() {
+        // F220: what the secondaries throw out is fresh by their depth, which goes with the
+        // distance and the jet's speed, not with how many land there: at the same distance
+        // the lightest and the heaviest azimuth of a vertical impact's curtain freshen
+        // alike, less with distance, and not at all past the median ray length.
+        let radius = 10e3;
+        let rays = Rays::new(Curtain::new(3, 0.0, std::f64::consts::FRAC_PI_2), radius);
+        let length = ray_length(radius);
+        let phis: Vec<f64> = (0..360).map(|k| (k as f64).to_radians()).collect();
+        let by_mass = |better: fn(f64, f64) -> bool| {
+            phis.iter()
+                .copied()
+                .reduce(|a, b| {
+                    let (ma, mb) = (rays.curtain().mass(a), rays.curtain().mass(b));
+                    if better(mb, ma) { b } else { a }
+                })
+                .unwrap()
+        };
+        let (heavy, light) = (by_mass(|b, a| b > a), by_mass(|b, a| b < a));
+        let r = 0.5 * length;
+        let (dense, sparse) = (
+            rays.fresh_share(r, heavy, 1.0),
+            rays.fresh_share(r, light, 1.0),
+        );
+        assert!(
+            rays.area(r, light) < std::f64::consts::LN_2,
+            "the light azimuth excavates under half the ground there"
+        );
+        assert!(
+            dense > 0.2 && (dense - sparse).abs() < 1e-9,
+            "{dense} {sparse}"
+        );
+        assert!(rays.fresh_share(2.0 * radius, heavy, 1.0) > dense);
+        assert_eq!(rays.fresh_share(1.01 * length, heavy, 1.0), 0.0);
     }
 
     #[test]

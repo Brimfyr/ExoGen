@@ -2868,3 +2868,17 @@ How it went:
 - **What the walls show.** The craters too small to draw shed mostly from those of 1 km up to the drawn size, so the smallest diameter counted hardly matters, and the statistical walls give the band Mercury draws only at the high resolution, 3.7 to 7.5 km, 0.25 percent of its surface where the drawn ones shed on 0.16.
 
 Still to do: Mercury's drawn simple craters, which its transition by gravity alone keeps under the size the finish draws (audit M38); the Moon's maria gathered in their province (audit M33, M35); the colours of Phase 5's weathering (audit M11).
+
+## The hundred-and-thirty-second milestone: the rays' streaks back and the halos softened
+
+- **F220.** The user saw the rays stand too bright against the ground about them and asked when the fine streaks of milestones 59 to 61 had gone. F212 (milestone 124) read a ray's secondaries' depth from how much ground its jet excavated, and freshened nothing where that was under half, which took away every sparse cluster, the streaks. A secondary's depth goes with its size, which falls with distance and goes with its jet's speed, not with how many land about it: now a sparse cluster freshens its ground as a dense one does at the same distance, and the rays fill the ground between their jets with their clusters again.
+- **F221.** Young craters stood in saturated bright discs: at 1.4 to 2.8 crater radii ten young model craters stood at 2.08 times the ground, where eight young reference craters stand at 1.10 to 1.66, though farther out they matched. The fragments dig secondaries only where they land apart, beyond the continuous deposit, and the deposit carries the ground it lands on in by ballistic sedimentation; the ring falls to 1.70, the brightest half percent of the Moon's surface from 0.216 to 0.202 against the reference's 0.192, and a young crater's halo is soft with fine streaks running out of it.
+
+How it went:
+
+- **Enceladus's network (M39).** Tried and recorded as a known limitation: cracks running on by the ice's toughness linked the terrains in 153 fractures, but the past episodes' lie under the plume's fallout and the present ones do not stand out.
+- **The gate re-checked.** Io passes; Enceladus is near passing; the Moon's maria on both hemispheres is a known limitation (M33); principle 16 added, its use kept for the end of Phase 4F (the user, 2026-10-29).
+- **The rays' end.** An end at twice the median ray length brought back the far rays' clusters but raised the brightest ground to 0.228; the median length kept.
+- **The curtain.** A census of young craters showed the rays' coverage beyond 2.8 radii already matching Tycho's and Copernicus's; the one crater that looked otherwise was large and strongly jetted.
+
+Still to do: the near ring at 1.70 against the reference's median of 1.37; the maria's bright rims (audit M36); the switch audit, then Phase 4F's close.
