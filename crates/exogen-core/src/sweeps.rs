@@ -194,6 +194,50 @@ mod tests {
         }
     }
 
+    /// Between Pluto, its shell frozen to its rock, and a larger Pluto whose shell floats on
+    /// an ocean, the shell goes by degrees (audit S1): its cryodomes fade and its deep ice
+    /// turns clean as the ocean grows to OCEAN_SHARE_WIDTH of its ice layer, neither
+    /// stepping where the ocean first forms.
+    #[test]
+    fn a_shell_comes_afloat_by_degrees() {
+        let (pluto, _) = preset("Pluto").unwrap().to_graph();
+        let r0 = pluto.f64("body.radius");
+        assert_eq!(pluto.f64("interior.ocean_degree"), 0.0);
+        let mut last: Option<[f64; 3]> = None;
+        for k in 0..=16 {
+            let f = 1.0 + 0.025 * k as f64;
+            let g = swept("Pluto", "body.radius", r0 * f);
+            let layer = g.f64("body.ice_layer_thickness");
+            let share = ((layer - g.f64("interior.ice_shell_thickness")) / layer).max(0.0);
+            let degree = g.f64("interior.ocean_degree");
+            let domes = g.f64("volcanism.cryodome_count");
+            let deep = g.str("materials.deep_bedrock");
+            let clean = if deep == "water_ice" {
+                1.0
+            } else {
+                crate::stages::materials::deep_clean_share(&g)
+            };
+            eprintln!(
+                "{f:.3}: {}, shell {:.0} km in {:.0}, ocean {share:.3}, degree {degree:.3}, cryodomes {domes}, deep {deep} clean {clean:.3}",
+                g.str("interior.tectonic_regime"),
+                g.f64("interior.ice_shell_thickness") / 1e3,
+                layer / 1e3,
+            );
+            // The deep ice is as clean as the shell floats.
+            assert!((clean - degree).abs() < 1e-12, "{clean} against {degree}");
+            if let Some([share0, degree0, domes0]) = last {
+                assert!(share >= share0, "{share0} to {share}");
+                assert!(degree >= degree0, "{degree0} to {degree}");
+                assert!(degree - degree0 < 0.35, "{degree0} to {degree}");
+                assert!(domes <= domes0 + 2.0, "{domes0} to {domes}");
+                assert!(domes0 - domes < 6.0, "{domes0} to {domes}");
+            }
+            last = Some([share, degree, domes]);
+        }
+        let [_, degree, domes] = last.unwrap();
+        assert_eq!((degree, domes), (1.0, 0.0));
+    }
+
     /// Prints the derived nodes the switches read along each sweep.
     #[test]
     #[ignore]

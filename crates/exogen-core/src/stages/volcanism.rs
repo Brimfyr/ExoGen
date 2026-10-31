@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 26;
+pub const VERSION: u64 = 27;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -330,8 +330,10 @@ impl FloodProcess {
             // Cryolava on an ice shell over rock, from the ice magma budget: slush that
             // is buoyant through the shell. Water under a shell over an ocean is denser
             // than the ice and does not flood the surface; what that shell does with
-            // its heat, chaos, fissures and fallout, is its own process.
+            // its heat, chaos, fissures and fallout, is its own process. A shell partly
+            // afloat floods as far as no ocean floats it (audit S1).
             "ice_shell_rock" => None,
+            "ice_shell_ocean" if graph.f64("interior.ocean_degree") < 1.0 => None,
             _ => return None,
         };
         let body_radius = graph.f64("body.radius");
@@ -418,8 +420,11 @@ impl FloodProcess {
             heap: BinaryHeap::new(),
             carry: 0.0,
             event_time,
-            flood_share: if graph.str("interior.tectonic_regime") == "ice_shell_rock" {
-                1.0 - CRYODOME_SHARE
+            flood_share: if graph
+                .str("interior.tectonic_regime")
+                .starts_with("ice_shell")
+            {
+                (1.0 - CRYODOME_SHARE) * (1.0 - graph.f64("interior.ocean_degree"))
             } else {
                 1.0
             },

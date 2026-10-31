@@ -27,7 +27,7 @@ use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::units::*;
 
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 
 /// A polar plume's fallout of fresh ice.
 pub struct Fallout {
@@ -696,13 +696,18 @@ impl Cryodome {
 /// magma budget spent in domes of volumes drawn log-uniform as a share of the body's
 /// cube, placed at random.
 pub fn cryodome_population(graph: &ParamGraph, present: f64, seed: u64) -> Vec<Cryodome> {
-    if graph.str("interior.tectonic_regime") != "ice_shell_rock"
+    if !graph
+        .str("interior.tectonic_regime")
+        .starts_with("ice_shell")
         || !crate::stages::ice::is_ice_surface(graph)
     {
         return Vec::new();
     }
-    // The magma rate is kept in m³/s; the budget here is in km³ per Gyr.
-    let rate = graph.f64("volcanism.rate") * GYR / 1e9 * CRYODOME_SHARE;
+    // The magma rate is kept in m³/s; the budget here is in km³ per Gyr. A shell builds
+    // domes as far as no ocean floats it (audit S1).
+    let rate = graph.f64("volcanism.rate") * GYR / 1e9
+        * CRYODOME_SHARE
+        * (1.0 - graph.f64("interior.ocean_degree"));
     if rate <= 0.0 {
         return Vec::new();
     }

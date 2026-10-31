@@ -2786,6 +2786,12 @@ pub const FOSSIL_VENT_LAG_GYR: f64 = 1e-5;
 /// measured 30 km shell, F75, and Ganymede's 0.031, the two outside the band).
 pub const WHOLESALE_SHELL_RATIO: f64 = 0.025;
 pub const THIN_SHELL_WIDTH: f64 = 0.2;
+/// An ice shell floats on its ocean by degrees (audit S1): wholly where the ocean is this
+/// share of the ice layer or more, not at all where the shell reaches the rock, smoothly
+/// between (a stated width; the ocean bodies' least share, Triton's, is 0.38). As far as
+/// it does not, its ice magma builds cryodomes and floods, and its deep ice is its crust's
+/// mixture rather than the frozen ocean's clean ice.
+pub const OCEAN_SHARE_WIDTH: f64 = 0.3;
 /// Grooved terrain (F44): lanes of new ice drawn as great-circle swaths, their lengths
 /// log-uniform between these angles, rad, their widths between these shares of the
 /// radius (Ganymede 30 to 250 km, Enceladus 3 to 24 km, its ridged belts), wobbling along

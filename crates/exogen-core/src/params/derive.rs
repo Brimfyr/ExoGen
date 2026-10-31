@@ -1087,7 +1087,9 @@ pub fn tectonics_chaos_fraction(c: &Ctx) -> Value {
 }
 
 pub fn volcanism_cryodome_count(c: &Ctx) -> Value {
-    if c.str("interior.tectonic_regime") != "ice_shell_rock" {
+    // A shell over rock builds them, as far as no ocean floats it (audit S1).
+    let open = 1.0 - c.f64("interior.ocean_degree");
+    if !c.str("interior.tectonic_regime").starts_with("ice_shell") || open <= 0.0 {
         return 0.0.into();
     }
     let r_km3 = (c.f64("body.radius") / 1e3).powi(3);
@@ -1097,7 +1099,7 @@ pub fn volcanism_cryodome_count(c: &Ctx) -> Value {
     );
     let mean = (hi - lo) / (hi / lo).ln();
     // The magma rate is kept in m³/s; the volumes are km³.
-    (CRYODOME_SHARE * c.f64("volcanism.rate") * GYR / 1e9 * c.f64("body.age") / mean)
+    (CRYODOME_SHARE * c.f64("volcanism.rate") * GYR / 1e9 * c.f64("body.age") / mean * open)
         .round()
         .into()
 }
@@ -1611,6 +1613,19 @@ pub fn interior_has_subsurface_ocean(c: &Ctx) -> Value {
     (is_icy(c.str("body.composition_class"))
         && c.f64("body.ice_layer_thickness") > c.f64("interior.ice_shell_thickness"))
     .into()
+}
+
+/// Audit S1: how far an ice shell floats on its ocean, by the ocean's share of the ice
+/// layer: none on a shell frozen to its rock, wholly from OCEAN_SHARE_WIDTH up, smoothly
+/// between.
+pub fn interior_ocean_degree(c: &Ctx) -> Value {
+    if !c.bool("interior.has_subsurface_ocean") {
+        return 0.0.into();
+    }
+    let layer = c.f64("body.ice_layer_thickness");
+    let share = (layer - c.f64("interior.ice_shell_thickness")) / layer.max(1.0);
+    let x = (share / OCEAN_SHARE_WIDTH).clamp(0.0, 1.0);
+    (x * x * (3.0 - 2.0 * x)).into()
 }
 
 pub fn interior_tectonic_regime(c: &Ctx) -> Value {
@@ -2774,9 +2789,10 @@ pub fn materials_deep_bedrock(c: &Ctx) -> Value {
         }
         "rock" | "iron_rich" => "basalt",
         // Under a shell that floats on an ocean the deep ice is clean; a crust over rock
-        // is the same mixture all the way down.
+        // is the same mixture all the way down, and a shell partly afloat is between them
+        // by its ocean's degree (audit S1, `materials::deep_clean_share`).
         "rock_ice" | "ice_dominated" => {
-            if regime == "ice_shell_ocean" {
+            if c.f64("interior.ocean_degree") >= 1.0 {
                 "water_ice"
             } else {
                 c.str("materials.bedrock")

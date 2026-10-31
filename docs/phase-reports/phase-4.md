@@ -2986,3 +2986,15 @@ How it went:
 - **The coronae swing.** Along Venus's radius the rock coronae go between none and some three thousand from one body to the next, every diapir reading one mantle's state: recorded under V1 as a known limitation.
 
 Still to do: the ice shells' names (S1: the cryodomes and the deep ice step where an ocean forms), for the user's choice; then the phase's close.
+
+## The hundred-and-thirty-ninth milestone: an ice shell afloat by degrees
+
+- **F231.** An ice shell floats on its ocean by degrees, by the ocean's share of its ice layer up to 0.3 of it: its cryodomes and cryolava floods fade and its deep ice cleans as it comes afloat (audit S1). Along Pluto's radius the domes fade from 16 to none, where they went at once as the ocean formed.
+
+How it went:
+
+- **The direction given did not hold.** The domes built only in the times without an ocean took Pluto from 16 to about 1 and gave Mimas about 1,100, the budget being the present rate over the whole life; the deep ice clean by the share of the shell that froze from the ocean would have turned every ocean body's dirty, the top of their shells never having melted. The user chose the degree on the present ocean, the history recorded under S1 with the efficiency's.
+- **Every preset as it was.** The ocean bodies at degree one, Triton the least at 0.38 of its layer, the frozen ones at none: the renders of Pluto, Ceres, Charon, Miranda, Callisto, Triton, Europa, Ganymede, Enceladus, Mimas, Titan and the Moon are identical, and a Pluto 1.1 times larger, at degree 0.42, has 9 domes and 143 cryolava floods where it had none.
+- **Miranda's coronae.** They read the present shell's name; kept as they are, Miranda having no ocean, and recorded under S1 as a chronology item.
+
+Still to do: the phase's close.

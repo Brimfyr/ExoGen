@@ -386,7 +386,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 171;
+pub const FINISH_VERSION: u64 = 172;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2981,9 +2981,12 @@ fn ice_shell_history(
     let surface_temperature = graph.f64("atmosphere.surface_temperature_mean");
     let gravity = graph.f64("body.gravity");
     // The ice that flows is the shell under the crust, which large craters excavate (F126):
-    // under a shell that floats on an ocean the frozen ocean, otherwise the crust's own mix.
-    let rock = crate::stages::materials::Library::from_graph(graph)
-        .non_ice(graph.str("materials.deep_bedrock"));
+    // under a shell that floats on an ocean the frozen ocean, otherwise the crust's own mix,
+    // and under one partly afloat between them by its ocean's degree (audit S1).
+    let library = crate::stages::materials::Library::from_graph(graph);
+    let clean = crate::stages::materials::deep_clean_share(graph);
+    let rock = library.non_ice(graph.str("materials.deep_bedrock")) * (1.0 - clean)
+        + library.non_ice("water_ice") * clean;
     let viscosity_scale = 10f64.powf(ICE_ROCK_VISCOSITY_DECADES * rock);
     let strength = graph.f64("interior.crust_strength");
     Some(Box::new(move |t: f64| {

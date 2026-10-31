@@ -1549,6 +1549,22 @@ static NODES: &[NodeDef] = &[
         "",
     ),
     derived(
+        "interior.ocean_degree",
+        "interior",
+        "Ocean degree",
+        "",
+        1.0,
+        f(0.0, 1.0),
+        &[
+            "interior.has_subsurface_ocean",
+            "body.ice_layer_thickness",
+            "interior.ice_shell_thickness",
+        ],
+        d::interior_ocean_degree,
+        "How far an ice shell floats on its ocean (audit S1): 0 on a shell frozen to its rock, 1 where the ocean is 0.3 or more of the ice layer, smoothly between. The shell's cryodomes and cryolava floods go as far as it is 0, and its deep ice from its crust's mixture to the frozen ocean's clean ice. The ocean bodies 1, Triton's ocean the least at 0.38 of its layer.",
+        "stated width",
+    ),
+    derived(
         "interior.tectonic_regime",
         "interior",
         "Tectonic regime",
@@ -3274,12 +3290,13 @@ static NODES: &[NodeDef] = &[
         f(0.0, 1e5),
         &[
             "interior.tectonic_regime",
+            "interior.ocean_degree",
             "body.radius",
             "volcanism.rate",
             "body.age",
         ],
         d::volcanism_cryodome_count,
-        "Domes of brine-rich ice a shell over rock has built over its life (F46): 0.7 of the ice magma budget in domes of 1e-6 to 3e-5 of the radius cubed; Ceres about 20, most of them relaxed away. Informative; the loop draws them from the budget.",
+        "Domes of brine-rich ice a shell over rock has built over its life (F46), as far as no ocean floats it (audit S1): 0.7 of the ice magma budget in domes of 1e-6 to 3e-5 of the radius cubed; Ceres about 20, most of them relaxed away. Informative; the loop draws them from the budget.",
         "PLAN.md 4.3",
     ),
     derived(
@@ -3455,6 +3472,7 @@ static NODES: &[NodeDef] = &[
         &[
             "body.composition_class",
             "interior.tectonic_regime",
+            "interior.ocean_degree",
             "atmosphere.surface_pressure",
             "materials.bedrock",
             "body.mantle_feo",
@@ -3464,7 +3482,7 @@ static NODES: &[NodeDef] = &[
             "body.core_mass_fraction",
         ],
         d::materials_deep_bedrock,
-        "What large craters excavate from below the surface layer: the noritic lower crust under a flotation crust, the graphite flotation crust under a reduced body's lavas, otherwise the basalt (F125); clean ice under the lag of an ice shell, otherwise the bedrock. Pin to choose.",
+        "What large craters excavate from below the surface layer: the noritic lower crust under a flotation crust, the graphite flotation crust under a reduced body's lavas, otherwise the basalt (F125); the frozen ocean's clean ice under an ice shell that floats on one, the crust's own mix under one frozen to its rock, between them by the ocean's degree (F126, audit S1). Pin to choose.",
         "F125; provisional, Phase 7",
     ),
     derived(

@@ -27,7 +27,7 @@ use crate::units::{
     UNIT_LINEA, UNIT_MOUNTAIN, UNIT_OCEANIC,
 };
 
-pub const VERSION: u64 = 34;
+pub const VERSION: u64 = 35;
 
 #[derive(Clone, Copy, Debug)]
 pub struct EndMember {
@@ -531,6 +531,36 @@ pub fn end_member_ids() -> Vec<&'static str> {
     MATERIALS.iter().map(|e| e.id).collect()
 }
 
+/// What deep craters excavate (F125, F126): the deep bedrock, and under a shell partly
+/// afloat on its ocean the frozen ocean's clean ice by its share (audit S1).
+pub fn deep_member(library: &Library, graph: &ParamGraph) -> Option<EndMember> {
+    let deep = library.member(graph.str("materials.deep_bedrock"))?;
+    let clean = deep_clean_share(graph);
+    if clean <= 0.0 {
+        return Some(deep);
+    }
+    let ice = library.member("water_ice")?;
+    Some(EndMember {
+        fresh: lerp3(deep.fresh, ice.fresh, clean as f32),
+        roughness: deep.roughness + (ice.roughness - deep.roughness) * clean as f32,
+        ..deep
+    })
+}
+
+/// The share of what deep craters excavate that is the frozen ocean's clean ice where the
+/// deep bedrock is the crust's ice: under a shell partly afloat on its ocean, its ocean's
+/// degree (audit S1); none on a shell frozen to its rock, and none past the deep bedrock
+/// itself where the shell wholly floats and it is the clean ice.
+pub fn deep_clean_share(graph: &ParamGraph) -> f64 {
+    let id = graph.str("materials.deep_bedrock");
+    let degree = graph.f64("interior.ocean_degree");
+    if is_ice(id) && id != "water_ice" && degree > 0.0 && degree < 1.0 {
+        degree
+    } else {
+        0.0
+    }
+}
+
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [
         a[0] + (b[0] - a[0]) * t,
@@ -975,9 +1005,7 @@ pub fn albedo(
     };
     // What deep craters excavate. Silicates keep their contrast when mature; ice brought
     // up from under a lag darkens back to the lag.
-    let deep = library
-        .member(graph.str("materials.deep_bedrock"))
-        .unwrap_or(bedrock);
+    let deep = deep_member(&library, graph).unwrap_or(bedrock);
     let deep_pair = Pair {
         fresh: deep.fresh,
         mature: if is_ice(deep.id) {
