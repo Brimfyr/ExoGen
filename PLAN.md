@@ -441,7 +441,7 @@ Each cell holds fractions of end-members. Each end-member has a reflectance spec
 
 **Controls.** Composition class sets defaults only. The user controls the bedrock type, the baseline regolith mixture, the volatile inventory (which ices exist) and may add custom end-members with a spectrum or an RGB; the processes decide where each material ends up. A world with nitrogen ice over water-ice bedrock comes from an inventory holding both species and a temperature that freezes both, not from a palette choice, and any of these derived nodes can be pinned to compose a surface by hand.
 
-Initial end-member set (about 20): mature and fresh anorthositic regolith, mature and fresh mare basalt, fresh basaltic lava, oxidised fine dust, dark basaltic sand, hematite, water ice frost (fine) and coarse ice, CO2 frost, N2 ice, CH4 ice, tholin (Titan type and Pluto type), S8 sulfur, SO2 frost, short-chain red sulfur, white salts and carbonates, hydrated brown salts, carbonaceous dark material, quartz sand, soil, snow, sea ice, vegetation pigment. Users can add end-members with a spectrum or an RGB.
+Initial end-member set (about 25): mature and fresh anorthositic regolith, mature and fresh mare basalt, fresh basaltic lava, oxidised fine dust, dark basaltic sand, olivine sand, hematite, water ice frost (fine) and coarse ice, CO2 frost, N2 ice, CH4 ice, tholin (Titan type and Pluto type), S8 sulfur, SO2 frost, short-chain red sulfur, white salts and carbonates, evaporite chlorides and sulfates, hydrated brown salts, carbonaceous dark material, quartz sand, soil, snow, sea ice, vegetation pigment. Each appears where a process makes it: quartz sand from a granitic crust worn by water, evaporites where a closed basin's water evaporates, olivine where weathering is weak and transport sorts the dense grains together. Users can add end-members with a spectrum or an RGB.
 
 Liquid bodies: colour from the absorption spectrum of the liquid and depth, R(λ) = R_bottom e^(-2 a(λ) z) + R_deep(λ)(1 - e^(-2 a(λ) z)). Water goes turquoise over shelves and deep blue over basins. Liquid methane is near black.
 
@@ -696,20 +696,80 @@ Gate: on crops of the three test bodies, no feature shows an analytic outline, a
 
 ### Phase 5: atmosphere, climate, volatiles and erosion (XL)
 
-- Insolation for arbitrary rotation states including locked. 2D energy balance, circulation, wind field.
-- Moisture transport, precipitation, orographic effects.
-- Volatile phase states, sea-level fill, cold traps, hemispheric caps, volatile transport.
-- Fluvial erosion with implicit stream power, lakes, deltas. Glacial flow and erosion. Aeolian dust transport, streaks, dune fields. Mass wasting. Sublimation textures.
-- Resolved-scale surface physics, on every body with or without an atmosphere: thermal segregation of frost by slope (begun in Phase 4 for ice), sublimation pitting and knobby degradation of dirty ice, gardening of thin ejecta into the substrate, regolith creep and talus on slopes, the degradation and infilling of small craters by later impacts, dust and frost deposition that follows topography and wind. These are the processes that give a surface its natural variation; each is a stage with its own fields and its own gate, run at the finishing resolution, and none of it is left to a texturing pass (see "Variation within units" in 4.12 and Phase 7).
-- Chemical weathering: oxidation, tholins. Atmospheric crater filtering.
-- Io's activity on the general pipeline (moved from Phase 4F, audit S3, whose survey lists what the Io regime switches): paterae, plumes, flows and mountains by the heat-pipe share, laid on a surface that accumulates its history and that burial renews, Io the limit; the mantle with its heat pipe; the sulfur and SO2 from the volatile inventory and the plasma's alteration from the parent's magnetosphere; with Io's water lost beside Mars's, so that bodies between the Moon and Io and between Io and Europa come in by degrees.
-- A plateau's spreading on a weak layer and the belt it piles at its toe (moved from Phase 4F, audit M42): Mars's Thaumasia highlands as the toe of the Thaumasia plateau sliding on the salt and ice its early water left (Montgomery et al. 2009), and Phlegra Montes if its origin allows.
-- Weather model: two-layer moist shallow water on the coarse cubesphere with topography and zonal or day-night forcing, validated on the standard shallow-water test cases.
-- Cloud type classification, structured primitives for tropical cyclones, hoods, plumes and dust storms, per-class export.
-- History curves for atmospheric pressure, volatile inventory and stellar luminosity.
-- Presets: Mars complete, Titan, Pluto complete, Earth-like with simple continents from the primordial crust stage, a tidally locked eyeball world, and an early-wet Mars that dries out along its pressure history.
+Planned on 2026-10-31, after Phase 4F's close: climate first, the weather model last, each sub-phase with its own gate and review, as Phase 4F ran. Mars, Titan and Pluto are the test bodies for the look, as the Moon, Io and Enceladus were for Phase 4F; an Earth-like and a tidally locked ocean world give the climate its numbers. Principles 11 to 15 hold for every new process: one process on every body, nothing pinned to a reference body, and features that come and go by degrees along the paths between bodies, with sweep tests. Principle 16's noise pass still waits until after Phase 6. The parameter graph already holds the zero-dimensional climate of Phase 1 (the mean surface temperature by the grey greenhouse, the Hadley edge, the lapse rate, sea level, the frost points); the phase builds the stages that turn it into fields and let the fields shape the surface.
 
-Gate: Earth-like at 1 AU around a G2V star gives global mean temperature within 5 K of Earth and a Hadley edge within 25 to 35°; deserts and rain shadows appear in the right places; Mars preset dust albedo correlates with topography and wind as on Mars; Titan preset has dark equatorial dunes and polar seas; the locked ocean world has a sharp sea-ice edge on the freezing isoline, lobate ice margins over land and calving fronts at open-water coasts. Earth-like cloud fraction and its zonal profile match the climatology within tolerance; the Mars preset shows a winter polar hood and afternoon orographic clouds over the large shields; the locked ocean world shows a substellar cloud shield that shifts east as the rotation period shortens.
+**5A Climate on every body.**
+
+- Insolation for any rotation state from one integral of the star's path across the body's sky: a fast rotator's seasons by obliquity and eccentricity, a body locked to its star centred on the substellar point, a spin-orbit resonance's hot longitudes (Mercury's), and a moon's seasons by its planet's obliquity.
+- A two-dimensional diffusive energy balance on the coarse cubesphere (North 1975): heat capacity by surface type, outgoing radiation through the greenhouse optical depth, horizontal transport scaled by pressure and rotation (Williams and Kasting 1997), the ice-albedo feedback, ocean heat transport where seas exist. On an airless body the same balance without transport, with the day and night its thermal inertia sets.
+- Temperature downscaled to the fine grid by the lapse rate, slope and aspect (section 4.12).
+- History curves for surface pressure, volatile inventory and the star's luminosity, so that the climate runs through the loop's history; three of the inputs held constant until now get histories.
+- One temperature for every stage: the ice stage's latitude temperature and Io's frost read the new field.
+
+Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean temperature, its Hadley edge between 25 and 35°; Mars's, Venus's and Titan's mean temperatures; the Moon's and Mercury's day, night and polar temperatures against Diviner's and MESSENGER's.
+
+**5B Volatiles.**
+
+- Phase states per species at the local temperature and pressure.
+- Sea level from the inventory on the hypsometry: a connected ocean by default, priority-flood lakes with a volume budget as an option.
+- Cold traps where a species stays below its frost point, the permanently shadowed craters at the Moon's and Mercury's poles among them.
+- Caps from the traps and the inventory, never placed: polar at low obliquity, equatorial above about 54°, the night side of a body locked to its star; seasonal caps as an optional second exported state.
+- Sea ice on the liquid's freezing isoline, with a marginal zone of floes.
+- Volatile transport between traps over the history: Pluto's nitrogen gathering in Sputnik Planitia, Triton's southern cap.
+- Atmospheric escape and the loss of water: Mars's, and Io's, which audit S2 and S3 wait on.
+- Io's frost through the day (audit M7).
+
+Gate: the locked ocean world's sea-ice edge on the freezing isoline; Mars's residual caps, water ice in the north and CO2 in the south, where its temperatures put them; Pluto's nitrogen gathered in its basin.
+
+**5C Water and ice at work.**
+
+- The climatological wind field: cells by the Held and Hou edge, jets for fast rotators, a single cell for slow rotators and for bodies locked to their star.
+- Moisture transport: saturation by Clausius-Clapeyron for the working volatile (water, methane, ammonia), evaporation, advection, condensation where the air converges or rises over the relief, depletion downwind.
+- Fluvial erosion by implicit stream power (Braun and Willett 2013) on priority-flood routing (Barnes et al. 2014): valley networks, lakes, fans and deltas, catastrophic outflow channels as an event type.
+- Glacial flow and erosion by shallow ice: ice sheets, valley glaciers, calving fronts and shelves; the same code for nitrogen glaciers.
+- Mass wasting and creep (audit W4), with the scarps' wear and the lowlands' sediments (audit T5).
+- The methane cycle on Titan.
+
+Gate: an Earth-like's deserts and rain shadows in the right places; the locked ocean world's lobate ice margins over land and calving fronts at open coasts; valley networks on the early-wet Mars's old terrain; Titan's polar seas.
+
+**5D Dust, sand and chemistry.**
+
+- Aeolian transport: wind stress against the threshold friction speed (Iversen and White 1982); dust stripped where the stress passes it and laid where it does not; wind streaks behind craters; dune fields where sand gathers in basins and crater floors.
+- Sand made by weathering and sorted in transport by grain size and density.
+- Chemical weathering, each material only where its process makes it: oxidation to red dust, hematite and nanophase oxides (Mars); basaltic sand kept dark where the dunes keep it fresh; soils; quartz sand from a granitic crust worn by water; evaporites where a closed basin's water evaporates faster than it is fed (chlorides and sulfates on Mars, salt flats on an Earth-like); olivine where weathering is weak and sorting gathers it; tholins from methane photolysis; Venus's rocks altered by its hot atmosphere.
+- Sublimation and periglacial textures.
+- Atmospheric filtering of small craters.
+- Rays by composition (audit T4); the colours of Mars, Titan, the tholins and Miranda (audit M11).
+
+Gate: Mars's dust albedo correlates with its topography and wind as on Mars, its colours measured; Titan's dark equatorial dunes.
+
+**5E Surface physics on every body.** The resolved-scale processes that give a surface its natural variation, on every body with or without an atmosphere, each a stage with its own fields, run at the finishing resolution, none of it left to a texturing pass (see "Variation within units" in 4.12 and Phase 7):
+
+- Gardening of thin ejecta into the substrate; small craters degraded and infilled by later impacts.
+- Regolith creep and talus on slopes.
+- Frost segregated by slope (begun in Phase 4 for ice); sublimation pitting and knobby degradation of dirty ice.
+- Dust and frost deposition that follows topography and wind.
+- The fidelity items moved here from Phase 4F: dark palimpsests (M2), the coronae's dark belts (M3b), Europa's bright old bands (M5), Callisto's degraded troughs (M13), a subsided Valles Marineris (M32), Io's layered plains (M37), Pluto's oldest faults worn down or buried (F233), Mars's central pits in ground ice (S9), Venus's climate drive (M26).
+
+Gate: on crops of Mars, Titan and Pluto, the terms of Phase 4F's gate for every new process (no analytic outline, no one-cell contact, no single-scale repetition), and no regression on the Moon, Io and Enceladus.
+
+**5F Io and Thaumasia.**
+
+- Io's activity on the general pipeline (moved from Phase 4F, audit S3, whose survey lists what the Io regime switches): paterae, plumes, flows and mountains by the heat-pipe share, laid on a surface that accumulates its history and that burial renews, Io the limit; the mantle with its heat pipe; the sulfur and SO2 from the volatile inventory and the plasma's alteration from the parent's magnetosphere; with Io's water lost beside Mars's (5B), so that bodies between the Moon and Io and between Io and Europa come in by degrees.
+- A plateau's spreading on a weak layer and the belt it piles at its toe (moved from Phase 4F, audit M42): Mars's Thaumasia highlands as the toe of the Thaumasia plateau sliding on the salt and ice its early water left (Montgomery et al. 2009), and Phlegra Montes if its origin allows.
+
+Gate: Io's look at the standard of Phase 4F's gate; sweeps from the Moon to Io and from Io to Europa with surfaces between theirs; a belt at the Thaumasia plateau's toe.
+
+**5G Weather and clouds.** Nothing on the surface reads it, so it comes last.
+
+- Weather model: two-layer moist shallow water on the coarse cubesphere with topography and zonal or day-night forcing, validated on the standard shallow-water test cases (Williamson et al. 1992).
+- Cloud type classification, structured primitives for tropical cyclones, hoods, plumes and dust storms, per-class export (section 4.7).
+
+Gate: Earth-like cloud fraction and its zonal profile match the climatology within tolerance; the Mars preset shows a winter polar hood and afternoon orographic clouds over the large shields; the locked ocean world shows a substellar cloud shield that shifts east as the rotation period shortens.
+
+Presets: Mars complete, Titan, Pluto complete, an Earth-like with simple continents from the primordial crust stage, a tidally locked eyeball world, and an early-wet Mars that dries out along its pressure history.
+
+Gate of the phase: every sub-phase's gate, held again at the close on fresh renders of every preset.
 
 ### Phase 6: mobile-lid plate tectonics (XL)
 
