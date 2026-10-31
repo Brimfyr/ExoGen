@@ -37,7 +37,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | S6 | Closed (F227) | the retention from the renewal's rate, by the thin shell's degree and the tides; the regolith's clean ice by the same degree |
 | S7, S8 | Closed | F126; the eighteenth milestone |
 | S9 | Closed (F229) | the target ice by degrees from its ice share: the transition, the strength, the largest crater, the pits and rings between rock's and ice's; the sweep a test |
-| S10 | **Short list** | a rocky interior's tides by its class, not its temperature |
+| S10 | Known limitation | a rocky interior's tides by its class, not its temperature (the user, 2026-10-30) |
 | W1 | Closed (F94) | the lobes' sizes stated shares: known limitation, with M16 |
 | W2 | Closed (F224) | the roughness ramps over the anchor crater's radius |
 | W3 | Closed (F223) | the tesserae chosen on a height smoothed over the broken lid's flexural parameter |
@@ -96,7 +96,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | M38 | Closed | the rays done; the transition recorded, not adopted |
 | M40, M41 | Noise pass | one pass over every body after Phase 6 (principle 16); Pele's rings left as they are |
 | M42 | Phases 5 and 6 |  |
-| V1 | **Short list** | the sweeps Moon to Io (S3), Ganymede to Europa (S4 to S6), Mars to Venus and dry to wet (S1), with their switches |
+| V1 | Closed in part (F227 to F231) | five sweeps are tests: Europa's tides (S4, S6), Enceladus's tides (S5), Callisto's density (S9), Venus's radius (S1) and Pluto's radius (S1); Moon to Io with S3 (Phase 5), dry to wet with the plates (Phase 6); the rock coronae's swing between neighbouring bodies: known limitation |
 | The fabric under the cells (phase report, milestones 104 to 109) | Phase 7 | for the detail pass's shader |
 | The ropy terrain between the stripe ridges (PLAN.md, Phase 4F) | Known limitation | the grain too laminar at the resolved scale; finer, with Phase 7 |
 | The icy lids' faults on the same field; Venus's subdued arc | Known limitation | dropped from the milestones' lists without a record; the icy lids' with M21 |

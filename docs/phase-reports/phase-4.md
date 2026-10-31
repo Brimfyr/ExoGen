@@ -2998,3 +2998,14 @@ How it went:
 - **Miranda's coronae.** They read the present shell's name; kept as they are, Miranda having no ocean, and recorded under S1 as a chronology item.
 
 Still to do: the phase's close.
+
+## Phase 4F at its close
+
+Phase 4F ran from 12 to 31 October 2026 in 139 milestones, its findings to F231. It applied principle 12 to every stage that existed before it, with Enceladus, the Moon and Io as its test bodies, and took on principles 15 and 16 and the audit of the switches as it went.
+
+- **What it did.** A structured base under every feature (milestones 1 to 5); the icy terrains renewed by their lids, shells and oceans (Ganymede's lanes, Europa's lineae, chaos and bands, Enceladus's polar terrains, the icy moons' thermal-orbital history, the shell by degrees); craters, rays and what craters bring up; Io's surface from its heat budget and deposit history; volcanoes, rises and floods on one melt budget; the lid's strain and the faults, thrusts and flexure it makes; interiors that store their heat, and materials from the processes that make them.
+- **The gate.** Passed on 30 October: Io at its re-check, Enceladus with its fractures' global network a known limitation (M39), the Moon with its maria on both hemispheres (M33) and its young craters' near rings and the maria's bright rims (M36) known limitations.
+- **The closing audit.** Its 71 rows stand at 25 closed, 19 closed in part, 19 known limitations, and 8 moved to Phases 5, 6 and 7 or the noise pass after Phase 6, parked or tied to other entries. S10 is a known limitation and V1 closed in part, five of its sweeps tests (the user's choices of 30 October, brought into the table).
+- **The renders.** All seventeen presets at 4,096 pixels against the last full set (30 October, b0b8bfd): no regression. Mimas changed as milestone 135 meant, its lanes from 10.3 to 5.5 percent of the surface, and Venus's tesserae as milestone 134 meant; elsewhere the relief moves by tens of metres, the roughness at young deposits' edges ramping over the anchor crater's radius (F224), and the albedo by a few levels; Io and Europa are unchanged to the eye.
+
+The review page puts the summary, the known limitations and what moved beside the renders. Awaiting the user's review: Phase 5 begins on their go-ahead.
