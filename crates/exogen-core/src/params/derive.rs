@@ -391,6 +391,15 @@ pub mod physics {
         u.min(WATER_COLUMN_MAX).min(inventory_gel_m * 1_000.0)
     }
 
+    /// F235: water vapour's greenhouse optical depth at a surface temperature, saturating as
+    /// its bands fill; none without water.
+    pub fn water_optical_depth(t: f64, inventory_gel_m: f64) -> f64 {
+        if inventory_gel_m <= 0.0 {
+            return 0.0;
+        }
+        TAU_H2O.0 * (water_column(t, inventory_gel_m) / TAU_H2O.1).ln_1p()
+    }
+
     pub fn grey_surface_temperature(t_eq: f64, tau: f64) -> f64 {
         t_eq * (1.0 + 0.75 * tau).powf(0.25)
     }
@@ -398,14 +407,7 @@ pub mod physics {
     /// Surface temperature with the water vapour feedback: the smallest root of
     /// T = T_eq (1 + 3 tau(T) / 4)^(1/4) above T_eq, by scan and bisection.
     pub fn surface_temperature(t_eq: f64, tau_dry: f64, water_inventory_gel_m: f64) -> f64 {
-        let tau = |t: f64| {
-            tau_dry
-                + if water_inventory_gel_m > 0.0 {
-                    TAU_H2O.0 * water_column(t, water_inventory_gel_m).powf(TAU_H2O.1)
-                } else {
-                    0.0
-                }
-        };
+        let tau = |t: f64| tau_dry + water_optical_depth(t, water_inventory_gel_m);
         let f = |t: f64| t - grey_surface_temperature(t_eq, tau(t));
         let t0 = t_eq.max(1.0);
         if f(t0) >= 0.0 {

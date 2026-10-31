@@ -25,6 +25,16 @@ use crate::fields::Field;
 use crate::grid::{CubeSphere, lon_lat_from_direction};
 use crate::params::ParamGraph;
 
+/// The year's sunlight over a grid (F235): its mean flux and the sun's mean height.
+#[derive(Clone, Debug)]
+pub struct Sunlight {
+    /// The year's mean flux on the ground, W/m².
+    pub flux: Field<f32>,
+    /// The cosine of the star's zenith angle averaged over the year, each moment weighted by
+    /// the flux it brings: 1 with the star always overhead, 0 where it never shines.
+    pub height: Field<f32>,
+}
+
 /// The star's path across a body's sky: everything its insolation depends on.
 #[derive(Clone, Copy, Debug)]
 pub struct Sky {
@@ -85,53 +95,71 @@ impl Sky {
 
     /// The year's mean flux on the ground at a latitude and longitude, W/m².
     pub fn annual_mean_at(&self, lat: f64, lon: f64) -> f64 {
-        let tilts = self.obliquities();
-        let share = match self.resonance {
-            None => {
-                tilts
-                    .iter()
-                    .map(|&eps| zonal_annual_share(lat, eps))
-                    .sum::<f64>()
-                    / tilts.len() as f64
-            }
-            Some((_, orbits)) => {
-                tilts
-                    .iter()
-                    .map(|&eps| {
-                        let path = self.resonant_path(eps, orbits);
-                        path_share(&path, lat, lon)
-                    })
-                    .sum::<f64>()
-                    / tilts.len() as f64
-            }
-        };
-        self.flux * share / (1.0 - self.eccentricity * self.eccentricity).sqrt()
+        self.flux * self.shares_at(lat, lon).0
+            / (1.0 - self.eccentricity * self.eccentricity).sqrt()
     }
 
-    /// The year's mean flux on the ground over a grid, W/m², from a table in latitude (a
-    /// fast rotator) or in latitude and longitude (a resonant body) read bilinearly, so that
-    /// the field is the same at every resolution.
+    /// The sun's year-mean height at a latitude and longitude, weighted by its flux (F235).
+    pub fn annual_height_at(&self, lat: f64, lon: f64) -> f64 {
+        let (one, two) = self.shares_at(lat, lon);
+        if one > 0.0 { two / one } else { 0.0 }
+    }
+
+    /// The year's mean share of the overhead flux at a point, and of that share times the
+    /// zenith angle's cosine, over the axis's precession.
+    fn shares_at(&self, lat: f64, lon: f64) -> (f64, f64) {
+        let tilts = self.obliquities();
+        let each: Vec<(f64, f64)> = match self.resonance {
+            None => tilts
+                .iter()
+                .map(|&eps| zonal_annual_shares(lat, eps))
+                .collect(),
+            Some((_, orbits)) => tilts
+                .iter()
+                .map(|&eps| path_shares(&self.resonant_path(eps, orbits), lat, lon))
+                .collect(),
+        };
+        average_pairs(&each)
+    }
+
+    /// The year's mean flux on the ground over a grid, W/m².
     pub fn annual_mean(&self, grid: CubeSphere) -> Field<f32> {
+        self.annual_sunlight(grid).flux
+    }
+
+    /// The year's sunlight over a grid, its flux and the sun's mean height, from a table in
+    /// latitude (a fast rotator) or in latitude and longitude (a resonant body) read
+    /// bilinearly, so that the fields are the same at every resolution.
+    pub fn annual_sunlight(&self, grid: CubeSphere) -> Sunlight {
         let scale = self.flux / (1.0 - self.eccentricity * self.eccentricity).sqrt();
         let tilts = self.obliquities();
         let n_lat = INSOLATION_TABLE_LATITUDES;
         let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
+        let height = |(one, two): (f64, f64)| if one > 0.0 { two / one } else { 0.0 };
         match self.resonance {
             None => {
-                let table: Vec<f64> = (0..n_lat)
+                let table: Vec<(f64, f64)> = (0..n_lat)
                     .into_par_iter()
                     .map(|i| {
-                        tilts
+                        let each: Vec<(f64, f64)> = tilts
                             .iter()
-                            .map(|&eps| zonal_annual_share(lat_of(i), eps))
-                            .sum::<f64>()
-                            / tilts.len() as f64
+                            .map(|&eps| zonal_annual_shares(lat_of(i), eps))
+                            .collect();
+                        average_pairs(&each)
                     })
                     .collect();
-                Field::from_fn(grid, |_, d| {
-                    let (_, lat) = lon_lat_from_direction(d);
-                    (scale * read_row(&table, lat)) as f32
-                })
+                let shares: Vec<f64> = table.iter().map(|p| p.0).collect();
+                let heights: Vec<f64> = table.iter().map(|&p| height(p)).collect();
+                Sunlight {
+                    flux: Field::from_fn(grid, |_, d| {
+                        let (_, lat) = lon_lat_from_direction(d);
+                        (scale * read_row(&shares, lat)) as f32
+                    }),
+                    height: Field::from_fn(grid, |_, d| {
+                        let (_, lat) = lon_lat_from_direction(d);
+                        read_row(&heights, lat) as f32
+                    }),
+                }
             }
             Some((_, orbits)) => {
                 let n_lon = INSOLATION_TABLE_LONGITUDES;
@@ -139,22 +167,30 @@ impl Sky {
                     .iter()
                     .map(|&eps| self.resonant_path(eps, orbits))
                     .collect();
-                let table: Vec<f64> = (0..n_lat * n_lon)
+                let table: Vec<(f64, f64)> = (0..n_lat * n_lon)
                     .into_par_iter()
                     .map(|k| {
                         let (i, j) = (k / n_lon, k % n_lon);
                         let lon = -PI + TAU * j as f64 / n_lon as f64;
-                        paths
+                        let each: Vec<(f64, f64)> = paths
                             .iter()
-                            .map(|p| path_share(p, lat_of(i), lon))
-                            .sum::<f64>()
-                            / paths.len() as f64
+                            .map(|p| path_shares(p, lat_of(i), lon))
+                            .collect();
+                        average_pairs(&each)
                     })
                     .collect();
-                Field::from_fn(grid, |_, d| {
-                    let (lon, lat) = lon_lat_from_direction(d);
-                    (scale * read_grid(&table, n_lon, lat, lon)) as f32
-                })
+                let shares: Vec<f64> = table.iter().map(|p| p.0).collect();
+                let heights: Vec<f64> = table.iter().map(|&p| height(p)).collect();
+                Sunlight {
+                    flux: Field::from_fn(grid, |_, d| {
+                        let (lon, lat) = lon_lat_from_direction(d);
+                        (scale * read_grid(&shares, n_lon, lat, lon)) as f32
+                    }),
+                    height: Field::from_fn(grid, |_, d| {
+                        let (lon, lat) = lon_lat_from_direction(d);
+                        read_grid(&heights, n_lon, lat, lon) as f32
+                    }),
+                }
             }
         }
     }
@@ -206,22 +242,33 @@ struct PathStep {
 }
 
 /// The mean of the flux on the ground at a point over a path, as a share of the flux
-/// overhead at the mean distance.
-fn path_share(path: &[PathStep], lat: f64, lon: f64) -> f64 {
+/// overhead at the mean distance, and of that share times the zenith angle's cosine.
+fn path_shares(path: &[PathStep], lat: f64, lon: f64) -> (f64, f64) {
     let (sp, cp) = lat.sin_cos();
-    path.iter()
-        .map(|s| {
-            let cz = sp * s.sin_decl + cp * s.cos_decl * (s.hour + lon).cos();
-            s.flux * cz.max(0.0)
-        })
-        .sum::<f64>()
-        / path.len() as f64
+    let (one, two) = path.iter().fold((0.0, 0.0), |(one, two), s| {
+        let cz = (sp * s.sin_decl + cp * s.cos_decl * (s.hour + lon).cos()).max(0.0);
+        (one + s.flux * cz, two + s.flux * cz * cz)
+    });
+    (one / path.len() as f64, two / path.len() as f64)
+}
+
+/// The mean of pairs.
+fn average_pairs(each: &[(f64, f64)]) -> (f64, f64) {
+    let n = each.len().max(1) as f64;
+    let (a, b) = each.iter().fold((0.0, 0.0), |(a, b), p| (a + p.0, b + p.1));
+    (a / n, b / n)
 }
 
 /// The day's mean flux on the ground at a latitude, as a share of the flux overhead, with
 /// the star at a declination: the integral of the sun's height from sunrise to sunset
 /// (Berger 1978), whole days of light or night inside the polar circles.
 pub fn diurnal_share(lat: f64, decl: f64) -> f64 {
+    diurnal_shares(lat, decl).0
+}
+
+/// The day's mean share of the overhead flux, and of that share times the zenith angle's
+/// cosine (F235), from sunrise to sunset.
+pub fn diurnal_shares(lat: f64, decl: f64) -> (f64, f64) {
     let (sp, cp) = lat.sin_cos();
     let (sd, cd) = decl.sin_cos();
     let (a, b) = (sp * sd, cp * cd);
@@ -232,21 +279,29 @@ pub fn diurnal_share(lat: f64, decl: f64) -> f64 {
     } else {
         (-a / b).acos()
     };
-    ((h0 * a + b * h0.sin()) / PI).max(0.0)
+    let (sh, ch) = h0.sin_cos();
+    let one = (h0 * a + b * sh) / PI;
+    let two = (a * a * h0 + 2.0 * a * b * sh + b * b * (h0 + sh * ch) / 2.0) / PI;
+    (one.max(0.0), two.max(0.0))
 }
 
 /// The year's mean of the day's share at a latitude on a circular orbit, the star's
 /// longitude sampled evenly; an eccentric orbit's is this over (1 - e^2)^(1/2).
 pub fn zonal_annual_share(lat: f64, obliquity: f64) -> f64 {
+    zonal_annual_shares(lat, obliquity).0
+}
+
+/// The year's means of the day's two shares at a latitude on a circular orbit (F235).
+pub fn zonal_annual_shares(lat: f64, obliquity: f64) -> (f64, f64) {
     let n = INSOLATION_SEASON_SAMPLES;
     let s = obliquity.sin();
-    (0..n)
+    let each: Vec<(f64, f64)> = (0..n)
         .map(|j| {
             let ls = (j as f64 + 0.5) / n as f64 * TAU;
-            diurnal_share(lat, (s * ls.sin()).clamp(-1.0, 1.0).asin())
+            diurnal_shares(lat, (s * ls.sin()).clamp(-1.0, 1.0).asin())
         })
-        .sum::<f64>()
-        / n as f64
+        .collect();
+    average_pairs(&each)
 }
 
 /// The eccentric anomaly of a mean anomaly, by Newton's method from E = M + e sin M.
@@ -490,6 +545,27 @@ mod tests {
             .iter()
             .fold((180.0f64, 0.0f64), |(a, b), &t| (a.min(t), b.max(t)));
         assert!(lo > 128.0 && hi < 175.0, "Triton's tilts {lo} to {hi}");
+    }
+
+    /// F235: the sun stands higher over the tropics than the poles: on the Earth its
+    /// year-mean height, weighted by the flux, is 0.754 at the equator and 0.313 at the poles
+    /// (ebm_proto3.py); a body locked to its star has it overhead at the substellar point.
+    #[test]
+    fn the_sun_stands_higher_over_the_tropics() {
+        let earth = sky(0.0167, 23.44, 366.256);
+        let equator = earth.annual_height_at(0.0, 0.0);
+        let pole = earth.annual_height_at(PI / 2.0 - 0.004, 0.0);
+        assert!((equator - 0.754).abs() < 0.005, "equator {equator}");
+        assert!((pole - 0.313).abs() < 0.01, "pole {pole}");
+        let locked = sky(0.0, 0.0, 1.0);
+        assert!((locked.annual_height_at(0.0, 0.0) - 1.0).abs() < 1e-6);
+        assert!((locked.annual_height_at(0.0, 60f64.to_radians()) - 0.5).abs() < 1e-6);
+        assert_eq!(locked.annual_height_at(0.0, PI), 0.0);
+        // The field's table agrees with the direct integral.
+        let f = earth.annual_sunlight(CubeSphere::new(32));
+        let g = f.height.grid();
+        let (c, _, _) = g.locate([1.0, 0.0, 0.0]);
+        assert!((f.height.get(c) as f64 - equator).abs() < 0.01);
     }
 
     /// F234: no resonance for a fast spin or a spin that drifts against its orbit; the low

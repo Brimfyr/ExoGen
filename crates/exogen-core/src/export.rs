@@ -313,6 +313,8 @@ pub fn export(
         "mask_liquid.png",
         "surface_age.exr",
         "surface_age.png",
+        "temperature.exr",
+        "temperature.png",
         "units.png",
         "sidecar.json",
     ] {
@@ -521,6 +523,45 @@ pub fn export(
         },
     );
 
+    // The year's mean surface temperature (F235).
+    let temperature_eq = to_equirectangular(&grid, out.temperature.as_slice(), width, height_px);
+    let (tmin, tmax) = min_max(&temperature_eq);
+    write_exr_f32(
+        &settings.dir.join("temperature.exr"),
+        width,
+        height_px,
+        "temperature",
+        &temperature_eq,
+    )?;
+    maps.insert(
+        "temperature".to_string(),
+        MapInfo {
+            file: "temperature.exr".into(),
+            encoding: "float32 EXR".into(),
+            units: "K, the year's mean surface temperature".into(),
+            min: tmin as f64,
+            max: tmax as f64,
+        },
+    );
+    write_png16(
+        &settings.dir.join("temperature.png"),
+        width,
+        height_px,
+        &temperature_eq,
+        tmin,
+        tmax,
+    )?;
+    maps.insert(
+        "temperature_png".to_string(),
+        MapInfo {
+            file: "temperature.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: "K, the year's mean surface temperature".into(),
+            min: tmin as f64,
+            max: tmax as f64,
+        },
+    );
+
     // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
     let unit_eq: Vec<u8> = (0..width * height_px)
@@ -645,6 +686,10 @@ pub fn export(
     let mut stage_outputs = BTreeMap::new();
     stage_outputs.insert("sea_level_m".to_string(), out.sea_level);
     stage_outputs.insert("ocean_fraction".to_string(), out.ocean_fraction);
+    let (mean_t, equator_t, poles_t) = crate::climate::bands(&out.temperature);
+    stage_outputs.insert("mean_temperature_k".to_string(), mean_t);
+    stage_outputs.insert("equator_temperature_k".to_string(), equator_t);
+    stage_outputs.insert("polar_temperature_k".to_string(), poles_t);
     let sidecar = Sidecar {
         exogen_version: crate::VERSION.to_string(),
         project: settings.project_name.clone(),

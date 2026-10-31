@@ -199,6 +199,8 @@ pub struct FinishOutput {
     pub albedo: Field<[f32; 3]>,
     /// Optical maturity, 0 fresh to 1 fully weathered.
     pub maturity: Field<f32>,
+    /// The year's mean surface temperature, K (F235).
+    pub temperature: Field<f32>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -324,7 +326,14 @@ impl Runner {
             graph.hash_of_group("materials"),
             graph.hash_of_group("surface"),
             graph.hash_of_group("seeds"),
+            // The climate (F235).
+            graph.hash_of_group("climate"),
+            graph.hash_of_group("atmosphere"),
+            graph.hash_of_group("rotation"),
+            graph.hash_of_group("orbit"),
+            graph.hash_of_group("star"),
             graph.hash_of(&[
+                "interior.surface_heat_flux",
                 "detail.finishing_resolution",
                 "output.epoch",
                 "volatiles.inventory",
@@ -386,7 +395,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 173;
+pub const FINISH_VERSION: u64 = 174;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2908,6 +2917,17 @@ pub fn finish(
         message: "materials".to_string(),
     });
     let albedo = materials::albedo(graph, &layers, &maturity, &rays, present, slope.as_ref());
+    // The year's mean climate (F235) on its own coarse grid, brought to this one.
+    let climate =
+        crate::climate::EnergyBalance::from_graph(graph).solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        let (mean, equator, poles) = crate::climate::bands(&climate.temperature);
+        eprintln!(
+            "climate: the year's mean surface {mean:.1} K, {equator:.1} within 10° of the equator, {poles:.1} beyond 80°, after {} steps",
+            climate.iterations
+        );
+    }
+    let temperature = climate.temperature.resample(grid);
     let hash = hash_words(&[
         layers.hash(),
         height.hash(),
@@ -2931,6 +2951,7 @@ pub fn finish(
         height,
         albedo,
         maturity,
+        temperature,
         rays,
         sea_level,
         ocean_fraction,

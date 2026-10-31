@@ -7,6 +7,7 @@
 //! command-line tool are thin clients over it. See `PLAN.md` and `docs/adr/` in the
 //! repository for the design.
 
+pub mod climate;
 pub mod constants;
 pub mod convection;
 pub mod crater;

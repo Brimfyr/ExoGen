@@ -1644,11 +1644,15 @@ pub const MANTLE_STEPS: usize = 4_000;
 // ---------------------------------------------------------------- atmosphere and climate
 
 /// Grey greenhouse optical depth per species: tau = a u^b with u the species column mass in
-/// kg/m². CO2 fit to Venus (tau 148 at 1.0e6 kg/m²) and Mars (0.076 at 156 kg/m²); water
-/// fit to Earth's 25 kg/m² column giving the balance of Earth's tau 0.85; methane and the
-/// N2 collision-induced term fit to Titan (0.30 and 0.37). Provisional, Phase 5.
+/// kg/m². CO2 fit to Venus (tau 148 at 1.0e6 kg/m²) and Mars (0.076 at 156 kg/m²); methane
+/// and the N2 collision-induced term fit to Titan (0.30 and 0.37). Provisional, Phase 5.
 pub const TAU_CO2: (f64, f64) = (9.7e-4, 0.864);
-pub const TAU_H2O: (f64, f64) = (0.169, 0.5);
+/// Water vapour's optical depth saturates as its bands fill, tau = a ln(1 + u / u0) (F235):
+/// set so that Earth's zero-dimensional greenhouse is kept (291.6 K) and its outgoing
+/// radiation rises by 2.1 W/m² per kelvin of the surface, the slope Earth's zonal means show
+/// (North 1975; Warren and Schneider 1979 give 1.6 to 2.2). The square root it replaces gave
+/// 0.31, and in the energy balance ran the tropics away.
+pub const TAU_H2O: (f64, f64) = (0.1656, 0.1028);
 pub const TAU_CH4: (f64, f64) = (5.3e-3, 0.5);
 pub const TAU_N2_CIA: (f64, f64) = (1.09e-8, 1.5);
 /// Water vapour column model: 25 kg/m² at 288 K and 70% relative humidity, scaled by
@@ -1736,6 +1740,32 @@ pub const INSOLATION_ORBIT_SAMPLES: usize = 720;
 pub const INSOLATION_SWING_SAMPLES: usize = 24;
 pub const INSOLATION_TABLE_LATITUDES: usize = 361;
 pub const INSOLATION_TABLE_LONGITUDES: usize = 720;
+/// F235: the planetary albedo's rise as the sun's year-mean height falls, per unit of its
+/// cosine (`insolation::Sunlight::height`), under an atmosphere of at least Earth's column:
+/// the low sun's longer path through cloud and haze and the water's steeper reflection,
+/// calibrated on Earth's zonal albedo, 0.30 + 0.09 P2(sin lat) (North and Coakley 1979), whose
+/// fit against the height is this. A thinner atmosphere scatters less, by its column's share
+/// of Earth's (Mars 0.016).
+pub const LOW_SUN_ALBEDO: f64 = 0.32;
+pub const LOW_SUN_COLUMN: f64 = 1.033e4;
+/// F235: ice and snow where water is the working liquid: their albedo, and the year's mean
+/// temperatures over which they come to cover the ground, none at freezing to all at the ice
+/// line, -10 °C (North 1975).
+pub const ICE_ALBEDO: f64 = 0.62;
+pub const ICE_LINE_RANGE: (f64, f64) = (263.15, 273.15);
+/// The sky's temperature, K.
+pub const COSMIC_BACKGROUND_K: f64 = 2.725;
+/// F235: the energy balance's grid, cells of 2.8°, the year's mean climate smooth on it; and
+/// its solver: Newton's steps of at most CLIMATE_MAX_STEP_K until none moves a cell by
+/// CLIMATE_TOLERANCE_K, the local slope floored at CLIMATE_SLOPE_FLOOR of the radiation's
+/// own, each step's system by conjugate gradients to CLIMATE_CG_TOLERANCE of its residual.
+pub const CLIMATE_FACE_SIZE: u32 = 32;
+pub const CLIMATE_MAX_ITERATIONS: usize = 200;
+pub const CLIMATE_MAX_STEP_K: f64 = 10.0;
+pub const CLIMATE_TOLERANCE_K: f64 = 1e-4;
+pub const CLIMATE_SLOPE_FLOOR: f64 = 0.5;
+pub const CLIMATE_CG_ITERATIONS: usize = 4000;
+pub const CLIMATE_CG_TOLERANCE: f64 = 1e-10;
 
 // ---------------------------------------------------------------- volatiles
 
