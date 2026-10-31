@@ -3466,6 +3466,18 @@ static NODES: &[NodeDef] = &[
         "0.3 Gyr on the Moon over the body's maturing rate against the Moon's (F214): a tenth its weathering against the Moon's (half the solar wind, as the distance to the -2, half micrometeorite melt, as the distance to the -2.8), nine tenths its gardening diffusivity against the Moon's; at most 4 Gyr; off under an atmosphere above 1 mbar. Lunar soils reach optical maturity within a few hundred million years: Eratosthenian craters are mature, Copernican ones are not.",
         "provisional, Phase 2; F214",
     ),
+    derived(
+        "surface.thermal_inertia",
+        "surface",
+        "Thermal inertia",
+        "J/m²/K/s^½",
+        1.0,
+        f(0.0, 1e4),
+        &["atmosphere.surface_pressure", "cratering.target_ice"],
+        d::surface_thermal_inertia,
+        "The regolith's grains touching in vacuum, the Moon's 55 (Hayne et al. 2017), with the gas in its pores conducting at the surface's pressure (Presley and Christensen 1997) through grains of fine sand, its heat capacity by its share of ice (F236): Mars about 185, a 1-bar Earth about 470.",
+        "Hayne et al. 2017; Presley and Christensen 1997 (F236)",
+    ),
     // ------------------------------------------------------------------ materials
     input(
         "materials.bedrock",

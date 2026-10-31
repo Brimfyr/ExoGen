@@ -199,8 +199,10 @@ pub struct FinishOutput {
     pub albedo: Field<[f32; 3]>,
     /// Optical maturity, 0 fresh to 1 fully weathered.
     pub maturity: Field<f32>,
-    /// The year's mean surface temperature, K (F235).
+    /// The year's mean surface temperature through its days and seasons, K (F235, F236).
     pub temperature: Field<f32>,
+    /// The coldest and the warmest the surface stands through the year, K (F236).
+    pub temperature_range: (f64, f64),
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -395,7 +397,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 174;
+pub const FINISH_VERSION: u64 = 175;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2917,17 +2919,21 @@ pub fn finish(
         message: "materials".to_string(),
     });
     let albedo = materials::albedo(graph, &layers, &maturity, &rays, present, slope.as_ref());
-    // The year's mean climate (F235) on its own coarse grid, brought to this one.
-    let climate =
-        crate::climate::EnergyBalance::from_graph(graph).solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+    // The year's climate (F235) on its own coarse grid, through its days and seasons
+    // (F236), brought to this one.
+    let balance = crate::climate::EnergyBalance::from_graph(graph);
+    let climate = balance.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+    let cycle = balance.cycle(&climate, &crate::climate::Ground::from_graph(graph));
+    let temperature_range = cycle.extremes();
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
-        let (mean, equator, poles) = crate::climate::bands(&climate.temperature);
+        let (steady, ..) = crate::climate::bands(&climate.temperature);
+        let (mean, equator, poles) = crate::climate::bands(&cycle.mean);
         eprintln!(
-            "climate: the year's mean surface {mean:.1} K, {equator:.1} within 10° of the equator, {poles:.1} beyond 80°, after {} steps",
-            climate.iterations
+            "climate: the year's mean surface {mean:.1} K through its days and seasons ({steady:.1} K steady after {} steps), {equator:.1} within 10° of the equator, {poles:.1} beyond 80°; from {:.1} to {:.1} K",
+            climate.iterations, temperature_range.0, temperature_range.1
         );
     }
-    let temperature = climate.temperature.resample(grid);
+    let temperature = cycle.mean.resample(grid);
     let hash = hash_words(&[
         layers.hash(),
         height.hash(),
@@ -2952,6 +2958,7 @@ pub fn finish(
         albedo,
         maturity,
         temperature,
+        temperature_range,
         rays,
         sea_level,
         ocean_fraction,

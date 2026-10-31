@@ -538,7 +538,7 @@ pub fn export(
         MapInfo {
             file: "temperature.exr".into(),
             encoding: "float32 EXR".into(),
-            units: "K, the year's mean surface temperature".into(),
+            units: "K, the year's mean surface temperature through its days and seasons".into(),
             min: tmin as f64,
             max: tmax as f64,
         },
@@ -556,7 +556,7 @@ pub fn export(
         MapInfo {
             file: "temperature.png".into(),
             encoding: "16-bit grey PNG, linear from min to max".into(),
-            units: "K, the year's mean surface temperature".into(),
+            units: "K, the year's mean surface temperature through its days and seasons".into(),
             min: tmin as f64,
             max: tmax as f64,
         },
@@ -690,6 +690,8 @@ pub fn export(
     stage_outputs.insert("mean_temperature_k".to_string(), mean_t);
     stage_outputs.insert("equator_temperature_k".to_string(), equator_t);
     stage_outputs.insert("polar_temperature_k".to_string(), poles_t);
+    stage_outputs.insert("coldest_temperature_k".to_string(), out.temperature_range.0);
+    stage_outputs.insert("warmest_temperature_k".to_string(), out.temperature_range.1);
     let sidecar = Sidecar {
         exogen_version: crate::VERSION.to_string(),
         project: settings.project_name.clone(),

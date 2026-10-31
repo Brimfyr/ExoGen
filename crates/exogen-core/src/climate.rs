@@ -24,14 +24,18 @@
 //! at a share of the radiation's own so that the ice's feedback, which can make it negative,
 //! leaves the system positive definite.
 
+use std::f64::consts::{PI, TAU};
+
 use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::fields::Field;
-use crate::grid::{CubeSphere, lon_lat_from_direction};
-use crate::insolation::Sky;
+use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
+use crate::insolation::{PathStep, Sky, diurnal_share, read_grid, read_row};
 use crate::params::ParamGraph;
-use crate::params::derive::physics::{species_columns, tau_dry, water_optical_depth};
+use crate::params::derive::physics::{
+    mean_heat_capacity, regolith_heat, species_columns, tau_dry, water_optical_depth,
+};
 
 /// What the energy balance reads.
 #[derive(Clone, Copy, Debug)]
@@ -54,6 +58,8 @@ pub struct EnergyBalance {
     /// The body's own heat flowing out through its surface, W/m², which every cell radiates
     /// with its sunlight: a cell the star never warms stands where it radiates this alone.
     pub heat_flux: f64,
+    /// The year, the orbit about the star, s.
+    pub year: f64,
 }
 
 /// The year's mean climate on the climate grid.
@@ -63,8 +69,55 @@ pub struct Climate {
     pub temperature: Field<f32>,
     /// The sunlight absorbed, W/m².
     pub absorbed: Field<f32>,
+    /// The albedo at the year's mean temperature.
+    pub albedo: Field<f32>,
+    /// The heat the atmosphere brings the cell, W/m² (negative where it carries heat away).
+    pub transport: Field<f32>,
     /// Newton's steps to converge.
     pub iterations: usize,
+}
+
+/// The ground under the climate (F236): what its days and years read.
+#[derive(Clone, Copy, Debug)]
+pub struct Ground {
+    /// Thermal inertia, J m⁻² K⁻¹ s^-1/2.
+    pub inertia: f64,
+    /// Volumetric heat capacity, J m⁻³ K⁻¹.
+    pub heat: f64,
+    /// The heat capacity of the air over a square metre, J m⁻² K⁻¹, warming and cooling
+    /// with the ground under it.
+    pub air: f64,
+}
+
+impl Ground {
+    pub fn from_graph(graph: &ParamGraph) -> Self {
+        let empty = std::collections::BTreeMap::new();
+        let composition = graph
+            .get("atmosphere.composition")
+            .as_map()
+            .unwrap_or(&empty);
+        let air = if graph.f64("atmosphere.surface_pressure") > 0.0 {
+            mean_heat_capacity(composition) * graph.f64("atmosphere.column_mass")
+        } else {
+            0.0
+        };
+        Self {
+            inertia: graph.f64("surface.thermal_inertia"),
+            heat: regolith_heat(graph.f64("cratering.target_ice")),
+            air,
+        }
+    }
+}
+
+/// The year's surface temperatures through the days and seasons (F236), K.
+#[derive(Clone, Debug)]
+pub struct Cycle {
+    /// The mean over the year.
+    pub mean: Field<f32>,
+    /// The warmest the surface stands.
+    pub max: Field<f32>,
+    /// The coldest.
+    pub min: Field<f32>,
 }
 
 impl EnergyBalance {
@@ -104,7 +157,14 @@ impl EnergyBalance {
             water: if airless { 0.0 } else { water },
             start: graph.f64("atmosphere.surface_temperature_mean"),
             heat_flux: graph.f64("interior.surface_heat_flux").max(0.0),
+            year: graph.f64("orbit.year"),
         }
+    }
+
+    /// The outgoing radiation and its slope at a surface temperature.
+    fn olr_and_slope(&self, t: f64) -> (f64, f64) {
+        let h = 0.01;
+        (self.olr(t), (self.olr(t + h) - self.olr(t - h)) / (2.0 * h))
     }
 
     /// The outgoing radiation at a surface temperature, W/m².
@@ -200,13 +260,376 @@ impl EnergyBalance {
                 break;
             }
         }
-        let absorbed: Vec<f64> = (0..n)
-            .map(|k| flux[k] * (1.0 - albedo(k, t[k]).0))
+        let reflected: Vec<f64> = (0..n).map(|k| albedo(k, t[k]).0).collect();
+        let brought: Vec<f64> = (0..n)
+            .map(|k| {
+                links[k]
+                    .iter()
+                    .map(|&(j, w)| d * w * (t[j] - t[k]))
+                    .sum::<f64>()
+                    / area[k]
+            })
             .collect();
         Climate {
             temperature: Field::from_fn(grid, |c, _| t[grid.index(c)] as f32),
-            absorbed: Field::from_fn(grid, |c, _| absorbed[grid.index(c)] as f32),
+            absorbed: Field::from_fn(grid, |c, _| {
+                let k = grid.index(c);
+                (flux[k] * (1.0 - reflected[k])) as f32
+            }),
+            albedo: Field::from_fn(grid, |c, _| reflected[grid.index(c)] as f32),
+            transport: Field::from_fn(grid, |c, _| brought[grid.index(c)] as f32),
             iterations,
+        }
+    }
+
+    /// The year's surface temperatures through the days and seasons on the climate's grid
+    /// (F236): at each place a column of ground under the star's path, its sunlight absorbed
+    /// at the albedo the year's balance found and the air's heat brought by its transport. A
+    /// body that spins many times a year is run through the year on the day's mean sunlight
+    /// until its seasons repeat, then through a day at each season; a body in a spin-orbit
+    /// resonance through the orbits it repeats in, until they repeat.
+    pub fn cycle(&self, climate: &Climate, ground: &Ground) -> Cycle {
+        let grid = climate.temperature.grid();
+        let at = |lat: f64, lon: f64| -> (f64, f64, f64) {
+            let (c, _, _) = grid.locate(direction_from_lon_lat(lon, lat));
+            (
+                climate.temperature.get(c) as f64,
+                climate.albedo.get(c) as f64,
+                climate.transport.get(c) as f64,
+            )
+        };
+        let all = self.sky.obliquities();
+        let tilts: Vec<f64> = if all.len() > CYCLE_SWING_SAMPLES {
+            (0..CYCLE_SWING_SAMPLES)
+                .map(|j| all[j * all.len() / CYCLE_SWING_SAMPLES])
+                .collect()
+        } else {
+            all
+        };
+        let combine = |each: Vec<(f64, f64, f64)>| -> (f64, f64, f64) {
+            let n = each.len().max(1) as f64;
+            each.iter().fold((0.0, f64::MIN, f64::MAX), |acc, e| {
+                (acc.0 + e.0 / n, acc.1.max(e.1), acc.2.min(e.2))
+            })
+        };
+        let n_lat = match self.sky.resonance {
+            None => CYCLE_LATITUDES,
+            Some(_) => CYCLE_RESONANT_GRID.0,
+        };
+        let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
+        let (rows, n_lon): (Vec<(f64, f64, f64)>, Option<usize>) = match self.sky.resonance {
+            None => (
+                (0..n_lat)
+                    .into_par_iter()
+                    .map(|i| {
+                        let (steady, albedo, brought) = at(lat_of(i), 0.0);
+                        combine(
+                            tilts
+                                .iter()
+                                .map(|&eps| {
+                                    self.zonal_cycle(
+                                        ground,
+                                        lat_of(i),
+                                        eps,
+                                        steady,
+                                        albedo,
+                                        brought,
+                                    )
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                None,
+            ),
+            Some((_, orbits)) => {
+                let n_lon = CYCLE_RESONANT_GRID.1;
+                let paths: Vec<Vec<PathStep>> = tilts
+                    .iter()
+                    .map(|&eps| self.sky.resonant_path(eps, orbits))
+                    .collect();
+                (
+                    (0..n_lat * n_lon)
+                        .into_par_iter()
+                        .map(|k| {
+                            let (i, j) = (k / n_lon, k % n_lon);
+                            let lon = -PI + TAU * j as f64 / n_lon as f64;
+                            let (steady, albedo, brought) = at(lat_of(i), lon);
+                            combine(
+                                paths
+                                    .iter()
+                                    .map(|path| {
+                                        let place = (lat_of(i), lon);
+                                        let start = (steady, albedo, brought);
+                                        self.resonant_cycle(ground, orbits, path, place, start)
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                    Some(n_lon),
+                )
+            }
+        };
+        let field = |pick: fn(&(f64, f64, f64)) -> f64| {
+            let values: Vec<f64> = rows.iter().map(pick).collect();
+            Field::from_fn(grid, |_, d| {
+                let (lon, lat) = lon_lat_from_direction(d);
+                let value = match n_lon {
+                    None => read_row(&values, lat),
+                    Some(n_lon) => read_grid(&values, n_lon, lat, lon),
+                };
+                value as f32
+            })
+        };
+        Cycle {
+            mean: field(|r| r.0),
+            max: field(|r| r.1),
+            min: field(|r| r.2),
+        }
+    }
+
+    /// A fast spinner's year at a latitude and tilt: the mean, the warmest and the coldest.
+    fn zonal_cycle(
+        &self,
+        ground: &Ground,
+        lat: f64,
+        eps: f64,
+        steady: f64,
+        albedo: f64,
+        brought: f64,
+    ) -> (f64, f64, f64) {
+        let olr = |t: f64| self.olr_and_slope(t);
+        let solar_days = (self.sky.spins - eps.cos()).abs().max(1e-3);
+        let day = self.year / solar_days;
+        let column = Column::new(ground, day, self.year);
+        let mut work = Work::new(column.len());
+        let mut t = vec![steady; column.len()];
+        let dt = self.year / CYCLE_YEAR_STEPS as f64;
+        let mut seasons: Vec<(Vec<f64>, f64, f64)> = Vec::new();
+        let mut last = f64::NAN;
+        for _ in 0..CYCLE_MAX_YEARS {
+            seasons.clear();
+            let mut sums = vec![0.0; t.len()];
+            for m in 0..CYCLE_YEAR_STEPS {
+                let anomaly = TAU * (m as f64 + 0.5) / CYCLE_YEAR_STEPS as f64;
+                let (flux, decl) = self.sky.at_mean_anomaly(anomaly, eps);
+                let gain = (1.0 - albedo) * flux * diurnal_share(lat, decl) + brought;
+                column.step(&mut t, &mut work, dt, gain, self.heat_flux, olr);
+                for (s, v) in sums.iter_mut().zip(&t) {
+                    *s += v;
+                }
+                if m % (CYCLE_YEAR_STEPS / CYCLE_SEASONS) == 0 {
+                    seasons.push((t.clone(), flux, decl));
+                }
+            }
+            let surface = sums[0] / CYCLE_YEAR_STEPS as f64;
+            if (surface - last).abs() < CYCLE_SETTLED_K {
+                break;
+            }
+            last = surface;
+            settle(&mut t, &sums, CYCLE_YEAR_STEPS);
+        }
+        // A day at each season, from the ground as the season left it.
+        let (sp, cp) = lat.sin_cos();
+        let dt = day / CYCLE_DAY_STEPS as f64;
+        let (mut mean, mut hi, mut lo) = (0.0, f64::MIN, f64::MAX);
+        for (state, flux, decl) in &seasons {
+            let (sd, cd) = decl.sin_cos();
+            let mut t = state.clone();
+            let mut sum = 0.0;
+            for d in 0..CYCLE_DAYS {
+                for h in 0..CYCLE_DAY_STEPS {
+                    let hour = TAU * (h as f64 + 0.5) / CYCLE_DAY_STEPS as f64 - PI;
+                    let cz = (sp * sd + cp * cd * hour.cos()).max(0.0);
+                    let gain = (1.0 - albedo) * flux * cz + brought;
+                    column.step(&mut t, &mut work, dt, gain, self.heat_flux, olr);
+                    if d + 1 == CYCLE_DAYS {
+                        sum += t[0];
+                        hi = hi.max(t[0]);
+                        lo = lo.min(t[0]);
+                    }
+                }
+            }
+            mean += sum / CYCLE_DAY_STEPS as f64;
+        }
+        (mean / seasons.len().max(1) as f64, hi, lo)
+    }
+
+    /// A resonant body's cycle at a place (latitude, longitude), started from its year's
+    /// balance (temperature, albedo, transport): the mean, the warmest and the coldest.
+    fn resonant_cycle(
+        &self,
+        ground: &Ground,
+        orbits: u32,
+        path: &[PathStep],
+        (lat, lon): (f64, f64),
+        (steady, albedo, brought): (f64, f64, f64),
+    ) -> (f64, f64, f64) {
+        let olr = |t: f64| self.olr_and_slope(t);
+        let cycle = self.year * orbits as f64;
+        let column = Column::new(ground, cycle, cycle);
+        let mut work = Work::new(column.len());
+        let mut t = vec![steady; column.len()];
+        let dt = cycle / path.len() as f64;
+        let e = self.sky.eccentricity;
+        let scale = self.sky.flux / (1.0 - e * e).sqrt();
+        let (sp, cp) = lat.sin_cos();
+        let (mut mean, mut hi, mut lo) = (0.0, f64::MIN, f64::MAX);
+        let mut last = f64::NAN;
+        for _ in 0..CYCLE_MAX_YEARS {
+            let mut sums = vec![0.0; t.len()];
+            (hi, lo) = (f64::MIN, f64::MAX);
+            for s in path {
+                let cz = (sp * s.sin_decl + cp * s.cos_decl * (s.hour + lon).cos()).max(0.0);
+                let gain = (1.0 - albedo) * scale * s.flux * cz + brought;
+                column.step(&mut t, &mut work, dt, gain, self.heat_flux, olr);
+                for (sum, v) in sums.iter_mut().zip(&t) {
+                    *sum += v;
+                }
+                hi = hi.max(t[0]);
+                lo = lo.min(t[0]);
+            }
+            mean = sums[0] / path.len() as f64;
+            if (mean - last).abs() < CYCLE_SETTLED_K {
+                break;
+            }
+            last = mean;
+            settle(&mut t, &sums, path.len());
+        }
+        (mean, hi, lo)
+    }
+}
+
+/// Moves each layer of the ground below the surface so that its mean over the last cycle
+/// is the surface's: the deep ground settles at the surface's mean, as it does once the
+/// cycles repeat, without waiting the many cycles its depth takes.
+fn settle(t: &mut [f64], sums: &[f64], steps: usize) {
+    let surface = sums[0] / steps as f64;
+    for (v, s) in t.iter_mut().zip(sums).skip(1) {
+        *v += surface - s / steps as f64;
+    }
+}
+
+impl Cycle {
+    /// The coldest and the warmest the surface stands anywhere through the year, K.
+    pub fn extremes(&self) -> (f64, f64) {
+        let coldest = self
+            .min
+            .as_slice()
+            .iter()
+            .fold(f64::MAX, |a, &v| a.min(v as f64));
+        let warmest = self
+            .max
+            .as_slice()
+            .iter()
+            .fold(f64::MIN, |a, &v| a.max(v as f64));
+        (coldest, warmest)
+    }
+}
+
+/// A column of ground: each layer's heat capacity per square metre, the surface's carrying
+/// the air's, and the conductance from each layer to the one below.
+#[derive(Clone, Debug)]
+struct Column {
+    capacity: Vec<f64>,
+    conductance: Vec<f64>,
+}
+
+/// The tridiagonal solve's working rows.
+struct Work {
+    a: Vec<f64>,
+    b: Vec<f64>,
+    c: Vec<f64>,
+    d: Vec<f64>,
+}
+
+impl Work {
+    fn new(n: usize) -> Self {
+        Self {
+            a: vec![0.0; n],
+            b: vec![0.0; n],
+            c: vec![0.0; n],
+            d: vec![0.0; n],
+        }
+    }
+}
+
+impl Column {
+    /// Layers from COLUMN_TOP_SHARE of the skin depth of `day` down to three skin depths of
+    /// `deep_period`, each COLUMN_GROWTH times thicker than the one above.
+    fn new(ground: &Ground, day: f64, deep_period: f64) -> Self {
+        let conductivity = ground.inertia * ground.inertia / ground.heat;
+        let diffusivity = conductivity / ground.heat;
+        let skin = |period: f64| (diffusivity * period / PI).sqrt();
+        let bottom = 3.0 * skin(deep_period.max(day));
+        let mut dz = Vec::new();
+        let (mut z, mut h) = (0.0, COLUMN_TOP_SHARE * skin(day));
+        while (z < bottom || dz.len() < 8) && dz.len() < COLUMN_MAX_LAYERS {
+            dz.push(h);
+            z += h;
+            h *= COLUMN_GROWTH;
+        }
+        let mut capacity: Vec<f64> = dz.iter().map(|d| ground.heat * d).collect();
+        capacity[0] += ground.air;
+        let conductance = dz
+            .windows(2)
+            .map(|w| conductivity / (0.5 * (w[0] + w[1])))
+            .collect();
+        Self {
+            capacity,
+            conductance,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.capacity.len()
+    }
+
+    /// One implicit step of `dt`: the surface gains `gain` W/m² and radiates as `olr` gives
+    /// (its value and slope), linearised about its temperature; `bottom` W/m² flows into the
+    /// lowest layer from below.
+    fn step(
+        &self,
+        t: &mut [f64],
+        w: &mut Work,
+        dt: f64,
+        gain: f64,
+        bottom: f64,
+        olr: impl Fn(f64) -> (f64, f64),
+    ) {
+        let n = t.len();
+        for (i, &ti) in t.iter().enumerate() {
+            w.b[i] = self.capacity[i] / dt;
+            w.d[i] = self.capacity[i] / dt * ti;
+            w.a[i] = 0.0;
+            w.c[i] = 0.0;
+            if i > 0 {
+                let g = self.conductance[i - 1];
+                w.a[i] = -g;
+                w.b[i] += g;
+            }
+            if i + 1 < n {
+                let g = self.conductance[i];
+                w.c[i] = -g;
+                w.b[i] += g;
+            }
+        }
+        let (r, dr) = olr(t[0]);
+        w.b[0] += dr;
+        w.d[0] += gain - r + dr * t[0];
+        w.d[n - 1] += bottom;
+        for i in 1..n {
+            let m = w.a[i] / w.b[i - 1];
+            w.b[i] -= m * w.c[i - 1];
+            w.d[i] -= m * w.d[i - 1];
+        }
+        t[n - 1] = w.d[n - 1] / w.b[n - 1];
+        for i in (0..n - 1).rev() {
+            t[i] = (w.d[i] - w.c[i] * t[i + 1]) / w.b[i];
+        }
+        for v in t.iter_mut() {
+            *v = v.max(COSMIC_BACKGROUND_K);
         }
     }
 }
@@ -353,6 +776,132 @@ mod tests {
                 eb.transport, eb.albedo, eb.low_sun, eb.ice, climate.iterations
             );
         }
+    }
+
+    fn cycle_of(name: &str) -> (Cycle, Climate) {
+        let graph = crate::presets::preset(name).unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&graph);
+        let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+        (eb.cycle(&climate, &Ground::from_graph(&graph)), climate)
+    }
+
+    fn at(f: &Field<f32>, lat_deg: f64, lon_deg: f64) -> f64 {
+        let g = f.grid();
+        let d = direction_from_lon_lat(lon_deg.to_radians(), lat_deg.to_radians());
+        f.get(g.locate(d).0) as f64
+    }
+
+    /// Prints each preset's year through its days and seasons against its steady balance.
+    #[test]
+    #[ignore = "diagnostic: the presets' days and seasons"]
+    fn print_cycle() {
+        let names = std::env::var("EXOGEN_BODY").unwrap_or_default();
+        for name in crate::presets::PRESET_NAMES {
+            if !names.is_empty() && !names.split(',').any(|n| n == *name) {
+                continue;
+            }
+            let start = std::time::Instant::now();
+            let (cycle, climate) = cycle_of(name);
+            let took = start.elapsed().as_secs_f64();
+            let (mean, equator, poles) = bands(&cycle.mean);
+            let (steady, ..) = bands(&climate.temperature);
+            println!(
+                "{name:10} mean {mean:6.1} K (steady {steady:6.1})  equator {equator:6.1} from {:6.1} to {:6.1}  poles {poles:6.1} from {:6.1} to {:6.1}  90° east at noon {:6.1}  ({took:.1} s)",
+                at(&cycle.min, 0.0, 0.0),
+                at(&cycle.max, 0.0, 0.0),
+                at(&cycle.min, 89.0, 0.0),
+                at(&cycle.max, 89.0, 0.0),
+                at(&cycle.max, 0.0, 90.0),
+            );
+        }
+    }
+
+    /// F236: the Moon's equator through its days and nights, its noons near 390 K and its
+    /// nights near 95 K (Diviner; Vasavada et al. 2012), its mean far under the radiative
+    /// balance with the year's mean sunlight.
+    #[test]
+    fn the_moon_s_equator_takes_its_days_and_nights() {
+        let (cycle, climate) = cycle_of("Moon");
+        let max = at(&cycle.max, 0.0, 0.0);
+        let min = at(&cycle.min, 0.0, 0.0);
+        let mean = at(&cycle.mean, 0.0, 0.0);
+        let steady = at(&climate.temperature, 0.0, 0.0);
+        assert!((375.0..400.0).contains(&max), "noon {max}");
+        assert!((85.0..110.0).contains(&min), "night {min}");
+        assert!(
+            (195.0..240.0).contains(&mean) && mean < steady - 40.0,
+            "mean {mean} steady {steady}"
+        );
+    }
+
+    /// F236: Mercury's hot longitudes reach some 700 K at perihelion's noon and its warm
+    /// longitudes some 570 K at aphelion's, its nights near 100 K (Vasavada, Paige and Wood
+    /// 1999).
+    #[test]
+    fn mercury_s_hot_longitudes_reach_seven_hundred_kelvin() {
+        let (cycle, _) = cycle_of("Mercury");
+        let hot = at(&cycle.max, 0.0, 0.0);
+        let warm = at(&cycle.max, 0.0, 90.0);
+        let night = at(&cycle.min, 0.0, 0.0);
+        assert!((680.0..720.0).contains(&hot), "hot {hot}");
+        assert!((545.0..590.0).contains(&warm), "warm {warm}");
+        assert!((80.0..130.0).contains(&night), "night {night}");
+    }
+
+    /// F236: Mars's equator swings through its days, the dust-free ground of its tropics
+    /// near 290 K at summer's noon and 180 K before dawn (Curiosity's ground temperatures,
+    /// Martín-Torres et al. 2015), about its 210 K mean.
+    #[test]
+    fn mars_s_equator_swings_through_its_days() {
+        let (cycle, _) = cycle_of("Mars");
+        let max = at(&cycle.max, 0.0, 0.0);
+        let min = at(&cycle.min, 0.0, 0.0);
+        let mean = at(&cycle.mean, 0.0, 0.0);
+        assert!((260.0..310.0).contains(&max), "noon {max}");
+        assert!((150.0..200.0).contains(&min), "night {min}");
+        assert!((195.0..235.0).contains(&mean), "mean {mean}");
+    }
+
+    /// F236: a thick atmosphere holds the day and the seasons: Venus's and Titan's means
+    /// through them stand at their steady balances. The Earth-like's seasons swing as land's
+    /// do until its ocean holds them (5B), its summer poles too warm, its mean 2 K under its
+    /// steady balance and still within the gate's 5 K of Earth's.
+    #[test]
+    fn a_thick_atmosphere_keeps_its_steady_mean() {
+        for (name, within) in [("Venus", 0.5), ("Titan", 0.5), ("Earth", 3.0)] {
+            let (cycle, climate) = cycle_of(name);
+            let (mean, ..) = bands(&cycle.mean);
+            let (steady, ..) = bands(&climate.temperature);
+            assert!(
+                (mean - steady).abs() < within,
+                "{name}: {mean} against {steady}"
+            );
+            if name == "Earth" {
+                assert!((mean - 288.0).abs() < 5.0, "Earth's mean {mean}");
+            }
+        }
+    }
+
+    /// F236: a regolith's thermal inertia by the gas in its pores: the Moon's 55 in vacuum,
+    /// Mars's near the 200 its global maps give for fine-grained ground (Putzig and Mellon
+    /// 2007), dry sand's some 500 under a bar.
+    #[test]
+    fn the_regolith_conducts_by_the_gas_in_its_pores() {
+        let inertia = |name: &str| {
+            let graph = crate::presets::preset(name).unwrap().to_graph().0;
+            graph.f64("surface.thermal_inertia")
+        };
+        assert!((inertia("Moon") - 55.0).abs() < 1.0);
+        assert!(
+            (150.0..230.0).contains(&inertia("Mars")),
+            "Mars {}",
+            inertia("Mars")
+        );
+        assert!(
+            (400.0..560.0).contains(&inertia("Earth")),
+            "Earth {}",
+            inertia("Earth")
+        );
     }
 
     /// F235, the gate of 5A: an Earth-like at 1 AU around a G2V star within 5 K of Earth's

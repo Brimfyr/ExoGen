@@ -77,6 +77,19 @@ impl Sky {
         }
     }
 
+    /// The star's flux and declination at a mean anomaly from perihelion, for a tilt (F236).
+    pub fn at_mean_anomaly(&self, m: f64, eps: f64) -> (f64, f64) {
+        let e = self.eccentricity;
+        let big_e = eccentric_anomaly(m, e);
+        let r = 1.0 - e * big_e.cos();
+        let nu = 2.0
+            * ((1.0 + e).sqrt() * (big_e / 2.0).sin())
+                .atan2((1.0 - e).sqrt() * (big_e / 2.0).cos());
+        let ls = nu + self.perihelion_season;
+        let decl = (eps.sin() * ls.sin()).clamp(-1.0, 1.0).asin();
+        (self.flux / (r * r), decl)
+    }
+
     /// The obliquities the axis takes as it precesses on its cone, sampled evenly through
     /// the precession: one when it does not swing.
     pub fn obliquities(&self) -> Vec<f64> {
@@ -198,7 +211,7 @@ impl Sky {
     /// The star's path through a resonant body's sky over the orbits it takes to repeat,
     /// sampled evenly in time: at each step its flux over the mean's, its declination, and
     /// the hour angle at longitude zero.
-    fn resonant_path(&self, eps: f64, orbits: u32) -> Vec<PathStep> {
+    pub(crate) fn resonant_path(&self, eps: f64, orbits: u32) -> Vec<PathStep> {
         let e = self.eccentricity;
         let n = INSOLATION_ORBIT_SAMPLES * orbits as usize;
         let (se, ce) = eps.sin_cos();
@@ -234,11 +247,12 @@ impl Sky {
 
 /// One step of the star's path: its flux, declination and the hour angle at longitude zero.
 #[derive(Clone, Copy, Debug)]
-struct PathStep {
-    flux: f64,
-    sin_decl: f64,
-    cos_decl: f64,
-    hour: f64,
+pub(crate) struct PathStep {
+    /// The flux over its mean, times (1 - e^2)^(1/2).
+    pub(crate) flux: f64,
+    pub(crate) sin_decl: f64,
+    pub(crate) cos_decl: f64,
+    pub(crate) hour: f64,
 }
 
 /// The mean of the flux on the ground at a point over a path, as a share of the flux
@@ -333,7 +347,7 @@ pub fn spin_orbit_resonance(spins: f64) -> Option<(u32, u32)> {
 }
 
 /// A table over latitude from pole to pole, read linearly.
-fn read_row(table: &[f64], lat: f64) -> f64 {
+pub(crate) fn read_row(table: &[f64], lat: f64) -> f64 {
     let n = table.len();
     let x = ((lat + PI / 2.0) / PI * (n - 1) as f64).clamp(0.0, (n - 1) as f64);
     let i = (x.floor() as usize).min(n - 2);
@@ -343,7 +357,7 @@ fn read_row(table: &[f64], lat: f64) -> f64 {
 
 /// A table over latitude (rows, pole to pole) and longitude (columns, from -180°, wrapping),
 /// read bilinearly.
-fn read_grid(table: &[f64], n_lon: usize, lat: f64, lon: f64) -> f64 {
+pub(crate) fn read_grid(table: &[f64], n_lon: usize, lat: f64, lon: f64) -> f64 {
     let n_lat = table.len() / n_lon;
     let y = ((lat + PI / 2.0) / PI * (n_lat - 1) as f64).clamp(0.0, (n_lat - 1) as f64);
     let i = (y.floor() as usize).min(n_lat - 2);

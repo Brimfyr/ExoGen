@@ -1766,6 +1766,41 @@ pub const CLIMATE_TOLERANCE_K: f64 = 1e-4;
 pub const CLIMATE_SLOPE_FLOOR: f64 = 0.5;
 pub const CLIMATE_CG_ITERATIONS: usize = 4000;
 pub const CLIMATE_CG_TOLERANCE: f64 = 1e-10;
+/// F236: a regolith's thermal inertia in vacuum, its grains touching, J m⁻² K⁻¹ s^-1/2: the
+/// Moon's, 55 (Hayne et al. 2017); the icy Galilean moons' 50 to 70 (Rathbun et al. 2010)
+/// bracket it, and it stands for an icy regolith too.
+pub const REGOLITH_INERTIA_VACUUM: f64 = 55.0;
+/// F236: the volumetric heat capacity of a rocky regolith, 1,500 kg/m³ at 650 J/kg/K near
+/// 250 K, and of an icy one, 550 kg/m³ of porous ice at 890 J/kg/K near 100 K, J/m³/K.
+pub const ROCK_REGOLITH_HEAT: f64 = 9.75e5;
+pub const ICE_REGOLITH_HEAT: f64 = 4.9e5;
+/// F236: the gas in a regolith's pores conducts as Presley and Christensen (1997) measured,
+/// k = C P^0.6 d^(-0.11 log10(P / K)), P in torr and d in µm: (C, K). The grains are fine
+/// sand, REGOLITH_GRAIN_UM (a stated choice until 5D's dust and sand set them), and the gas
+/// in the pores is rarefied up to about an atmosphere, PORE_GAS_MAX_PA, no further: dry
+/// sand's 0.2 to 0.3 W/m/K.
+pub const PORE_GAS_CONDUCTIVITY: (f64, f64) = (0.0015, 8.1e4);
+pub const REGOLITH_GRAIN_UM: f64 = 100.0;
+pub const PORE_GAS_MAX_PA: f64 = 101_325.0;
+/// F236: the day and the year's columns of ground: layers from COLUMN_TOP_SHARE of the day's
+/// skin depth, each COLUMN_GROWTH times the one above, down to three of the year's skin
+/// depths, at most COLUMN_MAX_LAYERS; steps through the day and the year, the seasons a
+/// day is resolved at, the days each is run, the years or cycles allowed to settle and the
+/// change in a year's mean that counts as settled; the tables' latitudes, and a resonant
+/// body's latitudes and longitudes (its steps an orbit the insolation's); the precession
+/// cone's tilts sampled.
+pub const COLUMN_TOP_SHARE: f64 = 0.125;
+pub const COLUMN_GROWTH: f64 = 1.2;
+pub const COLUMN_MAX_LAYERS: usize = 48;
+pub const CYCLE_DAY_STEPS: usize = 96;
+pub const CYCLE_YEAR_STEPS: usize = 96;
+pub const CYCLE_SEASONS: usize = 24;
+pub const CYCLE_DAYS: usize = 3;
+pub const CYCLE_MAX_YEARS: usize = 40;
+pub const CYCLE_SETTLED_K: f64 = 0.05;
+pub const CYCLE_LATITUDES: usize = 91;
+pub const CYCLE_RESONANT_GRID: (usize, usize) = (46, 90);
+pub const CYCLE_SWING_SAMPLES: usize = 4;
 
 // ---------------------------------------------------------------- volatiles
 

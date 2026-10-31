@@ -391,6 +391,29 @@ pub mod physics {
         u.min(WATER_COLUMN_MAX).min(inventory_gel_m * 1_000.0)
     }
 
+    /// F236: the volumetric heat capacity of a regolith with a share of ice, J/m³/K.
+    pub fn regolith_heat(ice: f64) -> f64 {
+        ROCK_REGOLITH_HEAT + (ICE_REGOLITH_HEAT - ROCK_REGOLITH_HEAT) * ice.clamp(0.0, 1.0)
+    }
+
+    /// F236: the conductivity the gas in a regolith's pores adds at a surface pressure, W/m/K
+    /// (Presley and Christensen 1997), the gas rarefied in the pores up to about an atmosphere.
+    pub fn pore_gas_conductivity(p_pa: f64) -> f64 {
+        if p_pa <= 0.0 {
+            return 0.0;
+        }
+        let torr = p_pa.min(PORE_GAS_MAX_PA) / 133.322;
+        let (c, k) = PORE_GAS_CONDUCTIVITY;
+        c * torr.powf(0.6) * REGOLITH_GRAIN_UM.powf(-0.11 * (torr / k).log10())
+    }
+
+    /// F236: a regolith's thermal inertia, its grains' contacts in vacuum with its pores' gas.
+    pub fn thermal_inertia(p_pa: f64, ice: f64) -> f64 {
+        let heat = regolith_heat(ice);
+        (REGOLITH_INERTIA_VACUUM * REGOLITH_INERTIA_VACUUM + pore_gas_conductivity(p_pa) * heat)
+            .sqrt()
+    }
+
     /// F235: water vapour's greenhouse optical depth at a surface temperature, saturating as
     /// its bands fill; none without water.
     pub fn water_optical_depth(t: f64, inventory_gel_m: f64) -> f64 {
@@ -2676,6 +2699,15 @@ pub fn cratering_retention_age(c: &Ctx) -> Value {
         }
     }
     retention.clamp(1e-4, age).into()
+}
+
+/// F236: the surface's thermal inertia.
+pub fn surface_thermal_inertia(c: &Ctx) -> Value {
+    thermal_inertia(
+        c.f64("atmosphere.surface_pressure"),
+        c.f64("cratering.target_ice"),
+    )
+    .into()
 }
 
 pub fn surface_space_weathering_timescale(c: &Ctx) -> Value {
