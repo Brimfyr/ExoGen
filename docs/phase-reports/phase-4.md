@@ -1,6 +1,6 @@
 # Phase 4 report: ice worlds
 
-Status: complete, 2026-10-11, six milestones each committed to main on its own; reviewed three times (2026-10-11 and twice on 2026-10-12) and revised after each review, then revised a fourth time on 2026-10-12 to the emergent pillar, and followed the same day by Phase 4F, the fidelity of the base (the sections at the end). Awaiting the next look before Phase 5 starts.
+Status: complete, 2026-10-11, six milestones each committed to main on its own; reviewed three times (2026-10-11 and twice on 2026-10-12) and revised after each review, then revised a fourth time on 2026-10-12 to the emergent pillar, and followed the same day by Phase 4F, the fidelity of the base (the sections at the end), complete on 2026-10-31 in 140 milestones and closed by the user after its review. Awaiting the user's go-ahead for Phase 5.
 
 Phase 4 gives the icy bodies their own physics. Phase 3 left them as cratered balls of ice with a regime name: Europa a blank sheet, Ganymede one terrain, and both carrying twenty kilometres of basin relief that warm ice cannot hold. The plan's list (PLAN.md, Phase 4 and section 4.3) is composition and shell thickness from density, viscous relaxation of craters into palimpsests, the tidal stress field with lineae, cycloids and bands, grooved terrain, focused polar heating, chaos, cryovolcanism with plume fallout and salt deposits, sublimation lag, hemispheric asymmetry for locked moons, and the ice and salt end-members. The gate is that Ganymede shows two terrains with a crater density contrast, that Europa's crack orientations follow the tidal stress field, and that relaxation removes large craters first.
 
@@ -3009,3 +3009,20 @@ Phase 4F ran from 12 to 31 October 2026 in 139 milestones, its findings to F231.
 - **The renders.** All seventeen presets at 4,096 pixels against the last full set (30 October, b0b8bfd): no regression. Mimas changed as milestone 135 meant, its lanes from 10.3 to 5.5 percent of the surface, and Venus's tesserae as milestone 134 meant; elsewhere the relief moves by tens of metres, the roughness at young deposits' edges ramping over the anchor crater's radius (F224), and the albedo by a few levels; Io and Europa are unchanged to the eye.
 
 The review page puts the summary, the known limitations and what moved beside the renders. Awaiting the user's review: Phase 5 begins on their go-ahead.
+
+## The hundred-and-fortieth milestone: an ocean frozen at its floor, and a lid's faults that grow
+
+The user asked, at the review, whether the many rifts on the icy bodies, Mimas's, Ceres's and Pluto's, were right. Mostly not: of these only Pluto and Charon show widespread extensional faults, and Pluto's as long systems, not a scatter.
+
+- **F232.** An ocean freezes on its floor as the high-pressure ices as well as on its top as ice I, so that Ganymede's, Callisto's and Titan's lids hardly stretch as they cool: Callisto's 3,198 graben, 308,000 km, fall to 86, 8,900 km, from the 0.02 percent its lid still stretches.
+- **F233.** A lid's faults grow as it stretches, each as deep as its length allows until it cuts the lid's brittle layer, linking where they meet: Charon's chasmata fewer, longer and wider, Pluto's long faults 2.8 km deep across its whole layer.
+
+How it went:
+
+- **The amounts and the form.** The investigation found both wrong: the lid's stretch, by every icy body's freezing water whatever froze beneath it, and the faults' form, a scatter of short ones. The user chose both parts before the close.
+- **Mixed, and kept.** Callisto is the clear gain, Charon a gain; Pluto, Triton and Ceres look much as they did, a lid stretched alike every way filling its whole surface. The user chose to keep both parts and record the rest: Pluto's regional faults with the icy lids' field, its old faults' burial with Phase 5, Ceres's muddy ocean, Mimas's refreezing (M22).
+- **The renders.** All 17 presets rendered at 1,024 px: the Moon, Mercury, Io, Mars, Venus and Earth byte-identical to HEAD's, the icy bodies all changed. Ganymede's 2,939 lid graben and Titan's 2,987 are gone, Callisto's 3,198 fall to 86 (its contrast 0.200 to 0.176), Triton's 8,481 to 4,785 and Charon's 2,818 to 1,884, its wide troughs 224 to 485. The lists, which count F152's blocks within the wide graben as well, rise on Pluto (1,345 wide troughs and 9,391 graben to 2,192 and 15,395), Ceres (124 and 3,953 to 1,487 and 6,495), Mimas (38 and 1,070 to 598 and 2,091) and Miranda (94 wide troughs to 484); Europa's and Enceladus's few faults are redrawn. Against milestone 138's renders (F231 among the changes), the albedo moves by more than 0.2 in log luminance on 8 percent of Triton's map, 3 percent of Callisto's and Ceres's, and under 1 percent of the others'.
+
+## Phase 4F closed
+
+The user closed Phase 4F on 31 October 2026 after its review, with the hundred-and-fortieth milestone. It ran from 12 to 31 October in 140 milestones, its findings to F233; its gate passed on 30 October, and every entry of the closing audit has an outcome. Phase 5 begins on the user's go-ahead.

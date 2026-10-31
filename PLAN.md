@@ -680,6 +680,8 @@ Gate: Ganymede preset shows two terrains with a crater density contrast; Europa 
 
 ### Phase 4F: fidelity of the base (L)
 
+Done 2026-10-31 in 140 milestones, its gate passed and its audit closed (docs/phase-reports/phase-4.md).
+
 Added after the Phase 4 reviews (2026-10-12): the physics of Phases 1 to 4 produced diagrams of itself, idealized shapes with one-cell contacts and flat units, and a later texturing pass cannot invent the variation the processes never made. Principle 12 is applied to every existing stage before Phase 5 begins, with Enceladus, the Moon and Io as the test bodies.
 
 - A structured substrate: fractal relief from the unresolved crater population, growing with surface age to saturation with the spectrum the crater scaling gives, under every resolved feature; tectonic fabric; a smooth multi-scale filter in place of the box pyramid (which left block artefacts in renewed floors).

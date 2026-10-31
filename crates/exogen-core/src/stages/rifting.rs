@@ -55,6 +55,21 @@ enum Source {
     Limbs,
     /// The loads laid by then, beyond the rest.
     Loads,
+    /// An icy lid stretched alike every way by its body's change of radius (F147, F233).
+    Lid,
+}
+
+/// The deepest an icy lid's faults reach at a time (F147): within its elastic part, its
+/// ice and a thin shell's share of the radius (`strain::brittle_bound`).
+struct LidBound {
+    thermal: ThermalHistory,
+    shell: f64,
+}
+
+impl LidBound {
+    fn at(&self, t: f64) -> f64 {
+        self.thermal.at(t).elastic.min(self.shell).max(1e3)
+    }
 }
 
 /// A share of the lid's tension and the faults it opens.
@@ -120,6 +135,8 @@ pub struct RiftProcess {
     rising: (f64, f64),
     /// The rounds the rises' and limbs' extension has been spent in so far, for their keys.
     rounds: u64,
+    /// An icy lid's faults' bound through time, where the process is an icy lid's.
+    lid: Option<LidBound>,
 }
 
 impl RiftProcess {
@@ -225,7 +242,7 @@ impl RiftProcess {
             let all = match d.source {
                 Source::Rises => extension.iter().sum(),
                 Source::Limbs => limb_extension.iter().map(|l| l.2).sum(),
-                Source::Loads => f64::INFINITY,
+                Source::Loads | Source::Lid => f64::INFINITY,
             };
             d.increment = all / RIFT_GROWTH_INCREMENTS;
         }
@@ -254,7 +271,98 @@ impl RiftProcess {
             drawn: 0,
             rising: (0.0, 0.0),
             rounds: 0,
+            lid: None,
         })
+    }
+
+    /// An icy lid's faults (F147), grown as its body's change of radius stretches it alike
+    /// every way (F233): one driver over the whole lid, its faults' shadows read on a grid
+    /// `face` cells a side, within the lid's brittle part at each time.
+    pub(crate) fn for_lid(
+        graph: &ParamGraph,
+        thermal: &ThermalHistory,
+        rules: FaultRules,
+        face: u32,
+    ) -> Self {
+        let body_radius = rules.body_radius;
+        let coarse = CubeSphere::new(face);
+        let area: Vec<f64> = (0..coarse.cell_count())
+            .map(|i| coarse.cell_area(coarse.cell(i)) * body_radius * body_radius)
+            .collect();
+        let n = coarse.cell_count();
+        let age = graph.f64("body.age");
+        let carried = RIFT_LOOP_WIDTH_CELLS * rules.cell;
+        Self {
+            coarse,
+            drivers: vec![Driver {
+                source: Source::Lid,
+                added: vec![1.0; n],
+                high: vec![0.0; n],
+                rules,
+                keys: (0x5714_0000_0000, 50_000_000_000),
+                pending: 0.0,
+                increment: f64::INFINITY,
+            }],
+            clock: thermal.melt_clock(area.iter().sum()),
+            area,
+            extension: Vec::new(),
+            limb_extension: Vec::new(),
+            faults: Vec::new(),
+            index: HashMap::new(),
+            parent: Vec::new(),
+            system: Vec::new(),
+            carried,
+            grown: Vec::new(),
+            epochs: 0,
+            last: 0.0,
+            read: false,
+            rng: Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x5714_1D00),
+            record_start: graph
+                .f64("cratering.record_start")
+                .max(age - graph.f64("cratering.retention_age"))
+                .clamp(0.0, age),
+            age,
+            drawn: 0,
+            rising: (0.0, 0.0),
+            rounds: 0,
+            lid: Some(LidBound {
+                thermal: thermal.clone(),
+                shell: crate::stages::strain::shell_bound(graph),
+            }),
+        }
+    }
+
+    /// Spends `budget`, m², of an icy lid's extension over the span of time it was taken up
+    /// in, Gyr (F233): the faults standing take up the share that falls within their
+    /// shadows and grow by it, the rest opens new faults outside them. What the faults took
+    /// up beyond it, a new fault's being whole, the next increment's budget makes up.
+    pub(crate) fn stretch(&mut self, budget: f64, span: (f64, f64)) {
+        let target = self.drivers[0].pending + budget;
+        if target <= 0.0 {
+            self.drivers[0].pending = target;
+            return;
+        }
+        let body_radius = self.drivers[0].rules.body_radius;
+        let growth = self.area.clone();
+        let whole: f64 = growth.iter().sum();
+        // With the lid stretched alike every way, a fault keeps its own heading.
+        let isotropic = |p: [f64; 3]| {
+            let (east, north) = local_basis(p);
+            (1.0, 1.0, east, east, north)
+        };
+        let before: f64 = self.faults.iter().map(|f| taken(&f.trough)).sum();
+        self.round(
+            0,
+            &growth,
+            whole,
+            target,
+            &isotropic,
+            0.0,
+            body_radius,
+            span,
+        );
+        let after: f64 = self.faults.iter().map(|f| taken(&f.trough)).sum();
+        self.drivers[0].pending = target - (after - before);
     }
 
     /// Reads the field at a time if a rise has grown by FIELD_REREAD_GROWTH or the loop has
@@ -302,7 +410,7 @@ impl RiftProcess {
             match d.source {
                 Source::Rises => d.pending += by_rises,
                 Source::Limbs => d.pending += by_limbs,
-                Source::Loads => {}
+                Source::Loads | Source::Lid => {}
             }
         }
         self.grown = grown;
@@ -531,7 +639,26 @@ impl RiftProcess {
         };
         let added = &driver.added;
         let unstretched = |q: [f64; 3]| added[coarse.index(coarse.locate(q).0)] <= 0.0;
+        // An icy lid's new fault runs its own way until it meets a fault standing at least
+        // half as wide, which takes up the stress it would have run on (F147).
+        let lid = self.lid.as_ref();
+        let (index, faults) = (&self.index, &self.faults);
+        let meets = |q: [f64; 3], width: f64| {
+            let c = coarse.locate(q).0;
+            (-1..=1).any(|di| {
+                (-1..=1).any(|dj| {
+                    let cell = coarse.index(coarse.neighbor(c, di, dj));
+                    index.get(&cell).is_some_and(|list| {
+                        list.iter().any(|&(other, y)| {
+                            faults[other].trough.width >= 0.5 * width
+                                && angle_between(q, y) * body_radius < 0.5 * width
+                        })
+                    })
+                })
+            })
+        };
         let fresh = |draw: u64, length: f64, spacing: f64, width: f64| {
+            let stop = |q: [f64; 3]| unstretched(q) || (lid.is_some() && meets(q, width));
             trace_in(
                 at,
                 start_of(draw),
@@ -543,12 +670,18 @@ impl RiftProcess {
                 width,
                 None,
                 yield_tension,
-                Some(&unstretched),
+                Some(&stop),
             )
         };
         let timing = |u: f64, _spent: f64, _draw: u64| begin + (end - begin) * u;
         let (clock, age) = (&self.clock, self.age);
-        let window = |time: f64, carried: bool| carving(clock, age, begin, time, carried);
+        // A lid's fault drops its floor at once; the loop carves a wide one within the step
+        // it forms (F147).
+        let window = |time: f64, carried: bool| match lid {
+            Some(_) => (time, time + 1e-6),
+            None => carving(clock, age, begin, time, carried),
+        };
+        let layer_at = |t: f64| lid.map_or(0.0, |l| l.at(t));
         let keys = (
             driver.keys.0 + k * 10_000_000,
             driver.keys.1 + k * 1_000_000,
@@ -561,7 +694,7 @@ impl RiftProcess {
             &fresh,
             &timing,
             &window,
-            &|_| 0.0,
+            &layer_at,
             None,
         );
         let count = opened.len();
@@ -680,7 +813,15 @@ impl RiftProcess {
             // length; a graben's stays within its layer and a rift at its cap stays there, so
             // theirs as their length.
             let ratio = (before + budget) / before.max(1.0);
-            let confined = f.trough.kind == TroughKind::Graben || f.trough.depth >= rules.depth_cap;
+            // An icy lid's graben deepens and widens with its length until its fault cuts
+            // its layer (F233), so what it takes up grows as the square of its length until
+            // then.
+            let confined = match (rules.layer, &self.lid) {
+                (FaultLayer::Lid(deepest), Some(lid)) => {
+                    length / LID_FAULT_ASPECT >= lid.at(now).min(deepest)
+                }
+                _ => f.trough.kind == TroughKind::Graben || f.trough.depth >= rules.depth_cap,
+            };
             let grown = if confined { ratio } else { ratio.sqrt() };
             let target = (length * grown).min(rules.l_max);
             let run = (target - length) / free as f64;
@@ -785,6 +926,7 @@ impl RiftProcess {
         let mut trough = self.faults[fi].trough.clone();
         trough.points = points;
         trough.length = length;
+        let bound = self.lid.as_ref().map_or(0.0, |l| l.at(now));
         shape(
             rules,
             &self.rng,
@@ -793,10 +935,15 @@ impl RiftProcess {
             &breaks,
             least,
             linked,
+            bound,
         );
         let left = (before + budget - taken(&trough)).max(0.0);
-        // Its time: when it first broke; a graben's when it last grew.
-        if trough.start_gyr == trough.end_gyr && !self.faults[fi].carried {
+        // Its time: when it first broke; a graben's when it last grew, a lid's dropping its
+        // floor at once (F147).
+        if self.lid.is_some() {
+            trough.start_gyr = trough.start_gyr.max(now.min(self.age));
+            trough.end_gyr = trough.start_gyr + 1e-6;
+        } else if trough.start_gyr == trough.end_gyr && !self.faults[fi].carried {
             trough.end_gyr = trough.start_gyr.max(now.min(self.age));
             trough.start_gyr = trough.end_gyr;
         }
@@ -844,7 +991,9 @@ fn taken(trough: &Trough) -> f64 {
 /// its trace and length and the ends of its segments, its depth at least `least`, what the
 /// extension it has taken up asks of it (F179), as far as the length of the system it
 /// linked into, `linked`, m, lets a fault's throw grow (Cartwright et al. 1995: linked
-/// faults' throw catches up with their summed length), within its rules' cap.
+/// faults' throw catches up with their summed length), within its rules' cap; `bound` the
+/// deepest an icy lid's faults reach at its time (F233).
+#[allow(clippy::too_many_arguments)]
 fn shape(
     rules: &FaultRules,
     rng: &Rng,
@@ -853,10 +1002,11 @@ fn shape(
     breaks: &[f64],
     least: f64,
     linked: f64,
+    bound: f64,
 ) {
     let length = trough.length;
     let scatter = (RIFT_DEPTH_SCATTER * rng.normal(draw, 2)).exp();
-    let (layer_width, layer) = rules.layer.draw(rng, draw, 0.0);
+    let (layer_width, layer) = rules.layer.draw(rng, draw, bound, length);
     let most = (rules.depth_per_length * linked.max(length) * scatter).min(rules.depth_cap);
     let zone = (rules.depth_per_length * length * scatter)
         .clamp(RIFT_MIN_DEPTH, rules.depth_cap)
@@ -882,7 +1032,9 @@ fn shape(
             let throw = if rift {
                 zone
             } else {
-                let cap = layer.min(GRABEN_DEPTH_PER_WIDTH * width);
+                let cap = layer
+                    .min(GRABEN_DEPTH_PER_WIDTH * width)
+                    .max(RIFT_MIN_DEPTH);
                 let mean_segment = length / (bounds.len() - 1).max(1) as f64;
                 let plateau =
                     (SEGMENT_THROW_PER_LENGTH * rules.compliance * mean_segment * scatter)
@@ -1009,6 +1161,7 @@ mod tests {
                 &breaks,
                 0.0,
                 t.length,
+                0.0,
             );
             assert_eq!(again.kind, t.kind, "{}", t.id);
             assert!((again.width - t.width).abs() < 1e-6 && (again.depth - t.depth).abs() < 1e-6);

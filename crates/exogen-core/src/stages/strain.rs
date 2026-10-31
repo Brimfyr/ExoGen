@@ -6,28 +6,27 @@
 //! A body whose radius changes strains its lid the same way in every direction and through
 //! its whole thickness. An icy body grows as its ocean freezes, water expanding by nine
 //! percent as it turns to ice (Charon's lid stretched by some 1 percent of its area, Beyer
-//! et al. 2017), and shrinks where its ocean lies deep enough to freeze as a denser ice;
-//! every body shrinks a little as its interior cools (F16). The lid
-//! bends elastically until its stress breaks its faulted layer, in tension at under a third
-//! of the stress compression needs, and its faults take up whatever strain lies beyond, so
-//! that a shell melted and refrozen to where it was breaks nothing new. The stretch since
-//! its surface began to keep a record opens normal faults that cut the lid's brittle layer:
-//! graben as wide as their faults, dipping at 60°, stand apart where they meet at that
-//! layer's base, kilometres deep for their length in ice, which yields some ten times as
-//! far as rock for the same stress. With no direction to follow, each runs its own way
-//! until it meets an older one at least as long, which takes up the stress it would have
-//! run on (a longer one cuts across it), so that the lid breaks into blocks, and half of
-//! them run beside one drawn before, so that they gather in belts.
-
-use std::cell::RefCell;
-use std::collections::HashMap;
+//! et al. 2017), and shrinks where its water freezes as a denser ice: below ice I's limit
+//! under a thick shell, and on the floor of an ocean deep enough that its water passes the
+//! high-pressure ices' melting point (F232), so that Ganymede's, Callisto's and Titan's
+//! lids hardly stretch as they cool; every body shrinks a little as its interior cools
+//! (F16). The lid bends elastically until its stress breaks its faulted layer, in tension
+//! at under a third of the stress compression needs, and its faults take up whatever strain
+//! lies beyond, so that a shell melted and refrozen to where it was breaks nothing new. The
+//! stretch since its surface began to keep a record opens normal faults in the lid's
+//! brittle layer, each as deep as its length allows until it cuts the layer through, its
+//! graben as wide as its faults, dipping at 60°, meet at their base, kilometres deep for
+//! their length in ice, which yields some ten times as far as rock for the same stress.
+//! They grow as the lid stretches (F233): the faults standing take up the stretch within
+//! their shadows, lengthening, and link where they meet, before new ones open outside
+//! them; with no direction to follow, each runs its own way until it meets one at least
+//! half as wide, and half the new ones run beside one drawn before, so that they gather in
+//! belts.
 
 use crate::constants::*;
-use crate::geom::{angle_between, local_basis};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
-use crate::rng::Rng;
-use crate::stages::plume::{FaultLayer, FaultRules, Trough, populate, trace_in};
+use crate::stages::plume::{FaultLayer, FaultRules, Trough};
 use crate::thermal::ThermalHistory;
 
 /// What a lid is made of: its density, kg/m³, Young's modulus, Pa, Poisson's ratio and its
@@ -108,6 +107,60 @@ fn within(ice: f64, radius: f64) -> f64 {
     layer.min(LID_LAYER_RADIUS_SHARE * radius)
 }
 
+/// The melting point of ice Ih at a pressure, K (IAPWS R14-08), by bisection on its melting
+/// curve; that of the triple point with ice III beyond it.
+fn ice_one_melting(p: f64) -> f64 {
+    let (tt, pt) = ICE_IH_TRIPLE;
+    let curve = |t: f64| {
+        let theta = t / tt;
+        pt * (1.0
+            + ICE_IH_MELTING
+                .iter()
+                .map(|&(a, b)| a * (1.0 - theta.powf(b)))
+                .sum::<f64>())
+    };
+    let (mut lo, mut hi) = (ICE_HP_MELTING[0].0, tt);
+    if p >= curve(lo) {
+        return lo;
+    }
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if curve(mid) > p {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
+/// The pressure at which water at a temperature freezes as a high-pressure ice, Pa: on the
+/// melting curve of ice III, V or VI that spans the temperature (IAPWS R14-08), the triple
+/// point of ice Ih, ice III and the melt below them.
+fn high_pressure_melting(t: f64) -> f64 {
+    let (t_low, p_low, ..) = ICE_HP_MELTING[0];
+    if t <= t_low {
+        return p_low;
+    }
+    let &(t_star, p_star, a, b, _) = ICE_HP_MELTING
+        .iter()
+        .find(|&&(_, _, _, _, top)| t <= top)
+        .unwrap_or(&ICE_HP_MELTING[2]);
+    p_star * (1.0 - a * (1.0 - (t / t_star).powf(b)))
+}
+
+/// F232: the depth of an ocean's floor under a shell `h` thick, m: an ocean stands at the
+/// melting point of the ice at its shell's base, and below it its water freezes as the
+/// high-pressure ices where its pressure passes their melting point at that temperature
+/// (Squyres 1980; Mueller and McKinnon 1988: the oceans of Ganymede, Callisto and Titan lie
+/// between ice I and the high-pressure ices, which grow from below as they cool). The
+/// shell's base reaching ice I's limit leaves no ocean.
+fn ocean_floor(h: f64, gravity: f64) -> f64 {
+    let base = DENSITY_ICE * gravity * h;
+    let melt = high_pressure_melting(ice_one_melting(base));
+    h + (melt - base).max(0.0) / (DENSITY_OCEAN * gravity)
+}
+
 /// The lid's strain from the body's change of radius (F147): the extension and the
 /// shortening its faults take up, as shares of its area, cumulative from the record's start
 /// at times through the record. The record starts as the craters' does: when the surface
@@ -177,7 +230,10 @@ impl LidStrain {
             }
             let h = thermal.at(t).lithosphere.clamp(0.0, ice);
             let upper = shell(h.min(ice_one));
-            (upper, shell(h) - upper)
+            // The ocean freezes on its floor as well, as the high-pressure ices, below where
+            // its water passes their melting point at the ocean's temperature (F232).
+            let floor = ocean_floor(h, gravity).clamp(h, ice);
+            (upper, shell(h) - upper + shell(ice) - shell(floor))
         };
         let (v0, w0) = frozen(0.0);
         let area = 4.0 * std::f64::consts::PI * r * r;
@@ -260,11 +316,9 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
     // The brittle layer the faults cut: down to where its faults close, within the lid's
     // brittle part at the fault's time.
     let deepest = closure_depth(graph);
-    let bound = |t: f64| brittle_bound(graph, thermal, t);
     let layer = deepest.min(shell_bound(graph)).max(1e3);
-    // The widest graben, whose faults cut the whole layer, and the median fault's.
+    // The widest graben, whose faults cut the whole layer.
     let widest = 2.0 * layer / GRABEN_DIP_DEG.to_radians().tan();
-    let width = LID_LAYER_MEDIAN_SHARE * widest;
     // Its faults slip per length as density over stiffness against rock's (a stated choice
     // between stiffness alone, which would cut Charon's chasmata a tenth of their length
     // deep, and the frictional stress at a depth, which would leave them shallower than
@@ -272,7 +326,7 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
     let compliance =
         (material.density / material.modulus) / (DENSITY_CRUST_ROCK / ROCK_YOUNG_MODULUS);
     let cell = grid.delta() * r;
-    let l_min = (LID_FAULT_MIN_WIDTHS * width).max(4.0 * cell);
+    let l_min = LID_FAULT_MIN_CELLS * cell;
     let rules = FaultRules {
         l_min,
         l_max: (LID_FAULT_MAX_LENGTH * r).max(2.0 * l_min),
@@ -284,78 +338,24 @@ pub fn lid_faults(graph: &ParamGraph, grid: CubeSphere, thermal: &ThermalHistory
         cell,
         body_radius: r,
     };
-    // Where the faults drawn so far run, by the cells of a grid about a graben wide: each
-    // point with the fault's half-width and length.
-    let face = ((std::f64::consts::TAU * r / (4.0 * width)).round() as u32).clamp(8, 256);
-    let coarse = CubeSphere::new(face);
-    type Drawn = Vec<([f64; 3], f64, f64)>;
-    let index: RefCell<HashMap<usize, Drawn>> = RefCell::new(HashMap::new());
-    let meets = |p: [f64; 3], half: f64, length: f64| -> bool {
-        let index = index.borrow();
-        let (c, _, _) = coarse.locate(p);
-        for di in -1..=1 {
-            for dj in -1..=1 {
-                let k = coarse.index(coarse.neighbor(c, di, dj));
-                if let Some(points) = index.get(&k)
-                    && points
-                        .iter()
-                        .any(|&(q, h, l)| l >= length && angle_between(p, q) * r < half + h)
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    };
-    let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0x5714_1D00);
-    // With the lid stretched alike every way, a fault keeps its own heading.
-    let isotropic = |p: [f64; 3]| {
-        let (east, north) = local_basis(p);
-        (1.0, 1.0, east, east, north)
-    };
-    let fresh = |draw: u64, length: f64, spacing: f64, width: f64| {
-        let start = rng.unit_direction(draw, 20);
-        let stop = |p: [f64; 3]| meets(p, 0.5 * width, length);
-        trace_in(
-            &isotropic,
-            start,
-            length,
-            spacing,
-            r,
-            &rng,
-            draw,
-            width,
-            None,
-            0.0,
-            Some(&stop),
-        )
-    };
-    // A fault breaks when the lid has stretched by as much as the faults before it took up,
-    // so that the older ones are drawn first and stop the younger.
-    let timing = |_u: f64, share: f64, _draw: u64| strain.extension_time(share);
-    // A fault drops its floor at once; the loop carves a wide one within the step it forms.
-    let window = |t: f64, _carried: bool| (t, t + 1e-6);
-    let drawn = |t: &Trough| {
-        let mut index = index.borrow_mut();
-        for &p in &t.points {
-            let k = coarse.index(coarse.locate(p).0);
-            index
-                .entry(k)
-                .or_default()
-                .push((p, 0.5 * t.width, t.length));
-        }
-    };
-    populate(
-        &rules,
-        total * area,
-        &rng,
-        (0x5714_0000_0000, 50_000_000_000),
-        &fresh,
-        &timing,
-        &window,
-        &bound,
-        Some(&drawn),
-    )
+    // The faults' shadows read on a grid about a widest graben's cells.
+    let face = ((std::f64::consts::TAU * r / (4.0 * widest)).round() as u32).clamp(8, 256);
+    let mut rifts = crate::stages::rifting::RiftProcess::for_lid(graph, thermal, rules, face);
+    // The extension spent in increments of its whole as the lid took it up, the faults
+    // standing taking up what falls within their shadows before new ones open (F233), so
+    // that the lid's faults grow and link as it stretches.
+    let n = RIFT_GROWTH_INCREMENTS as usize;
+    for i in 0..n {
+        let span = (
+            strain.extension_time(i as f64 / n as f64),
+            strain.extension_time((i + 1) as f64 / n as f64),
+        );
+        rifts.stretch(total * area / n as f64, span);
+    }
+    let mut faults = rifts.finish(false);
+    // The older ones are drawn first.
+    faults.sort_by(|a, b| a.start_gyr.total_cmp(&b.start_gyr));
+    faults
 }
 
 /// The lid's faults through the coarse loop (F153): the wide ones, which the loop's grid
@@ -433,13 +433,14 @@ impl StrainProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::angle_between;
 
     use crate::stages::plume::TroughKind;
 
     /// Charon's lid stretches as its ocean freezes, by at least 1 percent of its area
-    /// (Beyer et al. 2017), and breaks into chasmata 10 to 50 km wide and kilometres deep,
-    /// Serenity the widest, Mandjet's 450 km among them, before its southern plain's
-    /// flooding.
+    /// (Beyer et al. 2017), and breaks into chasmata 10 to 50 km wide, the long ones that cut
+    /// its layer kilometres deep (F233), Serenity the widest, Mandjet's 450 km among them,
+    /// before its southern plain's flooding.
     #[test]
     fn charon_s_lid_stretches_as_its_ocean_freezes_and_breaks_into_chasmata() {
         let (g, _) = crate::presets::preset("Charon").unwrap().to_graph();
@@ -459,12 +460,18 @@ mod tests {
             v[v.len() / 2]
         };
         let width = median(faults.iter().map(|f| f.width).collect());
-        let depth = median(faults.iter().map(|f| f.depth).collect());
+        let long = median(
+            faults
+                .iter()
+                .filter(|f| f.length > 200e3)
+                .map(|f| f.depth)
+                .collect(),
+        );
         let longest = faults.iter().map(|f| f.length).fold(0.0, f64::max);
         let widest = faults.iter().map(|f| f.width).fold(0.0, f64::max);
         assert!(width > 15e3 && width < 35e3, "{width}");
         assert!(widest > 35e3 && widest < 60e3, "{widest}");
-        assert!(depth > 1.5e3 && depth < 6e3, "{depth}");
+        assert!(long > 1.5e3 && long < 6e3, "{long}");
         assert!(longest > 400e3, "{longest}");
         assert!(
             faults
@@ -514,6 +521,90 @@ mod tests {
             sh > 0.0 && (e - expect).abs() < 0.02 * expect,
             "{e} {sh} {expect}"
         );
+    }
+
+    /// F232: an ocean freezes on its floor as the high-pressure ices where its water passes
+    /// their melting point at its temperature, which the shell's base sets. Ganymede's,
+    /// Callisto's and Titan's oceans lie between ice I and the high-pressure ices, so that as
+    /// they cool their floors rise as their shells thicken and their lids hardly stretch
+    /// (Squyres 1980: Callisto's lack of grooves); Pluto's and Charon's reach the rock, and
+    /// their lids stretch as their oceans freeze (Charon's some 1 percent of its area, Beyer
+    /// et al. 2017; Pluto's extension, Bierson et al. 2020).
+    #[test]
+    fn an_ocean_freezes_on_its_floor_as_the_high_pressure_ices() {
+        // The melting curves: ice Ih at 100 MPa (IAPWS R14-08: 264.2 K), ice V at 260 K.
+        assert!((ice_one_melting(100e6) - 264.2).abs() < 0.1);
+        assert!((high_pressure_melting(260.0) - 403e6).abs() < 2e6);
+        for (name, floored) in [
+            ("Ganymede", true),
+            ("Callisto", true),
+            ("Titan", true),
+            ("Pluto", false),
+            ("Charon", false),
+        ] {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            let thermal = ThermalHistory::from_graph(&g);
+            let age = g.f64("body.age");
+            let (ice, gravity) = (g.f64("body.ice_layer_thickness"), g.f64("body.gravity"));
+            let (h0, h1) = (thermal.at(0.0).lithosphere, thermal.at(age).lithosphere);
+            let (f0, f1) = (ocean_floor(h0, gravity), ocean_floor(h1, gravity));
+            let extension = LidStrain::from_graph(&g, &thermal)
+                .extension
+                .last()
+                .copied()
+                .unwrap_or(0.0);
+            eprintln!(
+                "{name}: shell {:.0} to {:.0} km, floor {:.0} to {:.0} km in {:.0}, extension {:.4}",
+                h0 / 1e3,
+                h1 / 1e3,
+                f0 / 1e3,
+                f1 / 1e3,
+                ice / 1e3,
+                extension
+            );
+            if floored {
+                assert!(f1 < f0 && f1 < ice && f1 > h1, "{name}");
+                assert!(extension < 1e-3, "{name} {extension}");
+            } else {
+                assert!(f0 > ice, "{name}");
+                assert!(extension > 0.01, "{name} {extension}");
+            }
+        }
+    }
+
+    /// F233: a lid's faults grow and link as it stretches, each as deep as its length allows
+    /// until it cuts the lid's brittle layer: Pluto's long faults stand as wide as its layer
+    /// lets them and deeper than its short ones, and a lid stretched little opens few faults
+    /// rather than one each time it stretches.
+    #[test]
+    fn a_lid_s_faults_grow_deeper_with_their_length() {
+        let (g, _) = crate::presets::preset("Pluto").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&g);
+        let faults = lid_faults(&g, CubeSphere::new(128), &thermal);
+        let widest =
+            2.0 * closure_depth(&g).min(shell_bound(&g)) / GRABEN_DIP_DEG.to_radians().tan();
+        let mut by_length: Vec<&Trough> = faults.iter().collect();
+        by_length.sort_by(|a, b| a.length.total_cmp(&b.length));
+        let tenth = by_length.len() / 10;
+        let mean = |set: &[&Trough], f: fn(&Trough) -> f64| {
+            set.iter().map(|t| f(t)).sum::<f64>() / set.len().max(1) as f64
+        };
+        let (short, long) = (&by_length[..tenth], &by_length[by_length.len() - tenth..]);
+        let (short_depth, long_depth) = (mean(short, |t| t.depth), mean(long, |t| t.depth));
+        let long_width = mean(long, |t| t.width);
+        eprintln!(
+            "{} faults; short tenth {:.0} km long {short_depth:.0} m deep; long tenth {:.0} km long {long_depth:.0} m deep {long_width:.0} m wide of {widest:.0}",
+            faults.len(),
+            mean(short, |t| t.length) / 1e3,
+            mean(long, |t| t.length) / 1e3,
+        );
+        assert!(long_depth > 1.5 * short_depth);
+        assert!(long_width > 0.8 * widest && long_width <= widest * (1.0 + 1e-9));
+        // Europa's lid barely stretches: a few faults, not one each increment.
+        let (europa, _) = crate::presets::preset("Europa").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&europa);
+        let few = lid_faults(&europa, CubeSphere::new(128), &thermal).len();
+        assert!(few < 16, "{few}");
     }
 
     /// Rock lids and Io's open no faults by this process.
@@ -646,6 +737,7 @@ mod tests {
             let t0 = std::time::Instant::now();
             let faults = lid_faults(&g, grid, &thermal);
             let mut l: Vec<f64> = faults.iter().map(|f| f.length / 1e3).collect();
+            let total_km: f64 = l.iter().sum();
             l.sort_by(f64::total_cmp);
             let deep = faults.iter().map(|f| f.depth).fold(0.0, f64::max);
             let wide = faults.iter().map(|f| f.width).fold(0.0, f64::max);
@@ -663,7 +755,7 @@ mod tests {
             let first = strain.radius_change.first().copied().unwrap_or(0.0);
             let last = strain.radius_change.last().copied().unwrap_or(0.0);
             println!(
-                "{name}: radius {:+.2} km through the record; extension {:.3}% shortening {:.3}% of the area; {} faults in {:.2}s; length median {:.0} max {:.0} km; width median {:.0} max {:.0} km; depth median {:.1} deepest {:.1} km; times q10 {:.2} q50 {:.2} q90 {:.2}",
+                "{name}: radius {:+.2} km through the record; extension {:.3}% shortening {:.3}% of the area; {} faults ({total_km:.0} km) in {:.2}s; length median {:.0} max {:.0} km; width median {:.0} max {:.0} km; depth median {:.1} deepest {:.1} km; times q10 {:.2} q50 {:.2} q90 {:.2}",
                 (last - first) / 1e3,
                 100.0 * strain.extension.last().copied().unwrap_or(0.0),
                 100.0 * strain.shortening.last().copied().unwrap_or(0.0),

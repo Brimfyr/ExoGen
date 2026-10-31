@@ -82,7 +82,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | M17 | Closed in part (F113) | pit chains and dikes off the rises: known limitation |
 | M18 | Known limitation | a rise's axis drawn |
 | M21 | Closed in part (F225) | the lanes read the lid's strain, opening none while it yields in compression; one budget spent once on graben, lanes and bands: known limitation |
-| M22 | Known limitation | the oceans' histories wait on the thermal model's revisit (with LANE_RENEWAL_GYR on Mimas) |
+| M22 | Closed in part (F232, F233) | the large moons' oceans freeze on their floors as well, their lids hardly stretching, and the lids' faults grow; Pluto's faults over its whole surface (the icy lids' field) and buried when old (Phase 5), Mimas's refreezing and Ceres's muddy ocean: known limitations (with LANE_RENEWAL_GYR on Mimas) |
 | M23 | Closed in part (F149, F152) | the belts' tilted blocks: known limitation |
 | M25 | Closed in part (F183) | known limitation |
 | M26 | Closed in part (F157, F158) | Venus's climate drive with Phase 5; the rest: known limitation |
@@ -99,7 +99,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | V1 | Closed in part (F227 to F231) | five sweeps are tests: Europa's tides (S4, S6), Enceladus's tides (S5), Callisto's density (S9), Venus's radius (S1) and Pluto's radius (S1); Moon to Io with S3 (Phase 5), dry to wet with the plates (Phase 6); the rock coronae's swing between neighbouring bodies: known limitation |
 | The fabric under the cells (phase report, milestones 104 to 109) | Phase 7 | for the detail pass's shader |
 | The ropy terrain between the stripe ridges (PLAN.md, Phase 4F) | Known limitation | the grain too laminar at the resolved scale; finer, with Phase 7 |
-| The icy lids' faults on the same field; Venus's subdued arc | Known limitation | dropped from the milestones' lists without a record; the icy lids' with M21 |
+| The icy lids' faults on the same field; Venus's subdued arc | Known limitation | dropped from the milestones' lists without a record; the icy lids' with M21; since F233, Pluto's and Triton's faults fill their whole surfaces at their shadows' spacing, where Pluto's gather where Sputnik Planitia's load and the reorientation it drove put them (Keane et al. 2016) |
 
 
 ## Switches (principle 15)
@@ -491,10 +491,10 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | CORONA_INTRUSIVE_SHARE, CORONA_VENT_SHARE, CORONA_STACK_DENSITY, CORONA_RING_SHARE | intrusion four fifths of the melt (Dombard et al.; White, Crisp and Spera 2006), half the lava at the vents, cumulates 200 kg/m³ denser than the crust (Dombard et al.), rings 0.15 of the radius (F146) | the lava's run over the ground it floods; the lower crust's flow under the load |
 | CORONA_RIM_VARIATION, CORONA_HEAD_WANDER | stated choices (F146): the rim's thickening varying by 0.7 round the edge, the drip in arcs, the outline wandering by 0.15 of the radius | the head's own shape and the crust's flow round the pocket, the arcs from the lid's tearing (Davaille et al. 2017) |
 | FAULT_LAYER_PRESSURE, LID_LAYER_SPREAD | Charon's Serenity Chasma, 40 to 50 km wide (Beyer et al. 2017), over ice at 0.29 m/s² (F147); checked on Tethys's Ithaca Chasma, 100 km wide, given 87; the spread a stated choice | the faulted layer's base from the lid's strength envelope, friction against creep at the strain rate the lid stretches at |
-| LID_FAULT_MIN_WIDTHS, LID_FAULT_MAX_LENGTH, LID_LAYER_RADIUS_SHARE | restricted faults run two to ten times as long as they are high (Nicol et al. 1996; Soliva and Benedicto 2005), half a great circle, a fifth of the radius against Ithaca's 0.19 (F147) | the faults' lengths from their linkage as the strain grows, the layer's bound from a thick shell's stresses |
+| LID_FAULT_MIN_CELLS, LID_FAULT_ASPECT, LID_FAULT_MAX_LENGTH, LID_LAYER_RADIUS_SHARE | the shortest fault four of the loop's cells; a fault surface twice as long as it is high (Nicol et al. 1996: 2.15) until it cuts its layer (F233); half a great circle; a fifth of the radius against Ithaca's 0.19 (F147) | the faults' lengths from their linkage as the strain grows, the layer's bound from a thick shell's stresses |
 | lid compliance (density over stiffness against rock's) | Charon's chasmata, at most 0.016 of their length deep (F147), between the stiffness alone and the frictional stress at a depth | a fault's slip per length from its stress drop and the rock's stiffness, checked on Pluto's and the Moon's graben |
-| ICE_HP_FREEZING_CHANGE | between ice III's 2.6 percent at 350 MPa and ice II's 6 to 8 (F147) | each high-pressure ice's density against the water's at the ocean floor's pressure and temperature |
-| LID_LAYER_MEDIAN_SHARE, LID_LAYER_SPREAD | a lid's faults cut to half the deepest at the median, by 0.5 in the logarithm (F149): Charon's chasmata 10 to 50 km wide, Serenity the widest; Pluto's fossae a few km to 20 | the depths faults nucleate at and grow to within the brittle layer, from the layer's strength with depth |
+| ICE_HP_FREEZING_CHANGE | between ice III's 2.6 percent at 350 MPa and ice II's 6 to 8 (F147); where the water freezes as them, from the IAPWS melting curves (F232) | each high-pressure ice's density against the water's at the ocean floor's pressure and temperature |
+| LID_LAYER_SPREAD | a lid's fault reaches down as far as its length allows, scattered by 0.5 in the logarithm (F149, F233): Charon's chasmata 10 to 50 km wide, Serenity the widest; Pluto's fossae a few km to 20 | the depths faults nucleate at and grow to within the brittle layer, from the layer's strength with depth |
 | RISE_MEMBRANE_SHARE | a rise's crest tension the membrane stress of its uplift on the sphere, E h / R (F150; Turcotte et al. 1981) | the thin shell solved for the rise's load and support (the direction of the canyons' audit row) |
 | UPWELLING_LIMB_REACH, UPWELLING_LIMB_TENSION, UPWELLING_LIMB_WIDTH | Venus's three rises joined by rifts along their upwelling limbs (F150): plumes within four radii together on one upwelling, pulled apart by 0.8 of the lesser crest's tension over a rise radius | the mantle's convection pattern, its upwelling sheets and the traction they put on the lid |
 | the GPE margin's plane strain over the flexural wavelength | a stated choice (F150): a plateau's margin spreads down its slope, the stress along the contour Poisson's share of the stress across it | the membrane stress of the relief solved on the shell (Banerdt 1986) |
@@ -786,6 +786,8 @@ Pluto's ocean freezes through in its thermal history, so its lid stretches by 2.
 Direction: the ice shell's insulation and its ocean's survival in the thermal history; the share of a freezing or melting ocean's change of volume its pressure takes up rather than the lid (Manga and Wang 2007), which F82 reads for the cracks.
 
 When: with the thermal model's revisit.
+
+Closed in part by F232 and F233 (2026-10-31): an ocean freezes on its floor as the high-pressure ices where its water passes their melting point at its temperature, so that Ganymede's, Callisto's and Titan's lids hardly stretch as they cool (Callisto's 3,198 graben, 308,000 km, fall to 86, 8,900 km), and a lid's faults grow as it stretches, deepening with their length. Still open, known limitations: Pluto's ocean still freezes through, its lid stretching by 2.1 percent, its faults filling its whole surface where the real ones are regional (the icy lids' field) and its oldest buried (Phase 5); Mimas refreezes in its last 10 Myr; Ceres's lid stretches by the water a pure ocean would freeze, where its crust froze from a muddy ocean, at least 30 percent salts and clathrates (Fu et al. 2017).
 
 ### M23. Charon's chasmata lack their fabric (closed in part by F149)
 

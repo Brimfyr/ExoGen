@@ -719,36 +719,55 @@ pub const GRABEN_DIP_DEG: f64 = 60.0;
 /// turns to ice I (1,000 against 917 kg/m³; Beyer et al. 2017 take 8.5 percent) (F147).
 pub const ICE_FREEZING_EXPANSION: f64 = 0.09;
 /// Water freezes as ice I down to where the pressure reaches ice I's limit, Pa (the triple
-/// point of ice I, ice III and the melt, 209.9 MPa at 251 K; Wagner, Saul and Pruss 1994),
+/// point of ice I, ice III and the melt, 208.566 MPa at 251.165 K; IAPWS R14-08, 2011),
 /// and below it as high-pressure ice, denser than the water it freezes from by this share
 /// of its volume (a stated choice between ice III's 2.6 percent at 350 MPa and ice II's 6
 /// to 8; a deep ocean freezing to ice II shrinks the body, Hammond, Barr and Parmentier
 /// 2016) (F147).
-pub const ICE_I_PRESSURE_LIMIT: f64 = 209.9e6;
+pub const ICE_I_PRESSURE_LIMIT: f64 = 208.566e6;
 pub const ICE_HP_FREEZING_CHANGE: f64 = -0.05;
+/// The melting curve of ice Ih (IAPWS R14-08, 2011; Wagner et al. 2011): p / p_t = 1 +
+/// sum a_i (1 - theta^b_i), theta = T / T_t, from the triple point of ice Ih, the vapour and
+/// the melt (273.16 K, 611.657 Pa) to that of ice Ih, ice III and the melt.
+pub const ICE_IH_TRIPLE: (f64, f64) = (273.16, 611.657);
+pub const ICE_IH_MELTING: [(f64, f64); 3] = [
+    (0.119_539_337e7, 3.0),
+    (0.808_183_159e5, 25.75),
+    (0.333_826_860e4, 103.75),
+];
+/// The melting curves of the high-pressure ices III, V and VI (IAPWS R14-08): p / p* = 1 - a
+/// (1 - theta^b), theta = T / T*, each from its lower triple point (T*, p*) up to the next
+/// one's temperature, K: ice III from 251.165 K and 208.566 MPa, ice V from 256.164 K and
+/// 350.1 MPa, ice VI from 273.31 K and 632.4 MPa to 355 K. Water at the ocean's temperature
+/// freezes as one of them where its pressure passes the curve (F232).
+pub const ICE_HP_MELTING: [(f64, f64, f64, f64, f64); 3] = [
+    (251.165, 208.566e6, 0.299_948, 60.0, 256.164),
+    (256.164, 350.1e6, 1.187_21, 8.0, 273.31),
+    (273.31, 632.4e6, 1.074_76, 4.6, 355.0),
+];
 /// A strain through the whole lid breaks it down to where the overburden reaches this
 /// pressure, Pa, the base of the brittle layer its faults cut, where a graben's faults,
 /// dipping at 60°, meet (a stated choice: Charon's Serenity Chasma, 40 to 50 km wide,
-/// Beyer et al. 2017, over ice at 0.29 m/s²); the faults run from this many graben widths
-/// long, four times as long as their faults reach down, as faults that have reached their
-/// layer's base lengthen rather than deepen (restricted faults run two to ten times as long
-/// as they are high, Nicol et al. 1996, Soliva and Benedicto 2005; a stated choice within
-/// that), up to this many radii, half a great circle (a stated choice: Tethys's Ithaca
-/// Chasma runs 2,000 km on a 531 km radius) (F147).
+/// Beyer et al. 2017, over ice at 0.29 m/s²); the faults run from this many of the loop's
+/// cells long, the shortest it draws, up to this many radii, half a great circle (a stated
+/// choice: Tethys's Ithaca Chasma runs 2,000 km on a 531 km radius) (F147, F233).
 pub const FAULT_LAYER_PRESSURE: f64 = 11e6;
-pub const LID_FAULT_MIN_WIDTHS: f64 = 4.0;
+pub const LID_FAULT_MIN_CELLS: f64 = 4.0;
 pub const LID_FAULT_MAX_LENGTH: f64 = std::f64::consts::PI;
+/// A lid's fault reaches down this share of its length: a fault surface runs about twice as
+/// long as it is high (Nicol et al. 1996: unrestricted normal faults' aspect 2.15), until it
+/// cuts its brittle layer, beyond which it lengthens rather than deepens (F233).
+pub const LID_FAULT_ASPECT: f64 = 2.0;
 /// The friction on faults in ice (Beeman et al. 1988) and in rock below 200 MPa of normal
 /// stress (Byerlee 1978): a lid breaks in tension at `1 - 1/K` and in compression at
 /// `K - 1` times its faulted layer's pressure, `K = (sqrt(1 + mu²) + mu)²` (F147).
 pub const ICE_FRICTION: f64 = 0.69;
 pub const ROCK_FRICTION: f64 = 0.85;
-/// A lid's fault cuts to a depth log-normal about this share of the deepest its faults
-/// reach, by this spread in its logarithm, and no deeper than the deepest: most faults
-/// nucleate and die within the brittle layer, and the few that cut it through make the
-/// widest graben (stated choices: Charon's chasmata 10 to 50 km wide, Serenity the widest;
-/// Pluto's fossae a few km to 20) (F147, revised).
-pub const LID_LAYER_MEDIAN_SHARE: f64 = 0.5;
+/// A lid's fault reaches down as far as its length allows (LID_FAULT_ASPECT), scattered
+/// log-normally by this spread in its logarithm, and no deeper than the deepest: short
+/// faults die within the brittle layer and the long ones cut it through, making the widest
+/// graben (a stated choice: Charon's chasmata 10 to 50 km wide, Serenity the widest;
+/// Pluto's fossae a few km to 20) (F147, F233).
 pub const LID_LAYER_SPREAD: f64 = 0.5;
 /// The faulted layer lies within this share of the body's radius: deeper, the lid is no
 /// thin shell stretched alike through its thickness, and its graben would span much of the

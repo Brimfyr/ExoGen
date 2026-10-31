@@ -35,7 +35,7 @@ use crate::stages::volcanism::FloodEvent;
 use crate::thermal::ThermalHistory;
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 35;
+pub const VERSION: u64 = 36;
 
 /// A volcanic rise: a broad dome growing between two times.
 #[derive(Clone, Debug)]
@@ -1401,16 +1401,16 @@ pub(crate) enum FaultLayer {
     /// The layer near the surface a rise's bending breaks (F111): graben widths and layer
     /// depths drawn apart, log-normal about Tharsis's.
     Surface,
-    /// The layer a strain through the whole lid breaks (F147): log-normal about half the
-    /// deepest its faults reach, within what the lid allows at the fault's time, the graben
-    /// as wide as their faults, dipping at 60°, meet at its base.
+    /// The layer a strain through the whole lid breaks (F147): as deep as the fault's
+    /// length allows (F233), within what the lid allows at the fault's time, the graben as
+    /// wide as their faults, dipping at 60°, meet at its base.
     Lid(f64),
 }
 
 impl FaultLayer {
     /// A fault's graben width and faulted layer, m; `bound` is the deepest a lid's faults
-    /// reach at the fault's time.
-    pub(crate) fn draw(&self, rng: &Rng, draw: u64, bound: f64) -> (f64, f64) {
+    /// reach at the fault's time and `length` the fault's.
+    pub(crate) fn draw(&self, rng: &Rng, draw: u64, bound: f64, length: f64) -> (f64, f64) {
         match *self {
             FaultLayer::Surface => {
                 let layer_width = (GRABEN_WIDTH
@@ -1421,9 +1421,10 @@ impl FaultLayer {
                 .clamp(FAULT_LAYER_RANGE.0, FAULT_LAYER_RANGE.1);
                 (layer_width, layer)
             }
+            // A lid's fault reaches down as far as its length allows, until it cuts its
+            // layer (F233).
             FaultLayer::Lid(deepest) => {
-                let layer = (deepest
-                    * LID_LAYER_MEDIAN_SHARE
+                let layer = (length / LID_FAULT_ASPECT
                     * (LID_LAYER_SPREAD * rng.normal(draw ^ 0x6A4E_0000_0000, 2)).exp())
                 .min(bound)
                 .min(deepest);
@@ -1474,7 +1475,7 @@ pub(crate) fn populate(
         // layer cuts deeper, a rift as wide as its throw (F111).
         // The fault's time first: the layer it breaks is the lid's then.
         let time = timing(rng.uniform(draw, 8), spent / budget, draw);
-        let (layer_width, layer) = rules.layer.draw(rng, draw, layer_at(time));
+        let (layer_width, layer) = rules.layer.draw(rng, draw, layer_at(time), length);
         let zone_depth = |length: f64| {
             (rules.depth_per_length * length * scatter).clamp(RIFT_MIN_DEPTH, rules.depth_cap)
         };
@@ -1566,6 +1567,11 @@ pub(crate) fn populate(
         } else {
             (points, breaks)
         };
+        // A lid's fault as deep and as wide as the length it ran allows (F233).
+        let (layer_width, layer) = match rules.layer {
+            FaultLayer::Lid(_) => rules.layer.draw(rng, draw, layer_at(time), length),
+            FaultLayer::Surface => (layer_width, layer),
+        };
         // A fault that died out early slipped as its own length allows; it is a
         // rift if that throw exceeds the faulted layer, else a graben whose
         // segments each throw as their own length allows (F111).
@@ -1597,7 +1603,9 @@ pub(crate) fn populate(
                 let throw = if rift {
                     zone
                 } else {
-                    let cap = layer.min(GRABEN_DEPTH_PER_WIDTH * width);
+                    let cap = layer
+                        .min(GRABEN_DEPTH_PER_WIDTH * width)
+                        .max(RIFT_MIN_DEPTH);
                     let mean_segment = length / (bounds.len() - 1).max(1) as f64;
                     let plateau =
                         (SEGMENT_THROW_PER_LENGTH * rules.compliance * mean_segment * scatter)
