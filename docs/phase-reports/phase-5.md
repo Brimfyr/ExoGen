@@ -1,6 +1,6 @@
 # Phase 5 report: atmosphere, climate, volatiles and erosion
 
-Status: started 2026-10-31, after Phase 4F's close; sub-phase 5A, climate on every body, under way.
+Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way.
 
 Phase 5 gives the bodies their air, their weather's long average, their volatiles and the processes that wear a surface down: sunlight and the temperature it makes on every body, seas, caps and cold traps from the inventory, rivers, glaciers, wind, dust, sand and the chemistry that colours them. The plan (PLAN.md, Phase 5) runs it as seven sub-phases in order, each with its own gate and review: 5A climate on every body, 5B volatiles, 5C water and ice at work, 5D dust, sand and chemistry, 5E surface physics on every body, 5F Io and Thaumasia, 5G weather and clouds. Mars, Titan and Pluto are its test bodies for the look; an Earth-like and a tidally locked ocean world give the climate its numbers.
 
@@ -76,3 +76,11 @@ How it went:
 ## 5A's close
 
 The climate through the loop's history, 5A's last item, moved to 5B (the user, 2026-10-31): with the atmosphere held at today's state until 5B it would add only the faint young Sun, shifting every preset's thermal history a little, where beside the atmosphere's escape and outgassing it carries Mars's thick early atmosphere and an M dwarf's planets losing their water in its bright youth. The user asked whether the history would need every kind of star: the main sequence from 0.08 to 3 solar masses is modelled (F3), a low-mass star's bright contraction before it is added with 5B, and hot stars and stellar remnants stay outside the plan unless chosen. 5A's gate review follows.
+
+### 5A passed
+
+The user's verdict on the review page (2026-10-31): "Everything here looks good." The gate as reviewed: the Earth-like's mean 284.8 K, its Hadley edge 32.6°, Mars's mean 213.6 K, the Moon's equator by day and night, Mercury's hot and warm longitudes met; Venus's mean (753 K, 2.2 percent high) and Titan's on its relief (88.9 K against 93.7, its uplands far above its methane seas) near; the poles' permanent shadows left to 5B's cold traps.
+
+## 5B, the volatiles
+
+The order: the frost's seasons first, the atmosphere's main volatile condensing on the cold ground and holding it at its frost point, then the caps the inventory lays in the cold traps with their materials and their albedo, the shadows of the airless poles, sea ice and the locked ocean world, one temperature for every stage, and the climate through the loop's history with the atmosphere's escape and the volatiles' transport.
