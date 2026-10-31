@@ -30,11 +30,13 @@ use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::fields::Field;
+use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
 use crate::insolation::{PathStep, Sky, diurnal_share, read_grid, read_row};
 use crate::params::ParamGraph;
 use crate::params::derive::physics::{
-    mean_heat_capacity, regolith_heat, species_columns, tau_dry, water_optical_depth,
+    mean_heat_capacity, mean_molecular_mass, regolith_heat, species_columns, tau_dry, water_column,
+    water_optical_depth,
 };
 
 /// What the energy balance reads.
@@ -511,6 +513,169 @@ fn settle(t: &mut [f64], sums: &[f64], steps: usize) {
     }
 }
 
+/// What the downscaling reads (F237): how the greenhouse above a place thins with its height,
+/// and how the air holds a slope to its surroundings.
+#[derive(Clone, Copy, Debug)]
+pub struct Downscale {
+    /// The dry gases' optical depths at the datum, each with the power of its column it
+    /// grows by, tau = a u^b: carbon dioxide, methane, nitrogen's collisions.
+    pub gases: [(f64, f64); 3],
+    /// The water a warm atmosphere can hold vapour from, metres of global layer.
+    pub water: f64,
+    /// The pressure's scale height, m.
+    pub scale_height: f64,
+    /// The lapse rate, K/m: no surface cools with height faster than the air convecting
+    /// over it.
+    pub lapse: f64,
+    /// The heat the air exchanges with the ground per kelvin between them, W/m²/K.
+    pub exchange: f64,
+    /// The body's radius, m.
+    pub radius: f64,
+}
+
+impl Downscale {
+    pub fn from_graph(graph: &ParamGraph) -> Self {
+        let empty = std::collections::BTreeMap::new();
+        let composition = graph
+            .get("atmosphere.composition")
+            .as_map()
+            .unwrap_or(&empty);
+        let pressure = graph.f64("atmosphere.surface_pressure");
+        if pressure <= 0.0 {
+            return Self {
+                gases: [(0.0, 1.0); 3],
+                water: 0.0,
+                scale_height: 0.0,
+                lapse: 0.0,
+                exchange: 0.0,
+                radius: graph.f64("body.radius"),
+            };
+        }
+        let columns = species_columns(composition, graph.f64("atmosphere.column_mass"));
+        let tau = |species: &str, (a, b): (f64, f64)| {
+            (a * columns.get(species).copied().unwrap_or(0.0).powf(b), b)
+        };
+        let water = EnergyBalance::from_graph(graph).water;
+        let mu = mean_molecular_mass(composition);
+        let t = graph.f64("atmosphere.surface_temperature_mean").max(1.0);
+        let density = pressure * mu / (GAS_CONSTANT * t);
+        Self {
+            gases: [
+                tau("CO2", TAU_CO2),
+                tau("CH4", TAU_CH4),
+                tau("N2", TAU_N2_CIA),
+            ],
+            water,
+            scale_height: graph.f64("atmosphere.scale_height"),
+            lapse: graph.f64("climate.lapse_rate"),
+            exchange: density
+                * mean_heat_capacity(composition)
+                * AIR_EXCHANGE_COEFFICIENT
+                * SURFACE_WIND_SPEED,
+            radius: graph.f64("body.radius"),
+        }
+    }
+
+    /// The surface temperature at a place, from the climate's temperature there (`flat`) and
+    /// at the place its slope faces (`facing`), at a height above the datum, K. The ground
+    /// sheds its heat to space and to the air; the share it sheds by radiation follows its
+    /// own sunlight and greenhouse, the rest the air over it. So its slope moves it toward
+    /// the facing place's temperature by the radiation's share, and its height cools it by
+    /// the air's share of the lapse rate and the radiation's share of the thinner greenhouse
+    /// above it, the dry gases thinning with the pressure and the water vapour with its own
+    /// scale height; never faster than the lapse rate. A height that is not finite is taken
+    /// at the datum.
+    pub fn at(&self, flat: f64, facing: f64, height: f64) -> f64 {
+        let height = if height.is_finite() { height } else { 0.0 };
+        let radiative = 4.0 * SIGMA_SB * flat.powi(3);
+        let keep = radiative / (radiative + self.exchange).max(1e-30);
+        let t = flat + keep * (facing - flat);
+        if self.scale_height <= 0.0 || height == 0.0 {
+            return t;
+        }
+        let ratio = (-height / self.scale_height).exp();
+        let dry_datum: f64 = self.gases.iter().map(|g| g.0).sum();
+        let dry_here: f64 = self.gases.iter().map(|&(tau, b)| tau * ratio.powf(b)).sum();
+        let water_datum = water_optical_depth(flat, self.water);
+        let water_here = if self.water > 0.0 {
+            let scale = flat * flat / (WATER_L_OVER_RV * self.lapse.max(1e-9));
+            let column = water_column(flat, self.water) * (-height / scale).exp();
+            TAU_H2O.0 * (column / TAU_H2O.1).ln_1p()
+        } else {
+            0.0
+        };
+        let thinning =
+            (1.0 + 0.75 * (dry_here + water_here)) / (1.0 + 0.75 * (dry_datum + water_datum));
+        let change = keep * t * (thinning.powf(0.25) - 1.0) - (1.0 - keep) * self.lapse * height;
+        let cap = self.lapse * height.abs();
+        t + change.clamp(-cap, cap)
+    }
+
+    /// The year's mean surface temperature on the surface's own grid from the climate's: each
+    /// place at its height above the sea's surface (or the mean radius without a sea), its
+    /// slope from its neighbours' heights, the sea's surface flat.
+    pub fn apply(&self, climate: &Field<f32>, height: &Field<f32>, sea_level: f64) -> Field<f32> {
+        let grid = height.grid();
+        let src = climate.grid();
+        let padded = PaddedField::new(&src, climate.as_slice());
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            let bad = height.as_slice().iter().filter(|h| !h.is_finite()).count();
+            if bad > 0 {
+                eprintln!("climate: {bad} heights not finite, taken at the datum");
+            }
+        }
+        let sea = sea_level.is_finite();
+        Field::from_fn(grid, |c, d| {
+            let flat = sample_bilinear(&src, &padded, d) as f64;
+            let h = height.get(c) as f64;
+            let under_sea = sea && h <= sea_level;
+            let facing = if under_sea {
+                flat
+            } else {
+                sample_bilinear(&src, &padded, surface_normal(height, c, d, self.radius)) as f64
+            };
+            let above = if sea { (h - sea_level).max(0.0) } else { h };
+            self.at(flat, facing, above) as f32
+        })
+    }
+}
+
+/// The unit normal of the ground at a cell, from its four neighbours' heights by least
+/// squares in the plane of the cell.
+fn surface_normal(height: &Field<f32>, c: crate::grid::Cell, d: [f64; 3], radius: f64) -> [f64; 3] {
+    let grid = height.grid();
+    let (east, north) = crate::geom::local_basis(d);
+    let h0 = height.get(c) as f64;
+    let (mut sxx, mut sxy, mut syy, mut sxh, mut syh) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        let nb = grid.neighbor(c, di, dj);
+        let p = grid.center(nb);
+        let dp = [
+            (p[0] - d[0]) * radius,
+            (p[1] - d[1]) * radius,
+            (p[2] - d[2]) * radius,
+        ];
+        let (x, y) = (crate::geom::dot(dp, east), crate::geom::dot(dp, north));
+        let dh = height.get(nb) as f64 - h0;
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+        sxh += x * dh;
+        syh += y * dh;
+    }
+    let det = sxx * syy - sxy * sxy;
+    if det.abs() < 1e-30 {
+        return d;
+    }
+    let gx = (syy * sxh - sxy * syh) / det;
+    let gy = (sxx * syh - sxy * sxh) / det;
+    crate::geom::normalize([
+        d[0] - gx * east[0] - gy * north[0],
+        d[1] - gx * east[1] - gy * north[1],
+        d[2] - gx * east[2] - gy * north[2],
+    ])
+}
+
 impl Cycle {
     /// The coldest and the warmest the surface stands anywhere through the year, K.
     pub fn extremes(&self) -> (f64, f64) {
@@ -902,6 +1067,51 @@ mod tests {
             "Earth {}",
             inertia("Earth")
         );
+    }
+
+    fn downscale_of(name: &str) -> Downscale {
+        Downscale::from_graph(&crate::presets::preset(name).unwrap().to_graph().0)
+    }
+
+    /// F237: a place's height cools it by the air's share of the lapse rate and the
+    /// radiation's share of the thinner greenhouse: an Earth-like's 3 km summit some 15 K
+    /// under its sea level, 5 K/km against the air's 6.3; Venus's 11 km summit near 650 K, as
+    /// Maxwell Montes stands (Pettengill et al. 1992); Mars's thin air cools its heights by
+    /// less than half a kelvin a kilometre; an airless body's not at all.
+    #[test]
+    fn a_summit_stands_under_less_greenhouse() {
+        let earth = downscale_of("Earth");
+        let t = earth.at(288.0, 288.0, 3000.0);
+        assert!((270.0..278.0).contains(&t), "Earth {t}");
+        let t = downscale_of("Venus").at(755.0, 755.0, 11_000.0);
+        assert!((630.0..680.0).contains(&t), "Venus {t}");
+        let t = downscale_of("Mars").at(210.0, 210.0, 20_000.0);
+        assert!(t > 200.0 && t < 210.0, "Mars {t}");
+        assert_eq!(downscale_of("Moon").at(250.0, 250.0, 5000.0), 250.0);
+    }
+
+    /// F237: a slope takes the sunlight of the place it faces: on the airless Moon ground at
+    /// 60° north tilted 20° toward the equator stands at the temperature of 40° north; Titan's
+    /// thick air holds a slope at its surroundings'.
+    #[test]
+    fn a_slope_faces_the_sunlight_of_another_latitude() {
+        let (cycle, _) = cycle_of("Moon");
+        let moon = downscale_of("Moon");
+        let grid = CubeSphere::new(256);
+        let rise = 20f64.to_radians().tan() * moon.radius;
+        let height = Field::from_fn(grid, |_, d| {
+            let (_, lat) = lon_lat_from_direction(d);
+            (rise * lat.max(0.0)) as f32
+        });
+        let t = moon.apply(&cycle.mean, &height, f64::NAN);
+        let here = at(&t, 60.0, 0.0);
+        let flat = at(&cycle.mean, 60.0, 0.0);
+        let faced = at(&cycle.mean, 40.0, 0.0);
+        assert!(
+            (here - faced).abs() < 3.0 && here > flat + 5.0,
+            "{here} flat {flat} faced {faced}"
+        );
+        assert!((downscale_of("Titan").at(91.0, 95.0, 0.0) - 91.0).abs() < 0.1);
     }
 
     /// F235, the gate of 5A: an Earth-like at 1 AU around a G2V star within 5 K of Earth's

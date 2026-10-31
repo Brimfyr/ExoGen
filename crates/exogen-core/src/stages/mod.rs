@@ -397,7 +397,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 175;
+pub const FINISH_VERSION: u64 = 176;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2933,7 +2933,9 @@ pub fn finish(
             climate.iterations, temperature_range.0, temperature_range.1
         );
     }
-    let temperature = cycle.mean.resample(grid);
+    // Brought to this grid by each place's height and slope (F237).
+    let temperature =
+        crate::climate::Downscale::from_graph(graph).apply(&cycle.mean, &height, sea_level);
     let hash = hash_words(&[
         layers.hash(),
         height.hash(),
