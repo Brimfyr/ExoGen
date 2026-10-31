@@ -86,7 +86,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | M23 | Closed in part (F149, F152) | the belts' tilted blocks: known limitation |
 | M25 | Closed in part (F183) | known limitation |
 | M26 | Closed in part (F157, F158) | Venus's climate drive with Phase 5; the rest: known limitation |
-| M27 | Closed in part (F160, F182) | the despinning wants the rotation's history, an input held constant: known limitation |
+| M27 | Closed in part (F160, F182) | the despinning wants the rotation's history, derived since F238 from the present spin: the despinning's stress from it, a later milestone |
 | M29, M30 | Closed (F165, F172) | EPISODIC_FILL_FRACTION set aside (milestone 99) and the flanks' residuals: known limitation |
 | M31 | Closed in part (to F192) | the plateaus' internal relief, the strain after the event, the lid's thickening where shortened and the plains' strain: known limitation |
 | M33, M39 | Known limitation |  |
@@ -543,6 +543,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | REGOLITH_INERTIA_VACUUM (F236) | the Moon's regolith, 55 (Hayne et al. 2017) | checked on the icy Galilean moons, 50 to 70 (Rathbun et al. 2010), and on Mercury's and Europa's days and nights (`climate::tests`) |
 | REGOLITH_GRAIN_UM (F236) | a stated choice: fine sand, 100 µm, through which the pores' gas conducts (Presley and Christensen 1997) | the grains from 5D's dust and sand: Mars's dusty plains far lower, its rocks and sands higher |
 | AIR_EXCHANGE_COEFFICIENT, SURFACE_WIND_SPEED (F237) | the bulk transfer coefficient over land (Garratt 1992: 1e-3 to 2e-3) and a stated 5 m/s wind | each place's wind from 5C's wind field |
+| OCEAN_TIDE_Q_MEAN (F238) | Earth: the Moon at its Roche limit near Earth's age, about a third of today's ocean dissipation (Bills and Ray 1999) | an ocean world's dissipation from its basins' resonance with the tide (5C's oceans) |
+| PRIMORDIAL_SPIN_SHARE (F238) | giant impacts' spins (Kokubo and Ida 2007; Kokubo and Genda 2010); Earth's 4.9 h near the 5 h after the Moon-forming impact | the spin from the body's accretion history |
+| SATELLITE_DENSITY, THERMAL_TIDE_PRESSURE (F238) | stated choices: a rocky moon's density for a satellite's Roche limit; a bar for an atmosphere whose thermal tides may hold a spin (Leconte et al. 2015) | the satellite's composition as an input; the thermal tide from the weather model's heating (5G) |
 | D_EARTH, D_CAP_MULTIPLE (F33, F235) | Earth's transport (Williams and Kasting 1997) and a stated cap at ten times it | the scaling with rotation is Earth's: Titan's poles 0.1 K under its equator against Cassini's 3 K (Jennings et al. 2016), Venus's 6.5 K; a slowly turning atmosphere's single cell with the wind field (5C) |
 | EARLY_TIME_EXPONENTS | stated choices: the orbital period at the snow line, the disc's solids over the area within it (F135) | no body to check; around a red dwarf the snow line where its planets formed is set by its far brighter youth, not by its luminosity today |
 

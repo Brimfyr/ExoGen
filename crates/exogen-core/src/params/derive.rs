@@ -805,38 +805,89 @@ pub fn body_oblateness(c: &Ctx) -> Value {
 
 // ------------------------------------------------------------------ rotation
 
+/// F238: the time the primary's tide takes to bring the spin the body was born with to its
+/// orbit's rate.
 pub fn rotation_locking_timescale(c: &Ctx) -> Value {
-    let m = c.f64("body.mass");
-    let r = c.f64("body.radius");
-    let moment = c.f64("body.moment_of_inertia_factor") * m * r * r;
-    let omega = 2.0 * PI / c.f64("rotation.period");
-    let t = locking_timescale(
-        omega,
-        c.f64("orbit.semi_major_axis"),
-        moment,
-        c.f64("interior.dissipation_q"),
-        c.f64("orbit.primary_mass"),
-        c.f64("interior.love_number_k2"),
-        r,
-    );
-    (t / GYR).min(1e12).into()
+    crate::spin::SpinInputs::body(c)
+        .locking_time()
+        .min(1e12)
+        .into()
 }
 
-pub fn rotation_mode(c: &Ctx) -> Value {
+/// F238: the present spin, an input; by default the orbit's when the primary's tide would
+/// have locked it within the body's age, otherwise Earth's.
+pub fn rotation_period(c: &Ctx) -> Value {
     if c.f64("rotation.locking_timescale") < c.f64("body.age") {
-        "locked"
+        c.f64("orbit.period")
     } else {
-        "free"
+        DEFAULT_ROTATION_PERIOD
+    }
+    .into()
+}
+
+/// F238: the present spin's state read from its period: locked to its primary, in another
+/// low-order resonance with its orbit, or free.
+pub fn rotation_mode(c: &Ctx) -> Value {
+    match crate::insolation::spin_orbit_resonance(c.f64("orbit.period") / c.f64("rotation.period"))
+    {
+        Some((1, 1)) => "locked",
+        Some(_) => "resonant",
+        None => "free",
     }
     .into()
 }
 
 pub fn rotation_effective_period(c: &Ctx) -> Value {
-    match c.str("rotation.mode") {
-        "locked" => c.f64("orbit.period"),
-        _ => c.f64("rotation.period"),
-    }
-    .into()
+    c.f64("rotation.period").into()
+}
+
+/// F238: when the tides brought a held spin to its present state, Gyr after formation; -1
+/// when free or never within the body's age.
+pub fn rotation_capture_time(c: &Ctx) -> Value {
+    crate::spin::SpinInputs::from_ctx(c)
+        .history()
+        .capture
+        .unwrap_or(-1.0)
+        .into()
+}
+
+/// F238: the spin the body was born with.
+pub fn rotation_primordial_period(c: &Ctx) -> Value {
+    let history = crate::spin::SpinInputs::from_ctx(c).history();
+    (2.0 * PI / history.primordial.abs().max(1e-30)).into()
+}
+
+/// F238: the sidereal period through the body's life, hours.
+pub fn rotation_period_history(c: &Ctx) -> Value {
+    crate::spin::SpinInputs::from_ctx(c).history().period.into()
+}
+
+/// F238: the satellite's distance through the body's life, m.
+pub fn satellite_distance_history(c: &Ctx) -> Value {
+    crate::spin::SpinInputs::from_ctx(c)
+        .history()
+        .satellite
+        .unwrap_or_else(|| Curve::constant(0.0))
+        .into()
+}
+
+/// F238: when the satellite formed at its Roche limit, Gyr after the body; -1 when the
+/// history does not reach it.
+pub fn satellite_formation_time(c: &Ctx) -> Value {
+    crate::spin::SpinInputs::from_ctx(c)
+        .history()
+        .satellite_formed
+        .unwrap_or(-1.0)
+        .into()
+}
+
+/// F238: the time the satellite's tide takes to bring the spin the body was born with to the
+/// satellite's orbital rate.
+pub fn satellite_locking_timescale(c: &Ctx) -> Value {
+    crate::spin::SpinInputs::body(c)
+        .satellite_locking_time()
+        .min(1e12)
+        .into()
 }
 
 /// F234: tides damp the tilt of a body locked to its star; a moon locked to its planet keeps

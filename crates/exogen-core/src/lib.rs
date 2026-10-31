@@ -26,6 +26,7 @@ pub mod project;
 pub mod rng;
 pub mod shade;
 pub mod spharm;
+pub mod spin;
 pub mod stages;
 pub mod thermal;
 pub mod units;

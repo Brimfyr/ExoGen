@@ -638,7 +638,7 @@ pub fn reference_checks() -> Vec<Check> {
             "Pluto",
             "rotation.mode",
             "free",
-            "locked to Charon in reality, which is not modelled",
+            "the spin against the Sun; locked to Charon, its satellite (F238)",
         ),
         text("Pluto", "body.composition_class", "rock_ice", ""),
         range(

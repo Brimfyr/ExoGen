@@ -1806,6 +1806,34 @@ pub const CYCLE_SWING_SAMPLES: usize = 4;
 /// choice until 5C's wind field gives each place its own.
 pub const AIR_EXCHANGE_COEFFICIENT: f64 = 1.5e-3;
 pub const SURFACE_WIND_SPEED: f64 = 5.0;
+/// F238: the spin a body is born with, a share of its breakup rate: giant impacts leave
+/// Earth-mass planets turning in 2 to 3 hours, about half the breakup rate (Kokubo and Ida
+/// 2007), and imperfect accretion some 30 percent slower (Kokubo and Genda 2010). Earth's
+/// comes to 4 h, near the 5 h after the Moon-forming impact (Canup 2004).
+pub const PRIMORDIAL_SPIN_SHARE: f64 = 0.35;
+/// F238: an ocean world's tidal Q over its history: its oceans dissipate today some three
+/// times their long average, by the resonance of their basins with the tide (Bills and Ray
+/// 1999), so that a history on today's Q of 12 brings the Moon to Earth 1.5 Gyr ago. Fitted
+/// on Earth: at 34 the Moon stands at its Roche limit near Earth's age.
+pub const OCEAN_TIDE_Q_MEAN: f64 = 34.0;
+/// F238: a fluid satellite's Roche limit, 2.44 R (rho / rho_s)^(1/3), where it formed going
+/// back, and the satellite's density, a rocky moon's (the Moon's 3,340 kg/m³), a stated choice
+/// while the satellite's composition is not an input.
+pub const ROCHE_FLUID: f64 = 2.44;
+pub const SATELLITE_DENSITY: f64 = 3340.0;
+/// F238: an atmosphere at least this thick may hold a spin asynchronous by its thermal tides
+/// (Leconte et al. 2015 find 1 bar enough near the inner edge of the habitable zone); the model
+/// does not compute the tide, whose strength wants the atmosphere's heating profile (5G), so a
+/// free spin under it is noted rather than flagged.
+pub const THERMAL_TIDE_PRESSURE: f64 = 1.0e5;
+/// F238: a spin's history going back: no step longer than SPIN_STEP_GYR, nor than
+/// SPIN_STEP_SHARE of the time the spin or the satellite's distance takes to change by itself;
+/// the curve's samples.
+pub const SPIN_STEP_GYR: f64 = 0.01;
+pub const SPIN_STEP_SHARE: f64 = 0.01;
+pub const SPIN_HISTORY_SAMPLES: usize = 64;
+/// F238: the sidereal period of a free spin when none is set, s: Earth's.
+pub const DEFAULT_ROTATION_PERIOD: f64 = 86_164.0;
 
 // ---------------------------------------------------------------- volatiles
 

@@ -254,7 +254,26 @@ const fn stage_output(
 
 const PRIMARY: &[&str] = &["star", "planet"];
 const COMPOSITION_CLASS: &[&str] = &["iron_rich", "rock", "rock_ice", "ice_dominated"];
-const ROTATION_MODE: &[&str] = &["free", "locked"];
+const ROTATION_MODE: &[&str] = &["free", "locked", "resonant"];
+
+/// What a spin's history reads (F238).
+const SPIN_DEPS: &[&str] = &[
+    "body.mass",
+    "body.radius",
+    "body.moment_of_inertia_factor",
+    "body.age",
+    "interior.love_number_k2",
+    "interior.dissipation_q",
+    "volatiles.working_liquid",
+    "orbit.primary_mass",
+    "orbit.semi_major_axis",
+    "orbit.mean_motion",
+    "orbit.period",
+    "satellite.mass",
+    "satellite.semi_major_axis",
+    "rotation.period",
+    "rotation.obliquity",
+];
 const SALT: &[&str] = &["hydrated_salt", "carbonate_salt"];
 const ROTATION_REGIME: &[&str] = &["rapid", "rhines", "slow"];
 const TECTONIC_REGIME: &[&str] = &[
@@ -1061,15 +1080,17 @@ static NODES: &[NodeDef] = &[
         "F9",
     ),
     // ------------------------------------------------------------------ rotation
-    root(
+    input(
         "rotation.period",
         "rotation",
         "Rotation period",
         "h",
         3600.0,
         f(1800.0, 3.6e8),
-        Default::F64(86_164.0),
-        "Sidereal rotation period when the body is not locked.",
+        &["rotation.locking_timescale", "body.age", "orbit.period"],
+        d::rotation_period,
+        "The present sidereal period, measured: by default the orbit's when the primary's tide would have locked the spin within the body's age, otherwise Earth's. Its history is derived from it (F238).",
+        "F238",
     ),
     root(
         "rotation.obliquity",
@@ -1099,30 +1120,34 @@ static NODES: &[NodeDef] = &[
         1.0,
         f(0.0, 1e12),
         &[
-            "rotation.period",
             "orbit.semi_major_axis",
+            "orbit.mean_motion",
             "body.mass",
             "body.radius",
             "body.moment_of_inertia_factor",
+            "body.age",
             "interior.dissipation_q",
+            "volatiles.working_liquid",
             "orbit.primary_mass",
             "interior.love_number_k2",
+            "satellite.mass",
+            "satellite.semi_major_axis",
         ],
         d::rotation_locking_timescale,
-        "Time to despin to synchronous rotation from the set period.",
-        "Gladman et al. 1996 (F10)",
+        "Time the primary's tide (constant Q) takes to bring the spin the body was born with, a share of its breakup rate, to its orbit's rate (F238).",
+        "Gladman et al. 1996 (F10); F238",
     ),
-    input(
+    derived(
         "rotation.mode",
         "rotation",
         "Rotation state",
         "",
         1.0,
         ValueType::Enum(ROTATION_MODE),
-        &["rotation.locking_timescale", "body.age"],
+        &["rotation.period", "orbit.period"],
         d::rotation_mode,
-        "locked when the locking timescale is shorter than the body's age.",
-        "",
+        "The present spin's state read from its period: locked to its primary, in another low-order resonance with its orbit (Mercury's 3:2), or free (F238).",
+        "F238",
     ),
     derived(
         "rotation.effective_period",
@@ -1131,9 +1156,9 @@ static NODES: &[NodeDef] = &[
         "h",
         3600.0,
         f(0.0, 1e12),
-        &["rotation.mode", "rotation.period", "orbit.period"],
+        &["rotation.period"],
         d::rotation_effective_period,
-        "The orbital period when locked, else the set period.",
+        "The present period (F238).",
         "",
     ),
     derived(
@@ -1159,6 +1184,112 @@ static NODES: &[NodeDef] = &[
         d::rotation_angular_velocity,
         "2π over the effective period.",
         "",
+    ),
+    derived(
+        "rotation.capture_time",
+        "rotation",
+        "Capture time",
+        "Gyr",
+        1.0,
+        f(-1.0, 100.0),
+        SPIN_DEPS,
+        d::rotation_capture_time,
+        "When the tides brought a locked or resonant spin to its present state from the spin the body was born with, after formation; -1 when free or never within the body's age (F238).",
+        "F238",
+    ),
+    derived(
+        "rotation.primordial_period",
+        "rotation",
+        "Primordial period",
+        "h",
+        3600.0,
+        f(0.0, 1e12),
+        SPIN_DEPS,
+        d::rotation_primordial_period,
+        "The spin the body was born with: a share of its breakup rate for a held spin, the period its free spin's history runs back to (F238).",
+        "F238",
+    ),
+    derived(
+        "rotation.period_history",
+        "rotation",
+        "Period history",
+        "h",
+        1.0,
+        ValueType::Curve,
+        SPIN_DEPS,
+        d::rotation_period_history,
+        "The sidereal period through the body's life, from the present back by its tides (F238).",
+        "F238",
+    ),
+    // ------------------------------------------------------------------ satellite
+    root(
+        "satellite.mass",
+        "satellite",
+        "Satellite mass",
+        "kg",
+        1.0,
+        f(0.0, 1e28),
+        Default::F64(0.0),
+        "The body's largest satellite, whose tide slows its spin and whose orbit takes up what the spin loses; none at zero (F238).",
+    ),
+    root(
+        "satellite.semi_major_axis",
+        "satellite",
+        "Satellite distance",
+        "km",
+        1000.0,
+        f(0.0, 1e12),
+        Default::F64(0.0),
+        "The present semi-major axis of the largest satellite's orbit (F238).",
+    ),
+    derived(
+        "satellite.locking_timescale",
+        "satellite",
+        "Satellite locking timescale",
+        "Gyr",
+        1.0,
+        f(0.0, 1e12),
+        &[
+            "body.mass",
+            "body.radius",
+            "body.moment_of_inertia_factor",
+            "body.age",
+            "interior.love_number_k2",
+            "interior.dissipation_q",
+            "volatiles.working_liquid",
+            "orbit.primary_mass",
+            "orbit.semi_major_axis",
+            "orbit.mean_motion",
+            "satellite.mass",
+            "satellite.semi_major_axis",
+        ],
+        d::satellite_locking_timescale,
+        "Time the satellite's tide takes to bring the spin the body was born with to the satellite's orbital rate: a binary pair locks each other (F238).",
+        "F238",
+    ),
+    derived(
+        "satellite.distance_history",
+        "satellite",
+        "Satellite distance history",
+        "m",
+        1.0,
+        ValueType::Curve,
+        SPIN_DEPS,
+        d::satellite_distance_history,
+        "The satellite's distance through the body's life, receding as the spin it slows gives it angular momentum (F238).",
+        "F238",
+    ),
+    derived(
+        "satellite.formation_time",
+        "satellite",
+        "Satellite formation time",
+        "Gyr",
+        1.0,
+        f(-1.0, 100.0),
+        SPIN_DEPS,
+        d::satellite_formation_time,
+        "When the satellite stood at its Roche limit going back, after the body formed: where it formed; -1 when the history does not reach it (F238).",
+        "F238",
     ),
     derived(
         "rotation.spins_per_year",
@@ -3754,10 +3885,12 @@ mod tests {
         assert_eq!(g.str("volatiles.working_liquid"), "water");
         assert_eq!(g.str("interior.tectonic_regime"), "mobile_lid");
         assert!(g.is_pinned("volatiles.inventory"));
-        g.set("rotation.mode", "locked").unwrap();
-        assert!(g.is_pinned("rotation.mode"));
-        assert!((g.f64("rotation.effective_period") - g.f64("orbit.period")).abs() < 1.0);
-        g.reset("rotation.mode");
+        let orbit = g.f64("orbit.period");
+        g.set("rotation.period", orbit).unwrap();
+        assert!(g.is_pinned("rotation.period"));
+        assert_eq!(g.str("rotation.mode"), "locked");
+        assert!((g.f64("rotation.effective_period") - orbit).abs() < 1.0);
+        g.reset("rotation.period");
         assert_eq!(g.str("rotation.mode"), "free");
         let overrides = g.overrides();
         assert!(overrides.contains_key("volatiles.inventory"));

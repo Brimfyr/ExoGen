@@ -1,6 +1,6 @@
 version = "0.0.1"
 name = "Pluto"
-description = "Reference body. Nitrogen ice plains and dark tholin regions under a 10 microbar atmosphere. Locked to Charon in reality; Charon is not modelled."
+description = "Reference body. Nitrogen ice plains and dark tholin regions under a 10 microbar atmosphere. Its spin locked to Charon, its satellite, whose tide brought it there (F238)."
 
 [values]
 "orbit.semi_major_axis" = 5.9064e12
@@ -9,6 +9,9 @@ description = "Reference body. Nitrogen ice plains and dark tholin regions under
 "body.density" = 1854.0
 "rotation.period" = 551856.0
 "rotation.obliquity" = 119.6
+# Charon: GM 105.9 km³/s² (Brozović and Jacobson 2024), its orbit 19,596 km, its period Pluto's spin.
+"satellite.mass" = 1.587e21
+"satellite.semi_major_axis" = 1.9596e7
 "atmosphere.surface_pressure" = 1.0
 "atmosphere.composition" = { N2 = 0.995, CH4 = 0.005 }
 "volatiles.inventory" = { H2O = 413000.0, N2 = 30.0, CH4 = 5.0 }

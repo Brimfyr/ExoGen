@@ -704,8 +704,7 @@ Planned on 2026-10-31, after Phase 4F's close: climate first, the weather model 
 - A two-dimensional diffusive energy balance on the coarse cubesphere (North 1975): heat capacity by surface type, outgoing radiation through the greenhouse optical depth, horizontal transport scaled by pressure and rotation (Williams and Kasting 1997), the ice-albedo feedback, ocean heat transport where seas exist. On an airless body the same balance without transport, with the day and night its thermal inertia sets.
 - Temperature downscaled to the fine grid by the lapse rate, slope and aspect (section 4.12).
 - History curves for surface pressure, volatile inventory and the star's luminosity, so that the climate runs through the loop's history; three of the inputs held constant until now get histories.
-- One temperature for every stage: the ice stage's latitude temperature and Io's frost read the new field.
-- The spin from tides, so that no preset pins its rotation (principle 11): capture into a spin-orbit resonance (Mercury's 3:2, Goldreich and Peale 1966; Correia and Laskar 2004) and the balance of the atmosphere's thermal tides against the solid body's (Venus's slow retrograde spin, Correia and Laskar 2001).
+- The spin's history from its present state (the user, 2026-10-31): the present rotation period and obliquity are inputs, measured, and the history leading to them is derived from the tides, the primary's and the largest satellite's, the planet's spin and the satellite's orbit trading angular momentum (a binary pair locking each other); a held spin, locked or in a resonance (Mercury's 3:2), brought there from the spin the body was born with, a free spin run back from today. The plausibility rules flag a present state the history cannot reach, and no preset pins its rotation (principle 11). The atmosphere's thermal tides (Venus's slow retrograde spin, Correia and Laskar 2001; Leconte et al. 2015) wait on the heating profile the weather model gives (5G). The history feeds the despinning's stress (audit M27) and the climate through time.
 
 Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean temperature, its Hadley edge between 25 and 35°; Mars's, Venus's and Titan's mean temperatures; the Moon's and Mercury's day, night and polar temperatures against Diviner's and MESSENGER's.
 
@@ -719,6 +718,7 @@ Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean 
 - Volatile transport between traps over the history: Pluto's nitrogen gathering in Sputnik Planitia, Triton's southern cap.
 - Atmospheric escape and the loss of water: Mars's, and Io's, which audit S2 and S3 wait on.
 - Io's frost through the day (audit M7).
+- One temperature for every stage (moved from 5A): the ice stage's lag and frost and Io's frost read the climate's temperatures, their sublimation integrated through the days and seasons, not taken at a mean.
 
 Gate: the locked ocean world's sea-ice edge on the freezing isoline; Mars's residual caps, water ice in the north and CO2 in the south, where its temperatures put them; Pluto's nitrogen gathered in its basin.
 

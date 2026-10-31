@@ -11,6 +11,9 @@ description = "Reference body. G2V star at 1 AU, 1.013 bar N2/O2, 2.7 km global 
 "body.density" = 5514.0
 "rotation.period" = 86164.1
 "rotation.obliquity" = 23.44
+# The Moon, whose tide slows Earth's spin as the Moon recedes (F238).
+"satellite.mass" = 7.342e22
+"satellite.semi_major_axis" = 3.844e8
 "atmosphere.surface_pressure" = 101325.0
 "atmosphere.composition" = { N2 = 0.7808, O2 = 0.2095, Ar = 0.0093, CO2 = 0.00042, H2O = 0.004 }
 "volatiles.inventory" = { H2O = 2700.0 }

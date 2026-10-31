@@ -6,7 +6,7 @@
 use super::ParamGraph;
 use super::derive::physics::volatile;
 use super::derive::{PHASE_LIQUID, PHASE_LIQUID_AND_SOLID};
-use crate::constants::{AU, JEANS_RETENTION_THRESHOLD};
+use crate::constants::{AU, JEANS_RETENTION_THRESHOLD, THERMAL_TIDE_PRESSURE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
@@ -104,15 +104,53 @@ pub fn evaluate(g: &ParamGraph) -> Vec<Warning> {
         }
     }
 
-    if g.is_pinned("rotation.mode") && g.str("rotation.mode") == "free" {
+    // F238: the present spin against the history its tides allow.
+    let age = g.f64("body.age");
+    let mode = g.str("rotation.mode");
+    if mode == "free" {
         let t_lock = g.f64("rotation.locking_timescale");
-        let age = g.f64("body.age");
         if t_lock < age {
+            if g.f64("atmosphere.surface_pressure") >= THERMAL_TIDE_PRESSURE {
+                note(
+                    &mut out,
+                    "rotation.period",
+                    format!(
+                        "Its primary's tide would have locked its spin within {t_lock:.2} Gyr; a thick atmosphere's thermal tides can hold a spin asynchronous against it (Leconte et al. 2015), which the model does not compute."
+                    ),
+                );
+            } else {
+                warn(
+                    &mut out,
+                    "rotation.period",
+                    format!(
+                        "Its primary's tide would have locked its spin within {t_lock:.2} Gyr, less than its age of {age:.2} Gyr: a free spin needs a reason the model does not have."
+                    ),
+                );
+            }
+        }
+    } else if g.f64("rotation.capture_time") < 0.0 {
+        let born = g.f64("rotation.primordial_period") / 3600.0;
+        warn(
+            &mut out,
+            "rotation.period",
+            format!(
+                "Its tides would not bring the {born:.1} h spin it was born with to its present {mode} state within its age of {age:.2} Gyr."
+            ),
+        );
+    }
+    if g.f64("satellite.mass") > 0.0 {
+        let t_sat = g.f64("satellite.locking_timescale");
+        let mass = g.f64("body.mass") + g.f64("satellite.mass");
+        let distance = g.f64("satellite.semi_major_axis");
+        let orbit =
+            std::f64::consts::TAU * (distance.powi(3) / (crate::constants::G * mass)).sqrt();
+        let synchronous = (g.f64("rotation.period") / orbit - 1.0).abs() < 1e-3;
+        if t_sat < age && !synchronous {
             warn(
                 &mut out,
-                "rotation.mode",
+                "satellite.mass",
                 format!(
-                    "Locking timescale {t_lock:.2} Gyr is shorter than the body age {age:.2} Gyr, but rotation is pinned free."
+                    "Its satellite's tide would have locked its spin to the satellite's orbit within {t_sat:.3} Gyr, less than its age of {age:.2} Gyr."
                 ),
             );
         }

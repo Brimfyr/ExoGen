@@ -113,7 +113,7 @@ mod tests {
         g.set("body.radius", 3.3895e6).unwrap();
         g.set("body.density", 3934.0).unwrap();
         g.set("atmosphere.surface_pressure", 610.0).unwrap();
-        g.set("rotation.mode", "free").unwrap();
+        g.set("rotation.period", 88_642.7).unwrap();
         let mut inv = BTreeMap::new();
         inv.insert("H2O".to_string(), 25.0);
         g.set("volatiles.inventory", Value::Map(inv)).unwrap();
@@ -132,7 +132,7 @@ mod tests {
                 def.id
             );
         }
-        assert!(g2.is_pinned("rotation.mode"));
+        assert!(g2.is_pinned("rotation.period"));
     }
 
     #[test]
