@@ -1,6 +1,6 @@
 # Phase 5 report: atmosphere, climate, volatiles and erosion
 
-Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way.
+Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way, its first milestone the frost's seasons (F239).
 
 Phase 5 gives the bodies their air, their weather's long average, their volatiles and the processes that wear a surface down: sunlight and the temperature it makes on every body, seas, caps and cold traps from the inventory, rivers, glaciers, wind, dust, sand and the chemistry that colours them. The plan (PLAN.md, Phase 5) runs it as seven sub-phases in order, each with its own gate and review: 5A climate on every body, 5B volatiles, 5C water and ice at work, 5D dust, sand and chemistry, 5E surface physics on every body, 5F Io and Thaumasia, 5G weather and clouds. Mars, Titan and Pluto are its test bodies for the look; an Earth-like and a tidally locked ocean world give the climate its numbers.
 
@@ -84,3 +84,18 @@ The user's verdict on the review page (2026-10-31): "Everything here looks good.
 ## 5B, the volatiles
 
 The order: the frost's seasons first, the atmosphere's main volatile condensing on the cold ground and holding it at its frost point, then the caps the inventory lays in the cold traps with their materials and their albedo, the shadows of the airless poles, sea ice and the locked ocean world, one temperature for every stage, and the climate through the loop's history with the atmosphere's escape and the volatiles' transport.
+
+## The sixth milestone: the frost's seasons
+
+5B's first milestone (the order above): the atmosphere's main condensable gas condensing on the cold ground, holding it at its frost point, and the pressure falling and rising with the caps.
+
+- **F239.** Mars's carbon dioxide holds its winter poles at its frost point, 145 K, where they fell to 80 K; its seasonal caps reach some 50° of latitude in their winters, the northern 1,099 kg/m² at the pole by the end of its winter, about MOLA's metre; its pressure swings from 502 to 696 Pa, 28 percent, as Viking's did. Pluto's and Triton's nitrogen lays thin seasonal caps from their own gas. The frost is drawn over the ground at the snapshot's season, its slopes taking the frost of the places they face, and exported as `frost.exr`.
+
+How it went:
+
+- **The surface's balance.** The first frost took the step's whole shortfall, the column's conduction counted twice, and laid some 10,000 kg/m² at Mars's north pole; the column is now solved under a surface held at the point, and the surface layer's own balance is the frost it takes.
+- **One atmosphere.** With every latitude drawing on a gas of its own, held at the body's pressure, Pluto and Triton froze over and their caps grew without end; the latitudes now run in step, the frost the cold ground takes the gas's own.
+- **A step of 2.6 years.** Pluto's year is 248 of Earth's, its 96 steps each longer than its air takes to freeze out, and every latitude took the same air in the same step: its frost came to three times its gas. The frost point is now settled each step, at the one point at which the frost taken leaves the gas its pressure.
+- **A pressure no gas can reach.** Raising the gas's mass until the year's mean pressure met the body's ran away where the frost's own balance holds the pressure: Pluto's frost reached hundreds of kg/m² and its air still stood under 0.4 Pa of its 1. The gas is now the frost's that comes and goes in the share of the body's pressure the air keeps, all of it on Mars and little on Pluto. Their pressures stand far under the measured, the frost radiating as a black body where nitrogen ice's emissivity is some 0.6: a shortfall reported, not tuned.
+- **A locked Mars.** Mars locked to its star at 3 AU laid frost at 0 K on its substellar ground: the steady transport, held through the cycle, took more heat from it at aphelion than the frosted ground absorbed, and frost formed without the gas to form it. Frosted ground now takes the heat the air brings it but gives none, as ground its frost holds below its steady temperature would draw heat rather than shed it; the locked Mars lays its gas on its night side and poles. The diagnostic found the transport's local response, by Williams and Kasting's scaling with rotation, 30 times Pluto's radiation's slope.
+- **The renders.** Mars, Pluto and Triton rendered at 2,048 px take their frost at the snapshot's season, the northern spring equinox: Mars's northern cap covers the ground to 50° north, frost on its pole-facing slopes past the edge, and its southern begins at 81° south; Pluto's northern cap reaches 63°, Triton's 61° north and 80° south. The caps' outlines follow their latitudes, broken only by the slopes: the cycle's ground is a latitude's, its albedo and inertia the same along it. The Moon is byte-identical to 5A's renders in every map; the Earth-like's and Titan's albedo and relief are identical and their temperatures within 0.04 K, their latitudes now running in step under gases whose frost points they never reach.

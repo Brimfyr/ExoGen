@@ -1834,12 +1834,26 @@ pub const SPIN_STEP_SHARE: f64 = 0.01;
 pub const SPIN_HISTORY_SAMPLES: usize = 64;
 /// F238: the sidereal period of a free spin when none is set, s: Earth's.
 pub const DEFAULT_ROTATION_PERIOD: f64 = 86_164.0;
+/// F239: the colours of the frosts the atmosphere's bulk gas lays, linear reflectance, their
+/// albedo in the energy balance their mean: carbon dioxide's between Mars's seasonal caps'
+/// 0.4 to 0.7 and its residual south cap's 0.8 (Paige and Ingersoll 1985), nitrogen's and
+/// methane's as Triton's and Pluto's bright plains, faintly pink (Buratti et al. 2017).
+pub const CO2_FROST_COLOUR: [f32; 3] = [0.68, 0.68, 0.70];
+pub const N2_FROST_COLOUR: [f32; 3] = [0.84, 0.80, 0.76];
+pub const CH4_FROST_COLOUR: [f32; 3] = [0.80, 0.76, 0.70];
+/// F239: the frost that hides the ground's colour, kg/m²: about a millimetre.
+pub const FROST_COVER_MASS: f64 = 1.0;
+/// F239: the frost point each step of the frost's lockstep settles at, found to within
+/// FROST_POINT_TOLERANCE_K in at most FROST_POINT_ITERATIONS tries.
+pub const FROST_POINT_ITERATIONS: usize = 60;
+pub const FROST_POINT_TOLERANCE_K: f64 = 1e-6;
 
 // ---------------------------------------------------------------- volatiles
 
 /// Triple point temperature (K), triple point pressure (Pa), latent heat of vaporisation
 /// (J/kg), latent heat of sublimation (J/kg), specific gas constant (J/kg/K), liquid
 /// density (kg/m³), for each volatile species.
+#[derive(Debug)]
 pub struct Volatile {
     pub name: &'static str,
     pub t_triple: f64,

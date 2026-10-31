@@ -315,6 +315,8 @@ pub fn export(
         "surface_age.png",
         "temperature.exr",
         "temperature.png",
+        "frost.exr",
+        "frost.png",
         "units.png",
         "sidecar.json",
     ] {
@@ -562,6 +564,49 @@ pub fn export(
         },
     );
 
+    // The frost on the ground at the snapshot's season (F239).
+    let frost_eq = to_equirectangular(&grid, out.frost.as_slice(), width, height_px);
+    let (fmin, fmax) = min_max(&frost_eq);
+    let frost_units = match out.frost_gas {
+        Some(gas) => format!("kg/m² of {gas} frost on the ground at the snapshot's season"),
+        None => "kg/m² of frost on the ground at the snapshot's season: none".to_string(),
+    };
+    write_exr_f32(
+        &settings.dir.join("frost.exr"),
+        width,
+        height_px,
+        "frost",
+        &frost_eq,
+    )?;
+    maps.insert(
+        "frost".to_string(),
+        MapInfo {
+            file: "frost.exr".into(),
+            encoding: "float32 EXR".into(),
+            units: frost_units.clone(),
+            min: fmin as f64,
+            max: fmax as f64,
+        },
+    );
+    write_png16(
+        &settings.dir.join("frost.png"),
+        width,
+        height_px,
+        &frost_eq,
+        fmin,
+        fmax,
+    )?;
+    maps.insert(
+        "frost_png".to_string(),
+        MapInfo {
+            file: "frost.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: frost_units,
+            min: fmin as f64,
+            max: fmax as f64,
+        },
+    );
+
     // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
     let unit_eq: Vec<u8> = (0..width * height_px)
@@ -692,6 +737,22 @@ pub fn export(
     stage_outputs.insert("polar_temperature_k".to_string(), poles_t);
     stage_outputs.insert("coldest_temperature_k".to_string(), out.temperature_range.0);
     stage_outputs.insert("warmest_temperature_k".to_string(), out.temperature_range.1);
+    let (frost_mean, ..) = crate::climate::bands(&out.frost);
+    let cover = crate::fields::Field::from_fn(out.frost.grid(), |c, _| {
+        crate::climate::frost_cover(out.frost.get(c)) as f32
+    });
+    stage_outputs.insert("frost_mean_kg_m2".to_string(), frost_mean);
+    stage_outputs.insert(
+        "frost_cover_fraction".to_string(),
+        crate::climate::bands(&cover).0,
+    );
+    if let Some((lo, hi)) = out.pressure_range {
+        stage_outputs.insert("pressure_lowest_pa".to_string(), lo);
+        stage_outputs.insert("pressure_highest_pa".to_string(), hi);
+    }
+    if let Some(growth) = out.cap_growth {
+        stage_outputs.insert("cap_growth_kg_m2_yr".to_string(), growth);
+    }
     let sidecar = Sidecar {
         exogen_version: crate::VERSION.to_string(),
         project: settings.project_name.clone(),

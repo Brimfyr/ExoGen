@@ -203,6 +203,14 @@ pub struct FinishOutput {
     pub temperature: Field<f32>,
     /// The coldest and the warmest the surface stands through the year, K (F236).
     pub temperature_range: (f64, f64),
+    /// The frost on the ground at the snapshot's season, kg/m², and its gas (F239).
+    pub frost: Field<f32>,
+    pub frost_gas: Option<&'static str>,
+    /// The surface pressure's lowest and highest through the year as the frost takes the
+    /// gas and gives it back, Pa, and the frost that outlasts the year, kg/m² a year over the
+    /// body, where the atmosphere lays frost (F239).
+    pub pressure_range: Option<(f64, f64)>,
+    pub cap_growth: Option<f64>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -397,7 +405,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 176;
+pub const FINISH_VERSION: u64 = 177;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2933,9 +2941,30 @@ pub fn finish(
             climate.iterations, temperature_range.0, temperature_range.1
         );
     }
-    // Brought to this grid by each place's height and slope (F237).
-    let temperature =
-        crate::climate::Downscale::from_graph(graph).apply(&cycle.mean, &height, sea_level);
+    // Brought to this grid by each place's height and slope (F237), and the frost at the
+    // snapshot's season with them, over the ground's colour (F239).
+    let downscale = crate::climate::Downscale::from_graph(graph);
+    let temperature = downscale.apply(&cycle.mean, &height, sea_level);
+    let (frost, albedo) = match cycle.frost {
+        Some(f) => {
+            let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &height, sea_level);
+            let albedo = crate::climate::frosted_albedo(&albedo, &frost, f.colour);
+            if std::env::var_os("EXOGEN_DEBUG").is_some() {
+                let (mean, ..) = crate::climate::bands(&frost);
+                let range = cycle.pressure_range.unwrap_or((f64::NAN, f64::NAN));
+                eprintln!(
+                    "frost: {} at {:.1} K, {mean:.2} kg/m² over the body at the snapshot; the pressure {:.4e} to {:.4e} Pa through the year; caps grow {:.3} kg/m² a year",
+                    f.species,
+                    f.point,
+                    range.0,
+                    range.1,
+                    cycle.cap_growth.unwrap_or(0.0)
+                );
+            }
+            (frost, albedo)
+        }
+        None => (Field::new(grid), albedo),
+    };
     let hash = hash_words(&[
         layers.hash(),
         height.hash(),
@@ -2961,6 +2990,10 @@ pub fn finish(
         maturity,
         temperature,
         temperature_range,
+        frost,
+        frost_gas: cycle.frost.map(|f| f.species),
+        pressure_range: cycle.pressure_range,
+        cap_growth: cycle.cap_growth,
         rays,
         sea_level,
         ocean_fraction,

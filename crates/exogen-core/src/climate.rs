@@ -35,8 +35,8 @@ use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
 use crate::insolation::{PathStep, Sky, diurnal_share, read_grid, read_row};
 use crate::params::ParamGraph;
 use crate::params::derive::physics::{
-    mean_heat_capacity, mean_molecular_mass, regolith_heat, species_columns, tau_dry, water_column,
-    water_optical_depth,
+    mean_heat_capacity, mean_molecular_mass, regolith_heat, saturation_temperature,
+    species_columns, tau_dry, volatile, water_column, water_optical_depth,
 };
 
 /// What the energy balance reads.
@@ -62,6 +62,12 @@ pub struct EnergyBalance {
     pub heat_flux: f64,
     /// The year, the orbit about the star, s.
     pub year: f64,
+    /// The frost of the atmosphere's bulk gas (F239).
+    pub frost: Option<Frost>,
+    /// The mean anomaly of the snapshot's season, rad from perihelion.
+    pub snapshot: f64,
+    /// The surface pressure, Pa: its mean over the year.
+    pub pressure: f64,
 }
 
 /// The year's mean climate on the climate grid.
@@ -111,7 +117,88 @@ impl Ground {
     }
 }
 
-/// The year's surface temperatures through the days and seasons (F236), K.
+/// The frost of the atmosphere's bulk gas (F239): where the ground would cool below its frost
+/// point at its partial pressure, the gas condenses on it, and its latent heat holds the
+/// ground at the frost point while it lies (Leighton and Murray 1966).
+#[derive(Clone, Copy, Debug)]
+pub struct Frost {
+    pub species: &'static str,
+    /// The frost point at the gas's partial pressure, K.
+    pub point: f64,
+    /// The latent heat of sublimation, J/kg.
+    pub latent: f64,
+    /// The frost's albedo and colour.
+    pub albedo: f64,
+    pub colour: [f32; 3],
+    /// The gas's mean partial pressure, Pa, and its column over the body, kg/m².
+    pub partial: f64,
+    pub column: f64,
+    /// The gas's vapour curve.
+    pub volatile: &'static crate::constants::Volatile,
+}
+
+impl Frost {
+    /// The condensable gas with the largest partial pressure below its triple point, which
+    /// alone has the mass to cover the ground; none without an atmosphere, or on a body whose
+    /// frost its own stage lays (Io's).
+    pub fn from_graph(graph: &ParamGraph) -> Option<Self> {
+        let pressure = graph.f64("atmosphere.surface_pressure");
+        if pressure <= 0.0 || crate::stages::io::is_io_regime(graph) {
+            return None;
+        }
+        let empty = std::collections::BTreeMap::new();
+        let composition = graph
+            .get("atmosphere.composition")
+            .as_map()
+            .unwrap_or(&empty);
+        let total: f64 = composition.values().sum::<f64>().max(1e-12);
+        composition
+            .iter()
+            .filter_map(|(name, share)| {
+                let v = volatile(name)?;
+                let partial = pressure * share / total;
+                let colour = frost_colour(name)?;
+                (partial > 0.0 && partial < v.p_triple).then_some((partial, v, colour))
+            })
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(partial, v, colour)| {
+                let columns = species_columns(composition, graph.f64("atmosphere.column_mass"));
+                Self {
+                    species: v.name,
+                    point: saturation_temperature(v, partial),
+                    latent: v.l_sub,
+                    albedo: (colour.iter().sum::<f32>() / 3.0) as f64,
+                    colour,
+                    partial,
+                    column: columns.get(v.name).copied().unwrap_or(0.0),
+                    volatile: v,
+                }
+            })
+    }
+
+    /// The frost point at a partial pressure of the gas, K; none at none.
+    pub fn point_at(&self, partial: f64) -> f64 {
+        if partial <= 0.0 {
+            0.0
+        } else {
+            saturation_temperature(self.volatile, partial)
+        }
+    }
+}
+
+/// The colour of a gas's frost, linear reflectance (F239); none for a gas whose frost the
+/// model does not draw.
+fn frost_colour(species: &str) -> Option<[f32; 3]> {
+    match species {
+        "CO2" => Some(CO2_FROST_COLOUR),
+        "N2" => Some(N2_FROST_COLOUR),
+        "CH4" => Some(CH4_FROST_COLOUR),
+        _ => None,
+    }
+}
+
+/// The year's surface temperatures through the days and seasons (F236), K, and the frost
+/// (F239).
 #[derive(Clone, Debug)]
 pub struct Cycle {
     /// The mean over the year.
@@ -120,6 +207,42 @@ pub struct Cycle {
     pub max: Field<f32>,
     /// The coldest.
     pub min: Field<f32>,
+    /// The share of the year frost lies on the ground, 1 under a residual cap.
+    pub frost_share: Field<f32>,
+    /// The frost on the ground at the snapshot's season, kg/m².
+    pub frost_now: Field<f32>,
+    /// The frost's gas, if the atmosphere has one.
+    pub frost: Option<Frost>,
+    /// The surface pressure's lowest and highest through the year as the frost takes and
+    /// gives the gas back, Pa, where it lays frost.
+    pub pressure_range: Option<(f64, f64)>,
+    /// The frost that outlasts the year, kg/m² a year over the body: its caps' growth, which
+    /// the model does not yet keep (5B's caps), where it lays frost.
+    pub cap_growth: Option<f64>,
+}
+
+/// A place's year: its mean, warmest and coldest temperature, the share of the year frost
+/// lies on it and its frost at the snapshot's season.
+#[derive(Clone, Copy, Debug)]
+struct Year {
+    mean: f64,
+    max: f64,
+    min: f64,
+    frost_share: f64,
+    frost_now: f64,
+}
+
+impl Year {
+    /// A year without frost.
+    fn bare(mean: f64, max: f64, min: f64) -> Self {
+        Self {
+            mean,
+            max,
+            min,
+            frost_share: 0.0,
+            frost_now: 0.0,
+        }
+    }
 }
 
 impl EnergyBalance {
@@ -160,6 +283,13 @@ impl EnergyBalance {
             start: graph.f64("atmosphere.surface_temperature_mean"),
             heat_flux: graph.f64("interior.surface_heat_flux").max(0.0),
             year: graph.f64("orbit.year"),
+            frost: Frost::from_graph(graph),
+            pressure: graph.f64("atmosphere.surface_pressure").max(0.0),
+            snapshot: snapshot_anomaly(
+                graph.f64("climate.season"),
+                graph.f64("orbit.perihelion_season").to_radians(),
+                graph.f64("orbit.star_eccentricity"),
+            ),
         }
     }
 
@@ -308,19 +438,70 @@ impl EnergyBalance {
         } else {
             all
         };
-        let combine = |each: Vec<(f64, f64, f64)>| -> (f64, f64, f64) {
+        let combine = |each: Vec<Year>| -> Year {
             let n = each.len().max(1) as f64;
-            each.iter().fold((0.0, f64::MIN, f64::MAX), |acc, e| {
-                (acc.0 + e.0 / n, acc.1.max(e.1), acc.2.min(e.2))
-            })
+            each.iter().fold(
+                Year {
+                    mean: 0.0,
+                    max: f64::MIN,
+                    min: f64::MAX,
+                    frost_share: 0.0,
+                    frost_now: 0.0,
+                },
+                |acc, e| Year {
+                    mean: acc.mean + e.mean / n,
+                    max: acc.max.max(e.max),
+                    min: acc.min.min(e.min),
+                    frost_share: acc.frost_share + e.frost_share / n,
+                    frost_now: acc.frost_now + e.frost_now / n,
+                },
+            )
         };
         let n_lat = match self.sky.resonance {
             None => CYCLE_LATITUDES,
             Some(_) => CYCLE_RESONANT_GRID.0,
         };
         let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
-        let (rows, n_lon): (Vec<(f64, f64, f64)>, Option<usize>) = match self.sky.resonance {
-            None => (
+        let mut pressure_range = None;
+        let mut cap_growth = None;
+        // A frost's runs, one a tilt: their places' years combined, the pressure's range the
+        // widest and the caps' growth the mean.
+        let mut gather = |runs: Vec<(Vec<Year>, (f64, f64), f64)>| -> Vec<Year> {
+            pressure_range = runs
+                .iter()
+                .map(|r| r.1)
+                .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)));
+            cap_growth = Some(runs.iter().map(|r| r.2).sum::<f64>() / runs.len().max(1) as f64);
+            (0..runs.first().map_or(0, |r| r.0.len()))
+                .map(|i| combine(runs.iter().map(|r| r.0[i]).collect()))
+                .collect()
+        };
+        // A place of the frost's lockstep, its latitude's band of the sphere's area shared
+        // among its longitudes.
+        let frost_place = |i: usize, lon: f64, share: f64| {
+            let (lat, half) = (lat_of(i), PI / (n_lat - 1) as f64 / 2.0);
+            let band = (lat + half).min(PI / 2.0).sin() - (lat - half).max(-PI / 2.0).sin();
+            let (steady, albedo, brought) = at(lat, lon);
+            Place {
+                lat,
+                lon,
+                weight: band * share,
+                steady,
+                albedo,
+                brought,
+            }
+        };
+        let (rows, n_lon): (Vec<Year>, Option<usize>) = match (self.sky.resonance, self.frost) {
+            // A frost's caps draw on one atmosphere, so its places run in step.
+            (None, Some(frost)) => {
+                let places: Vec<Place> = (0..n_lat).map(|i| frost_place(i, 0.0, 1.0)).collect();
+                let runs = tilts
+                    .iter()
+                    .map(|&eps| self.frosty_years(ground, &places, eps, &frost))
+                    .collect();
+                (gather(runs), None)
+            }
+            (None, None) => (
                 (0..n_lat)
                     .into_par_iter()
                     .map(|i| {
@@ -344,18 +525,30 @@ impl EnergyBalance {
                     .collect(),
                 None,
             ),
-            Some((_, orbits)) => {
+            (Some((_, orbits)), frost) => {
                 let n_lon = CYCLE_RESONANT_GRID.1;
+                let lon_of = |j: usize| -PI + TAU * j as f64 / n_lon as f64;
                 let paths: Vec<Vec<PathStep>> = tilts
                     .iter()
                     .map(|&eps| self.sky.resonant_path(eps, orbits))
                     .collect();
-                (
-                    (0..n_lat * n_lon)
+                let rows = match frost {
+                    Some(frost) => {
+                        let share = 1.0 / n_lon as f64;
+                        let places: Vec<Place> = (0..n_lat * n_lon)
+                            .map(|k| frost_place(k / n_lon, lon_of(k % n_lon), share))
+                            .collect();
+                        let runs = paths
+                            .iter()
+                            .map(|path| self.frosty_orbits(ground, orbits, path, &places, &frost))
+                            .collect();
+                        gather(runs)
+                    }
+                    None => (0..n_lat * n_lon)
                         .into_par_iter()
                         .map(|k| {
                             let (i, j) = (k / n_lon, k % n_lon);
-                            let lon = -PI + TAU * j as f64 / n_lon as f64;
+                            let lon = lon_of(j);
                             let (steady, albedo, brought) = at(lat_of(i), lon);
                             combine(
                                 paths
@@ -369,11 +562,11 @@ impl EnergyBalance {
                             )
                         })
                         .collect(),
-                    Some(n_lon),
-                )
+                };
+                (rows, Some(n_lon))
             }
         };
-        let field = |pick: fn(&(f64, f64, f64)) -> f64| {
+        let field = |pick: fn(&Year) -> f64| {
             let values: Vec<f64> = rows.iter().map(pick).collect();
             Field::from_fn(grid, |_, d| {
                 let (lon, lat) = lon_lat_from_direction(d);
@@ -385,13 +578,18 @@ impl EnergyBalance {
             })
         };
         Cycle {
-            mean: field(|r| r.0),
-            max: field(|r| r.1),
-            min: field(|r| r.2),
+            mean: field(|r| r.mean),
+            max: field(|r| r.max),
+            min: field(|r| r.min),
+            frost_share: field(|r| r.frost_share),
+            frost_now: field(|r| r.frost_now),
+            frost: self.frost,
+            pressure_range,
+            cap_growth,
         }
     }
 
-    /// A fast spinner's year at a latitude and tilt: the mean, the warmest and the coldest.
+    /// A fast spinner's year at a latitude and tilt.
     fn zonal_cycle(
         &self,
         ground: &Ground,
@@ -400,7 +598,7 @@ impl EnergyBalance {
         steady: f64,
         albedo: f64,
         brought: f64,
-    ) -> (f64, f64, f64) {
+    ) -> Year {
         let olr = |t: f64| self.olr_and_slope(t);
         let solar_days = (self.sky.spins - eps.cos()).abs().max(1e-3);
         let day = self.year / solar_days;
@@ -455,11 +653,313 @@ impl EnergyBalance {
             }
             mean += sum / CYCLE_DAY_STEPS as f64;
         }
-        (mean / seasons.len().max(1) as f64, hi, lo)
+        Year::bare(mean / seasons.len().max(1) as f64, hi, lo)
+    }
+
+    /// The years of a fast spinner whose atmosphere lays frost (F239): its latitudes run in
+    /// step through the year on the day's mean sunlight, then each through a day at each
+    /// season from the ground, its frost and the frost point as the season left them. Returns
+    /// the years, the surface pressure's range and the caps' growth in a year, kg/m².
+    fn frosty_years(
+        &self,
+        ground: &Ground,
+        places: &[Place],
+        eps: f64,
+        frost: &Frost,
+    ) -> (Vec<Year>, (f64, f64), f64) {
+        let olr = |t: f64| self.olr_and_slope(t);
+        let solar_days = (self.sky.spins - eps.cos()).abs().max(1e-3);
+        let day = self.year / solar_days;
+        let column = Column::new(ground, day, self.year);
+        let steps = CYCLE_YEAR_STEPS;
+        let sun: Vec<(f64, f64)> = (0..steps)
+            .map(|m| {
+                let anomaly = TAU * (m as f64 + 0.5) / steps as f64;
+                self.sky.at_mean_anomaly(anomaly, eps)
+            })
+            .collect();
+        let light = |m: usize, p: &Place| sun[m].0 * diurnal_share(p.lat, sun[m].1);
+        let timing = (
+            steps,
+            self.year / steps as f64,
+            snapshot_step(self.snapshot, steps),
+        );
+        let every = steps / CYCLE_SEASONS;
+        let (runs, range, growth) =
+            self.frosty_cycles(&column, places, timing, light, frost, every);
+        let dt = day / CYCLE_DAY_STEPS as f64;
+        let years = runs
+            .par_iter()
+            .zip(places.par_iter())
+            .map(|(r, p)| {
+                let mut work = Work::new(column.len());
+                let mut trial = Trial::new(column.len());
+                let (sp, cp) = p.lat.sin_cos();
+                let (mut mean, mut hi, mut lo) = (0.0, f64::MIN, f64::MAX);
+                for (m, state, frost_mass, point) in &r.records {
+                    let f = Frost {
+                        point: *point,
+                        ..*frost
+                    };
+                    let (flux, decl) = sun[*m];
+                    let (sd, cd) = decl.sin_cos();
+                    let mut t = state.clone();
+                    let mut mass = *frost_mass;
+                    let mut sum = 0.0;
+                    for d in 0..CYCLE_DAYS {
+                        for h in 0..CYCLE_DAY_STEPS {
+                            let hour = TAU * (h as f64 + 0.5) / CYCLE_DAY_STEPS as f64 - PI;
+                            let light = flux * (sp * sd + cp * cd * hour.cos()).max(0.0);
+                            let gains = (
+                                (1.0 - p.albedo) * light + p.brought,
+                                (1.0 - f.albedo) * light + p.brought.max(0.0),
+                            );
+                            let (rows, heat) = ((&mut work, &mut trial), self.heat_flux);
+                            column.frosty_step(&mut t, rows, dt, gains, heat, olr, &f, &mut mass);
+                            if d + 1 == CYCLE_DAYS {
+                                sum += t[0];
+                                hi = hi.max(t[0]);
+                                lo = lo.min(t[0]);
+                            }
+                        }
+                    }
+                    mean += sum / CYCLE_DAY_STEPS as f64;
+                }
+                Year {
+                    mean: mean / r.records.len().max(1) as f64,
+                    max: hi,
+                    min: lo,
+                    frost_share: r.frosted as f64 / steps as f64,
+                    frost_now: r.now,
+                }
+            })
+            .collect();
+        (years, range, growth)
+    }
+
+    /// The cycles of a resonant body whose atmosphere lays frost (F239): its places run in
+    /// step through the orbits it repeats in. Returns the years, the surface pressure's range
+    /// and the caps' growth in a year, kg/m².
+    fn frosty_orbits(
+        &self,
+        ground: &Ground,
+        orbits: u32,
+        path: &[PathStep],
+        places: &[Place],
+        frost: &Frost,
+    ) -> (Vec<Year>, (f64, f64), f64) {
+        let cycle = self.year * orbits as f64;
+        let column = Column::new(ground, cycle, cycle);
+        let e = self.sky.eccentricity;
+        let scale = self.sky.flux / (1.0 - e * e).sqrt();
+        let light = |k: usize, p: &Place| {
+            let (s, (sp, cp)) = (&path[k], p.lat.sin_cos());
+            scale * s.flux * (sp * s.sin_decl + cp * s.cos_decl * (s.hour + p.lon).cos()).max(0.0)
+        };
+        let steps = path.len();
+        let snapshot = snapshot_step(self.snapshot, steps / orbits.max(1) as usize);
+        let timing = (steps, cycle / steps as f64, snapshot);
+        let (runs, range, growth) = self.frosty_cycles(&column, places, timing, light, frost, 0);
+        let years = runs
+            .iter()
+            .map(|r| Year {
+                mean: r.sums[0] / steps as f64,
+                max: r.hi,
+                min: r.lo,
+                frost_share: r.frosted as f64 / steps as f64,
+                frost_now: r.now,
+            })
+            .collect();
+        (years, range, growth / orbits.max(1) as f64)
+    }
+
+    /// Places run in step through their cycles while their frost draws on one atmosphere
+    /// (F239): the frost the cold ground takes is the atmosphere's own, so that its pressure,
+    /// and the frost point with it, falls as the caps grow and rises as they sublime (Leighton
+    /// and Murray 1966). At each step every place tries its step, and the point is the one at
+    /// which the frost they take together leaves the gas at the pressure whose point it is: a
+    /// thin atmosphere's pressure follows its frost's balance through the step. Frosted
+    /// ground takes the heat the air brings it but gives it none: the cycle's transport is the
+    /// year's steady one (F236), and ground its frost holds below its steady temperature
+    /// would draw heat from its surroundings rather than shed it. The gas's
+    /// whole mass is set so that its pressure over the cycle averages the body's where the
+    /// frost allows it. Frost that lies all through the cycle and grows is a cap's growth,
+    /// which the model does not yet keep where the gas is given back (5B's caps): it is
+    /// counted, and taken off in the share given. The cycle is `steps` steps of `dt` with the
+    /// snapshot's step, each place lit at a step as `light` gives, the ground recorded every
+    /// `every` steps (never at 0). Returns the places' runs, the surface pressure's range
+    /// through the last cycle and the frost the caps grow by in a cycle, kg/m² over the body.
+    fn frosty_cycles(
+        &self,
+        column: &Column,
+        places: &[Place],
+        (steps, dt, snapshot): (usize, f64, usize),
+        light: impl Fn(usize, &Place) -> f64 + Sync,
+        frost: &Frost,
+        every: usize,
+    ) -> (Vec<Run>, (f64, f64), f64) {
+        let olr = |t: f64| self.olr_and_slope(t);
+        let whole = places.iter().map(|p| p.weight).sum::<f64>().max(1e-30);
+        let over = |runs: &[Run], pick: fn(&Run) -> f64| {
+            runs.iter()
+                .zip(places)
+                .map(|(r, p)| pick(r) * p.weight)
+                .sum::<f64>()
+                / whole
+        };
+        let partial = |air: f64| frost.partial * air.max(0.0) / frost.column.max(1e-30);
+        let mut runs: Vec<Run> = places
+            .iter()
+            .map(|p| Run::new(column.len(), p.steady))
+            .collect();
+        let (mut held, mut load) = (frost.column, 0.0);
+        let mut range = (f64::MAX, f64::MIN);
+        let mut growth = 0.0;
+        let mut last = vec![f64::NAN; places.len()];
+        for _ in 0..CYCLE_MAX_YEARS {
+            range = (f64::MAX, f64::MIN);
+            runs.iter_mut().for_each(Run::begin);
+            for k in 0..steps {
+                let highest = frost.point_at(partial(held));
+                runs.par_iter_mut()
+                    .zip(places.par_iter())
+                    .for_each(|(r, p)| {
+                        let lit = light(k, p);
+                        let gains = (
+                            (1.0 - p.albedo) * lit + p.brought,
+                            (1.0 - frost.albedo) * lit + p.brought.max(0.0),
+                        );
+                        let (rows, heat) = ((&mut r.work, &mut r.trial), self.heat_flux);
+                        column.trial(&r.t, rows, dt, gains, heat, olr, r.mass, highest);
+                    });
+                let air = (held - load, whole);
+                let point = self.frost_point(column, &runs, places, air, dt, frost, highest);
+                let shed = olr(point);
+                runs.par_iter_mut().for_each(|r| {
+                    column.finish(
+                        &mut r.t,
+                        &r.trial,
+                        dt,
+                        point,
+                        shed,
+                        frost.latent,
+                        &mut r.mass,
+                    );
+                    r.record(k, snapshot, every, point);
+                });
+                load = over(&runs, |r| r.mass);
+                let now = partial(held - load);
+                range = (range.0.min(now), range.1.max(now));
+            }
+            // The frost that lay all cycle and grew through it: a cap's growth.
+            growth = over(&runs, Run::growth);
+            let means: Vec<f64> = runs.iter().map(|r| r.sums[0] / steps as f64).collect();
+            let settled = means
+                .iter()
+                .zip(&last)
+                .all(|(m, l)| (m - l).abs() < CYCLE_SETTLED_K);
+            last = means;
+            if settled {
+                break;
+            }
+            // The gas's whole mass: the atmosphere's, and the frost's that comes and goes in
+            // the share of the body's pressure the air keeps through the cycle: all of it
+            // where the frost leaves the air its pressure, so that the air's mean comes to the
+            // body's; little where the frost's own balance holds the air below it, as no store
+            // of gas would raise it. A cap's growth comes off in the same share, as the gas it
+            // took is given back: the cap a closed atmosphere's frost lays stays.
+            let mean_load = over(&runs, |r| r.frost_sum) / steps as f64;
+            let kept = ((held - mean_load) / frost.column.max(1e-30)).clamp(0.0, 1.0);
+            for r in runs.iter_mut() {
+                r.mass -= kept * r.growth();
+                let sums = std::mem::take(&mut r.sums);
+                settle(&mut r.t, &sums, steps);
+                r.sums = sums;
+            }
+            load = over(&runs, |r| r.mass);
+            held = (frost.column + (mean_load - growth) * kept).max(load);
+        }
+        // The surface pressure: the other gases' and the frost's gas's.
+        let others = (self.pressure - frost.partial).max(0.0);
+        (runs, (others + range.0, others + range.1), growth)
+    }
+
+    /// The frost point a step of the lockstep settles at (F239): the point at which the frost
+    /// the places take through the step leaves the gas, `air` kg/m² over the body before it,
+    /// at the partial pressure whose point it is. The frost taken rises with the point and the
+    /// point of what is left falls, so the two cross once, between none and `highest`, the
+    /// point of all the gas; found by false position, halving the side that stays. Frosted
+    /// ground gives the air none of its heat (`frosty_cycles`), so that at no point does it
+    /// take frost the air does not hold.
+    #[allow(clippy::too_many_arguments)]
+    fn frost_point(
+        &self,
+        column: &Column,
+        runs: &[Run],
+        places: &[Place],
+        (air, whole): (f64, f64),
+        dt: f64,
+        frost: &Frost,
+        highest: f64,
+    ) -> f64 {
+        let taking: Vec<(&Run, f64)> = runs
+            .iter()
+            .zip(places)
+            .filter(|(r, _)| r.mass > 0.0 || !r.trial.clear)
+            .map(|(r, p)| (r, p.weight / whole))
+            .collect();
+        let gap = |point: f64| {
+            let radiated = self.olr(point);
+            let taken: f64 = taking
+                .iter()
+                .map(|(r, w)| {
+                    column
+                        .deposit(&r.trial, dt, point, radiated, frost.latent, r.mass)
+                        .1
+                        * w
+                })
+                .sum();
+            point - frost.point_at(frost.partial * (air - taken).max(0.0) / frost.column.max(1e-30))
+        };
+        let (mut lo, mut hi) = (0.0, highest);
+        let (mut g_lo, mut g_hi) = (gap(lo), gap(hi));
+        if g_hi <= 0.0 {
+            return hi;
+        }
+        // The low side always leaves the air the gas the frost does not take.
+        let mut side = 0;
+        for _ in 0..FROST_POINT_ITERATIONS {
+            let mid = if g_hi > g_lo {
+                (lo * g_hi - hi * g_lo) / (g_hi - g_lo)
+            } else {
+                0.5 * (lo + hi)
+            };
+            let g = gap(mid);
+            if g <= 0.0 && g > -FROST_POINT_TOLERANCE_K {
+                return mid;
+            }
+            if g > 0.0 {
+                (hi, g_hi) = (mid, g);
+                if side > 0 {
+                    g_lo *= 0.5;
+                }
+                side = 1;
+            } else {
+                (lo, g_lo) = (mid, g);
+                if side < 0 {
+                    g_hi *= 0.5;
+                }
+                side = -1;
+            }
+            if hi - lo < FROST_POINT_TOLERANCE_K {
+                break;
+            }
+        }
+        lo
     }
 
     /// A resonant body's cycle at a place (latitude, longitude), started from its year's
-    /// balance (temperature, albedo, transport): the mean, the warmest and the coldest.
+    /// balance (temperature, albedo, transport).
     fn resonant_cycle(
         &self,
         ground: &Ground,
@@ -467,7 +967,7 @@ impl EnergyBalance {
         path: &[PathStep],
         (lat, lon): (f64, f64),
         (steady, albedo, brought): (f64, f64, f64),
-    ) -> (f64, f64, f64) {
+    ) -> Year {
         let olr = |t: f64| self.olr_and_slope(t);
         let cycle = self.year * orbits as f64;
         let column = Column::new(ground, cycle, cycle);
@@ -499,8 +999,21 @@ impl EnergyBalance {
             last = mean;
             settle(&mut t, &sums, path.len());
         }
-        (mean, hi, lo)
+        Year::bare(mean, hi, lo)
     }
+}
+
+/// The mean anomaly of a season, an orbit fraction from the northern spring equinox, on an
+/// orbit whose perihelion falls at a solar longitude, rad.
+fn snapshot_anomaly(season: f64, perihelion: f64, e: f64) -> f64 {
+    let nu = (TAU * season - perihelion).rem_euclid(TAU);
+    let big_e = 2.0 * (((1.0 - e) / (1.0 + e)).sqrt() * (nu / 2.0).tan()).atan();
+    (big_e - e * big_e.sin()).rem_euclid(TAU)
+}
+
+/// The step of an orbit sampled in `steps` that holds a mean anomaly.
+fn snapshot_step(anomaly: f64, steps: usize) -> usize {
+    ((anomaly / TAU * steps as f64) as usize).min(steps.saturating_sub(1))
 }
 
 /// Moves each layer of the ground below the surface so that its mean over the last cycle
@@ -587,8 +1100,7 @@ impl Downscale {
     /// at the datum.
     pub fn at(&self, flat: f64, facing: f64, height: f64) -> f64 {
         let height = if height.is_finite() { height } else { 0.0 };
-        let radiative = 4.0 * SIGMA_SB * flat.powi(3);
-        let keep = radiative / (radiative + self.exchange).max(1e-30);
+        let keep = self.keep(flat);
         let t = flat + keep * (facing - flat);
         if self.scale_height <= 0.0 || height == 0.0 {
             return t;
@@ -614,6 +1126,43 @@ impl Downscale {
     /// The year's mean surface temperature on the surface's own grid from the climate's: each
     /// place at its height above the sea's surface (or the mean radius without a sea), its
     /// slope from its neighbours' heights, the sea's surface flat.
+    /// The share of the sunlight a slope faces that its temperature keeps against its
+    /// surroundings', at a temperature: what the ground radiates per kelvin against what the
+    /// air exchanges with it.
+    fn keep(&self, t: f64) -> f64 {
+        let radiative = 4.0 * SIGMA_SB * t.powi(3);
+        radiative / (radiative + self.exchange).max(1e-30)
+    }
+
+    /// The frost on the ground at the snapshot's season brought to a grid (F239), kg/m²: a
+    /// place takes the frost of the place its slope faces, as its temperature does, held
+    /// toward its surroundings' by the air as its temperature is, at the climate's `mean`
+    /// temperatures; a sea's surface is flat. The frost does not yet see a height's thinner
+    /// air and its lower frost point.
+    pub fn frost(
+        &self,
+        frost: &Field<f32>,
+        mean: &Field<f32>,
+        height: &Field<f32>,
+        sea_level: f64,
+    ) -> Field<f32> {
+        let src = frost.grid();
+        let lying = PaddedField::new(&src, frost.as_slice());
+        let warmth = PaddedField::new(&src, mean.as_slice());
+        let sea = sea_level.is_finite();
+        Field::from_fn(height.grid(), |c, d| {
+            let flat = sample_bilinear(&src, &lying, d) as f64;
+            if sea && height.get(c) as f64 <= sea_level {
+                return flat.max(0.0) as f32;
+            }
+            let normal = surface_normal(height, c, d, self.radius);
+            let facing = sample_bilinear(&src, &lying, normal) as f64;
+            let facing = if facing.is_finite() { facing } else { flat };
+            let keep = self.keep(sample_bilinear(&src, &warmth, d) as f64);
+            (flat + keep * (facing - flat)).max(0.0) as f32
+        })
+    }
+
     pub fn apply(&self, climate: &Field<f32>, height: &Field<f32>, sea_level: f64) -> Field<f32> {
         let grid = height.grid();
         let src = climate.grid();
@@ -638,6 +1187,25 @@ impl Downscale {
             self.at(flat, facing, above) as f32
         })
     }
+}
+
+/// The ground's colour under its frost (F239): the frost hides it as 1 - exp(-m / M), m the
+/// frost and M FROST_COVER_MASS.
+pub fn frosted_albedo(
+    albedo: &Field<[f32; 3]>,
+    frost: &Field<f32>,
+    colour: [f32; 3],
+) -> Field<[f32; 3]> {
+    Field::from_fn(albedo.grid(), |c, _| {
+        let cover = frost_cover(frost.get(c));
+        let a = albedo.get(c);
+        std::array::from_fn(|i| (a[i] as f64 * (1.0 - cover) + colour[i] as f64 * cover) as f32)
+    })
+}
+
+/// The share of the ground's colour a frost of `m` kg/m² hides (F239).
+pub fn frost_cover(m: f32) -> f64 {
+    1.0 - (-(m.max(0.0) as f64) / FROST_COVER_MASS).exp()
 }
 
 /// The unit normal of the ground at a cell, from its four neighbours' heights by least
@@ -720,6 +1288,125 @@ impl Work {
     }
 }
 
+/// A step's outcomes before its frost point is settled (F239): bare ground's step left to
+/// itself, and the column below a surface held at a point, each layer linear in the point.
+struct Trial {
+    /// Bare ground's free step.
+    free: Vec<f64>,
+    /// The held column: each layer at base + point × lift.
+    base: Vec<f64>,
+    lift: Vec<f64>,
+    /// The surface as the step found it, and what it gains, W/m².
+    start: f64,
+    gain: f64,
+    /// Bare ground the step leaves above every point it could settle at.
+    clear: bool,
+}
+
+impl Trial {
+    fn new(n: usize) -> Self {
+        Self {
+            free: vec![0.0; n],
+            base: vec![0.0; n],
+            lift: vec![0.0; n],
+            start: 0.0,
+            gain: 0.0,
+            clear: true,
+        }
+    }
+}
+
+/// A place of the frost's lockstep (F239): its latitude and longitude, rad, its share of the
+/// sphere's area, and its year's balance: temperature, albedo and transport.
+#[derive(Clone, Copy, Debug)]
+struct Place {
+    lat: f64,
+    lon: f64,
+    weight: f64,
+    steady: f64,
+    albedo: f64,
+    brought: f64,
+}
+
+/// A place's ground and frost through the frost's lockstep (F239), and its last cycle.
+struct Run {
+    t: Vec<f64>,
+    mass: f64,
+    work: Work,
+    trial: Trial,
+    /// Each layer's sum through the cycle, the surface's warmest and coldest, the steps frost
+    /// lay and the frost at the snapshot's step.
+    sums: Vec<f64>,
+    hi: f64,
+    lo: f64,
+    frosted: usize,
+    now: f64,
+    /// The frost the cycle began with, its sum through the cycle and its least.
+    frost_start: f64,
+    frost_sum: f64,
+    frost_least: f64,
+    /// The step, the ground, its frost and the point at each step recorded.
+    records: Vec<(usize, Vec<f64>, f64, f64)>,
+}
+
+impl Run {
+    fn new(n: usize, steady: f64) -> Self {
+        Self {
+            t: vec![steady; n],
+            mass: 0.0,
+            work: Work::new(n),
+            trial: Trial::new(n),
+            sums: vec![0.0; n],
+            hi: f64::MIN,
+            lo: f64::MAX,
+            frosted: 0,
+            now: 0.0,
+            frost_start: 0.0,
+            frost_sum: 0.0,
+            frost_least: f64::MAX,
+            records: Vec::new(),
+        }
+    }
+
+    /// The frost the cycle added to frost that lay all through it, kg/m².
+    fn growth(&self) -> f64 {
+        if self.frost_least > 0.0 {
+            (self.mass - self.frost_start).max(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// A new cycle.
+    fn begin(&mut self) {
+        self.sums.fill(0.0);
+        (self.hi, self.lo) = (f64::MIN, f64::MAX);
+        self.frosted = 0;
+        self.frost_start = self.mass;
+        (self.frost_sum, self.frost_least) = (0.0, f64::MAX);
+        self.records.clear();
+    }
+
+    /// The record of the cycle's `k`th step, just taken at `point`.
+    fn record(&mut self, k: usize, snapshot: usize, every: usize, point: f64) {
+        for (s, v) in self.sums.iter_mut().zip(&self.t) {
+            *s += v;
+        }
+        (self.hi, self.lo) = (self.hi.max(self.t[0]), self.lo.min(self.t[0]));
+        if self.mass > 0.0 {
+            self.frosted += 1;
+        }
+        self.frost_sum += self.mass;
+        self.frost_least = self.frost_least.min(self.mass);
+        if k == snapshot {
+            self.now = self.mass;
+        }
+        if every > 0 && k.is_multiple_of(every) {
+            self.records.push((k, self.t.clone(), self.mass, point));
+        }
+    }
+}
+
 impl Column {
     /// Layers from COLUMN_TOP_SHARE of the skin depth of `day` down to three skin depths of
     /// `deep_period`, each COLUMN_GROWTH times thicker than the one above.
@@ -751,6 +1438,153 @@ impl Column {
         self.capacity.len()
     }
 
+    /// One step with the frost at its point (F239): the step's trial, ended at the point.
+    #[allow(clippy::too_many_arguments)]
+    fn frosty_step(
+        &self,
+        t: &mut [f64],
+        (w, tr): (&mut Work, &mut Trial),
+        dt: f64,
+        gains: (f64, f64),
+        bottom: f64,
+        olr: impl Fn(f64) -> (f64, f64) + Copy,
+        f: &Frost,
+        mass: &mut f64,
+    ) {
+        self.trial(t, (w, tr), dt, gains, bottom, olr, *mass, f.point);
+        self.finish(t, tr, dt, f.point, olr(f.point), f.latent, mass);
+    }
+
+    /// A step's trial under the frost (F239). While frost lies on the ground, or the ground
+    /// would cool below the frost point, the ground stands at the point and the step's energy
+    /// sublimes or condenses frost instead, at its latent heat (Leighton and Murray 1966);
+    /// frost reflects at its own albedo, so the gains are the bare ground's and the frosted
+    /// ground's. The trial takes bare ground's step left to itself and, unless that leaves it
+    /// above `highest`, the column below a surface held at a point, which stands linear in the
+    /// point, so that the point may be settled after.
+    #[allow(clippy::too_many_arguments)]
+    fn trial(
+        &self,
+        t: &[f64],
+        (w, tr): (&mut Work, &mut Trial),
+        dt: f64,
+        (bare, frosted): (f64, f64),
+        bottom: f64,
+        olr: impl Fn(f64) -> (f64, f64) + Copy,
+        mass: f64,
+        highest: f64,
+    ) {
+        tr.start = t[0];
+        tr.clear = false;
+        tr.gain = if mass > 0.0 { frosted } else { bare };
+        if mass <= 0.0 {
+            tr.free.copy_from_slice(t);
+            self.step(&mut tr.free, w, dt, bare, bottom, olr);
+            if tr.free[0] >= highest {
+                tr.clear = true;
+                return;
+            }
+        }
+        self.held(t, w, tr, dt, bottom);
+    }
+
+    /// The column below a surface held at a point through a step (F239), as the point's
+    /// linear response: each layer stands at base + point × lift.
+    fn held(&self, t: &[f64], w: &mut Work, tr: &mut Trial, dt: f64, bottom: f64) {
+        let n = t.len();
+        tr.base[0] = 0.0;
+        tr.lift[0] = 1.0;
+        if n < 2 {
+            return;
+        }
+        for (i, &ti) in t.iter().enumerate().skip(1) {
+            w.b[i] = self.capacity[i] / dt;
+            tr.base[i] = self.capacity[i] / dt * ti;
+            tr.lift[i] = 0.0;
+            w.a[i] = 0.0;
+            w.c[i] = 0.0;
+            let g = self.conductance[i - 1];
+            if i == 1 {
+                tr.lift[i] = g;
+            } else {
+                w.a[i] = -g;
+            }
+            w.b[i] += g;
+            if i + 1 < n {
+                let g = self.conductance[i];
+                w.c[i] = -g;
+                w.b[i] += g;
+            }
+        }
+        tr.base[n - 1] += bottom;
+        for i in 2..n {
+            let m = w.a[i] / w.b[i - 1];
+            w.b[i] -= m * w.c[i - 1];
+            tr.base[i] -= m * tr.base[i - 1];
+            tr.lift[i] -= m * tr.lift[i - 1];
+        }
+        tr.base[n - 1] /= w.b[n - 1];
+        tr.lift[n - 1] /= w.b[n - 1];
+        for i in (1..n - 1).rev() {
+            tr.base[i] = (tr.base[i] - w.c[i] * tr.base[i + 1]) / w.b[i];
+            tr.lift[i] = (tr.lift[i] - w.c[i] * tr.lift[i + 1]) / w.b[i];
+        }
+    }
+
+    /// The frost a trial step takes at a point, kg/m² (F239), from the surface layer's balance
+    /// through the step: what it needs to reach the point, less what it gains and what its
+    /// column below brings it, more what it radiates, the balance left over latent heat. As
+    /// found, and bounded: bare ground only takes frost, and frost gives back no more than lies.
+    fn deposit(
+        &self,
+        tr: &Trial,
+        dt: f64,
+        point: f64,
+        radiated: f64,
+        latent: f64,
+        mass: f64,
+    ) -> (f64, f64) {
+        if mass <= 0.0 && (tr.clear || tr.free[0] >= point) {
+            return (0.0, 0.0);
+        }
+        let t1 = tr.base.get(1).map_or(point, |b| b + point * tr.lift[1]);
+        let below = self.conductance.first().map_or(0.0, |g| g * (t1 - point));
+        let short = self.capacity[0] * (point - tr.start) / dt - tr.gain - below + radiated;
+        let found = short * dt / latent;
+        (found, found.max(-mass.max(0.0)))
+    }
+
+    /// Ends a trial step at the point its air settled at (F239): bare ground the step leaves
+    /// above the point keeps its free step; frosted ground, or ground that would cool below
+    /// the point, stands at it and takes or gives frost, and where the frost runs out what was
+    /// left to sublime warms the ground past the point.
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &self,
+        t: &mut [f64],
+        tr: &Trial,
+        dt: f64,
+        point: f64,
+        (radiated, slope): (f64, f64),
+        latent: f64,
+        mass: &mut f64,
+    ) {
+        if *mass <= 0.0 && (tr.clear || tr.free[0] >= point) {
+            t.copy_from_slice(&tr.free);
+            return;
+        }
+        let (found, taken) = self.deposit(tr, dt, point, radiated, latent, *mass);
+        for (v, (b, l)) in t.iter_mut().zip(tr.base.iter().zip(&tr.lift)) {
+            *v = b + point * l;
+        }
+        *mass = (*mass + taken).max(0.0);
+        if taken > found {
+            let g = self.conductance.first().copied().unwrap_or(0.0);
+            let respond = self.capacity[0] + dt * (slope + g);
+            t[0] = point + (taken - found) * latent / respond;
+        }
+    }
+
     /// One implicit step of `dt`: the surface gains `gain` W/m² and radiates as `olr` gives
     /// (its value and slope), linearised about its temperature; `bottom` W/m² flows into the
     /// lowest layer from below.
@@ -761,7 +1595,7 @@ impl Column {
         dt: f64,
         gain: f64,
         bottom: f64,
-        olr: impl Fn(f64) -> (f64, f64),
+        olr: impl Fn(f64) -> (f64, f64) + Copy,
     ) {
         let n = t.len();
         for (i, &ti) in t.iter().enumerate() {
@@ -1067,6 +1901,216 @@ mod tests {
             "Earth {}",
             inertia("Earth")
         );
+    }
+
+    /// Prints the frost of each body whose atmosphere lays one: its gas and frost point, and
+    /// by latitude the coldest the ground stands, the share of the year frost lies on it and
+    /// its frost at the snapshot's season.
+    #[test]
+    #[ignore = "diagnostic: the frost's seasons"]
+    fn print_frost() {
+        let names = std::env::var("EXOGEN_BODY").unwrap_or_else(|_| "Mars,Triton,Pluto".into());
+        for name in names.split(',') {
+            let (cycle, _) = cycle_of(name);
+            let Some(f) = cycle.frost else {
+                println!("{name}: no frost");
+                continue;
+            };
+            println!(
+                "{name}: {} frost at {:.1} K, albedo {:.2}, partial {:.4e} Pa, column {:.4} kg/m², pressure {:?}, caps grow {:?} kg/m² a year",
+                f.species,
+                f.point,
+                f.albedo,
+                f.partial,
+                f.column,
+                cycle.pressure_range,
+                cycle.cap_growth
+            );
+            for lat in [
+                -90.0, -80.0, -70.0, -60.0, -50.0, -30.0, 0.0, 30.0, 50.0, 60.0, 70.0, 80.0, 90.0,
+            ] {
+                println!(
+                    "  {lat:6.1}°  coldest {:6.1} K  mean {:6.1} K  frost {:4.2} of the year  now {:9.2} kg/m²",
+                    at(&cycle.min, lat, 0.0),
+                    at(&cycle.mean, lat, 0.0),
+                    at(&cycle.frost_share, lat, 0.0),
+                    at(&cycle.frost_now, lat, 0.0)
+                );
+            }
+        }
+    }
+
+    /// F239, the frost's seasons on Mars (Leighton and Murray 1966): carbon dioxide condenses
+    /// on the winter poles and holds them at its frost point, near 145 K; its seasonal caps
+    /// reach past 60° of latitude in both hemispheres (James et al. 1992), the northern
+    /// laying a metre of frost at the pole by the end of its winter, the snapshot's season
+    /// (MOLA's 1 to 1.5 m, Smith et al. 2001), the southern only beginning; and the pressure
+    /// swings by a quarter to a third through the year as the caps take the gas and give it
+    /// back (the Viking landers, Hess et al. 1980).
+    #[test]
+    fn mars_s_winter_poles_hold_their_frost() {
+        let (cycle, _) = cycle_of("Mars");
+        let f = cycle.frost.expect("Mars lays frost");
+        assert_eq!(f.species, "CO2");
+        for lat in [-90.0, -80.0, 80.0, 90.0] {
+            let coldest = at(&cycle.min, lat, 0.0);
+            assert!(
+                coldest > f.point - 3.0 && coldest < f.point + 1.0,
+                "{lat}: {coldest} against {}",
+                f.point
+            );
+        }
+        for lat in [-60.0, 60.0] {
+            assert!(at(&cycle.frost_share, lat, 0.0) > 0.4, "{lat}");
+        }
+        for lat in [-30.0, 0.0, 30.0] {
+            assert_eq!(at(&cycle.frost_share, lat, 0.0), 0.0, "{lat}");
+        }
+        let north = at(&cycle.frost_now, 90.0, 0.0);
+        let south = at(&cycle.frost_now, -90.0, 0.0);
+        assert!((700.0..2000.0).contains(&north), "north {north}");
+        assert!(south < 100.0, "south {south}");
+        let (lo, hi) = cycle.pressure_range.expect("its pressure swings");
+        let swing = (hi - lo) / hi;
+        assert!((0.2..0.4).contains(&swing), "{lo} to {hi}");
+    }
+
+    /// F239: ground that stays above its gas's frost point lays none: the Earth-like's poles
+    /// far above carbon dioxide's 129 K, Titan's uplands above methane's 87 K; Venus's gases
+    /// stand past their triple points, and the Moon has none.
+    #[test]
+    fn no_frost_where_the_ground_stays_above_its_point() {
+        for name in ["Earth", "Titan", "Venus", "Moon"] {
+            let (cycle, _) = cycle_of(name);
+            let most = cycle
+                .frost_share
+                .as_slice()
+                .iter()
+                .fold(0.0f32, |a, &v| a.max(v));
+            assert_eq!(most, 0.0, "{name}");
+            assert_eq!(
+                cycle.frost.is_some(),
+                matches!(name, "Earth" | "Titan"),
+                "{name}"
+            );
+        }
+    }
+
+    /// F239: a thin atmosphere's frost draws on its own gas: Pluto's frost holds no more
+    /// than the 1.6 kg/m² its atmosphere weighs, and the pressure follows the frost's balance
+    /// through the year. That balance holds it far under the 1 Pa measured (Stern et al.
+    /// 2015): the model's nitrogen frost radiates as a black body where the ice's emissivity
+    /// is some 0.6 (Stansberry et al. 1996), and Pluto's reservoir of nitrogen ice waits on
+    /// 5B's caps.
+    #[test]
+    fn a_thin_atmosphere_s_frost_draws_on_its_own_gas() {
+        let (cycle, _) = cycle_of("Pluto");
+        let f = cycle.frost.expect("Pluto lays frost");
+        assert_eq!(f.species, "N2");
+        let (mean, ..) = bands(&cycle.frost_now);
+        assert!(
+            mean > 0.0 && mean < 1.1 * f.column,
+            "{mean} against {}",
+            f.column
+        );
+        let (lo, hi) = cycle
+            .pressure_range
+            .expect("its pressure follows the frost");
+        assert!(lo < hi && hi < f.partial, "{lo} to {hi}");
+    }
+
+    /// F239: a slope takes the frost of the place it faces, as its temperature does: on Mars
+    /// at the end of the northern winter, ground at 60° north tilted 20° toward the equator
+    /// holds a small part of the frost of the flat ground about it.
+    #[test]
+    fn a_slope_facing_the_sun_holds_less_frost() {
+        let (cycle, _) = cycle_of("Mars");
+        let mars = downscale_of("Mars");
+        let grid = CubeSphere::new(256);
+        let rise = 20f64.to_radians().tan() * mars.radius;
+        let height = Field::from_fn(grid, |_, d| {
+            let (_, lat) = lon_lat_from_direction(d);
+            (rise * lat.max(0.0)) as f32
+        });
+        let frost = mars.frost(&cycle.frost_now, &cycle.mean, &height, f64::NAN);
+        let here = at(&frost, 60.0, 0.0);
+        let flat = at(&cycle.frost_now, 60.0, 0.0);
+        assert!(flat > 100.0 && here < 0.3 * flat, "{here} flat {flat}");
+    }
+
+    /// F239: frost hides the ground's colour as it thickens, a millimetre's worth most of it.
+    #[test]
+    fn frost_hides_the_ground_as_it_thickens() {
+        let grid = CubeSphere::new(4);
+        let ground = Field::filled(grid, [0.1f32, 0.2, 0.3]);
+        let colour = CO2_FROST_COLOUR;
+        for (m, share) in [(0.0f32, 0.0), (1.0, 1.0 - (-1.0f64).exp()), (20.0, 1.0)] {
+            let a = frosted_albedo(&ground, &Field::filled(grid, m), colour).as_slice()[0];
+            for i in 0..3 {
+                let expect = 0.1 * (i + 1) as f64 * (1.0 - share) + colour[i] as f64 * share;
+                assert!((a[i] as f64 - expect).abs() < 1e-5, "{m}: {a:?}");
+            }
+        }
+    }
+
+    /// Prints the frost of a Mars locked to its star: its night side's cold trap.
+    #[test]
+    #[ignore = "diagnostic: a locked body's frost"]
+    fn print_locked_frost() {
+        let mut graph = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let au: f64 = std::env::var("EXOGEN_AU").map_or(1.524, |v| v.parse().unwrap());
+        graph.set("orbit.semi_major_axis", au * 1.496e11).unwrap();
+        let year = graph.f64("orbit.year");
+        graph.set("rotation.period", year).unwrap();
+        let eb = EnergyBalance::from_graph(&graph);
+        println!("resonance {:?}", eb.sky.resonance);
+        let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+        let started = std::time::Instant::now();
+        let cycle = eb.cycle(&climate, &Ground::from_graph(&graph));
+        let f = cycle.frost.unwrap();
+        let (mean, ..) = bands(&cycle.frost_now);
+        println!(
+            "{:.1} s: pressure {:?}, caps grow {:?} kg/m² a year, frost {mean:.2} kg/m² over the body, column {:.1}",
+            started.elapsed().as_secs_f64(),
+            cycle.pressure_range,
+            cycle.cap_growth,
+            f.column
+        );
+        for lon in [0.0, 90.0, 180.0, -90.0] {
+            println!(
+                "  lon {lon:6.1}: coldest {:6.1} K, mean {:6.1} K, frost {:4.2} of the year, now {:9.2} kg/m²",
+                at(&cycle.min, 0.0, lon),
+                at(&cycle.mean, 0.0, lon),
+                at(&cycle.frost_share, 0.0, lon),
+                at(&cycle.frost_now, 0.0, lon)
+            );
+        }
+    }
+
+    /// Prints the transport's local response, D sum(w) / area, W/m²/K, against the
+    /// radiation's slope, at the equator and the pole of each body.
+    #[test]
+    #[ignore = "diagnostic: the transport's local response"]
+    fn print_transport_response() {
+        for name in ["Earth", "Mars", "Venus", "Titan", "Pluto", "Triton"] {
+            let graph = crate::presets::preset(name).unwrap().to_graph().0;
+            let eb = EnergyBalance::from_graph(&graph);
+            let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+            let climate = eb.solve(grid);
+            let l = links(grid);
+            for lat in [0.0f64, 60.0, 89.0] {
+                let (c, _, _) = grid.locate(direction_from_lon_lat(0.0, lat.to_radians()));
+                let k = grid.index(c);
+                let w: f64 = l[k].iter().map(|x| x.1).sum();
+                let response = eb.transport * w / grid.cell_area(c);
+                let t = climate.temperature.get(c) as f64;
+                let (_, slope) = eb.olr_and_slope(t);
+                println!(
+                    "{name} {lat:4.0}°: response {response:.3} W/m²/K, radiation {slope:.3}, brought {:.2} W/m², steady {t:.1} K",
+                    climate.transport.get(c)
+                );
+            }
+        }
     }
 
     fn downscale_of(name: &str) -> Downscale {
