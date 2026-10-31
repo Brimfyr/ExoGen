@@ -12,6 +12,10 @@ description = "Reference body. Small ice moon of Saturn; the most heavily crater
 # over a mean radius of 198.2 km.
 "orbit.semi_major_axis" = 1.85539e8
 "orbit.eccentricity" = 0.0196
+# Its tilt to Saturn's orbit, its own orbit in Saturn's equator: Saturn's obliquity,
+# and Saturn's season at perihelion, just past the southern summer solstice.
+"rotation.obliquity" = 26.73
+"orbit.perihelion_season" = 280.0
 "body.radius" = 1.982e5
 "body.density" = 1149.0
 "atmosphere.surface_pressure" = 0.0

@@ -10,9 +10,13 @@ description = "Reference body. Retrograde moon of Neptune; nitrogen ice cap and 
 "parent.eccentricity" = 0.0086
 "orbit.semi_major_axis" = 3.5476e8
 "orbit.eccentricity" = 0.00002
+# Its orbit, retrograde at 157° to Neptune's equator, precesses about Neptune's axis in
+# about seven centuries: its axis circles the direction opposite Neptune's, tilted
+# 180 - 28.32° from Neptune's orbit, at 23°, its tilt to the Sun between 5° and 51°.
+"rotation.obliquity" = 151.68
+"rotation.obliquity_swing" = 23.0
 "body.radius" = 1.3534e6
 "body.density" = 2061.0
-"rotation.obliquity" = 157.0
 "atmosphere.surface_pressure" = 1.4
 "atmosphere.composition" = { N2 = 0.9999, CH4 = 0.0001 }
 "volatiles.inventory" = { H2O = 400000.0, N2 = 50.0, CH4 = 2.0 }

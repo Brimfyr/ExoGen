@@ -10,6 +10,10 @@ description = "Reference body. 1.47 bar N2 with 5% methane; methane and ethane s
 "parent.eccentricity" = 0.0565
 "orbit.semi_major_axis" = 1.22187e9
 "orbit.eccentricity" = 0.0288
+# Its tilt to Saturn's orbit, its own orbit in Saturn's equator: Saturn's obliquity,
+# and Saturn's season at perihelion, just past the southern summer solstice.
+"rotation.obliquity" = 26.73
+"orbit.perihelion_season" = 280.0
 "body.radius" = 2.5747e6
 "body.density" = 1880.0
 "atmosphere.surface_pressure" = 146700.0

@@ -1718,6 +1718,24 @@ pub const MOLAR_MASS_BY_GAS: [(&str, f64); 10] = [
 pub const MOIST_LAPSE_FACTOR: f64 = 0.65;
 /// Obliquity above which the annual insolation maximum moves to the poles, degrees.
 pub const HIGH_OBLIQUITY_DEG: f64 = 54.0;
+/// The low orders of spin-orbit resonance tides capture a spin into (Goldreich and Peale
+/// 1966): no more than two orbits to repeat and five turns in them, the 1:1 of a locked
+/// body, Mercury's 3:2, 2:1 and 5:2 among them (F234).
+pub const RESONANCE_MAX_ORBITS: u32 = 2;
+pub const RESONANCE_MAX_SPINS: u32 = 5;
+/// How far a spin may drift from a resonance and still be in it, in turns of the star
+/// across the sky per repeat: a numerical tolerance, the presets' periods given to five
+/// figures (Mercury's 58.6462 days against its 87.969-day orbit is 6e-6 off its 3:2).
+pub const RESONANCE_DRIFT_TURNS: f64 = 1e-3;
+/// The insolation integral's sampling (F234): the star's longitude through a fast rotator's
+/// year, times through a resonant body's orbit, the precession cone's nodes, and the table
+/// read bilinearly for the fields (half a degree in latitude and longitude). Each converges
+/// the year's mean to better than 1e-4 against the brute-force references.
+pub const INSOLATION_SEASON_SAMPLES: usize = 720;
+pub const INSOLATION_ORBIT_SAMPLES: usize = 720;
+pub const INSOLATION_SWING_SAMPLES: usize = 24;
+pub const INSOLATION_TABLE_LATITUDES: usize = 361;
+pub const INSOLATION_TABLE_LONGITUDES: usize = 720;
 
 // ---------------------------------------------------------------- volatiles
 

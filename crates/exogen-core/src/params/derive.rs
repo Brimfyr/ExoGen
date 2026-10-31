@@ -614,6 +614,27 @@ pub fn orbit_insolation(c: &Ctx) -> Value {
     (c.f64("star.luminosity") * L_SUN / (4.0 * PI * d * d)).into()
 }
 
+/// F234: the year, the orbit about the star: the body's own, or its parent's for a moon.
+pub fn orbit_year(c: &Ctx) -> Value {
+    match c.str("orbit.primary") {
+        "planet" => kepler_period(
+            c.f64("parent.semi_major_axis"),
+            c.f64("star.mass") * M_SUN + c.f64("parent.mass"),
+        ),
+        _ => c.f64("orbit.period"),
+    }
+    .into()
+}
+
+/// F234: the eccentricity of the orbit about the star: the body's own, or its parent's.
+pub fn orbit_star_eccentricity(c: &Ctx) -> Value {
+    match c.str("orbit.primary") {
+        "planet" => c.f64("parent.eccentricity"),
+        _ => c.f64("orbit.eccentricity"),
+    }
+    .into()
+}
+
 // ------------------------------------------------------------------ body
 
 pub fn body_mass(c: &Ctx) -> Value {
@@ -793,12 +814,31 @@ pub fn rotation_effective_period(c: &Ctx) -> Value {
     .into()
 }
 
+/// F234: tides damp the tilt of a body locked to its star; a moon locked to its planet keeps
+/// its tilt to its planet's orbit about the star.
 pub fn rotation_effective_obliquity(c: &Ctx) -> Value {
-    match c.str("rotation.mode") {
-        "locked" => 0.0,
-        _ => c.f64("rotation.obliquity"),
+    if c.str("rotation.mode") == "locked" && c.str("orbit.primary") != "planet" {
+        0.0
+    } else {
+        c.f64("rotation.obliquity")
     }
     .into()
+}
+
+/// F234: sidereal turns per orbit about the star.
+pub fn rotation_spins_per_year(c: &Ctx) -> Value {
+    (c.f64("orbit.year") / c.f64("rotation.effective_period")).into()
+}
+
+/// F234: the spins per orbit of an exact low-order resonance with the star, 0 when there is
+/// none; a moon's spin is held by its planet, not by the star.
+pub fn rotation_resonance(c: &Ctx) -> Value {
+    if c.str("orbit.primary") == "planet" {
+        return 0.0.into();
+    }
+    crate::insolation::spin_orbit_resonance(c.f64("rotation.spins_per_year"))
+        .map_or(0.0, |(p, q)| p as f64 / q as f64)
+        .into()
 }
 
 pub fn rotation_angular_velocity(c: &Ctx) -> Value {

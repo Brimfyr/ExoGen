@@ -10,6 +10,8 @@ description = "Reference body. Ancient, uniformly cratered ice-rock moon: a dark
 "parent.eccentricity" = 0.0489
 "orbit.semi_major_axis" = 1.8827e9
 "orbit.eccentricity" = 0.0074
+# Its tilt to Jupiter's orbit, its own orbit in Jupiter's equator: Jupiter's obliquity.
+"rotation.obliquity" = 3.13
 "body.radius" = 2.4103e6
 "body.density" = 1834.0
 "atmosphere.surface_pressure" = 0.0

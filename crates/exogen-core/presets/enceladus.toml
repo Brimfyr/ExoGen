@@ -10,6 +10,10 @@ description = "Reference body. Small ice moon; ancient cratered plains and a ren
 "parent.eccentricity" = 0.0565
 "orbit.semi_major_axis" = 2.3802e8
 "orbit.eccentricity" = 0.0047
+# Its tilt to Saturn's orbit, its own orbit in Saturn's equator: Saturn's obliquity,
+# and Saturn's season at perihelion, just past the southern summer solstice.
+"rotation.obliquity" = 26.73
+"orbit.perihelion_season" = 280.0
 # The 2:1 resonance with Dione forces it (Meyer and Wisdom 2008; F138).
 "orbit.resonance_forced" = true
 "body.radius" = 2.521e5

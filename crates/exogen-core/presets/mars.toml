@@ -5,6 +5,7 @@ description = "Reference body. 6 mbar CO2, 25 m global water layer as polar ice,
 [values]
 "orbit.semi_major_axis" = 2.2794e11
 "orbit.eccentricity" = 0.0934
+"orbit.perihelion_season" = 251.0
 "body.radius" = 3.3895e6
 "body.density" = 3934.0
 "rotation.period" = 88642.7

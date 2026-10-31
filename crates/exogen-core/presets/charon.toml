@@ -15,6 +15,8 @@ description = "Reference body. Pluto's large moon, locked face to face with it; 
 # satellite table lists Pluto's 1,853 for it).
 "orbit.semi_major_axis" = 1.9595764e7
 "orbit.eccentricity" = 0.000161
+# Its tilt to Pluto's orbit about the Sun, its own orbit in Pluto's equator.
+"rotation.obliquity" = 119.6
 "body.radius" = 6.06e5
 "body.density" = 1705.0
 "atmosphere.surface_pressure" = 0.0

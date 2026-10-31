@@ -15,6 +15,7 @@ pub mod fields;
 pub mod flexure;
 pub mod geom;
 pub mod grid;
+pub mod insolation;
 pub mod mantle;
 pub mod noise;
 pub mod orbital;

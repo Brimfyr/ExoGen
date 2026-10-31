@@ -10,6 +10,8 @@ description = "Reference body. Small ice moon of Uranus; ancient cratered terrai
 "parent.eccentricity" = 0.0472
 "orbit.semi_major_axis" = 1.29846e8
 "orbit.eccentricity" = 0.0014
+# Its tilt to Uranus's orbit, its own orbit in Uranus's equator: Uranus's obliquity.
+"rotation.obliquity" = 97.77
 "body.radius" = 2.358e5
 # JPL's satellite constants: GM 4.3 +- 0.2 km³/s², 1,178 +- 53 kg/m³.
 "body.density" = 1178.0

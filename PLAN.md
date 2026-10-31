@@ -705,6 +705,7 @@ Planned on 2026-10-31, after Phase 4F's close: climate first, the weather model 
 - Temperature downscaled to the fine grid by the lapse rate, slope and aspect (section 4.12).
 - History curves for surface pressure, volatile inventory and the star's luminosity, so that the climate runs through the loop's history; three of the inputs held constant until now get histories.
 - One temperature for every stage: the ice stage's latitude temperature and Io's frost read the new field.
+- The spin from tides, so that no preset pins its rotation (principle 11): capture into a spin-orbit resonance (Mercury's 3:2, Goldreich and Peale 1966; Correia and Laskar 2004) and the balance of the atmosphere's thermal tides against the solid body's (Venus's slow retrograde spin, Correia and Laskar 2001).
 
 Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean temperature, its Hadley edge between 25 and 35°; Mars's, Venus's and Titan's mean temperatures; the Moon's and Mercury's day, night and polar temperatures against Diviner's and MESSENGER's.
 

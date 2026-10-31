@@ -10,6 +10,8 @@ description = "Reference body. Largest moon; dark cratered terrain over clean ic
 "parent.eccentricity" = 0.0489
 "orbit.semi_major_axis" = 1.0704e9
 "orbit.eccentricity" = 0.0013
+# Its tilt to Jupiter's orbit, its own orbit in Jupiter's equator: Jupiter's obliquity.
+"rotation.obliquity" = 3.13
 # The Laplace resonance forces it (F138).
 "orbit.resonance_forced" = true
 "body.radius" = 2.6341e6
