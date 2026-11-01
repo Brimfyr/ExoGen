@@ -1,6 +1,6 @@
 # Phase 5 report: atmosphere, climate, volatiles and erosion
 
-Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240), the caps of the inventory's ices (F241) and the frost's own gas's (F242), the poles' shadows (F243), the sea's heat and its ice (F244), the seasons' air (F245), which revises 5A's cycle, and the ices that come and go (F246).
+Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240), the caps of the inventory's ices (F241) and the frost's own gas's (F242), the poles' shadows (F243), the sea's heat and its ice (F244), the seasons' air (F245), which revises 5A's cycle, the ices that come and go (F246) and nitrogen frost's emissivity (F247).
 
 Phase 5 gives the bodies their air, their weather's long average, their volatiles and the processes that wear a surface down: sunlight and the temperature it makes on every body, seas, caps and cold traps from the inventory, rivers, glaciers, wind, dust, sand and the chemistry that colours them. The plan (PLAN.md, Phase 5) runs it as seven sub-phases in order, each with its own gate and review: 5A climate on every body, 5B volatiles, 5C water and ice at work, 5D dust, sand and chemistry, 5E surface physics on every body, 5F Io and Thaumasia, 5G weather and clouds. Mars, Titan and Pluto are its test bodies for the look; an Earth-like and a tidally locked ocean world give the climate its numbers.
 
@@ -181,3 +181,14 @@ How it went:
 - **Phases between places.** A phase cannot be blended across the year's end: read between the cycle's places on the circle of the year, and nearest the cell when exported, while the thickness blends.
 - **A marine pole's thick ice.** The Earth-like's north pole lies wholly under sea, and its ice, its top never melting under its column's radiation, thickens past its cycles, 9.8 m at its peak; over a sea that is 71 percent of every latitude it stands at 4.2 m, the land beside it warming the summer's air.
 - **The renders.** The Earth-like and Mars rendered at 2,048 px are byte-identical to the last renders in every map they had, the cryosphere map written beside them, and Pluto with them: Mars's thickest 0.94 m, Pluto's 0.08 m, the Earth-like's 9.8 m.
+
+## The fourteenth milestone: nitrogen frost's emissivity
+
+- **F247.** The user's call (2026-11-01): nitrogen's frost radiates at its published emissivities, 0.3 in its alpha phase and 0.8 in its beta phase above 35.61 K. Pluto's pressure through its year climbs to 0.87 Pa, near the 1 Pa measured, where it stood under 0.03; Triton's to 1.20 Pa, near its 1.4.
+
+How it went:
+
+- **The published numbers.** Nitrogen ice's emissivity is its phase's: its cubic alpha phase's far under its hexagonal beta phase's (Stansberry et al. 1996), 0.3 and 0.8 in Pluto's volatile transport models (Bertrand et al. 2019), which with the beta's 0.8 and an albedo of 0.72 to 0.73 reproduce Pluto's pressure (Meza et al. 2019). Taken as published, with the frost's albedo left its colour's 0.80.
+- **A step in the frost's balance.** The emissivity's jump at the transition, taken as a step, would make the frost's radiation leap as its point crosses 35.61 K; blended over half a kelvin, its slope enters the frosted ground's linearised step.
+- **Pressures near the measured.** Pluto's frost, radiating 0.8 in its beta phase, holds a frost point warm enough for its pressure to climb to 0.87 Pa; in its alpha phase, at 0.3, it gives back its gas sooner, and the pressure falls only to 0.010 Pa, where it fell to 0.005. Triton's climbs to 1.20 Pa.
+- **The renders.** Pluto and Triton rendered at 2,048 px: Pluto's pressure through its year from 0.010 to 0.87 Pa, Triton's from 0.13 to 1.11 Pa, their caps where they stood, 1.35 and 1.78 percent of the body in nitrogen; Mars byte-identical in every map, its carbon dioxide frost still a black body.

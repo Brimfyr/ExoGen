@@ -1900,6 +1900,15 @@ pub const SEA_ICE_MELT_ALBEDO: f64 = 0.55;
 pub const SEA_ICE_MELT_MARGIN_K: f64 = 0.1;
 /// F244: a fast spinner's latitude's sea is its mean over SEA_SHARE_LONGITUDES longitudes.
 pub const SEA_SHARE_LONGITUDES: usize = 72;
+/// F247: nitrogen ice's emissivity, its cubic alpha phase's below its transition to its
+/// hexagonal beta phase, 35.61 K, and its beta phase's above it: 0.3 and 0.8, the published
+/// pair (Stansberry et al. 1996's alpha far under its beta; Bertrand et al. 2019), the beta's
+/// 0.8 the one Pluto's pressure is matched with (Meza et al. 2019); the step blended over
+/// N2_PHASE_HALF_WIDTH_K either side of the transition, a stated choice that keeps the frost's
+/// balance smooth.
+pub const N2_EMISSIVITY: (f64, f64) = (0.3, 0.8);
+pub const N2_PHASE_TRANSITION_K: f64 = 35.61;
+pub const N2_PHASE_HALF_WIDTH_K: f64 = 0.25;
 /// F245: the share of the transport a sea's water carries across the sea's share of the
 /// boundary between two places, the air the rest: some third, the ocean's share of the
 /// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated

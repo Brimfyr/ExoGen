@@ -572,6 +572,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | a trap's air at its cell's height, as much colder as the ground (F245) | stated: F237's height effect, the air near its ground following the ground | the air's own profile over the relief (5G) |
 | an ice's window, the longest run of the year it lies through, past half its colour hidden (F246) | stated: one window a place a year; the cover the drawn maps count | ices that lie twice a year, a window apiece |
 | the cryosphere map's phases, shares of the year's time from the northern spring equinox (F246) | a stated choice: an engine's clock, against the season's solar longitude (`climate.season`) | — |
+| N2_EMISSIVITY, N2_PHASE_TRANSITION_K (F247) | measured: alpha and beta nitrogen ice's emissivities (Stansberry et al. 1996; Bertrand et al. 2019's 0.3 and 0.8) and their transition | the emissivity from the ice's grains and what it holds in solution |
+| N2_PHASE_HALF_WIDTH_K (F247) | a stated choice: the step blended to keep the frost's balance smooth | the transition's latent heat |
+| carbon dioxide's and methane's frost radiating as black bodies (F247) | a stated choice | their measured emissivities |
 | D_EARTH, D_CAP_MULTIPLE (F33, F235) | Earth's transport (Williams and Kasting 1997) and a stated cap at ten times it | the scaling with rotation is Earth's: Titan's poles 0.1 K under its equator against Cassini's 3 K (Jennings et al. 2016), Venus's 6.5 K; a slowly turning atmosphere's single cell with the wind field (5C) |
 | EARLY_TIME_EXPONENTS | stated choices: the orbital period at the snow line, the disc's solids over the area within it (F135) | no body to check; around a red dwarf the snow line where its planets formed is set by its far brighter youth, not by its luminosity today |
 

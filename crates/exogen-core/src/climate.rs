@@ -192,6 +192,20 @@ impl Frost {
             })
     }
 
+    /// The frost's emissivity at a temperature and its slope per kelvin (F247): nitrogen's,
+    /// its alpha phase's below its transition and its beta phase's above, the step blended
+    /// smoothly across it; every other frost's a black body's.
+    pub fn emissivity(&self, t: f64) -> (f64, f64) {
+        if self.species != "N2" {
+            return (1.0, 0.0);
+        }
+        let (alpha, beta) = N2_EMISSIVITY;
+        let x = ((t - N2_PHASE_TRANSITION_K) / N2_PHASE_HALF_WIDTH_K).clamp(-1.0, 1.0);
+        let step = (2.0 + 3.0 * x - x * x * x) / 4.0;
+        let slope = 0.75 * (1.0 - x * x) / N2_PHASE_HALF_WIDTH_K;
+        (alpha + (beta - alpha) * step, (beta - alpha) * slope)
+    }
+
     /// The frost point at a partial pressure of the gas, K; none at none.
     pub fn point_at(&self, partial: f64) -> f64 {
         if partial <= 0.0 {
@@ -757,6 +771,18 @@ impl EnergyBalance {
         }
     }
 
+    /// The frost's radiation at its emissivity and the heat it gives air at `air` K (F247),
+    /// with their slope, at the frost's temperature.
+    fn frost_shed(&self, air: f64, frost: &Frost) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
+        let f = *frost;
+        move |t: f64| {
+            let (r, slope) = self.olr_and_slope(t);
+            let (e, de) = f.emissivity(t);
+            let h = self.coupling(t);
+            (e * r + h * (t - air), e * slope + de * r + h)
+        }
+    }
+
     /// A place's land's albedo at its temperature (F245): its ground's, brightening under ice
     /// and snow where water is the working liquid by the ramp the year's balance reads
     /// (F235), on the land's own temperature through the year rather than the year's mean
@@ -1285,8 +1311,9 @@ impl EnergyBalance {
                                     let gains = (bare, (1.0 - f.albedo) * lit);
                                     let rows = (&mut work, &mut trial);
                                     let heat = self.heat_flux;
+                                    let sheds = (shed, self.frost_shed(record.air, f));
                                     column.frosty_step(
-                                        &mut t, rows, dt, gains, heat, shed, f, &mut mass,
+                                        &mut t, rows, dt, gains, heat, sheds, f, &mut mass,
                                     );
                                 }
                                 None => {
@@ -1498,8 +1525,12 @@ impl EnergyBalance {
                             self.frost_point(column, (&runs, places, &air), gas, dt, f, highest);
                         let ((olr, slope), exchange) =
                             (self.olr_and_slope(point), self.coupling(point));
+                        let (e, de) = f.emissivity(point);
                         runs.par_iter_mut().zip(air.par_iter()).for_each(|(r, &a)| {
-                            let shed = (olr + exchange * (point - a), slope + exchange);
+                            let shed = (
+                                e * olr + exchange * (point - a),
+                                e * slope + de * olr + exchange,
+                            );
                             column.finish(
                                 &mut r.t,
                                 &r.trial,
@@ -1605,6 +1636,7 @@ impl EnergyBalance {
             .collect();
         let gap = |point: f64| {
             let (olr, exchange) = (self.olr(point), self.coupling(point));
+            let olr = olr * frost.emissivity(point).0;
             let taken: f64 = taking
                 .iter()
                 .map(|&(r, w, a)| {
@@ -1957,10 +1989,20 @@ impl EnergyBalance {
                         .point_at(partials.get(k).copied().unwrap_or(frost.partial) * cell.thin),
                     ..*frost
                 };
-                let shed = self.shed(cell.air_at(air, places, k));
+                let a = cell.air_at(air, places, k);
+                let sheds = (self.shed(a), self.frost_shed(a, &f));
                 let rows = (&mut work, &mut trial);
                 let gains = (gain(lit), gain(lit));
-                column.frosty_step(&mut t, rows, dt, gains, self.heat_flux, shed, &f, &mut mass);
+                column.frosty_step(
+                    &mut t,
+                    rows,
+                    dt,
+                    gains,
+                    self.heat_flux,
+                    sheds,
+                    &f,
+                    &mut mass,
+                );
                 for (s, v) in sums.iter_mut().zip(&t) {
                     *s += v;
                 }
@@ -2068,7 +2110,8 @@ impl EnergyBalance {
         match frost {
             Some(f) => {
                 let gains = (own, (1.0 - f.albedo) * lit);
-                column.frosty_step(t, (work, trial), dt, gains, self.heat_flux, shed, f, mass);
+                let sheds = (shed, self.frost_shed(air, f));
+                column.frosty_step(t, (work, trial), dt, gains, self.heat_flux, sheds, f, mass);
             }
             None => column.step(t, work, dt, own, self.heat_flux, shed),
         }
@@ -2957,7 +3000,8 @@ impl Column {
         self.capacity.len()
     }
 
-    /// One step with the frost at its point (F239): the step's trial, ended at the point.
+    /// One step with the frost at its point (F239): the step's trial, ended at the point,
+    /// `sheds` the bare ground's radiation and the frosted ground's (F247).
     #[allow(clippy::too_many_arguments)]
     fn frosty_step(
         &self,
@@ -2966,12 +3010,15 @@ impl Column {
         dt: f64,
         gains: (f64, f64),
         bottom: f64,
-        olr: impl Fn(f64) -> (f64, f64) + Copy,
+        (bare, frosted): (
+            impl Fn(f64) -> (f64, f64) + Copy,
+            impl Fn(f64) -> (f64, f64) + Copy,
+        ),
         f: &Frost,
         mass: &mut f64,
     ) {
-        self.trial(t, (w, tr), dt, gains, bottom, olr, *mass, f.point);
-        self.finish(t, tr, dt, f.point, olr(f.point), f.latent, mass);
+        self.trial(t, (w, tr), dt, gains, bottom, bare, *mass, f.point);
+        self.finish(t, tr, dt, f.point, frosted(f.point), f.latent, mass);
     }
 
     /// A step's trial under the frost (F239). While frost lies on the ground, or the ground
@@ -3965,12 +4012,12 @@ mod tests {
         }
     }
 
-    /// F239: a thin atmosphere's frost draws on its own gas: Pluto's frost holds no more
-    /// than the 1.6 kg/m² its atmosphere weighs, and the pressure follows the frost's balance
-    /// through the year. That balance holds it far under the 1 Pa measured (Stern et al.
-    /// 2015): the model's nitrogen frost radiates as a black body where the ice's emissivity
-    /// is some 0.6 (Stansberry et al. 1996), and Pluto's reservoir of nitrogen ice waits on
-    /// 5B's caps.
+    /// F239, F247: a thin atmosphere's frost draws on its own gas: Pluto's frost holds no
+    /// more than the 1.6 kg/m² its atmosphere weighs, and the pressure follows the frost's
+    /// balance through the year. Its nitrogen frost radiating at its phases' emissivities, the
+    /// pressure climbs through the year to near the 1 Pa measured (Stern et al. 2015), and
+    /// Triton's to near the 1.4 to 1.6 Pa Voyager 2 found (Tyler et al. 1989), where black-body
+    /// frost held them at a hundredth and a tenth of it.
     #[test]
     fn a_thin_atmosphere_s_frost_draws_on_its_own_gas() {
         let (cycle, _) = cycle_of("Pluto");
@@ -3982,10 +4029,33 @@ mod tests {
             "{mean} against {}",
             f.column
         );
-        let (lo, hi) = cycle
-            .pressure_range
-            .expect("its pressure follows the frost");
-        assert!(lo < hi && hi < f.partial, "{lo} to {hi}");
+        for (name, measured) in [("Pluto", 1.0), ("Triton", 1.4)] {
+            let (cycle, _) = cycle_of(name);
+            let (lo, hi) = cycle
+                .pressure_range
+                .expect("its pressure follows the frost");
+            println!("{name}: {lo:.3e} to {hi:.3e} Pa");
+            assert!(
+                lo < hi && hi > 0.5 * measured && hi < 1.5 * measured,
+                "{name}: {lo} to {hi}"
+            );
+        }
+    }
+
+    /// F247: nitrogen frost radiates as its phase does, 0.3 in its alpha phase and 0.8 in
+    /// its beta phase above 35.61 K, smoothly across the transition; carbon dioxide frost as a
+    /// black body.
+    #[test]
+    fn nitrogen_frost_radiates_as_its_phase_does() {
+        let pluto = Frost::from_graph(&crate::presets::preset("Pluto").unwrap().to_graph().0)
+            .expect("Pluto's frost");
+        let near = |(e, slope): (f64, f64), want: f64| (e - want).abs() < 1e-12 && slope == 0.0;
+        assert!(near(pluto.emissivity(30.0), 0.3) && near(pluto.emissivity(40.0), 0.8));
+        let (mid, slope) = pluto.emissivity(N2_PHASE_TRANSITION_K);
+        assert!((mid - 0.55).abs() < 1e-12 && slope > 0.0, "{mid} {slope}");
+        let mars = Frost::from_graph(&crate::presets::preset("Mars").unwrap().to_graph().0)
+            .expect("Mars's frost");
+        assert_eq!(mars.emissivity(140.0), (1.0, 0.0));
     }
 
     /// F239: a slope takes the frost of the place it faces, as its temperature does: on Mars
