@@ -211,6 +211,8 @@ pub struct FinishOutput {
     /// body, where the atmosphere lays frost (F239).
     pub pressure_range: Option<(f64, f64)>,
     pub cap_growth: Option<f64>,
+    /// Where each ice of the inventory would last, on the climate's grid (F240).
+    pub traps: crate::climate::Traps,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -405,7 +407,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 177;
+pub const FINISH_VERSION: u64 = 178;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2931,7 +2933,8 @@ pub fn finish(
     // (F236), brought to this one.
     let balance = crate::climate::EnergyBalance::from_graph(graph);
     let climate = balance.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
-    let cycle = balance.cycle(&climate, &crate::climate::Ground::from_graph(graph));
+    let ground = crate::climate::Ground::from_graph(graph);
+    let cycle = balance.cycle(&climate, &ground);
     let temperature_range = cycle.extremes();
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         let (steady, ..) = crate::climate::bands(&climate.temperature);
@@ -2944,6 +2947,38 @@ pub fn finish(
     // Brought to this grid by each place's height and slope (F237), and the frost at the
     // snapshot's season with them, over the ground's colour (F239).
     let downscale = crate::climate::Downscale::from_graph(graph);
+    // Where each ice of the inventory would last (F240), each cell of the climate's grid at
+    // its height above the datum's air, a sea's surface where a sea stands.
+    let above = Field::from_fn(grid, |c, _| {
+        let h = height.get(c);
+        if sea_level.is_finite() {
+            (h - sea_level as f32).max(0.0)
+        } else {
+            h
+        }
+    });
+    let heights = crate::climate::coarsen(&above, climate.temperature.grid());
+    let water = materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh);
+    let ices = crate::climate::Ice::of_inventory(graph, water);
+    let traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        for (ice, _) in &traps.vapour {
+            if let Some((lat, lon, vapour)) = traps.coldest(ice.species) {
+                eprintln!(
+                    "traps: {}'s coldest at {lat:.1}° {lon:.1}°, holding the air's vapour at {vapour:.3e} Pa",
+                    ice.species
+                );
+            }
+        }
+        if let Some((ice, growth)) = &traps.growth {
+            let (most, share) = crate::climate::growth_reach(growth);
+            eprintln!(
+                "traps: {}'s ice grows by at most {most:.1} kg/m² a year, on {:.2}% of the body",
+                ice.species,
+                100.0 * share
+            );
+        }
+    }
     let temperature = downscale.apply(&cycle.mean, &height, sea_level);
     let (frost, albedo) = match cycle.frost {
         Some(f) => {
@@ -2994,6 +3029,7 @@ pub fn finish(
         frost_gas: cycle.frost.map(|f| f.species),
         pressure_range: cycle.pressure_range,
         cap_growth: cycle.cap_growth,
+        traps,
         rays,
         sea_level,
         ocean_fraction,

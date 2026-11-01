@@ -1847,6 +1847,13 @@ pub const FROST_COVER_MASS: f64 = 1.0;
 /// FROST_POINT_TOLERANCE_K in at most FROST_POINT_ITERATIONS tries.
 pub const FROST_POINT_ITERATIONS: usize = 60;
 pub const FROST_POINT_TOLERANCE_K: f64 = 1e-6;
+/// F240: an ice in a cold trap runs TRAP_YEARS years from an unlimited store of
+/// TRAP_STORE kg/m², the first settling the ground beneath it.
+pub const TRAP_YEARS: usize = 3;
+pub const TRAP_STORE: f64 = 1.0e9;
+/// F240: a fast spinner's traps are run on the cycle's latitudes at TRAP_HEIGHT_LEVELS
+/// heights spanning its own, read at each cell between them.
+pub const TRAP_HEIGHT_LEVELS: usize = 7;
 
 // ---------------------------------------------------------------- volatiles
 

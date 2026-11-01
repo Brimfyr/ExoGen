@@ -34,9 +34,10 @@ use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
 use crate::insolation::{PathStep, Sky, diurnal_share, read_grid, read_row};
 use crate::params::ParamGraph;
+use crate::params::derive::is_icy;
 use crate::params::derive::physics::{
     mean_heat_capacity, mean_molecular_mass, regolith_heat, saturation_temperature,
-    species_columns, tau_dry, volatile, water_column, water_optical_depth,
+    species_columns, tau_dry, vapour_pressure, volatile, water_column, water_optical_depth,
 };
 
 /// What the energy balance reads.
@@ -186,6 +187,144 @@ impl Frost {
     }
 }
 
+/// A volatile's ice that can lie on the ground (F240): its gas, its colour and the albedo
+/// that is its colour's mean.
+#[derive(Clone, Copy, Debug)]
+pub struct Ice {
+    pub species: &'static str,
+    pub colour: [f32; 3],
+    pub volatile: &'static crate::constants::Volatile,
+}
+
+impl Ice {
+    /// The inventory's ices the model draws (F240): carbon dioxide's, nitrogen's and
+    /// methane's in their frosts' colours (F239), water's in `water`, clean water ice's,
+    /// except where the water is an icy body's own shell.
+    pub fn of_inventory(graph: &ParamGraph, water: [f32; 3]) -> Vec<Ice> {
+        let empty = std::collections::BTreeMap::new();
+        let inventory = graph.get("volatiles.inventory").as_map().unwrap_or(&empty);
+        let shell = is_icy(graph.str("body.composition_class"));
+        inventory
+            .iter()
+            .filter(|&(name, &m)| m > 0.0 && !(shell && name == "H2O"))
+            .filter_map(|(name, _)| {
+                let v = volatile(name)?;
+                let colour = if name == "H2O" {
+                    water
+                } else {
+                    frost_colour(name)?
+                };
+                Some(Ice {
+                    species: v.name,
+                    colour,
+                    volatile: v,
+                })
+            })
+            .collect()
+    }
+
+    pub fn albedo(&self) -> f64 {
+        (self.colour.iter().sum::<f32>() / 3.0) as f64
+    }
+}
+
+/// Where each ice of the inventory would last (F240), on the climate's grid.
+#[derive(Clone, Debug)]
+pub struct Traps {
+    /// The frost's own gas's ice, lying all year from an unlimited store: the frost it gains
+    /// in a year, kg/m², positive where a cap would grow (Leighton and Murray 1966).
+    pub growth: Option<(Ice, Field<f32>)>,
+    /// Every other ice: the year-mean saturation pressure over it, brought to the datum's air
+    /// by the place's height, Pa; the lower, the colder the trap, and the coldest's holds the
+    /// air's vapour (Ingersoll 1970).
+    pub vapour: Vec<(Ice, Field<f32>)>,
+}
+
+impl Traps {
+    /// An ice's coldest trap: its latitude and longitude, degrees, and the saturation
+    /// pressure it holds the datum's air at, Pa.
+    pub fn coldest(&self, species: &str) -> Option<(f64, f64, f64)> {
+        let (_, field) = self.vapour.iter().find(|(ice, _)| ice.species == species)?;
+        let grid = field.grid();
+        let (k, &v) = field
+            .as_slice()
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_finite())
+            .min_by(|a, b| a.1.total_cmp(b.1))?;
+        let (lon, lat) = lon_lat_from_direction(grid.center(grid.cell(k)));
+        Some((lat.to_degrees(), lon.to_degrees(), v as f64))
+    }
+}
+
+/// A cell of the climate's grid in the traps (F240): its latitude and longitude, rad, the
+/// share of the datum's pressure its height keeps, its year's balance (temperature, albedo,
+/// transport) and the heat its air exchanges with the ground per kelvin, W/m²/K.
+#[derive(Clone, Copy, Debug)]
+struct TrapCell {
+    lat: f64,
+    lon: f64,
+    thin: f64,
+    steady: f64,
+    albedo: f64,
+    brought: f64,
+    exchange: f64,
+}
+
+impl TrapCell {
+    /// The frost at a step of its cycle at the cell's partial pressure, `partials` the
+    /// datum's.
+    fn laid(&self, frost: Option<&Frost>, partials: &[f64], k: usize) -> Option<Frost> {
+        frost.map(|f| Frost {
+            point: f.point_at(partials.get(k).copied().unwrap_or(f.partial) * self.thin),
+            ..*f
+        })
+    }
+}
+
+/// An ice's column and the bare ground's beside it in the traps (F240), their frost, and
+/// their sums through a cycle.
+#[derive(Clone)]
+struct Pair {
+    air: Vec<f64>,
+    air_mass: f64,
+    ice: Vec<f64>,
+    ice_mass: f64,
+    sums: Vec<f64>,
+    air_sums: Vec<f64>,
+    work: Work,
+    trial: Trial,
+}
+
+impl Pair {
+    fn new(column: &Column, steady: f64) -> Self {
+        let n = column.len();
+        Self {
+            air: vec![steady; n],
+            air_mass: 0.0,
+            ice: vec![steady; n],
+            ice_mass: 0.0,
+            sums: vec![0.0; n],
+            air_sums: vec![0.0; n],
+            work: Work::new(n),
+            trial: Trial::new(n),
+        }
+    }
+
+    /// A new cycle.
+    fn begin(&mut self) {
+        self.sums.fill(0.0);
+        self.air_sums.fill(0.0);
+    }
+
+    /// The deep ground of both columns settled at their surfaces' means over a cycle of
+    /// `steps`.
+    fn settle(&mut self, steps: usize) {
+        settle(&mut self.ice, &self.sums, steps);
+        settle(&mut self.air, &self.air_sums, steps);
+    }
+}
+
 /// The colour of a gas's frost, linear reflectance (F239); none for a gas whose frost the
 /// model does not draw.
 fn frost_colour(species: &str) -> Option<[f32; 3]> {
@@ -219,6 +358,10 @@ pub struct Cycle {
     /// The frost that outlasts the year, kg/m² a year over the body: its caps' growth, which
     /// the model does not yet keep (5B's caps), where it lays frost.
     pub cap_growth: Option<f64>,
+    /// The tilts the year was run at, and at each the frost's gas's partial pressure at the
+    /// datum through the year's steps, Pa, where it lays frost (F240).
+    pub tilts: Vec<f64>,
+    pub partials: Vec<Vec<f64>>,
 }
 
 /// A place's year: its mean, warmest and coldest temperature, the share of the year frost
@@ -230,6 +373,26 @@ struct Year {
     min: f64,
     frost_share: f64,
     frost_now: f64,
+}
+
+/// The frost's year at a tilt (F239): the places' years, the surface pressure's range, Pa,
+/// the caps' growth in a year over the body, kg/m², and the frost's gas's partial pressure at
+/// each step of the year.
+struct FrostYear {
+    years: Vec<Year>,
+    range: (f64, f64),
+    growth: f64,
+    partials: Vec<f64>,
+}
+
+/// The frost's lockstep through its last cycle (F239): the places' runs, the surface
+/// pressure's range, Pa, the frost the caps grow by in the cycle over the body, kg/m², and
+/// the frost's gas's partial pressure after each step.
+struct Lockstep {
+    runs: Vec<Run>,
+    range: (f64, f64),
+    growth: f64,
+    partials: Vec<f64>,
 }
 
 impl Year {
@@ -464,16 +627,19 @@ impl EnergyBalance {
         let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
         let mut pressure_range = None;
         let mut cap_growth = None;
+        let mut partials = Vec::new();
         // A frost's runs, one a tilt: their places' years combined, the pressure's range the
         // widest and the caps' growth the mean.
-        let mut gather = |runs: Vec<(Vec<Year>, (f64, f64), f64)>| -> Vec<Year> {
+        let mut gather = |runs: Vec<FrostYear>| -> Vec<Year> {
             pressure_range = runs
                 .iter()
-                .map(|r| r.1)
+                .map(|r| r.range)
                 .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)));
-            cap_growth = Some(runs.iter().map(|r| r.2).sum::<f64>() / runs.len().max(1) as f64);
-            (0..runs.first().map_or(0, |r| r.0.len()))
-                .map(|i| combine(runs.iter().map(|r| r.0[i]).collect()))
+            cap_growth =
+                Some(runs.iter().map(|r| r.growth).sum::<f64>() / runs.len().max(1) as f64);
+            partials = runs.iter().map(|r| r.partials.clone()).collect();
+            (0..runs.first().map_or(0, |r| r.years.len()))
+                .map(|i| combine(runs.iter().map(|r| r.years[i]).collect()))
                 .collect()
         };
         // A place of the frost's lockstep, its latitude's band of the sphere's area shared
@@ -586,6 +752,8 @@ impl EnergyBalance {
             frost: self.frost,
             pressure_range,
             cap_growth,
+            tilts,
+            partials,
         }
     }
 
@@ -658,15 +826,14 @@ impl EnergyBalance {
 
     /// The years of a fast spinner whose atmosphere lays frost (F239): its latitudes run in
     /// step through the year on the day's mean sunlight, then each through a day at each
-    /// season from the ground, its frost and the frost point as the season left them. Returns
-    /// the years, the surface pressure's range and the caps' growth in a year, kg/m².
+    /// season from the ground, its frost and the frost point as the season left them.
     fn frosty_years(
         &self,
         ground: &Ground,
         places: &[Place],
         eps: f64,
         frost: &Frost,
-    ) -> (Vec<Year>, (f64, f64), f64) {
+    ) -> FrostYear {
         let olr = |t: f64| self.olr_and_slope(t);
         let solar_days = (self.sky.spins - eps.cos()).abs().max(1e-3);
         let day = self.year / solar_days;
@@ -685,10 +852,10 @@ impl EnergyBalance {
             snapshot_step(self.snapshot, steps),
         );
         let every = steps / CYCLE_SEASONS;
-        let (runs, range, growth) =
-            self.frosty_cycles(&column, places, timing, light, frost, every);
+        let lockstep = self.frosty_cycles(&column, places, timing, light, frost, every);
         let dt = day / CYCLE_DAY_STEPS as f64;
-        let years = runs
+        let years = lockstep
+            .runs
             .par_iter()
             .zip(places.par_iter())
             .map(|(r, p)| {
@@ -734,12 +901,16 @@ impl EnergyBalance {
                 }
             })
             .collect();
-        (years, range, growth)
+        FrostYear {
+            years,
+            range: lockstep.range,
+            growth: lockstep.growth,
+            partials: lockstep.partials,
+        }
     }
 
     /// The cycles of a resonant body whose atmosphere lays frost (F239): its places run in
-    /// step through the orbits it repeats in. Returns the years, the surface pressure's range
-    /// and the caps' growth in a year, kg/m².
+    /// step through the orbits it repeats in.
     fn frosty_orbits(
         &self,
         ground: &Ground,
@@ -747,7 +918,7 @@ impl EnergyBalance {
         path: &[PathStep],
         places: &[Place],
         frost: &Frost,
-    ) -> (Vec<Year>, (f64, f64), f64) {
+    ) -> FrostYear {
         let cycle = self.year * orbits as f64;
         let column = Column::new(ground, cycle, cycle);
         let e = self.sky.eccentricity;
@@ -759,8 +930,9 @@ impl EnergyBalance {
         let steps = path.len();
         let snapshot = snapshot_step(self.snapshot, steps / orbits.max(1) as usize);
         let timing = (steps, cycle / steps as f64, snapshot);
-        let (runs, range, growth) = self.frosty_cycles(&column, places, timing, light, frost, 0);
-        let years = runs
+        let lockstep = self.frosty_cycles(&column, places, timing, light, frost, 0);
+        let years = lockstep
+            .runs
             .iter()
             .map(|r| Year {
                 mean: r.sums[0] / steps as f64,
@@ -770,7 +942,12 @@ impl EnergyBalance {
                 frost_now: r.now,
             })
             .collect();
-        (years, range, growth / orbits.max(1) as f64)
+        FrostYear {
+            years,
+            range: lockstep.range,
+            growth: lockstep.growth / orbits.max(1) as f64,
+            partials: lockstep.partials,
+        }
     }
 
     /// Places run in step through their cycles while their frost draws on one atmosphere
@@ -787,8 +964,7 @@ impl EnergyBalance {
     /// which the model does not yet keep where the gas is given back (5B's caps): it is
     /// counted, and taken off in the share given. The cycle is `steps` steps of `dt` with the
     /// snapshot's step, each place lit at a step as `light` gives, the ground recorded every
-    /// `every` steps (never at 0). Returns the places' runs, the surface pressure's range
-    /// through the last cycle and the frost the caps grow by in a cycle, kg/m² over the body.
+    /// `every` steps (never at 0).
     fn frosty_cycles(
         &self,
         column: &Column,
@@ -797,7 +973,7 @@ impl EnergyBalance {
         light: impl Fn(usize, &Place) -> f64 + Sync,
         frost: &Frost,
         every: usize,
-    ) -> (Vec<Run>, (f64, f64), f64) {
+    ) -> Lockstep {
         let olr = |t: f64| self.olr_and_slope(t);
         let whole = places.iter().map(|p| p.weight).sum::<f64>().max(1e-30);
         let over = |runs: &[Run], pick: fn(&Run) -> f64| {
@@ -815,9 +991,11 @@ impl EnergyBalance {
         let (mut held, mut load) = (frost.column, 0.0);
         let mut range = (f64::MAX, f64::MIN);
         let mut growth = 0.0;
+        let mut partials = Vec::with_capacity(steps);
         let mut last = vec![f64::NAN; places.len()];
         for _ in 0..CYCLE_MAX_YEARS {
             range = (f64::MAX, f64::MIN);
+            partials.clear();
             runs.iter_mut().for_each(Run::begin);
             for k in 0..steps {
                 let highest = frost.point_at(partial(held));
@@ -850,6 +1028,7 @@ impl EnergyBalance {
                 load = over(&runs, |r| r.mass);
                 let now = partial(held - load);
                 range = (range.0.min(now), range.1.max(now));
+                partials.push(now);
             }
             // The frost that lay all cycle and grew through it: a cap's growth.
             growth = over(&runs, Run::growth);
@@ -881,7 +1060,12 @@ impl EnergyBalance {
         }
         // The surface pressure: the other gases' and the frost's gas's.
         let others = (self.pressure - frost.partial).max(0.0);
-        (runs, (others + range.0, others + range.1), growth)
+        Lockstep {
+            runs,
+            range: (others + range.0, others + range.1),
+            growth,
+            partials,
+        }
     }
 
     /// The frost point a step of the lockstep settles at (F239): the point at which the frost
@@ -956,6 +1140,360 @@ impl EnergyBalance {
             }
         }
         lo
+    }
+
+    /// Where each ice would last (F240): every cell of the climate's grid runs a column of
+    /// the ice through its year at its height's pressure, `heights` m above the datum's air
+    /// thinning it by the scale height, under the frost's seasons (F239), at each tilt the
+    /// year was run at, beside the bare ground about it, whose air exchanges heat with the
+    /// ice as F237's does with a slope (`pair_step`). The frost's own gas's ice lies all year from an unlimited store, held at
+    /// its point at the cell's partial pressure, and gains or loses what the surface's
+    /// balance leaves (Leighton and Murray 1966). Any other ice lies under the frost where
+    /// the frost lays it, its albedo its surface's, and its trap is the year-mean saturation
+    /// pressure over it through the days and seasons, divided by the share of the datum's
+    /// pressure its height keeps, so that it is the vapour pressure the datum's air must hold
+    /// to keep it (Ingersoll 1970).
+    pub fn traps(
+        &self,
+        climate: &Climate,
+        ground: &Ground,
+        cycle: &Cycle,
+        ices: &[Ice],
+        heights: &Field<f32>,
+        downscale: &Downscale,
+    ) -> Traps {
+        let grid = climate.temperature.grid();
+        let thins: Vec<f64> = heights
+            .as_slice()
+            .iter()
+            .map(|&h| {
+                let h = if h.is_finite() { h as f64 } else { 0.0 };
+                if downscale.scale_height > 0.0 {
+                    (-h / downscale.scale_height).exp()
+                } else {
+                    1.0
+                }
+            })
+            .collect();
+        let cell_at = |lat: f64, lon: f64, thin: f64| {
+            let (c, _, _) = grid.locate(direction_from_lon_lat(lon, lat));
+            TrapCell {
+                lat,
+                lon,
+                thin,
+                steady: climate.temperature.get(c) as f64,
+                albedo: climate.albedo.get(c) as f64,
+                brought: climate.transport.get(c) as f64,
+                exchange: downscale.exchange,
+            }
+        };
+        let frost = cycle.frost.as_ref();
+        // A fast spinner's traps are its latitudes' at a few heights, the frost's point the
+        // only thing a height changes, read at each cell between them; a resonant body's are
+        // each cell's own.
+        let levels: Option<Vec<f64>> = match self.sky.resonance {
+            None => {
+                let (lo, hi) = thins
+                    .iter()
+                    .fold((f64::MAX, f64::MIN), |(a, b), &t| (a.min(t), b.max(t)));
+                let k = if frost.is_some() && hi > lo * (1.0 + 1e-6) {
+                    TRAP_HEIGHT_LEVELS
+                } else {
+                    1
+                };
+                Some(
+                    (0..k)
+                        .map(|j| match k {
+                            1 => 1.0,
+                            _ => (lo.ln() + (hi / lo).ln() * j as f64 / (k - 1) as f64).exp(),
+                        })
+                        .collect(),
+                )
+            }
+            Some(_) => None,
+        };
+        let places: Vec<TrapCell> = match &levels {
+            Some(levels) => (0..CYCLE_LATITUDES)
+                .flat_map(|i| {
+                    let lat = -PI / 2.0 + PI * i as f64 / (CYCLE_LATITUDES - 1) as f64;
+                    levels.iter().map(move |&thin| (lat, thin))
+                })
+                .map(|(lat, thin)| cell_at(lat, 0.0, thin))
+                .collect(),
+            None => (0..grid.cell_count())
+                .map(|k| {
+                    let (lon, lat) = lon_lat_from_direction(grid.center(grid.cell(k)));
+                    cell_at(lat, lon, thins[k])
+                })
+                .collect(),
+        };
+        let mut traps = Traps {
+            growth: None,
+            vapour: Vec::new(),
+        };
+        for ice in ices {
+            let own = frost.filter(|f| f.species == ice.species);
+            let values: Vec<f64> = places
+                .par_iter()
+                .map(|cell| {
+                    let n = cycle.tilts.len().max(1) as f64;
+                    cycle
+                        .tilts
+                        .iter()
+                        .enumerate()
+                        .map(|(j, &eps)| {
+                            let partials = cycle.partials.get(j).map_or(&[][..], |p| &p[..]);
+                            match own {
+                                Some(f) => self.ice_growth(ground, cell, eps, partials, f),
+                                None => self.ice_vapour(ground, cell, eps, partials, frost, ice),
+                            }
+                        })
+                        .sum::<f64>()
+                        / n
+                })
+                .collect();
+            // The vapour at the datum's air: the saturation pressure over the ice over the
+            // share of that air's pressure its height keeps.
+            let field = Field::from_fn(grid, |c, d| {
+                let k = grid.index(c);
+                let value = match &levels {
+                    Some(levels) => {
+                        let (_, lat) = lon_lat_from_direction(d);
+                        read_table(&values, levels, lat, thins[k], own.is_none())
+                    }
+                    None => values[k],
+                };
+                match own {
+                    Some(_) => value as f32,
+                    None => (value / thins[k]) as f32,
+                }
+            });
+            match own {
+                Some(_) => traps.growth = Some((*ice, field)),
+                None => traps.vapour.push((*ice, field)),
+            }
+        }
+        traps
+    }
+
+    /// A cell's sunlight through its cycle at a tilt (F240): a fast spinner's year in
+    /// CYCLE_YEAR_STEPS steps on the day's mean, with each step's flux and declination for
+    /// its days; a resonant body's orbits along its path. Returns the steps' sunlight, their
+    /// flux and declination where the days are run, the step's length and the cycle's in
+    /// years.
+    fn trap_sun(&self, cell: &TrapCell, eps: f64) -> (Vec<f64>, Vec<(f64, f64)>, f64, f64) {
+        match self.sky.resonance {
+            None => {
+                let sun: Vec<(f64, f64)> = (0..CYCLE_YEAR_STEPS)
+                    .map(|m| {
+                        let anomaly = TAU * (m as f64 + 0.5) / CYCLE_YEAR_STEPS as f64;
+                        self.sky.at_mean_anomaly(anomaly, eps)
+                    })
+                    .collect();
+                let light = sun
+                    .iter()
+                    .map(|&(flux, decl)| flux * diurnal_share(cell.lat, decl))
+                    .collect();
+                (light, sun, self.year / CYCLE_YEAR_STEPS as f64, 1.0)
+            }
+            Some((_, orbits)) => {
+                let path = self.sky.resonant_path(eps, orbits);
+                let e = self.sky.eccentricity;
+                let scale = self.sky.flux / (1.0 - e * e).sqrt();
+                let (sp, cp) = cell.lat.sin_cos();
+                let light = path
+                    .iter()
+                    .map(|s| {
+                        let cz = sp * s.sin_decl + cp * s.cos_decl * (s.hour + cell.lon).cos();
+                        scale * s.flux * cz.max(0.0)
+                    })
+                    .collect();
+                let cycle = self.year * orbits as f64;
+                (light, Vec::new(), cycle / path.len() as f64, orbits as f64)
+            }
+        }
+    }
+
+    /// The column a cell's ice runs on at a tilt, and its day: a fast spinner's resolves its
+    /// day, a resonant body's its whole cycle.
+    fn trap_column(&self, ground: &Ground, eps: f64) -> (Column, f64) {
+        match self.sky.resonance {
+            None => {
+                let solar_days = (self.sky.spins - eps.cos()).abs().max(1e-3);
+                let day = self.year / solar_days;
+                (Column::new(ground, day, self.year), day)
+            }
+            Some((_, orbits)) => {
+                let cycle = self.year * orbits as f64;
+                (Column::new(ground, cycle, cycle), cycle)
+            }
+        }
+    }
+
+    /// The frost a cell's ice of the frost's own gas gains in a year at a tilt (F240), kg/m²:
+    /// lying all year from an unlimited store, held at its point at the cell's partial
+    /// pressure, it gains or loses what the surface's balance leaves (F239), the deep ground
+    /// settled under it.
+    fn ice_growth(
+        &self,
+        ground: &Ground,
+        cell: &TrapCell,
+        eps: f64,
+        partials: &[f64],
+        frost: &Frost,
+    ) -> f64 {
+        let (column, _) = self.trap_column(ground, eps);
+        let (light, _, dt, years) = self.trap_sun(cell, eps);
+        let mut pair = Pair::new(&column, cell.steady);
+        let mut gained = 0.0;
+        for _ in 0..TRAP_YEARS {
+            pair.ice_mass = TRAP_STORE;
+            pair.begin();
+            for (k, &lit) in light.iter().enumerate() {
+                let f = cell.laid(Some(frost), partials, k);
+                self.pair_step(&column, cell, &mut pair, dt, lit, f.as_ref(), frost.albedo);
+            }
+            gained = (pair.ice_mass - TRAP_STORE) / years;
+            pair.settle(light.len());
+        }
+        gained
+    }
+
+    /// The year-mean saturation pressure over a cell's ice of another gas at a tilt (F240),
+    /// Pa: the frost's gas laying frost on it where the cell's partial pressure's point
+    /// allows (F239), run
+    /// through its year until it repeats and then, a fast spinner's, through a day at each
+    /// season.
+    fn ice_vapour(
+        &self,
+        ground: &Ground,
+        cell: &TrapCell,
+        eps: f64,
+        partials: &[f64],
+        frost: Option<&Frost>,
+        ice: &Ice,
+    ) -> f64 {
+        let (column, day) = self.trap_column(ground, eps);
+        let (light, sun, dt, _) = self.trap_sun(cell, eps);
+        let albedo = ice.albedo();
+        let mut pair = Pair::new(&column, cell.steady);
+        let mut last = f64::NAN;
+        let mut seasons: Vec<(usize, Pair)> = Vec::new();
+        let mut vapour = 0.0;
+        let every = (light.len() / CYCLE_SEASONS).max(1);
+        for _ in 0..CYCLE_MAX_YEARS {
+            seasons.clear();
+            vapour = 0.0;
+            pair.begin();
+            for (k, &lit) in light.iter().enumerate() {
+                let f = cell.laid(frost, partials, k);
+                self.pair_step(&column, cell, &mut pair, dt, lit, f.as_ref(), albedo);
+                vapour += vapour_pressure(ice.volatile, pair.ice[0]);
+                if !sun.is_empty() && k.is_multiple_of(every) {
+                    seasons.push((k, pair.clone()));
+                }
+            }
+            let surface = pair.sums[0] / light.len() as f64;
+            if (surface - last).abs() < CYCLE_SETTLED_K {
+                break;
+            }
+            last = surface;
+            pair.settle(light.len());
+        }
+        if sun.is_empty() {
+            return vapour / light.len() as f64;
+        }
+        // A fast spinner's days at each season, from the ground and its frost as the season
+        // left them: the saturation pressure through the last of them.
+        let (sp, cp) = cell.lat.sin_cos();
+        let dt = day / CYCLE_DAY_STEPS as f64;
+        let mut sum = 0.0;
+        for (k, state) in &seasons {
+            let (flux, decl) = sun[*k];
+            let (sd, cd) = decl.sin_cos();
+            let f = cell.laid(frost, partials, *k);
+            let mut pair = state.clone();
+            for d in 0..CYCLE_DAYS {
+                for h in 0..CYCLE_DAY_STEPS {
+                    let hour = TAU * (h as f64 + 0.5) / CYCLE_DAY_STEPS as f64 - PI;
+                    let lit = flux * (sp * sd + cp * cd * hour.cos()).max(0.0);
+                    self.pair_step(&column, cell, &mut pair, dt, lit, f.as_ref(), albedo);
+                    if d + 1 == CYCLE_DAYS {
+                        sum += vapour_pressure(ice.volatile, pair.ice[0]);
+                    }
+                }
+            }
+        }
+        sum / (seasons.len().max(1) * CYCLE_DAY_STEPS) as f64
+    }
+
+    /// A cell's ice and the bare ground about it through a step (F240): the bare ground as
+    /// the cycle takes it, the frost laying its frost on it where `frost` allows (F239); then
+    /// the ice at `albedo`, the frost on it in turn, the air over it at the bare ground's
+    /// temperature exchanging heat with it as F237's air does with a slope, so that a thick
+    /// atmosphere holds the ice near its own temperature and a thin one leaves it its own
+    /// sunlight.
+    #[allow(clippy::too_many_arguments)]
+    fn pair_step(
+        &self,
+        column: &Column,
+        cell: &TrapCell,
+        pair: &mut Pair,
+        dt: f64,
+        lit: f64,
+        frost: Option<&Frost>,
+        albedo: f64,
+    ) {
+        let olr = |t: f64| self.olr_and_slope(t);
+        let heat = self.heat_flux;
+        let bare = (1.0 - cell.albedo) * lit + cell.brought;
+        let frosted = |f: &Frost| (1.0 - f.albedo) * lit + cell.brought.max(0.0);
+        let rows = (&mut pair.work, &mut pair.trial);
+        match frost {
+            Some(f) => {
+                let gains = (bare, frosted(f));
+                column.frosty_step(
+                    &mut pair.air,
+                    rows,
+                    dt,
+                    gains,
+                    heat,
+                    olr,
+                    f,
+                    &mut pair.air_mass,
+                );
+            }
+            None => column.step(&mut pair.air, rows.0, dt, bare, heat, olr),
+        }
+        let (air, exchange) = (pair.air[0], cell.exchange);
+        let shed = move |t: f64| {
+            let (r, slope) = self.olr_and_slope(t);
+            (r + exchange * (t - air), slope + exchange)
+        };
+        let own = (1.0 - albedo) * lit + cell.brought;
+        let rows = (&mut pair.work, &mut pair.trial);
+        match frost {
+            Some(f) => {
+                let gains = (own, frosted(f));
+                column.frosty_step(
+                    &mut pair.ice,
+                    rows,
+                    dt,
+                    gains,
+                    heat,
+                    shed,
+                    f,
+                    &mut pair.ice_mass,
+                );
+            }
+            None => column.step(&mut pair.ice, rows.0, dt, own, heat, shed),
+        }
+        for (s, v) in pair.sums.iter_mut().zip(&pair.ice) {
+            *s += v;
+        }
+        for (s, v) in pair.air_sums.iter_mut().zip(&pair.air) {
+            *s += v;
+        }
     }
 
     /// A resonant body's cycle at a place (latitude, longitude), started from its year's
@@ -1189,6 +1727,78 @@ impl Downscale {
     }
 }
 
+/// The most an ice of the frost's own gas would grow by anywhere, kg/m² a year, and the
+/// share of the body's area on which it would grow (F240).
+pub fn growth_reach(growth: &Field<f32>) -> (f64, f64) {
+    let grid = growth.grid();
+    let (mut most, mut grown, mut whole) = (f64::MIN, 0.0, 0.0);
+    for (k, &g) in growth.as_slice().iter().enumerate() {
+        let a = grid.cell_area(grid.cell(k));
+        most = most.max(g as f64);
+        whole += a;
+        if g > 0.0 {
+            grown += a;
+        }
+    }
+    (most, grown / whole.max(1e-30))
+}
+
+/// A value of a fast spinner's traps at a latitude and a share of the datum's pressure
+/// (F240): `values` its CYCLE_LATITUDES latitudes' at each of `levels`, read linearly between
+/// them, in the logarithm where `log`, and in the logarithm of the share.
+fn read_table(values: &[f64], levels: &[f64], lat: f64, thin: f64, log: bool) -> f64 {
+    let k = levels.len();
+    let n = values.len() / k;
+    let x = ((lat + PI / 2.0) / PI * (n - 1) as f64).clamp(0.0, (n - 1) as f64);
+    let i = (x.floor() as usize).min(n - 2);
+    let wx = x - i as f64;
+    let (j, wy) = if k == 1 {
+        (0, 0.0)
+    } else {
+        let span = (levels[k - 1] / levels[0]).ln();
+        let y = ((thin / levels[0]).ln() / span * (k - 1) as f64).clamp(0.0, (k - 1) as f64);
+        let j = (y.floor() as usize).min(k - 2);
+        (j, y - j as f64)
+    };
+    let at = |i: usize, j: usize| {
+        let v = values[i * k + j];
+        if log { v.max(1e-300).ln() } else { v }
+    };
+    let row = |i: usize| match k {
+        1 => at(i, 0),
+        _ => at(i, j) * (1.0 - wy) + at(i, j + 1) * wy,
+    };
+    let v = row(i) * (1.0 - wx) + row(i + 1) * wx;
+    if log { v.exp() } else { v }
+}
+
+/// A field's area-weighted mean over each cell of a coarser grid (F240), its non-finite
+/// values left out.
+pub fn coarsen(fine: &Field<f32>, coarse: CubeSphere) -> Field<f32> {
+    let grid = fine.grid();
+    let n = coarse.cell_count();
+    let (mut sum, mut area) = (vec![0.0f64; n], vec![0.0f64; n]);
+    for (k, &v) in fine.as_slice().iter().enumerate() {
+        if !v.is_finite() {
+            continue;
+        }
+        let c = grid.cell(k);
+        let (to, _, _) = coarse.locate(grid.center(c));
+        let j = coarse.index(to);
+        let a = grid.cell_area(c);
+        sum[j] += v as f64 * a;
+        area[j] += a;
+    }
+    Field::from_fn(coarse, |c, _| {
+        let j = coarse.index(c);
+        if area[j] > 0.0 {
+            (sum[j] / area[j]) as f32
+        } else {
+            0.0
+        }
+    })
+}
+
 /// The ground's colour under its frost (F239): the frost hides it as 1 - exp(-m / M), m the
 /// frost and M FROST_COVER_MASS.
 pub fn frosted_albedo(
@@ -1270,6 +1880,7 @@ struct Column {
 }
 
 /// The tridiagonal solve's working rows.
+#[derive(Clone)]
 struct Work {
     a: Vec<f64>,
     b: Vec<f64>,
@@ -1290,6 +1901,7 @@ impl Work {
 
 /// A step's outcomes before its frost point is settled (F239): bare ground's step left to
 /// itself, and the column below a surface held at a point, each layer linear in the point.
+#[derive(Clone)]
 struct Trial {
     /// Bare ground's free step.
     free: Vec<f64>,
@@ -2111,6 +2723,112 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Prints each body's cold traps (F240), on ground at the datum: the frost's own gas's
+    /// growth and every other ice's year-mean saturation pressure by latitude.
+    #[test]
+    #[ignore = "diagnostic: the cold traps"]
+    fn print_traps() {
+        let names =
+            std::env::var("EXOGEN_BODY").unwrap_or_else(|_| "Mars,Earth,Pluto,Triton".into());
+        for name in names.split(',') {
+            let graph = crate::presets::preset(name).unwrap().to_graph().0;
+            let eb = EnergyBalance::from_graph(&graph);
+            let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+            let ground = Ground::from_graph(&graph);
+            let cycle = eb.cycle(&climate, &ground);
+            let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
+            let heights = Field::new(climate.temperature.grid());
+            let downscale = Downscale::from_graph(&graph);
+            let started = std::time::Instant::now();
+            let traps = eb.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
+            println!(
+                "{name}: {:?} in {:.1} s",
+                ices.iter().map(|i| i.species).collect::<Vec<_>>(),
+                started.elapsed().as_secs_f64()
+            );
+            let lats = [
+                -90.0, -85.0, -80.0, -70.0, -60.0, -40.0, 0.0, 40.0, 60.0, 70.0, 80.0, 85.0, 90.0,
+            ];
+            if let Some((ice, g)) = &traps.growth {
+                let row: Vec<String> = lats
+                    .iter()
+                    .map(|&l| format!("{l}:{:.0}", at(g, l, 0.0)))
+                    .collect();
+                println!("  {} grows, kg/m² a year: {}", ice.species, row.join(" "));
+            }
+            for (ice, v) in &traps.vapour {
+                let row: Vec<String> = lats
+                    .iter()
+                    .map(|&l| format!("{l}:{:.2e}", at(v, l, 0.0)))
+                    .collect();
+                println!("  {} year-mean vapour, Pa: {}", ice.species, row.join(" "));
+                println!(
+                    "  {} coldest trap {:?}",
+                    ice.species,
+                    traps.coldest(ice.species)
+                );
+            }
+        }
+    }
+
+    /// A body's cold traps (F240) on ground at `height`, m, by longitude.
+    fn traps_of(name: &str, height: impl Fn(f64) -> f64 + Sync) -> Traps {
+        let graph = crate::presets::preset(name).unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&graph);
+        let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+        let ground = Ground::from_graph(&graph);
+        let cycle = eb.cycle(&climate, &ground);
+        let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
+        let heights = Field::from_fn(climate.temperature.grid(), |_, d| {
+            height(lon_lat_from_direction(d).0) as f32
+        });
+        eb.traps(
+            &climate,
+            &ground,
+            &cycle,
+            &ices,
+            &heights,
+            &Downscale::from_graph(&graph),
+        )
+    }
+
+    /// F240: each ice finds its coldest trap: Mars's water its north pole, its summer under
+    /// the aphelion milder than the south's under the perihelion (the north residual cap's
+    /// water ice, Kieffer et al. 1976); Earth's a pole; Pluto's methane its low latitudes,
+    /// which its tilt of 120° leaves the least of the year's sunlight (Sputnik Planitia's
+    /// 25° north, Hamilton et al. 2016).
+    #[test]
+    fn each_ice_finds_its_coldest_trap() {
+        for (name, species, (lo, hi)) in [
+            ("Mars", "H2O", (75.0, 90.0)),
+            ("Earth", "H2O", (-90.0, -75.0)),
+            ("Pluto", "CH4", (-35.0, 35.0)),
+        ] {
+            let traps = traps_of(name, |_| 0.0);
+            let (lat, _, vapour) = traps.coldest(species).unwrap();
+            let lat = if name == "Earth" { -lat.abs() } else { lat };
+            assert!((lo..=hi).contains(&lat), "{name} {species} at {lat}");
+            assert!(vapour > 0.0, "{name} {species} {vapour}");
+        }
+    }
+
+    /// F240: a basin traps better than a height: the higher pressure of its air raises the
+    /// frost's point, so that Mars's carbon dioxide ice 5 km down grows more than 5 km up,
+    /// and its water there needs less vapour in the air (the trapping that gathers Pluto's
+    /// nitrogen in Sputnik Planitia, Bertrand and Forget 2016).
+    #[test]
+    fn a_basin_traps_better_than_a_height() {
+        let traps = traps_of("Mars", |lon| 5000.0 * lon.sin());
+        let (_, growth) = traps.growth.as_ref().expect("Mars's CO2 ice");
+        let (low, high) = (at(growth, 80.0, -90.0), at(growth, 80.0, 90.0));
+        println!("CO2 at 80° north grows {low:.0} kg/m² a year 5 km down, {high:.0} 5 km up");
+        assert!(low > high + 10.0, "CO2 {low} down, {high} up");
+        let (_, vapour) = traps.vapour.iter().find(|v| v.0.species == "H2O").unwrap();
+        let (low, high) = (at(vapour, 80.0, -90.0), at(vapour, 80.0, 90.0));
+        println!("H2O at 80° north needs {low:.2e} Pa 5 km down, {high:.2e} 5 km up");
+        assert!(low < high, "H2O {low} down, {high} up");
     }
 
     fn downscale_of(name: &str) -> Downscale {

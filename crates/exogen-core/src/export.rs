@@ -753,6 +753,21 @@ pub fn export(
     if let Some(growth) = out.cap_growth {
         stage_outputs.insert("cap_growth_kg_m2_yr".to_string(), growth);
     }
+    // The cold traps (F240): each ice's coldest and the vapour it holds the air at; the
+    // frost's own gas's ice's best growth and the share of the body it would grow on.
+    for (ice, _) in &out.traps.vapour {
+        if let Some((lat, _, vapour)) = out.traps.coldest(ice.species) {
+            let species = ice.species.to_lowercase();
+            stage_outputs.insert(format!("trap_{species}_vapour_pa"), vapour);
+            stage_outputs.insert(format!("trap_{species}_latitude_deg"), lat);
+        }
+    }
+    if let Some((ice, growth)) = &out.traps.growth {
+        let (most, share) = crate::climate::growth_reach(growth);
+        let species = ice.species.to_lowercase();
+        stage_outputs.insert(format!("trap_{species}_growth_kg_m2_yr"), most);
+        stage_outputs.insert(format!("trap_{species}_growth_fraction"), share);
+    }
     let sidecar = Sidecar {
         exogen_version: crate::VERSION.to_string(),
         project: settings.project_name.clone(),

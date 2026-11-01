@@ -933,7 +933,7 @@ pub fn rotation_regime(c: &Ctx) -> Value {
 
 // ------------------------------------------------------------------ interior
 
-fn is_icy(class: &str) -> bool {
+pub(crate) fn is_icy(class: &str) -> bool {
     matches!(class, "rock_ice" | "ice_dominated")
 }
 
