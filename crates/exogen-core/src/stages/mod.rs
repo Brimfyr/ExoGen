@@ -217,6 +217,10 @@ pub struct FinishOutput {
     pub caps: Vec<caps::Cap>,
     /// The share of the body in the poles' permanent shadow (F243).
     pub shadow_fraction: f64,
+    /// The sea's ice at the snapshot's season, kg/m², and the share of the body it covers
+    /// (F244).
+    pub sea_ice: Field<f32>,
+    pub sea_ice_fraction: f64,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -411,7 +415,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 180;
+pub const FINISH_VERSION: u64 = 181;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3015,6 +3019,44 @@ pub fn finish(
             100.0 * shadow_fraction
         );
     }
+    // The sea's year beside its land (F244): its ice at the snapshot's season, exported and
+    // reported, not drawn while the climate's ice line stands near 60°, where the sea then
+    // freezes through most of its year; the map keeps the climate's temperatures.
+    let mut sea_ice = Field::new(grid);
+    let mut sea_ice_fraction = 0.0;
+    if let Some(ocean) = crate::climate::Ocean::from_graph(graph)
+        && sea_level.is_finite()
+    {
+        let wet = Field::from_fn(
+            grid,
+            |c, _| {
+                if layers.liquid.get(c) > 0.0 { 1.0 } else { 0.0 }
+            },
+        );
+        let share = crate::climate::coarsen(&wet, climate.temperature.grid());
+        let sea = (&ocean, &share);
+        let seas = balance.seas(&climate, &ground, &cycle, sea, downscale.exchange);
+        let mut covered = 0.0;
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            if layers.liquid.get(c) <= 0.0 {
+                continue;
+            }
+            let mass = seas.ice_at(grid.center(c)).max(0.0);
+            sea_ice.as_mut_slice()[k] = mass as f32;
+            if mass > SEA_ICE_COVER_MASS * std::f64::consts::LN_2 {
+                covered += grid.cell_area(c);
+            }
+        }
+        sea_ice_fraction = covered / (4.0 * std::f64::consts::PI);
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            eprintln!(
+                "seas: ice over {:.2}% of the body at the snapshot, the sea's mean {:.1} K",
+                100.0 * sea_ice_fraction,
+                crate::climate::bands(&seas.mean).0
+            );
+        }
+    }
     let (frost, albedo) = match cycle.frost {
         Some(f) => {
             let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &height, sea_level);
@@ -3067,6 +3109,8 @@ pub fn finish(
         traps,
         caps: laid,
         shadow_fraction,
+        sea_ice,
+        sea_ice_fraction,
         rays,
         sea_level,
         ocean_fraction,

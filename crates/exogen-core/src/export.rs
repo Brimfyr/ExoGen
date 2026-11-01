@@ -319,6 +319,8 @@ pub fn export(
         "frost.png",
         "ice.exr",
         "ice.png",
+        "sea_ice.exr",
+        "sea_ice.png",
         "units.png",
         "sidecar.json",
     ] {
@@ -648,6 +650,46 @@ pub fn export(
         },
     );
 
+    // The sea's ice at the snapshot's season (F244).
+    let sea_eq = to_equirectangular(&grid, out.sea_ice.as_slice(), width, height_px);
+    let (smin, smax) = min_max(&sea_eq);
+    let sea_units = "kg/m² of the sea's ice at the snapshot's season";
+    write_exr_f32(
+        &settings.dir.join("sea_ice.exr"),
+        width,
+        height_px,
+        "sea_ice",
+        &sea_eq,
+    )?;
+    maps.insert(
+        "sea_ice".to_string(),
+        MapInfo {
+            file: "sea_ice.exr".into(),
+            encoding: "float32 EXR".into(),
+            units: sea_units.into(),
+            min: smin as f64,
+            max: smax as f64,
+        },
+    );
+    write_png16(
+        &settings.dir.join("sea_ice.png"),
+        width,
+        height_px,
+        &sea_eq,
+        smin,
+        smax,
+    )?;
+    maps.insert(
+        "sea_ice_png".to_string(),
+        MapInfo {
+            file: "sea_ice.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: sea_units.into(),
+            min: smin as f64,
+            max: smax as f64,
+        },
+    );
+
     // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
     let unit_eq: Vec<u8> = (0..width * height_px)
@@ -779,6 +821,7 @@ pub fn export(
     stage_outputs.insert("coldest_temperature_k".to_string(), out.temperature_range.0);
     // The poles' shadows (F243): the share of the body in them and the coldest the map holds.
     stage_outputs.insert("shadow_fraction".to_string(), out.shadow_fraction);
+    stage_outputs.insert("sea_ice_fraction".to_string(), out.sea_ice_fraction);
     let mapped = out
         .temperature
         .as_slice()

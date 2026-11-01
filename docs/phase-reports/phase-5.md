@@ -1,6 +1,6 @@
 # Phase 5 report: atmosphere, climate, volatiles and erosion
 
-Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240), the caps of the inventory's ices (F241) and the frost's own gas's (F242), and the poles' shadows (F243).
+Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240), the caps of the inventory's ices (F241) and the frost's own gas's (F242), the poles' shadows (F243) and the sea's heat and its ice (F244).
 
 Phase 5 gives the bodies their air, their weather's long average, their volatiles and the processes that wear a surface down: sunlight and the temperature it makes on every body, seas, caps and cold traps from the inventory, rivers, glaciers, wind, dust, sand and the chemistry that colours them. The plan (PLAN.md, Phase 5) runs it as seven sub-phases in order, each with its own gate and review: 5A climate on every body, 5B volatiles, 5C water and ice at work, 5D dust, sand and chemistry, 5E surface physics on every body, 5F Io and Thaumasia, 5G weather and clouds. Mars, Titan and Pluto are its test bodies for the look; an Earth-like and a tidally locked ocean world give the climate its numbers.
 
@@ -144,3 +144,16 @@ How it went:
 - **The sun at a pole.** Near a pole the sun's azimuth is its hour angle, and at the solstice it stands highest toward the equator, at the colatitude and the tilt; a place is shadowed where its horizon in each direction stands over the sun's highest there, the disc's top included, and the equator's direction, where the sun stands highest, is tried first.
 - **Too many shadows on the Moon.** Its shadowed share comes to some three times the measured: near the pole, where the sun climbs under 3°, a cell a few hundred metres lower than its neighbours is shadowed, and the finish's cells, some 5 km, do not resolve the smallest craters that hold most of the Moon's shadow.
 - **The renders.** The Moon, Mercury, Ceres and Callisto rendered at 2,048 px take their shadows in their temperatures alone; Mars, tilted 25°, is byte-identical.
+
+## The eleventh milestone: the sea's heat and its ice
+
+- **F244.** A sea of water runs its own year, its 50 m mixed layer holding its seasons and freezing ice that grows and melts by Semtner's thermodynamics; the air over a place mixes its land's and its sea's. The Earth-like's sea at 45° swings 8 K where its land swings 80; its sea ice stands at the end of its northern winter from some 60° to the pole. The ice is exported and reported, not drawn: the climate's ice line near 60° leaves a belt of it there.
+
+How it went:
+
+- **Ice that never melted.** Its top held at the freezing point, as the frost's is, the ice grew some 10 m a winter and never melted; as Semtner's zero layers, its top cooled under its snow, and the air's heat and its melting ice's albedo let the summer take it back.
+- **The land's air.** The ice's air at first was its land's, the continent's winter: the sea at 45° froze. The air over a place now mixes its land's and its sea's by their shares, and a sea that is most of its latitude keeps its own.
+- **The climate's transport.** Laid on the ice's top, the transport radiated away and left the ice 10 to 13 m thick at 55° south, where the Southern Ocean stands open; through the sea's water, as a slab ocean's heat transport comes, it melts the ice's base. Where the climate's ice line stands, near 60°, the ice still keeps most of the year.
+- **A belt of ice near 60°.** Drawn, the Earth-like's sea ice covered 14.9 percent of the body in March, four times Earth's: a belt near 60° in both hemispheres, around an open southern polar sea melted by its polar day, and the map's mean fell 2.1 K under the 5A gate's. The climate's year's balance there stands at 268 K, its ice line (F235); the sea's year follows it. A restoring toward that balance would only hold it frozen: the ice is exported, not drawn, and the map keeps the climate's temperatures, until the ice line stands where Earth's does.
+- **A world frozen on average.** The locked ocean world, an Earth-like locked to an M dwarf at 0.0485 AU, takes 0.44 of Earth's sunlight and stands at 209.5 K on average, its water solid at its mean: it has no sea. Its sea waits on the working liquid read from the local climate, the next milestone.
+- **The renders.** The Earth-like rendered at 2,048 px is byte-identical to the last renders in every map, its ice exported in sea_ice.exr alone; Mars and the Moon, without seas, likewise.

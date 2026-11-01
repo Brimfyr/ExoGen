@@ -80,6 +80,8 @@ pub struct Climate {
     pub absorbed: Field<f32>,
     /// The albedo at the year's mean temperature.
     pub albedo: Field<f32>,
+    /// The albedo without its ice and snow (F244).
+    pub ground_albedo: Field<f32>,
     /// The heat the atmosphere brings the cell, W/m² (negative where it carries heat away).
     pub transport: Field<f32>,
     /// Newton's steps to converge.
@@ -185,6 +187,84 @@ impl Frost {
             saturation_temperature(self.volatile, partial)
         }
     }
+}
+
+/// A sea's mixed layer and the ice that forms on it (F244): the layer's heat capacity,
+/// J/m²/K; the sea's freezing point, K; its ice's latent heat of fusion, J/kg, density,
+/// kg/m³, and conductivity, W/m/K; the heat the sea brings the ice's base, W/m²; and the
+/// ice's colour, the albedo its mean.
+#[derive(Clone, Copy, Debug)]
+pub struct Ocean {
+    pub capacity: f64,
+    pub freezing: f64,
+    pub latent: f64,
+    pub density: f64,
+    pub conductivity: f64,
+    pub base_flux: f64,
+    pub colour: [f32; 3],
+}
+
+impl Ocean {
+    /// The body's sea where its working liquid is water (F244): its mixed layer
+    /// OCEAN_MIXED_LAYER_M deep, freezing SEA_SALT_DEPRESSION_K under pure water's point as
+    /// Earth's salt water does; the ices of other seas wait on their own constants.
+    pub fn from_graph(graph: &ParamGraph) -> Option<Self> {
+        if graph.str("volatiles.working_liquid") != "water" {
+            return None;
+        }
+        let water = volatile("H2O")?;
+        Some(Self {
+            capacity: water.liquid_density * SEA_WATER_HEAT_CAPACITY * OCEAN_MIXED_LAYER_M,
+            freezing: water.t_triple - SEA_SALT_DEPRESSION_K,
+            latent: WATER_FUSION_HEAT,
+            density: ICE_DENSITIES[0].1,
+            conductivity: SEA_ICE_CONDUCTIVITY,
+            base_flux: SEA_ICE_BASE_FLUX,
+            colour: SEA_ICE_COLOUR,
+        })
+    }
+
+    pub fn albedo(&self) -> f64 {
+        (self.colour.iter().sum::<f32>() / 3.0) as f64
+    }
+}
+
+/// A sea's year (F244), on the climate's grid: its surface's mean through the year, its
+/// coldest and warmest, K, its ice at the snapshot's season, kg/m², and the share of the
+/// year ice lies on it.
+#[derive(Clone, Debug)]
+pub struct Seas {
+    pub mean: Field<f32>,
+    pub min: Field<f32>,
+    pub max: Field<f32>,
+    pub ice_now: Field<f32>,
+    pub ice_share: Field<f32>,
+    pub ocean: Ocean,
+    /// The ice at the snapshot's season at each place of the cycle's layout, and the
+    /// layout's longitudes, a fast spinner's one.
+    ice_rows: Vec<f64>,
+    n_lon: usize,
+}
+
+impl Seas {
+    /// The sea's ice at the snapshot's season in a direction, kg/m², read along the cycle's
+    /// latitudes, a resonant body's longitudes too.
+    pub fn ice_at(&self, d: [f64; 3]) -> f64 {
+        let (lon, lat) = lon_lat_from_direction(d);
+        match self.n_lon {
+            1 => read_row(&self.ice_rows, lat),
+            n => read_grid(&self.ice_rows, n, lat, lon),
+        }
+    }
+}
+
+/// A sea's mixed layer at a place (F244): the layer's temperature, K, its ice, kg/m², and
+/// the surface's temperature, the ice's top where it lies.
+#[derive(Clone, Copy, Debug)]
+struct Sea {
+    t: f64,
+    ice: f64,
+    surface: f64,
 }
 
 /// A volatile's ice that can lie on the ground (F240): its gas, its colour and the albedo
@@ -599,6 +679,7 @@ impl EnergyBalance {
                 (flux[k] * (1.0 - reflected[k])) as f32
             }),
             albedo: Field::from_fn(grid, |c, _| reflected[grid.index(c)] as f32),
+            ground_albedo: Field::from_fn(grid, |c, _| base[grid.index(c)] as f32),
             transport: Field::from_fn(grid, |c, _| brought[grid.index(c)] as f32),
             iterations,
         }
@@ -1312,6 +1393,251 @@ impl EnergyBalance {
             }
         }
         traps
+    }
+
+    /// A sea's year at every place of the cycle's layout (F244): a fast spinner's latitudes
+    /// through the year on the day's mean sunlight, a resonant body's places through the
+    /// orbits it repeats in, at each tilt, until they repeat: the sea's mixed layer under its
+    /// sunlight, at the albedo of its open water, the year's balance's without its ice, or of
+    /// its own ice, freezing and melting it (`sea_step`), beside the land about it: the air
+    /// over a place mixes its land's and its sea's by their shares of it, `sea` the sea's on
+    /// the climate's grid, each exchanging heat with it as F237's air does with a slope,
+    /// `exchange` W/m²/K, so that each warms or cools toward the other by the other's share.
+    pub fn seas(
+        &self,
+        climate: &Climate,
+        ground: &Ground,
+        cycle: &Cycle,
+        (ocean, sea): (&Ocean, &Field<f32>),
+        exchange: f64,
+    ) -> Seas {
+        let grid = climate.temperature.grid();
+        let (n_lat, n_lon) = match self.sky.resonance {
+            None => (CYCLE_LATITUDES, 1),
+            Some(_) => CYCLE_RESONANT_GRID,
+        };
+        let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
+        let lon_of = |j: usize| -PI + TAU * j as f64 / n_lon as f64;
+        let frost = cycle.frost.as_ref();
+        let share_at = |lat: f64, lon: f64| {
+            sea.get(sea.grid().locate(direction_from_lon_lat(lon, lat)).0) as f64
+        };
+        // A fast spinner's latitude's sea is its mean around the latitude.
+        let shares: Vec<f64> = (0..n_lat * n_lon)
+            .map(|k| {
+                let (lat, lon) = (lat_of(k / n_lon), lon_of(k % n_lon));
+                match self.sky.resonance {
+                    None => {
+                        (0..SEA_SHARE_LONGITUDES)
+                            .map(|j| share_at(lat, TAU * j as f64 / SEA_SHARE_LONGITUDES as f64))
+                            .sum::<f64>()
+                            / SEA_SHARE_LONGITUDES as f64
+                    }
+                    Some(_) => share_at(lat, lon),
+                }
+            })
+            .collect();
+        let years: Vec<[f64; 5]> = (0..n_lat * n_lon)
+            .into_par_iter()
+            .map(|k| {
+                let (lat, lon) = (lat_of(k / n_lon), lon_of(k % n_lon));
+                let (c, _, _) = grid.locate(direction_from_lon_lat(lon, lat));
+                let share = shares[k];
+                let cell = TrapCell {
+                    lat,
+                    lon,
+                    thin: 1.0,
+                    steady: climate.temperature.get(c) as f64,
+                    albedo: climate.albedo.get(c) as f64,
+                    brought: climate.transport.get(c) as f64,
+                    exchange,
+                };
+                let open = climate.ground_albedo.get(c) as f64;
+                let n = cycle.tilts.len().max(1) as f64;
+                cycle.tilts.iter().enumerate().fold(
+                    [0.0, f64::MAX, f64::MIN, 0.0, 0.0],
+                    |acc, (j, &eps)| {
+                        let partials = cycle.partials.get(j).map_or(&[][..], |p| &p[..]);
+                        let place = (&cell, open, share);
+                        let y = self.sea_year(ground, place, eps, partials, frost, ocean);
+                        [
+                            acc[0] + y[0] / n,
+                            acc[1].min(y[1]),
+                            acc[2].max(y[2]),
+                            acc[3] + y[3] / n,
+                            acc[4] + y[4] / n,
+                        ]
+                    },
+                )
+            })
+            .collect();
+        let field = |j: usize| {
+            let values: Vec<f64> = years.iter().map(|y| y[j]).collect();
+            Field::from_fn(grid, |_, d| {
+                let (lon, lat) = lon_lat_from_direction(d);
+                let value = match self.sky.resonance {
+                    None => read_row(&values, lat),
+                    Some(_) => read_grid(&values, n_lon, lat, lon),
+                };
+                value as f32
+            })
+        };
+        Seas {
+            mean: field(0),
+            min: field(1),
+            max: field(2),
+            ice_now: field(3),
+            ice_share: field(4),
+            ocean: *ocean,
+            ice_rows: years.iter().map(|y| y[3]).collect(),
+            n_lon,
+        }
+    }
+
+    /// A sea's year at a place and tilt (F244), beside the land about it at the place's
+    /// year's balance: its surface's mean, coldest and warmest, its ice at the snapshot's
+    /// season and the share of the year it lies, `open` its open water's albedo and `share`
+    /// the sea's share of the place.
+    fn sea_year(
+        &self,
+        ground: &Ground,
+        (cell, open, share): (&TrapCell, f64, f64),
+        eps: f64,
+        partials: &[f64],
+        frost: Option<&Frost>,
+        ocean: &Ocean,
+    ) -> [f64; 5] {
+        let (column, _) = self.trap_column(ground, eps);
+        let (light, _, dt, years) = self.trap_sun(cell, eps);
+        let snapshot = snapshot_step(self.snapshot, (light.len() as f64 / years) as usize);
+        let (mut work, mut trial) = (Work::new(column.len()), Trial::new(column.len()));
+        let mut air = vec![cell.steady; column.len()];
+        let mut air_mass = 0.0;
+        let mut sea = Sea {
+            t: cell.steady.max(ocean.freezing),
+            ice: 0.0,
+            surface: cell.steady,
+        };
+        let steps = light.len() as f64;
+        let mut year = [0.0; 5];
+        let mut last = f64::NAN;
+        for _ in 0..CYCLE_MAX_YEARS {
+            year = [0.0, f64::MAX, f64::MIN, 0.0, 0.0];
+            let mut sums = vec![0.0; air.len()];
+            for (k, &lit) in light.iter().enumerate() {
+                // The land about the sea, its air warming or cooling toward the sea's by the
+                // sea's share of the place.
+                let (toward, by) = (sea.surface, cell.exchange * share);
+                let shed = move |t: f64| {
+                    let (r, slope) = self.olr_and_slope(t);
+                    (r + by * (t - toward), slope + by)
+                };
+                let bare = (1.0 - cell.albedo) * lit + cell.brought;
+                match cell.laid(frost, partials, k) {
+                    Some(f) => {
+                        let frosted = (1.0 - f.albedo) * lit + cell.brought.max(0.0);
+                        let rows = (&mut work, &mut trial);
+                        let gains = (bare, frosted);
+                        let heat = self.heat_flux;
+                        column.frosty_step(
+                            &mut air,
+                            rows,
+                            dt,
+                            gains,
+                            heat,
+                            shed,
+                            &f,
+                            &mut air_mass,
+                        );
+                    }
+                    None => column.step(&mut air, &mut work, dt, bare, self.heat_flux, shed),
+                }
+                for (s, v) in sums.iter_mut().zip(&air) {
+                    *s += v;
+                }
+                let land = (air[0], cell.exchange * (1.0 - share));
+                self.sea_step(&mut sea, dt, (lit, open, cell.brought), land, ocean);
+                year[0] += sea.surface / steps;
+                year[1] = year[1].min(sea.surface);
+                year[2] = year[2].max(sea.surface);
+                if k == snapshot {
+                    year[3] = sea.ice;
+                }
+                if sea.ice > 0.0 {
+                    year[4] += 1.0 / steps;
+                }
+            }
+            settle(&mut air, &sums, light.len());
+            if (year[0] - last).abs() < CYCLE_SETTLED_K {
+                break;
+            }
+            last = year[0];
+        }
+        year
+    }
+
+    /// One step of a sea's mixed layer and its ice (F244), lit by `lit` W/m², its open water
+    /// at `open` albedo, brought `brought` W/m² by the air's transport, under air at `air` K
+    /// exchanging `exchange` W/m²/K with it. Open, the layer takes its gain, radiates and
+    /// exchanges with the air, implicitly; cooled past its freezing point, the cold it is
+    /// left with freezes ice at the ice's latent heat, and the layer stays at the point.
+    /// Under ice, the ice's top stands where its sunlight, its radiation, the air's heat and
+    /// the heat conducted up through the ice balance (Semtner 1976's zero layers), above the
+    /// point no further, its excess there melting the ice from the top; the ice reflects at
+    /// its snow's albedo while its top is cold and at its melting ice's once it melts; it
+    /// grows at its base by what it conducts, less what the sea brings it, the transport's
+    /// heat with it: the climate's transport reaches a sea through its water, open or under
+    /// ice, as a slab ocean's heat transport does; ice melted through gives the layer the
+    /// rest.
+    fn sea_step(
+        &self,
+        sea: &mut Sea,
+        dt: f64,
+        (lit, open, brought): (f64, f64, f64),
+        (air, exchange): (f64, f64),
+        ocean: &Ocean,
+    ) {
+        let open = (1.0 - open) * lit + brought;
+        let melting = sea.surface >= ocean.freezing - SEA_ICE_MELT_MARGIN_K;
+        let albedo = if melting {
+            SEA_ICE_MELT_ALBEDO
+        } else {
+            ocean.albedo()
+        };
+        let frozen = (1.0 - albedo) * lit;
+        let below = ocean.base_flux + brought;
+        if sea.ice <= 0.0 {
+            let (r, slope) = self.olr_and_slope(sea.t);
+            let gain = open - r + exchange * (air - sea.t);
+            let t = sea.t + dt * gain / (ocean.capacity + dt * (slope + exchange));
+            if t >= ocean.freezing {
+                (sea.t, sea.surface) = (t, t);
+                return;
+            }
+            sea.ice = ocean.capacity * (ocean.freezing - t) / ocean.latent;
+            (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
+            return;
+        }
+        let through = ocean.conductivity / (sea.ice / ocean.density).max(SEA_ICE_THINNEST_M);
+        let mut top = sea.surface.min(ocean.freezing);
+        for _ in 0..SEA_ICE_NEWTON_STEPS {
+            let (r, slope) = self.olr_and_slope(top);
+            let gap = frozen - r + exchange * (air - top) + through * (ocean.freezing - top);
+            top = (top + gap / (slope + exchange + through)).max(COSMIC_BACKGROUND_K);
+        }
+        let mut melted = 0.0;
+        if top > ocean.freezing {
+            top = ocean.freezing;
+            let left = frozen - self.olr(top) + exchange * (air - top);
+            melted = left.max(0.0) * dt / ocean.latent;
+        }
+        let grown = (through * (ocean.freezing - top) - below) * dt / ocean.latent;
+        sea.ice += grown - melted;
+        sea.surface = top;
+        if sea.ice < 0.0 {
+            sea.t = ocean.freezing - sea.ice * ocean.latent / ocean.capacity;
+            (sea.ice, sea.surface) = (0.0, sea.t);
+        }
     }
 
     /// A cell's sunlight through its cycle at a tilt (F240): a fast spinner's year in
@@ -2990,6 +3316,104 @@ mod tests {
         let (low, high) = (at(vapour, 80.0, -90.0), at(vapour, 80.0, 90.0));
         println!("H2O at 80° north needs {low:.2e} Pa 5 km down, {high:.2e} 5 km up");
         assert!(low < high, "H2O {low} down, {high} up");
+    }
+
+    /// A tidally locked ocean world (F244): the Earth-like moved into an M dwarf's
+    /// habitable zone, at Proxima Centauri b's 0.0485 AU about a star of 0.12 solar masses,
+    /// without its moon or its tilt, its spin locked to its orbit.
+    fn locked_ocean_world() -> ParamGraph {
+        let mut g = crate::presets::preset("Earth").unwrap().to_graph().0;
+        g.set("star.mass", 0.12).unwrap();
+        g.set("orbit.semi_major_axis", 0.0485 * AU).unwrap();
+        g.set("satellite.mass", 0.0).unwrap();
+        g.set("rotation.obliquity", 0.0).unwrap();
+        let period = g.f64("orbit.period");
+        g.set("rotation.period", period).unwrap();
+        g
+    }
+
+    /// A body's sea through its year (F244).
+    fn seas_of(graph: &ParamGraph) -> (Seas, Cycle, Climate) {
+        let eb = EnergyBalance::from_graph(graph);
+        let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+        let cycle = eb.cycle(&climate, &Ground::from_graph(graph));
+        let ocean = Ocean::from_graph(graph).expect("a water sea");
+        let exchange = Downscale::from_graph(graph).exchange;
+        let ground = Ground::from_graph(graph);
+        let share = std::env::var("EXOGEN_SEA_SHARE").map_or(0.7, |v| v.parse().unwrap());
+        let sea = Field::filled(climate.temperature.grid(), share as f32);
+        let seas = eb.seas(&climate, &ground, &cycle, (&ocean, &sea), exchange);
+        (seas, cycle, climate)
+    }
+
+    /// F244: the sea holds its seasons: at the Earth-like's 45° its surface swings by under
+    /// 10 K where its land swings by tens, and stays open the year round; by the end of the
+    /// northern winter its sea ice stands a metre or two thick near the pole (the Arctic's
+    /// March ice some 2 m, Maykut and Untersteiner 1971).
+    #[test]
+    fn the_sea_holds_its_seasons_and_freezes_at_the_pole() {
+        let earth = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let (seas, cycle, _) = seas_of(&earth);
+        let swing = at(&seas.max, 45.0, 0.0) - at(&seas.min, 45.0, 0.0);
+        let land = at(&cycle.max, 45.0, 0.0) - at(&cycle.min, 45.0, 0.0);
+        assert!(swing < 10.0 && land > 40.0, "sea {swing}, land {land}");
+        assert_eq!(at(&seas.ice_share, 45.0, 0.0), 0.0);
+        let pole = at(&seas.ice_now, 85.0, 0.0);
+        assert!((500.0..4000.0).contains(&pole), "ice {pole}");
+    }
+
+    /// Prints the Earth-like's sea by latitude against its land, and the locked ocean
+    /// world's along its equator from its substellar point.
+    #[test]
+    #[ignore = "diagnostic: the seas"]
+    fn print_seas() {
+        let earth = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let (seas, cycle, _) = seas_of(&earth);
+        for lat in [
+            -90.0, -75.0, -60.0, -45.0, -30.0, 0.0, 30.0, 45.0, 60.0, 75.0, 90.0,
+        ] {
+            println!(
+                "Earth {lat:5.0}°: sea {:6.1} K ({:6.1} to {:6.1}), ice now {:8.1} kg/m², {:4.2} of the year; land {:6.1} ({:6.1} to {:6.1})",
+                at(&seas.mean, lat, 0.0),
+                at(&seas.min, lat, 0.0),
+                at(&seas.max, lat, 0.0),
+                at(&seas.ice_now, lat, 0.0),
+                at(&seas.ice_share, lat, 0.0),
+                at(&cycle.mean, lat, 0.0),
+                at(&cycle.min, lat, 0.0),
+                at(&cycle.max, lat, 0.0)
+            );
+        }
+        let world = locked_ocean_world();
+        println!(
+            "locked world: star {:.4} L_sun, insolation {:.1} W/m², mode {}, period {:.2} d, liquid {}, mean {:.1} K",
+            world.f64("star.luminosity"),
+            world.f64("orbit.insolation"),
+            world.str("rotation.mode"),
+            world.f64("orbit.period") / 86400.0,
+            world.str("volatiles.working_liquid"),
+            world.f64("atmosphere.surface_temperature_mean")
+        );
+        if Ocean::from_graph(&world).is_none() {
+            println!("locked world: no sea at its zero-dimensional mean");
+            return;
+        }
+        let (seas, _, climate) = seas_of(&world);
+        for lon in [0.0, 20.0, 40.0, 60.0, 80.0, 100.0, 120.0, 150.0, 180.0] {
+            println!(
+                "locked {lon:5.0}° from the substellar point: steady {:6.1} K, sea {:6.1} K, ice {:9.1} kg/m²",
+                at(&climate.temperature, 0.0, lon),
+                at(&seas.mean, 0.0, lon),
+                at(&seas.ice_now, 0.0, lon)
+            );
+        }
+        for lat in [30.0, 60.0, 89.0] {
+            println!(
+                "locked lat {lat}° at the substellar longitude: sea {:6.1} K, ice {:9.1}",
+                at(&seas.mean, lat, 0.0),
+                at(&seas.ice_now, lat, 0.0)
+            );
+        }
     }
 
     fn downscale_of(name: &str) -> Downscale {

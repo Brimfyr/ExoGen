@@ -1875,6 +1875,31 @@ pub const CAP_YIELD_STRESS: f64 = 50_000.0;
 pub const SHADOW_SUN_LIMIT_DEG: f64 = 20.0;
 pub const SHADOW_AZIMUTHS: usize = 32;
 pub const SHADOW_STEPS: usize = 64;
+/// F244: a sea's mixed layer, OCEAN_MIXED_LAYER_M deep (Earth's 50 to 100 m, de Boyer
+/// Montegut et al. 2004), of salt water's heat capacity, J/kg/K; its salt lowers its
+/// freezing point by SEA_SALT_DEPRESSION_K (Earth's 35 per mille); its ice's latent heat of
+/// fusion, J/kg, and conductivity, W/m/K (Maykut and Untersteiner 1971); the heat the sea
+/// brings the ice's base, W/m² (the Arctic's 2, Maykut and Untersteiner 1971); the ice's
+/// colour under its snow, linear, its albedo some 0.78 (Perovich 1996); the thinnest ice
+/// its conduction reads, m, and the Newton steps that find its top's temperature.
+pub const OCEAN_MIXED_LAYER_M: f64 = 50.0;
+pub const SEA_WATER_HEAT_CAPACITY: f64 = 3_990.0;
+pub const SEA_SALT_DEPRESSION_K: f64 = 1.8;
+pub const WATER_FUSION_HEAT: f64 = 3.34e5;
+pub const SEA_ICE_CONDUCTIVITY: f64 = 2.03;
+pub const SEA_ICE_BASE_FLUX: f64 = 2.0;
+pub const SEA_ICE_COLOUR: [f32; 3] = [0.74, 0.78, 0.82];
+pub const SEA_ICE_THINNEST_M: f64 = 0.01;
+pub const SEA_ICE_NEWTON_STEPS: usize = 8;
+/// F244: the sea ice that hides the sea's colour, kg/m²: some 5 cm, a floe's marginal ice.
+pub const SEA_ICE_COVER_MASS: f64 = 50.0;
+/// F244: the albedo of melting sea ice, its snow wet and its ponds open (the Arctic's
+/// summer 0.5 to 0.6, Perovich et al. 2002), once its top stands within
+/// SEA_ICE_MELT_MARGIN_K of its melting point.
+pub const SEA_ICE_MELT_ALBEDO: f64 = 0.55;
+pub const SEA_ICE_MELT_MARGIN_K: f64 = 0.1;
+/// F244: a fast spinner's latitude's sea is its mean over SEA_SHARE_LONGITUDES longitudes.
+pub const SEA_SHARE_LONGITUDES: usize = 72;
 
 // ---------------------------------------------------------------- volatiles
 
