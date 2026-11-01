@@ -455,11 +455,150 @@ pub struct Cycle {
     pub partials: Vec<Vec<f64>>,
     /// The sea's year, where the body has one (F244).
     pub seas: Option<Seas>,
+    /// The ices that come and go through the year, under an atmosphere (F246).
+    pub cryosphere: Option<Cryosphere>,
     /// The air over each place of the cycle's layout through its last cycle at each tilt,
     /// step after step, K, none on an airless body; and the layout's latitudes and
     /// longitudes (F245).
     air: Vec<Vec<f64>>,
     layout: (usize, usize),
+}
+
+/// An ice's window through the year at a place (F246): the phases of the year, its share
+/// from the northern spring equinox, it freezes at and melts out at, 0 and 1 where it lies
+/// all year, its peak, kg/m² (m once brought to a grid), and the phase of its peak; all none
+/// where it never lies.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Window {
+    pub freeze: f64,
+    pub melt: f64,
+    pub peak: f64,
+    pub at: f64,
+}
+
+impl Window {
+    /// Whether the ice lies all year.
+    pub fn perennial(&self) -> bool {
+        self.peak > 0.0 && self.freeze == 0.0 && self.melt == 1.0
+    }
+
+    /// The window an ice lies in through a cycle of `masses`, one at the end of each step
+    /// (F246), a mass past `cover` counting as lying, as half the ground's colour hidden:
+    /// the longest run of steps it lies through, which it freezes in the middle of its first
+    /// and melts in the middle of the step after its last; its peak the most it holds in
+    /// that run. `phase` takes a time in steps from the cycle's start to
+    /// the phase of the year.
+    fn of(masses: &[f32], cover: f64, phase: impl Fn(f64) -> f64) -> Window {
+        let n = masses.len();
+        let lying: Vec<bool> = masses.iter().map(|&m| m as f64 > cover).collect();
+        let count = lying.iter().filter(|&&l| l).count();
+        let peak_in = |steps: &mut dyn Iterator<Item = usize>| {
+            steps
+                .map(|k| (k, masses[k] as f64))
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .unwrap_or((0, 0.0))
+        };
+        if count == 0 {
+            return Window::default();
+        }
+        if count == n {
+            let (k, peak) = peak_in(&mut (0..n));
+            return Window {
+                freeze: 0.0,
+                melt: 1.0,
+                peak,
+                at: phase(k as f64 + 1.0),
+            };
+        }
+        // The longest run, from a step it does not lie in round the cycle.
+        let open = lying.iter().position(|&l| !l).unwrap_or(0);
+        let (mut best, mut longest, mut start, mut run) = (0, 0, 0, 0);
+        for j in 1..=n {
+            let k = (open + j) % n;
+            if lying[k] {
+                if run == 0 {
+                    start = k;
+                }
+                run += 1;
+                if run > longest {
+                    (best, longest) = (start, run);
+                }
+            } else {
+                run = 0;
+            }
+        }
+        let (k, peak) = peak_in(&mut (0..longest).map(|j| (best + j) % n));
+        Window {
+            freeze: phase(best as f64 + 0.5),
+            melt: phase((best + longest) as f64 + 0.5),
+            peak,
+            at: phase(k as f64 + 1.0),
+        }
+    }
+}
+
+/// The ices that come and go through the year (F246): at each place of the cycle's layout
+/// its land's frost's window and its sea's ice's, and the phase of the snapshot's season.
+#[derive(Clone, Debug)]
+pub struct Cryosphere {
+    land: Vec<Window>,
+    sea: Vec<Window>,
+    layout: (usize, usize),
+    /// The phase of the year of the snapshot's season.
+    pub snapshot: f64,
+}
+
+impl Cryosphere {
+    /// Whether an ice, its land's frost or, `sea`, its sea's ice, lies anywhere in the year.
+    pub fn holds(&self, sea: bool) -> bool {
+        let windows = if sea { &self.sea } else { &self.land };
+        windows.iter().any(|w| w.peak > 0.0)
+    }
+
+    /// The window of an ice in a direction (F246), its land's frost's or, `sea`, its sea's
+    /// ice's: its peak read between the cycle's places, as its mass is, and its phases those
+    /// of the places it lies at, by their weights, on the circle of the year; all year where
+    /// the nearest of them holds it all year.
+    pub fn at(&self, d: [f64; 3], sea: bool) -> Window {
+        let (lon, lat) = lon_lat_from_direction(d);
+        let windows = if sea { &self.sea } else { &self.land };
+        let corners = reader(self.layout.0, self.layout.1, lat, lon);
+        let peak: f64 = corners.iter().map(|&(p, w)| w * windows[p].peak).sum();
+        let lying: Vec<(f64, Window)> = corners
+            .iter()
+            .filter(|&&(p, w)| w > 0.0 && windows[p].peak > 0.0)
+            .map(|&(p, w)| (w, windows[p]))
+            .collect();
+        let Some(&(_, nearest)) = lying.iter().max_by(|a, b| a.0.total_cmp(&b.0)) else {
+            return Window::default();
+        };
+        let circular = |among: &[(f64, Window)], pick: fn(&Window) -> f64| {
+            let (s, c) = among.iter().fold((0.0, 0.0), |(s, c), (w, window)| {
+                let angle = TAU * pick(window);
+                (s + w * angle.sin(), c + w * angle.cos())
+            });
+            (s.atan2(c) / TAU).rem_euclid(1.0)
+        };
+        let (freeze, melt) = if nearest.perennial() {
+            (0.0, 1.0)
+        } else {
+            let seasonal: Vec<(f64, Window)> = lying
+                .iter()
+                .copied()
+                .filter(|(_, w)| !w.perennial())
+                .collect();
+            (
+                circular(&seasonal, |w| w.freeze),
+                circular(&seasonal, |w| w.melt),
+            )
+        };
+        Window {
+            freeze,
+            melt,
+            peak,
+            at: circular(&lying, |w| w.at),
+        }
+    }
 }
 
 /// A place's year: its land's mean, warmest and coldest temperature, the share of the year
@@ -486,6 +625,9 @@ struct TiltYear {
     growth: Option<f64>,
     partials: Vec<f64>,
     air: Vec<f64>,
+    /// Each place's frost and its sea's ice at the end of each step, kg/m², place after
+    /// place (F246).
+    masses: [Vec<f32>; 2],
 }
 
 /// The lockstep through its last cycle (F239, F245): the places' runs; where the atmosphere
@@ -498,6 +640,9 @@ struct Lockstep {
     growth: Option<f64>,
     partials: Vec<f64>,
     air: Vec<f64>,
+    /// Each place's frost and its sea's ice at the end of each step, kg/m², place after
+    /// place (F246).
+    masses: [Vec<f32>; 2],
 }
 
 impl Year {
@@ -844,6 +989,7 @@ impl EnergyBalance {
                     growth: None,
                     partials: Vec::new(),
                     air: Vec::new(),
+                    masses: [Vec::new(), Vec::new()],
                 })
                 .collect()
         };
@@ -896,6 +1042,40 @@ impl EnergyBalance {
                 value as f32
             })
         };
+        // The ices' windows: each place's masses through its cycle, the tilts' mean step by
+        // step, the phase of the year counted from the northern spring equinox.
+        let places = n_lat * n_lon;
+        let steps = each
+            .first()
+            .map_or(0, |e| e.masses[0].len() / places.max(1));
+        let cryosphere = (steps > 0).then(|| {
+            let orbits = self.sky.resonance.map_or(1, |(_, q)| q) as f64;
+            let e = self.sky.eccentricity;
+            let equinox = snapshot_anomaly(0.0, self.sky.perihelion_season, e) / TAU / orbits;
+            let phase = |t: f64| (t / steps as f64 - equinox).rem_euclid(1.0);
+            let windows = |j: usize, cover: f64| -> Vec<Window> {
+                (0..places)
+                    .map(|p| {
+                        let span = p * steps..(p + 1) * steps;
+                        let masses: Vec<f32> = (0..steps)
+                            .map(|k| {
+                                each.iter()
+                                    .map(|t| t.masses[j][span.start + k])
+                                    .sum::<f32>()
+                                    / each.len() as f32
+                            })
+                            .collect();
+                        Window::of(&masses, cover, phase)
+                    })
+                    .collect()
+            };
+            Cryosphere {
+                land: windows(0, FROST_COVER_MASS * std::f64::consts::LN_2),
+                sea: windows(1, SEA_ICE_COVER_MASS * std::f64::consts::LN_2),
+                layout: (n_lat, n_lon),
+                snapshot: (self.snapshot / TAU / orbits - equinox).rem_euclid(1.0),
+            }
+        });
         let seas = ocean.map(|ocean| Seas {
             mean: field(|y| y.sea[0]),
             min: field(|y| y.sea[1]),
@@ -923,6 +1103,7 @@ impl EnergyBalance {
             tilts,
             partials: each.iter().map(|e| e.partials.clone()).collect(),
             seas,
+            cryosphere,
             air: each.into_iter().map(|e| e.air).collect(),
             layout: (n_lat, n_lon),
         }
@@ -1138,6 +1319,7 @@ impl EnergyBalance {
             growth: lockstep.growth,
             partials: lockstep.partials,
             air: lockstep.air,
+            masses: lockstep.masses,
         }
     }
 
@@ -1183,6 +1365,7 @@ impl EnergyBalance {
             growth: lockstep.growth.map(|g| g / orbits.max(1) as f64),
             partials: lockstep.partials,
             air: lockstep.air,
+            masses: lockstep.masses,
         }
     }
 
@@ -1234,7 +1417,7 @@ impl EnergyBalance {
         let partial = |air: f64| frost.map_or(0.0, |f| f.partial * air.max(0.0) / column_gas);
         let mut runs: Vec<Run> = places
             .iter()
-            .map(|p| Run::new(column.len(), p, ocean))
+            .map(|p| Run::new((column.len(), steps), p, ocean))
             .collect();
         let mut air: Vec<f64> = places.iter().map(|p| p.steady).collect();
         let mut series = vec![0.0; steps * n];
@@ -1379,12 +1562,21 @@ impl EnergyBalance {
             let others = (self.pressure - f.partial).max(0.0);
             (others + range.0, others + range.1)
         });
+        let masses = [
+            runs.iter()
+                .flat_map(|r| r.masses[0].iter().copied())
+                .collect(),
+            runs.iter()
+                .flat_map(|r| r.masses[1].iter().copied())
+                .collect(),
+        ];
         Lockstep {
             runs,
             range,
             growth: frost.map(|_| growth),
             partials,
             air: series,
+            masses,
         }
     }
 
@@ -2149,6 +2341,62 @@ impl Downscale {
         })
     }
 
+    /// The ices' windows on a grid (F246): a sea's ice's where the grid's liquid lies, its
+    /// peak's thickness, m, at `densities.1`; a land's frost's where `frost` reads its frost,
+    /// the place its slope faces where its own sunlight rules it, its peak's thickness brought
+    /// there as the frost is, at `densities.0`. Each its freeze and melt phases, its peak's
+    /// thickness and its peak's phase, a field apiece.
+    pub fn seasons(
+        &self,
+        cryosphere: &Cryosphere,
+        mean: &Field<f32>,
+        (height, liquid): (&Field<f32>, &Field<f32>),
+        densities: (f64, f64),
+    ) -> [Field<f32>; 4] {
+        let src = mean.grid();
+        let warmth = PaddedField::new(&src, mean.as_slice());
+        let grid = height.grid();
+        let windows: Vec<Window> = (0..grid.cell_count())
+            .into_par_iter()
+            .map(|k| {
+                let c = grid.cell(k);
+                let d = grid.center(c);
+                if liquid.get(c) > 0.0 {
+                    let w = cryosphere.at(d, true);
+                    return Window {
+                        peak: w.peak / densities.1,
+                        ..w
+                    };
+                }
+                let flat = cryosphere.at(d, false);
+                let facing = cryosphere.at(surface_normal(height, c, d, self.radius), false);
+                let keep = self.keep(sample_bilinear(&src, &warmth, d) as f64);
+                let peak = (flat.peak + keep * (facing.peak - flat.peak)).max(0.0);
+                let read = if (keep > 0.5 && facing.peak > 0.0) || flat.peak <= 0.0 {
+                    facing
+                } else {
+                    flat
+                };
+                if peak <= 0.0 || read.peak <= 0.0 {
+                    return Window::default();
+                }
+                Window {
+                    peak: peak / densities.0,
+                    ..read
+                }
+            })
+            .collect();
+        let field = |pick: fn(&Window) -> f64| {
+            Field::from_fn(grid, |c, _| pick(&windows[grid.index(c)]) as f32)
+        };
+        [
+            field(|w| w.freeze),
+            field(|w| w.melt),
+            field(|w| w.peak),
+            field(|w| w.at),
+        ]
+    }
+
     pub fn apply(&self, climate: &Field<f32>, height: &Field<f32>, sea_level: f64) -> Field<f32> {
         let grid = height.grid();
         let src = climate.grid();
@@ -2563,10 +2811,12 @@ struct Run {
     ice_now: f64,
     /// The steps recorded.
     records: Vec<Record>,
+    /// The frost and the sea's ice at the end of each step of the cycle, kg/m² (F246).
+    masses: [Vec<f32>; 2],
 }
 
 impl Run {
-    fn new(n: usize, place: &Place, ocean: Option<&Ocean>) -> Self {
+    fn new((n, steps): (usize, usize), place: &Place, ocean: Option<&Ocean>) -> Self {
         let sea = ocean.filter(|_| place.sea > 0.0).map(|o| {
             let t = place.steady.max(o.freezing);
             Sea {
@@ -2596,6 +2846,7 @@ impl Run {
             iced: 0,
             ice_now: 0.0,
             records: Vec::new(),
+            masses: [vec![0.0; steps], vec![0.0; steps]],
         }
     }
 
@@ -2645,6 +2896,8 @@ impl Run {
         if k == snapshot {
             self.now = self.mass;
         }
+        self.masses[0][k] = self.mass as f32;
+        self.masses[1][k] = self.sea.map_or(0.0, |s| s.ice) as f32;
         if every > 0 && k.is_multiple_of(every) {
             self.records.push(Record {
                 k,
@@ -4002,6 +4255,82 @@ mod tests {
             assert!((0.2..0.8).contains(&share), "{lat}: {share}");
         }
         assert_eq!(at(&seas.ice_share, 45.0, 0.0), 0.0);
+    }
+
+    /// F246: an ice's window through the year: the longest run of steps it lies through,
+    /// round the cycle's end, its phases from the northern spring equinox; all year as 0 and
+    /// 1; none where it never lies.
+    #[test]
+    fn an_ice_s_window_is_its_longest_run() {
+        let phase = |t: f64| (t / 10.0 - 0.25).rem_euclid(1.0);
+        // Lying from step 8 round to step 2, its most at step 0; a shorter run at 5.
+        let masses = [9.0f32, 5.0, 2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 1.0, 4.0];
+        let w = Window::of(&masses, 0.5, phase);
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(near(w.freeze, 0.6) && near(w.melt, 0.1), "{w:?}");
+        assert!(near(w.peak, 9.0) && near(w.at, 0.85), "{w:?}");
+        let all = Window::of(
+            &[2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            0.5,
+            phase,
+        );
+        assert!(all.perennial() && near(all.at, 0.85), "{all:?}");
+        assert_eq!(Window::of(&[0.1; 10], 0.5, phase), Window::default());
+    }
+
+    /// F246: the ices come and go with the seasons: Mars's northern carbon dioxide frost at
+    /// 70° north freezes in its autumn and melts out in its spring, its peak near the end of
+    /// its winter, its southern frost half a year off (James et al. 1992); the Earth-like's
+    /// sea ice at 65° north freezes in its autumn and melts out in its summer, its polar ice
+    /// lying all year.
+    #[test]
+    fn the_ices_come_and_go_with_the_seasons() {
+        let (cycle, _) = cycle_of("Mars");
+        let cryo = cycle.cryosphere.as_ref().expect("Mars's frost");
+        let at =
+            |lat: f64, sea: bool| cryo.at(direction_from_lon_lat(0.0, f64::to_radians(lat)), sea);
+        let (north, south) = (at(70.0, false), at(-70.0, false));
+        println!("Mars 70° north {north:?}, south {south:?}");
+        assert!(north.peak > 100.0 && !north.perennial(), "{north:?}");
+        assert!((0.45..0.85).contains(&north.freeze), "{north:?}");
+        assert!((0.05..0.4).contains(&north.melt), "{north:?}");
+        let gap = (south.at - north.at).rem_euclid(1.0);
+        assert!((0.3..0.7).contains(&gap), "{north:?} {south:?}");
+        let (cycle, _) = cycle_of("Earth");
+        let cryo = cycle.cryosphere.as_ref().expect("the Earth-like's sea ice");
+        let at = |lat: f64| cryo.at(direction_from_lon_lat(0.0, f64::to_radians(lat)), true);
+        let (seasonal, polar) = (at(65.0), at(88.0));
+        println!("Earth's sea 65° north {seasonal:?}, 88° {polar:?}");
+        assert!(
+            !seasonal.perennial() && seasonal.peak > 100.0,
+            "{seasonal:?}"
+        );
+        assert!((0.5..0.95).contains(&seasonal.freeze), "{seasonal:?}");
+        assert!((0.2..0.6).contains(&seasonal.melt), "{seasonal:?}");
+        assert!(polar.perennial(), "{polar:?}");
+    }
+
+    /// Prints the Earth-like's sea ice through its year near its north pole, kg/m², every
+    /// fourth step from perihelion, over its sea at every latitude (EXOGEN_SEA_SHARE).
+    #[test]
+    #[ignore = "diagnostic: the sea ice's year"]
+    fn print_sea_series() {
+        let earth = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&earth);
+        let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+        let (ocean, share) = sea_of(&earth).unwrap();
+        let layout = eb.layout(&climate, Some(&share));
+        let ground = Ground::from_graph(&earth);
+        let year = eb.seasonal_years(&ground, &layout, eb.sky.obliquity, Some(&ocean));
+        let steps = year.masses[1].len() / layout.places.len();
+        for lat in [89.0f64, 85.0, 80.0, 75.0, 70.0] {
+            let i = ((lat + 90.0) / 2.0).round() as usize;
+            let row: Vec<String> = (0..steps)
+                .step_by(4)
+                .map(|k| format!("{:.0}", year.masses[1][i * steps + k]))
+                .collect();
+            println!("{lat}: {}", row.join(" "));
+        }
     }
 
     /// Prints the Earth-like's sea by latitude against its land, and the locked ocean

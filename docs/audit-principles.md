@@ -570,6 +570,8 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | the sea's ice reflecting as the year's balance's ice (F245) | stated: ICE_ALBEDO, the planetary albedo over ice and snow | the ice's own snow and ponds through the season |
 | a resonant body under air stepped at CYCLE_YEAR_STEPS an orbit, or CYCLE_DAY_STEPS a solar day (F245) | a stated choice: a fast spinner's steps of its year and its day | — |
 | a trap's air at its cell's height, as much colder as the ground (F245) | stated: F237's height effect, the air near its ground following the ground | the air's own profile over the relief (5G) |
+| an ice's window, the longest run of the year it lies through, past half its colour hidden (F246) | stated: one window a place a year; the cover the drawn maps count | ices that lie twice a year, a window apiece |
+| the cryosphere map's phases, shares of the year's time from the northern spring equinox (F246) | a stated choice: an engine's clock, against the season's solar longitude (`climate.season`) | — |
 | D_EARTH, D_CAP_MULTIPLE (F33, F235) | Earth's transport (Williams and Kasting 1997) and a stated cap at ten times it | the scaling with rotation is Earth's: Titan's poles 0.1 K under its equator against Cassini's 3 K (Jennings et al. 2016), Venus's 6.5 K; a slowly turning atmosphere's single cell with the wind field (5C) |
 | EARLY_TIME_EXPONENTS | stated choices: the orbital period at the snow line, the disc's solids over the area within it (F135) | no body to check; around a red dwarf the snow line where its planets formed is set by its far brighter youth, not by its luminosity today |
 

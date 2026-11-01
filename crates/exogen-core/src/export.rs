@@ -321,6 +321,8 @@ pub fn export(
         "ice.png",
         "sea_ice.exr",
         "sea_ice.png",
+        "cryosphere.exr",
+        "cryosphere.png",
         "units.png",
         "sidecar.json",
     ] {
@@ -690,6 +692,64 @@ pub fn export(
         },
     );
 
+    // The ices that come and go through the year (F246): R the phase of the year they freeze
+    // at and G the phase they melt out at, from the northern spring equinox, 0 and 1 where
+    // they lie all year; B their thickness at their peak; A the phase of their peak. The
+    // phases nearest cell per pixel, so that a window round the year's end is not blended
+    // through its middle; the thickness bilinear.
+    let cryo: Vec<Vec<f32>> = out
+        .cryosphere
+        .iter()
+        .enumerate()
+        .map(|(j, f)| match j {
+            2 => to_equirectangular(&grid, f.as_slice(), width, height_px),
+            _ => to_equirectangular_nearest(&grid, f.as_slice(), width, height_px),
+        })
+        .collect();
+    let thickest = cryo[2].iter().fold(0.0f32, |a, &v| a.max(v));
+    let ices = if out.cryosphere_ices.is_empty() {
+        "none".to_string()
+    } else {
+        out.cryosphere_ices.join(", ")
+    };
+    let cryo_units = format!(
+        "phases are shares of the year's time from the northern spring equinox: R the phase an ice freezes at, G the phase it melts out at, R 0 and G 1 where it lies all year, the ice lying from R round to G; B m of the ice at its peak; A the phase of its peak; the ices: {ices}"
+    );
+    write_exr_channels(
+        &settings.dir.join("cryosphere.exr"),
+        (width, height_px),
+        "cryosphere",
+        &["R", "G", "B", "A"],
+        &cryo,
+    )?;
+    maps.insert(
+        "cryosphere".to_string(),
+        MapInfo {
+            file: "cryosphere.exr".into(),
+            encoding: "float32 EXR, channels R, G, B, A".into(),
+            units: cryo_units.clone(),
+            min: 0.0,
+            max: thickest as f64,
+        },
+    );
+    write_png_rgba16(
+        &settings.dir.join("cryosphere.png"),
+        (width, height_px),
+        &cryo,
+        thickest,
+    )?;
+    maps.insert(
+        "cryosphere_png".to_string(),
+        MapInfo {
+            file: "cryosphere.png".into(),
+            encoding: "16-bit RGBA PNG: R, G and A phases from 0 to 1, B linear from 0 to max"
+                .into(),
+            units: cryo_units,
+            min: 0.0,
+            max: thickest as f64,
+        },
+    );
+
     // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
     let unit_eq: Vec<u8> = (0..width * height_px)
@@ -822,6 +882,13 @@ pub fn export(
     // The poles' shadows (F243): the share of the body in them and the coldest the map holds.
     stage_outputs.insert("shadow_fraction".to_string(), out.shadow_fraction);
     stage_outputs.insert("sea_ice_fraction".to_string(), out.sea_ice_fraction);
+    stage_outputs.insert("cryosphere_thickest_m".to_string(), thickest as f64);
+    if out.cryosphere_snapshot.is_finite() {
+        stage_outputs.insert(
+            "cryosphere_snapshot_phase".to_string(),
+            out.cryosphere_snapshot,
+        );
+    }
     let mapped = out
         .temperature
         .as_slice()
@@ -1212,6 +1279,80 @@ fn write_exr_f32(
     let image = Image::from_layer(layer);
     retry(|| image.write().non_parallel().to_file(path))
         .map_err(|e| ExportError::Exr(e.to_string()))
+}
+
+fn write_exr_channels(
+    path: &Path,
+    (width, height): (usize, usize),
+    layer: &str,
+    names: &[&str],
+    data: &[Vec<f32>],
+) -> Result<(), ExportError> {
+    let channels = names
+        .iter()
+        .zip(data)
+        .map(|(name, v)| AnyChannel::new(*name, FlatSamples::F32(v.clone())))
+        .collect();
+    let layer = Layer::new(
+        (width, height),
+        LayerAttributes::named(layer),
+        Encoding::FAST_LOSSLESS,
+        AnyChannels::sort(channels),
+    );
+    let image = Image::from_layer(layer);
+    retry(|| image.write().non_parallel().to_file(path))
+        .map_err(|e| ExportError::Exr(e.to_string()))
+}
+
+/// Four channels to a 16-bit RGBA PNG: the third, a thickness, from 0 to `top`, the others
+/// phases from 0 to 1.
+fn write_png_rgba16(
+    path: &Path,
+    (width, height): (usize, usize),
+    channels: &[Vec<f32>],
+    top: f32,
+) -> Result<(), ExportError> {
+    let scale = |j: usize| {
+        if j == 2 {
+            1.0 / top.max(f32::MIN_POSITIVE)
+        } else {
+            1.0
+        }
+    };
+    let mut pixels = Vec::with_capacity(width * height * 4);
+    for k in 0..width * height {
+        for (j, channel) in channels.iter().enumerate() {
+            let v = (channel[k] * scale(j)).clamp(0.0, 1.0);
+            pixels.push((v * 65535.0).round() as u16);
+        }
+    }
+    let img = image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_raw(
+        width as u32,
+        height as u32,
+        pixels,
+    )
+    .expect("buffer size");
+    retry(|| img.save(path))?;
+    Ok(())
+}
+
+/// A field on the cube to equirectangular pixels, each the value of the cell its centre
+/// falls in.
+fn to_equirectangular_nearest(
+    grid: &crate::grid::CubeSphere,
+    values: &[f32],
+    width: usize,
+    height: usize,
+) -> Vec<f32> {
+    (0..width * height)
+        .map(|k| {
+            let (x, y) = (k % width, k / width);
+            let lon = ((x as f64 + 0.5) / width as f64 - 0.5) * 2.0 * std::f64::consts::PI;
+            let lat = (0.5 - (y as f64 + 0.5) / height as f64) * std::f64::consts::PI;
+            let d = crate::grid::direction_from_lon_lat(lon, lat);
+            values[grid.index(grid.locate(d).0)]
+        })
+        .collect()
 }
 
 fn write_exr_rgb(

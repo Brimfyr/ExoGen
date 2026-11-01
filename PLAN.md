@@ -707,7 +707,7 @@ Planned on 2026-10-31, after Phase 4F's close: climate first, the weather model 
 
 Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean temperature, its Hadley edge between 25 and 35°; Mars's, Venus's and Titan's mean temperatures; the Moon's and Mercury's day, night and polar temperatures against Diviner's and MESSENGER's.
 
-**5B Volatiles.** Under way: the frost's seasons (F239), the atmosphere's main volatile condensing on the cold ground and its pressure following its caps; the cold traps (F240), where each ice of the inventory would last; the caps of the inventory's ices (F241) and the frost's own gas's (F242); the poles' shadows (F243); the sea's heat and its ice (F244); the seasons' air (F245).
+**5B Volatiles.** Under way: the frost's seasons (F239), the atmosphere's main volatile condensing on the cold ground and its pressure following its caps; the cold traps (F240), where each ice of the inventory would last; the caps of the inventory's ices (F241) and the frost's own gas's (F242); the poles' shadows (F243); the sea's heat and its ice (F244); the seasons' air (F245); the ices that come and go (F246), the seasonal caps' exported state.
 
 - Phase states per species at the local temperature and pressure.
 - Sea level from the inventory on the hypsometry: a connected ocean by default, priority-flood lakes with a volume budget as an option.

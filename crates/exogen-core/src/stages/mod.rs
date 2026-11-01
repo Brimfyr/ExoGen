@@ -221,6 +221,12 @@ pub struct FinishOutput {
     /// (F244).
     pub sea_ice: Field<f32>,
     pub sea_ice_fraction: f64,
+    /// The ices that come and go through the year (F246): the phases of the year they freeze
+    /// at and melt out at, their thickness at their peak, m, and its phase; the ices they
+    /// are, and the phase of the snapshot's season.
+    pub cryosphere: [Field<f32>; 4],
+    pub cryosphere_ices: Vec<String>,
+    pub cryosphere_snapshot: f64,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -415,7 +421,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 182;
+pub const FINISH_VERSION: u64 = 183;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3076,6 +3082,30 @@ pub fn finish(
         }
         _ => albedo,
     };
+    // The ices that come and go through the year (F246): each one's window at each cell.
+    let (cryosphere, cryosphere_ices, cryosphere_snapshot) = match &cycle.cryosphere {
+        Some(cryo) => {
+            let frost_density = cycle.frost.map_or(1.0, |f| caps::ice_density(f.species));
+            let densities = (frost_density, caps::ice_density("H2O"));
+            let ground = (&height, &layers.liquid);
+            let fields = downscale.seasons(cryo, &cycle.mean, ground, densities);
+            let mut ices: Vec<String> = cycle
+                .frost
+                .iter()
+                .filter(|_| cryo.holds(false))
+                .map(|f| format!("{} frost on the ground", f.species))
+                .collect();
+            if cycle.seas.is_some() && cryo.holds(true) {
+                ices.push("the sea's water ice".to_string());
+            }
+            (fields, ices, cryo.snapshot)
+        }
+        None => (
+            std::array::from_fn(|_| Field::new(grid)),
+            Vec::new(),
+            f64::NAN,
+        ),
+    };
     let (frost, albedo) = match cycle.frost {
         Some(f) => {
             let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &height, sea_level);
@@ -3130,6 +3160,9 @@ pub fn finish(
         shadow_fraction,
         sea_ice,
         sea_ice_fraction,
+        cryosphere,
+        cryosphere_ices,
+        cryosphere_snapshot,
         rays,
         sea_level,
         ocean_fraction,
