@@ -2609,9 +2609,11 @@ static NODES: &[NodeDef] = &[
             "atmosphere.surface_pressure",
             "atmosphere.composition",
             "rotation.angular_velocity",
+            "atmosphere.column_mass",
+            "body.radius",
         ],
         d::climate_transport_coefficient,
-        "Williams–Kasting scaling with pressure, heat capacity, molecular mass and rotation, capped at ten times Earth's.",
+        "Williams–Kasting scaling with pressure, heat capacity, molecular mass and rotation, capped at ten times Earth's and at the atmosphere's column carried by the surface wind across the body.",
         "Williams and Kasting 1997 (F33)",
     ),
     derived(

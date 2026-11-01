@@ -415,7 +415,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 181;
+pub const FINISH_VERSION: u64 = 182;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2807,7 +2807,22 @@ pub fn finish(
     let balance = crate::climate::EnergyBalance::from_graph(graph);
     let climate = balance.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
     let ground = crate::climate::Ground::from_graph(graph);
-    let cycle = balance.cycle(&climate, &ground);
+    // The sea's share of each cell of the climate's grid where water is the working liquid
+    // (F244), the sea's year run with its land's under their air (F245).
+    let ocean = crate::climate::Ocean::from_graph(graph);
+    let sea_share = |layers: &LayerSet, level: f64| {
+        (ocean.is_some() && level.is_finite()).then(|| {
+            let wet = Field::from_fn(
+                grid,
+                |c, _| {
+                    if layers.liquid.get(c) > 0.0 { 1.0 } else { 0.0 }
+                },
+            );
+            crate::climate::coarsen(&wet, CubeSphere::new(CLIMATE_FACE_SIZE))
+        })
+    };
+    let share = sea_share(&layers, full_sea);
+    let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()));
     let downscale = crate::climate::Downscale::from_graph(graph);
     let above = {
         let height = layers.height();
@@ -2990,7 +3005,8 @@ pub fn finish(
     } else {
         let over = caps::on_climate(&laid, climate.temperature.grid());
         let climate = balance.solve_over(CubeSphere::new(CLIMATE_FACE_SIZE), Some(&over));
-        let cycle = balance.cycle(&climate, &ground);
+        let share = sea_share(&layers, sea_level);
+        let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()));
         (climate, cycle)
     };
     let temperature_range = cycle.extremes();
@@ -3019,44 +3035,47 @@ pub fn finish(
             100.0 * shadow_fraction
         );
     }
-    // The sea's year beside its land (F244): its ice at the snapshot's season, exported and
-    // reported, not drawn while the climate's ice line stands near 60°, where the sea then
-    // freezes through most of its year; the map keeps the climate's temperatures.
+    // The sea's year beside its land under their air (F244, F245): its surface's temperature
+    // on its cells, its ice at the snapshot's season over its colour by the share it covers.
     let mut sea_ice = Field::new(grid);
+    let mut sea_cover = Field::new(grid);
     let mut sea_ice_fraction = 0.0;
-    if let Some(ocean) = crate::climate::Ocean::from_graph(graph)
-        && sea_level.is_finite()
-    {
-        let wet = Field::from_fn(
-            grid,
-            |c, _| {
-                if layers.liquid.get(c) > 0.0 { 1.0 } else { 0.0 }
-            },
-        );
-        let share = crate::climate::coarsen(&wet, climate.temperature.grid());
-        let sea = (&ocean, &share);
-        let seas = balance.seas(&climate, &ground, &cycle, sea, downscale.exchange);
-        let mut covered = 0.0;
-        for k in 0..grid.cell_count() {
-            let c = grid.cell(k);
-            if layers.liquid.get(c) <= 0.0 {
-                continue;
+    let albedo = match &cycle.seas {
+        Some(seas) if sea_level.is_finite() => {
+            let mut covered = 0.0;
+            for k in 0..grid.cell_count() {
+                let c = grid.cell(k);
+                if layers.liquid.get(c) <= 0.0 {
+                    continue;
+                }
+                let d = grid.center(c);
+                temperature.as_mut_slice()[k] = seas.mean_at(d) as f32;
+                sea_ice.as_mut_slice()[k] = seas.ice_at(d).max(0.0) as f32;
+                let cover = seas.cover_at(d).clamp(0.0, 1.0);
+                sea_cover.as_mut_slice()[k] = cover as f32;
+                if cover > 0.5 {
+                    covered += grid.cell_area(c);
+                }
             }
-            let mass = seas.ice_at(grid.center(c)).max(0.0);
-            sea_ice.as_mut_slice()[k] = mass as f32;
-            if mass > SEA_ICE_COVER_MASS * std::f64::consts::LN_2 {
-                covered += grid.cell_area(c);
+            sea_ice_fraction = covered / (4.0 * std::f64::consts::PI);
+            if std::env::var_os("EXOGEN_DEBUG").is_some() {
+                eprintln!(
+                    "seas: ice over {:.2}% of the body at the snapshot, the sea's mean {:.1} K",
+                    100.0 * sea_ice_fraction,
+                    crate::climate::bands(&seas.mean).0
+                );
             }
+            Field::from_fn(grid, |c, _| {
+                let cover = sea_cover.get(c);
+                let mut a = albedo.get(c);
+                for (v, &ice) in a.iter_mut().zip(&seas.ocean.colour) {
+                    *v += (ice - *v) * cover;
+                }
+                a
+            })
         }
-        sea_ice_fraction = covered / (4.0 * std::f64::consts::PI);
-        if std::env::var_os("EXOGEN_DEBUG").is_some() {
-            eprintln!(
-                "seas: ice over {:.2}% of the body at the snapshot, the sea's mean {:.1} K",
-                100.0 * sea_ice_fraction,
-                crate::climate::bands(&seas.mean).0
-            );
-        }
-    }
+        _ => albedo,
+    };
     let (frost, albedo) = match cycle.frost {
         Some(f) => {
             let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &height, sea_level);

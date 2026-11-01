@@ -1900,6 +1900,11 @@ pub const SEA_ICE_MELT_ALBEDO: f64 = 0.55;
 pub const SEA_ICE_MELT_MARGIN_K: f64 = 0.1;
 /// F244: a fast spinner's latitude's sea is its mean over SEA_SHARE_LONGITUDES longitudes.
 pub const SEA_SHARE_LONGITUDES: usize = 72;
+/// F245: the share of the transport a sea's water carries across the sea's share of the
+/// boundary between two places, the air the rest: some third, the ocean's share of the
+/// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated
+/// choice until 5C's oceans give each sea its own circulation.
+pub const OCEAN_TRANSPORT_SHARE: f64 = 0.3;
 
 // ---------------------------------------------------------------- volatiles
 

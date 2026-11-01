@@ -526,8 +526,17 @@ pub mod physics {
         phi2.max(0.0).sqrt().min(PI / 2.0).to_degrees()
     }
 
-    /// F33: transport coefficient, W/m²/K.
-    pub fn transport_coefficient(p_pa: f64, cp: f64, mu: f64, omega: f64) -> f64 {
+    /// F33: transport coefficient, W/m²/K: Williams and Kasting's scaling, capped at
+    /// D_CAP_MULTIPLE times Earth's, and no faster than the atmosphere's column, of heat
+    /// capacity `column_heat` J/m²/K, carried by the surface wind across the body's
+    /// `radius` (F245): a diffusivity of the wind's speed over the body's radius, which a
+    /// slowly turning thin atmosphere, whose rotation would allow it far more, reaches first.
+    pub fn transport_coefficient(
+        p_pa: f64,
+        (cp, mu): (f64, f64),
+        omega: f64,
+        (column_heat, radius): (f64, f64),
+    ) -> f64 {
         if p_pa <= 0.0 {
             return 0.0;
         }
@@ -536,7 +545,8 @@ pub mod physics {
             * (cp / 1_004.0)
             * (0.028_97 / mu)
             * (7.2921e-5 / omega.max(1e-12)).powi(2);
-        d.min(D_CAP_MULTIPLE * D_EARTH)
+        let carried = column_heat * SURFACE_WIND_SPEED / radius.max(1.0);
+        d.min(D_CAP_MULTIPLE * D_EARTH).min(carried)
     }
 
     // ---------------------------------------------------------------- cratering
@@ -2475,11 +2485,12 @@ pub fn climate_hadley_edge_latitude(c: &Ctx) -> Value {
 
 pub fn climate_transport_coefficient(c: &Ctx) -> Value {
     let comp = c.map("atmosphere.composition");
+    let cp = mean_heat_capacity(comp);
     transport_coefficient(
         c.f64("atmosphere.surface_pressure"),
-        mean_heat_capacity(comp),
-        mean_molecular_mass(comp),
+        (cp, mean_molecular_mass(comp)),
         c.f64("rotation.angular_velocity"),
+        (cp * c.f64("atmosphere.column_mass"), c.f64("body.radius")),
     )
     .into()
 }
@@ -3204,8 +3215,16 @@ mod tests {
     fn held_hou_and_transport_for_earth() {
         let edge = held_hou_edge_deg(9.81, 2.0 * 8_500.0, 0.25, 7.2921e-5, 6.371e6);
         assert!(edge > 28.0 && edge < 36.0, "{edge}");
-        let d = transport_coefficient(101_325.0, 1_004.0, 0.028_97, 7.2921e-5);
+        let earth = (1_004.0 * 101_325.0 / 9.81, 6.371e6);
+        let d = transport_coefficient(101_325.0, (1_004.0, 0.028_97), 7.2921e-5, earth);
         assert!((d - 0.58).abs() < 0.01);
+        // A thin atmosphere turning once a year carries no more than its column at the wind.
+        let mars = (735.0 * 610.0 / 3.71, 3.39e6);
+        let locked = transport_coefficient(610.0, (735.0, 0.044), 1.06e-7, mars);
+        assert!(
+            (locked - mars.0 * SURFACE_WIND_SPEED / mars.1).abs() < 1e-9,
+            "{locked}"
+        );
     }
 
     #[test]

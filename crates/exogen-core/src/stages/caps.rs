@@ -363,7 +363,7 @@ mod tests {
         let eb = EnergyBalance::from_graph(&graph);
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
         let ground = Ground::from_graph(&graph);
-        let cycle = eb.cycle(&climate, &ground);
+        let cycle = eb.cycle(&climate, &ground, None);
         let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
         let heights = Field::new(climate.temperature.grid());
         let downscale = Downscale::from_graph(&graph);

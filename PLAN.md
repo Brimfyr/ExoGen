@@ -698,7 +698,7 @@ Gate: on crops of the three test bodies, no feature shows an analytic outline, a
 
 Planned on 2026-10-31, after Phase 4F's close: climate first, the weather model last, each sub-phase with its own gate and review, as Phase 4F ran. Mars, Titan and Pluto are the test bodies for the look, as the Moon, Io and Enceladus were for Phase 4F; an Earth-like and a tidally locked ocean world give the climate its numbers. Principles 11 to 15 hold for every new process: one process on every body, nothing pinned to a reference body, and features that come and go by degrees along the paths between bodies, with sweep tests. Principle 16's noise pass still waits until after Phase 6. The parameter graph already holds the zero-dimensional climate of Phase 1 (the mean surface temperature by the grey greenhouse, the Hadley edge, the lapse rate, sea level, the frost points); the phase builds the stages that turn it into fields and let the fields shape the surface.
 
-**5A Climate on every body.** Done 2026-10-31 in five milestones (F234 to F238), its review passed.
+**5A Climate on every body.** Done 2026-10-31 in five milestones (F234 to F238), its review passed; its cycle revised in 5B (F245, the user, 2026-11-01): the transport answers the seasons through the air over each place, a share of it through the sea's water.
 
 - Insolation for any rotation state from one integral of the star's path across the body's sky: a fast rotator's seasons by obliquity and eccentricity, a body locked to its star centred on the substellar point, a spin-orbit resonance's hot longitudes (Mercury's), and a moon's seasons by its planet's obliquity.
 - A two-dimensional diffusive energy balance on the coarse cubesphere (North 1975): heat capacity by surface type, outgoing radiation through the greenhouse optical depth, horizontal transport scaled by pressure and rotation (Williams and Kasting 1997), the ice-albedo feedback, ocean heat transport where seas exist. On an airless body the same balance without transport, with the day and night its thermal inertia sets.
@@ -707,7 +707,7 @@ Planned on 2026-10-31, after Phase 4F's close: climate first, the weather model 
 
 Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean temperature, its Hadley edge between 25 and 35°; Mars's, Venus's and Titan's mean temperatures; the Moon's and Mercury's day, night and polar temperatures against Diviner's and MESSENGER's.
 
-**5B Volatiles.** Under way: the frost's seasons (F239), the atmosphere's main volatile condensing on the cold ground and its pressure following its caps; the cold traps (F240), where each ice of the inventory would last; the caps of the inventory's ices (F241) and the frost's own gas's (F242); the poles' shadows (F243); the sea's heat and its ice (F244).
+**5B Volatiles.** Under way: the frost's seasons (F239), the atmosphere's main volatile condensing on the cold ground and its pressure following its caps; the cold traps (F240), where each ice of the inventory would last; the caps of the inventory's ices (F241) and the frost's own gas's (F242); the poles' shadows (F243); the sea's heat and its ice (F244); the seasons' air (F245).
 
 - Phase states per species at the local temperature and pressure.
 - Sea level from the inventory on the hypsometry: a connected ocean by default, priority-flood lakes with a volume budget as an option.

@@ -212,8 +212,18 @@ impl Sky {
     /// sampled evenly in time: at each step its flux over the mean's, its declination, and
     /// the hour angle at longitude zero.
     pub(crate) fn resonant_path(&self, eps: f64, orbits: u32) -> Vec<PathStep> {
+        self.resonant_path_sampled(eps, orbits, INSOLATION_ORBIT_SAMPLES)
+    }
+
+    /// The star's path through a resonant body's sky, `samples` steps an orbit.
+    pub(crate) fn resonant_path_sampled(
+        &self,
+        eps: f64,
+        orbits: u32,
+        samples: usize,
+    ) -> Vec<PathStep> {
         let e = self.eccentricity;
-        let n = INSOLATION_ORBIT_SAMPLES * orbits as usize;
+        let n = samples * orbits as usize;
         let (se, ce) = eps.sin_cos();
         let ls_p = self.perihelion_season;
         // The rotation's phase puts the chosen longitude under the star at perihelion.
@@ -221,7 +231,7 @@ impl Sky {
         let theta0 = ra_p - self.subsolar_longitude;
         (0..n)
             .map(|j| {
-                let m = (j as f64 + 0.5) / INSOLATION_ORBIT_SAMPLES as f64 * TAU;
+                let m = (j as f64 + 0.5) / samples as f64 * TAU;
                 let big_e = eccentric_anomaly(m, e);
                 let r = 1.0 - e * big_e.cos();
                 let nu = 2.0
