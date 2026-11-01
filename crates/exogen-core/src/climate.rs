@@ -46,8 +46,8 @@ use crate::params::ParamGraph;
 use crate::params::derive::is_icy;
 use crate::params::derive::physics::{
     blackbody_share_below, mean_heat_capacity, mean_molecular_mass, regolith_heat,
-    saturation_temperature, species_columns, tau_dry, vapour_pressure, volatile, water_column,
-    water_optical_depth,
+    saturation_temperature, species_columns, sunlight_pattern, tau_dry, vapour_pressure, volatile,
+    water_column, water_optical_depth,
 };
 
 /// What the energy balance reads.
@@ -273,40 +273,296 @@ pub struct Seas {
     pub ice_share: Field<f32>,
     pub ocean: Ocean,
     /// The surface's mean, the ice at the snapshot's season and the share of the sea it
-    /// covers at each place of the cycle's layout, and the layout's longitudes, a fast
-    /// spinner's one.
+    /// covers at each place of the cycle's layout, and the layout's latitudes and longitudes,
+    /// a fast spinner's one.
     mean_rows: Vec<f64>,
     ice_rows: Vec<f64>,
     cover_rows: Vec<f64>,
-    n_lon: usize,
+    layout: (usize, usize),
+    /// Where the ice at the snapshot's season ends between the places (F251).
+    guide: Guide,
+    margin: Margin,
 }
 
 impl Seas {
     /// The sea's ice at the snapshot's season in a direction, kg/m², read along the cycle's
-    /// latitudes, a resonant body's longitudes too.
+    /// latitudes, a resonant body's longitudes too; between places under ice and open ones,
+    /// thinning to its edge where the margin sets it (F251).
     pub fn ice_at(&self, d: [f64; 3]) -> f64 {
-        self.read(&self.ice_rows, d)
+        match self.edge(d) {
+            Some((depth, corners)) => depth * self.among(&self.ice_rows, &corners, true),
+            None => self.read(&self.ice_rows, d),
+        }
     }
 
-    /// The sea's surface's mean through the year in a direction, K.
+    /// The sea's surface's mean through the year in a direction, K: between places under ice
+    /// and open ones, the open places' past the ice's edge, the ice's top's within it, rising
+    /// to the freezing point at its edge (F251).
     pub fn mean_at(&self, d: [f64; 3]) -> f64 {
-        self.read(&self.mean_rows, d)
+        match self.edge(d) {
+            Some((depth, corners)) if depth > 0.0 => {
+                let held = self.among(&self.mean_rows, &corners, true);
+                self.ocean.freezing + depth * (held - self.ocean.freezing)
+            }
+            Some((_, corners)) => self.among(&self.mean_rows, &corners, false),
+            None => self.read(&self.mean_rows, d),
+        }
     }
 
     /// The share of the sea its ice covers at the snapshot's season in a direction (F245):
-    /// each place's, 1 - exp(-m / SEA_ICE_COVER_MASS), read between the places, so that the
-    /// ice's margin spans the distance between a place under ice and an open one, as a
-    /// marginal ice zone does, where its mass would step from one to the other.
+    /// each place's, 1 - exp(-m / SEA_ICE_COVER_MASS), read between the places; between
+    /// places under ice and open ones, from none at the ice's edge (F251) to the share at the
+    /// places under ice, as a marginal ice zone spans the distance.
     pub fn cover_at(&self, d: [f64; 3]) -> f64 {
-        self.read(&self.cover_rows, d)
+        match self.edge(d) {
+            Some((depth, corners)) => depth * self.among(&self.cover_rows, &corners, true),
+            None => self.read(&self.cover_rows, d),
+        }
     }
 
     fn read(&self, rows: &[f64], d: [f64; 3]) -> f64 {
         let (lon, lat) = lon_lat_from_direction(d);
-        match self.n_lon {
+        match self.layout.1 {
             1 => read_row(rows, lat),
             n => read_grid(rows, n, lat, lon),
         }
+    }
+
+    /// How far into the ice a direction stands where the places about it differ (F251), and
+    /// those places with their weights.
+    fn edge(&self, d: [f64; 3]) -> Option<(f64, [(usize, f64); 4])> {
+        let (lon, lat) = lon_lat_from_direction(d);
+        let corners = reader(self.layout.0, self.layout.1, lat, lon);
+        let depth = self.margin.depth(&corners, self.guide.at(d))?;
+        Some((depth, corners))
+    }
+
+    /// The weighted mean of `rows` over the places a direction reads the ice holds, `held`,
+    /// or leaves open (`Margin::kind`).
+    fn among(&self, rows: &[f64], corners: &[(usize, f64); 4], held: bool) -> f64 {
+        let (sum, weight) = self
+            .margin
+            .kind(corners, held)
+            .iter()
+            .fold((0.0, 0.0), |(s, t), &(p, w)| (s + w * rows[p], t + w));
+        if weight > 0.0 { sum / weight } else { 0.0 }
+    }
+}
+
+/// The pattern the year's sunlight sets over the body (F251): the diffusive balance's
+/// temperature at each cosine of the angle from its axis (`sunlight_pattern`), the point a
+/// body locked to its star centres its sunlight on, any other's spin axis: smooth everywhere
+/// and as round about its axis as the sunlight. It guides where an ice's edge falls between
+/// the cycle's places.
+#[derive(Clone, Debug)]
+struct Guide {
+    profile: Vec<f64>,
+    axis: [f64; 3],
+}
+
+impl Guide {
+    fn of(balance: &EnergyBalance, climate: &Climate) -> Guide {
+        let locked = balance.sky.resonance == Some((1, 1));
+        let axis = if locked {
+            let grid = climate.absorbed.grid();
+            let sum = grid.cells().fold([0.0; 3], |acc, c| {
+                let (d, q) = (grid.center(c), climate.absorbed.get(c) as f64);
+                let w = q * grid.cell_area(c);
+                [acc[0] + w * d[0], acc[1] + w * d[1], acc[2] + w * d[2]]
+            });
+            let norm = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
+            if norm > 0.0 {
+                [sum[0] / norm, sum[1] / norm, sum[2] / norm]
+            } else {
+                [1.0, 0.0, 0.0]
+            }
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+        let e = balance.sky.eccentricity;
+        let flux = balance.sky.flux / (1.0 - e * e).max(1e-9).sqrt();
+        let tilt = balance.sky.obliquity;
+        let absorbed = |mu: f64| {
+            let q = if locked {
+                flux * mu.max(0.0)
+            } else {
+                flux * crate::insolation::zonal_annual_share(mu.clamp(-1.0, 1.0).asin(), tilt)
+            };
+            (1.0 - balance.albedo) * q
+        };
+        let (_, slope) = balance.olr_and_slope(balance.start.max(1.0));
+        let profile = sunlight_pattern((slope, balance.transport), absorbed);
+        Guide { profile, axis }
+    }
+
+    fn at(&self, d: [f64; 3]) -> f64 {
+        let mu = (d[0] * self.axis[0] + d[1] * self.axis[1] + d[2] * self.axis[2]).clamp(-1.0, 1.0);
+        let n = self.profile.len();
+        let x = ((mu + 1.0) / 2.0 * n as f64 - 0.5).clamp(0.0, (n - 1) as f64);
+        let i = (x.floor() as usize).min(n - 2);
+        let f = x - i as f64;
+        self.profile[i] * (1.0 - f) + self.profile[i + 1] * f
+    }
+}
+
+/// Where an ice's edge falls between the cycle's places (F251). The cycle tells, place by
+/// place, whether the ice holds; between a place it holds and one beside it it does not, its
+/// edge stands where the guide crosses the midpoint of the two places' guides, smoothed along
+/// the edge over MARGIN_SMOOTHING spacings of the places, so that it runs along the guide's
+/// isoline round its regions rather than along the layout's steps, as the caps' edges follow
+/// their traps read smoothly between the climate's cells (F241). The ice thins to its edge
+/// over half the guide's step between the two places.
+#[derive(Clone, Debug)]
+struct Margin {
+    /// Whether the ice holds at each place, none where the place has none of its ground.
+    held: Vec<Option<bool>>,
+    /// Whether a place of the other kind stands beside each place.
+    beside: Vec<bool>,
+    /// At each place near the edge: the guide the edge stands at and the guide over which the
+    /// ice thins to it, smoothed along it, and the nearest place under ice and open place;
+    /// NaN and none elsewhere.
+    edge: Vec<f64>,
+    thinning: Vec<f64>,
+    near: Vec<Option<(usize, usize)>>,
+}
+
+impl Margin {
+    fn new((n_lat, n_lon): (usize, usize), held: Vec<Option<bool>>, guide: &Guide) -> Margin {
+        let n = n_lat * n_lon;
+        let lat_of = |p: usize| -PI / 2.0 + PI * (p / n_lon) as f64 / (n_lat - 1) as f64;
+        let lon_of = |p: usize| -PI + TAU * (p % n_lon) as f64 / n_lon as f64;
+        let direction = |p: usize| direction_from_lon_lat(lon_of(p), lat_of(p));
+        // A fast spinner's place is its latitude's: its guide the guide's mean along it.
+        let values: Vec<f64> = (0..n)
+            .map(|p| match n_lon {
+                1 => {
+                    let k = SEA_SHARE_LONGITUDES;
+                    (0..k)
+                        .map(|m| {
+                            let lon = -PI + TAU * m as f64 / k as f64;
+                            guide.at(direction_from_lon_lat(lon, lat_of(p)))
+                        })
+                        .sum::<f64>()
+                        / k as f64
+                }
+                _ => guide.at(direction(p)),
+            })
+            .collect();
+        let neighbours = |p: usize| {
+            let (i, j) = (p / n_lon, p % n_lon);
+            let mut out = Vec::with_capacity(4);
+            if i > 0 {
+                out.push(p - n_lon);
+            }
+            if i + 1 < n_lat {
+                out.push(p + n_lon);
+            }
+            if n_lon > 1 {
+                out.push(i * n_lon + (j + n_lon - 1) % n_lon);
+                out.push(i * n_lon + (j + 1) % n_lon);
+            }
+            out
+        };
+        // The edge between each place under ice and each open place beside it whose guide is
+        // the warmer: its guide, half the step, where it stands, and the two places.
+        let mut links: Vec<(f64, f64, [f64; 3], f64, usize, usize)> = Vec::new();
+        let mut beside = vec![false; n];
+        for p in 0..n {
+            let Some(here) = held[p] else { continue };
+            for q in neighbours(p) {
+                if held[q] != Some(!here) {
+                    continue;
+                }
+                beside[p] = true;
+                if !here {
+                    continue;
+                }
+                let (cold, warm) = (p, q);
+                let step = values[warm] - values[cold];
+                if step <= 0.0 {
+                    continue;
+                }
+                let (a, b) = (direction(cold), direction(warm));
+                let mid = [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+                let norm = (mid[0] * mid[0] + mid[1] * mid[1] + mid[2] * mid[2]).sqrt();
+                let lat = 0.5 * (lat_of(cold) + lat_of(warm));
+                let at = [mid[0] / norm, mid[1] / norm, mid[2] / norm];
+                links.push((values[cold] + 0.5 * step, 0.5 * step, at, lat, cold, warm));
+            }
+        }
+        // Smoothed along the edge: a fast spinner's by latitude alone.
+        let width = MARGIN_SMOOTHING * PI / (n_lat - 1) as f64;
+        let mut edge = vec![f64::NAN; n];
+        let mut thinning = vec![f64::NAN; n];
+        let mut near = vec![None; n];
+        for p in 0..n {
+            let here = direction(p);
+            let (mut sum, mut thin, mut total, mut best) = (0.0, 0.0, 0.0, (0.0, None));
+            for &(g, half, at, lat, cold, warm) in &links {
+                let angle = match n_lon {
+                    1 => (lat_of(p) - lat).abs(),
+                    _ => {
+                        let dot = here[0] * at[0] + here[1] * at[1] + here[2] * at[2];
+                        dot.clamp(-1.0, 1.0).acos()
+                    }
+                };
+                let w = (-(angle / width).powi(2)).exp();
+                (sum, thin, total) = (sum + w * g, thin + w * half, total + w);
+                if w > best.0 {
+                    best = (w, Some((cold, warm)));
+                }
+            }
+            if total > MARGIN_REACH {
+                (edge[p], thinning[p], near[p]) = (sum / total, thin / total, best.1);
+            }
+        }
+        Margin {
+            held,
+            beside,
+            edge,
+            thinning,
+            near,
+        }
+    }
+
+    /// How far into the ice a point stands, its guide `at`, among `corners`, places with
+    /// their weights, one of them beside the ice's edge: 0 where its guide stands past the
+    /// edge's, rising to 1 half the guide's step into the ice; none where none is beside it.
+    fn depth(&self, corners: &[(usize, f64); 4], at: f64) -> Option<f64> {
+        let live = || corners.iter().filter(|c| c.1 > 0.0);
+        if !live().any(|&(p, _)| self.beside[p]) {
+            return None;
+        }
+        let (mut edge, mut thin, mut weight) = (0.0, 0.0, 0.0);
+        for &(p, w) in live().filter(|&&(p, _)| self.edge[p].is_finite()) {
+            (edge, thin, weight) = (
+                edge + w * self.edge[p],
+                thin + w * self.thinning[p],
+                weight + w,
+            );
+        }
+        (weight > 0.0).then(|| ((edge - at * weight) / thin.max(1e-300)).clamp(0.0, 1.0))
+    }
+
+    /// The places of a kind a point between places reads, `held` or open, with their
+    /// weights: the corners of that kind, or, where none is, the nearest such places to the
+    /// corners along the edge.
+    fn kind(&self, corners: &[(usize, f64); 4], held: bool) -> Vec<(usize, f64)> {
+        let own: Vec<(usize, f64)> = corners
+            .iter()
+            .copied()
+            .filter(|&(p, w)| w > 0.0 && self.held[p] == Some(held))
+            .collect();
+        if !own.is_empty() {
+            return own;
+        }
+        corners
+            .iter()
+            .filter(|c| c.1 > 0.0)
+            .filter_map(|&(p, w)| {
+                self.near[p].map(|(cold, warm)| (if held { cold } else { warm }, w))
+            })
+            .collect()
     }
 }
 
@@ -569,6 +825,9 @@ pub struct Cryosphere {
     layout: (usize, usize),
     /// The phase of the year of the snapshot's season.
     pub snapshot: f64,
+    /// Where the sea's ice ends between the places through the year (F251).
+    guide: Guide,
+    sea_margin: Margin,
 }
 
 impl Cryosphere {
@@ -581,17 +840,41 @@ impl Cryosphere {
     /// The window of an ice in a direction (F246), its land's frost's or, `sea`, its sea's
     /// ice's: its peak read between the cycle's places, as its mass is, and its phases those
     /// of the places it lies at, by their weights, on the circle of the year; all year where
-    /// the nearest of them holds it all year.
+    /// the nearest of them holds it all year. Between places a sea's ice lies at and places
+    /// it never lies at, it lies only within its margin's edge (F251), its peak thinning to it.
     pub fn at(&self, d: [f64; 3], sea: bool) -> Window {
         let (lon, lat) = lon_lat_from_direction(d);
         let windows = if sea { &self.sea } else { &self.land };
         let corners = reader(self.layout.0, self.layout.1, lat, lon);
-        let peak: f64 = corners.iter().map(|&(p, w)| w * windows[p].peak).sum();
-        let lying: Vec<(f64, Window)> = corners
-            .iter()
-            .filter(|&&(p, w)| w > 0.0 && windows[p].peak > 0.0)
-            .map(|&(p, w)| (w, windows[p]))
-            .collect();
+        let depth = sea
+            .then(|| self.sea_margin.depth(&corners, self.guide.at(d)))
+            .flatten();
+        if depth.is_some_and(|depth| depth <= 0.0) {
+            return Window::default();
+        }
+        // Within the margin, the windows of the places the ice lies at that it reads.
+        let lying: Vec<(f64, Window)> = match depth {
+            Some(_) => self
+                .sea_margin
+                .kind(&corners, true)
+                .into_iter()
+                .map(|(p, w)| (w, windows[p]))
+                .collect(),
+            None => corners
+                .iter()
+                .filter(|&&(p, w)| w > 0.0 && windows[p].peak > 0.0)
+                .map(|&(p, w)| (w, windows[p]))
+                .collect(),
+        };
+        let peak: f64 = match depth {
+            Some(depth) => {
+                let (sum, weight) = lying.iter().fold((0.0, 0.0), |(s, t), (w, window)| {
+                    (s + w * window.peak, t + w)
+                });
+                depth * sum / weight.max(1e-300)
+            }
+            None => corners.iter().map(|&(p, w)| w * windows[p].peak).sum(),
+        };
         let Some(&(_, nearest)) = lying.iter().max_by(|a, b| a.0.total_cmp(&b.0)) else {
             return Window::default();
         };
@@ -1023,15 +1306,15 @@ impl EnergyBalance {
             None => Vec::new(),
         };
         let ocean = sea.map(|s| s.0);
-        let each: Vec<TiltYear> = if self.exchange > 0.0 {
-            let layout = self.layout(climate, sea.map(|s| s.1));
+        let layout = (self.exchange > 0.0).then(|| self.layout(climate, sea.map(|s| s.1)));
+        let each: Vec<TiltYear> = if let Some(layout) = &layout {
             tilts
                 .iter()
                 .enumerate()
                 .map(|(j, &eps)| match self.sky.resonance {
-                    None => self.seasonal_years(ground, &layout, eps, ocean),
+                    None => self.seasonal_years(ground, layout, eps, ocean),
                     Some((_, orbits)) => {
-                        self.seasonal_orbits(ground, &layout, (orbits, &paths[j]), ocean)
+                        self.seasonal_orbits(ground, layout, (orbits, &paths[j]), ocean)
                     }
                 })
                 .collect()
@@ -1124,6 +1407,15 @@ impl EnergyBalance {
                 value as f32
             })
         };
+        // Where the sea's ice ends between the places, guided by the steady balance (F251):
+        // whether it holds at each place with a sea.
+        let guide = Guide::of(self, climate);
+        let wet = |p: usize| layout.as_ref().is_some_and(|l| l.places[p].sea > 0.0);
+        let held = |holds: &dyn Fn(usize) -> bool| -> Vec<Option<bool>> {
+            (0..n_lat * n_lon)
+                .map(|p| wet(p).then(|| holds(p)))
+                .collect()
+        };
         // The ices' windows: each place's masses through its cycle, the tilts' mean step by
         // step, the phase of the year counted from the northern spring equinox.
         let places = n_lat * n_lon;
@@ -1151,11 +1443,15 @@ impl EnergyBalance {
                     })
                     .collect()
             };
+            let sea = windows(1, SEA_ICE_COVER_MASS * std::f64::consts::LN_2);
+            let sea_margin = Margin::new((n_lat, n_lon), held(&|p| sea[p].peak > 0.0), &guide);
             Cryosphere {
                 land: windows(0, FROST_COVER_MASS * std::f64::consts::LN_2),
-                sea: windows(1, SEA_ICE_COVER_MASS * std::f64::consts::LN_2),
+                sea,
                 layout: (n_lat, n_lon),
                 snapshot: (self.snapshot / TAU / orbits - equinox).rem_euclid(1.0),
+                guide: guide.clone(),
+                sea_margin,
             }
         });
         let seas = ocean.map(|ocean| Seas {
@@ -1171,7 +1467,13 @@ impl EnergyBalance {
                 .iter()
                 .map(|y| 1.0 - (-y.sea[3].max(0.0) / SEA_ICE_COVER_MASS).exp())
                 .collect(),
-            n_lon,
+            layout: (n_lat, n_lon),
+            margin: Margin::new(
+                (n_lat, n_lon),
+                held(&|p| rows[p].sea[3] > SEA_ICE_COVER_MASS * std::f64::consts::LN_2),
+                &guide,
+            ),
+            guide: guide.clone(),
         });
         Cycle {
             mean: field(|y| y.mean),
@@ -4463,7 +4765,10 @@ mod tests {
     /// star at 900 W/m², keeps open sea under its star, its working liquid water at its
     /// warmest place though its mean stands below freezing, and its night under ice: its sea
     /// open over 0.3 to 0.7 of its dayside, where THAI's four models leave almost half open
-    /// (Sergeev et al. 2022).
+    /// (Sergeev et al. 2022). F251: its ice ends round its star along the sunlight's pattern
+    /// between the cycle's places rather than in their steps: where it covers half its sea,
+    /// its distance from the substellar point steps by under 0.2° from one bearing to the
+    /// next, and ranges less than the places' reading does.
     #[test]
     fn a_locked_ocean_world_keeps_its_sea_under_its_star() {
         let world = locked_ocean_world();
@@ -4481,6 +4786,37 @@ mod tests {
         assert!(seas.ice_at(substellar) < SEA_ICE_COVER_MASS);
         assert!(seas.ice_at(night) > 10.0 * SEA_ICE_COVER_MASS);
         assert!((0.3..0.7).contains(&open), "open {open}");
+        // The edge on each bearing from the substellar point, a degree apart: guided, and
+        // read between the places as before; its widest step from one bearing to the next and
+        // its range.
+        let edges = |cover: &dyn Fn([f64; 3]) -> f64| -> (f64, f64) {
+            let found: Vec<f64> = (0..360)
+                .map(|b| {
+                    let (sb, cb) = (b as f64).to_radians().sin_cos();
+                    (0..=2400)
+                        .map(|k| 30.0 + k as f64 * 0.025)
+                        .find(|&deg: &f64| {
+                            let (sd, cd) = deg.to_radians().sin_cos();
+                            cover([cd, sd * sb, sd * cb]) > 0.5
+                        })
+                        .unwrap_or(f64::NAN)
+                })
+                .collect();
+            let step = (0..360)
+                .map(|b| (found[(b + 1) % 360] - found[b]).abs())
+                .fold(0.0, f64::max);
+            let lo = found.iter().cloned().fold(f64::MAX, f64::min);
+            let hi = found.iter().cloned().fold(f64::MIN, f64::max);
+            (step, hi - lo)
+        };
+        let guided = edges(&|d| seas.cover_at(d));
+        let stepped = edges(&|d| seas.read(&seas.cover_rows, d));
+        println!(
+            "the eye's edge: guided, steps up to {:.2}° between bearings, ranging over {:.2}°; read between the places, {:.2}° and {:.2}°",
+            guided.0, guided.1, stepped.0, stepped.1
+        );
+        assert!(guided.0 < 0.2, "{guided:?}");
+        assert!(guided.1 < stepped.1, "{guided:?} {stepped:?}");
     }
 
     /// F244: the sea holds its seasons: at the Earth-like's 45° its surface swings by under

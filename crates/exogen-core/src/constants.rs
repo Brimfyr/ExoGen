@@ -1917,6 +1917,13 @@ pub const ICE_NEAR_BAND_WEIGHT: f64 = 0.7;
 pub const BLACKBODY_SERIES_TERMS: usize = 100;
 /// F244: a fast spinner's latitude's sea is its mean over SEA_SHARE_LONGITUDES longitudes.
 pub const SEA_SHARE_LONGITUDES: usize = 72;
+/// F251: an ice's edge between the cycle's places is smoothed along itself over
+/// MARGIN_SMOOTHING spacings of the cycle's latitudes, a Gaussian's width, so that where the
+/// places fall against the edge averages out.
+pub const MARGIN_SMOOTHING: f64 = 3.0;
+/// F251: the smoothing reaches the places where the edge's weights sum to MARGIN_REACH, some
+/// 2.6 widths from it.
+pub const MARGIN_REACH: f64 = 1e-3;
 /// F249: the warmest place's year-mean temperature from the year's sunlight's pattern: its
 /// spherical harmonics from WARMEST_SAMPLES cosines of the angle from the pattern's axis, to
 /// degree WARMEST_DEGREES.

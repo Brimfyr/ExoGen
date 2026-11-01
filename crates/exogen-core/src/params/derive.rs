@@ -424,16 +424,23 @@ pub mod physics {
     }
 
     /// F249: the warmest place's year-mean surface temperature, K, from the body's
-    /// zero-dimensional `mean`: raised by the pattern of the year's sunlight over the body,
-    /// `absorbed` W/m² at the cosine of the angle from the pattern's axis, as a diffusive
-    /// energy balance holds each spherical harmonic of it, q_l, against the radiation's slope
-    /// and the transport over the harmonic's degree, B + l (l + 1) D (North 1975), linear
-    /// about the mean.
-    pub fn warmest_temperature(
-        mean: f64,
+    /// zero-dimensional `mean`: raised by the pattern of the year's sunlight over the body
+    /// (`sunlight_pattern`).
+    pub fn warmest_temperature(mean: f64, held: (f64, f64), absorbed: impl Fn(f64) -> f64) -> f64 {
+        mean + sunlight_pattern(held, absorbed)
+            .into_iter()
+            .fold(f64::MIN, f64::max)
+    }
+
+    /// F249, F251: the pattern of the year's sunlight over the body, `absorbed` W/m² at the
+    /// cosine of the angle from the pattern's axis: the temperature it raises above the mean
+    /// at WARMEST_SAMPLES cosines from -1 to 1, as a diffusive energy balance holds each
+    /// spherical harmonic of it, q_l, against the radiation's slope and the transport over
+    /// the harmonic's degree, B + l (l + 1) D (North 1975), linear about the mean.
+    pub fn sunlight_pattern(
         (slope, transport): (f64, f64),
         absorbed: impl Fn(f64) -> f64,
-    ) -> f64 {
+    ) -> Vec<f64> {
         let n = WARMEST_SAMPLES;
         let mu: Vec<f64> = (0..n)
             .map(|i| -1.0 + (i as f64 + 0.5) * 2.0 / n as f64)
@@ -454,7 +461,7 @@ pub mod physics {
                 .collect();
             below = std::mem::replace(&mut p, next);
         }
-        mean + warm.iter().cloned().fold(f64::MIN, f64::max)
+        warm
     }
 
     /// F250: the share of a blackbody's power at `t` K at wavelengths below `um` µm, by the
