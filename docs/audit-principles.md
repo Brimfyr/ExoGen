@@ -583,6 +583,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | an ice's window closing on its peak toward its edge between the places (F252) | a stated choice: the depth into the margin as the share of the window kept | each sub-place point's own year |
 | YEAR_CURVE_RANGE, YEAR_CURVE_STEP, YEAR_CURVE_PEAK (F253) | stated: the fit's search and the places it counts | each place's own curve; the year's series gives the hemispheres' exact means |
 | perennial ice drawn at its peak all year (F253) | a stated choice | its seasonal thinning |
+| CYCLE_FAST_GRID (F254) | a stated choice: 2° in latitude as the zonal cycle's, 4° in longitude as a resonant body's | finer places, at their cost |
+| an airless fast spinner's cycle by latitude alone (F254) | a stated choice: no air joins its places | its ground's own variation by longitude |
+| a window opening and closing where its ice crosses the mass it lies at, and lengthening toward the places it lies at all year by their share (F255) | stated: linear between the steps' ends; the share a stated choice | the ice's own time at each sub-place point |
 | the ground's Bond albedo under any star (F250, F52) | a stated guess by pressure class | the clouds and the air's scattering of the star's light (5G) |
 | D_EARTH, D_CAP_MULTIPLE (F33, F235) | Earth's transport (Williams and Kasting 1997) and a stated cap at ten times it | the scaling with rotation is Earth's: Titan's poles 0.1 K under its equator against Cassini's 3 K (Jennings et al. 2016), Venus's 6.5 K; a slowly turning atmosphere's single cell with the wind field (5C) |
 | EARLY_TIME_EXPONENTS | stated choices: the orbital period at the snow line, the disc's solids over the area within it (F135) | no body to check; around a red dwarf the snow line where its planets formed is set by its far brighter youth, not by its luminosity today |

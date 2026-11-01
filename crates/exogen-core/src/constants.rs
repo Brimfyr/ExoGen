@@ -1802,6 +1802,9 @@ pub const CYCLE_MAX_YEARS: usize = 40;
 pub const CYCLE_SETTLED_K: f64 = 0.05;
 pub const CYCLE_LATITUDES: usize = 91;
 pub const CYCLE_RESONANT_GRID: (usize, usize) = (46, 90);
+/// F254: a fast spinner's cycle runs at places by latitude and longitude, as a resonant
+/// body's does, its latitudes CYCLE_LATITUDES as before, 2° apart, its longitudes 4°.
+pub const CYCLE_FAST_GRID: (usize, usize) = (CYCLE_LATITUDES, 90);
 pub const CYCLE_SWING_SAMPLES: usize = 4;
 /// F237: the air's exchange of heat with the ground, rho c_p C_H U: the bulk transfer
 /// coefficient over land (Garratt 1992: 1e-3 to 2e-3) and a surface wind of 5 m/s, a stated

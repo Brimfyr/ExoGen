@@ -842,10 +842,10 @@ impl Window {
 
     /// The window an ice lies in through a cycle of `masses`, one at the end of each step
     /// (F246), a mass past `cover` counting as lying, as half the ground's colour hidden:
-    /// the longest run of steps it lies through, which it freezes in the middle of its first
-    /// and melts in the middle of the step after its last; its peak the most it holds in
-    /// that run. `phase` takes a time in steps from the cycle's start to
-    /// the phase of the year.
+    /// the longest run of steps it lies through, which it freezes into and melts out of
+    /// where its mass crosses `cover`, between the steps' ends (F255); its peak the most it
+    /// holds in that run. `phase` takes a time in steps from the cycle's start to the phase
+    /// of the year.
     fn of(masses: &[f32], cover: f64, phase: impl Fn(f64) -> f64) -> Window {
         match Lying::longest(masses, cover) {
             None => Window::default(),
@@ -855,12 +855,15 @@ impl Window {
                 peak: masses[run.peak] as f64,
                 at: phase(run.peak as f64 + 1.0),
             },
-            Some(run) => Window {
-                freeze: phase(run.start as f64 + 0.5),
-                melt: phase((run.start + run.len) as f64 + 0.5),
-                peak: masses[run.peak] as f64,
-                at: phase(run.peak as f64 + 1.0),
-            },
+            Some(run) => {
+                let (opens, closes) = run.crossings(masses, cover);
+                Window {
+                    freeze: phase(run.start as f64 + opens),
+                    melt: phase(run.start as f64 + closes),
+                    peak: masses[run.peak] as f64,
+                    at: phase(run.peak as f64 + 1.0),
+                }
+            }
         }
     }
 }
@@ -890,6 +893,21 @@ struct Lying {
 }
 
 impl Lying {
+    /// When the ice's mass crosses `cover` on its way into the run and out of it, in steps
+    /// from the run's first step's start (F255): the masses stand at their steps' ends, so
+    /// that it opens within its first step and closes within the step after its last, where
+    /// the mass between them crosses.
+    fn crossings(&self, masses: &[f32], cover: f64) -> (f64, f64) {
+        let n = masses.len();
+        let m = |k: usize| masses[k % n] as f64;
+        let (first, last) = (self.start, self.start + self.len - 1);
+        let (before, after) = (m(first + n - 1), m(last + 1));
+        let opens = ((cover - before) / (m(first) - before).max(f64::MIN_POSITIVE)).clamp(0.0, 1.0);
+        let closes = self.len as f64
+            + ((m(last) - cover) / (m(last) - after).max(f64::MIN_POSITIVE)).clamp(0.0, 1.0);
+        (opens, closes)
+    }
+
     fn longest(masses: &[f32], cover: f64) -> Option<Lying> {
         let n = masses.len();
         let lying: Vec<bool> = masses.iter().map(|&m| m as f64 > cover).collect();
@@ -953,10 +971,10 @@ fn year_curve(masses: &[f32], steps: usize, cover: f64) -> Option<(f64, f64)> {
         if peak < YEAR_CURVE_PEAK * cover {
             continue;
         }
-        // Times in steps from the run's first step's start: it opens half a step in, peaks at
-        // its peak step's end and closes half a step past its last.
+        // Times in steps from the run's first step's start: it opens and closes where its
+        // mass crosses the mass it lies at (F255) and peaks at its peak step's end.
         let at = ((run.peak + steps - run.start) % steps) as f64 + 1.0;
-        let (open, close) = (0.5, run.len as f64 + 0.5);
+        let (open, close) = run.crossings(place, cover);
         for j in 0..run.len {
             let t = j as f64 + 1.0;
             let m = place[(run.start + j) % steps] as f64;
@@ -1018,8 +1036,8 @@ impl Cryosphere {
 
     /// The window of an ice in a direction (F246), its land's frost's or, `sea`, its sea's
     /// ice's: its peak read between the cycle's places, as its mass is, and its phases those
-    /// of the places it lies at, by their weights, on the circle of the year; all year where
-    /// the nearest of them holds it all year. Between places a sea's ice lies at and places
+    /// of the places it lies at, by their weights, on the circle of the year, its window
+    /// lengthening toward the places it lies at all year by their share (F255). Between places a sea's ice lies at and places
     /// it never lies at, it lies only within its margin's edge (F251), its peak thinning to it.
     pub fn at(&self, d: [f64; 3], sea: bool) -> Window {
         let (lon, lat) = lon_lat_from_direction(d);
@@ -1055,9 +1073,9 @@ impl Cryosphere {
             }
             None => corners.iter().map(|&(p, w)| w * windows[p].peak).sum(),
         };
-        let Some(&(_, nearest)) = lying.iter().max_by(|a, b| a.0.total_cmp(&b.0)) else {
+        if lying.is_empty() {
             return Window::default();
-        };
+        }
         // Within the margin, ice thinner than the mass it lies at never lies (F252).
         if depth.is_some() && peak <= lies * std::f64::consts::LN_2 {
             return Window::default();
@@ -1070,22 +1088,35 @@ impl Cryosphere {
             (s.atan2(c) / TAU).rem_euclid(1.0)
         };
         let at = circular(&lying, |w| w.at);
-        let (freeze, melt) = if nearest.perennial() {
+        let seasonal: Vec<(f64, Window)> = lying
+            .iter()
+            .copied()
+            .filter(|(_, w)| !w.perennial())
+            .collect();
+        let weight = |among: &[(f64, Window)]| among.iter().map(|(w, _)| w).sum::<f64>();
+        // The share of the places it reads that it lies at all year.
+        let all_year = 1.0 - weight(&seasonal) / weight(&lying);
+        let (freeze, melt) = if seasonal.is_empty() {
             (0.0, 1.0)
         } else {
-            let seasonal: Vec<(f64, Window)> = lying
-                .iter()
-                .copied()
-                .filter(|(_, w)| !w.perennial())
-                .collect();
             let (freeze, melt) = (
                 circular(&seasonal, |w| w.freeze),
                 circular(&seasonal, |w| w.melt),
+            );
+            // Toward the places it lies at all year, it freezes the earlier and melts the
+            // later, by their share, until it lies all year at them (F255).
+            let span = (melt - freeze).rem_euclid(1.0);
+            let longer = span + all_year * (1.0 - span);
+            let grow = 0.5 * (longer - span);
+            let (freeze, melt) = (
+                (freeze - grow).rem_euclid(1.0),
+                (melt + grow).rem_euclid(1.0),
             );
             // Toward its edge the ice lies the more briefly, its window closing on its peak
             // with its depth (F252), as the frost at a cap's margin comes late and goes early.
             let (before, after) = ((at - freeze).rem_euclid(1.0), (melt - at).rem_euclid(1.0));
             match depth {
+                _ if longer >= 1.0 - 1e-9 => (0.0, 1.0),
                 Some(depth) if before + after <= (melt - freeze).rem_euclid(1.0) + 1e-9 => (
                     (at - depth * before).rem_euclid(1.0),
                     (at + depth * after).rem_euclid(1.0),
@@ -1492,10 +1523,7 @@ impl EnergyBalance {
         } else {
             all
         };
-        let (n_lat, n_lon) = match self.sky.resonance {
-            None => (CYCLE_LATITUDES, 1),
-            Some(_) => CYCLE_RESONANT_GRID,
-        };
+        let (n_lat, n_lon) = self.cycle_grid();
         let paths: Vec<Vec<PathStep>> = match self.sky.resonance {
             Some(_) => tilts.iter().map(|&eps| self.resonant_steps(eps)).collect(),
             None => Vec::new(),
@@ -1802,12 +1830,22 @@ impl EnergyBalance {
     /// links to the places beside it, the transport's conductance to each per unit of the
     /// place's area at unit transport: on the unit sphere, the length of the edge they share
     /// over the distance between them, over the place's area.
-    fn layout(&self, climate: &Climate, sea: Option<&Field<f32>>) -> Layout {
-        let grid = climate.temperature.grid();
-        let (n_lat, n_lon) = match self.sky.resonance {
+    /// The cycle's places (F245, F254): under an atmosphere by latitude and longitude, a fast
+    /// spinner's latitudes 2° apart, a resonant body's 4°, so that a fast spinner's land, its
+    /// seas and its heights shape its seasons along its latitudes, as they do a resonant
+    /// body's, through the air between them; an airless fast spinner's by its latitudes
+    /// alone, its places apart, with no air between them.
+    fn cycle_grid(&self) -> (usize, usize) {
+        match self.sky.resonance {
+            None if self.exchange > 0.0 => CYCLE_FAST_GRID,
             None => (CYCLE_LATITUDES, 1),
             Some(_) => CYCLE_RESONANT_GRID,
-        };
+        }
+    }
+
+    fn layout(&self, climate: &Climate, sea: Option<&Field<f32>>) -> Layout {
+        let grid = climate.temperature.grid();
+        let (n_lat, n_lon) = self.cycle_grid();
         let (dphi, dlon) = (PI / (n_lat - 1) as f64, TAU / n_lon as f64);
         let lat_of = |i: usize| -PI / 2.0 + dphi * i as f64;
         let edges = |i: usize| {
@@ -2389,8 +2427,8 @@ impl EnergyBalance {
         // A fast spinner's traps are its latitudes' at a few heights, the frost's point the
         // only thing a height changes, read at each cell between them; a resonant body's are
         // each cell's own.
-        let levels: Option<Vec<f64>> = match self.sky.resonance {
-            None => {
+        let levels: Option<Vec<f64>> = match n_lon {
+            1 => {
                 let (lo, hi) = thins
                     .iter()
                     .fold((f64::MAX, f64::MIN), |(a, b), &t| (a.min(t), b.max(t)));
@@ -2408,7 +2446,7 @@ impl EnergyBalance {
                         .collect(),
                 )
             }
-            Some(_) => None,
+            _ => None,
         };
         let places: Vec<TrapCell> = match &levels {
             Some(levels) => (0..CYCLE_LATITUDES)
@@ -5141,12 +5179,14 @@ mod tests {
         let (cycle, climate) = graph_cycle(&earth);
         let (mean, steady) = (surface_mean(&cycle, &earth), bands(&climate.temperature).0);
         assert!((mean - steady).abs() < 1.0, "{mean} against {steady}");
-        let (n_lat, _) = cycle.layout;
+        let (n_lat, n_lon) = cycle.layout;
         let swing = |lat: f64| {
-            let i = ((lat + 90.0) / 180.0 * (n_lat - 1) as f64).round() as usize;
+            // The place at the latitude and the first longitude, its air step by step.
+            let i = ((lat + 90.0) / 180.0 * (n_lat - 1) as f64).round() as usize * n_lon;
             let air = &cycle.air[0];
-            let (lo, hi) = (0..air.len() / n_lat)
-                .map(|k| air[k * n_lat + i])
+            let places = n_lat * n_lon;
+            let (lo, hi) = (0..air.len() / places)
+                .map(|k| air[k * places + i])
                 .fold((f64::MAX, f64::MIN), |(a, b), t| (a.min(t), b.max(t)));
             hi - lo
         };
@@ -5165,16 +5205,19 @@ mod tests {
     }
 
     /// F246: an ice's window through the year: the longest run of steps it lies through,
-    /// round the cycle's end, its phases from the northern spring equinox; all year as 0 and
-    /// 1; none where it never lies.
+    /// round the cycle's end, its phases from the northern spring equinox, opening and
+    /// closing where its mass crosses the mass it lies at (F255); all year as 0 and 1; none
+    /// where it never lies.
     #[test]
     fn an_ice_s_window_is_its_longest_run() {
         let phase = |t: f64| (t / 10.0 - 0.25).rem_euclid(1.0);
-        // Lying from step 8 round to step 2, its most at step 0; a shorter run at 5.
+        // Lying from step 8 round to step 2, its most at step 0; a shorter run at 5. Its mass
+        // crosses 0.5 halfway from 0 at time 8 to 1 at time 9, and three quarters of the way
+        // from 2 at time 3 to 0 at time 4.
         let masses = [9.0f32, 5.0, 2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 1.0, 4.0];
         let w = Window::of(&masses, 0.5, phase);
         let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
-        assert!(near(w.freeze, 0.6) && near(w.melt, 0.1), "{w:?}");
+        assert!(near(w.freeze, 0.6) && near(w.melt, 0.125), "{w:?}");
         assert!(near(w.peak, 9.0) && near(w.at, 0.85), "{w:?}");
         let all = Window::of(
             &[2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
@@ -5255,6 +5298,49 @@ mod tests {
         assert!((0.5..0.95).contains(&seasonal.freeze), "{seasonal:?}");
         assert!((0.2..0.6).contains(&seasonal.melt), "{seasonal:?}");
         assert!(polar.perennial(), "{polar:?}");
+    }
+
+    /// F255: an ice's window opens and closes where its mass crosses the mass it lies at,
+    /// within the step: its masses stand at their steps' ends.
+    #[test]
+    fn a_window_opens_where_its_mass_crosses() {
+        let masses = [0.0f32, 0.5, 1.5, 2.0, 1.0, 0.2, 0.0, 0.0];
+        let phase = |t: f64| t / masses.len() as f64;
+        let w = Window::of(&masses, 1.0, phase);
+        // Up through 1.0 halfway from 0.5 at time 2 to 1.5 at time 3; down to it at time 5.
+        assert!((w.freeze - 2.5 / 8.0).abs() < 1e-12, "{w:?}");
+        assert!((w.melt - 5.0 / 8.0).abs() < 1e-12, "{w:?}");
+        assert!((w.peak - 2.0).abs() < 1e-12 && (w.at - 4.0 / 8.0).abs() < 1e-12);
+    }
+
+    /// F254: a fast spinner's cycle runs by longitude: at 60° north the Earth-like's land,
+    /// where a continent stands, swings through its year far more widely than its sea beside
+    /// it at the same latitude, as Siberia does against the Norwegian Sea.
+    #[test]
+    fn a_continent_s_year_swings_wider_than_its_sea_s() {
+        let earth = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&earth);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let climate = eb.solve(grid);
+        let ocean = Ocean::from_graph(&earth).expect("a water sea");
+        // Sea over the western half of the longitudes, land over the eastern.
+        let share = Field::from_fn(grid, |_, d| {
+            let (lon, _) = lon_lat_from_direction(d);
+            if lon < 0.0 { 1.0f32 } else { 0.0 }
+        });
+        let cycle = eb.cycle(
+            &climate,
+            &Ground::from_graph(&earth),
+            Some((&ocean, &share)),
+        );
+        let seas = cycle.seas.as_ref().expect("the sea");
+        let land = direction_from_lon_lat(90f64.to_radians(), 60f64.to_radians());
+        let sea = direction_from_lon_lat(-90f64.to_radians(), 60f64.to_radians());
+        let read = |f: &Field<f32>, d: [f64; 3]| f.get(f.grid().locate(d).0) as f64;
+        let land_swing = read(&cycle.max, land) - read(&cycle.min, land);
+        let sea_swing = seas.max_at(sea) - seas.min_at(sea);
+        println!("60° north: the land swings {land_swing:.1} K, the sea {sea_swing:.1} K");
+        assert!(land_swing > 2.0 * sea_swing, "{land_swing} {sea_swing}");
     }
 
     /// F253: an ice read at a phase of the year as an engine reads the cryosphere's maps,
@@ -5381,14 +5467,14 @@ mod tests {
                 at(&climate.temperature, lat, 0.0)
             );
         }
-        let (n_lat, _) = cycle.layout;
+        let (n_lat, n_lon) = cycle.layout;
         for lat in [-60.0f64, 0.0, 45.0, 60.0, 80.0] {
-            let i = ((lat + 90.0) / 180.0 * (n_lat - 1) as f64).round() as usize;
+            let i = ((lat + 90.0) / 180.0 * (n_lat - 1) as f64).round() as usize * n_lon;
             let air = &cycle.air[0];
-            let steps = air.len() / n_lat;
+            let steps = air.len() / (n_lat * n_lon);
             let row: Vec<String> = (0..steps)
                 .step_by(steps / 12)
-                .map(|k| format!("{:.0}", air[k * n_lat + i]))
+                .map(|k| format!("{:.0}", air[k * n_lat * n_lon + i]))
                 .collect();
             println!("Earth {lat:5.0}° air through the year: {}", row.join(" "));
         }
