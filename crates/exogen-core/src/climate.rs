@@ -240,56 +240,16 @@ pub struct Traps {
     pub vapour: Vec<(Ice, Field<f32>)>,
     /// Each of `vapour`'s ices' warmest through the year, K (F241).
     pub warmest: Vec<Field<f32>>,
-    /// Each of `vapour`'s ices' year-mean saturation pressure over it at its own height, Pa,
-    /// before it is brought to the datum's air.
-    raw: Vec<Field<f32>>,
-    /// A fast spinner's traps on its latitudes at a few heights, to read a place's at its own.
-    table: Option<TrapTable>,
-}
-
-/// A fast spinner's traps on its latitudes at a few heights (F240), kept to read any place's
-/// at its own height (F241): the shares of the datum's pressure, and each ice's values at
-/// each latitude and share, in `Traps`'s order.
-#[derive(Clone, Debug)]
-struct TrapTable {
-    levels: Vec<f64>,
-    growth: Vec<f64>,
-    vapour: Vec<Vec<f64>>,
-    warmest: Vec<Vec<f64>>,
 }
 
 impl Traps {
-    /// An ice's trap at a place of any grid at its own height (F241), `thin` the share of
-    /// the datum's pressure it keeps: for the frost's own gas, its ice's growth, kg/m² a
-    /// year; for any other, the vapour pressure the datum's air must hold to keep its ice,
-    /// Pa, and the warmest the ice stands, K. A fast spinner's are read on its latitudes'
-    /// heights; a resonant body's are its cell's.
-    pub fn at(&self, species: &str, d: [f64; 3], thin: f64) -> Option<(f64, f64)> {
-        let (_, lat) = lon_lat_from_direction(d);
-        if let Some((ice, field)) = &self.growth
-            && ice.species == species
-        {
-            let value = match &self.table {
-                Some(t) => read_table(&t.growth, &t.levels, lat, thin, false),
-                None => field.get(field.grid().locate(d).0) as f64,
-            };
-            return Some((value, f64::NAN));
-        }
-        let j = self
-            .vapour
-            .iter()
-            .position(|(ice, _)| ice.species == species)?;
-        let (raw, warmest) = match &self.table {
-            Some(t) => (
-                read_table(&t.vapour[j], &t.levels, lat, thin, true),
-                read_table(&t.warmest[j], &t.levels, lat, thin, false),
-            ),
-            None => {
-                let c = self.raw[j].grid().locate(d).0;
-                (self.raw[j].get(c) as f64, self.warmest[j].get(c) as f64)
-            }
-        };
-        Some((raw / thin.max(1e-30), warmest))
+    /// The climate's grid the traps stand on.
+    pub fn grid(&self) -> CubeSphere {
+        self.growth
+            .as_ref()
+            .map(|g| g.1.grid())
+            .or_else(|| self.vapour.first().map(|v| v.1.grid()))
+            .unwrap_or_else(|| CubeSphere::new(CLIMATE_FACE_SIZE))
     }
 
     /// An ice's coldest trap: its latitude and longitude, degrees, and the saturation
@@ -1298,14 +1258,6 @@ impl EnergyBalance {
             growth: None,
             vapour: Vec::new(),
             warmest: Vec::new(),
-            raw: Vec::new(),
-            table: None,
-        };
-        let mut table = TrapTable {
-            levels: levels.clone().unwrap_or_default(),
-            growth: Vec::new(),
-            vapour: Vec::new(),
-            warmest: Vec::new(),
         };
         for ice in ices {
             let own = frost.filter(|f| f.species == ice.species);
@@ -1346,26 +1298,18 @@ impl EnergyBalance {
                 Some(_) => {
                     let field = Field::from_fn(grid, |c, d| read(&values, c, d, false) as f32);
                     traps.growth = Some((*ice, field));
-                    table.growth = values;
                 }
                 None => {
                     // The vapour at the datum's air: the saturation pressure over the ice over
                     // the share of that air's pressure its height keeps.
-                    let raw = Field::from_fn(grid, |c, d| read(&values, c, d, true) as f32);
-                    let field = Field::from_fn(grid, |c, _| {
-                        (raw.get(c) as f64 / thins[grid.index(c)]) as f32
+                    let field = Field::from_fn(grid, |c, d| {
+                        (read(&values, c, d, true) / thins[grid.index(c)]) as f32
                     });
                     let warmest = Field::from_fn(grid, |c, d| read(&hottest, c, d, false) as f32);
                     traps.vapour.push((*ice, field));
-                    traps.raw.push(raw);
                     traps.warmest.push(warmest);
-                    table.vapour.push(values);
-                    table.warmest.push(hottest);
                 }
             }
-        }
-        if levels.is_some() {
-            traps.table = Some(table);
         }
         traps
     }

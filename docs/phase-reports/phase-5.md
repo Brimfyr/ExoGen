@@ -1,6 +1,6 @@
 # Phase 5 report: atmosphere, climate, volatiles and erosion
 
-Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240) and the caps of the inventory's ices (F241).
+Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240), the caps of the inventory's ices (F241) and the frost's own gas's (F242).
 
 Phase 5 gives the bodies their air, their weather's long average, their volatiles and the processes that wear a surface down: sunlight and the temperature it makes on every body, seas, caps and cold traps from the inventory, rivers, glaciers, wind, dust, sand and the chemistry that colours them. The plan (PLAN.md, Phase 5) runs it as seven sub-phases in order, each with its own gate and review: 5A climate on every body, 5B volatiles, 5C water and ice at work, 5D dust, sand and chemistry, 5E surface physics on every body, 5F Io and Thaumasia, 5G weather and clouds. Mars, Titan and Pluto are its test bodies for the look; an Earth-like and a tidally locked ocean world give the climate its numbers.
 
@@ -122,3 +122,15 @@ How it went:
 - **Pluto's methane over the whole body.** Laid over every place, ice holds exactly its inventory, and a rounding decided whether the fewest places were sought at all: Pluto's methane lay 4 m thick over the whole body. Ice that may cover every place now spreads over all of them only if no fewer hold it.
 - **No ice on the Earth-like.** Its summer poles stand at some 295 K, its seasons land's until its ocean holds them (5A), and its water's ice melts everywhere: it lays no ice sheets, and its sea keeps all its water.
 - **The renders.** Mars, Pluto and Triton rendered at 2,048 px take their caps; the Earth-like, Titan and the Moon are byte-identical to the last renders in every map.
+
+## The ninth milestone: the frost's own gas's caps
+
+- **F242.** The frost's own gas lays its caps last, where its ice grows the most: Mars's carbon dioxide in a basin at 77 to 79° north, up to 0.9 km thick over its water's ice; Pluto's nitrogen mostly between 37 and 43° south, Triton's at both poles. Mars's preset holds its carbon dioxide as measured, 0.12 m of its liquid where it held 8 m of ice.
+
+How it went:
+
+- **Mars's carbon dioxide.** The preset held 8 m of carbon dioxide ice over the whole body: laid, it would have stood a hundred times Mars's residual cap and buried deposits. It holds 0.12 m now (Phillips et al. 2011).
+- **North where Mars's is south.** The model's Mars's south polar band lies lower than its north, where Mars's stands 3 to 4 km higher, and its basins' air raises the frost's point: its carbon dioxide lies in a northern basin, where Mars's residual cap stands at its south pole at an albedo of some 0.8. 5B's gate wants it in the south.
+- **Pluto's nitrogen.** At the pressure the frost holds, Pluto's nitrogen ice loses mass everywhere, and its caps lie where it loses the least, at 40° south; Pluto's gathered in Sputnik Planitia over its history, which comes with the volatiles' transport.
+- **The air's reservoir.** The caps of the frost's own gas do not yet hold the air: their exchange with it waits on the volatiles' transport, where the reservoir's history matters.
+- **The renders.** Mars, Pluto and Triton rendered at 2,048 px take their caps; the Earth-like and the Moon are byte-identical to the last renders in every map.

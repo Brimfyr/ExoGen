@@ -63,14 +63,16 @@ pub fn liquid_species(working: &str) -> &'static [&'static str] {
     }
 }
 
-/// Lays each ice of the inventory but the frost's own gas's in its traps (F241), the least
-/// volatile first, each on the ground the last left: the ice covers the places from its
-/// coldest trap on, a sea's floor holding none, an ice that is the body's working liquid
-/// only where it never melts; its surface stands as the plastic profile of an ice that
-/// holds CAP_YIELD_STRESS (Nye 1951) from the margin of the ground it covers, until its caps
-/// hold its inventory or, a liquid's, until it covers all the ground it can. Each place's
-/// trap is its region's on the climate's grid, read smoothly between its cells: a cap
-/// kilometres thick buries the relief under it, which decides where it stands no more.
+/// Lays each ice of the inventory in its traps (F241), the least volatile first, each on the
+/// ground the last left: the ice covers the places from its coldest trap on, a sea's floor
+/// holding none; its surface stands as the plastic profile of an ice that holds
+/// CAP_YIELD_STRESS (Nye 1951) from the margin of the ground it covers, until its caps hold
+/// its inventory or, a liquid's, until it covers all the ground it can. Each place's trap is
+/// its region's on the climate's grid, read smoothly between its cells: a cap kilometres
+/// thick buries the relief under it, which decides where it stands no more. An ice's
+/// coldest traps are those where it needs the least vapour in the air (F240), the frost's
+/// own gas's those where its ice grows the most (F242); an ice that is the body's working
+/// liquid stands only where it never melts, the frost's own gas's where its ice grows.
 pub fn lay(graph: &ParamGraph, layers: &mut LayerSet, traps: &Traps) -> Vec<Cap> {
     let radius = graph.f64("body.radius");
     let gravity = graph.f64("body.gravity");
@@ -81,21 +83,37 @@ pub fn lay(graph: &ParamGraph, layers: &mut LayerSet, traps: &Traps) -> Vec<Cap>
         .unwrap_or(&empty)
         .clone();
     let liquid = liquid_species(graph.str("volatiles.working_liquid"));
-    let mut order: Vec<usize> = (0..traps.vapour.len()).collect();
+    // Each ice's traps on the climate's grid, the lower the colder, and where a liquid's ice
+    // may stand, at or above none.
+    let mut ices: Vec<(Ice, Vec<f32>, Vec<f32>)> = traps
+        .vapour
+        .iter()
+        .zip(&traps.warmest)
+        .map(|((ice, vapour), warmest)| {
+            let rank = vapour
+                .as_slice()
+                .iter()
+                .map(|&v| (v as f64).max(1e-300).ln() as f32)
+                .collect();
+            let melt = ice.volatile.t_triple as f32;
+            let stands = warmest.as_slice().iter().map(|&w| melt - w).collect();
+            (*ice, rank, stands)
+        })
+        .collect();
+    if let Some((ice, growth)) = &traps.growth {
+        let rank = growth.as_slice().iter().map(|&g| -g).collect();
+        ices.push((*ice, rank, growth.as_slice().to_vec()));
+    }
     // The least volatile first, its triple point the warmest.
-    order.sort_by(|&a, &b| {
-        let t = |j: usize| traps.vapour[j].0.volatile.t_triple;
-        t(b).total_cmp(&t(a))
-    });
+    ices.sort_by(|a, b| b.0.volatile.t_triple.total_cmp(&a.0.volatile.t_triple));
     let grid = layers.grid;
     let whole = 4.0 * std::f64::consts::PI * radius * radius;
     let areas: Vec<f64> = (0..grid.cell_count())
         .map(|k| grid.cell_area(grid.cell(k)) * radius * radius)
         .collect();
+    let coarse = traps.grid();
     let mut caps = Vec::new();
-    for j in order {
-        let (ice, field) = &traps.vapour[j];
-        let ice = *ice;
+    for (ice, rank, stands) in ices {
         let gel = inventory.get(ice.species).copied().unwrap_or(0.0);
         if gel <= 0.0 {
             continue;
@@ -104,16 +122,10 @@ pub fn lay(graph: &ParamGraph, layers: &mut LayerSet, traps: &Traps) -> Vec<Cap>
         let wanted = gel * ice.volatile.liquid_density / rho * whole;
         let melts = liquid.contains(&ice.species);
         let ground = layers.height();
-        // Each place's region's trap and its warmest, read smoothly on the climate's grid,
-        // the trap's logarithm; where its ice may stand, coldest first.
-        let coarse = field.grid();
-        let logs: Vec<f32> = field
-            .as_slice()
-            .iter()
-            .map(|&v| (v as f64).max(1e-300).ln() as f32)
-            .collect();
-        let trap = PaddedField::new(&coarse, &logs);
-        let warm = PaddedField::new(&coarse, traps.warmest[j].as_slice());
+        // Each place's region's trap, read smoothly on the climate's grid; where its ice may
+        // stand, coldest first.
+        let trap = PaddedField::new(&coarse, &rank);
+        let stands = PaddedField::new(&coarse, &stands);
         let mut ranks: Vec<(usize, f64)> = (0..grid.cell_count())
             .into_par_iter()
             .filter_map(|k| {
@@ -121,7 +133,7 @@ pub fn lay(graph: &ParamGraph, layers: &mut LayerSet, traps: &Traps) -> Vec<Cap>
                     return None;
                 }
                 let d = grid.center(grid.cell(k));
-                if melts && sample_bilinear(&coarse, &warm, d) as f64 >= ice.volatile.t_triple {
+                if melts && sample_bilinear(&coarse, &stands, d) < 0.0 {
                     return None;
                 }
                 let rank = sample_bilinear(&coarse, &trap, d) as f64;
@@ -411,6 +423,40 @@ mod tests {
         assert!(
             share < 0.2 && thickest > 100.0,
             "share {share}, thickest {thickest}"
+        );
+    }
+
+    /// F242: the frost's own gas lays its caps where its ice grows the most, last, on the
+    /// caps of the ices less volatile: Mars's carbon dioxide on ground at the datum at its
+    /// poles, its whole inventory, the 0.12 m of its residual cap and the deposits buried
+    /// under its south polar layered deposits (Phillips et al. 2011).
+    #[test]
+    fn the_frost_s_own_gas_lays_its_caps_where_its_ice_grows() {
+        let (graph, traps) = traps_of("Mars");
+        let mut layers = LayerSet::new(CubeSphere::new(64));
+        let caps = lay(&graph, &mut layers, &traps);
+        let species: Vec<&str> = caps.iter().map(|c| c.ice.species).collect();
+        assert_eq!(species, ["H2O", "CO2"]);
+        let cap = &caps[1];
+        assert!((cap.laid - 0.12).abs() < 1e-9, "laid {}", cap.laid);
+        let (share, thickest, lowest) = reach(cap);
+        assert!(
+            share > 0.0 && thickest > 0.0 && lowest > 75.0,
+            "{share} {thickest} {lowest}"
+        );
+    }
+
+    /// F242: a working liquid that is the frost's own gas lays its ice only where the ice
+    /// grows: Titan's methane, its air over 90 K holding its ice above its point, lays none.
+    #[test]
+    fn titan_s_methane_lays_no_cap() {
+        let (graph, traps) = traps_of("Titan");
+        let mut layers = LayerSet::new(CubeSphere::new(32));
+        let caps = lay(&graph, &mut layers, &traps);
+        assert!(
+            caps.is_empty(),
+            "{:?}",
+            caps.iter().map(|c| c.ice.species).collect::<Vec<_>>()
         );
     }
 
