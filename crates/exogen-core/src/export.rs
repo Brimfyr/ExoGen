@@ -777,6 +777,15 @@ pub fn export(
     stage_outputs.insert("equator_temperature_k".to_string(), equator_t);
     stage_outputs.insert("polar_temperature_k".to_string(), poles_t);
     stage_outputs.insert("coldest_temperature_k".to_string(), out.temperature_range.0);
+    // The poles' shadows (F243): the share of the body in them and the coldest the map holds.
+    stage_outputs.insert("shadow_fraction".to_string(), out.shadow_fraction);
+    let mapped = out
+        .temperature
+        .as_slice()
+        .iter()
+        .cloned()
+        .fold(f32::MAX, f32::min);
+    stage_outputs.insert("coldest_mapped_temperature_k".to_string(), mapped as f64);
     stage_outputs.insert("warmest_temperature_k".to_string(), out.temperature_range.1);
     let (frost_mean, ..) = crate::climate::bands(&out.frost);
     let cover = crate::fields::Field::from_fn(out.frost.grid(), |c, _| {

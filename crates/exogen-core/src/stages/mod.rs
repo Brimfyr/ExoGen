@@ -215,6 +215,8 @@ pub struct FinishOutput {
     pub traps: crate::climate::Traps,
     /// The caps the inventory laid in its traps (F241).
     pub caps: Vec<caps::Cap>,
+    /// The share of the body in the poles' permanent shadow (F243).
+    pub shadow_fraction: f64,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -409,7 +411,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 179;
+pub const FINISH_VERSION: u64 = 180;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2996,9 +2998,23 @@ pub fn finish(
             climate.iterations, temperature_range.0, temperature_range.1
         );
     }
-    // Brought to this grid by each place's height and slope (F237), and the frost at the
-    // snapshot's season with them, over the ground's colour (F239).
-    let temperature = downscale.apply(&cycle.mean, &height, sea_level);
+    // Brought to this grid by each place's height and slope (F237), the poles' shadows in
+    // it (F243), and the frost at the snapshot's season with them, over the ground's colour
+    // (F239).
+    let mut temperature = downscale.apply(&cycle.mean, &height, sea_level);
+    let shade = crate::climate::Shade::from_graph(graph, &balance);
+    let shadow_fraction = downscale.shade(&mut temperature, &height, &climate.absorbed, &shade);
+    if std::env::var_os("EXOGEN_DEBUG").is_some() && shadow_fraction > 0.0 {
+        let coldest = temperature
+            .as_slice()
+            .iter()
+            .cloned()
+            .fold(f32::MAX, f32::min);
+        eprintln!(
+            "shadows: {:.4}% of the body never sees the star, its coldest {coldest:.1} K",
+            100.0 * shadow_fraction
+        );
+    }
     let (frost, albedo) = match cycle.frost {
         Some(f) => {
             let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &height, sea_level);
@@ -3050,6 +3066,7 @@ pub fn finish(
         cap_growth: cycle.cap_growth,
         traps,
         caps: laid,
+        shadow_fraction,
         rays,
         sea_level,
         ocean_fraction,

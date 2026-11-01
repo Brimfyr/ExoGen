@@ -1765,6 +1765,127 @@ impl Downscale {
             self.at(flat, facing, above) as f32
         })
     }
+
+    /// The poles' shadows (F243): ground whose horizon stands, in every direction, above the
+    /// highest the star's disc climbs there through the year never sees it (`Shade`). It
+    /// stands at what the terrain it sees and the body's own heat hold it at: the terrain's
+    /// share of its sky, the mean of sin² of its horizon's elevation, at what that terrain
+    /// radiates through the year, `emitted` W/m² on the climate's grid, its own heat with
+    /// it; and the air holds it toward its surroundings as it does a slope. The horizon is
+    /// traced in SHADOW_AZIMUTHS directions out to SHADOW_STEPS cells, over the body's
+    /// curve, where the star never climbs past SHADOW_SUN_LIMIT_DEG. Returns the share of
+    /// the body in shadow.
+    pub fn shade(
+        &self,
+        temperature: &mut Field<f32>,
+        height: &Field<f32>,
+        emitted: &Field<f32>,
+        shade: &Shade,
+    ) -> f64 {
+        let grid = height.grid();
+        let src = emitted.grid();
+        let padded = PaddedField::new(&src, emitted.as_slice());
+        let step = (4.0 * PI / grid.cell_count() as f64).sqrt();
+        let limit = SHADOW_SUN_LIMIT_DEG.to_radians();
+        let level = |d: [f64; 3]| {
+            let h = height.get(grid.locate(d).0) as f64;
+            if h.is_finite() { h } else { 0.0 }
+        };
+        // The horizon in a direction: the highest the ground stands over a place, over the
+        // body's curve; traced until it passes `enough`.
+        let horizon =
+            |d: [f64; 3], h0: f64, (east, north): ([f64; 3], [f64; 3]), phi: f64, enough: f64| {
+                let mut most = f64::MIN;
+                for s in 1..=SHADOW_STEPS {
+                    let theta = s as f64 * step;
+                    let p = crate::geom::offset(d, east, north, theta, phi);
+                    let distance = theta * self.radius;
+                    let drop = distance * distance / (2.0 * self.radius);
+                    most = most.max(((level(p) - h0 - drop) / distance).atan());
+                    if most > enough {
+                        break;
+                    }
+                }
+                most
+            };
+        let shadowed: Vec<(usize, f32)> = (0..grid.cell_count())
+            .into_par_iter()
+            .filter_map(|k| {
+                let c = grid.cell(k);
+                let d = grid.center(c);
+                let (_, lat) = lon_lat_from_direction(d);
+                if shade.highest(lat, 0.0) > limit {
+                    return None;
+                }
+                let h0 = level(d);
+                let basis = crate::geom::local_basis(d);
+                let equator = if lat > 0.0 { -PI / 2.0 } else { PI / 2.0 };
+                let alphas = (0..SHADOW_AZIMUTHS).map(|j| TAU * j as f64 / SHADOW_AZIMUTHS as f64);
+                // Lit if the star clears the horizon in any direction, the equator's first.
+                for alpha in alphas.clone() {
+                    let sun = shade.highest(lat, alpha);
+                    if horizon(d, h0, basis, equator + alpha, sun) <= sun {
+                        return None;
+                    }
+                }
+                let terrain = alphas
+                    .map(|alpha| {
+                        horizon(d, h0, basis, equator + alpha, f64::MAX)
+                            .max(0.0)
+                            .sin()
+                            .powi(2)
+                    })
+                    .sum::<f64>()
+                    / SHADOW_AZIMUTHS as f64;
+                let walls = sample_bilinear(&src, &padded, d) as f64 + shade.heat;
+                let own = ((terrain * walls + shade.heat) / SIGMA_SB).powf(0.25);
+                let flat = temperature.get(c) as f64;
+                Some((k, (flat + self.keep(flat) * (own - flat)) as f32))
+            })
+            .collect();
+        let mut area = 0.0;
+        for &(k, t) in &shadowed {
+            temperature.as_mut_slice()[k] = t;
+            area += grid.cell_area(grid.cell(k));
+        }
+        area / (4.0 * PI)
+    }
+}
+
+/// What the poles' shadows read (F243): the body's largest tilt to its star's orbit through
+/// its precession, which sets the highest the star climbs at a pole, rad; the star's
+/// angular radius, rad; and the body's own heat flowing out, W/m².
+#[derive(Clone, Copy, Debug)]
+pub struct Shade {
+    pub tilt: f64,
+    pub sun: f64,
+    pub heat: f64,
+}
+
+impl Shade {
+    pub fn from_graph(graph: &ParamGraph, balance: &EnergyBalance) -> Self {
+        let tilt = balance
+            .sky
+            .obliquities()
+            .iter()
+            .fold(0.0f64, |a, &e| a.max(e.min(PI - e)));
+        let distance = graph.f64("orbit.star_distance").max(1.0);
+        Self {
+            tilt,
+            sun: (graph.f64("star.radius") * R_SUN / distance).atan(),
+            heat: balance.heat_flux,
+        }
+    }
+
+    /// The highest the star's disc climbs over the year at a latitude, rad, seen in a
+    /// direction `alpha` from the equator's: near a pole, the star's azimuth is its hour
+    /// angle, and at the solstice it stands at sin(phi) sin(tilt) + cos(phi) cos(tilt)
+    /// cos(alpha).
+    fn highest(&self, lat: f64, alpha: f64) -> f64 {
+        let (sp, cp) = lat.abs().sin_cos();
+        let (st, ct) = self.tilt.sin_cos();
+        (sp * st + cp * ct * alpha.cos()).clamp(-1.0, 1.0).asin() + self.sun
+    }
 }
 
 /// The most an ice of the frost's own gas would grow by anywhere, kg/m² a year, and the
@@ -2873,6 +2994,37 @@ mod tests {
 
     fn downscale_of(name: &str) -> Downscale {
         Downscale::from_graph(&crate::presets::preset(name).unwrap().to_graph().0)
+    }
+
+    /// F243: a crater at the Moon's pole keeps its floor from the sun: its rim stands over
+    /// the 1.8° the sun's disc climbs there at most, and its floor, seeing only its walls,
+    /// stands near the 25 to 70 K Diviner finds on the floors of the Moon's polar craters
+    /// (Paige et al. 2010); the same crater at 60° south sees the sun at noon.
+    #[test]
+    fn a_polar_crater_s_floor_never_sees_the_sun() {
+        let (cycle, climate) = cycle_of("Moon");
+        let moon = downscale_of("Moon");
+        let graph = crate::presets::preset("Moon").unwrap().to_graph().0;
+        let shade = Shade::from_graph(&graph, &EnergyBalance::from_graph(&graph));
+        let grid = CubeSphere::new(256);
+        let pole = direction_from_lon_lat(0.0, -PI / 2.0);
+        let sixty = direction_from_lon_lat(0.0, -PI / 3.0);
+        let (radius, depth) = (30_000.0, 3_000.0);
+        let bowl = |d: [f64; 3], centre: [f64; 3]| {
+            let r = crate::geom::angle_between(d, centre) * moon.radius / radius;
+            if r < 1.0 { -depth * (1.0 - r * r) } else { 0.0 }
+        };
+        let height = Field::from_fn(grid, |_, d| (bowl(d, pole) + bowl(d, sixty)) as f32);
+        let mut t = moon.apply(&cycle.mean, &height, f64::NAN);
+        let share = moon.shade(&mut t, &height, &climate.absorbed, &shade);
+        let floor = at(&t, -90.0, 0.0);
+        let lit = at(&t, -60.0, 0.0);
+        println!(
+            "shadowed {share:.2e} of the body, the polar floor {floor:.1} K, at 60° {lit:.1} K"
+        );
+        assert!(share > 0.0, "no shadow");
+        assert!((25.0..75.0).contains(&floor), "polar floor {floor}");
+        assert!(lit > 150.0, "60° floor {lit}");
     }
 
     /// F237: a place's height cools it by the air's share of the lapse rate and the

@@ -1,6 +1,6 @@
 # Phase 5 report: atmosphere, climate, volatiles and erosion
 
-Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240), the caps of the inventory's ices (F241) and the frost's own gas's (F242).
+Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240), the caps of the inventory's ices (F241) and the frost's own gas's (F242), and the poles' shadows (F243).
 
 Phase 5 gives the bodies their air, their weather's long average, their volatiles and the processes that wear a surface down: sunlight and the temperature it makes on every body, seas, caps and cold traps from the inventory, rivers, glaciers, wind, dust, sand and the chemistry that colours them. The plan (PLAN.md, Phase 5) runs it as seven sub-phases in order, each with its own gate and review: 5A climate on every body, 5B volatiles, 5C water and ice at work, 5D dust, sand and chemistry, 5E surface physics on every body, 5F Io and Thaumasia, 5G weather and clouds. Mars, Titan and Pluto are its test bodies for the look; an Earth-like and a tidally locked ocean world give the climate its numbers.
 
@@ -134,3 +134,13 @@ How it went:
 - **Pluto's nitrogen.** At the pressure the frost holds, Pluto's nitrogen ice loses mass everywhere, and its caps lie where it loses the least, at 40° south; Pluto's gathered in Sputnik Planitia over its history, which comes with the volatiles' transport.
 - **The air's reservoir.** The caps of the frost's own gas do not yet hold the air: their exchange with it waits on the volatiles' transport, where the reservoir's history matters.
 - **The renders.** Mars, Pluto and Triton rendered at 2,048 px take their caps; the Earth-like and the Moon are byte-identical to the last renders in every map.
+
+## The tenth milestone: the poles' shadows
+
+- **F243.** Ground near an airless pole whose horizon, in every direction, stands above the highest the sun's disc climbs never sees it, and stands at what its walls and the body's heat hold it at: a crater at the Moon's south pole keeps its floor at 41 K; the Moon's polar craters keep shadowed crescents under their equatorward walls, 39 K at the coldest, Mercury's 45 K, Ceres's 29 K. 5A's gate item met only in part, the poles' permanent shadows, is met.
+
+How it went:
+
+- **The sun at a pole.** Near a pole the sun's azimuth is its hour angle, and at the solstice it stands highest toward the equator, at the colatitude and the tilt; a place is shadowed where its horizon in each direction stands over the sun's highest there, the disc's top included, and the equator's direction, where the sun stands highest, is tried first.
+- **Too many shadows on the Moon.** Its shadowed share comes to some three times the measured: near the pole, where the sun climbs under 3°, a cell a few hundred metres lower than its neighbours is shadowed, and the finish's cells, some 5 km, do not resolve the smallest craters that hold most of the Moon's shadow.
+- **The renders.** The Moon, Mercury, Ceres and Callisto rendered at 2,048 px take their shadows in their temperatures alone; Mars, tilted 25°, is byte-identical.

@@ -1868,6 +1868,13 @@ pub const ICE_DENSITIES: [(&str, f64); 5] = [
 /// shear stress under the ice sheets, 50 to 150 kPa (Cuffey and Paterson 2010), the least a
 /// stated choice for every ice until its flow comes with 5C.
 pub const CAP_YIELD_STRESS: f64 = 50_000.0;
+/// F243: the poles' shadows: a place is tested only where the star never climbs past
+/// SHADOW_SUN_LIMIT_DEG, steeper than the walls of the craters the finish resolves stand
+/// over their floors; its horizon traced in SHADOW_AZIMUTHS directions out to SHADOW_STEPS
+/// cells.
+pub const SHADOW_SUN_LIMIT_DEG: f64 = 20.0;
+pub const SHADOW_AZIMUTHS: usize = 32;
+pub const SHADOW_STEPS: usize = 64;
 
 // ---------------------------------------------------------------- volatiles
 
