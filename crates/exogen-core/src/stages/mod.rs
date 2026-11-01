@@ -11,6 +11,7 @@
 //! liquid, computes optical maturity and rays, and assigns materials. Both parts are cached
 //! by a hash of the parameters and seeds they depend on.
 
+pub mod caps;
 pub mod corona;
 pub mod crust;
 pub mod cryo;
@@ -59,7 +60,6 @@ use crate::fields::{Field, LayerSet};
 use crate::geom::{angle_between, azimuth_from, local_basis, offset};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
-use crate::params::derive::physics::volatile;
 use crate::rng::{Rng, hash_words, mix64};
 use crate::thermal::ThermalHistory;
 use crate::units::UNIT_SECONDARY_FIELD;
@@ -213,6 +213,8 @@ pub struct FinishOutput {
     pub cap_growth: Option<f64>,
     /// Where each ice of the inventory would last, on the climate's grid (F240).
     pub traps: crate::climate::Traps,
+    /// The caps the inventory laid in its traps (F241).
+    pub caps: Vec<caps::Cap>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -407,7 +409,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 178;
+pub const FINISH_VERSION: u64 = 179;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2791,7 +2793,52 @@ pub fn finish(
         Some(&renewal.keep),
         buried.as_deref(),
     );
-    let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers);
+    // The year's climate on its own coarse grid (F235), which reads the graph alone,
+    // through its days and seasons (F236); where each ice of the inventory would last on the
+    // ground and the sea the inventory makes (F240); the caps the ices lay there (F241), and
+    // the sea their liquid leaves.
+    let (full_sea, _) = hydrosphere_fill(graph, &mut layers, 0.0);
+    let balance = crate::climate::EnergyBalance::from_graph(graph);
+    let climate = balance.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+    let ground = crate::climate::Ground::from_graph(graph);
+    let cycle = balance.cycle(&climate, &ground);
+    let downscale = crate::climate::Downscale::from_graph(graph);
+    let above = {
+        let height = layers.height();
+        Field::from_fn(grid, |c, _| {
+            let h = height.get(c);
+            if full_sea.is_finite() {
+                (h - full_sea as f32).max(0.0)
+            } else {
+                h
+            }
+        })
+    };
+    let heights = crate::climate::coarsen(&above, climate.temperature.grid());
+    let water = materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh);
+    let ices = crate::climate::Ice::of_inventory(graph, water);
+    let traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        for (ice, _) in &traps.vapour {
+            if let Some((lat, lon, vapour)) = traps.coldest(ice.species) {
+                eprintln!(
+                    "traps: {}'s coldest at {lat:.1}° {lon:.1}°, holding the air's vapour at {vapour:.3e} Pa",
+                    ice.species
+                );
+            }
+        }
+        if let Some((ice, growth)) = &traps.growth {
+            let (most, share) = crate::climate::growth_reach(growth);
+            eprintln!(
+                "traps: {}'s ice grows by at most {most:.1} kg/m² a year, on {:.2}% of the body",
+                ice.species,
+                100.0 * share
+            );
+        }
+    }
+    let laid = caps::lay(graph, &mut layers, &traps);
+    let taken: f64 = laid.iter().map(|c| c.from_sea).sum();
+    let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers, taken);
     let height = layers.height();
     // On ice, each slope sits at its own mean temperature: frost and lag follow it.
     let slope = (ice::is_ice_surface(graph) || io::is_io_regime(graph))
@@ -2929,12 +2976,17 @@ pub fn finish(
         message: "materials".to_string(),
     });
     let albedo = materials::albedo(graph, &layers, &maturity, &rays, present, slope.as_ref());
-    // The year's climate (F235) on its own coarse grid, through its days and seasons
-    // (F236), brought to this one.
-    let balance = crate::climate::EnergyBalance::from_graph(graph);
-    let climate = balance.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
-    let ground = crate::climate::Ground::from_graph(graph);
-    let cycle = balance.cycle(&climate, &ground);
+    // The caps' ice over the ground's colour, and the climate again over their albedo
+    // (F241).
+    let albedo = caps::over(&albedo, &laid);
+    let (climate, cycle) = if laid.is_empty() {
+        (climate, cycle)
+    } else {
+        let over = caps::on_climate(&laid, climate.temperature.grid());
+        let climate = balance.solve_over(CubeSphere::new(CLIMATE_FACE_SIZE), Some(&over));
+        let cycle = balance.cycle(&climate, &ground);
+        (climate, cycle)
+    };
     let temperature_range = cycle.extremes();
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         let (steady, ..) = crate::climate::bands(&climate.temperature);
@@ -2946,39 +2998,6 @@ pub fn finish(
     }
     // Brought to this grid by each place's height and slope (F237), and the frost at the
     // snapshot's season with them, over the ground's colour (F239).
-    let downscale = crate::climate::Downscale::from_graph(graph);
-    // Where each ice of the inventory would last (F240), each cell of the climate's grid at
-    // its height above the datum's air, a sea's surface where a sea stands.
-    let above = Field::from_fn(grid, |c, _| {
-        let h = height.get(c);
-        if sea_level.is_finite() {
-            (h - sea_level as f32).max(0.0)
-        } else {
-            h
-        }
-    });
-    let heights = crate::climate::coarsen(&above, climate.temperature.grid());
-    let water = materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh);
-    let ices = crate::climate::Ice::of_inventory(graph, water);
-    let traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
-    if std::env::var_os("EXOGEN_DEBUG").is_some() {
-        for (ice, _) in &traps.vapour {
-            if let Some((lat, lon, vapour)) = traps.coldest(ice.species) {
-                eprintln!(
-                    "traps: {}'s coldest at {lat:.1}° {lon:.1}°, holding the air's vapour at {vapour:.3e} Pa",
-                    ice.species
-                );
-            }
-        }
-        if let Some((ice, growth)) = &traps.growth {
-            let (most, share) = crate::climate::growth_reach(growth);
-            eprintln!(
-                "traps: {}'s ice grows by at most {most:.1} kg/m² a year, on {:.2}% of the body",
-                ice.species,
-                100.0 * share
-            );
-        }
-    }
     let temperature = downscale.apply(&cycle.mean, &height, sea_level);
     let (frost, albedo) = match cycle.frost {
         Some(f) => {
@@ -3030,6 +3049,7 @@ pub fn finish(
         pressure_range: cycle.pressure_range,
         cap_growth: cycle.cap_growth,
         traps,
+        caps: laid,
         rays,
         sea_level,
         ocean_fraction,
@@ -3755,31 +3775,17 @@ impl RaySystem {
 
 /// Fill the working liquid to its inventory volume (docs/parameters.md F26). Returns the
 /// liquid level relative to the mean radius and the covered area fraction.
-pub fn hydrosphere_fill(graph: &ParamGraph, layers: &mut LayerSet) -> (f64, f64) {
-    let species = match graph.str("volatiles.working_liquid") {
-        "water" | "ammonia_water" => "H2O",
-        "methane_ethane" => "CH4",
-        "nitrogen" => "N2",
-        "sulfur_dioxide" => "SO2",
-        "carbon_dioxide" => "CO2",
-        _ => {
-            layers.liquid = Field::new(layers.grid);
-            return (f64::NAN, 0.0);
-        }
-    };
-    let mut gel = graph
-        .get("volatiles.inventory")
-        .as_map()
-        .and_then(|m| m.get(species).copied())
-        .unwrap_or(0.0);
-    if species == "CH4" {
-        gel += graph
-            .get("volatiles.inventory")
+pub fn hydrosphere_fill(graph: &ParamGraph, layers: &mut LayerSet, taken: f64) -> (f64, f64) {
+    let species = caps::liquid_species(graph.str("volatiles.working_liquid"));
+    let inventory = graph.get("volatiles.inventory");
+    let held = |s: &&str| {
+        inventory
             .as_map()
-            .and_then(|m| m.get("C2H6").copied())
-            .unwrap_or(0.0);
-    }
-    let _ = volatile(species);
+            .and_then(|m| m.get(*s).copied())
+            .unwrap_or(0.0)
+    };
+    // The working liquid's inventory, less what the caps took (F241).
+    let gel = species.iter().map(held).sum::<f64>() - taken;
     let radius = graph.f64("body.radius");
     if gel <= 0.0 {
         layers.liquid = Field::new(layers.grid);

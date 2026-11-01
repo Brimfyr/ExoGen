@@ -317,6 +317,8 @@ pub fn export(
         "temperature.png",
         "frost.exr",
         "frost.png",
+        "ice.exr",
+        "ice.png",
         "units.png",
         "sidecar.json",
     ] {
@@ -607,6 +609,45 @@ pub fn export(
         },
     );
 
+    // The caps' ice, its thickness (F241).
+    let ice_eq = to_equirectangular(&grid, out.layers.ice.as_slice(), width, height_px);
+    let (imin, imax) = min_max(&ice_eq);
+    write_exr_f32(
+        &settings.dir.join("ice.exr"),
+        width,
+        height_px,
+        "ice",
+        &ice_eq,
+    )?;
+    maps.insert(
+        "ice".to_string(),
+        MapInfo {
+            file: "ice.exr".into(),
+            encoding: "float32 EXR".into(),
+            units: "m of the caps' ice the inventory laid in its cold traps".into(),
+            min: imin as f64,
+            max: imax as f64,
+        },
+    );
+    write_png16(
+        &settings.dir.join("ice.png"),
+        width,
+        height_px,
+        &ice_eq,
+        imin,
+        imax,
+    )?;
+    maps.insert(
+        "ice_png".to_string(),
+        MapInfo {
+            file: "ice.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: "m of the caps' ice the inventory laid in its cold traps".into(),
+            min: imin as f64,
+            max: imax as f64,
+        },
+    );
+
     // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
     let unit_eq: Vec<u8> = (0..width * height_px)
@@ -767,6 +808,30 @@ pub fn export(
         let species = ice.species.to_lowercase();
         stage_outputs.insert(format!("trap_{species}_growth_kg_m2_yr"), most);
         stage_outputs.insert(format!("trap_{species}_growth_fraction"), share);
+    }
+    // The caps (F241): each ice's laid, m of global layer of its liquid, and of that the
+    // sea's; the share of the body it covers and its thickest, m.
+    for cap in &out.caps {
+        let species = cap.ice.species.to_lowercase();
+        let grid = cap.thickness.grid();
+        let (mut covered, mut whole) = (0.0, 0.0);
+        for (k, &t) in cap.thickness.as_slice().iter().enumerate() {
+            let a = grid.cell_area(grid.cell(k));
+            whole += a;
+            if t > 0.0 {
+                covered += a;
+            }
+        }
+        let thickest = cap
+            .thickness
+            .as_slice()
+            .iter()
+            .cloned()
+            .fold(0.0f32, f32::max);
+        stage_outputs.insert(format!("cap_{species}_laid_m"), cap.laid);
+        stage_outputs.insert(format!("cap_{species}_from_sea_m"), cap.from_sea);
+        stage_outputs.insert(format!("cap_{species}_fraction"), covered / whole);
+        stage_outputs.insert(format!("cap_{species}_thickest_m"), thickest as f64);
     }
     let sidecar = Sidecar {
         exogen_version: crate::VERSION.to_string(),

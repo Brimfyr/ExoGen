@@ -238,9 +238,60 @@ pub struct Traps {
     /// by the place's height, Pa; the lower, the colder the trap, and the coldest's holds the
     /// air's vapour (Ingersoll 1970).
     pub vapour: Vec<(Ice, Field<f32>)>,
+    /// Each of `vapour`'s ices' warmest through the year, K (F241).
+    pub warmest: Vec<Field<f32>>,
+    /// Each of `vapour`'s ices' year-mean saturation pressure over it at its own height, Pa,
+    /// before it is brought to the datum's air.
+    raw: Vec<Field<f32>>,
+    /// A fast spinner's traps on its latitudes at a few heights, to read a place's at its own.
+    table: Option<TrapTable>,
+}
+
+/// A fast spinner's traps on its latitudes at a few heights (F240), kept to read any place's
+/// at its own height (F241): the shares of the datum's pressure, and each ice's values at
+/// each latitude and share, in `Traps`'s order.
+#[derive(Clone, Debug)]
+struct TrapTable {
+    levels: Vec<f64>,
+    growth: Vec<f64>,
+    vapour: Vec<Vec<f64>>,
+    warmest: Vec<Vec<f64>>,
 }
 
 impl Traps {
+    /// An ice's trap at a place of any grid at its own height (F241), `thin` the share of
+    /// the datum's pressure it keeps: for the frost's own gas, its ice's growth, kg/m² a
+    /// year; for any other, the vapour pressure the datum's air must hold to keep its ice,
+    /// Pa, and the warmest the ice stands, K. A fast spinner's are read on its latitudes'
+    /// heights; a resonant body's are its cell's.
+    pub fn at(&self, species: &str, d: [f64; 3], thin: f64) -> Option<(f64, f64)> {
+        let (_, lat) = lon_lat_from_direction(d);
+        if let Some((ice, field)) = &self.growth
+            && ice.species == species
+        {
+            let value = match &self.table {
+                Some(t) => read_table(&t.growth, &t.levels, lat, thin, false),
+                None => field.get(field.grid().locate(d).0) as f64,
+            };
+            return Some((value, f64::NAN));
+        }
+        let j = self
+            .vapour
+            .iter()
+            .position(|(ice, _)| ice.species == species)?;
+        let (raw, warmest) = match &self.table {
+            Some(t) => (
+                read_table(&t.vapour[j], &t.levels, lat, thin, true),
+                read_table(&t.warmest[j], &t.levels, lat, thin, false),
+            ),
+            None => {
+                let c = self.raw[j].grid().locate(d).0;
+                (self.raw[j].get(c) as f64, self.warmest[j].get(c) as f64)
+            }
+        };
+        Some((raw / thin.max(1e-30), warmest))
+    }
+
     /// An ice's coldest trap: its latitude and longitude, degrees, and the saturation
     /// pressure it holds the datum's air at, Pa.
     pub fn coldest(&self, species: &str) -> Option<(f64, f64, f64)> {
@@ -486,6 +537,12 @@ impl EnergyBalance {
 
     /// The year's mean climate on a grid.
     pub fn solve(&self, grid: CubeSphere) -> Climate {
+        self.solve_over(grid, None)
+    }
+
+    /// The year's mean climate on a grid over caps of ice (F241): `caps` the share of each
+    /// cell they cover and their albedo there, which each cell reflects at by its share.
+    pub fn solve_over(&self, grid: CubeSphere, caps: Option<&(Field<f32>, Field<f32>)>) -> Climate {
         let sun = self.sky.annual_sunlight(grid);
         let n = grid.cell_count();
         let area: Vec<f64> = (0..n).map(|k| grid.cell_area(grid.cell(k))).collect();
@@ -501,7 +558,17 @@ impl EnergyBalance {
             0.0
         };
         let base: Vec<f64> = (0..n)
-            .map(|k| (self.albedo + self.low_sun * (mean_height - height[k])).clamp(0.0, 1.0))
+            .map(|k| {
+                let a = (self.albedo + self.low_sun * (mean_height - height[k])).clamp(0.0, 1.0);
+                match caps {
+                    Some((share, albedo)) => {
+                        let c = grid.cell(k);
+                        let s = share.get(c) as f64;
+                        a + s * (albedo.get(c) as f64 - a)
+                    }
+                    None => a,
+                }
+            })
             .collect();
         let albedo = |k: usize, t: f64| -> (f64, f64) {
             let (share, slope) = self.ice_share(t);
@@ -1230,10 +1297,20 @@ impl EnergyBalance {
         let mut traps = Traps {
             growth: None,
             vapour: Vec::new(),
+            warmest: Vec::new(),
+            raw: Vec::new(),
+            table: None,
+        };
+        let mut table = TrapTable {
+            levels: levels.clone().unwrap_or_default(),
+            growth: Vec::new(),
+            vapour: Vec::new(),
+            warmest: Vec::new(),
         };
         for ice in ices {
             let own = frost.filter(|f| f.species == ice.species);
-            let values: Vec<f64> = places
+            // Each place's value through the tilts' mean, and its warmest at any.
+            let runs: Vec<(f64, f64)> = places
                 .par_iter()
                 .map(|cell| {
                     let n = cycle.tilts.len().max(1) as f64;
@@ -1241,37 +1318,54 @@ impl EnergyBalance {
                         .tilts
                         .iter()
                         .enumerate()
-                        .map(|(j, &eps)| {
+                        .fold((0.0, f64::MIN), |(sum, hot), (j, &eps)| {
                             let partials = cycle.partials.get(j).map_or(&[][..], |p| &p[..]);
-                            match own {
-                                Some(f) => self.ice_growth(ground, cell, eps, partials, f),
+                            let (value, warmest) = match own {
+                                Some(f) => {
+                                    (self.ice_growth(ground, cell, eps, partials, f), f64::NAN)
+                                }
                                 None => self.ice_vapour(ground, cell, eps, partials, frost, ice),
-                            }
+                            };
+                            (sum + value / n, hot.max(warmest))
                         })
-                        .sum::<f64>()
-                        / n
                 })
                 .collect();
-            // The vapour at the datum's air: the saturation pressure over the ice over the
-            // share of that air's pressure its height keeps.
-            let field = Field::from_fn(grid, |c, d| {
+            let values: Vec<f64> = runs.iter().map(|r| r.0).collect();
+            let hottest: Vec<f64> = runs.iter().map(|r| r.1).collect();
+            let read = |values: &[f64], c: crate::grid::Cell, d: [f64; 3], log: bool| {
                 let k = grid.index(c);
-                let value = match &levels {
+                match &levels {
                     Some(levels) => {
                         let (_, lat) = lon_lat_from_direction(d);
-                        read_table(&values, levels, lat, thins[k], own.is_none())
+                        read_table(values, levels, lat, thins[k], log)
                     }
                     None => values[k],
-                };
-                match own {
-                    Some(_) => value as f32,
-                    None => (value / thins[k]) as f32,
                 }
-            });
+            };
             match own {
-                Some(_) => traps.growth = Some((*ice, field)),
-                None => traps.vapour.push((*ice, field)),
+                Some(_) => {
+                    let field = Field::from_fn(grid, |c, d| read(&values, c, d, false) as f32);
+                    traps.growth = Some((*ice, field));
+                    table.growth = values;
+                }
+                None => {
+                    // The vapour at the datum's air: the saturation pressure over the ice over
+                    // the share of that air's pressure its height keeps.
+                    let raw = Field::from_fn(grid, |c, d| read(&values, c, d, true) as f32);
+                    let field = Field::from_fn(grid, |c, _| {
+                        (raw.get(c) as f64 / thins[grid.index(c)]) as f32
+                    });
+                    let warmest = Field::from_fn(grid, |c, d| read(&hottest, c, d, false) as f32);
+                    traps.vapour.push((*ice, field));
+                    traps.raw.push(raw);
+                    traps.warmest.push(warmest);
+                    table.vapour.push(values);
+                    table.warmest.push(hottest);
+                }
             }
+        }
+        if levels.is_some() {
+            traps.table = Some(table);
         }
         traps
     }
@@ -1360,8 +1454,8 @@ impl EnergyBalance {
     }
 
     /// The year-mean saturation pressure over a cell's ice of another gas at a tilt (F240),
-    /// Pa: the frost's gas laying frost on it where the cell's partial pressure's point
-    /// allows (F239), run
+    /// Pa, and the warmest it stands, K: the frost's gas laying frost on it where the cell's
+    /// partial pressure's point allows (F239), run
     /// through its year until it repeats and then, a fast spinner's, through a day at each
     /// season.
     fn ice_vapour(
@@ -1372,23 +1466,24 @@ impl EnergyBalance {
         partials: &[f64],
         frost: Option<&Frost>,
         ice: &Ice,
-    ) -> f64 {
+    ) -> (f64, f64) {
         let (column, day) = self.trap_column(ground, eps);
         let (light, sun, dt, _) = self.trap_sun(cell, eps);
         let albedo = ice.albedo();
         let mut pair = Pair::new(&column, cell.steady);
         let mut last = f64::NAN;
         let mut seasons: Vec<(usize, Pair)> = Vec::new();
-        let mut vapour = 0.0;
+        let (mut vapour, mut hot) = (0.0, f64::MIN);
         let every = (light.len() / CYCLE_SEASONS).max(1);
         for _ in 0..CYCLE_MAX_YEARS {
             seasons.clear();
-            vapour = 0.0;
+            (vapour, hot) = (0.0, f64::MIN);
             pair.begin();
             for (k, &lit) in light.iter().enumerate() {
                 let f = cell.laid(frost, partials, k);
                 self.pair_step(&column, cell, &mut pair, dt, lit, f.as_ref(), albedo);
                 vapour += vapour_pressure(ice.volatile, pair.ice[0]);
+                hot = hot.max(pair.ice[0]);
                 if !sun.is_empty() && k.is_multiple_of(every) {
                     seasons.push((k, pair.clone()));
                 }
@@ -1401,7 +1496,7 @@ impl EnergyBalance {
             pair.settle(light.len());
         }
         if sun.is_empty() {
-            return vapour / light.len() as f64;
+            return (vapour / light.len() as f64, hot);
         }
         // A fast spinner's days at each season, from the ground and its frost as the season
         // left them: the saturation pressure through the last of them.
@@ -1420,11 +1515,12 @@ impl EnergyBalance {
                     self.pair_step(&column, cell, &mut pair, dt, lit, f.as_ref(), albedo);
                     if d + 1 == CYCLE_DAYS {
                         sum += vapour_pressure(ice.volatile, pair.ice[0]);
+                        hot = hot.max(pair.ice[0]);
                     }
                 }
             }
         }
-        sum / (seasons.len().max(1) * CYCLE_DAY_STEPS) as f64
+        (sum / (seasons.len().max(1) * CYCLE_DAY_STEPS) as f64, hot)
     }
 
     /// A cell's ice and the bare ground about it through a step (F240): the bare ground as

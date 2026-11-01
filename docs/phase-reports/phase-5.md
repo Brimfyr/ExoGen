@@ -1,6 +1,6 @@
 # Phase 5 report: atmosphere, climate, volatiles and erosion
 
-Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239) and the cold traps (F240).
+Status: started 2026-10-31, after Phase 4F's close; 5A, climate on every body, passed the user's review on 2026-10-31 in five milestones; 5B, the volatiles, under way: the frost's seasons (F239), the cold traps (F240) and the caps of the inventory's ices (F241).
 
 Phase 5 gives the bodies their air, their weather's long average, their volatiles and the processes that wear a surface down: sunlight and the temperature it makes on every body, seas, caps and cold traps from the inventory, rivers, glaciers, wind, dust, sand and the chemistry that colours them. The plan (PLAN.md, Phase 5) runs it as seven sub-phases in order, each with its own gate and review: 5A climate on every body, 5B volatiles, 5C water and ice at work, 5D dust, sand and chemistry, 5E surface physics on every body, 5F Io and Thaumasia, 5G weather and clouds. Mars, Titan and Pluto are its test bodies for the look; an Earth-like and a tidally locked ocean world give the climate its numbers.
 
@@ -111,3 +111,14 @@ How it went:
 - **No residual carbon dioxide cap.** At the seasonal frost's albedo Mars's carbon dioxide ice lasts only in its deepest polar basins; its residual south cap, at 0.8, waits on the ice's own albedo.
 - **Mars's water vapour.** The clean ice's albedo holds Mars's air at 2.4e-6 Pa of water vapour, where it holds some 0.1: the residual cap's ice is dusty.
 - **The renders.** Mars, the Earth-like, Pluto, Triton and the Moon rendered at 2,048 px are byte-identical to the last milestone's in every map; the traps reach the sidecar only.
+
+## The eighth milestone: the caps of the inventory's ices
+
+- **F241.** Each ice of the inventory but the frost's own gas lays caps in its cold traps, from the coldest, its surface Nye's plastic profile from its margin, until they hold its inventory; a working liquid's only where its ice never melts, the rest left to the sea. Mars's water stands in caps at both poles, up to 4.4 km thick over 2.4 percent of the body, its polar basins filled; Pluto's and Triton's methane in domes near their equators.
+
+How it went:
+
+- **Each cell's own trap.** Read at each fine cell's own height, the traps let the relief of the craters decide: within a few degrees of a pole the latitude hardly changes the trap, and the ice covered the cells a crater's floor made colder one by one, a scatter of thin ice. A cap kilometres thick buries the relief under it: each place's trap is now its region's on the climate's grid, read smoothly between its cells, and the caps stand as domes.
+- **Pluto's methane over the whole body.** Laid over every place, ice holds exactly its inventory, and a rounding decided whether the fewest places were sought at all: Pluto's methane lay 4 m thick over the whole body. Ice that may cover every place now spreads over all of them only if no fewer hold it.
+- **No ice on the Earth-like.** Its summer poles stand at some 295 K, its seasons land's until its ocean holds them (5A), and its water's ice melts everywhere: it lays no ice sheets, and its sea keeps all its water.
+- **The renders.** Mars, Pluto and Triton rendered at 2,048 px take their caps; the Earth-like, Titan and the Moon are byte-identical to the last renders in every map.

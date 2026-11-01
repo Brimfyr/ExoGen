@@ -1854,6 +1854,20 @@ pub const TRAP_STORE: f64 = 1.0e9;
 /// F240: a fast spinner's traps are run on the cycle's latitudes at TRAP_HEIGHT_LEVELS
 /// heights spanning its own, read at each cell between them.
 pub const TRAP_HEIGHT_LEVELS: usize = 7;
+/// F241: the densities of the ices the caps lay, kg/m³: water's ice Ih, the default; solid
+/// carbon dioxide near its frost point (Mangan et al. 2017: 1.5 to 1.6 g/cm³); alpha
+/// nitrogen (Scott 1976); solid methane; solid ammonia.
+pub const ICE_DENSITIES: [(&str, f64); 5] = [
+    ("H2O", 917.0),
+    ("CO2", 1_560.0),
+    ("N2", 1_027.0),
+    ("CH4", 522.0),
+    ("NH3", 817.0),
+];
+/// F241: the yield stress of a cap's ice in Nye's (1951) plastic profile, Pa: the basal
+/// shear stress under the ice sheets, 50 to 150 kPa (Cuffey and Paterson 2010), the least a
+/// stated choice for every ice until its flow comes with 5C.
+pub const CAP_YIELD_STRESS: f64 = 50_000.0;
 
 // ---------------------------------------------------------------- volatiles
 
