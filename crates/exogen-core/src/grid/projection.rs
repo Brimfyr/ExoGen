@@ -23,6 +23,7 @@ use super::cubesphere::{Cell, CubeSphere};
 use super::direction_from_lon_lat;
 
 /// A cubesphere field with a one-cell ghost ring around each face.
+#[derive(Clone, Debug)]
 pub struct PaddedField {
     f: usize,
     data: Vec<f32>,

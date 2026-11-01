@@ -22,7 +22,7 @@ use rayon::prelude::*;
 
 use crate::constants::*;
 use crate::fields::Field;
-use crate::grid::{CubeSphere, lon_lat_from_direction};
+use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
 use crate::params::ParamGraph;
 
 /// The year's sunlight over a grid (F235): its mean flux and the sun's mean height.
@@ -33,6 +33,52 @@ pub struct Sunlight {
     /// The cosine of the star's zenith angle averaged over the year, each moment weighted by
     /// the flux it brings: 1 with the star always overhead, 0 where it never shines.
     pub height: Field<f32>,
+}
+
+/// The year's sunlight as a table in latitude, or in latitude and longitude for a resonant
+/// body (F235), read bilinearly at any direction (F256).
+#[derive(Clone, Debug)]
+pub struct SunTable {
+    /// The flux overhead at the mean distance, W/m².
+    scale: f64,
+    /// The year's mean share of it and the sun's mean height, by latitude from pole to pole
+    /// and, `n_lon` of them, by longitude.
+    shares: Vec<f64>,
+    heights: Vec<f64>,
+    n_lon: usize,
+}
+
+impl SunTable {
+    /// The year's mean flux on the ground in a direction, W/m².
+    pub fn flux_at(&self, d: [f64; 3]) -> f64 {
+        self.scale * self.read(&self.shares, d)
+    }
+
+    /// The sun's year-mean height in a direction, weighted by its flux.
+    pub fn height_at(&self, d: [f64; 3]) -> f64 {
+        self.read(&self.heights, d)
+    }
+
+    /// The directions of the table's nodes: its latitudes, by its longitudes for a resonant
+    /// body.
+    pub fn directions(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
+        let n_lat = self.shares.len() / self.n_lon;
+        (0..self.shares.len()).map(move |k| {
+            let (i, j) = (k / self.n_lon, k % self.n_lon);
+            let lat = -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
+            let lon = -PI + TAU * j as f64 / self.n_lon as f64;
+            direction_from_lon_lat(lon, lat)
+        })
+    }
+
+    fn read(&self, table: &[f64], d: [f64; 3]) -> f64 {
+        let (lon, lat) = lon_lat_from_direction(d);
+        if self.n_lon == 1 {
+            read_row(table, lat)
+        } else {
+            read_grid(table, self.n_lon, lat, lon)
+        }
+    }
 }
 
 /// The star's path across a body's sky: everything its insolation depends on.
@@ -74,6 +120,22 @@ impl Sky {
                 None
             },
             subsolar_longitude: graph.f64("climate.subsolar_longitude").to_radians(),
+        }
+    }
+
+    /// The sky of a body that spins many times its year, for its year's means alone (F256):
+    /// the star's flux at the mean distance, W/m², the orbit's eccentricity, the axis's mean
+    /// tilt and its precession's half-angle, rad.
+    pub fn zonal(flux: f64, eccentricity: f64, obliquity: f64, swing: f64) -> Self {
+        Self {
+            flux,
+            eccentricity,
+            obliquity,
+            swing,
+            perihelion_season: 0.0,
+            spins: f64::INFINITY,
+            resonance: None,
+            subsolar_longitude: 0.0,
         }
     }
 
@@ -144,14 +206,23 @@ impl Sky {
     /// latitude (a fast rotator) or in latitude and longitude (a resonant body) read
     /// bilinearly, so that the fields are the same at every resolution.
     pub fn annual_sunlight(&self, grid: CubeSphere) -> Sunlight {
+        let table = self.annual_table();
+        Sunlight {
+            flux: Field::from_fn(grid, |_, d| table.flux_at(d) as f32),
+            height: Field::from_fn(grid, |_, d| table.height_at(d) as f32),
+        }
+    }
+
+    /// The year's sunlight as its table (`annual_sunlight`), to be read at any direction.
+    pub fn annual_table(&self) -> SunTable {
         let scale = self.flux / (1.0 - self.eccentricity * self.eccentricity).sqrt();
         let tilts = self.obliquities();
         let n_lat = INSOLATION_TABLE_LATITUDES;
         let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
         let height = |(one, two): (f64, f64)| if one > 0.0 { two / one } else { 0.0 };
-        match self.resonance {
+        let (table, n_lon): (Vec<(f64, f64)>, usize) = match self.resonance {
             None => {
-                let table: Vec<(f64, f64)> = (0..n_lat)
+                let table = (0..n_lat)
                     .into_par_iter()
                     .map(|i| {
                         let each: Vec<(f64, f64)> = tilts
@@ -161,18 +232,7 @@ impl Sky {
                         average_pairs(&each)
                     })
                     .collect();
-                let shares: Vec<f64> = table.iter().map(|p| p.0).collect();
-                let heights: Vec<f64> = table.iter().map(|&p| height(p)).collect();
-                Sunlight {
-                    flux: Field::from_fn(grid, |_, d| {
-                        let (_, lat) = lon_lat_from_direction(d);
-                        (scale * read_row(&shares, lat)) as f32
-                    }),
-                    height: Field::from_fn(grid, |_, d| {
-                        let (_, lat) = lon_lat_from_direction(d);
-                        read_row(&heights, lat) as f32
-                    }),
-                }
+                (table, 1)
             }
             Some((_, orbits)) => {
                 let n_lon = INSOLATION_TABLE_LONGITUDES;
@@ -180,7 +240,7 @@ impl Sky {
                     .iter()
                     .map(|&eps| self.resonant_path(eps, orbits))
                     .collect();
-                let table: Vec<(f64, f64)> = (0..n_lat * n_lon)
+                let table = (0..n_lat * n_lon)
                     .into_par_iter()
                     .map(|k| {
                         let (i, j) = (k / n_lon, k % n_lon);
@@ -192,19 +252,14 @@ impl Sky {
                         average_pairs(&each)
                     })
                     .collect();
-                let shares: Vec<f64> = table.iter().map(|p| p.0).collect();
-                let heights: Vec<f64> = table.iter().map(|&p| height(p)).collect();
-                Sunlight {
-                    flux: Field::from_fn(grid, |_, d| {
-                        let (lon, lat) = lon_lat_from_direction(d);
-                        (scale * read_grid(&shares, n_lon, lat, lon)) as f32
-                    }),
-                    height: Field::from_fn(grid, |_, d| {
-                        let (lon, lat) = lon_lat_from_direction(d);
-                        read_grid(&heights, n_lon, lat, lon) as f32
-                    }),
-                }
+                (table, n_lon)
             }
+        };
+        SunTable {
+            scale,
+            shares: table.iter().map(|p| p.0).collect(),
+            heights: table.iter().map(|&p| height(p)).collect(),
+            n_lon,
         }
     }
 

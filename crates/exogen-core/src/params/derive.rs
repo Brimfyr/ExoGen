@@ -2990,7 +2990,7 @@ pub fn materials_regolith_mix(c: &Ctx) -> Value {
         if let (Some(crust), Some(lag)) = (library.member(bedrock), library.member(LAG_MATERIAL)) {
             let lum = |x: [f32; 3]| (x[0] + x[1] + x[2]) as f64 / 3.0;
             let cover = crate::stages::ice::lag_cover(
-                c.f64("orbit.insolation"),
+                (&zonal_sky(c), c.f64("interior.surface_heat_flux")),
                 library.non_ice(bedrock),
                 c.f64("cratering.retention_age"),
                 (lum(crust.fresh), lum(crust.mature), lum(lag.mature)),
@@ -3070,6 +3070,17 @@ pub fn materials_deep_bedrock(c: &Ctx) -> Value {
     deep.into()
 }
 
+/// The year's sunlight of a body that spins fast against its year (F256): the graph's lag reads
+/// its latitudes' year-mean sunlight under its orbit and its axis's tilt.
+fn zonal_sky(c: &Ctx) -> crate::insolation::Sky {
+    crate::insolation::Sky::zonal(
+        c.f64("orbit.insolation"),
+        c.f64("orbit.star_eccentricity"),
+        c.f64("rotation.effective_obliquity").to_radians(),
+        c.f64("rotation.obliquity_swing").to_radians(),
+    )
+}
+
 /// F126: the share of the surface layer an airless icy crust's lag has taken over its age
 /// (`ice::lag_depth_share`): where it is deep, fresh craters and slopes bring up lag.
 pub fn materials_lag_depth_share(c: &Ctx) -> Value {
@@ -3090,7 +3101,7 @@ pub fn materials_lag_depth_share(c: &Ctx) -> Value {
     };
     let lum = |x: [f32; 3]| (x[0] + x[1] + x[2]) as f64 / 3.0;
     crate::stages::ice::lag_depth_share(
-        c.f64("orbit.insolation"),
+        (&zonal_sky(c), c.f64("interior.surface_heat_flux")),
         library.non_ice(bedrock),
         c.f64("cratering.retention_age"),
         (lum(crust.fresh), lum(crust.mature), lum(lag.mature)),

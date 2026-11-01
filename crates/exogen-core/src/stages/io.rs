@@ -1482,11 +1482,11 @@ fn search_bin(d: [f64; 3]) -> usize {
 /// starts at its balance with the history's mean fall, or as lava when a flow or a
 /// floor was laid before the history began, and runs through the eruptions that reached
 /// it in their order: each fall buries what lay on top by its optical depth, the red
-/// sulfur reverts, the frost sublimes at the rate the vapour pressure of its own
-/// temperature gives (the frost's albedo, the latitude and the cell's slope towards the
-/// pole), and the plasma alters what lies on top where the column of the sublimation
-/// atmosphere, which the same vapour pressure sets, is too thin to stop it. A flow or a
-/// floor laid during the history starts black over its coverage at its time. A flow
+/// sulfur reverts, the frost sublimes at the rate its vapour pressure gives through its
+/// days and seasons (the cycle's temperatures where the cell's slope faces, brought to the
+/// frost's albedo, F256), and the plasma alters what lies on top where the column of the
+/// sublimation atmosphere, which the same vapour pressure sets, is too thin to stop it. A
+/// flow or a floor laid during the history starts black over its coverage at its time. A flow
 /// spreading over the plains drives off the sulfur dioxide in the ground it covers,
 /// which condenses again round it as a halo of frost (Williams et al. 2011: white
 /// diffuse deposits, often round lava flow margins, from SO2 driven off by warm flows and
@@ -1500,7 +1500,7 @@ pub fn deposit_history(
     layers: &mut LayerSet,
     body_radius: f64,
     gravity: f64,
-    insolation: f64,
+    cycle: &crate::climate::Cycle,
     episodes: &[PlumeEpisode],
     small: &[PlumeEpisode],
     background: &[f32],
@@ -1567,9 +1567,15 @@ pub fn deposit_history(
         }
     }
     let noise = GradientNoise::new(0x10_DE90_5175);
-    let frost_k = (insolation * (1.0 - IO_FROST_ALBEDO) / SIGMA_SB)
-        .max(1.0)
-        .powf(0.25);
+    // The frost's vapour pressure through its days and seasons (F256): the surface's
+    // temperatures through its cycle in a direction, brought from its ground's albedo to the
+    // frost's.
+    let vapour = |d: [f64; 3]| {
+        let (spread, albedo) = cycle.spread_at(d);
+        crate::climate::mean_rate(&spread, (albedo, IO_FROST_ALBEDO), |t| {
+            (-SO2_SUBLIMATION_K / t.max(1.0)).exp()
+        })
+    };
     let sublime_equator = IO_FROST_SUBLIMATION / IO_DEPOSIT_OPTICAL_MASS;
     let units = layers.unit_id.as_slice();
     let tilts = slope.map(|s| smoothed_over(s, FROST_SLOPE_LENGTH, body_radius));
@@ -1638,15 +1644,14 @@ pub fn deposit_history(
                     ..Fall::default()
                 };
                 let expected = background;
-                // The frost's temperature by day against the equator's sets its vapour
-                // pressure: the frost sublimes at its own slope's, and the atmosphere the
-                // sublimation supports shields the ground by the latitude's, being
-                // spread over far more than a slope.
-                let pressure = |tilt: f64| {
-                    let cos_lat = crate::stages::ice::effective_cos_lat(d, tilt).max(0.02);
-                    (SO2_SUBLIMATION_K * (1.0 / frost_k - 1.0 / (frost_k * cos_lat.powf(0.25))))
-                        .exp()
-                };
+                // The frost's vapour pressure through its days and seasons against the
+                // equator's on its meridian (F256): the frost sublimes at the direction its
+                // own slope faces, and the atmosphere the sublimation supports shields the
+                // ground by the flat ground's, being spread over far more than a slope.
+                let across = d[0].hypot(d[1]).max(1e-12);
+                let equator = vapour([d[0] / across, d[1] / across, 0.0]).max(f64::MIN_POSITIVE);
+                let pressure =
+                    |tilt: f64| vapour(crate::stages::ice::facing(d, tilt)) / equator;
                 let kinetics = Kinetics {
                     revert: 1.0 / IO_RED_FADE_YR,
                     sublime: sublime_equator

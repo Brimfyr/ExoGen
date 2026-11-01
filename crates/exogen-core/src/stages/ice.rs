@@ -3,18 +3,21 @@
 
 //! Icy surfaces (PLAN.md Phase 4): what the surface of an ice world does on its own.
 //!
-//! The maturity of an icy surface is its sublimation lag. Ice sublimes at the latitude's
-//! mean temperature and leaves its non-ice share behind, a dust that darkens the surface
-//! once it is a few centimetres thick; a warm, old, dirty surface goes dark (Callisto), a
-//! cold or young one stays bright (Enceladus, Europa), and a fresh crater that brings
-//! clean ice up from under the lag is bright until its own lag forms. The poles, which the
-//! mean insolation hardly warms, keep their frost.
+//! The maturity of an icy surface is its sublimation lag. Ice sublimes at the surface's
+//! year-mean temperature, the climate's balance at its own albedo where its slope faces
+//! (F256), and leaves its non-ice share behind, a dust that darkens the surface once it is a
+//! few centimetres thick; a warm, old, dirty surface goes dark (Callisto), a cold or young
+//! one stays bright (Enceladus, Europa), and a fresh crater that brings clean ice up from
+//! under the lag is bright until its own lag forms. The ground the year's sunlight hardly
+//! warms, a fast spinner's poles, keeps its frost.
 
 use rayon::prelude::*;
 
+use crate::climate::{YearMean, radiative_temperature};
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
 use crate::geom::{angle_between, cross, normalize, rotate};
+use crate::insolation::Sky;
 use crate::noise::GradientNoise;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
@@ -40,15 +43,6 @@ pub fn ice_sublimation_flux(t: f64) -> f64 {
         return 0.0;
     }
     ice_vapour_pressure(t) * (WATER_MOLECULE_MASS / (2.0 * std::f64::consts::PI * K_B * t)).sqrt()
-}
-
-/// Diurnal-mean temperature of an airless surface at a latitude: the mean insolation,
-/// S cos(lat) / π, radiated away, no lower than the polar floor.
-pub fn mean_surface_temperature(insolation: f64, bond_albedo: f64, cos_lat: f64) -> f64 {
-    let absorbed = insolation * (1.0 - bond_albedo) * cos_lat.max(0.0) / std::f64::consts::PI;
-    (absorbed / SIGMA_SB)
-        .powf(0.25)
-        .max(ICE_POLAR_TEMPERATURE_FLOOR_K)
 }
 
 /// The non-ice share of the regolith mix, its lag with the rest: how much frost a
@@ -78,12 +72,13 @@ pub fn crust_impurity(graph: &ParamGraph) -> f64 {
 
 /// F126: the lag's thickness, in units of its opaque mass, after `exposure_gyr` at each of
 /// `bands` bands of equal area over a hemisphere, by the sine of the latitude: each at the
-/// temperature its own reflectance gives it, settled from the fresh crust, so that a dark
-/// lag warms its latitude and grows faster while a cold latitude keeps its ice (Spencer
-/// 1987's thermal segregation). `albedos` are the crust's fresh and irradiated reflectances
-/// and the lag's.
+/// temperature its own reflectance gives it under its year's sunlight (F256), settled from
+/// the fresh crust, so that a dark lag warms its latitude and grows faster while a cold
+/// latitude keeps its ice (Spencer 1987's thermal segregation). `albedos` are the crust's
+/// fresh and irradiated reflectances and the lag's; `sky` a fast spinner's, its own heat
+/// flowing out at `heat` W/m².
 fn lag_by_latitude(
-    insolation: f64,
+    (sky, heat): (&Sky, f64),
     impurity: f64,
     exposure_gyr: f64,
     albedos: (f64, f64, f64),
@@ -95,12 +90,12 @@ fn lag_by_latitude(
     (0..bands)
         .map(|i| {
             let sin_lat = (i as f64 + 0.5) / bands as f64;
-            let cos_lat = (1.0 - sin_lat * sin_lat).sqrt();
+            let flux = sky.annual_mean_at(sin_lat.asin(), 0.0);
             let mut thickness = 0.0f64;
             for _ in 0..8 {
                 let lag = 1.0 - (-thickness).exp();
                 let albedo = crust + (lag_albedo - crust) * lag;
-                let t = mean_surface_temperature(insolation, albedo, cos_lat);
+                let t = radiative_temperature(flux * (1.0 - albedo) + heat.max(0.0), 1.0);
                 thickness = lag_at(t, impurity, exposure_gyr).0;
             }
             thickness
@@ -110,12 +105,12 @@ fn lag_by_latitude(
 
 /// F126: the share of an old icy surface its lag covers, over the sphere (`lag_by_latitude`).
 pub fn lag_cover(
-    insolation: f64,
+    sun: (&Sky, f64),
     impurity: f64,
     exposure_gyr: f64,
     albedos: (f64, f64, f64),
 ) -> f64 {
-    let bands = lag_by_latitude(insolation, impurity, exposure_gyr, albedos, 45);
+    let bands = lag_by_latitude(sun, impurity, exposure_gyr, albedos, 45);
     bands.iter().map(|t| 1.0 - (-t).exp()).sum::<f64>() / bands.len() as f64
 }
 
@@ -124,13 +119,13 @@ pub fn lag_cover(
 /// square root of its age, and where that is deeper than the layer craters and slopes
 /// expose, what they bring up is lag.
 pub fn lag_depth_share(
-    insolation: f64,
+    sun: (&Sky, f64),
     impurity: f64,
     exposure_gyr: f64,
     albedos: (f64, f64, f64),
     layer: f64,
 ) -> f64 {
-    let bands = lag_by_latitude(insolation, impurity, exposure_gyr, albedos, 45);
+    let bands = lag_by_latitude(sun, impurity, exposure_gyr, albedos, 45);
     let depth = |t: f64| t * LAG_OPAQUE_KG_M2 / LAG_BULK_DENSITY;
     bands
         .iter()
@@ -161,16 +156,15 @@ fn lag_at(temperature: f64, impurity: f64, exposure_gyr: f64) -> (f64, f64) {
 
 /// The exposure on which the surface's maturity saturates, Gyr, for mixing thin deposits
 /// with the ground they cover (F51): on rock the space-weathering timescale; on ice the
-/// exposure at which the lag of the body's mean temperature (the sphere's mean cosine of
-/// latitude, pi / 4) and regolith reaches 1 - 1/e.
+/// exposure at which the lag of the body's mean temperature (the sphere's mean sunlight, a
+/// quarter of the star's flux) and regolith reaches 1 - 1/e.
 pub fn maturity_timescale(graph: &ParamGraph) -> f64 {
     if !is_ice_surface(graph) {
         return graph.f64("surface.space_weathering_timescale").max(1e-6);
     }
-    let t = mean_surface_temperature(
-        graph.f64("orbit.insolation"),
-        graph.f64("atmosphere.bond_albedo"),
-        std::f64::consts::FRAC_PI_4,
+    let t = radiative_temperature(
+        graph.f64("orbit.insolation") / 4.0 * (1.0 - graph.f64("atmosphere.bond_albedo")),
+        1.0,
     );
     let impurity = crust_impurity(graph);
     let target = 1.0 - (-1.0f64).exp();
@@ -189,25 +183,25 @@ pub fn maturity_timescale(graph: &ParamGraph) -> f64 {
     0.5 * (lo + hi)
 }
 
-/// Thermal segregation: the share of a latitude covered by frost that condensed there
-/// out of what the warm latitudes sublimed over the body's life.
-pub struct FrostCover {
-    insolation: f64,
+/// Thermal segregation: the share of the ground covered by frost that condensed there out of
+/// what the warmest ground sublimed over the body's life, where the year leaves it cold.
+pub struct FrostCover<'a> {
+    year: &'a YearMean,
     albedo: f64,
     supply: f64,
     /// How much of the frost shows: a dirty regolith gardens it in.
     cleanliness: f64,
 }
 
-impl FrostCover {
-    pub fn new(graph: &ParamGraph) -> Self {
-        let insolation = graph.f64("orbit.insolation");
+impl<'a> FrostCover<'a> {
+    /// The frost of a body whose surface stands at `year`'s mean temperatures (F256).
+    pub fn new(graph: &ParamGraph, year: &'a YearMean) -> Self {
         let albedo = graph.f64("atmosphere.bond_albedo");
-        let t_eq = mean_surface_temperature(insolation, albedo, 1.0);
-        let sublimed = ice_sublimation_flux(t_eq) * graph.f64("body.age") * SECONDS_PER_GYR;
+        let warmest = year.warmest(albedo);
+        let sublimed = ice_sublimation_flux(warmest) * graph.f64("body.age") * SECONDS_PER_GYR;
         let cleanliness = (1.0 - regolith_impurity(graph)).clamp(0.0, 1.0).powi(2);
         Self {
-            insolation,
+            year,
             albedo,
             supply: (sublimed / FROST_SUPPLY_KG_M2).min(1.0),
             cleanliness,
@@ -219,24 +213,31 @@ impl FrostCover {
         self.at_slope(d, 0.0)
     }
 
-    /// Frost share at a direction on a slope: the slope faces the pole or the equator and
-    /// sits at that slope's own mean temperature, so frost lies on pole-facing walls and
+    /// Frost share at a direction on a slope: the slope sits at the year-mean temperature of
+    /// the direction it faces, so that on a fast spinner frost lies on pole-facing walls and
     /// leaves equator-facing ones.
     pub fn at_slope(&self, d: [f64; 3], poleward_slope: f64) -> f64 {
-        let cos_lat = effective_cos_lat(d, poleward_slope);
-        let t = mean_surface_temperature(self.insolation, self.albedo, cos_lat);
+        let t = self
+            .year
+            .temperature(facing(d, poleward_slope), self.albedo);
         let persist = 1.0 / (1.0 + ((t - FROST_HALF_K) / FROST_WIDTH_K).exp());
         FROST_COVER_MAX * persist * self.supply * self.cleanliness
     }
 }
 
-/// The cosine of the latitude a slope behaves as: a surface rising towards the pole faces
-/// the equator and is warmer, one rising towards the equator faces the pole.
-pub fn effective_cos_lat(d: [f64; 3], poleward_slope: f64) -> f64 {
-    let lat = d[2].clamp(-1.0, 1.0).asin().abs();
-    (lat - poleward_slope)
-        .clamp(0.0, std::f64::consts::FRAC_PI_2)
-        .cos()
+/// The direction a slope faces (F256): a surface rising towards the nearer pole by
+/// `poleward_slope` rad faces as far towards the equator, one falling towards it as far
+/// towards the pole, on its own meridian and past the equator or the pole if it is steep
+/// enough. Through the year it takes the sunlight flat ground facing there takes.
+pub fn facing(d: [f64; 3], poleward_slope: f64) -> [f64; 3] {
+    let (_, north) = crate::geom::local_basis(d);
+    let toward = if d[2] >= 0.0 { 1.0 } else { -1.0 };
+    let (s, c) = poleward_slope.sin_cos();
+    normalize([
+        c * d[0] - toward * s * north[0],
+        c * d[1] - toward * s * north[1],
+        c * d[2] - toward * s * north[2],
+    ])
 }
 
 /// The slope of a height field at every cell, rad, whatever its direction, from the four
@@ -282,18 +283,6 @@ pub fn poleward_slope(height: &Field<f32>, body_radius: f64) -> Field<f32> {
     })
 }
 
-/// The maturity field of an icy surface from the surface ages, each cell at its slope's
-/// own mean temperature. Ice renewed from below, the grooved lanes and the polar terrain,
-/// is clean whatever the regolith around it.
-pub fn lag_maturity(
-    graph: &ParamGraph,
-    layers: &LayerSet,
-    present: f64,
-    slope: Option<&Field<f32>>,
-) -> Field<f32> {
-    lag_fields(graph, layers, present, slope, None).0
-}
-
 /// The midpoints of 24 equal-probability bands of a standard normal: the facets a cell's
 /// unresolved slopes are summed over.
 const FACETS: [f64; 24] = [
@@ -309,8 +298,11 @@ fn skin_share(thickness: f64) -> f64 {
     (depth / RAY_SKIN_DEPTH_M).powf(-RAY_SKIN_SLOPE)
 }
 
-/// The maturity of an icy surface and its rays' skin share (`skin_share`), cell by cell.
-/// Where `facets` gives a cell's share of saturation by the unresolved craters (F54), the
+/// The maturity of an icy surface and its rays' skin share (`skin_share`), cell by cell, each
+/// cell at the year-mean temperature of its own albedo where its slope faces (F256). Ice
+/// renewed from below, the grooved lanes and the polar terrain, is clean whatever the
+/// regolith around it. Where `facets` gives a cell's share of saturation by the unresolved
+/// craters (F54), the
 /// cell is summed over unresolved facets tilted toward and away from the pole, spread by
 /// ICE_FACET_SLOPE_DEG times that share (F93): its warm facets grow their lag and its cold
 /// ones keep their ice, the thermal segregation of Spencer (1987) at every latitude, so the
@@ -318,12 +310,11 @@ fn skin_share(thickness: f64) -> f64 {
 pub fn lag_fields(
     graph: &ParamGraph,
     layers: &LayerSet,
-    present: f64,
+    (present, year): (f64, &YearMean),
     slope: Option<&Field<f32>>,
     facets: Option<&[f32]>,
 ) -> (Field<f32>, Field<f32>) {
     let grid = layers.grid;
-    let insolation = graph.f64("orbit.insolation");
     let albedos = crate::stages::materials::surface_albedos(graph);
     let impurity = crust_impurity(graph);
     let clean = crate::stages::materials::non_ice_fraction("water_ice");
@@ -336,7 +327,7 @@ pub fn lag_fields(
             let c = grid.cell(k);
             let d = grid.center(c);
             let tilt = slope.map_or(0.0, |s| s.get(c) as f64);
-            let cos_lat = effective_cos_lat(d, tilt);
+            let faces = facing(d, tilt);
             let exposure = present - layers.exposure_age(grid.index(c)) as f64;
             let exposure = match &fallout {
                 Some(f) => exposure.min(f.burial_gyr(d)),
@@ -355,7 +346,7 @@ pub fn lag_fields(
             let (mut m, mut thickness, mut bond) = (0.0, 0.0, a_fresh);
             for _ in 0..6 {
                 bond = (a_fresh + (a_mature - a_fresh) * m).clamp(0.0, 0.95);
-                let t = mean_surface_temperature(insolation, bond, cos_lat);
+                let t = year.temperature(faces, bond);
                 (thickness, m) = lag_at(t, impurity, exposure);
             }
             let spread = facets.map_or(0.0, |f| f[k] as f64) * ICE_FACET_SLOPE_DEG.to_radians();
@@ -365,8 +356,7 @@ pub fn lag_fields(
             // The facets at the cell's settled albedo.
             let (mut maturity, mut skin) = (0.0, 0.0);
             for z in FACETS {
-                let cos_lat = effective_cos_lat(d, tilt + spread * z);
-                let t = mean_surface_temperature(insolation, bond, cos_lat);
+                let t = year.temperature(facing(d, tilt + spread * z), bond);
                 let (thickness, m) = lag_at(t, impurity, exposure);
                 maturity += m;
                 skin += skin_share(thickness);
@@ -590,32 +580,65 @@ mod tests {
         assert!(ice_sublimation_flux(92.0) < 1e-17);
         // A dirty surface at Callisto's equatorial mean goes opaque over the age; a
         // clean one at Europa's stays bright; the poles stay bright anywhere.
-        let callisto = mean_surface_temperature(50.25, 0.22, 1.0);
-        let europa = mean_surface_temperature(50.25, 0.67, 1.0);
+        let year = YearMean::airless(&Sky::zonal(50.25, 0.0, 0.0, 0.0), 0.0);
+        let lat = |deg: f64| [deg.to_radians().cos(), 0.0, deg.to_radians().sin()];
+        let callisto = year.temperature(lat(0.0), 0.22);
+        let europa = year.temperature(lat(0.0), 0.67);
         assert!(callisto > 110.0 && callisto < 125.0, "{callisto}");
         assert!(europa < 100.0, "{europa}");
         assert!(lag_maturity_at(callisto, 0.7, 4.5) > 0.95);
         assert!(lag_maturity_at(callisto, 0.7, 0.05) < 0.6);
         assert!(lag_maturity_at(europa, 0.02, 0.06) < 0.15);
         // Old polar ice is gardened but carries no lag; the equator carries both.
-        let pole = lag_maturity_at(mean_surface_temperature(50.25, 0.22, 0.05), 0.7, 4.5);
+        let pole = lag_maturity_at(year.temperature(lat(87.1), 0.22), 0.7, 4.5);
         assert!(
             pole > 0.9 && pole < lag_maturity_at(callisto, 0.7, 4.5),
             "{pole}"
         );
-        let mid = lag_maturity_at(mean_surface_temperature(50.25, 0.22, 0.5), 0.7, 0.2);
+        let mid = lag_maturity_at(year.temperature(lat(60.0), 0.22), 0.7, 0.2);
         let eq = lag_maturity_at(callisto, 0.7, 0.2);
         assert!(mid < eq, "{mid} vs {eq}");
         // Frost: a Ganymede-like body wears caps past 40° and nothing at the equator.
         let frost = FrostCover {
-            insolation: 50.25,
+            year: &year,
             albedo: 0.43,
             supply: 1.0,
             cleanliness: 1.0,
         };
-        let lat = |deg: f64| [deg.to_radians().cos(), 0.0, deg.to_radians().sin()];
         assert!(frost.at(lat(0.0)) < 0.05 && frost.at(lat(70.0)) > 0.3);
         assert!(frost.at(lat(70.0)) > frost.at(lat(45.0)));
+        // A slope facing the pole is as cold as the latitude it faces.
+        let wall = frost.at_slope(lat(30.0), -40f64.to_radians());
+        assert!((wall - frost.at(lat(70.0))).abs() < 1e-3, "{wall}");
+    }
+
+    /// F256: a body on its side, tilted past 54 degrees, takes more of its year's sunlight at
+    /// its poles than at its equator: its poles are its warm ground, and a Ganymede so tilted
+    /// would wear its frost at its equator.
+    #[test]
+    fn a_body_on_its_side_keeps_its_frost_at_its_equator() {
+        let lat = |deg: f64| [deg.to_radians().cos(), 0.0, deg.to_radians().sin()];
+        let year = YearMean::airless(&Sky::zonal(50.25, 0.0, 98f64.to_radians(), 0.0), 0.0);
+        let (pole, equator) = (
+            year.temperature(lat(89.0), 0.43),
+            year.temperature(lat(0.0), 0.43),
+        );
+        assert!(pole > equator + 8.0, "pole {pole} equator {equator}");
+        assert!((year.warmest(0.43) - year.temperature(lat(90.0), 0.43)).abs() < 0.1);
+        let frost = FrostCover {
+            year: &year,
+            albedo: 0.43,
+            supply: 1.0,
+            cleanliness: 1.0,
+        };
+        assert!(frost.at(lat(0.0)) > 0.3 && frost.at(lat(85.0)) < 0.1);
+        // Upright, its equator is its warm ground.
+        let upright = YearMean::airless(&Sky::zonal(50.25, 0.0, 0.0, 0.0), 0.0);
+        let warmest = upright.warmest(0.43);
+        assert!(
+            (warmest - upright.temperature(lat(0.0), 0.43)).abs() < 0.1,
+            "{warmest}"
+        );
     }
 
     #[test]
@@ -625,17 +648,18 @@ mod tests {
         // bright; at Saturn's distance nothing sublimes; at Ceres's the lag covers all
         // but the poles.
         let dirty = (0.42, 0.37, 0.085);
-        let callisto = lag_cover(50.25, 0.26, 4.5, dirty);
+        let sky = |s: f64| Sky::zonal(s, 0.0, 0.0, 0.0);
+        let callisto = lag_cover((&sky(50.25), 0.0), 0.26, 4.5, dirty);
         assert!(callisto > 0.4 && callisto < 0.8, "Callisto {callisto}");
-        assert!(lag_cover(50.25, 0.02, 4.5, (0.83, 0.66, 0.085)) < 0.01);
-        assert!(lag_cover(14.8, 0.26, 4.5, dirty) < 0.01);
-        let ceres = lag_cover(177.7, 0.38, 4.5, (0.34, 0.30, 0.085));
+        assert!(lag_cover((&sky(50.25), 0.0), 0.02, 4.5, (0.83, 0.66, 0.085)) < 0.01);
+        assert!(lag_cover((&sky(14.8), 0.0), 0.26, 4.5, dirty) < 0.01);
+        let ceres = lag_cover((&sky(177.7), 0.0), 0.38, 4.5, (0.34, 0.30, 0.085));
         assert!(ceres > 0.9, "Ceres {ceres}");
         // A young surface has had no time to grow one.
-        assert!(lag_cover(50.25, 0.26, 0.01, dirty) < callisto / 2.0);
+        assert!(lag_cover((&sky(50.25), 0.0), 0.26, 0.01, dirty) < callisto / 2.0);
         // Ceres's crust loses its ice deeper than the half-kilometre layer its craters
         // expose, over most of the body; Callisto's to tens of metres.
-        let deep = |s: f64, f: f64, a| lag_depth_share(s, f, 4.5, a, 500.0);
+        let deep = |s: f64, f: f64, a| lag_depth_share((&sky(s), 0.0), f, 4.5, a, 500.0);
         assert!(deep(177.7, 0.38, (0.34, 0.30, 0.085)) > 0.8);
         assert!(deep(50.25, 0.26, dirty) < 0.1);
     }

@@ -41,7 +41,7 @@ use crate::constants::*;
 use crate::fields::Field;
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
-use crate::insolation::{PathStep, Sky, diurnal_share, read_grid, read_row};
+use crate::insolation::{PathStep, Sky, SunTable, diurnal_share, read_grid, read_row};
 use crate::params::ParamGraph;
 use crate::params::derive::is_icy;
 use crate::params::derive::physics::{
@@ -88,6 +88,87 @@ pub struct EnergyBalance {
     /// above the air's, rho C_H U (M_w / M) / p, kg/m²/s/Pa (F245).
     pub exchange: f64,
     pub evaporation: f64,
+}
+
+/// The year's mean temperature of a surface at its own albedo, facing where its slope faces
+/// (F256): the climate's year-mean balance there, the year's sunlight on the surface at its
+/// albedo and what else the climate brings the ground, its body's heat and its air's
+/// transport, radiated through the greenhouse over it. The stages that need the ground's
+/// mean temperature read it here: on an airless body the sunlight and the heat alone, its
+/// year's sunlight in the direction it faces exact for any obliquity, orbit and resonance.
+#[derive(Clone, Debug)]
+pub struct YearMean {
+    sun: SunTable,
+    heat: f64,
+    /// Under an atmosphere, on the climate's grid: the heat the air brings each cell, W/m²,
+    /// and the share of a black body's radiation the greenhouse over it lets out.
+    air: Option<(CubeSphere, PaddedField, PaddedField)>,
+}
+
+impl YearMean {
+    pub fn new(balance: &EnergyBalance, climate: &Climate) -> Self {
+        let grid = climate.temperature.grid();
+        let airless = balance.transport <= 0.0 && balance.tau_dry <= 0.0 && balance.water <= 0.0;
+        let air = (!airless).then(|| {
+            let emission: Vec<f32> = climate
+                .temperature
+                .as_slice()
+                .iter()
+                .map(|&t| {
+                    let t = t as f64;
+                    (balance.olr(t) / (SIGMA_SB * t.powi(4)).max(1e-30)) as f32
+                })
+                .collect();
+            (
+                grid,
+                PaddedField::new(&grid, climate.transport.as_slice()),
+                PaddedField::new(&grid, &emission),
+            )
+        });
+        Self {
+            sun: balance.sky.annual_table(),
+            heat: balance.heat_flux,
+            air,
+        }
+    }
+
+    /// An airless body's, under its sky, its own heat flowing out at `heat` W/m².
+    pub fn airless(sky: &Sky, heat: f64) -> Self {
+        Self {
+            sun: sky.annual_table(),
+            heat: heat.max(0.0),
+            air: None,
+        }
+    }
+
+    /// The year's mean temperature, K, of a surface of `albedo` facing `d`.
+    pub fn temperature(&self, d: [f64; 3], albedo: f64) -> f64 {
+        let absorbed = self.sun.flux_at(d) * (1.0 - albedo);
+        let (brought, emission) = match &self.air {
+            Some((grid, brought, emission)) => (
+                sample_bilinear(grid, brought, d) as f64,
+                (sample_bilinear(grid, emission, d) as f64).max(1e-6),
+            ),
+            None => (0.0, 1.0),
+        };
+        radiative_temperature(absorbed + brought + self.heat, emission)
+    }
+
+    /// The warmest year-mean temperature anywhere on the body of a surface of `albedo`, K.
+    pub fn warmest(&self, albedo: f64) -> f64 {
+        self.sun
+            .directions()
+            .map(|d| self.temperature(d, albedo))
+            .fold(0.0, f64::max)
+    }
+}
+
+/// The temperature, K, at which a surface radiates what it takes, `taken` W/m², a black body's
+/// radiation's `emission` share of it getting out; never below the cosmic background.
+pub fn radiative_temperature(taken: f64, emission: f64) -> f64 {
+    (taken.max(0.0) / (emission * SIGMA_SB))
+        .powf(0.25)
+        .max(COSMIC_BACKGROUND_K)
 }
 
 /// The year's mean climate on the climate grid.
@@ -761,6 +842,10 @@ pub struct Cycle {
     /// The cycle's year step by step and its clock, under an atmosphere (F253).
     pub series: Option<Series>,
     pub clock: Option<Clock>,
+    /// Each place's surface temperatures through the cycle, as quantiles, and the albedo its
+    /// ground stood at (F256).
+    spread: Vec<[f32; CYCLE_SPREAD]>,
+    spread_albedo: Vec<f32>,
 }
 
 /// The cycle's year step by step (F253): each step's end's phase of the year from the
@@ -1145,6 +1230,10 @@ struct Year {
     frost_share: f64,
     frost_now: f64,
     sea: [f64; 5],
+    /// The surface's temperatures through the cycle, as quantiles, and the albedo its ground
+    /// stood at (F256).
+    spread: [f32; CYCLE_SPREAD],
+    albedo: f32,
 }
 
 /// The cycle at a tilt (F245): the places' years; where the atmosphere lays frost, the
@@ -1178,8 +1267,8 @@ struct Lockstep {
 }
 
 impl Year {
-    /// A year without frost or sea.
-    fn bare(mean: f64, max: f64, min: f64) -> Self {
+    /// A year without frost or sea, its surface's temperatures `spread` at `albedo`.
+    fn bare(mean: f64, max: f64, min: f64, (spread, albedo): ([f32; CYCLE_SPREAD], f64)) -> Self {
         Self {
             mean,
             max,
@@ -1187,8 +1276,35 @@ impl Year {
             frost_share: 0.0,
             frost_now: 0.0,
             sea: [mean, min, max, 0.0, 0.0],
+            spread,
+            albedo: albedo as f32,
         }
     }
+}
+
+/// The quantiles of a place's surface temperatures through its cycle (F256): CYCLE_SPREAD of
+/// them, each the middle of an equal share of the sampled times.
+fn spread_of(samples: &mut [f64]) -> [f32; CYCLE_SPREAD] {
+    let mut out = [0.0f32; CYCLE_SPREAD];
+    if samples.is_empty() {
+        return out;
+    }
+    samples.sort_by(|a, b| a.total_cmp(b));
+    let n = samples.len();
+    for (i, q) in out.iter_mut().enumerate() {
+        let k = ((i as f64 + 0.5) / CYCLE_SPREAD as f64 * n as f64) as usize;
+        *q = samples[k.min(n - 1)] as f32;
+    }
+    out
+}
+
+/// The mean of a rate through a place's cycle (F256), its temperatures `spread` brought from
+/// the albedo they stood at to another, `albedos` (from, to), as the radiation they balance
+/// scales: what a surface brighter or darker than the climate's ground takes from the same
+/// sun.
+pub fn mean_rate(spread: &[f64], (from, to): (f64, f64), rate: impl Fn(f64) -> f64) -> f64 {
+    let scale = ((1.0 - to).max(0.0) / (1.0 - from).max(1e-6)).powf(0.25);
+    spread.iter().map(|&t| rate(t * scale)).sum::<f64>() / spread.len().max(1) as f64
 }
 
 /// F250: how strongly ice and snow brighten the ground under a star of effective temperature
@@ -1594,6 +1710,8 @@ impl EnergyBalance {
                         frost_share: 0.0,
                         frost_now: 0.0,
                         sea: [0.0, f64::MAX, f64::MIN, 0.0, 0.0],
+                        spread: [0.0; CYCLE_SPREAD],
+                        albedo: 0.0,
                     },
                     |acc, e| Year {
                         mean: acc.mean + e.mean / n,
@@ -1608,6 +1726,8 @@ impl EnergyBalance {
                             acc.sea[3] + e.sea[3] / n,
                             acc.sea[4] + e.sea[4] / n,
                         ],
+                        spread: std::array::from_fn(|i| acc.spread[i] + e.spread[i] / n as f32),
+                        albedo: acc.albedo + e.albedo / n as f32,
                     },
                 )
             })
@@ -1803,6 +1923,8 @@ impl EnergyBalance {
             layout: (n_lat, n_lon),
             series,
             clock,
+            spread: rows.iter().map(|y| y.spread).collect(),
+            spread_albedo: rows.iter().map(|y| y.albedo).collect(),
         }
     }
 
@@ -1972,6 +2094,7 @@ impl EnergyBalance {
                 let mut trial = Trial::new(column.len());
                 let (sp, cp) = p.lat.sin_cos();
                 let (mut mean, mut hi, mut lo) = (0.0, f64::MIN, f64::MAX);
+                let mut samples = Vec::new();
                 for record in &r.records {
                     let f = frost.map(|f| Frost {
                         point: record.point,
@@ -2006,12 +2129,15 @@ impl EnergyBalance {
                                 sum += t[0];
                                 hi = hi.max(t[0]);
                                 lo = lo.min(t[0]);
+                                samples.push(t[0]);
                             }
                         }
                     }
                     mean += sum / CYCLE_DAY_STEPS as f64;
                 }
                 let mean = mean / r.records.len().max(1) as f64;
+                let albedo =
+                    r.records.iter().map(|x| x.albedo).sum::<f64>() / r.records.len().max(1) as f64;
                 Year {
                     mean,
                     max: hi,
@@ -2019,6 +2145,8 @@ impl EnergyBalance {
                     frost_share: r.frosted as f64 / steps as f64,
                     frost_now: r.now,
                     sea: r.sea_year(steps, (mean, hi, lo)),
+                    spread: spread_of(&mut samples),
+                    albedo: albedo as f32,
                 }
             })
             .collect();
@@ -2058,6 +2186,7 @@ impl EnergyBalance {
             .iter()
             .map(|r| {
                 let mean = r.sums[0] / steps as f64;
+                let mut samples: Vec<f64> = r.surface.iter().map(|&t| t as f64).collect();
                 Year {
                     mean,
                     max: r.hi,
@@ -2065,6 +2194,8 @@ impl EnergyBalance {
                     frost_share: r.frosted as f64 / steps as f64,
                     frost_now: r.now,
                     sea: r.sea_year(steps, (mean, r.hi, r.lo)),
+                    spread: spread_of(&mut samples),
+                    albedo: r.albedo as f32,
                 }
             })
             .collect();
@@ -2848,6 +2979,7 @@ impl EnergyBalance {
         let (sp, cp) = lat.sin_cos();
         let dt = day / CYCLE_DAY_STEPS as f64;
         let (mut mean, mut hi, mut lo) = (0.0, f64::MIN, f64::MAX);
+        let mut samples = Vec::new();
         for (state, flux, decl) in &seasons {
             let (sd, cd) = decl.sin_cos();
             let mut t = state.clone();
@@ -2862,12 +2994,14 @@ impl EnergyBalance {
                         sum += t[0];
                         hi = hi.max(t[0]);
                         lo = lo.min(t[0]);
+                        samples.push(t[0]);
                     }
                 }
             }
             mean += sum / CYCLE_DAY_STEPS as f64;
         }
-        Year::bare(mean / seasons.len().max(1) as f64, hi, lo)
+        let spread = (spread_of(&mut samples), albedo);
+        Year::bare(mean / seasons.len().max(1) as f64, hi, lo, spread)
     }
 
     /// A resonant body's cycle at a place (latitude, longitude), started from its year's
@@ -2891,9 +3025,11 @@ impl EnergyBalance {
         let (sp, cp) = lat.sin_cos();
         let (mut mean, mut hi, mut lo) = (0.0, f64::MIN, f64::MAX);
         let mut last = f64::NAN;
+        let mut samples = Vec::with_capacity(path.len());
         for _ in 0..CYCLE_MAX_YEARS {
             let mut sums = vec![0.0; t.len()];
             (hi, lo) = (f64::MIN, f64::MAX);
+            samples.clear();
             for s in path {
                 let cz = (sp * s.sin_decl + cp * s.cos_decl * (s.hour + lon).cos()).max(0.0);
                 let gain = (1.0 - albedo) * scale * s.flux * cz + brought;
@@ -2903,6 +3039,7 @@ impl EnergyBalance {
                 }
                 hi = hi.max(t[0]);
                 lo = lo.min(t[0]);
+                samples.push(t[0]);
             }
             mean = sums[0] / path.len() as f64;
             if (mean - last).abs() < CYCLE_SETTLED_K {
@@ -2911,7 +3048,7 @@ impl EnergyBalance {
             last = mean;
             settle(&mut t, &sums, path.len());
         }
-        Year::bare(mean, hi, lo)
+        Year::bare(mean, hi, lo, (spread_of(&mut samples), albedo))
     }
 }
 
@@ -3410,6 +3547,21 @@ fn surface_normal(height: &Field<f32>, c: crate::grid::Cell, d: [f64; 3], radius
 }
 
 impl Cycle {
+    /// The surface's temperatures through its cycle in a direction (F256): the quantiles of
+    /// the places about it, read between them, and the albedo their ground stood at.
+    pub fn spread_at(&self, d: [f64; 3]) -> ([f64; CYCLE_SPREAD], f64) {
+        let (lon, lat) = lon_lat_from_direction(d);
+        let corners = reader(self.layout.0, self.layout.1, lat, lon);
+        let (mut out, mut albedo) = ([0.0; CYCLE_SPREAD], 0.0);
+        for &(p, w) in corners.iter().filter(|c| c.1 > 0.0) {
+            for (o, &q) in out.iter_mut().zip(&self.spread[p]) {
+                *o += w * q as f64;
+            }
+            albedo += w * self.spread_albedo[p] as f64;
+        }
+        (out, albedo)
+    }
+
     /// The coldest and the warmest the surface stands anywhere through the year, K.
     pub fn extremes(&self) -> (f64, f64) {
         let coldest = self
@@ -3552,6 +3704,8 @@ struct Run {
     records: Vec<Record>,
     /// The frost and the sea's ice at the end of each step of the cycle, kg/m² (F246).
     masses: [Vec<f32>; 2],
+    /// The surface's temperature at the end of each step of the cycle (F256).
+    surface: Vec<f32>,
 }
 
 impl Run {
@@ -3586,6 +3740,7 @@ impl Run {
             ice_now: 0.0,
             records: Vec::new(),
             masses: [vec![0.0; steps], vec![0.0; steps]],
+            surface: vec![0.0; steps],
         }
     }
 
@@ -3637,6 +3792,7 @@ impl Run {
         }
         self.masses[0][k] = self.mass as f32;
         self.masses[1][k] = self.sea.map_or(0.0, |s| s.ice) as f32;
+        self.surface[k] = self.t[0] as f32;
         if every > 0 && k.is_multiple_of(every) {
             self.records.push(Record {
                 k,
@@ -4542,6 +4698,20 @@ mod tests {
             (195.0..240.0).contains(&mean) && mean < steady - 40.0,
             "mean {mean} steady {steady}"
         );
+        // F256: its temperatures through its days, their quantiles from its night's to its
+        // noon's, their mean its mean.
+        let (spread, _) = cycle.spread_at(direction_from_lon_lat(0.0, 0.0));
+        let (coldest, warmest) = (spread[0], spread[CYCLE_SPREAD - 1]);
+        let middle = spread.iter().sum::<f64>() / CYCLE_SPREAD as f64;
+        assert!(
+            coldest > min - 1.0 && coldest < min + 15.0,
+            "coldest {coldest}"
+        );
+        assert!(
+            warmest > max - 5.0 && warmest < max + 1.0,
+            "warmest {warmest}"
+        );
+        assert!((middle - mean).abs() < 3.0, "mean {middle} against {mean}");
     }
 
     /// F236: Mercury's hot longitudes reach some 700 K at perihelion's noon and its warm

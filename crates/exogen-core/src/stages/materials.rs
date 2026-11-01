@@ -981,7 +981,8 @@ fn renewed_ice_mature(graph: &ParamGraph, ice: [f32; 3], regolith: [f32; 3]) -> 
     lerp3(ice, regolith, (REGOLITH_EXCHANGE * old) as f32)
 }
 
-/// Linear-reflectance albedo of the surface.
+/// Linear-reflectance albedo of the surface, an icy surface's frost where `year`'s mean
+/// temperatures leave it cold (F256).
 pub fn albedo(
     graph: &ParamGraph,
     layers: &LayerSet,
@@ -989,6 +990,7 @@ pub fn albedo(
     rays: &Field<f32>,
     present: f64,
     slope: Option<&Field<f32>>,
+    year: &crate::climate::YearMean,
 ) -> Field<[f32; 3]> {
     let library = Library::from_graph(graph);
     let bedrock = library
@@ -1069,7 +1071,7 @@ pub fn albedo(
     // An icy surface wears frost where it is cold enough to keep what the warm
     // latitudes sublimed.
     let frost = if is_ice(graph.str("materials.bedrock")) && !io {
-        Some(crate::stages::ice::FrostCover::new(graph))
+        Some(crate::stages::ice::FrostCover::new(graph, year))
     } else {
         None
     };

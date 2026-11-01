@@ -1388,11 +1388,11 @@ pub const IO_SMALL_ERUPTION_DURATION_YR: (f64, f64) = (0.03, 1.0);
 pub const IO_SMALL_ERUPTIONS_PER_YR: f64 = 10.0;
 /// Frost sublimes at the equator at this rate, kg/m² a year (Ingersoll 1985: the
 /// diurnally averaged sublimation at the equator is comparable to 0.1 cm/yr, here of
-/// solid SO2 at 1.9 g/cm³), elsewhere by the vapour pressure at its own temperature
+/// solid SO2 at 1.9 g/cm³), elsewhere by its vapour pressure through its days and seasons
 /// against the equator's, SO2's latent heat over the gas constant being this, K (the
 /// vapour pressure 1.52 x 10^13 exp(-4510 / T) Pa, Wagman 1979 as Ingersoll uses it),
-/// the frost's temperature by day that of a surface of this albedo under the sun at its
-/// latitude (a stated choice; 122 K at Io's subsolar point).
+/// the frost's temperatures those of the cycle's ground brought to this albedo (a stated
+/// choice; F256).
 pub const IO_FROST_SUBLIMATION: f64 = 1.9;
 pub const SO2_SUBLIMATION_K: f64 = 4_510.0;
 pub const IO_FROST_ALBEDO: f64 = 0.75;
@@ -1802,6 +1802,10 @@ pub const CYCLE_MAX_YEARS: usize = 40;
 pub const CYCLE_SETTLED_K: f64 = 0.05;
 pub const CYCLE_LATITUDES: usize = 91;
 pub const CYCLE_RESONANT_GRID: (usize, usize) = (46, 90);
+/// F256: each place's surface temperatures through its cycle's sampled times, its days at
+/// each season or its every step, kept as CYCLE_SPREAD quantiles, each the middle of an equal
+/// share of the times.
+pub const CYCLE_SPREAD: usize = 64;
 /// F254: a fast spinner's cycle runs at places by latitude and longitude, as a resonant
 /// body's does, its latitudes CYCLE_LATITUDES as before, 2° apart, its longitudes 4°.
 pub const CYCLE_FAST_GRID: (usize, usize) = (CYCLE_LATITUDES, 90);
@@ -2580,7 +2584,6 @@ pub const LAG_BULK_DENSITY: f64 = 1_000.0;
 /// Moon, at 0.25; Ganymede's narrow lanes and broken dark terrain all lie near a contact. Lava contacts mix sideways
 /// by F95 instead, and the basalts' colours are measured soils that hold their share.
 pub const REGOLITH_EXCHANGE: f64 = 0.3;
-pub const ICE_POLAR_TEMPERATURE_FLOOR_K: f64 = 40.0;
 /// Clean ice that an impact brings up is mixed back into the regolith by gardening over
 /// this time, Gyr, whatever the temperature: Callisto's bright craters are its young ones.
 pub const ICE_EJECTA_FADE_GYR: f64 = 0.5;

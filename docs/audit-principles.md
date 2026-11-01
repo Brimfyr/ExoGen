@@ -71,7 +71,7 @@ Phase 4F closes with every entry given an outcome: closed, with what closed it; 
 | M3 | Known limitation | the plains' craters want a heat history |
 | M4 | Known limitation | the refreezing's tension wants a local history of the shell |
 | M6 | Closed | the look accepted by the user (2026-10-15) |
-| M7 | Closed in part (F205, F206, F211) | the frost's temperature through the day goes with Phase 5 |
+| M7 | Closed in part (F205, F206, F211, F256) | the condensation that goes to the coldest ground goes with 5B's volatile transport |
 | M8, M20 | Closed in part (F117, F201) | the flow units' metres against the 50 m sheet: known limitation, with M40's relief and S3 |
 | M9 | Closed in part (F104) | the negative loads and the shields' and floods' mass: known limitation; the climate's latitudes with Phase 5 |
 | M10 | Closed in part | Venus's mountain belts with Phase 6 (M42); its lowland ridge belts and Mercury's domes: known limitation |
@@ -586,6 +586,10 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | CYCLE_FAST_GRID (F254) | a stated choice: 2° in latitude as the zonal cycle's, 4° in longitude as a resonant body's | finer places, at their cost |
 | an airless fast spinner's cycle by latitude alone (F254) | a stated choice: no air joins its places | its ground's own variation by longitude |
 | a window opening and closing where its ice crosses the mass it lies at, and lengthening toward the places it lies at all year by their share (F255) | stated: linear between the steps' ends; the share a stated choice | the ice's own time at each sub-place point |
+| the climate's year-mean balance at a cell's own albedo, its air's transport and greenhouse held as the climate found them (F256) | stated: exact on an airless body | the ground's own column through the cycle at its albedo |
+| a slope taking the year's sunlight of the direction it faces (F256) | geometric: exact for a plane whose horizon nothing shades | the slope's horizon |
+| CYCLE_SPREAD (F256) | a stated choice: 64 quantiles | finer, at their memory |
+| the cycle's temperatures brought to another albedo as the radiation they balance scales (F256) | stated: exact without thermal inertia | the frost's own column through the cycle |
 | the ground's Bond albedo under any star (F250, F52) | a stated guess by pressure class | the clouds and the air's scattering of the star's light (5G) |
 | D_EARTH, D_CAP_MULTIPLE (F33, F235) | Earth's transport (Williams and Kasting 1997) and a stated cap at ten times it | the scaling with rotation is Earth's: Titan's poles 0.1 K under its equator against Cassini's 3 K (Jennings et al. 2016), Venus's 6.5 K; a slowly turning atmosphere's single cell with the wind field (5C) |
 | EARLY_TIME_EXPONENTS | stated choices: the orbital period at the snow line, the disc's solids over the area within it (F135) | no body to check; around a red dwarf the snow line where its planets formed is set by its far brighter youth, not by its luminosity today |
@@ -681,6 +685,8 @@ Since F203 the frost coarsens as it ages and an old frost lets the ground throug
 Closed in part by F205, the hundred-and-eighteenth milestone: the first of the missing pieces above, SO2 laid broader than a plume's ring, its gas settling across its region as the atmosphere collapses each night. Frost shows over 40 percent of the surface, in broad soft fields where the fronts gather and most rings merge with them, and beyond 30 degrees under the plasma's alteration; the body's mean stays Io's measured colour. Tried first and not kept (2026-10-27): each frost subliming against the atmosphere its region's frost holds up, without the albedo feedback; frost rose from 4.4 to 4.6 percent, the gas the model then laid being far under the sublimation away from the rings. Still open: the frost's temperature through the day and the condensation that goes to the coldest ground, and the fields' fine structure (since done by F211).
 
 Since F206 the frost does not hold on the dark lava still showing, which the sun warms far above it, so the flows stand out within the frost fields; the frost's temperature over the bright ground is still its latitude's and slope's alone.
+
+Closed further by F256, Phase 5's twentieth milestone: the frost's temperature through the day with its thermal inertia. The frost sublimes by its vapour pressure through its days and seasons, the cycle's temperatures under Io's thermal inertia brought to the frost's albedo, against the equator's on its meridian: its noon at the equator stands at 116 K where 122, and its vapour pressure falls the faster with latitude, 0.15 of the equator's at 30° where 0.26. Frost shows over 29.1 percent of the surface where 27.0, the more between 10° and 45°; the plasma's red-brown begins where it did. Still open: the condensation that goes to the coldest ground, with 5B's volatile transport.
 
 ### M8. Io's flow coverage
 

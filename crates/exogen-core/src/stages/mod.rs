@@ -429,7 +429,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 189;
+pub const FINISH_VERSION: u64 = 190;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2837,6 +2837,9 @@ pub fn finish(
     };
     let share = sea_share(&layers, full_sea);
     let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()));
+    // The ground's year-mean temperature at its own albedo where its slope faces, which the
+    // ice's lag and frost read (F256).
+    let year = crate::climate::YearMean::new(&balance, &climate);
     let downscale = crate::climate::Downscale::from_graph(graph);
     let above = {
         let height = layers.height();
@@ -2875,7 +2878,8 @@ pub fn finish(
     let taken: f64 = laid.iter().map(|c| c.from_sea).sum();
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers, taken);
     let height = layers.height();
-    // On ice, each slope sits at its own mean temperature: frost and lag follow it.
+    // On ice, each slope sits at the year-mean temperature of where it faces: frost and lag
+    // follow it.
     let slope = (ice::is_ice_surface(graph) || io::is_io_regime(graph))
         .then(|| ice::poleward_slope(&height, body_radius));
     // Io's surface is what its plumes have left on it, each slope at its own temperature
@@ -2893,7 +2897,7 @@ pub fn finish(
             &mut layers,
             body_radius,
             graph.f64("body.gravity"),
-            graph.f64("orbit.insolation"),
+            &cycle,
             &plume_episodes,
             &small_eruptions,
             &background,
@@ -2930,7 +2934,7 @@ pub fn finish(
         let (maturity, skin) = ice::lag_fields(
             graph,
             &layers,
-            present,
+            (present, &year),
             slope.as_ref(),
             Some(&roughness_share),
         );
@@ -3010,7 +3014,15 @@ pub fn finish(
         fraction: 0.92,
         message: "materials".to_string(),
     });
-    let albedo = materials::albedo(graph, &layers, &maturity, &rays, present, slope.as_ref());
+    let albedo = materials::albedo(
+        graph,
+        &layers,
+        &maturity,
+        &rays,
+        present,
+        slope.as_ref(),
+        &year,
+    );
     // The caps' ice over the ground's colour, and the climate again over their albedo
     // (F241).
     let albedo = caps::over(&albedo, &laid);
