@@ -707,7 +707,7 @@ Planned on 2026-10-31, after Phase 4F's close: climate first, the weather model 
 
 Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean temperature, its Hadley edge between 25 and 35°; Mars's, Venus's and Titan's mean temperatures; the Moon's and Mercury's day, night and polar temperatures against Diviner's and MESSENGER's.
 
-**5B Volatiles.** Under way: the frost's seasons (F239), the atmosphere's main volatile condensing on the cold ground and its pressure following its caps; the cold traps (F240), where each ice of the inventory would last; the caps of the inventory's ices (F241) and the frost's own gas's (F242); the poles' shadows (F243); the sea's heat and its ice (F244); the seasons' air (F245); the ices that come and go (F246), the seasonal caps' exported state; nitrogen frost's emissivity (F247).
+**5B Volatiles.** Under way: the frost's seasons (F239), the atmosphere's main volatile condensing on the cold ground and its pressure following its caps; the cold traps (F240), where each ice of the inventory would last; the caps of the inventory's ices (F241) and the frost's own gas's (F242); the poles' shadows (F243); the sea's heat and its ice (F244); the seasons' air (F245); the ices that come and go (F246), the seasonal caps' exported state; nitrogen frost's emissivity (F247); the ground without its seasons' ice (F248).
 
 - Phase states per species at the local temperature and pressure.
 - Sea level from the inventory on the hypsometry: a connected ocean by default, priority-flood lakes with a volume budget as an option.
@@ -718,6 +718,7 @@ Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean 
 - Atmospheric escape and the loss of water: Mars's, and Io's, which audit S2 and S3 wait on.
 - Io's frost through the day (audit M7).
 - The climate through the loop's history (moved from 5A, the user, 2026-10-31): history curves for surface pressure and volatile inventory from the atmosphere's escape and outgassing, with the star's luminosity, its main sequence's brightening (F3) and a low-mass star's bright contraction before it (Baraffe et al. 2015), so that the climate runs through the loop's history beside the atmosphere's evolution: Mars's thick early atmosphere, an M dwarf's planets losing their water in its bright youth (Luger and Barnes 2015).
+- With the history (the user, 2026-11-01): the air's transport, its heat and its exchange with the ground following the pressure its escape and its frost leave it, where today they keep the full atmosphere's, a thin atmosphere's collapse onto a locked night side holding the more air for it; and the caps laid through the obliquity's cycles, where each ice stood, so that Mars's water stands at its poles and its carbon dioxide in the south, its frost brightening under its sun (Guo et al. 2010, tried and set aside until then: the caps laid at once sent all of Mars's water south after its carbon dioxide).
 - One temperature for every stage (moved from 5A): the ice stage's lag and frost and Io's frost read the climate's temperatures, their sublimation integrated through the days and seasons, not taken at a mean.
 
 Gate: the locked ocean world's sea-ice edge on the freezing isoline; Mars's residual caps, water ice in the north and CO2 in the south, where its temperatures put them; Pluto's nitrogen gathered in its basin.
@@ -727,7 +728,7 @@ Gate: the locked ocean world's sea-ice edge on the freezing isoline; Mars's resi
 - The climatological wind field: cells by the Held and Hou edge, jets for fast rotators, a single cell for slow rotators and for bodies locked to their star.
 - Moisture transport: saturation by Clausius-Clapeyron for the working volatile (water, methane, ammonia), evaporation, advection, condensation where the air converges or rises over the relief, depletion downwind.
 - Fluvial erosion by implicit stream power (Braun and Willett 2013) on priority-flood routing (Barnes et al. 2014): valley networks, lakes, fans and deltas, catastrophic outflow channels as an event type.
-- Glacial flow and erosion by shallow ice: ice sheets, valley glaciers, calving fronts and shelves; the same code for nitrogen glaciers.
+- Glacial flow and erosion by shallow ice: ice sheets, valley glaciers, calving fronts and shelves; the same code for nitrogen and carbon dioxide glaciers, a collapsed atmosphere's frost flowing back from its night side to the day side that sublimes it, which sets the pressure it keeps (Turbet et al. 2017; the user, 2026-11-01).
 - Mass wasting and creep (audit W4), with the scarps' wear and the lowlands' sediments (audit T5).
 - The methane cycle on Titan.
 

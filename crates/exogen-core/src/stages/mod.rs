@@ -421,7 +421,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 183;
+pub const FINISH_VERSION: u64 = 184;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3042,46 +3042,33 @@ pub fn finish(
         );
     }
     // The sea's year beside its land under their air (F244, F245): its surface's temperature
-    // on its cells, its ice at the snapshot's season over its colour by the share it covers.
+    // on its cells, its ice at the snapshot's season exported apart from the ground's colour,
+    // which holds no seasonal ice: the cryosphere map gives it at any season (F248).
     let mut sea_ice = Field::new(grid);
-    let mut sea_cover = Field::new(grid);
     let mut sea_ice_fraction = 0.0;
-    let albedo = match &cycle.seas {
-        Some(seas) if sea_level.is_finite() => {
-            let mut covered = 0.0;
-            for k in 0..grid.cell_count() {
-                let c = grid.cell(k);
-                if layers.liquid.get(c) <= 0.0 {
-                    continue;
-                }
-                let d = grid.center(c);
-                temperature.as_mut_slice()[k] = seas.mean_at(d) as f32;
-                sea_ice.as_mut_slice()[k] = seas.ice_at(d).max(0.0) as f32;
-                let cover = seas.cover_at(d).clamp(0.0, 1.0);
-                sea_cover.as_mut_slice()[k] = cover as f32;
-                if cover > 0.5 {
-                    covered += grid.cell_area(c);
-                }
+    if let Some(seas) = cycle.seas.as_ref().filter(|_| sea_level.is_finite()) {
+        let mut covered = 0.0;
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            if layers.liquid.get(c) <= 0.0 {
+                continue;
             }
-            sea_ice_fraction = covered / (4.0 * std::f64::consts::PI);
-            if std::env::var_os("EXOGEN_DEBUG").is_some() {
-                eprintln!(
-                    "seas: ice over {:.2}% of the body at the snapshot, the sea's mean {:.1} K",
-                    100.0 * sea_ice_fraction,
-                    crate::climate::bands(&seas.mean).0
-                );
+            let d = grid.center(c);
+            temperature.as_mut_slice()[k] = seas.mean_at(d) as f32;
+            sea_ice.as_mut_slice()[k] = seas.ice_at(d).max(0.0) as f32;
+            if seas.cover_at(d) > 0.5 {
+                covered += grid.cell_area(c);
             }
-            Field::from_fn(grid, |c, _| {
-                let cover = sea_cover.get(c);
-                let mut a = albedo.get(c);
-                for (v, &ice) in a.iter_mut().zip(&seas.ocean.colour) {
-                    *v += (ice - *v) * cover;
-                }
-                a
-            })
         }
-        _ => albedo,
-    };
+        sea_ice_fraction = covered / (4.0 * std::f64::consts::PI);
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            eprintln!(
+                "seas: ice over {:.2}% of the body at the snapshot, the sea's mean {:.1} K",
+                100.0 * sea_ice_fraction,
+                crate::climate::bands(&seas.mean).0
+            );
+        }
+    }
     // The ices that come and go through the year (F246): each one's window at each cell.
     let (cryosphere, cryosphere_ices, cryosphere_snapshot) = match &cycle.cryosphere {
         Some(cryo) => {
@@ -3089,14 +3076,25 @@ pub fn finish(
             let densities = (frost_density, caps::ice_density("H2O"));
             let ground = (&height, &layers.liquid);
             let fields = downscale.seasons(cryo, &cycle.mean, ground, densities);
+            // Each ice with its colour, linear reflectance, to draw it by.
+            let colour = |c: [f32; 3]| format!("[{:.2}, {:.2}, {:.2}]", c[0], c[1], c[2]);
             let mut ices: Vec<String> = cycle
                 .frost
                 .iter()
                 .filter(|_| cryo.holds(false))
-                .map(|f| format!("{} frost on the ground", f.species))
+                .map(|f| {
+                    format!(
+                        "{} frost on the ground, colour {}",
+                        f.species,
+                        colour(f.colour)
+                    )
+                })
                 .collect();
-            if cycle.seas.is_some() && cryo.holds(true) {
-                ices.push("the sea's water ice".to_string());
+            if let Some(seas) = cycle.seas.as_ref().filter(|_| cryo.holds(true)) {
+                ices.push(format!(
+                    "the sea's water ice, colour {}",
+                    colour(seas.ocean.colour)
+                ));
             }
             (fields, ices, cryo.snapshot)
         }
@@ -3106,10 +3104,10 @@ pub fn finish(
             f64::NAN,
         ),
     };
-    let (frost, albedo) = match cycle.frost {
+    // The frost at the snapshot's season, exported apart from the ground's colour (F248).
+    let frost = match cycle.frost {
         Some(f) => {
             let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &height, sea_level);
-            let albedo = crate::climate::frosted_albedo(&albedo, &frost, f.colour);
             if std::env::var_os("EXOGEN_DEBUG").is_some() {
                 let (mean, ..) = crate::climate::bands(&frost);
                 let range = cycle.pressure_range.unwrap_or((f64::NAN, f64::NAN));
@@ -3122,9 +3120,9 @@ pub fn finish(
                     cycle.cap_growth.unwrap_or(0.0)
                 );
             }
-            (frost, albedo)
+            frost
         }
-        None => (Field::new(grid), albedo),
+        None => Field::new(grid),
     };
     let hash = hash_words(&[
         layers.hash(),

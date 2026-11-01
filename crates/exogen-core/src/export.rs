@@ -696,16 +696,19 @@ pub fn export(
     // at and G the phase they melt out at, from the northern spring equinox, 0 and 1 where
     // they lie all year; B their thickness at their peak; A the phase of their peak. The
     // phases nearest cell per pixel, so that a window round the year's end is not blended
-    // through its middle; the thickness bilinear.
-    let cryo: Vec<Vec<f32>> = out
+    // through its middle; the thickness bilinear, but only where the nearest cell's window
+    // lies, so that it does not bleed past the phases at the ice's margins (F248).
+    let mut cryo: Vec<Vec<f32>> = out
         .cryosphere
         .iter()
-        .enumerate()
-        .map(|(j, f)| match j {
-            2 => to_equirectangular(&grid, f.as_slice(), width, height_px),
-            _ => to_equirectangular_nearest(&grid, f.as_slice(), width, height_px),
-        })
+        .map(|f| to_equirectangular_nearest(&grid, f.as_slice(), width, height_px))
         .collect();
+    let smooth = to_equirectangular(&grid, out.cryosphere[2].as_slice(), width, height_px);
+    for (v, s) in cryo[2].iter_mut().zip(smooth) {
+        if *v > 0.0 {
+            *v = s.max(0.0);
+        }
+    }
     let thickest = cryo[2].iter().fold(0.0f32, |a, &v| a.max(v));
     let ices = if out.cryosphere_ices.is_empty() {
         "none".to_string()
@@ -713,7 +716,7 @@ pub fn export(
         out.cryosphere_ices.join(", ")
     };
     let cryo_units = format!(
-        "phases are shares of the year's time from the northern spring equinox: R the phase an ice freezes at, G the phase it melts out at, R 0 and G 1 where it lies all year, the ice lying from R round to G; B m of the ice at its peak; A the phase of its peak; the ices: {ices}"
+        "phases are shares of the year's time from the northern spring equinox: R the phase an ice freezes at, G the phase it melts out at, R 0 and G 1 where it lies all year, the ice lying from R round to G; B m of the ice at its peak, over the height map, which holds none; A the phase of its peak; the ices, drawn over the albedo map, which holds none: {ices}"
     );
     write_exr_channels(
         &settings.dir.join("cryosphere.exr"),
