@@ -67,7 +67,7 @@ impl SpinInputs {
         let mass = c.f64("body.mass");
         let radius = c.f64("body.radius");
         // An ocean's tides dissipate today some three times what they did on average.
-        let q = if c.str("volatiles.working_liquid") == "water" {
+        let q = if c.str("volatiles.mean_liquid") == "water" {
             OCEAN_TIDE_Q_MEAN
         } else {
             c.f64("interior.dissipation_q")

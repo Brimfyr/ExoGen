@@ -320,8 +320,12 @@ pub fn over(albedo: &Field<[f32; 3]>, caps: &[Cap]) -> Field<[f32; 3]> {
 }
 
 /// The caps on the climate's grid (F241): the share of each cell they cover and their
-/// albedo there, the uppermost's showing.
-pub fn on_climate(caps: &[Cap], climate: CubeSphere) -> (Field<f32>, Field<f32>) {
+/// albedo there under the star's light (F250), the uppermost's showing.
+pub fn on_climate(
+    caps: &[Cap],
+    climate: CubeSphere,
+    balance: &crate::climate::EnergyBalance,
+) -> (Field<f32>, Field<f32>) {
     let grid = caps[0].thickness.grid();
     let cover = Field::from_fn(grid, |c, _| {
         let k = grid.index(c);
@@ -337,7 +341,7 @@ pub fn on_climate(caps: &[Cap], climate: CubeSphere) -> (Field<f32>, Field<f32>)
         let (mut shown, mut sum) = (1.0, 0.0);
         for cap in caps.iter().rev() {
             let s = cap.cover(k);
-            sum += shown * s * cap.ice.albedo();
+            sum += shown * s * balance.ice_albedo(&cap.ice);
             shown *= 1.0 - s;
         }
         sum as f32

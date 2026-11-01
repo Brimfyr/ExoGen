@@ -423,6 +423,58 @@ pub mod physics {
         TAU_H2O.0 * (water_column(t, inventory_gel_m) / TAU_H2O.1).ln_1p()
     }
 
+    /// F249: the warmest place's year-mean surface temperature, K, from the body's
+    /// zero-dimensional `mean`: raised by the pattern of the year's sunlight over the body,
+    /// `absorbed` W/m² at the cosine of the angle from the pattern's axis, as a diffusive
+    /// energy balance holds each spherical harmonic of it, q_l, against the radiation's slope
+    /// and the transport over the harmonic's degree, B + l (l + 1) D (North 1975), linear
+    /// about the mean.
+    pub fn warmest_temperature(
+        mean: f64,
+        (slope, transport): (f64, f64),
+        absorbed: impl Fn(f64) -> f64,
+    ) -> f64 {
+        let n = WARMEST_SAMPLES;
+        let mu: Vec<f64> = (0..n)
+            .map(|i| -1.0 + (i as f64 + 0.5) * 2.0 / n as f64)
+            .collect();
+        let q: Vec<f64> = mu.iter().map(|&m| absorbed(m)).collect();
+        let (mut below, mut p) = (vec![1.0; n], mu.clone());
+        let mut warm = vec![0.0; n];
+        for l in 1..=WARMEST_DEGREES {
+            let lf = l as f64;
+            let projected: f64 = q.iter().zip(&p).map(|(a, b)| a * b).sum::<f64>();
+            let coefficient = (2.0 * lf + 1.0) / 2.0 * projected * 2.0 / n as f64;
+            let held = coefficient / (slope + lf * (lf + 1.0) * transport);
+            for (w, pl) in warm.iter_mut().zip(&p) {
+                *w += held * pl;
+            }
+            let next: Vec<f64> = (0..n)
+                .map(|i| ((2.0 * lf + 1.0) * mu[i] * p[i] - lf * below[i]) / (lf + 1.0))
+                .collect();
+            below = std::mem::replace(&mut p, next);
+        }
+        mean + warm.iter().cloned().fold(f64::MIN, f64::max)
+    }
+
+    /// F250: the share of a blackbody's power at `t` K at wavelengths below `um` µm, by the
+    /// series (15 / π⁴) Σ e^(−n x) / n (x³ + 3 x² / n + 6 x / n² + 6 / n³), x = c₂ / (λ T)
+    /// (Chang and Rhee 1984).
+    pub fn blackbody_share_below(um: f64, t: f64) -> f64 {
+        if um <= 0.0 || t <= 0.0 {
+            return 0.0;
+        }
+        let x = RADIATION_C2_UM_K / (um * t);
+        let sum: f64 = (1..=BLACKBODY_SERIES_TERMS)
+            .map(|n| {
+                let n = n as f64;
+                (-n * x).exp() / n
+                    * (x.powi(3) + 3.0 * x * x / n + 6.0 * x / (n * n) + 6.0 / (n * n * n))
+            })
+            .sum();
+        (15.0 / PI.powi(4) * sum).clamp(0.0, 1.0)
+    }
+
     pub fn grey_surface_temperature(t_eq: f64, tau: f64) -> f64 {
         t_eq * (1.0 + 0.75 * tau).powf(0.25)
     }
@@ -1336,7 +1388,7 @@ pub fn interior_dissipation_q(c: &Ctx) -> Value {
         "rock_ice" => Q_ROCK_ICE,
         "ice_dominated" => Q_ICE,
         _ => {
-            if c.str("volatiles.working_liquid") == "water" {
+            if c.str("volatiles.mean_liquid") == "water" {
                 Q_ROCK_SURFACE_OCEAN
             } else {
                 Q_ROCK
@@ -1921,6 +1973,60 @@ pub fn atmosphere_surface_temperature_mean(c: &Ctx) -> Value {
     surface_temperature(t_eq, tau_dry(&columns), water).into()
 }
 
+/// F249: the warmest place's year-mean surface temperature: the mean raised by the year's
+/// sunlight's pattern, about the spin axis for a body spinning freely, about the substellar
+/// point for a body locked to its star, absorbed at the energy balance's albedo, which rises as
+/// the sun's height falls (F235), and damped by the radiation's slope at the mean, its water
+/// vapour's with it, and the transport.
+pub fn atmosphere_surface_temperature_warmest(c: &Ctx) -> Value {
+    let mean = c.f64("atmosphere.surface_temperature_mean");
+    let (tau, water) = if c.f64("atmosphere.surface_pressure") > 0.0 {
+        let columns = species_columns(
+            c.map("atmosphere.composition"),
+            c.f64("atmosphere.column_mass"),
+        );
+        let water = c.map_get("volatiles.inventory", "H2O")
+            + if c.map_get("atmosphere.composition", "H2O") > 0.0 {
+                1.0
+            } else {
+                0.0
+            };
+        (tau_dry(&columns), water)
+    } else {
+        (0.0, 0.0)
+    };
+    let olr = |t: f64| SIGMA_SB * t.powi(4) / (1.0 + 0.75 * (tau + water_optical_depth(t, water)));
+    let slope = (olr(mean + 0.5) - olr(mean - 0.5)).max(1e-9);
+    let e = c.f64("orbit.star_eccentricity");
+    let flux = c.f64("orbit.insolation") / (1.0 - e * e).max(1e-9).sqrt();
+    // The year's sunlight at each cosine and the sun's mean height there, weighted by it.
+    let locked = c.f64("rotation.resonance") == 1.0;
+    let tilt = c.f64("rotation.effective_obliquity").to_radians();
+    let sun = |mu: f64| -> (f64, f64) {
+        if locked {
+            (flux * mu.max(0.0), mu.max(0.0))
+        } else {
+            let lat = mu.clamp(-1.0, 1.0).asin();
+            let (one, two) = crate::insolation::zonal_annual_shares(lat, tilt);
+            (flux * one, if one > 0.0 { two / one } else { 0.0 })
+        }
+    };
+    let n = WARMEST_SAMPLES;
+    let (weight, heights) = (0..n)
+        .map(|i| sun(-1.0 + (i as f64 + 0.5) * 2.0 / n as f64))
+        .fold((0.0, 0.0), |(w, h), (q, height)| (w + q, h + q * height));
+    let mean_height = if weight > 0.0 { heights / weight } else { 0.0 };
+    let low_sun =
+        LOW_SUN_ALBEDO * (c.f64("atmosphere.column_mass") / LOW_SUN_COLUMN).clamp(0.0, 1.0);
+    let bond = c.f64("atmosphere.bond_albedo");
+    let held = (slope, c.f64("climate.transport_coefficient"));
+    warmest_temperature(mean, held, |mu| {
+        let (q, height) = sun(mu);
+        (1.0 - (bond + low_sun * (mean_height - height)).clamp(0.0, 1.0)) * q
+    })
+    .into()
+}
+
 pub fn atmosphere_greenhouse_optical_depth(c: &Ctx) -> Value {
     let t_eq = c.f64("atmosphere.equilibrium_temperature");
     let t_s = c.f64("atmosphere.surface_temperature_mean");
@@ -2018,7 +2124,14 @@ pub fn volatiles_inventory(c: &Ctx) -> Value {
 }
 
 pub fn volatiles_phase_state(c: &Ctx) -> Value {
-    let t = c.f64("atmosphere.surface_temperature_mean");
+    Value::Map(phase_states_at(
+        c,
+        c.f64("atmosphere.surface_temperature_mean"),
+    ))
+}
+
+/// Each volatile's phase at the surface's pressure and a temperature.
+fn phase_states_at(c: &Ctx, t: f64) -> BTreeMap<String, f64> {
     let p = c.f64("atmosphere.surface_pressure");
     let inv = c.map("volatiles.inventory");
     let mut out = BTreeMap::new();
@@ -2032,7 +2145,7 @@ pub fn volatiles_phase_state(c: &Ctx) -> Value {
             out.insert((*s).to_string(), phase_state(v, t, p, has));
         }
     }
-    Value::Map(out)
+    out
 }
 
 pub fn volatiles_phase_summary(c: &Ctx) -> Value {
@@ -2045,9 +2158,21 @@ pub fn volatiles_phase_summary(c: &Ctx) -> Value {
     parts.join("; ").into()
 }
 
+/// F249: the working liquid, the one with the largest inventory that the surface's warmest
+/// place keeps liquid: a body locked to its star keeps its sea under its star though its mean
+/// stands below freezing.
 pub fn volatiles_working_liquid(c: &Ctx) -> Value {
-    let states = c.map("volatiles.phase_state");
-    let inv = c.map("volatiles.inventory");
+    let states = phase_states_at(c, c.f64("atmosphere.surface_temperature_warmest"));
+    liquid_of(&states, c.map("volatiles.inventory")).into()
+}
+
+/// The liquid at the surface's mean conditions, which the tides read (F249).
+pub fn volatiles_mean_liquid(c: &Ctx) -> Value {
+    liquid_of(c.map("volatiles.phase_state"), c.map("volatiles.inventory")).into()
+}
+
+/// The liquid with the largest inventory among the phase states.
+fn liquid_of(states: &BTreeMap<String, f64>, inv: &BTreeMap<String, f64>) -> &'static str {
     let liquid = |s: &str| {
         let code = states.get(s).copied().unwrap_or(PHASE_ABSENT);
         code == PHASE_LIQUID || code == PHASE_LIQUID_AND_SOLID
@@ -2062,7 +2187,7 @@ pub fn volatiles_working_liquid(c: &Ctx) -> Value {
             }
         }
     }
-    let name = match best.map(|b| b.0) {
+    match best.map(|b| b.0) {
         Some("H2O") => {
             if amount("NH3") > 0.0 && liquid("NH3") {
                 "ammonia_water"
@@ -2076,8 +2201,7 @@ pub fn volatiles_working_liquid(c: &Ctx) -> Value {
         Some("SO2") => "sulfur_dioxide",
         Some("CO2") => "carbon_dioxide",
         _ => "none",
-    };
-    name.into()
+    }
 }
 
 pub fn volatiles_frost_points(c: &Ctx) -> Value {

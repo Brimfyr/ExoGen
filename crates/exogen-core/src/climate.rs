@@ -17,10 +17,12 @@
 //! (Williams and Kasting 1997, F33), zero on an airless body, whose every cell balances
 //! alone. Under a scattering atmosphere the albedo rises as the sun's mean height falls (the
 //! low sun and the clouds of North and Coakley 1979), and where water is the working
-//! liquid, ice and snow brighten the ground the year leaves below freezing (North 1975).
+//! liquid, ice and snow brighten the ground the year leaves below freezing (North 1975), less
+//! under a redder star, whose near infrared they reflect little of (F250).
 //!
-//! The balance is solved by Newton's method from the zero-dimensional mean temperature, the
-//! warm branch, each step's linear system by conjugate gradients; the local slope is floored
+//! The balance is solved by Newton's method from the zero-dimensional mean temperature, or
+//! where ice and snow brighten the ground from its balance without them (F249), the warm
+//! branch, each step's linear system by conjugate gradients; the local slope is floored
 //! at a share of the radiation's own so that the ice's feedback, which can make it negative,
 //! leaves the system positive definite.
 //!
@@ -43,8 +45,9 @@ use crate::insolation::{PathStep, Sky, diurnal_share, read_grid, read_row};
 use crate::params::ParamGraph;
 use crate::params::derive::is_icy;
 use crate::params::derive::physics::{
-    mean_heat_capacity, mean_molecular_mass, regolith_heat, saturation_temperature,
-    species_columns, tau_dry, vapour_pressure, volatile, water_column, water_optical_depth,
+    blackbody_share_below, mean_heat_capacity, mean_molecular_mass, regolith_heat,
+    saturation_temperature, species_columns, tau_dry, vapour_pressure, volatile, water_column,
+    water_optical_depth,
 };
 
 /// What the energy balance reads.
@@ -57,6 +60,9 @@ pub struct EnergyBalance {
     pub low_sun: f64,
     /// Whether water, the working liquid, freezes where the year leaves it cold.
     pub ice: bool,
+    /// How strongly ice and snow brighten the ground under the star's light, against under
+    /// the Sun's, under which their albedos are given (F250).
+    pub brightening: f64,
     /// The atmosphere's heat transport, W/m²/K.
     pub transport: f64,
     /// The greenhouse optical depth of the dry gases.
@@ -95,6 +101,9 @@ pub struct Climate {
     pub albedo: Field<f32>,
     /// The albedo without its ice and snow (F244).
     pub ground_albedo: Field<f32>,
+    /// The albedo of ice and snow under the star's light over the ground without its caps
+    /// (F250), which they brighten only where it is the brighter.
+    pub snow_albedo: Field<f32>,
     /// The heat the atmosphere brings the cell, W/m² (negative where it carries heat away).
     pub transport: Field<f32>,
     /// Newton's steps to converge.
@@ -673,6 +682,22 @@ impl Year {
     }
 }
 
+/// F250: how strongly ice and snow brighten the ground under a star of effective temperature
+/// `teff` K, against under the Sun: by its light's share in the visible and its weighted share
+/// in the near band, which they reflect, against the Sun's.
+pub fn ice_brightening(teff: f64) -> f64 {
+    let reflected = |t: f64| {
+        let (visible, near) = ICE_BANDS_UM;
+        let below = blackbody_share_below(visible, t);
+        below + ICE_NEAR_BAND_WEIGHT * (blackbody_share_below(near, t) - below)
+    };
+    if teff > 0.0 {
+        reflected(teff) / reflected(T_SUN)
+    } else {
+        1.0
+    }
+}
+
 impl EnergyBalance {
     pub fn from_graph(graph: &ParamGraph) -> Self {
         let empty = std::collections::BTreeMap::new();
@@ -711,6 +736,7 @@ impl EnergyBalance {
                 * (graph.f64("atmosphere.column_mass") / LOW_SUN_COLUMN).clamp(0.0, 1.0),
             ice: graph.bool("climate.ice_albedo_feedback")
                 && graph.str("volatiles.working_liquid") == "water",
+            brightening: ice_brightening(graph.f64("star.teff")),
             transport: if airless {
                 0.0
             } else {
@@ -784,15 +810,28 @@ impl EnergyBalance {
     }
 
     /// A place's land's albedo at its temperature (F245): its ground's, brightening under ice
-    /// and snow where water is the working liquid by the ramp the year's balance reads
-    /// (F235), on the land's own temperature through the year rather than the year's mean
-    /// (North and Coakley 1979).
-    fn land_albedo(&self, ground: f64, t: f64) -> f64 {
+    /// and snow of albedo `snow` where water is the working liquid by the ramp the year's
+    /// balance reads (F235), on the land's own temperature through the year rather than the
+    /// year's mean (North and Coakley 1979).
+    fn land_albedo(&self, (ground, snow): (f64, f64), t: f64) -> f64 {
         let (share, _) = self.ice_share(t);
-        if ICE_ALBEDO <= ground {
-            ground
+        ground + (snow - ground).max(0.0) * share
+    }
+
+    /// The albedo of ice or snow whose albedo under the Sun's light is `ice`, over ground of
+    /// albedo `ground`, under the star's light (F250).
+    fn ice_over(&self, ice: f64, ground: f64) -> f64 {
+        ground + self.brightening * (ice - ground)
+    }
+
+    /// An ice's albedo under the star's light (F250): water's, its colour's under the Sun's,
+    /// brightening the planet's ground as the energy balance's ice and snow do; the other
+    /// ices', their colours'.
+    pub fn ice_albedo(&self, ice: &Ice) -> f64 {
+        if ice.species == "H2O" {
+            self.ice_over(ice.albedo(), self.albedo)
         } else {
-            ground + (ICE_ALBEDO - ground) * share
+            ice.albedo()
         }
     }
 
@@ -846,9 +885,12 @@ impl EnergyBalance {
         } else {
             0.0
         };
+        let bare: Vec<f64> = (0..n)
+            .map(|k| (self.albedo + self.low_sun * (mean_height - height[k])).clamp(0.0, 1.0))
+            .collect();
         let base: Vec<f64> = (0..n)
             .map(|k| {
-                let a = (self.albedo + self.low_sun * (mean_height - height[k])).clamp(0.0, 1.0);
+                let a = bare[k];
                 match caps {
                     Some((share, albedo)) => {
                         let c = grid.cell(k);
@@ -859,19 +901,32 @@ impl EnergyBalance {
                 }
             })
             .collect();
+        // Ice and snow under the star's light over the ground without its caps (F250).
+        let snow: Vec<f64> = bare.iter().map(|&a| self.ice_over(ICE_ALBEDO, a)).collect();
         let albedo = |k: usize, t: f64| -> (f64, f64) {
             let (share, slope) = self.ice_share(t);
-            if ICE_ALBEDO <= base[k] {
-                (base[k], 0.0)
-            } else {
-                (
-                    base[k] + (ICE_ALBEDO - base[k]) * share,
-                    (ICE_ALBEDO - base[k]) * slope,
-                )
-            }
+            let brighter = (snow[k] - base[k]).max(0.0);
+            (base[k] + brighter * share, brighter * slope)
         };
         let d = self.transport;
         let mut t = vec![self.start.max(1.0); n];
+        // The warm branch (F249): where ice and snow brighten the cold ground, the balance
+        // starts from its climate without them, so that a body whose mean stands below
+        // freezing keeps the warmth its sunlight's pattern gives it where that is a balance,
+        // as a body locked to its star keeps its sea under its star.
+        if self.ice {
+            let bare = EnergyBalance {
+                ice: false,
+                ..*self
+            }
+            .solve_over(grid, caps);
+            t = bare
+                .temperature
+                .as_slice()
+                .iter()
+                .map(|&v| v as f64)
+                .collect();
+        }
         // An airless cell's start: its own balance with the year's sunlight and its heat.
         if d <= 0.0 {
             for k in 0..n {
@@ -929,6 +984,7 @@ impl EnergyBalance {
             }),
             albedo: Field::from_fn(grid, |c, _| reflected[grid.index(c)] as f32),
             ground_albedo: Field::from_fn(grid, |c, _| base[grid.index(c)] as f32),
+            snow_albedo: Field::from_fn(grid, |c, _| snow[grid.index(c)] as f32),
             transport: Field::from_fn(grid, |c, _| brought[grid.index(c)] as f32),
             iterations,
         }
@@ -1200,6 +1256,7 @@ impl EnergyBalance {
                     weight: (hi.sin() - lo.sin()) / n_lon as f64,
                     steady: climate.temperature.get(c) as f64,
                     albedo: climate.ground_albedo.get(c) as f64,
+                    snow: climate.snow_albedo.get(c) as f64,
                     sea: sea.clamp(0.0, 1.0),
                 }
             })
@@ -1500,7 +1557,7 @@ impl EnergyBalance {
                     .zip(air.par_iter().zip(inflow.par_iter()))
                     .for_each(|((r, p), (&a, &brought))| {
                         let lit = light(k, p);
-                        r.albedo = self.land_albedo(p.albedo, r.t[0]);
+                        r.albedo = self.land_albedo((p.albedo, p.snow), r.t[0]);
                         let bare = (1.0 - r.albedo) * lit;
                         let shed = self.shed(a);
                         let heat = self.heat_flux;
@@ -1852,7 +1909,7 @@ impl EnergyBalance {
     /// sea brings it, its own heat from below and `brought` W/m², the water's share of the
     /// transport (`sea_transport`); ice melted through gives the layer the rest. The ice
     /// reflects as the year's balance's ice and snow do (F235), as melting ice once it melts,
-    /// over the share of the sea it covers: thin ice is dark.
+    /// under the star's light (F250), over the share of the sea it covers: thin ice is dark.
     fn sea_step(
         &self,
         sea: &mut Sea,
@@ -1862,12 +1919,16 @@ impl EnergyBalance {
         (ocean, brought): (&Ocean, f64),
     ) {
         let melting = sea.surface >= ocean.freezing - SEA_ICE_MELT_MARGIN_K;
-        let ice = if melting {
-            SEA_ICE_MELT_ALBEDO
-        } else {
-            ICE_ALBEDO
-        }
-        .max(open);
+        let ice = self
+            .ice_over(
+                if melting {
+                    SEA_ICE_MELT_ALBEDO
+                } else {
+                    ICE_ALBEDO
+                },
+                open,
+            )
+            .max(open);
         let cover = 1.0 - (-sea.ice.max(0.0) / SEA_ICE_COVER_MASS).exp();
         let frozen = (1.0 - open - (ice - open) * cover) * lit;
         if sea.ice <= 0.0 {
@@ -2030,7 +2091,7 @@ impl EnergyBalance {
     ) -> (f64, f64) {
         let (column, day) = self.trap_column(ground, eps);
         let (light, sun, dt, _) = self.trap_sun(cell, eps);
-        let albedo = ice.albedo();
+        let albedo = self.ice_albedo(ice);
         let n = column.len();
         let places = air.len() / light.len().max(1);
         let (mut t, mut mass) = (vec![cell.steady; n], 0.0);
@@ -2798,6 +2859,7 @@ struct Place {
     weight: f64,
     steady: f64,
     albedo: f64,
+    snow: f64,
     sea: f64,
 }
 
@@ -4256,13 +4318,22 @@ mod tests {
         assert!(low < high, "H2O {low} down, {high} up");
     }
 
-    /// A tidally locked ocean world (F244): the Earth-like moved into an M dwarf's
-    /// habitable zone, at Proxima Centauri b's 0.0485 AU about a star of 0.12 solar masses,
-    /// without its moon or its tilt, its spin locked to its orbit.
+    /// A tidally locked ocean world (F244, F249, F250): the Earth-like as TRAPPIST-1e in the
+    /// first habitable case of the THAI comparison (Fauchez et al. 2020; Sergeev et al. 2022),
+    /// about a star of 0.0898 solar masses (Van Grootel et al. 2018) at 900 W/m², or
+    /// EXOGEN_LOCKED_FLUX's, on a circular orbit, without its moon or its tilt, its spin
+    /// locked to its orbit.
     fn locked_ocean_world() -> ParamGraph {
         let mut g = crate::presets::preset("Earth").unwrap().to_graph().0;
-        g.set("star.mass", 0.12).unwrap();
-        g.set("orbit.semi_major_axis", 0.0485 * AU).unwrap();
+        g.set("star.mass", 0.0898).unwrap();
+        let luminosity = g.f64("star.luminosity") * L_SUN;
+        let flux: f64 = std::env::var("EXOGEN_LOCKED_FLUX").map_or(900.0, |v| v.parse().unwrap());
+        g.set(
+            "orbit.semi_major_axis",
+            (luminosity / (4.0 * PI * flux)).sqrt(),
+        )
+        .unwrap();
+        g.set("orbit.eccentricity", 0.0).unwrap();
         g.set("satellite.mass", 0.0).unwrap();
         g.set("rotation.obliquity", 0.0).unwrap();
         let period = g.f64("orbit.period");
@@ -4270,10 +4341,146 @@ mod tests {
         g
     }
 
+    /// Prints each preset's warmest place's year-mean temperature as the parameters estimate
+    /// it (F249) against the energy balance's warmest cell, and the liquids at each.
+    #[test]
+    #[ignore = "diagnostic: the warmest place"]
+    fn print_warmest() {
+        let mut graphs: Vec<(String, ParamGraph)> = crate::presets::PRESET_NAMES
+            .iter()
+            .map(|n| {
+                (
+                    n.to_string(),
+                    crate::presets::preset(n).unwrap().to_graph().0,
+                )
+            })
+            .collect();
+        graphs.push(("locked".to_string(), locked_ocean_world()));
+        let locked = &graphs.last().unwrap().1;
+        println!(
+            "star teff: the Sun's {:.1} K, the locked world's {:.1} K at {:.6} L_sun; ice brightening {:.4} and {:.3}",
+            graphs[0].1.f64("star.teff"),
+            locked.f64("star.teff"),
+            locked.f64("star.luminosity"),
+            ice_brightening(graphs[0].1.f64("star.teff")),
+            ice_brightening(locked.f64("star.teff"))
+        );
+        for (name, graph) in &graphs {
+            let eb = EnergyBalance::from_graph(graph);
+            let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+            let warmest = climate
+                .temperature
+                .as_slice()
+                .iter()
+                .fold(f32::MIN, |a, &v| a.max(v));
+            println!(
+                "{name:10} mean {:6.1} K, warmest estimated {:6.1}, balance {:6.1} ({:.0} W/m²); liquid {} (at the mean {})",
+                graph.f64("atmosphere.surface_temperature_mean"),
+                graph.f64("atmosphere.surface_temperature_warmest"),
+                warmest,
+                graph.f64("orbit.insolation"),
+                graph.str("volatiles.working_liquid"),
+                graph.str("volatiles.mean_liquid"),
+            );
+        }
+    }
+
     /// A body's sea through its year (F244, F245).
     fn seas_of(graph: &ParamGraph) -> (Seas, Cycle, Climate) {
         let (cycle, climate) = graph_cycle(graph);
         (cycle.seas.clone().expect("a water sea"), cycle, climate)
+    }
+
+    /// The locked ocean world's year over a sea at every place, THAI's aquaplanet (F250).
+    fn locked_seas(world: &ParamGraph) -> (EnergyBalance, Seas, Climate) {
+        let eb = EnergyBalance::from_graph(world);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let climate = eb.solve(grid);
+        let ocean = Ocean::from_graph(world).expect("a water sea");
+        let share = Field::filled(grid, 1.0f32);
+        let cycle = eb.cycle(&climate, &Ground::from_graph(world), Some((&ocean, &share)));
+        (eb, cycle.seas.expect("a water sea"), climate)
+    }
+
+    /// A locked world's measures as THAI gives them (Sergeev et al. 2022): the body's and its
+    /// dayside's mean surface temperatures, K, its planetary albedo, and the share of its
+    /// dayside its sea's ice leaves open, the substellar point at longitude 0.
+    fn thai_measures(eb: &EnergyBalance, seas: &Seas, climate: &Climate) -> [f64; 4] {
+        let g = seas.mean.grid();
+        let freezing = seas.ocean.freezing;
+        let (mut all, mut day) = ((0.0, 0.0), (0.0, 0.0));
+        let (mut lit, mut reflected, mut open) = (0.0, 0.0, 0.0);
+        for c in g.cells() {
+            let (a, d) = (g.cell_area(c), g.center(c));
+            let t = seas.mean_at(d);
+            all = (all.0 + t * a, all.1 + a);
+            let (lon, lat) = lon_lat_from_direction(d);
+            if lat.cos() * lon.cos() <= 0.0 {
+                continue;
+            }
+            day = (day.0 + t * a, day.1 + a);
+            let cover = seas.cover_at(d);
+            if cover < 0.5 {
+                open += a;
+            }
+            let base = climate.ground_albedo.get(c) as f64;
+            let ice = if t >= freezing - SEA_ICE_MELT_MARGIN_K {
+                SEA_ICE_MELT_ALBEDO
+            } else {
+                ICE_ALBEDO
+            };
+            let albedo = base + cover * (eb.ice_over(ice, base).max(base) - base);
+            let q = climate.absorbed.get(c) as f64 / (1.0 - climate.albedo.get(c) as f64);
+            lit += q * a;
+            reflected += q * a * albedo;
+        }
+        [all.0 / all.1, day.0 / day.1, reflected / lit, open / day.1]
+    }
+
+    /// F250: ice and snow brighten the ground less under a redder star, by the share of its
+    /// light in the bands they reflect: within 0.07 of the contrasts Shields et al. 2013 found
+    /// over snow for an F2V star, a K2V star and AD Leo against the Sun, and under
+    /// TRAPPIST-1's light some 0.3 of the Sun's.
+    #[test]
+    fn the_ice_dims_under_a_redder_star() {
+        let visible = blackbody_share_below(0.7, T_SUN);
+        assert!((visible - 0.488).abs() < 0.002, "{visible}");
+        assert!(blackbody_share_below(1e3, T_SUN) > 0.999);
+        assert!((ice_brightening(T_SUN) - 1.0).abs() < 1e-12);
+        for (teff, shields) in [(6750.0, 1.040), (5084.0, 0.923), (3400.0, 0.503)] {
+            let b = ice_brightening(teff);
+            println!("{teff} K: {b:.3} against Shields et al.'s {shields}");
+            assert!(
+                (b - shields).abs() < 0.07,
+                "{teff} K: {b} against {shields}"
+            );
+        }
+        let trappist = ice_brightening(2566.0);
+        assert!((0.25..0.35).contains(&trappist), "{trappist}");
+    }
+
+    /// F249, F250: TRAPPIST-1e as THAI's first habitable case, an aquaplanet locked to its
+    /// star at 900 W/m², keeps open sea under its star, its working liquid water at its
+    /// warmest place though its mean stands below freezing, and its night under ice: its sea
+    /// open over 0.3 to 0.7 of its dayside, where THAI's four models leave almost half open
+    /// (Sergeev et al. 2022).
+    #[test]
+    fn a_locked_ocean_world_keeps_its_sea_under_its_star() {
+        let world = locked_ocean_world();
+        assert_eq!(world.str("rotation.mode"), "locked");
+        assert!(world.f64("atmosphere.surface_temperature_mean") < 273.15);
+        assert_eq!(world.str("volatiles.working_liquid"), "water");
+        let (eb, seas, climate) = locked_seas(&world);
+        let [mean, day, albedo, open] = thai_measures(&eb, &seas, &climate);
+        println!(
+            "TRAPPIST-1e: mean {mean:.1} K, dayside {day:.1} K, planetary albedo {albedo:.3}, open {open:.2} of the dayside (THAI: 232 to 246 K, 261 to 268 K, 0.22 to 0.28, almost half)"
+        );
+        let substellar = direction_from_lon_lat(0.0, 0.0);
+        let night = direction_from_lon_lat(PI, 0.0);
+        assert!(seas.mean_at(substellar) > seas.ocean.freezing + 5.0);
+        assert!(seas.ice_at(substellar) < SEA_ICE_COVER_MASS);
+        assert!(seas.ice_at(night) > 10.0 * SEA_ICE_COVER_MASS);
+        assert!((0.3..0.7).contains(&open), "open {open}");
     }
 
     /// F244: the sea holds its seasons: at the Earth-like's 45° its surface swings by under
@@ -4494,7 +4701,14 @@ mod tests {
             }
             return;
         }
-        let (seas, _, climate) = seas_of(&world);
+        let started = std::time::Instant::now();
+        let (eb, seas, climate) = locked_seas(&world);
+        let [mean, day, albedo, open] = thai_measures(&eb, &seas, &climate);
+        println!(
+            "locked world in {:.1} s: ice brightening {:.3}; mean {mean:.1} K, dayside {day:.1} K, planetary albedo {albedo:.3}, open {open:.2} of the dayside",
+            started.elapsed().as_secs_f64(),
+            eb.brightening
+        );
         for lon in [0.0, 20.0, 40.0, 60.0, 80.0, 100.0, 120.0, 150.0, 180.0] {
             println!(
                 "locked {lon:5.0}° from the substellar point: steady {:6.1} K, sea {:6.1} K, ice {:9.1} kg/m²",
@@ -4508,6 +4722,22 @@ mod tests {
                 "locked lat {lat}° at the substellar longitude: sea {:6.1} K, ice {:9.1}",
                 at(&seas.mean, lat, 0.0),
                 at(&seas.ice_now, lat, 0.0)
+            );
+        }
+        // The eye's shape: the sea at one distance from the substellar point along its
+        // meridian, its equator and the diagonal between, read from the cycle's places.
+        for distance in [50.0f64, 55.0, 60.0, 65.0, 70.0] {
+            let (cos, diagonal) = (distance.to_radians().cos(), distance.to_radians().cos());
+            let x = diagonal.sqrt().acos().to_degrees();
+            let read = |lat: f64, lon: f64| {
+                let d = direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+                (seas.mean_at(d), seas.cover_at(d))
+            };
+            let (meridian, equator, across) =
+                (read(distance, 0.0), read(0.0, distance), read(x, x));
+            println!(
+                "locked {distance}° from the substellar point (cos {cos:.3}): meridian {:.1} K cover {:.2}, equator {:.1} K cover {:.2}, diagonal {:.1} K cover {:.2}",
+                meridian.0, meridian.1, equator.0, equator.1, across.0, across.1
             );
         }
     }

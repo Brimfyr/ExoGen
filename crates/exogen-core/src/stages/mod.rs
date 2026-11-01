@@ -421,7 +421,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 184;
+pub const FINISH_VERSION: u64 = 185;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3009,7 +3009,7 @@ pub fn finish(
     let (climate, cycle) = if laid.is_empty() {
         (climate, cycle)
     } else {
-        let over = caps::on_climate(&laid, climate.temperature.grid());
+        let over = caps::on_climate(&laid, climate.temperature.grid(), &balance);
         let climate = balance.solve_over(CubeSphere::new(CLIMATE_FACE_SIZE), Some(&over));
         let share = sea_share(&layers, sea_level);
         let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()));

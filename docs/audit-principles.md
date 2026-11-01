@@ -575,6 +575,11 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | N2_EMISSIVITY, N2_PHASE_TRANSITION_K (F247) | measured: alpha and beta nitrogen ice's emissivities (Stansberry et al. 1996; Bertrand et al. 2019's 0.3 and 0.8) and their transition | the emissivity from the ice's grains and what it holds in solution |
 | N2_PHASE_HALF_WIDTH_K (F247) | a stated choice: the step blended to keep the frost's balance smooth | the transition's latent heat |
 | carbon dioxide's and methane's frost radiating as black bodies (F247) | a stated choice | their measured emissivities |
+| the working liquid at the surface's warmest place (F249) | stated: the year's sunlight's harmonics held by B + l(l + 1) D, linear about the mean (North 1975) | the climate's own warmest place, which the graph reads before the stages run |
+| the tides' liquid at the mean (F249) | a stated choice, which keeps the graph without a loop | the tides of the sea the climate lays |
+| ICE_BANDS_UM, ICE_NEAR_BAND_WEIGHT (F250) | fitted: the planetary albedos over snow and over the ocean under Earth-like air and clouds for four stars (Shields et al. 2013), in the bands of sea ice's three-band model (Briegleb and Light 2007) | the star's own spectrum, the air's own water, the ice's grains and its melt |
+| water's ice in the traps and the caps brightening the ground as the snow does, about the planet's Bond albedo (F250) | a stated choice: the snow's law for every water ice | the ice's own grains and spectrum under the star |
+| the ground's Bond albedo under any star (F250, F52) | a stated guess by pressure class | the clouds and the air's scattering of the star's light (5G) |
 | D_EARTH, D_CAP_MULTIPLE (F33, F235) | Earth's transport (Williams and Kasting 1997) and a stated cap at ten times it | the scaling with rotation is Earth's: Titan's poles 0.1 K under its equator against Cassini's 3 K (Jennings et al. 2016), Venus's 6.5 K; a slowly turning atmosphere's single cell with the wind field (5C) |
 | EARLY_TIME_EXPONENTS | stated choices: the orbital period at the snow line, the disc's solids over the area within it (F135) | no body to check; around a red dwarf the snow line where its planets formed is set by its far brighter youth, not by its luminosity today |
 

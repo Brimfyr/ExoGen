@@ -16,6 +16,8 @@ pub const G: f64 = 6.674_30e-11;
 pub const SIGMA_SB: f64 = 5.670_374_419e-8;
 /// Boltzmann constant, exact in the 2019 SI.
 pub const K_B: f64 = 1.380_649e-23;
+/// The second radiation constant, h c / k_B, CODATA 2018, in µm K.
+pub const RADIATION_C2_UM_K: f64 = 14_387.768_775;
 pub const SECONDS_PER_GYR: f64 = 3.155_76e16;
 pub const WATER_MOLECULE_MASS: f64 = 2.991e-26;
 /// Atomic mass unit, CODATA 2018.
@@ -1898,8 +1900,28 @@ pub const SEA_ICE_COVER_MASS: f64 = 50.0;
 /// SEA_ICE_MELT_MARGIN_K of its melting point.
 pub const SEA_ICE_MELT_ALBEDO: f64 = 0.55;
 pub const SEA_ICE_MELT_MARGIN_K: f64 = 0.1;
+/// F250: ice and snow under their star's light. Snow reflects almost all of the visible,
+/// below 0.7 µm, much of the near infrared to 1.19 µm and little beyond (Briegleb and
+/// Light 2007's three bands), where the air's water vapour takes much of the light besides:
+/// the brightening ice and snow give a place over its ground, their albedos given under the
+/// Sun's light (ICE_ALBEDO, SEA_ICE_MELT_ALBEDO), goes as their star's light's share in the
+/// visible and ICE_NEAR_BAND_WEIGHT times its share in the near band, a blackbody's at its
+/// effective temperature, against the Sun's. The weight fits the contrasts between the
+/// planetary albedos over snow and over the ocean that Shields et al. 2013 computed under
+/// Earth-like air and clouds for an F2V star, the Sun, a K2V star and AD Leo (M3V, taken at
+/// 6750, 5084 and 3400 K): 1.10, 0.90 and 0.54 of the Sun's against their 1.04, 0.92 and
+/// 0.50.
+pub const ICE_BANDS_UM: (f64, f64) = (0.7, 1.19);
+pub const ICE_NEAR_BAND_WEIGHT: f64 = 0.7;
+/// F250: terms of the series for a blackbody's power below a wavelength.
+pub const BLACKBODY_SERIES_TERMS: usize = 100;
 /// F244: a fast spinner's latitude's sea is its mean over SEA_SHARE_LONGITUDES longitudes.
 pub const SEA_SHARE_LONGITUDES: usize = 72;
+/// F249: the warmest place's year-mean temperature from the year's sunlight's pattern: its
+/// spherical harmonics from WARMEST_SAMPLES cosines of the angle from the pattern's axis, to
+/// degree WARMEST_DEGREES.
+pub const WARMEST_SAMPLES: usize = 720;
+pub const WARMEST_DEGREES: usize = 32;
 /// F247: nitrogen ice's emissivity, its cubic alpha phase's below its transition to its
 /// hexagonal beta phase, 35.61 K, and its beta phase's above it: 0.3 and 0.8, the published
 /// pair (Stansberry et al. 1996's alpha far under its beta; Bertrand et al. 2019), the beta's
