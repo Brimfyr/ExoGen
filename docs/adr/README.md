@@ -9,3 +9,4 @@ One file per decision. Each record states the context, the decision and its cons
 | [0003](0003-stage-caching.md) | Stage graph, caching and invalidation | Accepted |
 | [0004](0004-determinism.md) | Determinism and random numbers | Accepted |
 | [0005](0005-stack.md) | Language, libraries and workspace layout | Accepted |
+| [0006](0006-cryosphere-export.md) | The cryosphere's export | Accepted |

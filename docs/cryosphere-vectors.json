@@ -1,0 +1,785 @@
+{
+  "about": "ExoGen's cryosphere maps read at a phase of the year (docs/adr/0006): an ice's window from freeze round to melt, its peak's phase at, its peak (any unit) and its curve's exponents rise and fall; mass is what the reading gives at the phase, in the peak's unit.",
+  "vectors": [
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 112.5,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.0,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 104.625,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.01,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 65.62499999999991,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.05,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 0.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.1,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 0.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.2,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 0.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.3,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 0.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.35,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 0.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.45,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 0.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.5,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 0.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.6,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 80.38300969022198,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.75,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 150.0,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.9,
+      "rise": 0.9
+    },
+    {
+      "at": 0.9,
+      "fall": 2.0,
+      "freeze": 0.6,
+      "mass": 131.62500000000003,
+      "melt": 0.1,
+      "peak": 150.0,
+      "phase": 0.97,
+      "rise": 0.9
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.0,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.01,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.05,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.1,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.2,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 2.258693870913711,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.3,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 3.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.35,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 2.696421344623835,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.45,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 2.163435597219198,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.5,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.6,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.75,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.9,
+      "rise": 0.7
+    },
+    {
+      "at": 0.35,
+      "fall": 2.5,
+      "freeze": 0.2,
+      "mass": 0.0,
+      "melt": 0.6,
+      "peak": 3.0,
+      "phase": 0.97,
+      "rise": 0.7
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.0,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.01,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.05,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.1,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.2,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.3,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.35,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.45,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.5,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.6,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.75,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.9,
+      "rise": 1.0
+    },
+    {
+      "at": 0.5,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 7.0,
+      "melt": 1.0,
+      "peak": 7.0,
+      "phase": 0.97,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.0,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.01,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.05,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.1,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.2,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 40.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.3,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 37.5,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.35,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 17.499999999999993,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.45,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.5,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.6,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.75,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.9,
+      "rise": 1.0
+    },
+    {
+      "at": 0.3,
+      "fall": 2.0,
+      "freeze": 0.3,
+      "mass": 0.0,
+      "melt": 0.5,
+      "peak": 40.0,
+      "phase": 0.97,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.45,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.0,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.225,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.01,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.05,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.1,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.2,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.3,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.35,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.45,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.5,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.6,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.75,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.0,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.9,
+      "rise": 1.0
+    },
+    {
+      "at": 0.98,
+      "fall": 1.0,
+      "freeze": 0.95,
+      "mass": 0.6,
+      "melt": 0.02,
+      "peak": 0.9,
+      "phase": 0.97,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.0,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.01,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.05,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.1,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.2,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.3,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.35,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.45,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.5,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.6,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.75,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.9,
+      "rise": 1.0
+    },
+    {
+      "at": 0.0,
+      "fall": 1.0,
+      "freeze": 0.0,
+      "mass": 0.0,
+      "melt": 0.0,
+      "peak": 0.0,
+      "phase": 0.97,
+      "rise": 1.0
+    }
+  ]
+}

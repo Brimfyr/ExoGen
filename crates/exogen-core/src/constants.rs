@@ -1924,6 +1924,12 @@ pub const MARGIN_SMOOTHING: f64 = 3.0;
 /// F251: the smoothing reaches the places where the edge's weights sum to MARGIN_REACH, some
 /// 2.6 widths from it.
 pub const MARGIN_REACH: f64 = 1e-3;
+/// F253: an ice's year curve's exponents, fitted from YEAR_CURVE_RANGE in YEAR_CURVE_STEP,
+/// over the places whose ice comes and goes with a peak YEAR_CURVE_PEAK times its lying
+/// mass or more.
+pub const YEAR_CURVE_RANGE: (f64, f64) = (0.2, 5.0);
+pub const YEAR_CURVE_STEP: f64 = 0.01;
+pub const YEAR_CURVE_PEAK: f64 = 4.0;
 /// F249: the warmest place's year-mean temperature from the year's sunlight's pattern: its
 /// spherical harmonics from WARMEST_SAMPLES cosines of the angle from the pattern's axis, to
 /// degree WARMEST_DEGREES.

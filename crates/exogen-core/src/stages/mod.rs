@@ -201,8 +201,11 @@ pub struct FinishOutput {
     pub maturity: Field<f32>,
     /// The year's mean surface temperature through its days and seasons, K (F235, F236).
     pub temperature: Field<f32>,
-    /// The coldest and the warmest the surface stands through the year, K (F236).
+    /// The coldest and the warmest the surface stands through the year, K (F236), and each
+    /// cell's (F253).
     pub temperature_range: (f64, f64),
+    pub temperature_min: Field<f32>,
+    pub temperature_max: Field<f32>,
     /// The frost on the ground at the snapshot's season, kg/m², and its gas (F239).
     pub frost: Field<f32>,
     pub frost_gas: Option<&'static str>,
@@ -221,12 +224,17 @@ pub struct FinishOutput {
     /// (F244).
     pub sea_ice: Field<f32>,
     pub sea_ice_fraction: f64,
-    /// The ices that come and go through the year (F246): the phases of the year they freeze
-    /// at and melt out at, their thickness at their peak, m, and its phase; the ices they
-    /// are, and the phase of the snapshot's season.
+    /// The ices that come and go through the year (F246, F253): the phases of the year they
+    /// freeze at and melt out at, their thickness at their peak, m, and its phase; which ice
+    /// lies at each cell, its place among the ices from 1, none 0; the ices with what an
+    /// engine draws them by; the phase of the snapshot's season; the cycle's clock and its
+    /// year step by step.
     pub cryosphere: [Field<f32>; 4],
-    pub cryosphere_ices: Vec<String>,
+    pub cryosphere_ice: Field<f32>,
+    pub cryosphere_ices: Vec<crate::climate::SeasonalIce>,
     pub cryosphere_snapshot: f64,
+    pub cryosphere_clock: Option<crate::climate::Clock>,
+    pub cryosphere_series: Option<crate::climate::Series>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -421,7 +429,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 186;
+pub const FINISH_VERSION: u64 = 187;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3028,8 +3036,20 @@ pub fn finish(
     // it (F243), and the frost at the snapshot's season with them, over the ground's colour
     // (F239).
     let mut temperature = downscale.apply(&cycle.mean, &height, sea_level);
+    let lit = temperature.clone();
     let shade = crate::climate::Shade::from_graph(graph, &balance);
     let shadow_fraction = downscale.shade(&mut temperature, &height, &climate.absorbed, &shade);
+    // The year's coldest and warmest at each cell (F253), brought to the grid as its mean
+    // is; where the poles' shadows hold a cell, its mean all year.
+    let mut temperature_min = downscale.apply(&cycle.min, &height, sea_level);
+    let mut temperature_max = downscale.apply(&cycle.max, &height, sea_level);
+    for k in 0..grid.cell_count() {
+        let t = temperature.as_slice()[k];
+        if t < lit.as_slice()[k] {
+            temperature_min.as_mut_slice()[k] = t;
+            temperature_max.as_mut_slice()[k] = t;
+        }
+    }
     if std::env::var_os("EXOGEN_DEBUG").is_some() && shadow_fraction > 0.0 {
         let coldest = temperature
             .as_slice()
@@ -3055,6 +3075,8 @@ pub fn finish(
             }
             let d = grid.center(c);
             temperature.as_mut_slice()[k] = seas.mean_at(d) as f32;
+            temperature_min.as_mut_slice()[k] = seas.min_at(d) as f32;
+            temperature_max.as_mut_slice()[k] = seas.max_at(d) as f32;
             sea_ice.as_mut_slice()[k] = seas.ice_at(d).max(0.0) as f32;
             if seas.cover_at(d) > 0.5 {
                 covered += grid.cell_area(c);
@@ -3070,36 +3092,48 @@ pub fn finish(
         }
     }
     // The ices that come and go through the year (F246): each one's window at each cell.
-    let (cryosphere, cryosphere_ices, cryosphere_snapshot) = match &cycle.cryosphere {
+    let (cryosphere, cryosphere_ice, cryosphere_ices, cryosphere_snapshot) = match &cycle.cryosphere
+    {
         Some(cryo) => {
             let frost_density = cycle.frost.map_or(1.0, |f| caps::ice_density(f.species));
             let densities = (frost_density, caps::ice_density("H2O"));
             let ground = (&height, &layers.liquid);
-            let fields = downscale.seasons(cryo, &cycle.mean, ground, densities);
-            // Each ice with its colour, linear reflectance, to draw it by.
-            let colour = |c: [f32; 3]| format!("[{:.2}, {:.2}, {:.2}]", c[0], c[1], c[2]);
-            let mut ices: Vec<String> = cycle
-                .frost
-                .iter()
-                .filter(|_| cryo.holds(false))
-                .map(|f| {
-                    format!(
-                        "{} frost on the ground, colour {}",
-                        f.species,
-                        colour(f.colour)
-                    )
-                })
-                .collect();
-            if let Some(seas) = cycle.seas.as_ref().filter(|_| cryo.holds(true)) {
-                ices.push(format!(
-                    "the sea's water ice, colour {}",
-                    colour(seas.ocean.colour)
-                ));
+            let [freeze, melt, peak, at, kind] =
+                downscale.seasons(cryo, &cycle.mean, ground, densities);
+            // Each ice with what an engine draws it by (F253), and each cell's place among
+            // them from 1.
+            let mut ices = Vec::new();
+            let mut index = [0.0f32; 3];
+            if let Some(f) = cycle.frost.filter(|_| cryo.holds(false)) {
+                ices.push(crate::climate::SeasonalIce {
+                    name: format!("{} frost", f.species),
+                    species: f.species,
+                    sea: false,
+                    colour: f.colour,
+                    density: frost_density,
+                    cover_mass: FROST_COVER_MASS,
+                    curve: cryo.curves[0],
+                });
+                index[1] = ices.len() as f32;
             }
-            (fields, ices, cryo.snapshot)
+            if let Some(seas) = cycle.seas.as_ref().filter(|_| cryo.holds(true)) {
+                ices.push(crate::climate::SeasonalIce {
+                    name: "sea ice".to_string(),
+                    species: "H2O",
+                    sea: true,
+                    colour: seas.ocean.colour,
+                    density: densities.1,
+                    cover_mass: SEA_ICE_COVER_MASS,
+                    curve: cryo.curves[1],
+                });
+                index[2] = ices.len() as f32;
+            }
+            let ice = Field::from_fn(grid, |c, _| index[kind.get(c) as usize]);
+            ([freeze, melt, peak, at], ice, ices, cryo.snapshot)
         }
         None => (
             std::array::from_fn(|_| Field::new(grid)),
+            Field::new(grid),
             Vec::new(),
             f64::NAN,
         ),
@@ -3149,6 +3183,8 @@ pub fn finish(
         maturity,
         temperature,
         temperature_range,
+        temperature_min,
+        temperature_max,
         frost,
         frost_gas: cycle.frost.map(|f| f.species),
         pressure_range: cycle.pressure_range,
@@ -3159,8 +3195,11 @@ pub fn finish(
         sea_ice,
         sea_ice_fraction,
         cryosphere,
+        cryosphere_ice,
         cryosphere_ices,
         cryosphere_snapshot,
+        cryosphere_clock: cycle.clock,
+        cryosphere_series: cycle.series.clone(),
         rays,
         sea_level,
         ocean_fraction,

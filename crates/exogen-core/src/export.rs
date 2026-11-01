@@ -35,20 +35,107 @@ pub enum ExportError {
     Json(#[from] serde_json::Error),
 }
 
-#[derive(Serialize)]
+/// A map in the sidecar: its file, encoding and units, its range, how it may be filtered,
+/// "linear" or "nearest" where its values are codes or phases that must not be blended
+/// (F253), and its channels where it has several or they need saying.
+#[derive(Serialize, Default)]
 pub struct MapInfo {
     pub file: String,
     pub encoding: String,
     pub units: String,
     pub min: f64,
     pub max: f64,
+    pub filter: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<ChannelInfo>,
 }
 
+/// A channel of a map (F253): its name in the file, what it holds, its unit and its range.
+#[derive(Serialize)]
+pub struct ChannelInfo {
+    pub name: String,
+    pub holds: String,
+    pub unit: String,
+    pub min: f64,
+    pub max: f64,
+}
+
+/// The ices that come and go through the year, as the cryosphere's maps draw them (F253).
+#[derive(Serialize)]
+pub struct CryosphereInfo {
+    pub phase_origin: String,
+    pub evaluation: String,
+    pub snapshot_phase: Option<f64>,
+    pub thickest_m: f64,
+    pub ices: Vec<IceInfo>,
+    pub clock: Option<ClockInfo>,
+    pub year: Vec<YearRow>,
+}
+
+/// An ice of the cryosphere's maps (F253): its index in cryosphere_ice.png, its name and its
+/// species, where it lies, its colour, linear reflectance, its density, the mass that hides
+/// 1 - 1/e of what lies under it, the mass it lies at, past which half is hidden, which
+/// opens and closes its window, and its year curve's exponents, none where no place's ice
+/// comes and goes thickly enough to fit them.
+#[derive(Serialize)]
+pub struct IceInfo {
+    pub index: usize,
+    pub name: String,
+    pub species: String,
+    pub on: String,
+    pub colour_linear: [f32; 3],
+    pub density_kg_m3: f64,
+    pub cover_mass_kg_m2: f64,
+    pub lying_mass_kg_m2: f64,
+    pub curve: Option<CurveInfo>,
+}
+
+#[derive(Serialize)]
+pub struct CurveInfo {
+    pub rise: f64,
+    pub fall: f64,
+}
+
+/// The clock the phases run on (F253).
+#[derive(Serialize)]
+pub struct ClockInfo {
+    pub cycle_s: f64,
+    pub orbits: u32,
+    pub steps: usize,
+    pub solar_day_s: Option<f64>,
+    pub obliquity_deg: f64,
+    pub eccentricity: f64,
+    pub perihelion_ls_deg: f64,
+    pub northern_spring_phase: f64,
+    pub northern_summer_phase: f64,
+    pub northern_autumn_phase: f64,
+    pub northern_winter_phase: f64,
+}
+
+/// A step of the year (F253): its end's phase, the star's longitude seen from the body, its
+/// declination and flux, the surface pressure, and each ice's mean over each hemisphere,
+/// kg/m² of the hemisphere.
+#[derive(Serialize)]
+pub struct YearRow {
+    pub phase: f64,
+    pub ls_deg: f64,
+    pub declination_deg: f64,
+    pub flux_w_m2: f64,
+    pub pressure_pa: f64,
+    pub frost_north_kg_m2: f64,
+    pub frost_south_kg_m2: f64,
+    pub sea_ice_north_kg_m2: f64,
+    pub sea_ice_south_kg_m2: f64,
+}
+
+/// A parameter in the sidecar: a number in its display `unit`, its stored SI value `value`
+/// times `scale`; any other value as it is.
 #[derive(Serialize)]
 pub struct ParameterInfo {
     pub value: serde_json::Value,
     pub state: String,
     pub unit: String,
+    pub scale: f64,
 }
 
 #[derive(Serialize)]
@@ -184,6 +271,24 @@ pub struct ScarpInfo {
 /// How many floods the sidecar lists; the rest are counted.
 const SIDECAR_FLOOD_LIMIT: usize = 4_000;
 
+/// The sidecar's lists of features, which go apart to features.json (F253).
+const FEATURE_LISTS: [&str; 14] = [
+    "craters",
+    "scarps",
+    "floods",
+    "magma_provinces",
+    "ridges",
+    "rises",
+    "shields",
+    "canyons",
+    "graben",
+    "coronae",
+    "domes",
+    "paterae",
+    "mountains",
+    "lineae",
+];
+
 fn largest_floods(
     floods: &[crate::stages::volcanism::FloodRecord],
     limit: usize,
@@ -227,6 +332,8 @@ pub struct Sidecar {
     pub epoch_gyr_before_present: f64,
     pub epoch_time_since_formation_gyr: f64,
     pub maps: BTreeMap<String, MapInfo>,
+    /// The ices that come and go, how the cryosphere's maps hold them (F253).
+    pub cryosphere: Option<CryosphereInfo>,
     pub stage_outputs: BTreeMap<String, f64>,
     pub parameters: BTreeMap<String, ParameterInfo>,
     pub warnings: Vec<String>,
@@ -304,7 +411,12 @@ pub fn export(
     })?;
     // All or nothing: make sure every output can be written before writing any, so that
     // a file held open by a viewer leaves the previous set intact instead of a mixed one.
-    for name in [
+    let species: Vec<String> = out
+        .caps
+        .iter()
+        .map(|cap| cap.ice.species.to_lowercase())
+        .collect();
+    let mut names: Vec<String> = [
         "height.exr",
         "height.png",
         "albedo.exr",
@@ -315,17 +427,33 @@ pub fn export(
         "surface_age.png",
         "temperature.exr",
         "temperature.png",
+        "temperature_min.exr",
+        "temperature_min.png",
+        "temperature_max.exr",
+        "temperature_max.png",
         "frost.exr",
         "frost.png",
         "ice.exr",
         "ice.png",
         "sea_ice.exr",
         "sea_ice.png",
-        "cryosphere.exr",
-        "cryosphere.png",
+        "cryosphere_window.exr",
+        "cryosphere_window.png",
+        "cryosphere_thickness.exr",
+        "cryosphere_thickness.png",
+        "cryosphere_ice.png",
         "units.png",
         "sidecar.json",
-    ] {
+        "features.json",
+    ]
+    .iter()
+    .map(|n| n.to_string())
+    .collect();
+    for sp in &species {
+        names.push(format!("ice_{sp}.exr"));
+        names.push(format!("ice_{sp}.png"));
+    }
+    for name in &names {
         let path = settings.dir.join(name);
         retry(|| {
             std::fs::OpenOptions::new()
@@ -369,6 +497,7 @@ pub fn export(
             units: "m above datum".into(),
             min: hmin as f64,
             max: hmax as f64,
+            ..Default::default()
         },
     );
     write_png16(
@@ -387,6 +516,7 @@ pub fn export(
             units: "m above datum".into(),
             min: hmin as f64,
             max: hmax as f64,
+            ..Default::default()
         },
     );
 
@@ -411,6 +541,7 @@ pub fn export(
             units: "reflectance".into(),
             min: 0.0,
             max: 1.0,
+            ..Default::default()
         },
     );
     write_png_srgb(
@@ -427,6 +558,7 @@ pub fn export(
             units: "reflectance".into(),
             min: 0.0,
             max: 1.0,
+            ..Default::default()
         },
     );
 
@@ -466,6 +598,7 @@ pub fn export(
             units: "preview: albedo exposed to a common mean, lit from the upper left".into(),
             min: 0.0,
             max: 1.0,
+            ..Default::default()
         },
     );
 
@@ -489,6 +622,7 @@ pub fn export(
             units: "mask".into(),
             min: 0.0,
             max: 1.0,
+            ..Default::default()
         },
     );
 
@@ -510,6 +644,7 @@ pub fn export(
             units: "Gyr since formation of the current surface".into(),
             min: amin as f64,
             max: amax as f64,
+            ..Default::default()
         },
     );
     write_png16(
@@ -528,6 +663,7 @@ pub fn export(
             units: "Gyr since formation of the current surface".into(),
             min: amin as f64,
             max: amax as f64,
+            ..Default::default()
         },
     );
 
@@ -549,6 +685,7 @@ pub fn export(
             units: "K, the year's mean surface temperature through its days and seasons".into(),
             min: tmin as f64,
             max: tmax as f64,
+            ..Default::default()
         },
     );
     write_png16(
@@ -567,8 +704,62 @@ pub fn export(
             units: "K, the year's mean surface temperature through its days and seasons".into(),
             min: tmin as f64,
             max: tmax as f64,
+            ..Default::default()
         },
     );
+
+    // The year's coldest and warmest surface temperature at each cell (F253).
+    for (key, field, what) in [
+        (
+            "temperature_min",
+            &out.temperature_min,
+            "K, the coldest the surface stands through its days and seasons",
+        ),
+        (
+            "temperature_max",
+            &out.temperature_max,
+            "K, the warmest the surface stands through its days and seasons",
+        ),
+    ] {
+        let eq = to_equirectangular(&grid, field.as_slice(), width, height_px);
+        let (lo, hi) = min_max(&eq);
+        write_exr_f32(
+            &settings.dir.join(format!("{key}.exr")),
+            width,
+            height_px,
+            "temperature",
+            &eq,
+        )?;
+        write_png16(
+            &settings.dir.join(format!("{key}.png")),
+            width,
+            height_px,
+            &eq,
+            lo,
+            hi,
+        )?;
+        for (suffix, encoding) in [
+            ("exr", "float32 EXR"),
+            ("png", "16-bit grey PNG, linear from min to max"),
+        ] {
+            let name = if suffix == "exr" {
+                key.to_string()
+            } else {
+                format!("{key}_png")
+            };
+            maps.insert(
+                name,
+                MapInfo {
+                    file: format!("{key}.{suffix}"),
+                    encoding: encoding.into(),
+                    units: what.into(),
+                    min: lo as f64,
+                    max: hi as f64,
+                    ..Default::default()
+                },
+            );
+        }
+    }
 
     // The frost on the ground at the snapshot's season (F239).
     let frost_eq = to_equirectangular(&grid, out.frost.as_slice(), width, height_px);
@@ -592,6 +783,7 @@ pub fn export(
             units: frost_units.clone(),
             min: fmin as f64,
             max: fmax as f64,
+            ..Default::default()
         },
     );
     write_png16(
@@ -610,6 +802,7 @@ pub fn export(
             units: frost_units,
             min: fmin as f64,
             max: fmax as f64,
+            ..Default::default()
         },
     );
 
@@ -631,6 +824,7 @@ pub fn export(
             units: "m of the caps' ice the inventory laid in its cold traps".into(),
             min: imin as f64,
             max: imax as f64,
+            ..Default::default()
         },
     );
     write_png16(
@@ -649,8 +843,53 @@ pub fn export(
             units: "m of the caps' ice the inventory laid in its cold traps".into(),
             min: imin as f64,
             max: imax as f64,
+            ..Default::default()
         },
     );
+
+    // Each ice's caps apart (F253): water's, carbon dioxide's and the rest.
+    for (cap, sp) in out.caps.iter().zip(&species) {
+        let eq = to_equirectangular(&grid, cap.thickness.as_slice(), width, height_px);
+        let (lo, hi) = min_max(&eq);
+        let what = format!("m of the caps' {} ice", cap.ice.species);
+        write_exr_f32(
+            &settings.dir.join(format!("ice_{sp}.exr")),
+            width,
+            height_px,
+            "ice",
+            &eq,
+        )?;
+        write_png16(
+            &settings.dir.join(format!("ice_{sp}.png")),
+            width,
+            height_px,
+            &eq,
+            lo,
+            hi,
+        )?;
+        maps.insert(
+            format!("ice_{sp}"),
+            MapInfo {
+                file: format!("ice_{sp}.exr"),
+                encoding: "float32 EXR".into(),
+                units: what.clone(),
+                min: lo as f64,
+                max: hi as f64,
+                ..Default::default()
+            },
+        );
+        maps.insert(
+            format!("ice_{sp}_png"),
+            MapInfo {
+                file: format!("ice_{sp}.png"),
+                encoding: "16-bit grey PNG, linear from min to max".into(),
+                units: what,
+                min: lo as f64,
+                max: hi as f64,
+                ..Default::default()
+            },
+        );
+    }
 
     // The sea's ice at the snapshot's season (F244).
     let sea_eq = to_equirectangular(&grid, out.sea_ice.as_slice(), width, height_px);
@@ -671,6 +910,7 @@ pub fn export(
             units: sea_units.into(),
             min: smin as f64,
             max: smax as f64,
+            ..Default::default()
         },
     );
     write_png16(
@@ -689,69 +929,206 @@ pub fn export(
             units: sea_units.into(),
             min: smin as f64,
             max: smax as f64,
+            ..Default::default()
         },
     );
 
-    // The ices that come and go through the year (F246): R the phase of the year they freeze
-    // at and G the phase they melt out at, from the northern spring equinox, 0 and 1 where
-    // they lie all year; B their thickness at their peak; A the phase of their peak. The
-    // phases nearest cell per pixel, so that a window round the year's end is not blended
-    // through its middle; the thickness bilinear, but only where the nearest cell's window
-    // lies, so that it does not bleed past the phases at the ice's margins (F248).
-    let mut cryo: Vec<Vec<f32>> = out
-        .cryosphere
+    // The ices that come and go through the year (F246, F253), three maps of one meaning
+    // each and no alpha. The window: R the phase of the year an ice freezes at, G the phase it
+    // melts out at, from the northern spring equinox, 0 and 1 where it lies all year, B the
+    // phase of its peak; nearest cell per pixel, so that a window round the year's end is not
+    // blended through its middle. Its thickness at its peak, bilinear, but only where the
+    // nearest cell's window lies, so that it does not bleed past the window at the ice's
+    // margins (F248). Which ice lies, nearest cell, its index among the sidecar's ices.
+    let nearest = |field: &crate::fields::Field<f32>| {
+        to_equirectangular_nearest(&grid, field.as_slice(), width, height_px)
+    };
+    let window: Vec<Vec<f32>> = [0, 1, 3]
         .iter()
-        .map(|f| to_equirectangular_nearest(&grid, f.as_slice(), width, height_px))
+        .map(|&i| nearest(&out.cryosphere[i]))
         .collect();
+    let mut thickness = nearest(&out.cryosphere[2]);
     let smooth = to_equirectangular(&grid, out.cryosphere[2].as_slice(), width, height_px);
-    for (v, s) in cryo[2].iter_mut().zip(smooth) {
+    for (v, s) in thickness.iter_mut().zip(smooth) {
         if *v > 0.0 {
             *v = s.max(0.0);
         }
     }
-    let thickest = cryo[2].iter().fold(0.0f32, |a, &v| a.max(v));
-    let ices = if out.cryosphere_ices.is_empty() {
-        "none".to_string()
-    } else {
-        out.cryosphere_ices.join(", ")
+    let thickest = thickness.iter().fold(0.0f32, |a, &v| a.max(v));
+    let ice_index: Vec<u8> = nearest(&out.cryosphere_ice)
+        .iter()
+        .map(|&v| v.round().clamp(0.0, 255.0) as u8)
+        .collect();
+    let phase_unit = "share of the year's cycle from the northern spring equinox";
+    let window_channels = || {
+        [
+            (
+                "R",
+                "the phase the ice freezes at, 0 where it lies all year",
+            ),
+            ("G", "the phase it melts out at, 1 where it lies all year"),
+            ("B", "the phase of its peak"),
+        ]
+        .map(|(name, holds)| ChannelInfo {
+            name: name.into(),
+            holds: holds.into(),
+            unit: phase_unit.into(),
+            min: 0.0,
+            max: 1.0,
+        })
+        .into_iter()
+        .collect::<Vec<_>>()
     };
-    let cryo_units = format!(
-        "phases are shares of the year's time from the northern spring equinox: R the phase an ice freezes at, G the phase it melts out at, R 0 and G 1 where it lies all year, the ice lying from R round to G; B m of the ice at its peak, over the height map, which holds none; A the phase of its peak; the ices, drawn over the albedo map, which holds none: {ices}"
-    );
+    let window_units =
+        "the ice's window through the year: it lies from R round to G; all zero where no ice lies";
     write_exr_channels(
-        &settings.dir.join("cryosphere.exr"),
+        &settings.dir.join("cryosphere_window.exr"),
         (width, height_px),
-        "cryosphere",
-        &["R", "G", "B", "A"],
-        &cryo,
+        "cryosphere_window",
+        &["R", "G", "B"],
+        &window,
     )?;
     maps.insert(
-        "cryosphere".to_string(),
+        "cryosphere_window".to_string(),
         MapInfo {
-            file: "cryosphere.exr".into(),
-            encoding: "float32 EXR, channels R, G, B, A".into(),
-            units: cryo_units.clone(),
+            file: "cryosphere_window.exr".into(),
+            encoding: "float32 EXR, channels R, G, B".into(),
+            units: window_units.into(),
             min: 0.0,
-            max: thickest as f64,
+            max: 1.0,
+            filter: "nearest".into(),
+            channels: window_channels(),
         },
     );
-    write_png_rgba16(
-        &settings.dir.join("cryosphere.png"),
+    write_png_rgb16(
+        &settings.dir.join("cryosphere_window.png"),
         (width, height_px),
-        &cryo,
+        &window,
+    )?;
+    maps.insert(
+        "cryosphere_window_png".to_string(),
+        MapInfo {
+            file: "cryosphere_window.png".into(),
+            encoding: "16-bit RGB PNG, each channel from 0 to 1".into(),
+            units: window_units.into(),
+            min: 0.0,
+            max: 1.0,
+            filter: "nearest".into(),
+            channels: window_channels(),
+        },
+    );
+    let thickness_units = "m of the ice at its peak, over the height map, which holds none";
+    write_exr_f32(
+        &settings.dir.join("cryosphere_thickness.exr"),
+        width,
+        height_px,
+        "thickness",
+        &thickness,
+    )?;
+    maps.insert(
+        "cryosphere_thickness".to_string(),
+        MapInfo {
+            file: "cryosphere_thickness.exr".into(),
+            encoding: "float32 EXR, channel thickness".into(),
+            units: thickness_units.into(),
+            min: 0.0,
+            max: thickest as f64,
+            ..Default::default()
+        },
+    );
+    write_png16(
+        &settings.dir.join("cryosphere_thickness.png"),
+        width,
+        height_px,
+        &thickness,
+        0.0,
         thickest,
     )?;
     maps.insert(
-        "cryosphere_png".to_string(),
+        "cryosphere_thickness_png".to_string(),
         MapInfo {
-            file: "cryosphere.png".into(),
-            encoding: "16-bit RGBA PNG: R, G and A phases from 0 to 1, B linear from 0 to max"
-                .into(),
-            units: cryo_units,
+            file: "cryosphere_thickness.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: thickness_units.into(),
             min: 0.0,
             max: thickest as f64,
+            ..Default::default()
         },
     );
+    write_png8(
+        &settings.dir.join("cryosphere_ice.png"),
+        width,
+        height_px,
+        &ice_index,
+    )?;
+    maps.insert(
+        "cryosphere_ice_png".to_string(),
+        MapInfo {
+            file: "cryosphere_ice.png".into(),
+            encoding: "8-bit grey PNG".into(),
+            units: "the ice that lies, its index among the sidecar's cryosphere ices, 0 none"
+                .into(),
+            min: 0.0,
+            max: out.cryosphere_ices.len() as f64,
+            filter: "nearest".into(),
+            ..Default::default()
+        },
+    );
+    // What an engine draws them by: each ice, the clock and the year step by step.
+    let cryosphere = (!out.cryosphere_ices.is_empty()).then(|| CryosphereInfo {
+        phase_origin: "the northern spring equinox: phases are shares of the cycle's time after it".into(),
+        evaluation: "Evaluate each texel at the map's resolution, then filter the result: the window and the ice index are nearest-cell and must not be filtered. An ice lies at phase p where p falls in its window, from R round to G; its mass, kg/m², is its thickness at its peak times its density, times (t / rise)^a from R to its peak's phase B, t the time since R and rise the time from R to B, then times 1 - (g / fall)^b from B to G, g the time since B and fall the time from B to G, (a, b) its curve; all year its peak where R is 0 and G 1. It hides 1 - exp(-m / cover_mass) of what lies under it and stands m / density thick.".into(),
+        snapshot_phase: out.cryosphere_snapshot.is_finite().then_some(out.cryosphere_snapshot),
+        thickest_m: thickest as f64,
+        ices: out
+            .cryosphere_ices
+            .iter()
+            .enumerate()
+            .map(|(i, ice)| IceInfo {
+                index: i + 1,
+                name: ice.name.clone(),
+                species: ice.species.to_string(),
+                on: if ice.sea { "sea" } else { "land" }.into(),
+                colour_linear: ice.colour,
+                density_kg_m3: ice.density,
+                cover_mass_kg_m2: ice.cover_mass,
+                lying_mass_kg_m2: ice.cover_mass * std::f64::consts::LN_2,
+                curve: ice.curve.map(|(rise, fall)| CurveInfo { rise, fall }),
+            })
+            .collect(),
+        clock: out.cryosphere_clock.map(|c| ClockInfo {
+            cycle_s: c.cycle_s,
+            orbits: c.orbits,
+            steps: c.steps,
+            solar_day_s: c.solar_day_s,
+            obliquity_deg: c.obliquity_deg,
+            eccentricity: c.eccentricity,
+            perihelion_ls_deg: c.perihelion_ls_deg,
+            northern_spring_phase: c.seasons[0],
+            northern_summer_phase: c.seasons[1],
+            northern_autumn_phase: c.seasons[2],
+            northern_winter_phase: c.seasons[3],
+        }),
+        year: out
+            .cryosphere_series
+            .as_ref()
+            .map(|y| {
+                (0..y.phase.len())
+                    .map(|k| YearRow {
+                        phase: y.phase[k],
+                        ls_deg: y.ls_deg[k],
+                        declination_deg: y.declination_deg[k],
+                        flux_w_m2: y.flux[k],
+                        pressure_pa: y.pressure[k],
+                        frost_north_kg_m2: y.frost[0][k],
+                        frost_south_kg_m2: y.frost[1][k],
+                        sea_ice_north_kg_m2: y.sea_ice[0][k],
+                        sea_ice_south_kg_m2: y.sea_ice[1][k],
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    });
 
     // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
@@ -839,6 +1216,8 @@ pub fn export(
             units: "unit id, see unit_legend".into(),
             min: 0.0,
             max: 255.0,
+            filter: "nearest".into(),
+            ..Default::default()
         },
     );
 
@@ -865,12 +1244,19 @@ pub fn export(
             Kind::Multiplier => "multiplier",
             Kind::StageOutput => "stage_output",
         };
+        // A number in the unit it is labelled with (the review of the cryosphere maps,
+        // 2026-11-01: Mars's year, stored in seconds, read as 59 million days).
+        let value = match graph.get(def.id) {
+            crate::params::Value::F64(v) => serde_json::to_value(def.display(*v))?,
+            other => serde_json::to_value(other)?,
+        };
         parameters.insert(
             def.id.to_string(),
             ParameterInfo {
-                value: serde_json::to_value(graph.get(def.id))?,
+                value,
                 state: state.to_string(),
                 unit: def.unit.to_string(),
+                scale: def.scale,
             },
         );
     }
@@ -966,7 +1352,16 @@ pub fn export(
         preview_exaggeration: exaggeration,
         epoch_gyr_before_present: graph.f64("output.epoch"),
         epoch_time_since_formation_gyr: out.epoch_time_gyr,
-        maps,
+        maps: maps
+            .into_iter()
+            .map(|(name, mut info)| {
+                if info.filter.is_empty() {
+                    info.filter = "linear".into();
+                }
+                (name, info)
+            })
+            .collect(),
+        cryosphere,
         stage_outputs,
         parameters,
         warnings: graph
@@ -1232,12 +1627,30 @@ pub fn export(
             })
             .collect(),
     };
-    let path = settings.dir.join("sidecar.json");
-    let text = serde_json::to_string_pretty(&sidecar)?;
-    retry(|| std::fs::write(&path, &text)).map_err(|source| ExportError::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
+    // The features, most of the sidecar's size, apart in features.json, compact (F253).
+    let mut whole = serde_json::to_value(&sidecar)?;
+    let mut features = serde_json::Map::new();
+    if let Some(object) = whole.as_object_mut() {
+        for key in FEATURE_LISTS {
+            if let Some(list) = object.remove(key) {
+                features.insert(key.to_string(), list);
+            }
+        }
+        object.insert("features".to_string(), "features.json".into());
+    }
+    for (name, text) in [
+        ("sidecar.json", serde_json::to_string_pretty(&whole)?),
+        (
+            "features.json",
+            serde_json::to_string(&serde_json::Value::Object(features))?,
+        ),
+    ] {
+        let path = settings.dir.join(name);
+        retry(|| std::fs::write(&path, &text)).map_err(|source| ExportError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
+    }
     Ok(sidecar)
 }
 
@@ -1307,29 +1720,19 @@ fn write_exr_channels(
         .map_err(|e| ExportError::Exr(e.to_string()))
 }
 
-/// Four channels to a 16-bit RGBA PNG: the third, a thickness, from 0 to `top`, the others
-/// phases from 0 to 1.
-fn write_png_rgba16(
+/// Three channels from 0 to 1 to a 16-bit RGB PNG (F253).
+fn write_png_rgb16(
     path: &Path,
     (width, height): (usize, usize),
     channels: &[Vec<f32>],
-    top: f32,
 ) -> Result<(), ExportError> {
-    let scale = |j: usize| {
-        if j == 2 {
-            1.0 / top.max(f32::MIN_POSITIVE)
-        } else {
-            1.0
-        }
-    };
-    let mut pixels = Vec::with_capacity(width * height * 4);
+    let mut pixels = Vec::with_capacity(width * height * 3);
     for k in 0..width * height {
-        for (j, channel) in channels.iter().enumerate() {
-            let v = (channel[k] * scale(j)).clamp(0.0, 1.0);
-            pixels.push((v * 65535.0).round() as u16);
+        for channel in channels {
+            pixels.push((channel[k].clamp(0.0, 1.0) * 65535.0).round() as u16);
         }
     }
-    let img = image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_raw(
+    let img = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(
         width as u32,
         height as u32,
         pixels,
