@@ -433,7 +433,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 192;
+pub const FINISH_VERSION: u64 = 193;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2860,22 +2860,20 @@ pub fn finish(
     let water = materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh);
     let ices = crate::climate::Ice::of_inventory(graph, water);
     let mut traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
-    let bare_ice = balance.frost.map(|_| layers.ice.clone());
-    let mut laid = caps::lay(graph, &mut layers, &traps);
+    let bare_ice = layers.ice.clone();
+    let mut laid = caps::lay(graph, &mut layers, &traps, &[]);
     // The frost's own gas's caps hold its air (F258): the year again with them as the
     // reservoir its air draws on, over the caps' albedo, and every ice's caps laid again
     // where its ice keeps under that year.
     let climate_grid = climate.temperature.grid();
-    if let (Some(reservoir), Some(bare_ice)) = (
-        balance
-            .frost
-            .and_then(|f| caps::reservoir(&laid, climate_grid, &balance, f.species)),
-        bare_ice,
-    ) {
-        let over = caps::on_climate(&laid, climate_grid, &balance);
-        let climate = balance.solve_over(climate_grid, Some(&over));
+    let reservoir = balance
+        .frost
+        .and_then(|f| caps::reservoir(&laid, climate_grid, &balance, f.species));
+    let over = (!laid.is_empty()).then(|| caps::on_climate(&laid, climate_grid, &balance));
+    if let Some(reservoir) = &reservoir {
+        let climate = balance.solve_over(climate_grid, over.as_ref());
         let sea = ocean.as_ref().zip(share.as_ref());
-        let held = balance.cycle(&climate, &ground, sea, Some(&reservoir));
+        let held = balance.cycle(&climate, &ground, sea, Some(reservoir));
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             let range = held.pressure_range.unwrap_or((f64::NAN, f64::NAN));
             eprintln!(
@@ -2886,8 +2884,54 @@ pub fn finish(
             );
         }
         traps = balance.traps(&climate, &ground, &held, &ices, &heights, &downscale);
-        layers.ice = bare_ice;
-        laid = caps::lay(graph, &mut layers, &traps);
+        layers.ice.clone_from(&bare_ice);
+        laid = caps::lay(graph, &mut layers, &traps, &[]);
+    }
+    // Each ice that is not the body's working liquid gathered through the body's age under
+    // the orbit's cycles (F259), from a layer over the whole body, and its caps laid where it
+    // gathered.
+    let liquid = caps::liquid_species(graph.str("volatiles.working_liquid"));
+    let gathering: Vec<crate::climate::Ice> = ices
+        .iter()
+        .filter(|i| !liquid.contains(&i.species))
+        .copied()
+        .collect();
+    if !gathering.is_empty() {
+        let clock = std::time::Instant::now();
+        let levels = gather_levels(&heights, downscale.scale_height);
+        let sea = ocean.as_ref().zip(share.as_ref());
+        let world = (
+            climate_grid,
+            over.as_ref(),
+            &ground,
+            sea,
+            reservoir.as_ref(),
+        );
+        let cycled = cycled_traps(graph, &balance, world, &gathering, &levels, &downscale);
+        let gathering = caps::Gathering {
+            levels: &levels,
+            scale_height: downscale.scale_height,
+            cycle: graph.f64("orbit.precession_period"),
+            year: graph.f64("orbit.year"),
+            age: graph.f64("body.age") * SECONDS_PER_GYR,
+            temperature: graph.f64("atmosphere.surface_temperature_mean"),
+            airless: balance.exchange <= 0.0,
+        };
+        let frost = balance.frost.map(|f| f.species);
+        let gathered = caps::gather(graph, &heights, &cycled, frost, &gathering);
+        layers.ice.clone_from(&bare_ice);
+        laid = caps::lay(graph, &mut layers, &traps, &gathered);
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            eprintln!(
+                "gathered: {} through the orbit's cycles in {:.1} s",
+                gathered
+                    .iter()
+                    .map(|(s, _)| *s)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                clock.elapsed().as_secs_f64()
+            );
+        }
     }
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         for (ice, _) in &traps.vapour {
@@ -4026,6 +4070,82 @@ impl RaySystem {
 
 /// Fill the working liquid to its inventory volume (docs/parameters.md F26). Returns the
 /// liquid level relative to the mean radius and the covered area fraction.
+/// The shares of the datum's pressure the traps' table is run at for the ices' gathering
+/// (F259): TRAP_HEIGHT_LEVELS of them from the climate's lowest ground to its highest with
+/// GATHER_HEADROOM of ice over it; one on an airless body.
+fn gather_levels(heights: &Field<f32>, scale_height: f64) -> Vec<f64> {
+    let (lo, hi) = heights
+        .as_slice()
+        .iter()
+        .filter(|h| h.is_finite())
+        .fold((f64::MAX, f64::MIN), |(a, b), &h| {
+            (a.min(h as f64), b.max(h as f64))
+        });
+    if scale_height <= 0.0 || lo > hi {
+        return vec![1.0];
+    }
+    let (top, bottom) = (
+        (-lo / scale_height).exp(),
+        (-(hi + GATHER_HEADROOM) / scale_height).exp(),
+    );
+    let k = TRAP_HEIGHT_LEVELS;
+    (0..k)
+        .map(|j| (bottom.ln() + (top / bottom).ln() * j as f64 / (k - 1) as f64).exp())
+        .collect()
+}
+
+/// Each ice's traps on the latitudes' rows at the present and their mean through the turning
+/// of the seasons (F259): each state's year run on the rows over the caps laid, the frost's
+/// own gas's caps holding its air, at CYCLE_PRECESSION_SEASONS seasons at perihelion, equally
+/// apart in time, where they turn. The obliquity's swing waits for the lag that keeps a slow
+/// ice's deposits through its high epochs (PLAN 5E).
+#[allow(clippy::type_complexity)]
+fn cycled_traps(
+    graph: &ParamGraph,
+    balance: &crate::climate::EnergyBalance,
+    (grid, over, ground, sea, reservoir): (
+        CubeSphere,
+        Option<&(Field<f32>, Field<f32>)>,
+        &crate::climate::Ground,
+        Option<(&crate::climate::Ocean, &Field<f32>)>,
+        Option<&crate::climate::Reservoir>,
+    ),
+    ices: &[crate::climate::Ice],
+    levels: &[f64],
+    downscale: &crate::climate::Downscale,
+) -> Vec<caps::Cycled> {
+    let table = |state: crate::climate::EnergyBalance| {
+        let climate = state.solve_over(grid, over);
+        let cycle = state.cycle(&climate, ground, sea, reservoir);
+        state.trap_table((&climate, ground, &cycle), ices, levels, downscale)
+    };
+    let sky = balance.sky;
+    let present = table(balance.at_state(sky.obliquity, sky.perihelion_season));
+    let turns = graph.f64("orbit.precession_period") > 0.0 && sky.resonance.is_none();
+    let mut mean: Vec<Vec<f64>> = present.iter().map(|(_, v)| vec![0.0; v.len()]).collect();
+    if turns {
+        let seasons = CYCLE_PRECESSION_SEASONS as f64;
+        for l in 0..CYCLE_PRECESSION_SEASONS {
+            let perihelion = sky.perihelion_season + std::f64::consts::TAU * l as f64 / seasons;
+            let state = table(balance.at_state(sky.obliquity, perihelion));
+            for (m, (_, v)) in mean.iter_mut().zip(state) {
+                for (a, b) in m.iter_mut().zip(v) {
+                    *a += b / seasons;
+                }
+            }
+        }
+    } else {
+        for (m, (_, v)) in mean.iter_mut().zip(&present) {
+            m.clone_from(v);
+        }
+    }
+    present
+        .into_iter()
+        .zip(mean)
+        .map(|((ice, present), mean)| caps::Cycled { ice, present, mean })
+        .collect()
+}
+
 pub fn hydrosphere_fill(graph: &ParamGraph, layers: &mut LayerSet, taken: f64) -> (f64, f64) {
     let species = caps::liquid_species(graph.str("volatiles.working_liquid"));
     let inventory = graph.get("volatiles.inventory");
@@ -4068,6 +4188,52 @@ pub fn hydrosphere_fill(graph: &ParamGraph, layers: &mut LayerSet, taken: f64) -
 
 #[cfg(test)]
 mod tests {
+    /// F259: Mars's water, gathered through its age from a layer over the whole body on flat
+    /// ground as its seasons turn, stands at both its poles, the turning's mean holding each
+    /// alike, where the present season's traps alone would give it all to the north; its
+    /// carbon dioxide, moving in years, lies where the present season puts it.
+    #[test]
+    fn mars_s_water_gathers_at_both_its_poles() {
+        use super::*;
+        let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let balance = crate::climate::EnergyBalance::from_graph(&graph);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let ground = crate::climate::Ground::from_graph(&graph);
+        let downscale = crate::climate::Downscale::from_graph(&graph);
+        let ices = crate::climate::Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
+        let heights = Field::new(grid);
+        let levels = gather_levels(&heights, downscale.scale_height);
+        let world = (grid, None, &ground, None, None);
+        let cycled = cycled_traps(&graph, &balance, world, &ices, &levels, &downscale);
+        let gathering = caps::Gathering {
+            levels: &levels,
+            scale_height: downscale.scale_height,
+            cycle: graph.f64("orbit.precession_period"),
+            year: graph.f64("orbit.year"),
+            age: graph.f64("body.age") * SECONDS_PER_GYR,
+            temperature: graph.f64("atmosphere.surface_temperature_mean"),
+            airless: false,
+        };
+        let gathered = caps::gather(&graph, &heights, &cycled, Some("CO2"), &gathering);
+        let water = &gathered.iter().find(|g| g.0 == "H2O").unwrap().1;
+        let (mut north, mut south, mut all) = (0.0, 0.0, 0.0);
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            let m = water.as_slice()[k] as f64 * grid.cell_area(c);
+            let (_, lat) = crate::grid::lon_lat_from_direction(grid.center(c));
+            if lat.to_degrees() > 60.0 {
+                north += m;
+            } else if lat.to_degrees() < -60.0 {
+                south += m;
+            }
+            all += m;
+        }
+        let (north, south) = (north / all, south / all);
+        println!("Mars's water: north {north:.3}, south {south:.3}");
+        assert!(north > 0.25 && south > 0.25, "north {north}, south {south}");
+        assert!(north + south > 0.9, "north {north}, south {south}");
+    }
+
     #[test]
     fn time_bins_tile_every_quality_the_same_way() {
         use super::{LOOP_STEPS, LOOP_TIME_BINS, time_bins};

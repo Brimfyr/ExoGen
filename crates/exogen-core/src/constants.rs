@@ -1882,6 +1882,18 @@ pub const TRAP_HEIGHT_LEVELS: usize = 7;
 /// through at most CYCLE_SPIN_UP_YEARS cycles, the frost its air lays coming to its own over
 /// decades of its years, before its places run from them.
 pub const CYCLE_SPIN_UP_YEARS: usize = 100;
+/// F259: the ices gather through the body's age in steps that each move at most
+/// GATHER_STEP_SHARE of what lies, at most GATHER_MAX_STEPS of them, settled once what would
+/// move through the rest of the age is GATHER_SETTLED of what lies.
+pub const GATHER_STEP_SHARE: f64 = 0.05;
+/// F259: the traps' table the ices gather by reaches GATHER_HEADROOM m over the climate's
+/// highest ground, the caps' own heights.
+pub const GATHER_HEADROOM: f64 = 10_000.0;
+pub const GATHER_MAX_STEPS: usize = 20_000;
+pub const GATHER_SETTLED: f64 = 1e-3;
+/// F259: the turning of the seasons is sampled at CYCLE_PRECESSION_SEASONS seasons at
+/// perihelion, equally apart in time, each state's year run on the latitudes' rows.
+pub const CYCLE_PRECESSION_SEASONS: usize = 4;
 /// F258: the year's frost point the caps of the frost's own gas stand at is found at
 /// CAP_POINT_LEVELS heights from their lowest surface to their highest, read at each cell
 /// between them: the point falls with the pressure, smoothly with height.

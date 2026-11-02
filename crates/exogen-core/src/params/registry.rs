@@ -869,6 +869,16 @@ static NODES: &[NodeDef] = &[
         Default::F64(282.9),
         "The star's longitude seen from the body at perihelion, 0 at the northern spring equinox: Earth 283°, Mars 251°, Saturn's moons 280°.",
     ),
+    root(
+        "orbit.precession_period",
+        "orbit",
+        "Precession of the seasons",
+        "kyr",
+        3.155_76e10,
+        f(0.0, 1e17),
+        Default::F64(0.0),
+        "The period over which the season at perihelion turns through the year, measured: Mars's about 51 kyr, Earth's about 21, Pluto's 3.7 Myr. A slow ice of the inventory gathers through its age under the seasons' mean as they turn (F259). None where it holds.",
+    ),
     // ------------------------------------------------------------------ body
     root(
         "body.radius",

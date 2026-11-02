@@ -88,6 +88,9 @@ pub struct EnergyBalance {
     /// above the air's, rho C_H U (M_w / M) / p, kg/m²/s/Pa (F245).
     pub exchange: f64,
     pub evaporation: f64,
+    /// Whether a fast spinner's places stand on its latitudes' rows alone (F259): the years
+    /// of the orbit's cycles, run cheaply.
+    pub rows: bool,
 }
 
 /// The year's mean temperature of a surface at its own albedo, facing where its slope faces
@@ -1452,7 +1455,19 @@ impl EnergyBalance {
             ),
             exchange: ventilation * heat,
             evaporation,
+            rows: false,
         }
+    }
+
+    /// The year's balance at another state of the orbit's cycles (F259): at an obliquity, rad,
+    /// and a season at perihelion, rad from the northern spring equinox, its places on its
+    /// latitudes' rows.
+    pub fn at_state(&self, obliquity: f64, perihelion: f64) -> Self {
+        let mut state = *self;
+        state.sky.obliquity = obliquity;
+        state.sky.perihelion_season = perihelion;
+        state.rows = true;
+        state
     }
 
     /// The heat the air over a place exchanges with its ground per kelvin (F245), W/m²/K, at
@@ -2099,7 +2114,7 @@ impl EnergyBalance {
     /// alone, its places apart, with no air between them.
     fn cycle_grid(&self) -> (usize, usize) {
         match self.sky.resonance {
-            None if self.exchange > 0.0 => CYCLE_FAST_GRID,
+            None if self.exchange > 0.0 && !self.rows => CYCLE_FAST_GRID,
             None => (CYCLE_LATITUDES, 1),
             Some(_) => CYCLE_RESONANT_GRID,
         }
@@ -2271,6 +2286,11 @@ impl EnergyBalance {
             self.lockstep(ground, &column, rows, timing, light, ocean, spin)
                 .warm()
         });
+        // On the rows alone, caps that hold the air take the spin-up's years (F258).
+        let years = match layout.n_lon == 1 && layout.places.iter().any(|p| p.cap > 0.0) {
+            true => CYCLE_SPIN_UP_YEARS,
+            false => CYCLE_MAX_YEARS,
+        };
         let lockstep = self.lockstep(
             ground,
             &column,
@@ -2278,7 +2298,7 @@ impl EnergyBalance {
             timing,
             light,
             ocean,
-            (every, warm.as_ref(), CYCLE_MAX_YEARS),
+            (every, warm.as_ref(), years),
         );
         let dt = day / CYCLE_DAY_STEPS as f64;
         let frost = self.frost.as_ref();
@@ -2844,27 +2864,9 @@ impl EnergyBalance {
                 }
             })
             .collect();
-        // A cell's air is the cycle's over its place, as much colder the higher the cell
-        // stands as its ground is (F237): near its ground the air follows the ground, a thin
-        // atmosphere's barely cooling with height; its height the one its pressure's share
-        // gives.
-        let (n_lat, n_lon) = cycle.layout;
+        let (_, n_lon) = cycle.layout;
         let cell_at = |lat: f64, lon: f64, thin: f64| {
-            let (c, _, _) = grid.locate(direction_from_lon_lat(lon, lat));
-            let height = if thin > 0.0 && thin != 1.0 {
-                -downscale.scale_height * thin.ln()
-            } else {
-                0.0
-            };
-            let steady = climate.temperature.get(c) as f64;
-            TrapCell {
-                lat,
-                lon,
-                thin,
-                steady,
-                air: reader(n_lat, n_lon, lat, lon),
-                cooling: steady - downscale.at(steady, steady, height),
-            }
+            self.trap_cell((climate, cycle, downscale), lat, lon, thin)
         };
         let frost = cycle.frost.as_ref();
         // A fast spinner's traps are its latitudes' at a few heights, the frost's point the
@@ -2913,26 +2915,9 @@ impl EnergyBalance {
         };
         for ice in ices {
             let own = frost.filter(|f| f.species == ice.species);
-            // Each place's value through the tilts' mean, and its warmest at any.
             let runs: Vec<(f64, f64)> = places
                 .par_iter()
-                .map(|cell| {
-                    let n = cycle.tilts.len().max(1) as f64;
-                    cycle
-                        .tilts
-                        .iter()
-                        .enumerate()
-                        .fold((0.0, f64::MIN), |(sum, hot), (j, &eps)| {
-                            let partials = cycle.partials.get(j).map_or(&[][..], |p| &p[..]);
-                            let air = cycle.air.get(j).map_or(&[][..], |a| &a[..]);
-                            let along = (partials, air);
-                            let (value, warmest) = match own {
-                                Some(f) => (self.ice_growth(ground, cell, eps, along, f), f64::NAN),
-                                None => self.ice_vapour(ground, cell, eps, along, frost, ice),
-                            };
-                            (sum + value / n, hot.max(warmest))
-                        })
-                })
+                .map(|cell| self.trap_value(ground, cycle, cell, ice))
                 .collect();
             let values: Vec<f64> = runs.iter().map(|r| r.0).collect();
             let hottest: Vec<f64> = runs.iter().map(|r| r.1).collect();
@@ -2964,6 +2949,88 @@ impl EnergyBalance {
             }
         }
         traps
+    }
+
+    /// A place of the traps (F240) at a latitude and longitude, rad, and a share of the
+    /// datum's pressure its height keeps. Its air is the cycle's over its place, as much colder
+    /// the higher it stands as its ground is (F237): near its ground the air follows the
+    /// ground, a thin atmosphere's barely cooling with height; its height the one its
+    /// pressure's share gives.
+    fn trap_cell(
+        &self,
+        (climate, cycle, downscale): (&Climate, &Cycle, &Downscale),
+        lat: f64,
+        lon: f64,
+        thin: f64,
+    ) -> TrapCell {
+        let grid = climate.temperature.grid();
+        let (n_lat, n_lon) = cycle.layout;
+        let (c, _, _) = grid.locate(direction_from_lon_lat(lon, lat));
+        let height = if thin > 0.0 && thin != 1.0 {
+            -downscale.scale_height * thin.ln()
+        } else {
+            0.0
+        };
+        let steady = climate.temperature.get(c) as f64;
+        TrapCell {
+            lat,
+            lon,
+            thin,
+            steady,
+            air: reader(n_lat, n_lon, lat, lon),
+            cooling: steady - downscale.at(steady, steady, height),
+        }
+    }
+
+    /// An ice's trap at a place through the tilts' mean (F240), and its warmest at any: the
+    /// frost's own gas's ice's growth, kg/m² a year, every other ice's year-mean saturation
+    /// pressure over it, Pa, at the place's own pressure.
+    fn trap_value(&self, ground: &Ground, cycle: &Cycle, cell: &TrapCell, ice: &Ice) -> (f64, f64) {
+        let frost = cycle.frost.as_ref();
+        let own = frost.filter(|f| f.species == ice.species);
+        let n = cycle.tilts.len().max(1) as f64;
+        cycle
+            .tilts
+            .iter()
+            .enumerate()
+            .fold((0.0, f64::MIN), |(sum, hot), (j, &eps)| {
+                let partials = cycle.partials.get(j).map_or(&[][..], |p| &p[..]);
+                let air = cycle.air.get(j).map_or(&[][..], |a| &a[..]);
+                let along = (partials, air);
+                let (value, warmest) = match own {
+                    Some(f) => (self.ice_growth(ground, cell, eps, along, f), f64::NAN),
+                    None => self.ice_vapour(ground, cell, eps, along, frost, ice),
+                };
+                (sum + value / n, hot.max(warmest))
+            })
+    }
+
+    /// The cold traps on the cycle's latitudes' rows at `levels`, shares of the datum's
+    /// pressure (F259), the year run on its rows: each ice's trap at each latitude of the rows
+    /// and each level, latitude after latitude, as `trap_value` finds it there.
+    pub fn trap_table(
+        &self,
+        (climate, ground, cycle): (&Climate, &Ground, &Cycle),
+        ices: &[Ice],
+        levels: &[f64],
+        downscale: &Downscale,
+    ) -> Vec<(Ice, Vec<f64>)> {
+        let places: Vec<TrapCell> = (0..CYCLE_LATITUDES)
+            .flat_map(|i| {
+                let lat = -PI / 2.0 + PI * i as f64 / (CYCLE_LATITUDES - 1) as f64;
+                levels.iter().map(move |&thin| (lat, thin))
+            })
+            .map(|(lat, thin)| self.trap_cell((climate, cycle, downscale), lat, 0.0, thin))
+            .collect();
+        ices.iter()
+            .map(|ice| {
+                let values = places
+                    .par_iter()
+                    .map(|cell| self.trap_value(ground, cycle, cell, ice).0)
+                    .collect();
+                (*ice, values)
+            })
+            .collect()
     }
 
     /// One step of a sea's mixed layer and its ice (F244, F245), lit by `lit` W/m², its open
@@ -3750,7 +3817,7 @@ pub fn growth_reach(growth: &Field<f32>) -> (f64, f64) {
 /// A value of a fast spinner's traps at a latitude and a share of the datum's pressure
 /// (F240): `values` its CYCLE_LATITUDES latitudes' at each of `levels`, read linearly between
 /// them, in the logarithm where `log`, and in the logarithm of the share.
-fn read_table(values: &[f64], levels: &[f64], lat: f64, thin: f64, log: bool) -> f64 {
+pub(crate) fn read_table(values: &[f64], levels: &[f64], lat: f64, thin: f64, log: bool) -> f64 {
     let k = levels.len();
     let n = values.len() / k;
     let x = ((lat + PI / 2.0) / PI * (n - 1) as f64).clamp(0.0, (n - 1) as f64);
@@ -5539,7 +5606,7 @@ mod tests {
             &downscale,
         );
         let mut layers = crate::fields::LayerSet::new(CubeSphere::new(64));
-        let laid = crate::stages::caps::lay(&graph, &mut layers, &traps);
+        let laid = crate::stages::caps::lay(&graph, &mut layers, &traps, &[]);
         let f = eb.frost.expect("Pluto's nitrogen frost");
         let reservoir =
             crate::stages::caps::reservoir(&laid, grid, &eb, f.species).expect("nitrogen caps");

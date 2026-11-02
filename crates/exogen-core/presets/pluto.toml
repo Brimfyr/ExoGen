@@ -12,6 +12,9 @@ description = "Reference body. Nitrogen ice plains and dark tholin regions under
 "body.density" = 1854.0
 "rotation.period" = 551856.0
 "rotation.obliquity" = 119.6
+# The season at perihelion turning in 3.7 Myr (Bertrand et al. 2018, after Hamilton et
+# al. 2016 and Earle et al. 2017).
+"orbit.precession_period" = 1.168e14
 # Charon: GM 105.9 km³/s² (Brozović and Jacobson 2024), its orbit 19,596 km, its period Pluto's spin.
 "satellite.mass" = 1.587e21
 "satellite.semi_major_axis" = 1.9596e7

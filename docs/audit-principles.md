@@ -591,6 +591,11 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | CH4_FROST_ALBEDO (F257) | its colour's mean, kept | Pluto's methane ice's measured albedo, with the volatile transport |
 | the frost's own gas's caps in the year as the reservoir its air draws on, the air's year-mean the body's (F258) | stated: the year's mean set as before (F239); what the caps gain counted | the pressure at the season it was measured; the caps' own pressure where no measurement sets the body's |
 | the caps at the datum's frost point in the year, at their height's in the traps and the maps (F258) | stated | their exchange at their own heights, with the volatile transport |
+| each ice that is not the working liquid gathered through the body's age from a layer over the whole body (F259) | stated: the history's start a layer over the body; the present's orbit through the age but for the seasons' turning | the swing and the lag (5E); the climate's history |
+| an ice's exchange per pascal, C_H U / (R_s T), or the Hertz-Knudsen rate on an airless body (F259) | stated: the air's bulk exchange (F237) at the body's mean surface temperature | the boundary layer's own exchange, with 5C's wind |
+| an ice following its traps' departure from the turning's mean by 1 / sqrt(1 + (2 pi tau / P)^2) (F259) | stated: a store's answer to a cycle, the lag left out | the gathering through the cycles' sequence |
+| `orbit.precession_period` (F259) | measured: Mars's some 51 kyr (Laskar et al. 2004), Earth's some 21 kyr (Berger and Loutre 1991), Pluto's and Charon's 3.7 Myr (Bertrand et al. 2018) | none |
+| GATHER_STEP_SHARE, GATHER_MAX_STEPS, GATHER_SETTLED, GATHER_HEADROOM, CYCLE_PRECESSION_SEASONS (F259) | stated choices: the gathering's steps, its end, its table's reach and the turning's samples | none |
 | the caps laid twice, the second time in the traps of the year the first hold (F258) | stated: a step of the caps' fixed point; a third laying agrees on Mars, Triton and Pluto on flat ground | the caps gathered through the history |
 | CYCLE_SPIN_UP_YEARS (F258) | a stated choice: the rows' cycles the seasons are spun up through | none: the places settle from it |
 | CAP_POINT_LEVELS (F258) | a stated choice: the heights the caps' frost point is read between | none |

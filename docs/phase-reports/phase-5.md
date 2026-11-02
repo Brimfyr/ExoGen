@@ -287,3 +287,15 @@ How it went:
 - **Pluto.** Its air runs from 0.25 to 2.71 Pa through its year where 0.011 to 0.87; it doubles from Ls 2 to Ls 37 as Pluto's did from 1988 to 2002, but peaks there where Pluto's went on rising to 2015, and its mean is the preset's 2015 value read as its mean. Its nitrogen gathers in its two great ringed basins and in craters near its equator, where its tilt leaves the least sunlight and a basin's air raises its point, as the volatile transport models find, at its measured perihelion, Ls 3.8, where Earth's 283° stood.
 - **Triton and Mars.** Triton's air averages its 1.4 Pa where 0.44; its caps stay at its poles. Mars's seasons are as they were; its small cap of carbon dioxide, losing everywhere at its albedo, now lies on the northern water cap, where on the southern pole: the residual cap's place waits for the frost brightening under its sun with the caps' history.
 - **Not yet:** the caps' exchange at their own heights in the year and their gathering through the history, the volatile transport. Tried after: the pressure read at the season it was measured, Pluto's July 2015 1.25 Pa at its Ls 63.6; where the frost buffers the air the air at a season is the frost's balance's whatever the gas's mass, and it stood at 1.76 Pa as the year's gas drained. A pressure measured at such a season is a test of the ice's energy balance, not an input; nitrogen's frost albedo is measured, 0.80 (Hofgartner et al. 2023).
+
+## The twenty-third milestone: the ices gathered through the age
+
+- **F259.** Each ice of the inventory that is not the body's working liquid gathered through the body's age from a layer over the whole body, at the rates its traps give at its surface's height, as the seasons turn; its caps laid where it gathered.
+
+How it went:
+
+- **The gathering.** The traps are run on the latitudes' rows at a few heights of the air's pressure, at the present season and at each season at perihelion as the seasons turn; the frost's own gas, moving in years, follows the present, a slow ice the turning's mean. The ices gather from an even layer through the body's age, each exchanging where it lies uppermost, the frost's gas by its growth, any other ice by its saturation pressure against the air's vapour.
+- **Mars.** Its water gathers through its 4.5 Gyr all at its north pole, as the caps were laid before. On flat ground the turning's mean holds its two poles alike, but its relief makes the north the better trap, and over the age the south drains to it: Mars's southern layered deposits keep under the lag a sublimating ice leaves, which waits for 5E.
+- **The obliquity's swing, tried and not kept.** At 35° Mars's summer pole is its warmest place; the swing's mean, ruled by its high epochs, laid half of its water in its southern mid-latitude basins. A polar deposit keeps through a high epoch under its lag: the swing waits for the lag, in 5E.
+- **Pluto and Triton.** Their nitrogen, moving in years, lies where the present season puts it, as before.
+- **Not yet:** the swing and the lag (5E); the caps' exchange at their own heights in the year.

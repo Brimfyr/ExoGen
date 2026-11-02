@@ -20,6 +20,9 @@ description = "Reference body. Pluto's large moon, locked face to face with it; 
 "orbit.eccentricity" = 0.000161
 # Its tilt to Pluto's orbit about the Sun, its own orbit in Pluto's equator.
 "rotation.obliquity" = 119.6
+# The season at perihelion turning in 3.7 Myr (Bertrand et al. 2018, after Hamilton et
+# al. 2016 and Earle et al. 2017).
+"orbit.precession_period" = 1.168e14
 "body.radius" = 6.06e5
 "body.density" = 1705.0
 "atmosphere.surface_pressure" = 0.0
