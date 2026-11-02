@@ -213,6 +213,53 @@ pub mod physics {
         )
     }
 
+    /// The standard normal distribution's cumulative share below `x` (Abramowitz and Stegun
+    /// 7.1.26, within 1.5e-7).
+    pub fn normal_cdf(x: f64) -> f64 {
+        let z = x.abs() / std::f64::consts::SQRT_2;
+        let t = 1.0 / (1.0 + 0.327_591_1 * z);
+        let poly = t
+            * (0.254_829_592
+                + t * (-0.284_496_736
+                    + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+        let erf = 1.0 - poly * (-z * z).exp();
+        0.5 * (1.0 + erf.copysign(x))
+    }
+
+    /// F263: the share of the hot oxygen its ionosphere's O2+ recombination makes that escapes
+    /// a body of mass `m` and radius `r`: of each channel's atoms, those that carry more than
+    /// the oxygen atom's escape energy, their energy spread by the ion's thermal motion at the
+    /// thermosphere's temperature, by sqrt(E k T) for an atom carrying E.
+    pub fn recombination_escape_share(m: f64, r: f64) -> f64 {
+        const N_A: f64 = 6.022_140_76e23;
+        const EV: f64 = 1.602_176_634e-19;
+        let escape = G * m * 15.999e-3 / N_A / r / EV;
+        let kt = K_B * THERMOSPHERE_TEMPERATURE / EV;
+        O2_RECOMBINATION
+            .iter()
+            .map(|&(e, share)| share * normal_cdf((e - escape) / (e * kt).sqrt()))
+            .sum()
+    }
+
+    /// F263: the air a body of mass `m` and radius `r` loses to space, kg/m²/s, under an XUV
+    /// flux `xuv` against the present Sun's at 1 AU, its air of mean molecular mass `mu`,
+    /// kg/mol: Mars's measured non-thermal escape over its surface, each rate at its power of
+    /// the XUV against Mars's present, the photochemical by the share of its hot oxygen that
+    /// escapes the body against the share that escapes Mars; two escaping atoms a molecule of
+    /// the air; at most the energy limit's (F262).
+    pub fn air_escape(xuv: f64, m: f64, r: f64, mu: f64) -> f64 {
+        const N_A: f64 = 6.022_140_76e23;
+        let mars = xuv * MARS_DISTANCE_AU * MARS_DISTANCE_AU;
+        let gravity =
+            recombination_escape_share(m, r) / recombination_escape_share(MARS_MASS, MARS_RADIUS);
+        let (photochemical, ions) = (MARS_PHOTOCHEMICAL_ESCAPE, MARS_ION_ESCAPE);
+        let atoms = (photochemical.0 * mars.powf(photochemical.1) * gravity
+            + ions.0 * mars.powf(ions.1))
+            / (4.0 * PI * MARS_RADIUS * MARS_RADIUS);
+        let limit = ESCAPE_EFFICIENCY * xuv * XUV_SUN_FLUX * r / (4.0 * G * m);
+        (0.5 * atoms * mu / N_A).min(limit)
+    }
+
     /// F4, F261: XUV flux relative to the present Sun at 1 AU, from a star of `m` solar masses
     /// shining `l_sun` at an age, at distance `d_au` from it.
     pub fn xuv_relative(m: f64, l_sun: f64, age_gyr: f64, d_au: f64) -> f64 {
@@ -2213,6 +2260,72 @@ pub fn volatiles_water_history(c: &Ctx) -> Value {
 pub fn atmosphere_oxygen_left(c: &Ctx) -> Value {
     let (m, r) = (c.f64("body.mass"), c.f64("body.radius"));
     (runaway_escape(c).last().map_or(0.0, |p| p.2) * G * m / (r * r)).into()
+}
+
+/// F263: the air the body lost to space through its life, kg/m², at each time of its XUV
+/// history: what it had lost by then; none where it has no air.
+fn air_escape_history(c: &Ctx) -> Vec<(f64, f64)> {
+    let xuv = c.curve("star.xuv_history");
+    let held = c.f64("atmosphere.surface_pressure") > 0.0;
+    let (m, r) = (c.f64("body.mass"), c.f64("body.radius"));
+    let mu = c.f64("atmosphere.mean_molecular_mass");
+    let rate = |x: f64| if held { air_escape(x, m, r, mu) } else { 0.0 };
+    let mut lost = 0.0;
+    xuv.points
+        .iter()
+        .enumerate()
+        .map(|(k, &(t, x))| {
+            if k > 0 {
+                let (t0, x0) = xuv.points[k - 1];
+                lost += 0.5 * (rate(x0) + rate(x)) * (t - t0) * GYR;
+            }
+            (t, lost)
+        })
+        .collect()
+}
+
+/// F263: the air the body loses to space today, kg/s.
+pub fn atmosphere_escape_rate(c: &Ctx) -> Value {
+    let r = c.f64("body.radius");
+    let rate = if c.f64("atmosphere.surface_pressure") > 0.0 {
+        air_escape(
+            c.f64("star.xuv_relative"),
+            c.f64("body.mass"),
+            r,
+            c.f64("atmosphere.mean_molecular_mass"),
+        )
+    } else {
+        0.0
+    };
+    (rate * 4.0 * PI * r * r).into()
+}
+
+/// F263: the gas the body lost to space through its life, Pa, as the pressure it would hold.
+pub fn atmosphere_escaped(c: &Ctx) -> Value {
+    let lost = air_escape_history(c).last().map_or(0.0, |p| p.1);
+    (lost * c.f64("body.gravity")).into()
+}
+
+/// F263: the body's surface pressure through its life, Pa, Gyr since it formed: its present
+/// pressure and the air it lost to space after, the ice of its air's main gas, which buffers
+/// it, spent first (its outgassing and its stores to come).
+pub fn atmosphere_pressure_history(c: &Ctx) -> Value {
+    let escape = air_escape_history(c);
+    let lost = escape.last().map_or(0.0, |p| p.1);
+    let (now, g) = (c.f64("atmosphere.surface_pressure"), c.f64("body.gravity"));
+    let main = c
+        .map("atmosphere.composition")
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(s, _)| s.as_str());
+    let ice = main
+        .and_then(|s| volatile(s).map(|v| c.map_get("volatiles.inventory", s) * v.liquid_density))
+        .unwrap_or(0.0);
+    let points = escape
+        .iter()
+        .map(|&(t, by)| (t, now + (lost - by - ice).max(0.0) * g))
+        .collect();
+    Curve::new(points).into()
 }
 
 /// F249: the warmest place's year-mean surface temperature: the mean raised by the year's

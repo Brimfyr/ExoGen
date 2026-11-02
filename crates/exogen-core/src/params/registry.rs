@@ -2093,6 +2093,64 @@ static NODES: &[NodeDef] = &[
         "Luger and Barnes 2015 (F262)",
     ),
     derived(
+        "atmosphere.escape_rate",
+        "atmosphere",
+        "Escape to space",
+        "kg/s",
+        1.0,
+        f(0.0, 1e12),
+        &[
+            "star.xuv_relative",
+            "body.mass",
+            "body.radius",
+            "atmosphere.mean_molecular_mass",
+            "atmosphere.surface_pressure",
+        ],
+        d::atmosphere_escape_rate,
+        "The air the body loses to space today: Mars's measured non-thermal escape over its surface, photochemical oxygen as the EUV to the 2.6, ions as the EUV, the photochemical by the share of hot oxygen the body's gravity lets go; at most the energy limit. Mars some 1.8 kg/s, Earth and Venus their ions alone.",
+        "Lillis et al. 2017; Jakosky et al. 2018 (F263)",
+    ),
+    derived(
+        "atmosphere.escaped",
+        "atmosphere",
+        "Air lost to space",
+        "bar",
+        1e5,
+        f(0.0, 1e12),
+        &[
+            "star.xuv_history",
+            "body.mass",
+            "body.radius",
+            "body.gravity",
+            "atmosphere.mean_molecular_mass",
+            "atmosphere.surface_pressure",
+        ],
+        d::atmosphere_escaped,
+        "The air the body lost to space through its life, as the pressure it held, its escape today's at its XUV then.",
+        "Lillis et al. 2017; Jakosky et al. 2018 (F263)",
+    ),
+    derived(
+        "atmosphere.pressure_history",
+        "atmosphere",
+        "Pressure history",
+        "Pa",
+        1.0,
+        ValueType::Curve,
+        &[
+            "star.xuv_history",
+            "body.mass",
+            "body.radius",
+            "body.gravity",
+            "atmosphere.mean_molecular_mass",
+            "atmosphere.surface_pressure",
+            "atmosphere.composition",
+            "volatiles.inventory",
+        ],
+        d::atmosphere_pressure_history,
+        "The surface pressure over the body's life, Gyr since it formed: its present pressure and the air it lost to space after, the ice of its air's main gas spent first, Pluto's and Triton's nitrogen keeping their pressure. Its outgassing and its stores are still to come.",
+        "F263",
+    ),
+    derived(
         "atmosphere.greenhouse_optical_depth",
         "atmosphere",
         "Greenhouse optical depth",
@@ -4042,6 +4100,71 @@ mod tests {
         let d = (luminosity / (4.0 * std::f64::consts::PI * 900.0)).sqrt();
         g.set("orbit.semi_major_axis", d).unwrap();
         g
+    }
+
+    /// F263: Mars loses its air as MAVEN measures it today, some 1.8 kg/s, and, its escape
+    /// rising with its Sun's EUV, held more of it the further back: some half a bar 3.5 Ga
+    /// (Lillis et al. 2017's extrapolation, 0.48 bar over the last 3.5 Gyr), more before.
+    /// Hot oxygen does not escape the Earth or Venus, which lose their ions alone, a small
+    /// share of their air through their lives; Pluto's and Triton's nitrogen ice pays for what
+    /// they lose and keeps their pressure.
+    #[test]
+    fn the_air_lost_to_space_through_the_bodies_lives() {
+        let mars = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let rate = mars.f64("atmosphere.escape_rate");
+        assert!((1.4..2.2).contains(&rate), "Mars escapes {rate} kg/s");
+        let age = mars.f64("body.age");
+        let history = mars.curve("atmosphere.pressure_history").unwrap();
+        assert!(history.points.windows(2).all(|w| w[1].1 <= w[0].1));
+        let now = mars.f64("atmosphere.surface_pressure");
+        assert!((history.eval(age) - now).abs() < 1e-9 * now);
+        let ago = |gyr: f64| history.eval(age - gyr) / 1e5;
+        println!(
+            "Mars: {rate:.2} kg/s today; {:.3} bar 1 Ga, {:.3} 3 Ga, {:.3} 3.5 Ga, {:.3} 3.6 Ga, {:.3} 3.8 Ga, {:.2} 4.0 Ga, {:.1} when it formed; {:.1} bar lost",
+            ago(1.0),
+            ago(3.0),
+            ago(3.5),
+            ago(3.6),
+            ago(3.8),
+            ago(4.0),
+            history.eval(0.0) / 1e5,
+            mars.f64("atmosphere.escaped") / 1e5
+        );
+        assert!(
+            (0.2..1.0).contains(&ago(3.5)),
+            "Mars at 3.5 Ga {}",
+            ago(3.5)
+        );
+        assert!(
+            recombination_escape_share_of(&mars) > 0.6,
+            "Mars's hot oxygen escapes"
+        );
+        for name in ["Earth", "Venus", "Titan", "Pluto", "Triton"] {
+            let g = crate::presets::preset(name).unwrap().to_graph().0;
+            let share =
+                g.f64("atmosphere.escaped") / g.f64("atmosphere.surface_pressure").max(1e-30);
+            println!(
+                "{name}: {:.3e} kg/s today, {share:.3e} of its air lost through its life; hot oxygen escaping {:.3}",
+                g.f64("atmosphere.escape_rate"),
+                recombination_escape_share_of(&g)
+            );
+            if matches!(name, "Earth" | "Venus") {
+                assert!(recombination_escape_share_of(&g) < 1e-6, "{name}");
+                assert!(share < 0.2, "{name} lost {share} of its air");
+            }
+            // Their nitrogen ice, which buffers their air, pays for what escapes.
+            if matches!(name, "Pluto" | "Triton") {
+                let history = g.curve("atmosphere.pressure_history").unwrap();
+                assert!(history.is_constant(), "{name}'s pressure through its life");
+            }
+        }
+    }
+
+    fn recombination_escape_share_of(g: &ParamGraph) -> f64 {
+        super::super::derive::physics::recombination_escape_share(
+            g.f64("body.mass"),
+            g.f64("body.radius"),
+        )
     }
 
     /// F262: TRAPPIST-1e, through its runaway greenhouse's 0.34 Gyr under some 400 to 2000 times

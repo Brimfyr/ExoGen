@@ -124,6 +124,25 @@ pub const ESCAPE_EFFICIENCY: f64 = 0.1;
 /// Kasting 1986; Luger and Barnes 2015).
 pub const THERMOSPHERE_TEMPERATURE: f64 = 400.0;
 pub const H_O_DIFFUSION: (f64, f64) = (4.8e19, 0.75);
+/// F263: the heavy atoms Mars loses to space today, measured by MAVEN, per second, and the
+/// power of its EUV each rate follows: its photochemical oxygen, hot atoms from its
+/// ionosphere's O2+ recombining, 4.3e25 over the modern era's mean EUV, as the EUV to the
+/// 2.6 +- 0.6 (Lillis et al. 2017); its oxygen ions, 5e24 (Jakosky et al. 2018), rising with
+/// the EUV by about its own factor (Dong Y. et al. 2017). Its sputtering, 5e23 to 3e24 by the
+/// analysis and with no measured scaling, is left out (Leblanc et al. 2018; Jakosky et al.
+/// 2018), as its photochemical carbon, some 1e24 (Lo et al. 2021).
+pub const MARS_PHOTOCHEMICAL_ESCAPE: (f64, f64) = (4.3e25, 2.6);
+pub const MARS_ION_ESCAPE: (f64, f64) = (5e24, 1.0);
+/// F263: Mars's mass, kg, radius, m, and distance from the Sun, AU, where its escape was
+/// measured.
+pub const MARS_MASS: f64 = 6.4171e23;
+pub const MARS_RADIUS: f64 = 3.3895e6;
+pub const MARS_DISTANCE_AU: f64 = 1.5237;
+/// F263: the energy an O2+ ion's dissociative recombination gives each of its two oxygen
+/// atoms, eV, and the channel's share: O(3P)+O(3P) 6.99 eV, O(1D)+O(3P) 5.02, O(1D)+O(1D) 3.06
+/// and O(1D)+O(1S) 0.83 shared between them (Fox and Ha 2009, as Lillis et al. 2017 take them).
+pub const O2_RECOMBINATION: [(f64, f64); 4] =
+    [(3.495, 0.265), (2.51, 0.473), (1.53, 0.204), (0.415, 0.058)];
 
 /// F260: the luminosities of low-mass stars through their lives, the BHAC15 tracks (Baraffe et
 /// al. 2015): log10 of L/Lsun at log10 ages, years, from BHAC15_LOG_AGE_FIRST (1 Myr) every

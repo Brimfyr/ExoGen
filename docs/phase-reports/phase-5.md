@@ -330,3 +330,15 @@ How it went:
 - **TRAPPIST-1e.** It loses 12.5 Earth oceans through its 0.34 Gyr in the runaway, from 36.8 km of water to its present 2.7, and leaves 1805 bar of oxygen: Luger and Barnes's several oceans and up to 2000 bar. Bourrier et al. 2017, with a third of the model's XUV held at a constant share of its light, find 2.1 to 2.5 oceans by its entry into the habitable zone.
 - **The Earth** keeps its water, never past the runaway's flux.
 - **Not yet:** the photolysis's and the diffusion's limits; the oxygen's sinks; Venus's water.
+
+## The twenty-seventh milestone: the air lost to space through the body's life
+
+- **F263.** Every body loses its air as Mars does today, measured by MAVEN: its photochemical oxygen as the EUV to the 2.6, by the share of hot oxygen its gravity lets go, and its oxygen ions as the EUV; at most the energy limit. The air's escape today and through the life, and the pressure history it gives.
+
+How it went:
+
+- **The choice** (the user): Mars's measured rates applied to every body, scaled by its gravity and XUV, over thermal escape alone, which misses Mars's main loss.
+- **Mars.** 1.73 kg/s today; 0.36 bar 3.5 Ga, against Lillis et al.'s extrapolated 0.48; 0.44 3.6 Ga, under Kite et al.'s 0.9 bar; 0.69 3.8 Ga and 1.28 4.0 Ga. Before some 4.4 Ga the energy limit holds and the air the present would need climbs to 52 bar: an upper bound the outgassing lowers.
+- **Earth and Venus** keep their hot oxygen and lose their ions, at some 4 and 30 times their measured rates, a small share of their air; **Pluto and Triton** keep their pressure, their nitrogen ice paying.
+- **Outgassing, staged.** Applied with the Earth's measured juvenile yields, Mars's model outgasses some 0.6 to 0.9 bar after 3.5 Ga, as much as it loses: the budget needs its stores of carbonate, and the Earth's its weathering, so the outgassing comes with them (F264).
+- **Not yet:** the outgassing and its stores; light gases' thermal escape; sputtering; hydrogen's escape outside a runaway.
