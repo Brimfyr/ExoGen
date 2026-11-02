@@ -371,3 +371,13 @@ Rendered at 2,048 px at 7a94bd4 (Mars, Pluto, Triton, TRAPPIST-1e and the Earth)
 
 **The review page:** https://claude.ai/artifact/MPH4ptNVN4GruAwFLmv2Se, awaiting the user's review.
 
+## The twenty-ninth milestone: a shield's flanks shed no more than they hold
+
+- **F265.** Found by the gate check (the user: fix it before 5C): a failing flank sheds no more than the toe beyond its innermost scarp, the rest of the supply erupting as the region's floods, and no aureole lobe stands thicker than a fifth of its fall, a thicker one spreading wider and farther.
+
+How it went:
+
+- **The old Earth-like.** At TRAPPIST-1's measured 7.6 Gyr its lid stalls and its great shields shed all the supply their crust could not hold as landslides 30 to 280 km thick. Its relief now runs -9.1 to 12.6 km where it ran to 153, its temperatures 184 to 310 K where they fell to -550.
+- **Olympus Mons.** Its aureole's lobes stand 0.9 to 2.0 km where 2.4 to 6.5, and run up to 600 km, nearer the measured 1 to 2 km and 700 km; its scarp as before.
+- **A shield beyond its foot.** The wider aureoles took a shield's lobed outline past its foot, where its form turned back and drew no number at 2,137 of Mars's cells: past the foot the share now keeps rising.
+- **Not yet:** a great shield's own slope where its crust holds little.

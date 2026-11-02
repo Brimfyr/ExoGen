@@ -346,11 +346,22 @@ impl Shield {
 
     /// A point's share of the way from the summit to the edifice's foot (F101): the
     /// core's ellipse on the upper flanks, the lobing coming in as the square of the
-    /// distance, so that the summit stays round and the foot is lobed.
+    /// distance, so that the summit stays round and the foot is lobed. Past the foot it
+    /// keeps rising with the distance (F265), where the lobing's form turns back: below
+    /// one again, an edifice drawn far beyond its foot, or below none.
     fn reach_share(&self, r: f64, phi: f64) -> f64 {
         let (core, lobing) = self.outline(phi);
         let u = r / core;
-        u / (1.0 + lobing * u * u)
+        let foot = if lobing.abs() < 1e-9 {
+            1.0
+        } else {
+            (1.0 - (1.0 - 4.0 * lobing).sqrt()) / (2.0 * lobing)
+        };
+        if u >= foot {
+            u / foot
+        } else {
+            u / (1.0 + lobing * u * u)
+        }
     }
 
     /// The edifice's radius toward an azimuth, to its foot, m.
@@ -785,7 +796,10 @@ fn edifice_volume(shield: &Shield, kept: impl Fn(f64, f64) -> f64) -> f64 {
 /// what its crust holds pushes as much of its toe out beyond its foot, the scarp where the
 /// toe breaks away standing at the share of the reach that leaves that much beyond it; the
 /// toe and the lava together lie beyond it in lobes, each as far as a rock avalanche of its
-/// volume runs for the scarp's height.
+/// volume runs for the scarp's height. F265: the flanks shed no more than the toe beyond
+/// their innermost scarp, the rest of the supply erupting as the region's floods; and no
+/// lobe stands thicker than AUREOLE_THICKNESS_SHARE of its fall, a thicker one spreading
+/// wider and farther until it does. The failure's `spread` is what it sheds.
 fn flank_failure(shield: &Shield, spread: f64, rng: &Rng, draw: u64) -> Failure {
     let whole = edifice_volume(shield, |_, _| 1.0);
     let toe = |at: f64| {
@@ -793,6 +807,7 @@ fn flank_failure(shield: &Shield, spread: f64, rng: &Rng, draw: u64) -> Failure 
         whole - edifice_volume(shield, |u, _| 1.0 - smooth(u, at, at + wall))
     };
     let (mut lo, mut hi) = (0.3f64, 0.999f64);
+    let spread = spread.min(toe(lo));
     if toe(lo) <= spread {
         hi = lo;
     } else {
@@ -841,18 +856,28 @@ fn flank_failure(shield: &Shield, spread: f64, rng: &Rng, draw: u64) -> Failure 
         let volume = aureole * weights[j] / weight;
         let (slope, intercept) = AUREOLE_MOBILITY;
         let reach = 10f64.powf(slope * volume.max(1.0).log10() + intercept);
-        let run = fall / reach.max(1e-6);
-        let width = root * (0.425 * size).min(std::f64::consts::FRAC_PI_2).sin();
+        let mut run = fall / reach.max(1e-6);
+        let mut width = root * (0.425 * size).min(std::f64::consts::FRAC_PI_2).sin();
         // Its volume over its shape, (1 − x²) along and (1 − q²)^1.5 across a half width
         // widening by LANDSLIDE_SPREAD.
         let shape =
             3.0 * std::f64::consts::PI / 8.0 * width * run * (2.0 / 3.0 + LANDSLIDE_SPREAD / 4.0);
+        let mut peak = volume / shape.max(1.0);
+        // A lobe its volume would stand thicker than its fall holds spreads wider and
+        // farther, keeping its shape, until it stands at it (F265).
+        let most = AUREOLE_THICKNESS_SHARE * fall;
+        if peak > most {
+            let k = (peak / most).sqrt();
+            run *= k;
+            width *= k;
+            peak = most;
+        }
         lobes.push(AureoleLobe {
             azimuth,
             root,
             width,
             run,
-            peak: volume / shape.max(1.0),
+            peak,
             spacing: AUREOLE_RIDGE_SPACING * (0.7 + 0.6 * rng.uniform(draw, 60 + j as u64)),
             phase: std::f64::consts::TAU * rng.uniform(draw, 80 + j as u64),
         });
@@ -1865,13 +1890,9 @@ impl PlumeProcess {
                 let design = radius * SHIELD_SLOPE_DEG.to_radians().tan();
                 if design > height * (1.0 + 1e-9) {
                     let spread = shield.volume * (design / height - 1.0);
-                    shield.failure = Some(flank_failure(
-                        &shield,
-                        spread,
-                        &rng,
-                        draw ^ 0xA0E0_1E00_0000,
-                    ));
-                    shield.volume += spread;
+                    let failure = flank_failure(&shield, spread, &rng, draw ^ 0xA0E0_1E00_0000);
+                    shield.volume += failure.spread;
+                    shield.failure = Some(failure);
                 }
                 shields.push(shield);
                 before += volume(k as usize);
@@ -4267,7 +4288,7 @@ mod tests {
             "{}",
             failure.scarp
         );
-        assert_eq!(failure.spread, spread);
+        assert_eq!(failure.spread, spread, "its toe holds all its spread");
         let n = failure.lobes.len();
         assert!((AUREOLE_LOBES.0..=AUREOLE_LOBES.1).contains(&n), "{n}");
         shield.failure = Some(failure.clone());
@@ -4279,12 +4300,18 @@ mod tests {
             "{:.3e} toe, {spread:.3e} spread",
             whole - kept
         );
-        // Each scarp kilometres high, each lobe as far as its volume runs for its fall.
+        // Each scarp kilometres high, each lobe as far as its volume runs for its fall, and
+        // no thicker than a share of its fall (F265).
         for l in &failure.lobes {
             let at = failure.scarp_at(shield.id, l.azimuth);
             let fall = shield.height * shield_shape(at);
             assert!(fall > 2e3 && fall < 12e3, "{fall}");
             assert!(l.run > 100e3 && l.run < 1_200e3, "{}", l.run);
+            assert!(
+                l.peak <= AUREOLE_THICKNESS_SHARE * fall * (1.0 + 1e-9),
+                "{}",
+                l.peak
+            );
         }
         // The aureole holds the toe and the lava together, twice the spread.
         let grid = CubeSphere::new(256);
@@ -4358,6 +4385,107 @@ mod tests {
             }
         }
         assert!(failed >= 1);
+    }
+
+    /// F265: a shield's flanks shed no more than they can hold. On the Earth-like at
+    /// TRAPPIST-1e's 7.6 Gyr, its lid stalled into a stagnant one, its great shields' slope
+    /// would build them up to 55 km where its crust holds 9.5: they shed no more than the toe
+    /// beyond their innermost scarp, and their aureoles' lobes stand at most a fifth of their
+    /// fall, where they stood up to 280 km thick; Olympus Mons's lobes stand some 1 to 2 km
+    /// as its own do (DLR and ESA 2023).
+    #[test]
+    fn a_shield_sheds_no_more_than_its_flanks_hold() {
+        let mars = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let mut old = crate::presets::preset("Earth").unwrap().to_graph().0;
+        old.set("star.mass", 0.0898).unwrap();
+        old.set("star.age", 7.6).unwrap();
+        old.set("orbit.semi_major_axis", 4.429951e9).unwrap();
+        old.set("orbit.eccentricity", 0.0).unwrap();
+        old.set("satellite.mass", 0.0).unwrap();
+        old.set("rotation.obliquity", 0.0).unwrap();
+        old.set("rotation.period", 536633.3).unwrap();
+        for (name, g) in [("Mars", &mars), ("old Earth-like", &old)] {
+            let thermal = ThermalHistory::from_graph(g);
+            let Some(p) = PlumeProcess::new(g, CubeSphere::new(64), &thermal, None) else {
+                continue;
+            };
+            println!(
+                "{name}: relief held {:.1} km",
+                g.f64("interior.max_relief") / 1e3
+            );
+            for s in &p.shields {
+                let Some(f) = &s.failure else { continue };
+                let design = s.radius * SHIELD_SLOPE_DEG.to_radians().tan();
+                let lobes: Vec<String> = f
+                    .lobes
+                    .iter()
+                    .map(|l| {
+                        format!(
+                            "{:.1} km thick, {:.0} km run, {:.0} km wide",
+                            l.peak / 1e3,
+                            l.run / 1e3,
+                            2.0 * l.width / 1e3
+                        )
+                    })
+                    .collect();
+                println!(
+                    "  shield {}: {:.0} km across, {:.1} km high, design {:.1} km, edifice {:.2e} km3, spread {:.2e} km3, scarp at {:.2}; lobes {}",
+                    s.id,
+                    2.0 * s.radius / 1e3,
+                    s.height / 1e3,
+                    design / 1e3,
+                    (s.volume - f.spread) / 1e9,
+                    f.spread / 1e9,
+                    f.scarp,
+                    lobes.join("; ")
+                );
+                assert!(
+                    f.spread <= s.volume - f.spread,
+                    "{name}'s shield {} sheds past its edifice",
+                    s.id
+                );
+                for l in &f.lobes {
+                    let fall = s.height * shield_shape(f.scarp_at(s.id, l.azimuth));
+                    assert!(
+                        l.peak <= AUREOLE_THICKNESS_SHARE * fall * (1.0 + 1e-9),
+                        "{name}: {}",
+                        l.peak
+                    );
+                }
+                if name == "Mars" && s.id == 0 {
+                    assert!(
+                        f.lobes.iter().all(|l| l.peak < 2.5e3),
+                        "Olympus Mons's lobes"
+                    );
+                }
+            }
+        }
+    }
+
+    /// F265: a shield's edifice stands nowhere past its foot, however far its aureole reaches:
+    /// its lobed outline's form, turning back beyond the foot, drew it again far out, or as
+    /// no number at all, once Olympus Mons's aureole reached 1,300 km.
+    #[test]
+    fn a_shield_stands_nowhere_past_its_foot() {
+        let g = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let thermal = ThermalHistory::from_graph(&g);
+        let grid = CubeSphere::new(256);
+        let p = PlumeProcess::new(&g, grid, &thermal, None).unwrap();
+        let r = g.f64("body.radius");
+        for s in p.shields.iter().filter(|s| s.failure.is_some()) {
+            let mut stamper = crate::crater::Stamper::new(&grid);
+            stamper.gather(&grid, r, s.center, s.cap_radius(r) * r);
+            for &(idx, _, _) in &stamper.footprint {
+                let d = grid.center(grid.cell(idx));
+                let h = shield_height(s, d, r, false, 0.0, 1.0);
+                assert!(h.is_finite(), "shield {}", s.id);
+                let (rr, phi) = s.polar(d, r);
+                if rr > s.radius_toward(phi) * 1.001 {
+                    assert_eq!(h, 0.0, "shield {} past its foot", s.id);
+                }
+                assert!(aureole_thickness(s, d, r, 0.0, false).is_finite());
+            }
+        }
     }
 
     /// A preset's plume with its shields' supply scheduled from its floods over `steps`

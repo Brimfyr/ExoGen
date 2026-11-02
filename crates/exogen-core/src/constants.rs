@@ -760,6 +760,11 @@ pub const SCARP_WARP: f64 = 0.06;
 pub const SCARP_WALL_SLOPE_DEG: f64 = 30.0;
 pub const AUREOLE_LOBES: (usize, usize) = (4, 7);
 pub const AUREOLE_MOBILITY: (f64, f64) = (-0.15666, 0.62419);
+/// F265: the thickest an aureole's lobe stands against the fall its toe broke away from,
+/// Olympus Mons's lobes some 1 to 2 km thick, more than 2 km where two overlap, under its
+/// basal scarp 6 to 10 km high (DLR and ESA 2023), a stated share: a lobe its volume would
+/// stand thicker spreads wider and farther until it stands at it.
+pub const AUREOLE_THICKNESS_SHARE: f64 = 0.2;
 pub const AUREOLE_RIDGE_SPACING: f64 = 12e3;
 pub const AUREOLE_RIDGE_SHARE: f64 = 0.15;
 pub const AUREOLE_RIDGE_WARP: f64 = 1.0;
