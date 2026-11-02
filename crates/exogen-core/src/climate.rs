@@ -421,19 +421,22 @@ impl Seas {
         }
     }
 
+    /// `rows` read between the places about a direction that have a sea (F266).
     fn read(&self, rows: &[f64], d: [f64; 3]) -> f64 {
+        self.corners(d).iter().map(|&(p, w)| w * rows[p]).sum()
+    }
+
+    /// The places about a direction with their weights, those with a sea among them (F266).
+    fn corners(&self, d: [f64; 3]) -> [(usize, f64); 4] {
         let (lon, lat) = lon_lat_from_direction(d);
-        match self.layout.1 {
-            1 => read_row(rows, lat),
-            n => read_grid(rows, n, lat, lon),
-        }
+        self.margin
+            .ground(&reader(self.layout.0, self.layout.1, lat, lon))
     }
 
     /// How far into the ice a direction stands where the places about it differ (F251), and
     /// those places with their weights.
     fn edge(&self, d: [f64; 3]) -> Option<(f64, [(usize, f64); 4])> {
-        let (lon, lat) = lon_lat_from_direction(d);
-        let corners = reader(self.layout.0, self.layout.1, lat, lon);
+        let corners = self.corners(d);
         let depth = self.margin.depth(&corners, self.guide.at(d))?;
         Some((depth, corners))
     }
@@ -512,13 +515,20 @@ impl Guide {
 /// the edge over MARGIN_SMOOTHING spacings of the places, so that it runs along the guide's
 /// isoline round its regions rather than along the layout's steps, as the caps' edges follow
 /// their traps read smoothly between the climate's cells (F241). The ice thins to its edge
-/// over half the guide's step between the two places.
+/// over half the guide's step between the two places. F266: each edge counts by the share of
+/// its ground, the sea's or the land's, the less of its two places hold, in the smoothing and
+/// in where it stands: a place stands at the edge by the most such share with a place of the
+/// other kind beside it, and a point reads the guided edge by how much of the places about it
+/// stand at it, the places' own ice for the rest; so that a coastal place's sliver of sea,
+/// frozen by the land about it, neither pins the edge to the places' steps nor ends the
+/// guide's reach along a line between them.
 #[derive(Clone, Debug)]
 struct Margin {
     /// Whether the ice holds at each place, none where the place has none of its ground.
     held: Vec<Option<bool>>,
-    /// Whether a place of the other kind stands beside each place.
-    beside: Vec<bool>,
+    /// How far each place stands at the ice's edge, 0 to 1: the most share of its ground it
+    /// and a place of the other kind beside it both hold.
+    beside: Vec<f64>,
     /// At each place near the edge: the guide the edge stands at and the guide over which the
     /// ice thins to it, smoothed along it, and the nearest place under ice and open place;
     /// NaN and none elsewhere.
@@ -528,7 +538,12 @@ struct Margin {
 }
 
 impl Margin {
-    fn new((n_lat, n_lon): (usize, usize), held: Vec<Option<bool>>, guide: &Guide) -> Margin {
+    fn new(
+        (n_lat, n_lon): (usize, usize),
+        held: Vec<Option<bool>>,
+        shares: &[f64],
+        guide: &Guide,
+    ) -> Margin {
         let n = n_lat * n_lon;
         let lat_of = |p: usize| -PI / 2.0 + PI * (p / n_lon) as f64 / (n_lat - 1) as f64;
         let lon_of = |p: usize| -PI + TAU * (p % n_lon) as f64 / n_lon as f64;
@@ -565,16 +580,16 @@ impl Margin {
             out
         };
         // The edge between each place under ice and each open place beside it whose guide is
-        // the warmer: its guide, half the step, where it stands, and the two places.
-        let mut links: Vec<(f64, f64, [f64; 3], f64, usize, usize)> = Vec::new();
-        let mut beside = vec![false; n];
+        // the warmer.
+        let mut links: Vec<Link> = Vec::new();
+        let mut beside = vec![0.0f64; n];
         for p in 0..n {
             let Some(here) = held[p] else { continue };
             for q in neighbours(p) {
                 if held[q] != Some(!here) {
                     continue;
                 }
-                beside[p] = true;
+                beside[p] = beside[p].max(shares[p].min(shares[q]).max(0.0));
                 if !here {
                     continue;
                 }
@@ -588,7 +603,14 @@ impl Margin {
                 let norm = (mid[0] * mid[0] + mid[1] * mid[1] + mid[2] * mid[2]).sqrt();
                 let lat = 0.5 * (lat_of(cold) + lat_of(warm));
                 let at = [mid[0] / norm, mid[1] / norm, mid[2] / norm];
-                links.push((values[cold] + 0.5 * step, 0.5 * step, at, lat, cold, warm));
+                links.push(Link {
+                    guide: values[cold] + 0.5 * step,
+                    half: 0.5 * step,
+                    at,
+                    lat,
+                    places: (cold, warm),
+                    share: shares[cold].min(shares[warm]).max(0.0),
+                });
             }
         }
         // Smoothed along the edge: a fast spinner's by latitude alone.
@@ -599,18 +621,19 @@ impl Margin {
         for p in 0..n {
             let here = direction(p);
             let (mut sum, mut thin, mut total, mut best) = (0.0, 0.0, 0.0, (0.0, None));
-            for &(g, half, at, lat, cold, warm) in &links {
+            for l in &links {
                 let angle = match n_lon {
-                    1 => (lat_of(p) - lat).abs(),
+                    1 => (lat_of(p) - l.lat).abs(),
                     _ => {
+                        let at = l.at;
                         let dot = here[0] * at[0] + here[1] * at[1] + here[2] * at[2];
                         dot.clamp(-1.0, 1.0).acos()
                     }
                 };
-                let w = (-(angle / width).powi(2)).exp();
-                (sum, thin, total) = (sum + w * g, thin + w * half, total + w);
+                let w = l.share * (-(angle / width).powi(2)).exp();
+                (sum, thin, total) = (sum + w * l.guide, thin + w * l.half, total + w);
                 if w > best.0 {
-                    best = (w, Some((cold, warm)));
+                    best = (w, Some(l.places));
                 }
             }
             if total > MARGIN_REACH {
@@ -626,12 +649,52 @@ impl Margin {
         }
     }
 
+    /// The places about a point on the margin's ground, the sea's or the land's, with their
+    /// weights over their sum (F266): by a coast a point reads its own ground's places, not
+    /// the other's, which hold none of its ice; all of them where none is on its ground.
+    fn ground(&self, corners: &[(usize, f64); 4]) -> [(usize, f64); 4] {
+        let total: f64 = corners
+            .iter()
+            .filter(|&&(p, w)| w > 0.0 && self.held[p].is_some())
+            .map(|c| c.1)
+            .sum();
+        if total <= 0.0 {
+            return *corners;
+        }
+        corners.map(|(p, w)| {
+            (
+                p,
+                if self.held[p].is_some() {
+                    w / total
+                } else {
+                    0.0
+                },
+            )
+        })
+    }
+
     /// How far into the ice a point stands, its guide `at`, among `corners`, places with
-    /// their weights, one of them beside the ice's edge: 0 where its guide stands past the
-    /// edge's, rising to 1 half the guide's step into the ice; none where none is beside it.
+    /// their weights: by the guided edge, 0 where its guide stands past the edge's, rising to
+    /// 1 half the guide's step into the ice, as far as the places stand at the edge (F266),
+    /// and by the share of them the ice holds at for the rest; none where they are all of a
+    /// kind and none stands at the edge.
     fn depth(&self, corners: &[(usize, f64); 4], at: f64) -> Option<f64> {
-        let live = || corners.iter().filter(|c| c.1 > 0.0);
-        if !live().any(|&(p, _)| self.beside[p]) {
+        let live = || {
+            corners
+                .iter()
+                .filter(|&&(p, w)| w > 0.0 && self.held[p].is_some())
+        };
+        let total: f64 = live().map(|c| c.1).sum();
+        if total <= 0.0 {
+            return None;
+        }
+        let standing = live().map(|&(p, w)| w * self.beside[p]).sum::<f64>() / total;
+        let holds = live()
+            .filter(|&&(p, _)| self.held[p] == Some(true))
+            .map(|c| c.1)
+            .sum::<f64>()
+            / total;
+        if standing <= 0.0 && (holds <= 0.0 || holds >= 1.0) {
             return None;
         }
         let (mut edge, mut thin, mut weight) = (0.0, 0.0, 0.0);
@@ -642,7 +705,12 @@ impl Margin {
                 weight + w,
             );
         }
-        (weight > 0.0).then(|| ((edge - at * weight) / thin.max(1e-300)).clamp(0.0, 1.0))
+        let guided = if weight > 0.0 {
+            ((edge - at * weight) / thin.max(1e-300)).clamp(0.0, 1.0)
+        } else {
+            holds
+        };
+        Some(standing * guided + (1.0 - standing) * holds)
     }
 
     /// The places of a kind a point between places reads, `held` or open, with their
@@ -665,6 +733,19 @@ impl Margin {
             })
             .collect()
     }
+}
+
+/// An edge between a place under ice and an open place beside it (F251): its guide, half the
+/// guide's step between them, where it stands and its latitude, the two places, cold and
+/// warm, and the share of its ground the less of them holds (F266).
+#[derive(Clone, Copy, Debug)]
+struct Link {
+    guide: f64,
+    half: f64,
+    at: [f64; 3],
+    lat: f64,
+    places: (usize, usize),
+    share: f64,
 }
 
 /// A sea's mixed layer at a place (F244): the layer's temperature, K, its ice, kg/m², and
@@ -1161,7 +1242,7 @@ impl Cryosphere {
         } else {
             (&self.land, &self.land_margin, FROST_COVER_MASS)
         };
-        let corners = reader(self.layout.0, self.layout.1, lat, lon);
+        let corners = margin.ground(&reader(self.layout.0, self.layout.1, lat, lon));
         let depth = margin.depth(&corners, self.guide.at(d));
         if depth.is_some_and(|depth| depth <= 0.0) {
             return Window::default();
@@ -1908,6 +1989,11 @@ impl EnergyBalance {
         // whether it holds at each place with a sea.
         let guide = Guide::of(self, climate);
         let wet = |p: usize| layout.as_ref().is_some_and(|l| l.places[p].sea > 0.0);
+        // The share of each place's ground the sea holds and the land does (F266).
+        let sea_shares: Vec<f64> = (0..n_lat * n_lon)
+            .map(|p| layout.as_ref().map_or(0.0, |l| l.places[p].sea))
+            .collect();
+        let land_shares: Vec<f64> = sea_shares.iter().map(|s| 1.0 - s).collect();
         let held = |holds: &dyn Fn(usize) -> bool| -> Vec<Option<bool>> {
             (0..n_lat * n_lon)
                 .map(|p| wet(p).then(|| holds(p)))
@@ -1942,7 +2028,12 @@ impl EnergyBalance {
                     .collect()
             };
             let (land, sea) = (windows(0), windows(1));
-            let sea_margin = Margin::new((n_lat, n_lon), held(&|p| sea[p].peak > 0.0), &guide);
+            let sea_margin = Margin::new(
+                (n_lat, n_lon),
+                held(&|p| sea[p].peak > 0.0),
+                &sea_shares,
+                &guide,
+            );
             let dry = |p: usize| layout.as_ref().is_some_and(|l| l.places[p].sea < 1.0);
             let land_held = (0..places)
                 .map(|p| dry(p).then(|| land[p].peak > 0.0))
@@ -1954,7 +2045,7 @@ impl EnergyBalance {
                 snapshot: (self.snapshot / TAU / orbits as f64 - equinox).rem_euclid(1.0),
                 guide: guide.clone(),
                 sea_margin,
-                land_margin: Margin::new((n_lat, n_lon), land_held, &guide),
+                land_margin: Margin::new((n_lat, n_lon), land_held, &land_shares, &guide),
                 curves: [0, 1].map(|j| year_curve(&masses[j], steps, covers[j])),
             }
         });
@@ -2056,6 +2147,7 @@ impl EnergyBalance {
             margin: Margin::new(
                 (n_lat, n_lon),
                 held(&|p| rows[p].sea[3] > SEA_ICE_COVER_MASS * std::f64::consts::LN_2),
+                &sea_shares,
                 &guide,
             ),
             guide: guide.clone(),

@@ -381,3 +381,14 @@ How it went:
 - **Olympus Mons.** Its aureole's lobes stand 0.9 to 2.0 km where 2.4 to 6.5, and run up to 600 km, nearer the measured 1 to 2 km and 700 km; its scarp as before.
 - **A shield beyond its foot.** The wider aureoles took a shield's lobed outline past its foot, where its form turned back and drew no number at 2,137 of Mars's cells: past the foot the share now keeps rising.
 - **Not yet:** a great shield's own slope where its crust holds little.
+
+## The thirtieth milestone: the ice's edge at the coasts
+
+- **F266.** The user saw a hard, nearly right-angled turn in TRAPPIST-1e's seasonal ice and temperature where its open sea met its northern continent's tip. A place now stands at the ice's edge by the share of its ground it and a place of the other kind beside it both hold, and a point reads the guided edge by how much of the places about it stand there, the places' own ice for the rest, on its own ground only.
+
+How it went:
+
+- **The cause.** The sea's margin read its guided edge only where a place stood beside one of the other kind; a coastal place under ice stood beside open sea by a sliver of 0.01, so the points reading it opened their sea and their neighbours kept their ice, the switch along the places' column and row.
+- **The coast now.** The sea at the continent's tip keeps the ice the cold land holds it under and thins into the open sea over some ten degrees.
+- **Elsewhere.** The Earth's sea ice 12.30 percent of its sea where 12.26, its changes along its coasts.
+- **Tried first:** the edges weighted alone, and the reading on its own ground alone, which kept the switch.
