@@ -299,3 +299,14 @@ How it went:
 - **The obliquity's swing, tried and not kept.** At 35° Mars's summer pole is its warmest place; the swing's mean, ruled by its high epochs, laid half of its water in its southern mid-latitude basins. A polar deposit keeps through a high epoch under its lag: the swing waits for the lag, in 5E.
 - **Pluto and Triton.** Their nitrogen, moving in years, lies where the present season puts it, as before.
 - **Not yet:** the swing and the lag (5E); the caps' exchange at their own heights in the year.
+
+## The twenty-fourth milestone: the star and the climate through the body's life
+
+- **F260.** The star's light through the body's life by the BHAC15 tracks up to 1.4 solar masses, a low-mass star's bright contraction before its main sequence among them; the mean surface temperature through it under the present air; the time until which the body stood past the runaway greenhouse's flux.
+
+How it went:
+
+- **The star.** The tracks' share of the star's present luminosity at each time. The Sun shone at 0.69 of its present light when its planets formed. A red dwarf of TRAPPIST-1's mass stands on its track at 5.50e-4 of the Sun's light, against its measured 5.66e-4, and stood at 6.4 times that at 50 Myr.
+- **The climate.** Under its present air the young Earth stood at 249 K, below freezing until 2.52 Gyr after it formed: the faint young Sun's paradox, which the air's own history answers (F261).
+- **The runaway greenhouse.** By the star's effective temperature and the body's mass (Kopparapu et al. 2014), where the present albedo, a guess by pressure class, is not the steam's. TRAPPIST-1e ran away until 0.34 Gyr after it formed, where Bourrier et al. 2017 find TRAPPIST-1's planets' runaways ending after a few tens to a few hundred Myr; the Earth never did.
+- **Not yet:** the air's history (F261); the albedo's and the star's temperature's histories.

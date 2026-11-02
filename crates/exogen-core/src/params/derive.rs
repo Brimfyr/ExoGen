@@ -122,6 +122,40 @@ pub mod physics {
         "M9V".to_string()
     }
 
+    /// F260: a star's luminosity at an age, Gyr, on the BHAC15 tracks (Baraffe et al. 2015),
+    /// solar units: read linearly between the tracks' masses and in the logarithms of the
+    /// luminosity and the age; none for a mass beyond the tracks'.
+    pub fn track_luminosity(m: f64, age_gyr: f64) -> Option<f64> {
+        let n = BHAC15_MASSES.len();
+        if !(BHAC15_MASSES[0]..=BHAC15_MASSES[n - 1]).contains(&m) {
+            return None;
+        }
+        let i = BHAC15_MASSES[1..n - 1].partition_point(|&x| x <= m);
+        let wm = (m - BHAC15_MASSES[i]) / (BHAC15_MASSES[i + 1] - BHAC15_MASSES[i]);
+        let k = BHAC15_LOG_L[0].len();
+        let x = ((age_gyr.max(1e-9) * 1e9).log10() - BHAC15_LOG_AGE_FIRST) / BHAC15_LOG_AGE_STEP;
+        let x = x.clamp(0.0, (k - 1) as f64);
+        let j = (x.floor() as usize).min(k - 2);
+        let wa = x - j as f64;
+        let at = |row: &[f64]| row[j] * (1.0 - wa) + row[j + 1] * wa;
+        let log_l = at(&BHAC15_LOG_L[i]) * (1.0 - wm) + at(&BHAC15_LOG_L[i + 1]) * wm;
+        Some(10f64.powf(log_l))
+    }
+
+    /// F260: the runaway greenhouse's flux, W/m², about a star of effective temperature `teff`
+    /// for a planet of `mass_earths` (Kopparapu et al. 2014), read linearly in the logarithm of
+    /// the mass between their planets and held beyond them and their stars.
+    pub fn runaway_flux(teff: f64, mass_earths: f64) -> f64 {
+        let t = teff.clamp(RUNAWAY_TEFF.0, RUNAWAY_TEFF.1) - 5780.0;
+        let s = |c: &[f64; 5]| c[0] + t * (c[1] + t * (c[2] + t * (c[3] + t * c[4])));
+        let logs = RUNAWAY_MASSES.map(f64::log10);
+        let x = mass_earths.max(1e-12).log10();
+        let i = usize::from(x >= logs[1]);
+        let w = ((x - logs[i]) / (logs[i + 1] - logs[i])).clamp(0.0, 1.0);
+        let s_eff = s(&RUNAWAY_FLUX[i]) * (1.0 - w) + s(&RUNAWAY_FLUX[i + 1]) * w;
+        s_eff * L_SUN / (4.0 * PI * AU * AU)
+    }
+
     /// F4: XUV flux relative to the present Sun at 1 AU, at distance `d_au` from the star.
     pub fn xuv_relative(age_gyr: f64, d_au: f64) -> f64 {
         (age_gyr.max(XUV_SATURATION_AGE_GYR) / AGE_SUN_GYR).powf(XUV_AGE_EXPONENT) / (d_au * d_au)
@@ -657,17 +691,28 @@ pub fn star_xuv_relative(c: &Ctx) -> Value {
     xuv_relative(c.f64("star.age"), c.f64("orbit.star_distance") / AU).into()
 }
 
+/// F3, F260: the star's luminosity through the body's life, Gyr since the body formed, crowded
+/// toward its start: a star on the BHAC15 tracks (Baraffe et al. 2015), its bright contraction
+/// before its main sequence among them, by their luminosity's share of its present one; a
+/// heavier one by Gough's main-sequence brightening.
 pub fn star_luminosity_history(c: &Ctx) -> Value {
     let l_ref = c.f64("star.luminosity_reference");
     let t_ms = c.f64("star.main_sequence_lifetime");
+    let mass = c.f64("star.mass");
+    let present = c.f64("star.luminosity");
     let star_age = c.f64("star.age");
     let body_age = c.f64("body.age");
     let offset = star_age - body_age;
-    let n = 24;
+    let now = track_luminosity(mass, star_age).filter(|&l| l > 0.0);
+    let n = LUMINOSITY_HISTORY_POINTS;
     let points = (0..=n)
         .map(|k| {
-            let t = body_age * k as f64 / n as f64;
-            (t, luminosity_at_age(l_ref, offset + t, t_ms))
+            let t = body_age * (k as f64 / n as f64).powi(2);
+            let l = match (track_luminosity(mass, offset + t), now) {
+                (Some(then), Some(now)) => present * then / now,
+                _ => luminosity_at_age(l_ref, offset + t, t_ms),
+            };
+            (t, l)
         })
         .collect();
     Curve::new(points).into()
@@ -1978,6 +2023,67 @@ pub fn atmosphere_surface_temperature_mean(c: &Ctx) -> Value {
             0.0
         };
     surface_temperature(t_eq, tau_dry(&columns), water).into()
+}
+
+/// F260: the body's mean surface temperature through its life, K, Gyr since it formed: its
+/// zero-dimensional balance (F21) under its star's light then, its albedo and atmosphere the
+/// present's (their own histories wait for its escape and outgassing).
+pub fn atmosphere_surface_temperature_history(c: &Ctx) -> Value {
+    let t_eq = c.f64("atmosphere.equilibrium_temperature");
+    let present = c.f64("star.luminosity").max(1e-300);
+    let air = (c.f64("atmosphere.surface_pressure") > 0.0).then(|| {
+        let columns = species_columns(
+            c.map("atmosphere.composition"),
+            c.f64("atmosphere.column_mass"),
+        );
+        let water = c.map_get("volatiles.inventory", "H2O")
+            + if c.map_get("atmosphere.composition", "H2O") > 0.0 {
+                1.0
+            } else {
+                0.0
+            };
+        (tau_dry(&columns), water)
+    });
+    let points = c
+        .curve("star.luminosity_history")
+        .points
+        .iter()
+        .map(|&(t, l)| {
+            let t_eq = t_eq * (l / present).max(0.0).powf(0.25);
+            let surface = match air {
+                Some((tau, water)) => surface_temperature(t_eq, tau, water),
+                None => t_eq,
+            };
+            (t, surface)
+        })
+        .collect();
+    Curve::new(points).into()
+}
+
+/// F260: the time since the body formed, Gyr, until which its star's light stood past the
+/// runaway greenhouse's flux for its star and its mass (Kopparapu et al. 2014): a body of water
+/// and air, its water steam over it and no sea while its star was so bright, as a red dwarf's
+/// planets through its bright youth (Luger and Barnes 2015); none where it never did, or has
+/// no water or no air (an airless body's ice in its cold traps).
+pub fn atmosphere_runaway_until(c: &Ctx) -> Value {
+    let water = c.map_get("volatiles.inventory", "H2O") > 0.0
+        || c.map_get("atmosphere.composition", "H2O") > 0.0;
+    if !water || c.f64("atmosphere.surface_pressure") <= 0.0 {
+        return 0.0.into();
+    }
+    let limit = runaway_flux(c.f64("star.teff"), c.f64("body.mass") / M_EARTH);
+    let flux = c.f64("orbit.insolation") / c.f64("star.luminosity").max(1e-300);
+    let over = |l: f64| flux * l - limit;
+    let points = &c.curve("star.luminosity_history").points;
+    match points.iter().rposition(|&(_, l)| over(l) > 0.0) {
+        None => 0.0,
+        Some(i) if i + 1 == points.len() => points[i].0,
+        Some(i) => {
+            let ((t0, l0), (t1, l1)) = (points[i], points[i + 1]);
+            t0 + (t1 - t0) * over(l0) / (over(l0) - over(l1))
+        }
+    }
+    .into()
 }
 
 /// F249: the warmest place's year-mean surface temperature: the mean raised by the year's

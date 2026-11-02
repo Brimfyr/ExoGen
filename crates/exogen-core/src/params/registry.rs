@@ -557,12 +557,14 @@ static NODES: &[NodeDef] = &[
         &[
             "star.luminosity_reference",
             "star.main_sequence_lifetime",
+            "star.mass",
+            "star.luminosity",
             "star.age",
             "body.age",
         ],
         d::star_luminosity_history,
-        "Luminosity over the body's life, Gyr since the body formed.",
-        "Gough 1981 (F3)",
+        "Luminosity over the body's life, Gyr since the body formed: a star of up to 1.4 solar masses by the BHAC15 tracks, its bright contraction before its main sequence among them, a heavier one by its main sequence's brightening. The Sun 0.69 of its present when its planets formed, a red dwarf of 0.09 solar masses six times its present at 50 Myr.",
+        "Baraffe et al. 2015 (F260); Gough 1981 (F3)",
     ),
     // ------------------------------------------------------------------ orbit
     root(
@@ -1973,6 +1975,47 @@ static NODES: &[NodeDef] = &[
         d::atmosphere_surface_temperature_warmest,
         "The warmest place's year-mean: the mean raised by the year's sunlight's pattern, each spherical harmonic held by the radiation's slope and the transport. Earth's equator about 300, a body locked to its star its substellar point.",
         "North 1975 (F249)",
+    ),
+    derived(
+        "atmosphere.surface_temperature_history",
+        "atmosphere",
+        "Surface temperature history",
+        "K",
+        1.0,
+        ValueType::Curve,
+        &[
+            "atmosphere.equilibrium_temperature",
+            "atmosphere.surface_pressure",
+            "atmosphere.composition",
+            "atmosphere.column_mass",
+            "volatiles.inventory",
+            "star.luminosity",
+            "star.luminosity_history",
+        ],
+        d::atmosphere_surface_temperature_history,
+        "The mean surface temperature over the body's life, Gyr since it formed, under its star's light then, its albedo and atmosphere the present's: Earth's 249 K when it formed, frozen under the faint young Sun.",
+        "F21 (F260)",
+    ),
+    derived(
+        "atmosphere.runaway_until",
+        "atmosphere",
+        "Runaway greenhouse until",
+        "Gyr",
+        1.0,
+        f(0.0, 13.0),
+        &[
+            "volatiles.inventory",
+            "atmosphere.composition",
+            "atmosphere.surface_pressure",
+            "star.teff",
+            "body.mass",
+            "orbit.insolation",
+            "star.luminosity",
+            "star.luminosity_history",
+        ],
+        d::atmosphere_runaway_until,
+        "The time since the body formed until which its star's light stood past the runaway greenhouse's flux for its star and its mass: its water steam over it and no sea, as a red dwarf's planets through its bright youth. None where it never did, or it has no water or no air.",
+        "Kopparapu et al. 2014; Luger and Barnes 2015 (F260)",
     ),
     derived(
         "atmosphere.greenhouse_optical_depth",
@@ -3912,6 +3955,82 @@ mod tests {
             );
             assert!(!def.label.is_empty(), "{}", def.id);
         }
+    }
+
+    /// F260: the Sun shone at some 0.69 of its present light when its planets formed, 50 Myr
+    /// after it, and has brightened since (Baraffe et al. 2015); a red dwarf of TRAPPIST-1's
+    /// mass, 0.09 solar masses, at its measured 5.5e-4 of the Sun's today, contracted from six
+    /// times that at 50 Myr to its main sequence by 1 Gyr. Under it TRAPPIST-1e, at 900 W/m²,
+    /// stood past the runaway greenhouse's flux for some hundreds of Myr, as Bourrier et al.
+    /// 2017 find of the inner of TRAPPIST-1's planets in its habitable zone; Earth never did,
+    /// and at Venus's distance it does still.
+    #[test]
+    fn the_stars_light_through_their_bodies_lives() {
+        let earth = || crate::presets::preset("Earth").unwrap().to_graph().0;
+        let g = earth();
+        let now = g.f64("star.luminosity");
+        let history = g.curve("star.luminosity_history").unwrap();
+        let young = history.eval(0.0) / now;
+        assert!((0.66..0.72).contains(&young), "the young Sun {young}");
+        assert!((history.eval(g.f64("body.age")) / now - 1.0).abs() < 1e-9);
+        // From its main sequence's start, its least light, at some 50 Myr.
+        let main_sequence = history.points.iter().filter(|p| p.0 >= 0.1);
+        assert!(
+            main_sequence
+                .clone()
+                .zip(main_sequence.skip(1))
+                .all(|(a, b)| b.1 >= a.1)
+        );
+        assert_eq!(g.f64("atmosphere.runaway_until"), 0.0);
+        // The faint young Sun's paradox (Sagan and Mullen 1972): under its present air the
+        // young Earth froze.
+        let temperatures = g.curve("atmosphere.surface_temperature_history").unwrap();
+        let (formed, today) = (temperatures.eval(0.0), temperatures.eval(g.f64("body.age")));
+        let thaw = temperatures
+            .points
+            .windows(2)
+            .find(|w| w[1].1 >= 273.15)
+            .map_or(f64::NAN, |w| {
+                w[0].0 + (w[1].0 - w[0].0) * (273.15 - w[0].1) / (w[1].1 - w[0].1)
+            });
+        println!(
+            "Earth: {formed:.1} K when it formed, its present atmosphere held, thawed {thaw:.2} Gyr after, {today:.1} K today"
+        );
+        assert!(formed < 273.15 - 15.0, "the young Earth {formed}");
+        assert!((today - g.f64("atmosphere.surface_temperature_mean")).abs() < 1e-9);
+
+        let mut dwarf = earth();
+        dwarf.set("star.mass", 0.0898).unwrap();
+        dwarf.set("star.age", 7.6).unwrap();
+        let luminosity = dwarf.f64("star.luminosity");
+        let flux = 900.0;
+        dwarf
+            .set(
+                "orbit.semi_major_axis",
+                (luminosity * crate::constants::L_SUN / (4.0 * std::f64::consts::PI * flux)).sqrt(),
+            )
+            .unwrap();
+        let history = dwarf.curve("star.luminosity_history").unwrap();
+        let (young, grown) = (
+            history.eval(0.0) / luminosity,
+            history.eval(1.0) / luminosity,
+        );
+        assert!((5.0..8.0).contains(&young), "the young dwarf {young}");
+        assert!((0.95..1.1).contains(&grown), "the dwarf at 1 Gyr {grown}");
+        let runaway = dwarf.f64("atmosphere.runaway_until");
+        println!(
+            "TRAPPIST-1e: {luminosity:.2e} L_sun, teff {:.0} K, {young:.2} of it at 50 Myr, runaway until {runaway:.3} Gyr, {:.1} K when it formed",
+            dwarf.f64("star.teff"),
+            dwarf
+                .curve("atmosphere.surface_temperature_history")
+                .unwrap()
+                .eval(0.0)
+        );
+        assert!((0.15..0.6).contains(&runaway), "TRAPPIST-1e {runaway}");
+
+        let mut hot = earth();
+        hot.set("orbit.semi_major_axis", 0.723 * AU).unwrap();
+        assert_eq!(hot.f64("atmosphere.runaway_until"), hot.f64("body.age"));
     }
 
     #[test]
