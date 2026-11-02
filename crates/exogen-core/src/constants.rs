@@ -1843,14 +1843,27 @@ pub const SPIN_STEP_SHARE: f64 = 0.01;
 pub const SPIN_HISTORY_SAMPLES: usize = 64;
 /// F238: the sidereal period of a free spin when none is set, s: Earth's.
 pub const DEFAULT_ROTATION_PERIOD: f64 = 86_164.0;
-/// F239: the colours of the frosts the atmosphere's bulk gas lays, linear reflectance, their
-/// albedo in the energy balance their mean: carbon dioxide's between Mars's seasonal caps'
-/// 0.4 to 0.7 and its residual south cap's 0.8 (Paige and Ingersoll 1985), nitrogen's and
-/// methane's as Triton's and Pluto's bright plains, faintly pink (Buratti et al. 2017).
+/// F239: the colours of the frosts the atmosphere's bulk gas lays, linear reflectance:
+/// carbon dioxide's between Mars's seasonal caps' 0.4 to 0.7 and its residual south cap's 0.8
+/// (Paige and Ingersoll 1985), nitrogen's and methane's as Triton's and Pluto's bright plains,
+/// faintly pink (Buratti et al. 2017).
 pub const CO2_FROST_COLOUR: [f32; 3] = [0.68, 0.68, 0.70];
 pub const N2_FROST_COLOUR: [f32; 3] = [0.84, 0.80, 0.76];
 pub const CH4_FROST_COLOUR: [f32; 3] = [0.80, 0.76, 0.70];
-/// F239: the frost that hides the ground's colour, kg/m²: about a millimetre.
+/// F257: the frosts' albedos in the energy balance, apart from their colours: what they
+/// reflect of the whole of the star's light as they lie in spring, when their energy rules
+/// them. Carbon dioxide's between the measured broadband albedos of Mars's seasonal caps
+/// away from its residual cap, the north's typically 0.40 in TES's bolometric albedo
+/// (Kieffer and Titus 2001, as Piqueux et al. 2008 give it) and the south's brighter, the
+/// north's frost some ten times the dustier (Mars Climate Sounder, Gary-Bicas et al. 2020);
+/// its colour is its visible look over the caps' range. Nitrogen's and methane's their
+/// colours' means, kept until the volatile transport tests them against Pluto and Triton.
+pub const CO2_FROST_ALBEDO: f64 = 0.5;
+pub const N2_FROST_ALBEDO: f64 = 0.80;
+pub const CH4_FROST_ALBEDO: f64 = 0.75;
+/// F239: the frost that hides the ground's colour, kg/m²: about a millimetre. Its cover,
+/// 1 - exp(-m / FROST_COVER_MASS), is what the frost's energy reflects by (F257), what its
+/// window lies past at half and what its drawn colour shows.
 pub const FROST_COVER_MASS: f64 = 1.0;
 /// F239: the frost point each step of the frost's lockstep settles at, found to within
 /// FROST_POINT_TOLERANCE_K in at most FROST_POINT_ITERATIONS tries.

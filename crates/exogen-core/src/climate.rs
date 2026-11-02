@@ -233,7 +233,7 @@ pub struct Frost {
     pub point: f64,
     /// The latent heat of sublimation, J/kg.
     pub latent: f64,
-    /// The frost's albedo and colour.
+    /// The frost's albedo in the energy balance (F257) and its colour.
     pub albedo: f64,
     pub colour: [f32; 3],
     /// The gas's mean partial pressure, Pa, and its column over the body, kg/m².
@@ -273,7 +273,7 @@ impl Frost {
                     species: v.name,
                     point: saturation_temperature(v, partial),
                     latent: v.l_sub,
-                    albedo: (colour.iter().sum::<f32>() / 3.0) as f64,
+                    albedo: frost_albedo(v.name).unwrap_or(0.0),
                     colour,
                     partial,
                     column: columns.get(v.name).copied().unwrap_or(0.0),
@@ -709,8 +709,10 @@ impl Ice {
             .collect()
     }
 
+    /// The ice's albedo in the energy balance: a frost's apart from its colour (F257), water
+    /// ice's its colour's mean.
     pub fn albedo(&self) -> f64 {
-        (self.colour.iter().sum::<f32>() / 3.0) as f64
+        frost_albedo(self.species).unwrap_or((self.colour.iter().sum::<f32>() / 3.0) as f64)
     }
 }
 
@@ -800,6 +802,17 @@ fn frost_colour(species: &str) -> Option<[f32; 3]> {
         "CO2" => Some(CO2_FROST_COLOUR),
         "N2" => Some(N2_FROST_COLOUR),
         "CH4" => Some(CH4_FROST_COLOUR),
+        _ => None,
+    }
+}
+
+/// A gas's frost's albedo in the energy balance (F257), apart from its colour; none for a gas
+/// whose frost the model does not draw.
+fn frost_albedo(species: &str) -> Option<f64> {
+    match species {
+        "CO2" => Some(CO2_FROST_ALBEDO),
+        "N2" => Some(N2_FROST_ALBEDO),
+        "CH4" => Some(CH4_FROST_ALBEDO),
         _ => None,
     }
 }
@@ -3875,11 +3888,12 @@ impl Column {
 
     /// A step's trial under the frost (F239). While frost lies on the ground, or the ground
     /// would cool below the frost point, the ground stands at the point and the step's energy
-    /// sublimes or condenses frost instead, at its latent heat (Leighton and Murray 1966);
-    /// frost reflects at its own albedo, so the gains are the bare ground's and the frosted
-    /// ground's. The trial takes bare ground's step left to itself and, unless that leaves it
-    /// above `highest`, the column below a surface held at a point, which stands linear in the
-    /// point, so that the point may be settled after.
+    /// sublimes or condenses frost instead, at its latent heat (Leighton and Murray 1966); the
+    /// gains are the bare ground's and the frosted ground's, the ground under frost gaining
+    /// between them by the frost's cover (F257), as its colour shows it. The trial takes bare
+    /// ground's step left to itself and, unless that leaves it above `highest`, the column
+    /// below a surface held at a point, which stands linear in the point, so that the point
+    /// may be settled after.
     #[allow(clippy::too_many_arguments)]
     fn trial(
         &self,
@@ -3894,7 +3908,11 @@ impl Column {
     ) {
         tr.start = t[0];
         tr.clear = false;
-        tr.gain = if mass > 0.0 { frosted } else { bare };
+        tr.gain = if mass > 0.0 {
+            bare + (frosted - bare) * frost_cover(mass as f32)
+        } else {
+            bare
+        };
         if mass <= 0.0 {
             tr.free.copy_from_slice(t);
             self.step(&mut tr.free, w, dt, bare, bottom, olr);
@@ -4842,8 +4860,10 @@ mod tests {
                 f.point
             );
         }
+        // At 60° a third of the year or more: at 64° north from Ls 225 to Ls 12, 0.39 of the
+        // year (TES, Titus 2005).
         for lat in [-60.0, 60.0] {
-            assert!(at(&cycle.frost_share, lat, 0.0) > 0.4, "{lat}");
+            assert!(at(&cycle.frost_share, lat, 0.0) > 0.3, "{lat}");
         }
         for lat in [-30.0, 0.0, 30.0] {
             assert_eq!(at(&cycle.frost_share, lat, 0.0), 0.0, "{lat}");

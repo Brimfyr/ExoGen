@@ -263,3 +263,15 @@ How it went:
 - **The spreads.** Each place keeps its surface temperatures through its cycle as 64 quantiles. The Moon's equator's run from its night's to its noon's, their mean its mean.
 - **Io.** Its frost's noon under the ground's thermal inertia stands lower than the old balance's and falls faster with latitude, its vapour pressure at 30° 0.15 of the equator's where 0.26. Its frost shows over 29.1 percent of the surface where 27.0, the more between 10° and 45°; the plasma's red-brown begins where it did, and the shield's calibration holds.
 - **The renders.** Europa's albedo is unchanged and Ganymede's mean the same to 0.0001; Callisto's darkens by 0.0005 on average, a step of the 8-bit map at most and the more toward its poles, its graph's lag a hair wider, its Bond albedo 0.2075 where 0.2080, and through the ice's temperature its relaxation moves a little of its and Ganymede's terrain.
+
+## The twenty-first milestone: the frost's energy albedo
+
+- **F257.** The cryosphere review's third item: the frost's albedo in the energy balance apart from its colour, from measured broadband albedos, the thresholds its energy, its window and its drawn cover read made one, and its ageing.
+
+How it went:
+
+- **The albedo.** Carbon dioxide's frost reflected 0.69 in the energy balance, its colour's mean. It now reflects 0.5, between the measured broadband albedos of Mars's seasonal caps, the dusty north's typically 0.40 and the south's brighter; not fitted to the TES dates, against which it is checked. Nitrogen's and methane's keep their values until the volatile transport tests them.
+- **One cover.** The energy took the frost's albedo at the first gram, where the window counts frost past half its cover and the map draws it by its cover; now all three read the cover. The albedo's share changes nothing on its own, as the review found, a step laying more than a cover's frost at once.
+- **The emission, tried and not kept.** Radiating by the cover too, a thin nitrogen frost cooled as bare ground and a thick one at its own low emissivity, so that the frost held at about its cover's mass over a third of Pluto and a fifth of Triton and flickered across its window's threshold, 3.5 percent of Triton turning at once, and Pluto's pressure fell from 0.87 Pa to 0.55 against the 1 Pa or so measured. A frost's transparency in the far infrared is not its visible cover; the frost radiates at its own emissivity, as before.
+- **Mars.** At 64° north the frost leaves at Ls 39 where 77, against Ls 12 measured; its edges stand at 61.3° north at Ls 26 and 53.2° south at Ls 180, where 54.8 and 49.8, against about 66 and 59; its pressure swings as before. The north's summer holds no carbon dioxide frost for a quarter of its year, as Mars's from Ls 90 to its autumn.
+- **The ageing** goes to 5D with the dust: the frost darkens with the dust it gathers, Mars's northern frost some ten times the dustier, and its grains grow into a translucent slab, the south's cryptic region; the measured spring albedo stands for both meanwhile.

@@ -586,6 +586,9 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | CYCLE_FAST_GRID (F254) | a stated choice: 2° in latitude as the zonal cycle's, 4° in longitude as a resonant body's | finer places, at their cost |
 | an airless fast spinner's cycle by latitude alone (F254) | a stated choice: no air joins its places | its ground's own variation by longitude |
 | a window opening and closing where its ice crosses the mass it lies at, and lengthening toward the places it lies at all year by their share (F255) | stated: linear between the steps' ends; the share a stated choice | the ice's own time at each sub-place point |
+| CO2_FROST_ALBEDO (F257) | measured: between Mars's seasonal caps' broadband albedos, the north's 0.40 (TES) and the south's brighter | the frost's dust and its grains' growth (5D) |
+| N2_FROST_ALBEDO, CH4_FROST_ALBEDO (F257) | their colours' means, kept | Pluto's and Triton's measured albedos, with the volatile transport |
+| the frost's albedo by its cover, its emission at its own from its first gram (F257) | stated: the visible cover for its light; its far infrared's transparency unmeasured | how thin a frost lets the ground's far infrared through |
 | the climate's year-mean balance at a cell's own albedo, its air's transport and greenhouse held as the climate found them (F256) | stated: exact on an airless body | the ground's own column through the cycle at its albedo |
 | a slope taking the year's sunlight of the direction it faces (F256) | geometric: exact for a plane whose horizon nothing shades | the slope's horizon |
 | CYCLE_SPREAD (F256) | a stated choice: 64 quantiles | finer, at their memory |
