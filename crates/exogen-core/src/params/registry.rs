@@ -2041,6 +2041,58 @@ static NODES: &[NodeDef] = &[
         "Kopparapu et al. 2014; Luger and Barnes 2015 (F260)",
     ),
     derived(
+        "volatiles.water_lost",
+        "volatiles",
+        "Water lost to space",
+        "m",
+        1.0,
+        f(0.0, 1e9),
+        &[
+            "star.xuv_history",
+            "atmosphere.runaway_until",
+            "body.mass",
+            "body.radius",
+        ],
+        d::volatiles_water_lost,
+        "The water the body lost to space while its star's light held it past the runaway greenhouse's flux, as a global layer: the hydrogen of its steam escaping at the energy limit, a tenth of the XUV it took, dragging oxygen with it.",
+        "Luger and Barnes 2015; Bolmont et al. 2017 (F262)",
+    ),
+    derived(
+        "volatiles.water_history",
+        "volatiles",
+        "Water history",
+        "m",
+        1.0,
+        ValueType::Curve,
+        &[
+            "volatiles.inventory",
+            "star.xuv_history",
+            "atmosphere.runaway_until",
+            "body.mass",
+            "body.radius",
+        ],
+        d::volatiles_water_history,
+        "The body's water over its life as a global layer, Gyr since it formed: its present inventory and what it lost to space after.",
+        "F262",
+    ),
+    derived(
+        "atmosphere.oxygen_left",
+        "atmosphere",
+        "Oxygen left by the water's escape",
+        "bar",
+        1e5,
+        f(0.0, 1e12),
+        &[
+            "star.xuv_history",
+            "atmosphere.runaway_until",
+            "body.mass",
+            "body.radius",
+        ],
+        d::atmosphere_oxygen_left,
+        "The oxygen the water's escape left behind, as the pressure it would hold: what its hydrogen did not drag away. Its sinks, the crust's and a magma ocean's oxidation, are not modelled.",
+        "Luger and Barnes 2015 (F262)",
+    ),
+    derived(
         "atmosphere.greenhouse_optical_depth",
         "atmosphere",
         "Greenhouse optical depth",
@@ -3980,6 +4032,55 @@ mod tests {
         }
     }
 
+    /// The Earth-like at TRAPPIST-1e's 900 W/m² about a star of TRAPPIST-1's mass, 0.0898 solar
+    /// masses (Agol et al. 2021), at its age, 7.6 Gyr (Burgasser and Mamajek 2017).
+    fn trappist_1e() -> ParamGraph {
+        let mut g = crate::presets::preset("Earth").unwrap().to_graph().0;
+        g.set("star.mass", 0.0898).unwrap();
+        g.set("star.age", 7.6).unwrap();
+        let luminosity = g.f64("star.luminosity") * crate::constants::L_SUN;
+        let d = (luminosity / (4.0 * std::f64::consts::PI * 900.0)).sqrt();
+        g.set("orbit.semi_major_axis", d).unwrap();
+        g
+    }
+
+    /// F262: TRAPPIST-1e, through its runaway greenhouse's 0.34 Gyr under some 400 to 2000 times
+    /// the Earth's XUV, loses its water's hydrogen at the energy limit, dragging most of its
+    /// oxygen with it, and leaves the rest of that oxygen behind; the Earth, never past the
+    /// runaway's flux, keeps its water through its life.
+    #[test]
+    fn a_red_dwarf_s_planet_loses_its_water_in_its_runaway() {
+        let earth = crate::presets::preset("Earth").unwrap().to_graph().0;
+        assert_eq!(earth.f64("volatiles.water_lost"), 0.0);
+        assert_eq!(earth.f64("atmosphere.oxygen_left"), 0.0);
+        assert!(
+            earth
+                .curve("volatiles.water_history")
+                .unwrap()
+                .is_constant()
+        );
+
+        let g = trappist_1e();
+        let lost = g.f64("volatiles.water_lost");
+        let r = g.f64("body.radius");
+        // An Earth ocean, 1.39e21 kg (Luger and Barnes 2015), as a layer on the body.
+        let ocean = 1.39e21 / (1_000.0 * 4.0 * std::f64::consts::PI * r * r);
+        let oceans = lost / ocean;
+        let oxygen = g.f64("atmosphere.oxygen_left") / 1e5;
+        let history = g.curve("volatiles.water_history").unwrap();
+        let (formed, now) = (history.eval(0.0), history.eval(g.f64("body.age")));
+        println!(
+            "TRAPPIST-1e: {oceans:.2} Earth oceans lost to space in its runaway, {oxygen:.0} bar of oxygen left; water {formed:.0} m when it formed, {now:.0} m today"
+        );
+        assert!((now - g.get("volatiles.inventory").as_map().unwrap()["H2O"]).abs() < 1e-9);
+        assert!((formed - now - lost).abs() < 1e-6 * formed);
+        assert!(
+            (1.0..30.0).contains(&oceans),
+            "TRAPPIST-1e lost {oceans} oceans"
+        );
+        assert!(oxygen > 0.0);
+    }
+
     /// F260: the Sun shone at some 0.69 of its present light when its planets formed, 50 Myr
     /// after it, and has brightened since (Baraffe et al. 2015); a red dwarf of TRAPPIST-1's
     /// mass, 0.09 solar masses, at its measured 5.5e-4 of the Sun's today, contracted from six
@@ -4035,17 +4136,8 @@ mod tests {
         );
         assert!((xuv.eval(g.f64("body.age")) / now - xuv_today).abs() < 1e-9);
 
-        let mut dwarf = earth();
-        dwarf.set("star.mass", 0.0898).unwrap();
-        dwarf.set("star.age", 7.6).unwrap();
+        let dwarf = trappist_1e();
         let luminosity = dwarf.f64("star.luminosity");
-        let flux = 900.0;
-        dwarf
-            .set(
-                "orbit.semi_major_axis",
-                (luminosity * crate::constants::L_SUN / (4.0 * std::f64::consts::PI * flux)).sqrt(),
-            )
-            .unwrap();
         let history = dwarf.curve("star.luminosity_history").unwrap();
         let (young, grown) = (
             history.eval(0.0) / luminosity,

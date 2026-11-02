@@ -190,6 +190,29 @@ pub mod physics {
         at(m, age_gyr) / at(1.0, AGE_SUN_GYR)
     }
 
+    /// F262: the water a steam atmosphere loses to space and the oxygen it leaves behind,
+    /// kg/m²/s, under an XUV flux `xuv`, W/m², on a body of mass `m` and radius `r`: the
+    /// hydrogen of its steam escaping at the energy limit, ESCAPE_EFFICIENCY of the XUV it takes
+    /// over its potential, dragging oxygen with it as its flux passes the crossover (Luger and
+    /// Barnes 2015, their equations 3 and 11 to 13).
+    pub fn water_escape(xuv: f64, m: f64, r: f64) -> (f64, f64) {
+        const N_A: f64 = 6.022_140_76e23;
+        let (m_h, m_o) = (1.007_94e-3 / N_A, 15.999e-3 / N_A);
+        let g = G * m / (r * r);
+        // The energy-limited flux, all of it hydrogen, per square metre and second.
+        let reference = ESCAPE_EFFICIENCY * xuv * r / (4.0 * G * m) / m_h;
+        let t = THERMOSPHERE_TEMPERATURE;
+        let b = H_O_DIFFUSION.0 * t.powf(H_O_DIFFUSION.1);
+        let x = K_B * t * reference / (10.0 * b * g * m_h);
+        let dragged = if x >= 1.0 { (x - 1.0) / (x + 8.0) } else { 0.0 };
+        let hydrogen = reference / (1.0 + 0.5 * dragged * m_o / m_h);
+        let molecules = 0.5 * hydrogen;
+        (
+            molecules * (2.0 * m_h + m_o),
+            molecules * (1.0 - dragged) * m_o,
+        )
+    }
+
     /// F4, F261: XUV flux relative to the present Sun at 1 AU, from a star of `m` solar masses
     /// shining `l_sun` at an age, at distance `d_au` from it.
     pub fn xuv_relative(m: f64, l_sun: f64, age_gyr: f64, d_au: f64) -> f64 {
@@ -2140,6 +2163,56 @@ pub fn atmosphere_runaway_until(c: &Ctx) -> Value {
         }
     }
     .into()
+}
+
+/// F262: the water and the oxygen the body's runaway greenhouse (F260) moved, kg/m², at each
+/// time of its XUV history: the water it had lost to space by then and the oxygen its escape
+/// had left.
+fn runaway_escape(c: &Ctx) -> Vec<(f64, f64, f64)> {
+    let until = c.f64("atmosphere.runaway_until");
+    let (m, r) = (c.f64("body.mass"), c.f64("body.radius"));
+    let xuv = c.curve("star.xuv_history");
+    let rate = |t: f64| water_escape(xuv.eval(t) * XUV_SUN_FLUX, m, r);
+    let (mut water, mut oxygen, mut last) = (0.0, 0.0, 0.0);
+    xuv.points
+        .iter()
+        .map(|&(t, _)| {
+            let end = t.min(until);
+            if end > last {
+                let (a, b) = (rate(last), rate(end));
+                water += 0.5 * (a.0 + b.0) * (end - last) * GYR;
+                oxygen += 0.5 * (a.1 + b.1) * (end - last) * GYR;
+                last = end;
+            }
+            (t, water, oxygen)
+        })
+        .collect()
+}
+
+/// F262: the water the body lost to space through its runaway greenhouse, m of its global
+/// layer.
+pub fn volatiles_water_lost(c: &Ctx) -> Value {
+    (runaway_escape(c).last().map_or(0.0, |p| p.1) / 1_000.0).into()
+}
+
+/// F262: the body's water through its life, m of its global layer, Gyr since it formed: its
+/// present inventory and what it lost to space after.
+pub fn volatiles_water_history(c: &Ctx) -> Value {
+    let now = c.map_get("volatiles.inventory", "H2O");
+    let escape = runaway_escape(c);
+    let lost = escape.last().map_or(0.0, |p| p.1);
+    let points = escape
+        .iter()
+        .map(|&(t, water, _)| (t, now + (lost - water) / 1_000.0))
+        .collect();
+    Curve::new(points).into()
+}
+
+/// F262: the oxygen the water's escape left behind, Pa, as the pressure it would hold: what the
+/// escaping hydrogen did not drag away, its sinks in the crust and a magma ocean aside.
+pub fn atmosphere_oxygen_left(c: &Ctx) -> Value {
+    let (m, r) = (c.f64("body.mass"), c.f64("body.radius"));
+    (runaway_escape(c).last().map_or(0.0, |p| p.2) * G * m / (r * r)).into()
 }
 
 /// F249: the warmest place's year-mean surface temperature: the mean raised by the year's

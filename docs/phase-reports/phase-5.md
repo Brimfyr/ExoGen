@@ -320,3 +320,13 @@ How it went:
 - **The measures.** The red dwarfs' saturation time measured on a volume-complete sample (Pass et al. 2024), the F, G and K stars' and their saturated levels by colour (Jackson et al. 2012), the M dwarfs' level (Wright et al. 2018); the Sun's history as before.
 - **TRAPPIST-1.** A star of its mass at its age sends 8.5e-4 of its light in XUV against the 6e-4 to 9e-4 measured; TRAPPIST-1e takes 165 times the Earth's XUV today and some 2000 times when it formed.
 - **Not yet:** the escape it drives (F262, F263); a star's rotation through its life.
+
+## The twenty-sixth milestone: the water lost to space in a runaway
+
+- **F262.** While its star held it past the runaway greenhouse's flux, a body's water's hydrogen escaped at the energy limit, a tenth of the XUV it took, dragging oxygen with it past the crossover; the water lost, the water's history from its present inventory, and the oxygen left.
+
+How it went:
+
+- **TRAPPIST-1e.** It loses 12.5 Earth oceans through its 0.34 Gyr in the runaway, from 36.8 km of water to its present 2.7, and leaves 1805 bar of oxygen: Luger and Barnes's several oceans and up to 2000 bar. Bourrier et al. 2017, with a third of the model's XUV held at a constant share of its light, find 2.1 to 2.5 oceans by its entry into the habitable zone.
+- **The Earth** keeps its water, never past the runaway's flux.
+- **Not yet:** the photolysis's and the diffusion's limits; the oxygen's sinks; Venus's water.

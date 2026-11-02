@@ -115,6 +115,15 @@ pub const XUV_SATURATED_LEVELS: [(f64, f64); 8] = [
     (1.20, -4.24),
     (1.46, -4.28),
 ];
+/// F262: the share of the XUV a hydrogen-rich upper atmosphere's escape takes, 0.1: Bolmont et
+/// al. 2017's radiation-hydrodynamic baseline, 0.097, from 0.045 to 0.111 as the flux falls and
+/// its radiative cooling with it, where Luger and Barnes 2015 take 0.15 to 0.30.
+pub const ESCAPE_EFFICIENCY: f64 = 0.1;
+/// F262: the thermosphere's temperature at which escaping hydrogen drags oxygen, K, and
+/// hydrogen's binary diffusion coefficient through oxygen, b = 4.8e19 T^0.75 /m/s (Zahnle and
+/// Kasting 1986; Luger and Barnes 2015).
+pub const THERMOSPHERE_TEMPERATURE: f64 = 400.0;
+pub const H_O_DIFFUSION: (f64, f64) = (4.8e19, 0.75);
 
 /// F260: the luminosities of low-mass stars through their lives, the BHAC15 tracks (Baraffe et
 /// al. 2015): log10 of L/Lsun at log10 ages, years, from BHAC15_LOG_AGE_FIRST (1 Myr) every
