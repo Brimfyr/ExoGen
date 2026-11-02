@@ -1856,8 +1856,10 @@ pub const CH4_FROST_COLOUR: [f32; 3] = [0.80, 0.76, 0.70];
 /// away from its residual cap, the north's typically 0.40 in TES's bolometric albedo
 /// (Kieffer and Titus 2001, as Piqueux et al. 2008 give it) and the south's brighter, the
 /// north's frost some ten times the dustier (Mars Climate Sounder, Gary-Bicas et al. 2020);
-/// its colour is its visible look over the caps' range. Nitrogen's and methane's their
-/// colours' means, kept until the volatile transport tests them against Pluto and Triton.
+/// its colour is its visible look over the caps' range. Nitrogen's measured: Sputnik
+/// Planitia's bolometric Bond albedo, 0.80 +- 0.07 (Hofgartner et al. 2023), Pluto's nitrogen
+/// ice's 0.83 +- 0.11 (Lewis et al. 2021). Methane's its colour's mean, kept until the
+/// volatile transport tests it.
 pub const CO2_FROST_ALBEDO: f64 = 0.5;
 pub const N2_FROST_ALBEDO: f64 = 0.80;
 pub const CH4_FROST_ALBEDO: f64 = 0.75;
