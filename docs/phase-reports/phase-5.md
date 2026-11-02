@@ -353,3 +353,7 @@ How it went:
 - **The present balance.** Mars's melt gives 101 ppm of carbon dioxide, within what its meteorites' redox allows; it held 0.29 bar 3.5 Ga, 0.61 3.8 Ga and 1.20 4.0 Ga. The Earth's and Venus's yields are tiny, their air hardly touched; Pluto's and Triton's ice buffers both ways.
 - **Tried and set aside:** an air built from nothing by the outgassing, which leaves Mars without air until the present; the climate under the air's history, whose grey greenhouse gives early Mars 289 K under 0.61 bar where 1-D and 3-D models find 210 to 225 K.
 - **Not yet:** a melt's gases by its mantle's redox and the carbonate stores, with 5D; the greenhouse of a thick cold carbon dioxide atmosphere.
+
+## Two items moved, the gate next
+
+- **Moved** (the user, 2026-11-02): Io's frost to its coldest ground to 5F, with Io's surface on the general pipeline that replaces the pipeline it would be built in; the caps' exchange with the air at their own heights to 5E, a small effect (some 0.03 K a kilometre for Pluto's nitrogen, 0.7 for Mars's carbon dioxide). 5B's gate check and its review page next.
