@@ -5,6 +5,9 @@ description = "Reference body. Nitrogen ice plains and dark tholin regions under
 [values]
 "orbit.semi_major_axis" = 5.9064e12
 "orbit.eccentricity" = 0.2488
+# Perihelion in September 1989, soon after the northern spring equinox of January 1988:
+# the Sun at Ls 3.8 (Bertrand and Forget 2016; Meza et al. 2019).
+"orbit.perihelion_season" = 3.8
 "body.radius" = 1.1883e6
 "body.density" = 1854.0
 "rotation.period" = 551856.0

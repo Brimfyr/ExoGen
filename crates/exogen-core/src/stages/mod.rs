@@ -214,6 +214,10 @@ pub struct FinishOutput {
     /// body, where the atmosphere lays frost (F239).
     pub pressure_range: Option<(f64, f64)>,
     pub cap_growth: Option<f64>,
+    /// What the frost's own gas's caps gain in a year where they hold its air, kg/m² over the
+    /// body (F258): more than nothing where the body's pressure stands above the one they
+    /// would hold it at.
+    pub reservoir_gain: Option<f64>,
     /// Where each ice of the inventory would last, on the climate's grid (F240).
     pub traps: crate::climate::Traps,
     /// The caps the inventory laid in its traps (F241).
@@ -429,7 +433,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 191;
+pub const FINISH_VERSION: u64 = 192;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2836,7 +2840,7 @@ pub fn finish(
         })
     };
     let share = sea_share(&layers, full_sea);
-    let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()));
+    let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()), None);
     // The ground's year-mean temperature at its own albedo where its slope faces, which the
     // ice's lag and frost read (F256).
     let year = crate::climate::YearMean::new(&balance, &climate);
@@ -2855,7 +2859,36 @@ pub fn finish(
     let heights = crate::climate::coarsen(&above, climate.temperature.grid());
     let water = materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh);
     let ices = crate::climate::Ice::of_inventory(graph, water);
-    let traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
+    let mut traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
+    let bare_ice = balance.frost.map(|_| layers.ice.clone());
+    let mut laid = caps::lay(graph, &mut layers, &traps);
+    // The frost's own gas's caps hold its air (F258): the year again with them as the
+    // reservoir its air draws on, over the caps' albedo, and every ice's caps laid again
+    // where its ice keeps under that year.
+    let climate_grid = climate.temperature.grid();
+    if let (Some(reservoir), Some(bare_ice)) = (
+        balance
+            .frost
+            .and_then(|f| caps::reservoir(&laid, climate_grid, &balance, f.species)),
+        bare_ice,
+    ) {
+        let over = caps::on_climate(&laid, climate_grid, &balance);
+        let climate = balance.solve_over(climate_grid, Some(&over));
+        let sea = ocean.as_ref().zip(share.as_ref());
+        let held = balance.cycle(&climate, &ground, sea, Some(&reservoir));
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            let range = held.pressure_range.unwrap_or((f64::NAN, f64::NAN));
+            eprintln!(
+                "reservoir: the caps hold the air from {:.4e} to {:.4e} Pa through the year, gaining {:.3} kg/m² a year over the body",
+                range.0,
+                range.1,
+                held.reservoir.as_ref().map_or(0.0, |r| r.1)
+            );
+        }
+        traps = balance.traps(&climate, &ground, &held, &ices, &heights, &downscale);
+        layers.ice = bare_ice;
+        laid = caps::lay(graph, &mut layers, &traps);
+    }
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         for (ice, _) in &traps.vapour {
             if let Some((lat, lon, vapour)) = traps.coldest(ice.species) {
@@ -2874,7 +2907,6 @@ pub fn finish(
             );
         }
     }
-    let laid = caps::lay(graph, &mut layers, &traps);
     let taken: f64 = laid.iter().map(|c| c.from_sea).sum();
     let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers, taken);
     let height = layers.height();
@@ -3032,10 +3064,15 @@ pub fn finish(
         let over = caps::on_climate(&laid, climate.temperature.grid(), &balance);
         let climate = balance.solve_over(CubeSphere::new(CLIMATE_FACE_SIZE), Some(&over));
         let share = sea_share(&layers, sea_level);
-        let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()));
+        let sea = ocean.as_ref().zip(share.as_ref());
+        // The frost's own gas's caps hold its air (F258).
+        let reservoir = balance
+            .frost
+            .and_then(|f| caps::reservoir(&laid, climate_grid, &balance, f.species));
+        let cycle = balance.cycle(&climate, &ground, sea, reservoir.as_ref());
         (climate, cycle)
     };
-    let temperature_range = cycle.extremes();
+    let mut temperature_range = cycle.extremes();
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         let (steady, ..) = crate::climate::bands(&climate.temperature);
         let (mean, equator, poles) = crate::climate::bands(&cycle.mean);
@@ -3072,6 +3109,56 @@ pub fn finish(
             "shadows: {:.4}% of the body never sees the star, its coldest {coldest:.1} K",
             100.0 * shadow_fraction
         );
+    }
+    // The frost's own gas's caps stand at its frost point at their surface's height through
+    // the year (F258), over as much of each cell as their ice hides: the year's point read
+    // between CAP_POINT_LEVELS heights from their lowest to their highest.
+    if let Some(cap) = cycle
+        .frost
+        .and_then(|f| laid.iter().find(|c| c.ice.species == f.species))
+    {
+        let surfaces = (0..grid.cell_count())
+            .filter(|&k| cap.cover(k) > 0.0)
+            .map(|k| height.as_slice()[k] as f64)
+            .fold((f64::MAX, f64::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)));
+        let scale = downscale.scale_height;
+        let point_at = |h: f64| {
+            let thin = if scale > 0.0 { (-h / scale).exp() } else { 1.0 };
+            cycle.frost_point_year(thin)
+        };
+        let table: Vec<(f64, f64, f64)> = (0..CAP_POINT_LEVELS)
+            .filter_map(|j| {
+                let s = j as f64 / (CAP_POINT_LEVELS - 1) as f64;
+                point_at(surfaces.0 + (surfaces.1 - surfaces.0) * s)
+            })
+            .collect();
+        if surfaces.0 <= surfaces.1 && table.len() == CAP_POINT_LEVELS {
+            for &(_, lo, hi) in &table {
+                temperature_range = (temperature_range.0.min(lo), temperature_range.1.max(hi));
+            }
+            let span = (surfaces.1 - surfaces.0).max(1e-9);
+            for k in 0..grid.cell_count() {
+                let cover = cap.cover(k) as f32;
+                if cover <= 0.0 {
+                    continue;
+                }
+                let at = (height.as_slice()[k] as f64 - surfaces.0) / span;
+                let x = at.clamp(0.0, 1.0) * (CAP_POINT_LEVELS - 1) as f64;
+                let j = (x as usize).min(CAP_POINT_LEVELS - 2);
+                let w = x - j as f64;
+                let read = |pick: fn(&(f64, f64, f64)) -> f64| {
+                    (pick(&table[j]) * (1.0 - w) + pick(&table[j + 1]) * w) as f32
+                };
+                for (field, value) in [
+                    (&mut temperature, read(|t| t.0)),
+                    (&mut temperature_min, read(|t| t.1)),
+                    (&mut temperature_max, read(|t| t.2)),
+                ] {
+                    let v = &mut field.as_mut_slice()[k];
+                    *v += cover * (value - *v);
+                }
+            }
+        }
     }
     // The sea's year beside its land under their air (F244, F245): its surface's temperature
     // on its cells, its ice at the snapshot's season exported apart from the ground's colour,
@@ -3158,12 +3245,13 @@ pub fn finish(
                 let (mean, ..) = crate::climate::bands(&frost);
                 let range = cycle.pressure_range.unwrap_or((f64::NAN, f64::NAN));
                 eprintln!(
-                    "frost: {} at {:.1} K, {mean:.2} kg/m² over the body at the snapshot; the pressure {:.4e} to {:.4e} Pa through the year; caps grow {:.3} kg/m² a year",
+                    "frost: {} at {:.1} K, {mean:.2} kg/m² over the body at the snapshot; the pressure {:.4e} to {:.4e} Pa through the year; caps grow {:.3} kg/m² a year; the caps that hold the air gain {:.3}",
                     f.species,
                     f.point,
                     range.0,
                     range.1,
-                    cycle.cap_growth.unwrap_or(0.0)
+                    cycle.cap_growth.unwrap_or(0.0),
+                    cycle.reservoir.as_ref().map_or(0.0, |r| r.1)
                 );
             }
             frost
@@ -3201,6 +3289,7 @@ pub fn finish(
         frost_gas: cycle.frost.map(|f| f.species),
         pressure_range: cycle.pressure_range,
         cap_growth: cycle.cap_growth,
+        reservoir_gain: cycle.reservoir.as_ref().map(|r| r.1),
         traps,
         caps: laid,
         shadow_fraction,

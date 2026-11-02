@@ -10,6 +10,9 @@ description = "Reference body. Pluto's large moon, locked face to face with it; 
 "parent.radius" = 1.1883e6
 "parent.semi_major_axis" = 5.9064e12
 "parent.eccentricity" = 0.2488
+# Perihelion in September 1989, soon after the northern spring equinox of January 1988:
+# the Sun at Ls 3.8 (Bertrand and Forget 2016; Meza et al. 2019).
+"orbit.perihelion_season" = 3.8
 # Brozović and Jacobson (2024): a 19,595.764 km, e 1.61e-4, period 6.387 d; GM 106.1 km³/s²
 # over Nimmo et al. (2017)'s mean radius of 606.0 km, a density of 1,705 kg/m³ (JPL's
 # satellite table lists Pluto's 1,853 for it).

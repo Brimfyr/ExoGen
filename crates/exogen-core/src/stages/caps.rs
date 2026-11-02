@@ -326,6 +326,45 @@ pub fn on_climate(
     climate: CubeSphere,
     balance: &crate::climate::EnergyBalance,
 ) -> (Field<f32>, Field<f32>) {
+    shown(&caps.iter().collect::<Vec<_>>(), climate, balance)
+}
+
+/// The frost's own gas's caps on the climate's grid as the reservoir its air draws on
+/// (F258): the share of each cell they cover, by the cover their ice hides the ground with,
+/// the ice they hold over that share, kg/m², and the albedo of the ground about them under
+/// the other ices' caps; none where the gas laid no cap.
+pub fn reservoir(
+    caps: &[Cap],
+    climate: CubeSphere,
+    balance: &crate::climate::EnergyBalance,
+    species: &str,
+) -> Option<crate::climate::Reservoir> {
+    let cap = caps.iter().find(|c| c.ice.species == species)?;
+    let grid = cap.thickness.grid();
+    let rho = ice_density(species);
+    let cover = Field::from_fn(grid, |c, _| cap.cover(grid.index(c)) as f32);
+    let mass = Field::from_fn(grid, |c, _| (cap.thickness.get(c) as f64 * rho) as f32);
+    let share = crate::climate::coarsen(&cover, climate);
+    let held = crate::climate::coarsen(&mass, climate);
+    let mass = Field::from_fn(climate, |c, _| {
+        let s = share.get(c);
+        if s > 0.0 { held.get(c) / s } else { 0.0 }
+    });
+    let others: Vec<&Cap> = caps.iter().filter(|c| c.ice.species != species).collect();
+    let over = (!others.is_empty()).then(|| shown(&others, climate, balance));
+    Some(crate::climate::Reservoir {
+        share,
+        mass,
+        ground: balance.ground_albedo(climate, over.as_ref()),
+    })
+}
+
+/// Caps on the climate's grid, as `on_climate`.
+fn shown(
+    caps: &[&Cap],
+    climate: CubeSphere,
+    balance: &crate::climate::EnergyBalance,
+) -> (Field<f32>, Field<f32>) {
     let grid = caps[0].thickness.grid();
     let cover = Field::from_fn(grid, |c, _| {
         let k = grid.index(c);
@@ -367,7 +406,7 @@ mod tests {
         let eb = EnergyBalance::from_graph(&graph);
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
         let ground = Ground::from_graph(&graph);
-        let cycle = eb.cycle(&climate, &ground, None);
+        let cycle = eb.cycle(&climate, &ground, None, None);
         let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
         let heights = Field::new(climate.temperature.grid());
         let downscale = Downscale::from_graph(&graph);
@@ -448,6 +487,35 @@ mod tests {
             share > 0.0 && thickest > 0.0 && lowest > 75.0,
             "{share} {thickest} {lowest}"
         );
+    }
+
+    /// F258: Pluto's nitrogen lays its caps in the bands some 30° from its equator that its
+    /// tilt of 120° and its ground's seasons leave the coldest, where volatile transport
+    /// models gather it (Bertrand et al. 2018), Sputnik Planitia's 25° north among them.
+    #[test]
+    fn pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands() {
+        let (graph, traps) = traps_of("Pluto");
+        let mut layers = LayerSet::new(CubeSphere::new(64));
+        let caps = lay(&graph, &mut layers, &traps);
+        let cap = caps
+            .iter()
+            .find(|c| c.ice.species == "N2")
+            .expect("nitrogen caps");
+        let grid = cap.thickness.grid();
+        let (mut banded, mut covered) = (0.0, 0.0);
+        for (k, &t) in cap.thickness.as_slice().iter().enumerate() {
+            if t > 0.0 {
+                let c = grid.cell(k);
+                let (_, lat) = lon_lat_from_direction(grid.center(c));
+                let a = grid.cell_area(c);
+                covered += a;
+                if (10.0..40.0).contains(&lat.to_degrees().abs()) {
+                    banded += a;
+                }
+            }
+        }
+        let share = banded / covered;
+        assert!(share > 0.8, "{share} of the caps within 10° to 40°");
     }
 
     /// F242: a working liquid that is the frost's own gas lays its ice only where the ice

@@ -41,7 +41,7 @@ use crate::constants::*;
 use crate::fields::Field;
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
-use crate::insolation::{PathStep, Sky, SunTable, diurnal_share, read_grid, read_row};
+use crate::insolation::{PathStep, Sky, SunTable, Sunlight, diurnal_share, read_grid, read_row};
 use crate::params::ParamGraph;
 use crate::params::derive::is_icy;
 use crate::params::derive::physics::{
@@ -756,6 +756,16 @@ impl Traps {
     }
 }
 
+/// The frost's own gas's caps on the climate's grid, the reservoir its air draws on (F258):
+/// the share of each cell they cover, the ice they hold over that share, kg/m², and the albedo
+/// of the ground about them, under the other ices' caps.
+#[derive(Clone, Debug)]
+pub struct Reservoir {
+    pub share: Field<f32>,
+    pub mass: Field<f32>,
+    pub ground: Field<f32>,
+}
+
 /// A cell of the climate's grid in the traps (F240): its latitude and longitude, rad, the
 /// share of the datum's pressure its height keeps, its year's mean temperature, K, the
 /// places of the cycle's layout its air is read from, with their weights, and how much
@@ -839,6 +849,10 @@ pub struct Cycle {
     /// The frost that outlasts the year, kg/m² a year over the body: its caps' growth, which
     /// the caps keep (F241), where it lays frost.
     pub cap_growth: Option<f64>,
+    /// What the frost's own gas's caps gain through the year where they hold its air (F258),
+    /// kg/m² a year, over each place's area on the climate's grid and over the body: more
+    /// than nothing where the year's pressure stands above the one they would hold it at.
+    pub reservoir: Option<(Field<f32>, f64)>,
     /// The tilts the year was run at, and at each the frost's gas's partial pressure at the
     /// datum through the year's steps, Pa, where it lays frost (F240).
     pub tilts: Vec<f64>,
@@ -1262,6 +1276,9 @@ struct TiltYear {
     /// Each place's frost and its sea's ice at the end of each step, kg/m², place after
     /// place (F246).
     masses: [Vec<f32>; 2],
+    /// What the frost's own gas's caps gained over each place's area in a year, kg/m²
+    /// (F258).
+    caps: Vec<f64>,
 }
 
 /// The lockstep through its last cycle (F239, F245): the places' runs; where the atmosphere
@@ -1277,6 +1294,47 @@ struct Lockstep {
     /// Each place's frost and its sea's ice at the end of each step, kg/m², place after
     /// place (F246).
     masses: [Vec<f32>; 2],
+    /// What the frost's own gas's caps gained over each place's area in the cycle, kg/m²
+    /// (F258).
+    caps: Vec<f64>,
+    /// The gas in the air and its frost at the end, kg/m² over the body, apart from what the
+    /// caps gave or took (F258).
+    active: f64,
+}
+
+/// A lockstep's end on the latitudes' rows, to start the places from (F258): the gas in the
+/// air and its frost, kg/m² over the body, and each row's ground.
+struct Warm {
+    active: f64,
+    rows: Vec<WarmRow>,
+}
+
+/// A row's ground at a lockstep's end (F258): its land's column and frost, its caps' column
+/// and its sea.
+struct WarmRow {
+    t: Vec<f64>,
+    mass: f64,
+    cap: Option<Vec<f64>>,
+    sea: Option<Sea>,
+}
+
+impl Lockstep {
+    /// Its state at its end on the latitudes' rows, to start the places from (F258).
+    fn warm(self) -> Warm {
+        Warm {
+            active: self.active,
+            rows: self
+                .runs
+                .into_iter()
+                .map(|r| WarmRow {
+                    t: r.t,
+                    mass: r.mass,
+                    cap: r.cap.map(|c| c.t),
+                    sea: r.sea,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Year {
@@ -1506,17 +1564,20 @@ impl EnergyBalance {
         self.solve_over(grid, None)
     }
 
-    /// The year's mean climate on a grid over caps of ice (F241): `caps` the share of each
-    /// cell they cover and their albedo there, which each cell reflects at by its share.
-    pub fn solve_over(&self, grid: CubeSphere, caps: Option<&(Field<f32>, Field<f32>)>) -> Climate {
-        let sun = self.sky.annual_sunlight(grid);
+    /// The ground's albedo on a grid without ice and snow (F235): the body's, with the
+    /// low-sun term about the sunlight-weighted mean height, so that without ice the planet
+    /// reflects its Bond albedo; and under `caps` of ice (F241), by the share of each cell
+    /// they cover.
+    fn albedos(
+        &self,
+        grid: CubeSphere,
+        sun: &Sunlight,
+        caps: Option<&(Field<f32>, Field<f32>)>,
+    ) -> (Vec<f64>, Vec<f64>) {
         let n = grid.cell_count();
         let area: Vec<f64> = (0..n).map(|k| grid.cell_area(grid.cell(k))).collect();
-        let links = links(grid);
         let flux: Vec<f64> = sun.flux.as_slice().iter().map(|&q| q as f64).collect();
         let height: Vec<f64> = sun.height.as_slice().iter().map(|&m| m as f64).collect();
-        // The albedo's low-sun term about the sunlight-weighted mean height, so that without
-        // ice the planet reflects its Bond albedo.
         let weight: f64 = (0..n).map(|k| flux[k] * area[k]).sum();
         let mean_height = if weight > 0.0 {
             (0..n).map(|k| flux[k] * area[k] * height[k]).sum::<f64>() / weight
@@ -1539,6 +1600,30 @@ impl EnergyBalance {
                 }
             })
             .collect();
+        (bare, base)
+    }
+
+    /// The ground's albedo on a grid under `caps` of ice (F241), without ice and snow: the
+    /// albedo the year's places run their land at (F258).
+    pub fn ground_albedo(
+        &self,
+        grid: CubeSphere,
+        caps: Option<&(Field<f32>, Field<f32>)>,
+    ) -> Field<f32> {
+        let sun = self.sky.annual_sunlight(grid);
+        let (_, base) = self.albedos(grid, &sun, caps);
+        Field::from_fn(grid, |c, _| base[grid.index(c)] as f32)
+    }
+
+    /// The year's mean climate on a grid over caps of ice (F241): `caps` the share of each
+    /// cell they cover and their albedo there, which each cell reflects at by its share.
+    pub fn solve_over(&self, grid: CubeSphere, caps: Option<&(Field<f32>, Field<f32>)>) -> Climate {
+        let sun = self.sky.annual_sunlight(grid);
+        let n = grid.cell_count();
+        let area: Vec<f64> = (0..n).map(|k| grid.cell_area(grid.cell(k))).collect();
+        let links = links(grid);
+        let flux: Vec<f64> = sun.flux.as_slice().iter().map(|&q| q as f64).collect();
+        let (bare, base) = self.albedos(grid, &sun, caps);
         // Ice and snow under the star's light over the ground without its caps (F250).
         let snow: Vec<f64> = bare.iter().map(|&a| self.ice_over(ICE_ALBEDO, a)).collect();
         let albedo = |k: usize, t: f64| -> (f64, f64) {
@@ -1636,12 +1721,14 @@ impl EnergyBalance {
     /// airless body's places stand alone, each at the albedo its year's balance found; under
     /// an atmosphere they run in step under the air that carries the transport between them
     /// (`lockstep`), each over its land and, `sea` its share of each cell of the climate's
-    /// grid, its sea (F245).
+    /// grid, its sea (F245), and its share of the frost's own gas's caps, the `reservoir`
+    /// its air draws on (F258).
     pub fn cycle(
         &self,
         climate: &Climate,
         ground: &Ground,
         sea: Option<(&Ocean, &Field<f32>)>,
+        reservoir: Option<&Reservoir>,
     ) -> Cycle {
         let grid = climate.temperature.grid();
         let all = self.sky.obliquities();
@@ -1658,13 +1745,25 @@ impl EnergyBalance {
             None => Vec::new(),
         };
         let ocean = sea.map(|s| s.0);
-        let layout = (self.exchange > 0.0).then(|| self.layout(climate, sea.map(|s| s.1)));
+        let layout =
+            (self.exchange > 0.0).then(|| self.layout(climate, sea.map(|s| s.1), reservoir));
+        // A fast spinner whose caps hold its air spins its seasons up on its latitudes' rows
+        // first, its places started from them (F258).
+        let rows = layout
+            .as_ref()
+            .filter(|l| {
+                l.n_lon > 1 && self.sky.resonance.is_none() && l.places.iter().any(|p| p.cap > 0.0)
+            })
+            .map(|_| {
+                let rows = (CYCLE_LATITUDES, 1);
+                self.layout_on(climate, sea.map(|s| s.1), reservoir, rows)
+            });
         let each: Vec<TiltYear> = if let Some(layout) = &layout {
             tilts
                 .iter()
                 .enumerate()
                 .map(|(j, &eps)| match self.sky.resonance {
-                    None => self.seasonal_years(ground, layout, eps, ocean),
+                    None => self.seasonal_years(ground, layout, eps, ocean, rows.as_ref()),
                     Some((_, orbits)) => {
                         self.seasonal_orbits(ground, layout, (orbits, &paths[j]), ocean)
                     }
@@ -1707,6 +1806,7 @@ impl EnergyBalance {
                     partials: Vec::new(),
                     air: Vec::new(),
                     masses: [Vec::new(), Vec::new()],
+                    caps: Vec::new(),
                 })
                 .collect()
         };
@@ -1752,6 +1852,32 @@ impl EnergyBalance {
         let growths: Vec<f64> = each.iter().filter_map(|e| e.growth).collect();
         let cap_growth =
             (!growths.is_empty()).then(|| growths.iter().sum::<f64>() / growths.len() as f64);
+        // What the caps that hold the air gained through the year at each place, the tilts'
+        // mean, and over the body (F258).
+        let reservoir = layout
+            .as_ref()
+            .filter(|l| l.places.iter().any(|p| p.cap > 0.0))
+            .map(|l| {
+                let gains: Vec<f64> = (0..n_lat * n_lon)
+                    .map(|k| each.iter().map(|e| e.caps[k]).sum::<f64>() / n)
+                    .collect();
+                let whole: f64 = l.places.iter().map(|p| p.weight).sum();
+                let total = gains
+                    .iter()
+                    .zip(&l.places)
+                    .map(|(g, p)| g * p.weight)
+                    .sum::<f64>()
+                    / whole;
+                let field = Field::from_fn(grid, |_, d| {
+                    let (lon, lat) = lon_lat_from_direction(d);
+                    let value = match n_lon {
+                        1 => read_row(&gains, lat),
+                        _ => read_grid(&gains, n_lon, lat, lon),
+                    };
+                    value as f32
+                });
+                (field, total)
+            });
         let field = |pick: fn(&Year) -> f64| {
             let values: Vec<f64> = rows.iter().map(pick).collect();
             Field::from_fn(grid, |_, d| {
@@ -1852,7 +1978,7 @@ impl EnergyBalance {
                 {
                     let (mut sums, mut areas) = ([0.0; 2], [0.0; 2]);
                     for (p, place) in l.places.iter().enumerate() {
-                        let share = if j == 0 { 1.0 - place.sea } else { place.sea };
+                        let share = if j == 0 { place.land() } else { place.sea };
                         let north = if place.lat > 1e-9 {
                             1.0
                         } else if place.lat < -1e-9 {
@@ -1928,6 +2054,7 @@ impl EnergyBalance {
             frost: self.frost,
             pressure_range,
             cap_growth,
+            reservoir,
             tilts,
             partials: each.iter().map(|e| e.partials.clone()).collect(),
             seas,
@@ -1978,9 +2105,24 @@ impl EnergyBalance {
         }
     }
 
-    fn layout(&self, climate: &Climate, sea: Option<&Field<f32>>) -> Layout {
+    fn layout(
+        &self,
+        climate: &Climate,
+        sea: Option<&Field<f32>>,
+        reservoir: Option<&Reservoir>,
+    ) -> Layout {
+        self.layout_on(climate, sea, reservoir, self.cycle_grid())
+    }
+
+    /// The cycle's places on a grid of `n_lat` latitudes and `n_lon` longitudes, as `layout`.
+    fn layout_on(
+        &self,
+        climate: &Climate,
+        sea: Option<&Field<f32>>,
+        reservoir: Option<&Reservoir>,
+        (n_lat, n_lon): (usize, usize),
+    ) -> Layout {
         let grid = climate.temperature.grid();
-        let (n_lat, n_lon) = self.cycle_grid();
         let (dphi, dlon) = (PI / (n_lat - 1) as f64, TAU / n_lon as f64);
         let lat_of = |i: usize| -PI / 2.0 + dphi * i as f64;
         let edges = |i: usize| {
@@ -1990,10 +2132,21 @@ impl EnergyBalance {
                 (lat + dphi / 2.0).min(PI / 2.0),
             )
         };
-        let share_at = |lat: f64, lon: f64| {
-            sea.map_or(0.0, |f| {
-                f.get(f.grid().locate(direction_from_lon_lat(lon, lat)).0) as f64
-            })
+        let value_at = |f: &Field<f32>, lat: f64, lon: f64| {
+            f.get(f.grid().locate(direction_from_lon_lat(lon, lat)).0) as f64
+        };
+        // A pair of values summed at a place: along its latitude a fast spinner's, by
+        // SEA_SHARE_LONGITUDES samples of `sample` at each longitude, and a place's own on a
+        // grid by longitude.
+        let along = |sample: &dyn Fn(f64) -> (f64, f64), lon: f64| match n_lon {
+            1 => (0..SEA_SHARE_LONGITUDES)
+                .map(|m| sample(TAU * m as f64 / SEA_SHARE_LONGITUDES as f64))
+                .fold((0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1)),
+            _ => sample(lon),
+        };
+        let samples = match n_lon {
+            1 => SEA_SHARE_LONGITUDES as f64,
+            _ => 1.0,
         };
         let places = (0..n_lat * n_lon)
             .map(|k| {
@@ -2001,23 +2154,38 @@ impl EnergyBalance {
                 let (lat, lon) = (lat_of(i), -PI + dlon * j as f64);
                 let (lo, hi) = edges(i);
                 let (c, _, _) = grid.locate(direction_from_lon_lat(lon, lat));
-                let sea = match n_lon {
-                    1 => {
-                        (0..SEA_SHARE_LONGITUDES)
-                            .map(|m| share_at(lat, TAU * m as f64 / SEA_SHARE_LONGITUDES as f64))
-                            .sum::<f64>()
-                            / SEA_SHARE_LONGITUDES as f64
+                let (sea, _) = along(
+                    &|lon| (sea.map_or(0.0, |f| value_at(f, lat, lon)), 0.0),
+                    lon,
+                );
+                let sea = (sea / samples).clamp(0.0, 1.0);
+                // The share of the place the caps that hold the air cover and the ice they
+                // hold over it (F258), the ground about them at its own albedo.
+                let (cap, cap_mass, albedo) = match reservoir {
+                    Some(r) => {
+                        let (share, held) = along(
+                            &|lon| {
+                                let s = value_at(&r.share, lat, lon);
+                                (s, s * value_at(&r.mass, lat, lon))
+                            },
+                            lon,
+                        );
+                        let mass = if share > 0.0 { held / share } else { 0.0 };
+                        let cap = (share / samples).clamp(0.0, 1.0 - sea);
+                        (cap, mass, r.ground.get(c) as f64)
                     }
-                    _ => share_at(lat, lon),
+                    None => (0.0, 0.0, climate.ground_albedo.get(c) as f64),
                 };
                 Place {
                     lat,
                     lon,
                     weight: (hi.sin() - lo.sin()) / n_lon as f64,
                     steady: climate.temperature.get(c) as f64,
-                    albedo: climate.ground_albedo.get(c) as f64,
+                    albedo,
                     snow: climate.snow_albedo.get(c) as f64,
-                    sea: sea.clamp(0.0, 1.0),
+                    sea,
+                    cap,
+                    cap_mass,
                 }
             })
             .collect();
@@ -2077,6 +2245,7 @@ impl EnergyBalance {
         layout: &Layout,
         eps: f64,
         ocean: Option<&Ocean>,
+        rows: Option<&Layout>,
     ) -> TiltYear {
         let solar_days = (self.sky.spins - eps.cos()).abs().max(1e-3);
         let day = self.year / solar_days;
@@ -2095,7 +2264,22 @@ impl EnergyBalance {
             snapshot_step(self.snapshot, steps),
         );
         let every = steps / CYCLE_SEASONS;
-        let lockstep = self.lockstep(ground, &column, layout, timing, light, ocean, every);
+        // The seasons spun up on the latitudes' rows where caps hold the air (F258): the frost
+        // their air lays takes years to come to its own, cheaply on the rows.
+        let warm = rows.map(|rows| {
+            let spin = (0, None, CYCLE_SPIN_UP_YEARS);
+            self.lockstep(ground, &column, rows, timing, light, ocean, spin)
+                .warm()
+        });
+        let lockstep = self.lockstep(
+            ground,
+            &column,
+            layout,
+            timing,
+            light,
+            ocean,
+            (every, warm.as_ref(), CYCLE_MAX_YEARS),
+        );
         let dt = day / CYCLE_DAY_STEPS as f64;
         let frost = self.frost.as_ref();
         let years = lockstep
@@ -2170,6 +2354,7 @@ impl EnergyBalance {
             partials: lockstep.partials,
             air: lockstep.air,
             masses: lockstep.masses,
+            caps: lockstep.caps,
         }
     }
 
@@ -2193,7 +2378,8 @@ impl EnergyBalance {
         let steps = path.len();
         let snapshot = snapshot_step(self.snapshot, steps / orbits.max(1) as usize);
         let timing = (steps, cycle / steps as f64, snapshot);
-        let lockstep = self.lockstep(ground, &column, layout, timing, light, ocean, 0);
+        let year = (0, None, CYCLE_MAX_YEARS);
+        let lockstep = self.lockstep(ground, &column, layout, timing, light, ocean, year);
         let years = lockstep
             .runs
             .iter()
@@ -2212,13 +2398,15 @@ impl EnergyBalance {
                 }
             })
             .collect();
+        let orbits = orbits.max(1) as f64;
         TiltYear {
             years,
             range: lockstep.range,
-            growth: lockstep.growth.map(|g| g / orbits.max(1) as f64),
+            growth: lockstep.growth.map(|g| g / orbits),
             partials: lockstep.partials,
             air: lockstep.air,
             masses: lockstep.masses,
+            caps: lockstep.caps.iter().map(|g| g / orbits).collect(),
         }
     }
 
@@ -2242,8 +2430,18 @@ impl EnergyBalance {
     /// that its pressure over the cycle averages the body's where the frost allows it. Frost
     /// that lies all through the cycle and grows is a cap's growth, which the caps keep
     /// (F241) where the gas is given back: it is counted, and taken off in the share given.
+    ///
+    /// The frost's own gas's caps are the reservoir its air draws on (F258): each place's
+    /// share of them stands on its own column at the frost point through the cycle, gaining
+    /// what the air leaves it and giving the air what it sublimes, so that a cap in its summer
+    /// holds the air up against the frost its winter lays elsewhere. What they gain or lose
+    /// through the last cycle is counted, the gas they give the air held in the gas's whole
+    /// mass as their frost is.
+    ///
     /// The cycle is `steps` steps of `dt` with the snapshot's step, each place lit at a step
-    /// as `light` gives, the ground recorded every `every` steps (never at 0).
+    /// as `light` gives, the ground recorded every `every` steps (never at 0), the places
+    /// started from the latitudes' rows `warm` left where it is given, through at most
+    /// `years` cycles.
     #[allow(clippy::too_many_arguments)]
     fn lockstep(
         &self,
@@ -2253,7 +2451,7 @@ impl EnergyBalance {
         (steps, dt, snapshot): (usize, f64, usize),
         light: impl Fn(usize, &Place) -> f64 + Sync,
         ocean: Option<&Ocean>,
-        every: usize,
+        (every, warm, years): (usize, Option<&Warm>, usize),
     ) -> Lockstep {
         let places = &layout.places;
         let n = places.len();
@@ -2270,8 +2468,9 @@ impl EnergyBalance {
         let partial = |air: f64| frost.map_or(0.0, |f| f.partial * air.max(0.0) / column_gas);
         let mut runs: Vec<Run> = places
             .iter()
-            .map(|p| Run::new((column.len(), steps), p, ocean))
+            .map(|p| Run::new((column.len(), steps), p, ocean, frost))
             .collect();
+        let capped = runs.iter().any(|r| r.cap.is_some());
         let mut air: Vec<f64> = places.iter().map(|p| p.steady).collect();
         let mut series = vec![0.0; steps * n];
         let (mut diag, mut rhs) = (vec![0.0; n], vec![0.0; n]);
@@ -2295,24 +2494,45 @@ impl EnergyBalance {
             .collect();
         let mut inflow = vec![0.0; n];
         let (mut held, mut load) = (frost.map_or(0.0, |f| f.column), 0.0);
+        if let Some(w) = warm {
+            for (r, p) in runs.iter_mut().zip(places) {
+                let at = (p.lat + PI / 2.0) / PI * (w.rows.len() - 1) as f64;
+                let row = &w.rows[(at.round() as usize).min(w.rows.len() - 1)];
+                r.t.clone_from(&row.t);
+                r.mass = row.mass;
+                if let (Some(c), Some(t)) = (r.cap.as_mut(), &row.cap) {
+                    c.t.clone_from(t);
+                }
+                if let (Some(sea), Some(from)) = (r.sea.as_mut(), row.sea) {
+                    *sea = from;
+                }
+            }
+            held = w.active;
+            load = over(&runs, Run::load);
+        }
         let mut range = (f64::MAX, f64::MIN);
         let mut growth = 0.0;
         let mut partials = Vec::with_capacity(steps);
         let mut last = vec![f64::NAN; 2 * n];
-        for _ in 0..CYCLE_MAX_YEARS {
+        for _ in 0..years {
             range = (f64::MAX, f64::MIN);
             partials.clear();
             runs.iter_mut().for_each(Run::begin);
             for k in 0..steps {
-                // The air, from the ground under it as the last step left it.
+                // The air, from the ground under it as the last step left it: its land's, its
+                // sea's and its caps'.
                 for (q, (r, p)) in runs.iter().zip(places).enumerate() {
-                    let land = self.coupling(r.t[0]) * (1.0 - p.sea);
+                    let land = self.coupling(r.t[0]) * p.land();
                     let (wet, surface) = match &r.sea {
                         Some(s) => (self.sea_coupling(s.surface) * p.sea, s.surface),
                         None => (0.0, 0.0),
                     };
-                    diag[q] = hold + land + wet;
-                    rhs[q] = hold * air[q] + land * r.t[0] + wet * surface;
+                    let (iced, top) = match &r.cap {
+                        Some(c) => (self.coupling(c.t[0]) * c.share, c.t[0]),
+                        None => (0.0, 0.0),
+                    };
+                    diag[q] = hold + land + wet + iced;
+                    rhs[q] = hold * air[q] + land * r.t[0] + wet * surface + iced * top;
                 }
                 transport_solve(layout, &air_links, (&diag, &rhs), &mut air, true);
                 series[k * n..(k + 1) * n].copy_from_slice(&air);
@@ -2321,6 +2541,14 @@ impl EnergyBalance {
                     sea_transport(layout, &mut runs, step, ocean, &mut inflow);
                 }
                 let highest = frost.map(|f| f.point_at(partial(held)));
+                // Bare ground stays clear of frost above every point the air can reach, the
+                // point of all its gas; with caps that hold the air, which may give it more,
+                // above the point of the air as it stands, the step tried again past it if
+                // the point settles above (F258).
+                let ceiling = match (frost, highest) {
+                    (Some(f), Some(h)) if capped => Some(h.max(f.point_at(partial(held - load)))),
+                    _ => highest,
+                };
                 runs.par_iter_mut()
                     .zip(places.par_iter())
                     .zip(air.par_iter().zip(inflow.par_iter()))
@@ -2330,11 +2558,15 @@ impl EnergyBalance {
                         let bare = (1.0 - r.albedo) * lit;
                         let shed = self.shed(a);
                         let heat = self.heat_flux;
-                        match (frost, highest) {
-                            (Some(f), Some(highest)) => {
+                        match (frost, ceiling) {
+                            (Some(f), Some(top)) => {
                                 let gains = (bare, (1.0 - f.albedo) * lit);
                                 let rows = (&mut r.work, &mut r.trial);
-                                column.trial(&r.t, rows, dt, gains, heat, shed, r.mass, highest);
+                                column.trial(&r.t, rows, dt, gains, heat, shed, r.mass, top);
+                                if let Some(c) = r.cap.as_mut() {
+                                    let rows = (&mut c.work, &mut c.trial);
+                                    column.trial(&c.t, rows, dt, gains, heat, shed, c.mass, top);
+                                }
                             }
                             _ => column.step(&mut r.t, &mut r.work, dt, bare, heat, shed),
                         }
@@ -2344,11 +2576,29 @@ impl EnergyBalance {
                             self.sea_step(sea, dt, (lit, p.albedo), (a, exchange), water);
                         }
                     });
-                let point = match (frost, highest) {
-                    (Some(f), Some(highest)) => {
+                let point = match (frost, highest, ceiling) {
+                    (Some(f), Some(highest), Some(top)) => {
                         let gas = (held - load, whole);
-                        let point =
+                        let mut point =
                             self.frost_point(column, (&runs, places, &air), gas, dt, f, highest);
+                        if point > top {
+                            runs.par_iter_mut()
+                                .zip(places.par_iter())
+                                .zip(air.par_iter())
+                                .for_each(|((r, p), &a)| {
+                                    if r.mass <= 0.0 && r.trial.clear && r.trial.free[0] < point {
+                                        let lit = light(k, p);
+                                        let gains =
+                                            ((1.0 - r.albedo) * lit, (1.0 - f.albedo) * lit);
+                                        let (heat, shed) = (self.heat_flux, self.shed(a));
+                                        let rows = (&mut r.work, &mut r.trial);
+                                        let open = f64::INFINITY;
+                                        column.trial(&r.t, rows, dt, gains, heat, shed, 0.0, open);
+                                    }
+                                });
+                            let runs = (&runs[..], &places[..], &air[..]);
+                            point = self.frost_point(column, runs, gas, dt, f, highest);
+                        }
                         let ((olr, slope), exchange) =
                             (self.olr_and_slope(point), self.coupling(point));
                         let (e, de) = f.emissivity(point);
@@ -2366,8 +2616,12 @@ impl EnergyBalance {
                                 f.latent,
                                 &mut r.mass,
                             );
+                            if let Some(c) = r.cap.as_mut() {
+                                let (t, mass) = (&mut c.t, &mut c.mass);
+                                column.finish(t, &c.trial, dt, point, shed, f.latent, mass);
+                            }
                         });
-                        load = over(&runs, |r| r.mass);
+                        load = over(&runs, Run::load);
                         let now = partial(held - load);
                         range = (range.0.min(now), range.1.max(now));
                         partials.push(now);
@@ -2379,8 +2633,14 @@ impl EnergyBalance {
                     .zip(air.par_iter())
                     .for_each(|(r, &a)| r.record(k, snapshot, every, point, a));
             }
-            // The frost that lay all cycle and grew through it: a cap's growth.
-            growth = over(&runs, Run::growth);
+            // The frost that lay all cycle and grew through it: a cap's growth; and what the
+            // caps that hold the air gained through it (F258).
+            growth = over(&runs, |r| r.growth() * r.bare_share());
+            for r in runs.iter_mut() {
+                if let Some(c) = r.cap.as_mut() {
+                    c.gained = c.mass - c.start;
+                }
+            }
             let means: Vec<f64> = runs
                 .iter()
                 .flat_map(|r| [r.sums[0] / steps as f64, r.sea_sum / steps as f64])
@@ -2399,19 +2659,37 @@ impl EnergyBalance {
             // body's; little where the frost's own balance holds the air below it, as no store
             // of gas would raise it. A cap's growth comes off in the same share, as the gas it
             // took is given back: the cap a closed atmosphere's frost lays stays.
+            //
+            // Caps that hold the air are such a store (F258): the air's mean comes to the
+            // body's, the caps going on giving or taking through the next cycle what they did
+            // through this one, their kilometres barely touched.
             if let Some(f) = frost {
                 let mean_load = over(&runs, |r| r.frost_sum) / steps as f64;
-                let kept = ((held - mean_load) / column_gas).clamp(0.0, 1.0);
-                for r in runs.iter_mut() {
-                    r.mass -= kept * r.growth();
+                if capped {
+                    let drift = over(&runs, |r| {
+                        r.cap.as_ref().map_or(0.0, |c| c.share * c.gained)
+                    });
+                    for r in runs.iter_mut() {
+                        r.mass -= r.growth();
+                    }
+                    load = over(&runs, Run::load);
+                    held = (f.column + mean_load + drift - growth).max(load);
+                } else {
+                    let kept = ((held - mean_load) / column_gas).clamp(0.0, 1.0);
+                    for r in runs.iter_mut() {
+                        r.mass -= kept * r.growth();
+                    }
+                    load = over(&runs, Run::load);
+                    held = (f.column + (mean_load - growth) * kept).max(load);
                 }
-                load = over(&runs, |r| r.mass);
-                held = (f.column + (mean_load - growth) * kept).max(load);
             }
             for r in runs.iter_mut() {
                 let sums = std::mem::take(&mut r.sums);
                 settle(&mut r.t, &sums, steps);
                 r.sums = sums;
+                if let Some(c) = r.cap.as_mut() {
+                    settle(&mut c.t, &c.sums, steps);
+                }
             }
         }
         // The surface pressure: the other gases' and the frost's gas's.
@@ -2427,6 +2705,11 @@ impl EnergyBalance {
                 .flat_map(|r| r.masses[1].iter().copied())
                 .collect(),
         ];
+        let caps = runs
+            .iter()
+            .map(|r| r.cap.as_ref().map_or(0.0, |c| c.share * c.gained))
+            .collect();
+        let active = held - over(&runs, Run::taken);
         Lockstep {
             runs,
             range,
@@ -2434,6 +2717,8 @@ impl EnergyBalance {
             partials,
             air: series,
             masses,
+            caps,
+            active,
         }
     }
 
@@ -2443,7 +2728,8 @@ impl EnergyBalance {
     /// space and to the air over it (F245). The frost taken rises with the point and the
     /// point of what is left falls, so the two cross once, between none and `highest`, the
     /// point of all the gas; found by false position, halving the side that stays, the low
-    /// side, which leaves the air the gas the frost does not take.
+    /// side, which leaves the air the gas the frost does not take. The caps that hold the air
+    /// may give it more than all the gas (F258), and the point then stands above `highest`.
     fn frost_point(
         &self,
         column: &Column,
@@ -2453,22 +2739,26 @@ impl EnergyBalance {
         frost: &Frost,
         highest: f64,
     ) -> f64 {
-        let taking: Vec<(&Run, f64, f64)> = runs
-            .iter()
-            .zip(places)
-            .zip(air)
-            .filter(|((r, _), _)| r.mass > 0.0 || !r.trial.clear)
-            .map(|((r, p), &a)| (r, p.weight / whole, a))
-            .collect();
+        // Each place's ground bare of the caps where it takes or gives frost, and its caps:
+        // its trial, its frost, its share of the body and the air over it.
+        let mut taking: Vec<(&Trial, f64, f64, f64)> = Vec::new();
+        for ((r, p), &a) in runs.iter().zip(places).zip(air) {
+            if r.mass > 0.0 || !r.trial.clear {
+                taking.push((&r.trial, r.mass, p.weight * r.bare_share() / whole, a));
+            }
+            if let Some(c) = &r.cap {
+                taking.push((&c.trial, c.mass, p.weight * c.share / whole, a));
+            }
+        }
         let gap = |point: f64| {
             let (olr, exchange) = (self.olr(point), self.coupling(point));
             let olr = olr * frost.emissivity(point).0;
             let taken: f64 = taking
                 .iter()
-                .map(|&(r, w, a)| {
+                .map(|&(trial, mass, w, a)| {
                     let radiated = olr + exchange * (point - a);
                     column
-                        .deposit(&r.trial, dt, point, radiated, frost.latent, r.mass)
+                        .deposit(trial, dt, point, radiated, frost.latent, mass)
                         .1
                         * w
                 })
@@ -2478,7 +2768,16 @@ impl EnergyBalance {
         let (mut lo, mut hi) = (0.0, highest);
         let (mut g_lo, mut g_hi) = (gap(lo), gap(hi));
         if g_hi <= 0.0 {
-            return hi;
+            if runs.iter().all(|r| r.cap.is_none()) {
+                return hi;
+            }
+            // The point of what the air holds at `highest`, past the crossing.
+            (lo, g_lo) = (hi, g_hi);
+            hi -= g_hi;
+            g_hi = gap(hi);
+            if g_hi <= 0.0 {
+                return hi;
+            }
         }
         let mut side = 0;
         for _ in 0..FROST_POINT_ITERATIONS {
@@ -3575,6 +3874,21 @@ impl Cycle {
         (out, albedo)
     }
 
+    /// The frost point through the year where the air keeps `thin` of the datum's pressure,
+    /// K (F258): its mean, its lowest and its highest through the year's steps at each tilt,
+    /// where the atmosphere lays frost. The frost's own gas's caps stand at it.
+    pub fn frost_point_year(&self, thin: f64) -> Option<(f64, f64, f64)> {
+        let f = self.frost?;
+        let (mut sum, mut lo, mut hi, mut n) = (0.0, f64::MAX, f64::MIN, 0usize);
+        for &p in self.partials.iter().flatten() {
+            let t = f.point_at(p * thin);
+            sum += t;
+            (lo, hi) = (lo.min(t), hi.max(t));
+            n += 1;
+        }
+        (n > 0).then(|| (sum / n as f64, lo, hi))
+    }
+
     /// The coldest and the warmest the surface stands anywhere through the year, K.
     pub fn extremes(&self) -> (f64, f64) {
         let coldest = self
@@ -3650,7 +3964,8 @@ impl Trial {
 
 /// A place of the cycle's layout (F239, F245): its latitude and longitude, rad, its share of
 /// the sphere's area, its year's mean temperature, its ground's albedo without ice and snow,
-/// and the share of it the sea covers.
+/// the share of it the sea covers, and the share the frost's own gas's caps cover with the
+/// ice they hold there, kg/m² (F258).
 #[derive(Clone, Copy, Debug)]
 struct Place {
     lat: f64,
@@ -3660,6 +3975,15 @@ struct Place {
     albedo: f64,
     snow: f64,
     sea: f64,
+    cap: f64,
+    cap_mass: f64,
+}
+
+impl Place {
+    /// The share of the place its land covers bare of the caps.
+    fn land(&self) -> f64 {
+        (1.0 - self.sea - self.cap).max(0.0)
+    }
 }
 
 /// The places the cycle runs at under an atmosphere (F245): each place's links to its
@@ -3719,10 +4043,33 @@ struct Run {
     masses: [Vec<f32>; 2],
     /// The surface's temperature at the end of each step of the cycle (F256).
     surface: Vec<f32>,
+    /// The place's share of the frost's own gas's caps (F258).
+    cap: Option<Patch>,
+}
+
+/// A place's share of the caps that hold the air through the lockstep (F258): the share of
+/// the place they cover, their column and each layer's sum through the cycle, the ice they
+/// hold, kg/m², what they were laid with and held as the cycle began, and what the last
+/// cycle left them.
+struct Patch {
+    share: f64,
+    t: Vec<f64>,
+    sums: Vec<f64>,
+    mass: f64,
+    laid: f64,
+    start: f64,
+    gained: f64,
+    work: Work,
+    trial: Trial,
 }
 
 impl Run {
-    fn new((n, steps): (usize, usize), place: &Place, ocean: Option<&Ocean>) -> Self {
+    fn new(
+        (n, steps): (usize, usize),
+        place: &Place,
+        ocean: Option<&Ocean>,
+        frost: Option<&Frost>,
+    ) -> Self {
         let sea = ocean.filter(|_| place.sea > 0.0).map(|o| {
             let t = place.steady.max(o.freezing);
             Sea {
@@ -3731,12 +4078,26 @@ impl Run {
                 surface: t,
             }
         });
+        let cap = frost
+            .filter(|_| place.cap > 0.0 && place.cap_mass > 0.0)
+            .map(|f| Patch {
+                share: place.cap,
+                t: vec![place.steady.min(f.point); n],
+                sums: vec![0.0; n],
+                mass: place.cap_mass,
+                laid: place.cap_mass,
+                start: place.cap_mass,
+                gained: 0.0,
+                work: Work::new(n),
+                trial: Trial::new(n),
+            });
         Self {
             t: vec![place.steady; n],
             mass: 0.0,
             work: Work::new(n),
             trial: Trial::new(n),
             sea,
+            cap,
             albedo: place.albedo,
             sums: vec![0.0; n],
             hi: f64::MIN,
@@ -3766,6 +4127,24 @@ impl Run {
         }
     }
 
+    /// The share of the place its frost lies on: its land bare of the caps (F258).
+    fn bare_share(&self) -> f64 {
+        self.cap.as_ref().map_or(1.0, |c| 1.0 - c.share)
+    }
+
+    /// The frost's gas the place holds out of the air over its area, kg/m²: its frost on the
+    /// ground bare of the caps, and what its caps took since they were laid (F258).
+    fn load(&self) -> f64 {
+        self.mass * self.bare_share() + self.taken()
+    }
+
+    /// What the place's caps took out of the air since they were laid, kg/m² of the place.
+    fn taken(&self) -> f64 {
+        self.cap
+            .as_ref()
+            .map_or(0.0, |c| c.share * (c.mass - c.laid))
+    }
+
     /// A new cycle.
     fn begin(&mut self) {
         self.sums.fill(0.0);
@@ -3776,6 +4155,10 @@ impl Run {
         (self.sea_sum, self.sea_lo, self.sea_hi) = (0.0, f64::MAX, f64::MIN);
         self.iced = 0;
         self.records.clear();
+        if let Some(c) = self.cap.as_mut() {
+            c.sums.fill(0.0);
+            c.start = c.mass;
+        }
     }
 
     /// The record of the cycle's `k`th step, just taken at `point` under air at `air` K.
@@ -3787,8 +4170,13 @@ impl Run {
         if self.mass > 0.0 {
             self.frosted += 1;
         }
-        self.frost_sum += self.mass;
+        self.frost_sum += self.load();
         self.frost_least = self.frost_least.min(self.mass);
+        if let Some(c) = self.cap.as_mut() {
+            for (s, v) in c.sums.iter_mut().zip(&c.t) {
+                *s += v;
+            }
+        }
         if let Some(sea) = &self.sea {
             self.sea_sum += sea.surface;
             (self.sea_lo, self.sea_hi) =
@@ -4648,7 +5036,10 @@ mod tests {
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
         let sea = sea_of(graph);
         let sea = sea.as_ref().map(|(o, f)| (o, f));
-        (eb.cycle(&climate, &Ground::from_graph(graph), sea), climate)
+        (
+            eb.cycle(&climate, &Ground::from_graph(graph), sea, None),
+            climate,
+        )
     }
 
     fn cycle_of(name: &str) -> (Cycle, Climate) {
@@ -4991,7 +5382,7 @@ mod tests {
         println!("resonance {:?}", eb.sky.resonance);
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
         let started = std::time::Instant::now();
-        let cycle = eb.cycle(&climate, &Ground::from_graph(&graph), None);
+        let cycle = eb.cycle(&climate, &Ground::from_graph(&graph), None, None);
         let f = cycle.frost.unwrap();
         let (mean, ..) = bands(&cycle.frost_now);
         println!(
@@ -5125,6 +5516,60 @@ mod tests {
         }
     }
 
+    /// F258: the frost's own gas's caps hold its air: Pluto's nitrogen laid in its traps and
+    /// its year run again with them as the reservoir its air draws on, its pressure no longer
+    /// falling a hundredfold as its winter's frost takes the air, its year's mean the body's;
+    /// the caps standing at the frost point, the warmer the lower they lie.
+    #[test]
+    fn the_caps_hold_the_air() {
+        let graph = crate::presets::preset("Pluto").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&graph);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let climate = eb.solve(grid);
+        let ground = Ground::from_graph(&graph);
+        let bare = eb.cycle(&climate, &ground, None, None);
+        let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
+        let downscale = Downscale::from_graph(&graph);
+        let traps = eb.traps(
+            &climate,
+            &ground,
+            &bare,
+            &ices,
+            &Field::new(grid),
+            &downscale,
+        );
+        let mut layers = crate::fields::LayerSet::new(CubeSphere::new(64));
+        let laid = crate::stages::caps::lay(&graph, &mut layers, &traps);
+        let f = eb.frost.expect("Pluto's nitrogen frost");
+        let reservoir =
+            crate::stages::caps::reservoir(&laid, grid, &eb, f.species).expect("nitrogen caps");
+        let over = crate::stages::caps::on_climate(&laid, grid, &eb);
+        let held = eb.cycle(
+            &eb.solve_over(grid, Some(&over)),
+            &ground,
+            None,
+            Some(&reservoir),
+        );
+        let (lowest, _) = bare.pressure_range.unwrap();
+        let (lo, hi) = held.pressure_range.unwrap();
+        let series = held.series.as_ref().unwrap();
+        let mean = series.pressure.iter().sum::<f64>() / series.pressure.len() as f64;
+        let gain = held
+            .reservoir
+            .as_ref()
+            .map(|r| r.1)
+            .expect("the caps' gain");
+        println!(
+            "Pluto: pressure {lowest:.4} Pa at its lowest without its caps, {lo:.4} to {hi:.4} with them, mean {mean:.4}; the caps gain {gain:.3} kg/m² a year"
+        );
+        assert!(lo > 5.0 * lowest, "{lo} against {lowest}");
+        let body = graph.f64("atmosphere.surface_pressure");
+        assert!((mean / body - 1.0).abs() < 0.05, "{mean} against {body}");
+        let (high, ..) = held.frost_point_year(1.0).unwrap();
+        let (low, ..) = held.frost_point_year(1.2).unwrap();
+        assert!(low > high, "{low} lower down, {high} at the datum");
+    }
+
     /// F240: a basin traps better than a height: the higher pressure of its air raises the
     /// frost's point, so that Mars's carbon dioxide ice 5 km down grows more than 5 km up,
     /// and its water there needs less vapour in the air (the trapping that gathers Pluto's
@@ -5222,7 +5667,12 @@ mod tests {
         let climate = eb.solve(grid);
         let ocean = Ocean::from_graph(world).expect("a water sea");
         let share = Field::filled(grid, 1.0f32);
-        let cycle = eb.cycle(&climate, &Ground::from_graph(world), Some((&ocean, &share)));
+        let cycle = eb.cycle(
+            &climate,
+            &Ground::from_graph(world),
+            Some((&ocean, &share)),
+            None,
+        );
         (eb, cycle.seas.expect("a water sea"), climate)
     }
 
@@ -5522,6 +5972,7 @@ mod tests {
             &climate,
             &Ground::from_graph(&earth),
             Some((&ocean, &share)),
+            None,
         );
         let seas = cycle.seas.as_ref().expect("the sea");
         let land = direction_from_lon_lat(90f64.to_radians(), 60f64.to_radians());
@@ -5613,9 +6064,9 @@ mod tests {
         let eb = EnergyBalance::from_graph(&earth);
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
         let (ocean, share) = sea_of(&earth).unwrap();
-        let layout = eb.layout(&climate, Some(&share));
+        let layout = eb.layout(&climate, Some(&share), None);
         let ground = Ground::from_graph(&earth);
-        let year = eb.seasonal_years(&ground, &layout, eb.sky.obliquity, Some(&ocean));
+        let year = eb.seasonal_years(&ground, &layout, eb.sky.obliquity, Some(&ocean), None);
         let steps = year.masses[1].len() / layout.places.len();
         for lat in [89.0f64, 85.0, 80.0, 75.0, 70.0] {
             let i = ((lat + 90.0) / 2.0).round() as usize;
@@ -5768,7 +6219,7 @@ mod tests {
         graph.set("rotation.period", year).unwrap();
         let eb = EnergyBalance::from_graph(&graph);
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
-        let layout = eb.layout(&climate, None);
+        let layout = eb.layout(&climate, None, None);
         let n = layout.places.len();
         let links: Vec<Vec<(usize, f64)>> = layout
             .links

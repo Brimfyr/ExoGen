@@ -1302,6 +1302,9 @@ pub fn export(
     if let Some(growth) = out.cap_growth {
         stage_outputs.insert("cap_growth_kg_m2_yr".to_string(), growth);
     }
+    if let Some(gain) = out.reservoir_gain {
+        stage_outputs.insert("reservoir_gain_kg_m2_yr".to_string(), gain);
+    }
     // The cold traps (F240): each ice's coldest and the vapour it holds the air at; the
     // frost's own gas's ice's best growth and the share of the body it would grow on.
     for (ice, _) in &out.traps.vapour {

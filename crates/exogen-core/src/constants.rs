@@ -1876,6 +1876,14 @@ pub const TRAP_STORE: f64 = 1.0e9;
 /// F240: a fast spinner's traps are run on the cycle's latitudes at TRAP_HEIGHT_LEVELS
 /// heights spanning its own, read at each cell between them.
 pub const TRAP_HEIGHT_LEVELS: usize = 7;
+/// F258: a fast spinner whose caps hold its air spins its seasons up on its latitudes' rows
+/// through at most CYCLE_SPIN_UP_YEARS cycles, the frost its air lays coming to its own over
+/// decades of its years, before its places run from them.
+pub const CYCLE_SPIN_UP_YEARS: usize = 100;
+/// F258: the year's frost point the caps of the frost's own gas stand at is found at
+/// CAP_POINT_LEVELS heights from their lowest surface to their highest, read at each cell
+/// between them: the point falls with the pressure, smoothly with height.
+pub const CAP_POINT_LEVELS: usize = 9;
 /// F241: the densities of the ices the caps lay, kg/m³: water's ice Ih, the default; solid
 /// carbon dioxide near its frost point (Mangan et al. 2017: 1.5 to 1.6 g/cm³); alpha
 /// nitrogen (Scott 1976); solid methane; solid ammonia.

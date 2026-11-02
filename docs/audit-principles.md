@@ -588,6 +588,12 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | a window opening and closing where its ice crosses the mass it lies at, and lengthening toward the places it lies at all year by their share (F255) | stated: linear between the steps' ends; the share a stated choice | the ice's own time at each sub-place point |
 | CO2_FROST_ALBEDO (F257) | measured: between Mars's seasonal caps' broadband albedos, the north's 0.40 (TES) and the south's brighter | the frost's dust and its grains' growth (5D) |
 | N2_FROST_ALBEDO, CH4_FROST_ALBEDO (F257) | their colours' means, kept | Pluto's and Triton's measured albedos, with the volatile transport |
+| the frost's own gas's caps in the year as the reservoir its air draws on, the air's year-mean the body's (F258) | stated: the year's mean set as before (F239); what the caps gain counted | the pressure at the season it was measured; the caps' own pressure where no measurement sets the body's |
+| the caps at the datum's frost point in the year, at their height's in the traps and the maps (F258) | stated | their exchange at their own heights, with the volatile transport |
+| the caps laid twice, the second time in the traps of the year the first hold (F258) | stated: a step of the caps' fixed point; a third laying agrees on Mars, Triton and Pluto on flat ground | the caps gathered through the history |
+| CYCLE_SPIN_UP_YEARS (F258) | a stated choice: the rows' cycles the seasons are spun up through | none: the places settle from it |
+| CAP_POINT_LEVELS (F258) | a stated choice: the heights the caps' frost point is read between | none |
+| Pluto's and Charon's perihelion at Ls 3.8 (F258) | measured (Bertrand and Forget 2016) | none |
 | the frost's albedo by its cover, its emission at its own from its first gram (F257) | stated: the visible cover for its light; its far infrared's transparency unmeasured | how thin a frost lets the ground's far infrared through |
 | the climate's year-mean balance at a cell's own albedo, its air's transport and greenhouse held as the climate found them (F256) | stated: exact on an airless body | the ground's own column through the cycle at its albedo |
 | a slope taking the year's sunlight of the direction it faces (F256) | geometric: exact for a plane whose horizon nothing shades | the slope's horizon |
