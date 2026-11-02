@@ -81,9 +81,40 @@ pub const GOUGH_REFERENCE_FRACTION: f64 = 0.457;
 /// Main-sequence lifetime of the Sun used by the lifetime scaling, Gyr.
 pub const MAIN_SEQUENCE_LIFETIME_SUN_GYR: f64 = 10.0;
 
-/// Ribas et al. 2005: XUV flux of solar analogues scales as age^-1.23 beyond 0.1 Gyr.
+/// Ribas et al. 2005: XUV flux of solar analogues scales as age^-1.23 beyond 0.1 Gyr; the
+/// F, G and K stars' X-rays against their light fall as the age to the -1.22 +- 0.10 after their
+/// saturation, with no trend across them (Jackson et al. 2012).
 pub const XUV_AGE_EXPONENT: f64 = -1.23;
 pub const XUV_SATURATION_AGE_GYR: f64 = 0.1;
+/// F261: the present Sun's XUV flux at 1 AU, 1 to 1180 Å, W/m² (Ribas et al. 2005): some
+/// 3.4e-6 of its light.
+pub const XUV_SUN_FLUX: f64 = 4.64e-3;
+/// F261: a red dwarf of 0.1 to 0.3 solar masses keeps its X-ray light saturated for
+/// 5.9 - 15.4 M Gyr, M its mass in the Sun's (Pass et al. 2024, measured on the
+/// volume-complete sample within 15 pc): 4.4 Gyr at 0.1, 1.3 at 0.3. The F, G and K stars keep
+/// it 10^7.8 to 10^8.3 years with no trend (Jackson et al. 2012), the Sun's 0.1 Gyr
+/// (XUV_SATURATION_AGE_GYR) held from their reddest, the late K stars of
+/// XUV_SATURATION_FGK_MASS, up; read linearly in its logarithm between.
+pub const XUV_SATURATION_FIT: (f64, f64) = (5.9, -15.4);
+pub const XUV_SATURATION_FIT_MASS: f64 = 0.3;
+pub const XUV_SATURATION_FGK_MASS: f64 = 0.64;
+/// F261: a saturated star's X-ray light against its whole, log10, the XUV's proxy (Lammer et
+/// al. 2009), by its mass in the Sun's: the M dwarfs' (Wright et al. 2018) from M0 down, the F,
+/// G and K stars' by their colour (Jackson et al. 2012) at their colours' masses on the dwarfs'
+/// sequence (Pecaut and Mamajek 2013): falling from a red dwarf's 10^-3.05 to an F star's
+/// 10^-4.28, the Sun's 10^-3.68; read linearly in mass and held beyond. The late K stars' -3.14
+/// is Jackson's measure, not pi.
+#[allow(clippy::approx_constant)]
+pub const XUV_SATURATED_LEVELS: [(f64, f64); 8] = [
+    (0.57, -3.05),
+    (0.64, -3.14),
+    (0.72, -3.35),
+    (0.855, -3.36),
+    (0.94, -3.71),
+    (1.03, -3.67),
+    (1.20, -4.24),
+    (1.46, -4.28),
+];
 
 /// F260: the luminosities of low-mass stars through their lives, the BHAC15 tracks (Baraffe et
 /// al. 2015): log10 of L/Lsun at log10 ages, years, from BHAC15_LOG_AGE_FIRST (1 Myr) every

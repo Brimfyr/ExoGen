@@ -310,3 +310,13 @@ How it went:
 - **The climate.** Under its present air the young Earth stood at 249 K, below freezing until 2.52 Gyr after it formed: the faint young Sun's paradox, which the air's own history answers (F261).
 - **The runaway greenhouse.** By the star's effective temperature and the body's mass (Kopparapu et al. 2014), where the present albedo, a guess by pressure class, is not the steam's. TRAPPIST-1e ran away until 0.34 Gyr after it formed, where Bourrier et al. 2017 find TRAPPIST-1's planets' runaways ending after a few tens to a few hundred Myr; the Earth never did.
 - **Not yet:** the air's history (F261); the albedo's and the star's temperature's histories.
+
+## The twenty-fifth milestone: the star's XUV by its mass
+
+- **F261.** A star's XUV light against its whole saturated at a level by its mass until a time by its mass, then falling as the age to the -1.23: a red dwarf's saturated for Gyr at 10^-3.05 of its light, the Sun's for 0.1 Gyr at 10^-3.68. The XUV at the body through its life.
+
+How it went:
+
+- **The measures.** The red dwarfs' saturation time measured on a volume-complete sample (Pass et al. 2024), the F, G and K stars' and their saturated levels by colour (Jackson et al. 2012), the M dwarfs' level (Wright et al. 2018); the Sun's history as before.
+- **TRAPPIST-1.** A star of its mass at its age sends 8.5e-4 of its light in XUV against the 6e-4 to 9e-4 measured; TRAPPIST-1e takes 165 times the Earth's XUV today and some 2000 times when it formed.
+- **Not yet:** the escape it drives (F262, F263); a star's rotation through its life.

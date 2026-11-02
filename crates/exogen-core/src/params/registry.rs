@@ -542,10 +542,15 @@ static NODES: &[NodeDef] = &[
         "x present Sun at 1 AU",
         1.0,
         f(0.0, 1e6),
-        &["star.age", "orbit.star_distance"],
+        &[
+            "star.mass",
+            "star.luminosity",
+            "star.age",
+            "orbit.star_distance",
+        ],
         d::star_xuv_relative,
-        "Scales as age^-1.23 beyond 0.1 Gyr and with the inverse square of the star distance.",
-        "Ribas et al. 2005 (F4)",
+        "The star's light times its XUV share, saturated at a level by its mass until a time by its mass, a red dwarf's Gyr against the Sun's 0.1, falling after as age^-1.23; over the square of the star distance. TRAPPIST-1's planets some 100 to 200 times the Earth's.",
+        "Ribas et al. 2005 (F4); Jackson et al. 2012; Wright et al. 2018; Pass et al. 2024 (F261)",
     ),
     derived(
         "star.luminosity_history",
@@ -565,6 +570,24 @@ static NODES: &[NodeDef] = &[
         d::star_luminosity_history,
         "Luminosity over the body's life, Gyr since the body formed: a star of up to 1.4 solar masses by the BHAC15 tracks, its bright contraction before its main sequence among them, a heavier one by its main sequence's brightening. The Sun 0.69 of its present when its planets formed, a red dwarf of 0.09 solar masses six times its present at 50 Myr.",
         "Baraffe et al. 2015 (F260); Gough 1981 (F3)",
+    ),
+    derived(
+        "star.xuv_history",
+        "star",
+        "XUV history at the body",
+        "x present Sun at 1 AU",
+        1.0,
+        ValueType::Curve,
+        &[
+            "star.mass",
+            "star.age",
+            "body.age",
+            "orbit.star_distance",
+            "star.luminosity_history",
+        ],
+        d::star_xuv_history,
+        "The XUV flux at the body over its life, Gyr since it formed: its star's light then times its XUV share then, saturated until a time by its mass, a red dwarf's of 0.1 solar masses 4.4 Gyr, the Sun's 0.1. The Earth some 76 times today's when it formed.",
+        "Ribas et al. 2005; Jackson et al. 2012; Pass et al. 2024 (F261)",
     ),
     // ------------------------------------------------------------------ orbit
     root(
@@ -3998,6 +4021,19 @@ mod tests {
         );
         assert!(formed < 273.15 - 15.0, "the young Earth {formed}");
         assert!((today - g.f64("atmosphere.surface_temperature_mean")).abs() < 1e-9);
+        // F261: the Earth's XUV today the Sun's at 1 AU over its light, some 76 times today's
+        // when it formed, its Sun saturated (Ribas et al. 2005).
+        let xuv = g.curve("star.xuv_history").unwrap();
+        let (xuv_today, xuv_young) = (g.f64("star.xuv_relative") / now, xuv.eval(0.0) / now);
+        assert!(
+            (xuv_today - 1.0).abs() < 1e-3,
+            "the Earth's XUV {xuv_today}"
+        );
+        assert!(
+            (60.0..90.0).contains(&xuv_young),
+            "the young Earth's XUV {xuv_young}"
+        );
+        assert!((xuv.eval(g.f64("body.age")) / now - xuv_today).abs() < 1e-9);
 
         let mut dwarf = earth();
         dwarf.set("star.mass", 0.0898).unwrap();
@@ -4027,6 +4063,21 @@ mod tests {
                 .eval(0.0)
         );
         assert!((0.15..0.6).contains(&runaway), "TRAPPIST-1e {runaway}");
+        // F261: its XUV against its light today within Wheatley et al. 2017's measured 6e-4 to
+        // 9e-4, past its saturation of 4.5 Gyr, the present Sun's 3.4e-6.
+        let d = dwarf.f64("orbit.star_distance") / AU;
+        let xuv = dwarf.f64("star.xuv_relative");
+        let solar = crate::constants::XUV_SUN_FLUX * 4.0 * std::f64::consts::PI * AU * AU
+            / crate::constants::L_SUN;
+        let share = xuv * d * d / luminosity * solar;
+        let young_xuv = dwarf.curve("star.xuv_history").unwrap().eval(0.0);
+        println!(
+            "TRAPPIST-1e: XUV {xuv:.0} times the Earth's today, {young_xuv:.0} when it formed; its star's XUV {share:.2e} of its light"
+        );
+        assert!(
+            (5e-4..1.2e-3).contains(&share),
+            "TRAPPIST-1's XUV share {share}"
+        );
 
         let mut hot = earth();
         hot.set("orbit.semi_major_axis", 0.723 * AU).unwrap();

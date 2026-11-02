@@ -156,9 +156,44 @@ pub mod physics {
         s_eff * L_SUN / (4.0 * PI * AU * AU)
     }
 
-    /// F4: XUV flux relative to the present Sun at 1 AU, at distance `d_au` from the star.
-    pub fn xuv_relative(age_gyr: f64, d_au: f64) -> f64 {
-        (age_gyr.max(XUV_SATURATION_AGE_GYR) / AGE_SUN_GYR).powf(XUV_AGE_EXPONENT) / (d_au * d_au)
+    /// F261: how long a star of `m` solar masses keeps its XUV light saturated, Gyr.
+    pub fn xuv_saturation_time(m: f64) -> f64 {
+        let (a, b) = XUV_SATURATION_FIT;
+        let low = a + b * XUV_SATURATION_FIT_MASS;
+        if m <= XUV_SATURATION_FIT_MASS {
+            a + b * m
+        } else if m >= XUV_SATURATION_FGK_MASS {
+            XUV_SATURATION_AGE_GYR
+        } else {
+            let w =
+                (m - XUV_SATURATION_FIT_MASS) / (XUV_SATURATION_FGK_MASS - XUV_SATURATION_FIT_MASS);
+            low * (XUV_SATURATION_AGE_GYR / low).powf(w)
+        }
+    }
+
+    /// F4, F261: a star's XUV light against its whole at an age, Gyr, against the present
+    /// Sun's: its saturated level by its mass until its saturation time, falling after as the
+    /// age to XUV_AGE_EXPONENT (Ribas et al. 2005; Jackson et al. 2012).
+    pub fn xuv_share(m: f64, age_gyr: f64) -> f64 {
+        let level = |m: f64| {
+            let l = &XUV_SATURATED_LEVELS;
+            let i = l[1..l.len() - 1].partition_point(|&(x, _)| x <= m);
+            let w = ((m - l[i].0) / (l[i + 1].0 - l[i].0)).clamp(0.0, 1.0);
+            l[i].1 + (l[i + 1].1 - l[i].1) * w
+        };
+        let at = |m: f64, age: f64| {
+            10f64.powf(level(m))
+                * (age / xuv_saturation_time(m))
+                    .max(1.0)
+                    .powf(XUV_AGE_EXPONENT)
+        };
+        at(m, age_gyr) / at(1.0, AGE_SUN_GYR)
+    }
+
+    /// F4, F261: XUV flux relative to the present Sun at 1 AU, from a star of `m` solar masses
+    /// shining `l_sun` at an age, at distance `d_au` from it.
+    pub fn xuv_relative(m: f64, l_sun: f64, age_gyr: f64, d_au: f64) -> f64 {
+        l_sun * xuv_share(m, age_gyr) / (d_au * d_au)
     }
 
     // ---------------------------------------------------------------- orbit and body
@@ -688,7 +723,28 @@ pub fn star_spectral_type(c: &Ctx) -> Value {
 }
 
 pub fn star_xuv_relative(c: &Ctx) -> Value {
-    xuv_relative(c.f64("star.age"), c.f64("orbit.star_distance") / AU).into()
+    xuv_relative(
+        c.f64("star.mass"),
+        c.f64("star.luminosity"),
+        c.f64("star.age"),
+        c.f64("orbit.star_distance") / AU,
+    )
+    .into()
+}
+
+/// F261: the XUV flux at the body through its life, Gyr since it formed, against the present
+/// Sun's at 1 AU: its star's light then times its XUV share at its age then.
+pub fn star_xuv_history(c: &Ctx) -> Value {
+    let m = c.f64("star.mass");
+    let offset = c.f64("star.age") - c.f64("body.age");
+    let d = c.f64("orbit.star_distance") / AU;
+    let points = c
+        .curve("star.luminosity_history")
+        .points
+        .iter()
+        .map(|&(t, l)| (t, xuv_relative(m, l, offset + t, d)))
+        .collect();
+    Curve::new(points).into()
 }
 
 /// F3, F260: the star's luminosity through the body's life, Gyr since the body formed, crowded
