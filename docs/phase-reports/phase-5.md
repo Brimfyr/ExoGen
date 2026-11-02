@@ -357,3 +357,17 @@ How it went:
 ## Two items moved, the gate next
 
 - **Moved** (the user, 2026-11-02): Io's frost to its coldest ground to 5F, with Io's surface on the general pipeline that replaces the pipeline it would be built in; the caps' exchange with the air at their own heights to 5E, a small effect (some 0.03 K a kilometre for Pluto's nitrogen, 0.7 for Mars's carbon dioxide). 5B's gate check and its review page next.
+
+## The 5B gate check and its review page
+
+Rendered at 2,048 px at 7a94bd4 (Mars, Pluto, Triton, TRAPPIST-1e and the Earth) and measured on the maps:
+
+- **The locked ocean world's sea-ice edge on the freezing isoline.** TRAPPIST-1e's open sea's last cells beside the ice stand at 271.5 K (10 to 90 percent of them 271.4 to 271.7 K), seawater freezing at 271.35 K; its sea open over 50 percent of its dayside, where THAI's models leave almost half. Meets.
+- **Mars's water ice at its north pole.** 1.90 percent of the body, all beyond 60°N, on ground lower than 82 percent of the body's. Meets.
+- **Mars's carbon dioxide wherever its frost's balance holds it.** 0.015 percent of the body, on the northern water cap at 83°N; the physics able to give either hemisphere (the user, 2 November). Meets.
+- **Pluto's nitrogen gathered in its basin.** 1.34 percent of the body, 66 percent of it within 30° of the equator, on ground lower than 97 percent of the body's: its two great ringed basins and their craters. Meets.
+
+**Found by the check:** TRAPPIST-1e at its measured 7.6 Gyr (Burgasser and Mamajek 2017) cools into a stagnant lid (34 mW/m², a 224 km lithosphere) and its shields and floods pile up to 153 km on an Earth's gravity, where its relief limit is 9.5 km, the stagnant lid's shields and floods not held to it; at the Sun's 4.57 Gyr it keeps a mobile lid and relief of -5.5 to 6.5 km. No preset is old enough to show it. The review page draws TRAPPIST-1e's maps at 4.57 Gyr and its history at 7.6.
+
+**The review page:** https://claude.ai/artifact/MPH4ptNVN4GruAwFLmv2Se, awaiting the user's review.
+
