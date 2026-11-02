@@ -724,7 +724,7 @@ Gate: an Earth-like at 1 AU around a G2V star within 5 K of Earth's global mean 
 - The cycle by longitude for every spinning body (the user, 2026-11-01): a fast spinner's places by latitude and longitude, as a resonant body's are, so that its seasonal ices follow its land, its enclosed seas and its heights, not its latitudes, and its traps and frost hold their longitudes (Pluto's basin); a sea's mixed layer no deeper than the sea, so that its shelves freeze first.
 - The frost's energy albedo apart from its colour (the cryosphere review's third item, 2026-11-01): measured broadband albedos, the thresholds the energy, the window and the drawn cover read made one, the frost's ageing. Done by F257 thus: carbon dioxide's frost at the measured broadband albedo of Mars's seasonal caps, nitrogen's and methane's kept until the volatile transport tests them; the frost's albedo by the cover its window and its colour read, its emission at its own from its first gram (its far-infrared transparency unmeasured); its ageing with 5D's dust, its measured spring albedo standing for it meanwhile.
 
-Gate: the locked ocean world's sea-ice edge on the freezing isoline; Mars's residual caps, water ice in the north and CO2 in the south, where its temperatures put them; Pluto's nitrogen gathered in its basin.
+Gate: the locked ocean world's sea-ice edge on the freezing isoline; Mars's residual caps where its temperatures put them, its water ice at its north pole and its carbon dioxide wherever its frost's balance holds it, north, south or both, the south's cleaner and brightening frost deciding it with 5D's dust (the user, 2026-11-02: the physics able to give either, not the south required); Pluto's nitrogen gathered in its basin.
 
 **5C Water and ice at work.**
 
