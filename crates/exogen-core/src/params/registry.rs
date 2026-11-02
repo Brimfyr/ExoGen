@@ -2016,7 +2016,7 @@ static NODES: &[NodeDef] = &[
             "star.luminosity_history",
         ],
         d::atmosphere_surface_temperature_history,
-        "The mean surface temperature over the body's life, Gyr since it formed, under its star's light then, its albedo and atmosphere the present's: Earth's 249 K when it formed, frozen under the faint young Sun.",
+        "The mean surface temperature over the body's life, Gyr since it formed, under its star's light then, its albedo and atmosphere the present's: Earth's 249 K when it formed, frozen under the faint young Sun. Its air's history waits for a greenhouse that holds for thick cold carbon dioxide.",
         "F21 (F260)",
     ),
     derived(
@@ -2145,10 +2145,53 @@ static NODES: &[NodeDef] = &[
             "atmosphere.surface_pressure",
             "atmosphere.composition",
             "volatiles.inventory",
+            "volcanism.rate",
+            "volcanism.history",
         ],
         d::atmosphere_pressure_history,
-        "The surface pressure over the body's life, Gyr since it formed: its present pressure and the air it lost to space after, the ice of its air's main gas spent first, Pluto's and Triton's nitrogen keeping their pressure. Its outgassing and its stores are still to come.",
-        "F263",
+        "The surface pressure over the body's life, Gyr since it formed: its present pressure and the air it lost to space after less what its volcanism gave it after, at the yield that balances its loss today; the ice of its air's main gas spent first, Pluto's and Triton's nitrogen keeping their pressure.",
+        "F263, F264",
+    ),
+    derived(
+        "atmosphere.outgassing_yield",
+        "atmosphere",
+        "Outgassing yield",
+        "kg/m³ of melt",
+        1.0,
+        f(0.0, 1e6),
+        &[
+            "star.xuv_history",
+            "body.mass",
+            "body.radius",
+            "atmosphere.mean_molecular_mass",
+            "atmosphere.surface_pressure",
+            "volcanism.rate",
+            "volcanism.history",
+        ],
+        d::atmosphere_outgassing_yield,
+        "The air the body's melt gives it, at which its melt today gives what it loses to space today: Mars some 0.29, 100 ppm of carbon dioxide in its melt where its meteorites' redox allows 5 to 1000; the Earth's and Venus's next to none.",
+        "F264",
+    ),
+    derived(
+        "atmosphere.outgassed",
+        "atmosphere",
+        "Air outgassed",
+        "bar",
+        1e5,
+        f(0.0, 1e12),
+        &[
+            "star.xuv_history",
+            "body.mass",
+            "body.radius",
+            "body.gravity",
+            "atmosphere.mean_molecular_mass",
+            "atmosphere.surface_pressure",
+            "volcanism.rate",
+            "volcanism.history",
+        ],
+        d::atmosphere_outgassed,
+        "The air the body's volcanism gave it through its life, at its outgassing yield, as the pressure it would hold.",
+        "F264",
     ),
     derived(
         "atmosphere.greenhouse_optical_depth",
@@ -4103,16 +4146,25 @@ mod tests {
     }
 
     /// F263: Mars loses its air as MAVEN measures it today, some 1.8 kg/s, and, its escape
-    /// rising with its Sun's EUV, held more of it the further back: some half a bar 3.5 Ga
-    /// (Lillis et al. 2017's extrapolation, 0.48 bar over the last 3.5 Gyr), more before.
-    /// Hot oxygen does not escape the Earth or Venus, which lose their ions alone, a small
-    /// share of their air through their lives; Pluto's and Triton's nitrogen ice pays for what
-    /// they lose and keeps their pressure.
+    /// rising with its Sun's EUV, held more of it the further back. F264: its volcanism gave
+    /// some back, at the yield its melt today needs to give what it loses today, 100 ppm of
+    /// carbon dioxide where its meteorites' redox allows 5 to 1000: some 0.3 bar 3.5 Ga, 0.6
+    /// 3.8 Ga. Hot oxygen does not
+    /// escape the Earth or Venus, which lose their ions alone, a small share of their air
+    /// through their lives; Pluto's and Triton's nitrogen ice buffers what they lose and gain
+    /// and keeps their pressure.
     #[test]
     fn the_air_lost_to_space_through_the_bodies_lives() {
         let mars = crate::presets::preset("Mars").unwrap().to_graph().0;
         let rate = mars.f64("atmosphere.escape_rate");
         assert!((1.4..2.2).contains(&rate), "Mars escapes {rate} kg/s");
+        let yield_ = mars.f64("atmosphere.outgassing_yield");
+        println!(
+            "Mars: its melt gives {yield_:.3} kg/m³ ({:.0} ppm), {:.3} bar through its life",
+            yield_ / 2_900.0 * 1e6,
+            mars.f64("atmosphere.outgassed") / 1e5
+        );
+        assert!((0.15..0.5).contains(&yield_), "Mars's yield {yield_}");
         let age = mars.f64("body.age");
         let history = mars.curve("atmosphere.pressure_history").unwrap();
         assert!(history.points.windows(2).all(|w| w[1].1 <= w[0].1));
@@ -4144,9 +4196,10 @@ mod tests {
             let share =
                 g.f64("atmosphere.escaped") / g.f64("atmosphere.surface_pressure").max(1e-30);
             println!(
-                "{name}: {:.3e} kg/s today, {share:.3e} of its air lost through its life; hot oxygen escaping {:.3}",
+                "{name}: {:.3e} kg/s today, {share:.3e} of its air lost through its life; hot oxygen escaping {:.3}; outgassing yield {:.3e} kg/m³",
                 g.f64("atmosphere.escape_rate"),
-                recombination_escape_share_of(&g)
+                recombination_escape_share_of(&g),
+                g.f64("atmosphere.outgassing_yield")
             );
             if matches!(name, "Earth" | "Venus") {
                 assert!(recombination_escape_share_of(&g) < 1e-6, "{name}");

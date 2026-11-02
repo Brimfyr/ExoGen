@@ -2153,7 +2153,9 @@ pub fn atmosphere_surface_temperature_mean(c: &Ctx) -> Value {
 
 /// F260: the body's mean surface temperature through its life, K, Gyr since it formed: its
 /// zero-dimensional balance (F21) under its star's light then, its albedo and atmosphere the
-/// present's (their own histories wait for its escape and outgassing).
+/// present's: under its air's history (F263, F264) the grey law (F21) warms a thick cold
+/// carbon dioxide atmosphere far past what its bands' saturation, its Rayleigh scattering and its
+/// condensation allow.
 pub fn atmosphere_surface_temperature_history(c: &Ctx) -> Value {
     let t_eq = c.f64("atmosphere.equilibrium_temperature");
     let present = c.f64("star.luminosity").max(1e-300);
@@ -2284,6 +2286,63 @@ fn air_escape_history(c: &Ctx) -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// F264: the air's budget through the body's life: at each time of its XUV history, kg/m², what
+/// it lost to space after then (F263) less what its volcanism gave it after; the yield, kg of
+/// air per m³ of its melt, at which its melt today gives what it loses today, the balance that
+/// sets its outgassing; and what its volcanism gave it through its life, kg/m².
+fn air_budget(c: &Ctx) -> (Vec<(f64, f64)>, f64, f64) {
+    let escape = air_escape_history(c);
+    let r = c.f64("body.radius");
+    let area = 4.0 * PI * r * r;
+    let melt_now = c.f64("volcanism.rate");
+    let melting = if melt_now > 0.0 && c.f64("atmosphere.surface_pressure") > 0.0 {
+        let xuv = c
+            .curve("star.xuv_history")
+            .points
+            .last()
+            .map_or(0.0, |p| p.1);
+        let (m, mu) = (c.f64("body.mass"), c.f64("atmosphere.mean_molecular_mass"));
+        air_escape(xuv, m, r, mu) * area / melt_now
+    } else {
+        0.0
+    };
+    let melt = c.curve("volcanism.history");
+    let mut given = 0.0;
+    let outgassed: Vec<f64> = escape
+        .iter()
+        .enumerate()
+        .map(|(k, &(t, _))| {
+            if k > 0 {
+                let t0 = escape[k - 1].0;
+                given += 0.5 * (melt.eval(t0) + melt.eval(t)) * (t - t0) * GYR;
+            }
+            melting * given / area
+        })
+        .collect();
+    let (lost, gave) = (
+        escape.last().map_or(0.0, |p| p.1),
+        outgassed.last().copied().unwrap_or(0.0),
+    );
+    let budget = escape
+        .iter()
+        .zip(&outgassed)
+        .map(|(&(t, by), &out)| (t, (lost - by) - (gave - out)))
+        .collect();
+    (budget, melting, gave)
+}
+
+/// F264: the air the body's melt gives it, kg per m³ of melt, at which its melt today gives
+/// what it loses to space today.
+pub fn atmosphere_outgassing_yield(c: &Ctx) -> Value {
+    air_budget(c).1.into()
+}
+
+/// F264: the air the body's volcanism gave it through its life, Pa, as the pressure it would
+/// hold.
+pub fn atmosphere_outgassed(c: &Ctx) -> Value {
+    (air_budget(c).2 * c.f64("body.gravity")).into()
+}
+
 /// F263: the air the body loses to space today, kg/s.
 pub fn atmosphere_escape_rate(c: &Ctx) -> Value {
     let r = c.f64("body.radius");
@@ -2306,12 +2365,12 @@ pub fn atmosphere_escaped(c: &Ctx) -> Value {
     (lost * c.f64("body.gravity")).into()
 }
 
-/// F263: the body's surface pressure through its life, Pa, Gyr since it formed: its present
-/// pressure and the air it lost to space after, the ice of its air's main gas, which buffers
-/// it, spent first (its outgassing and its stores to come).
+/// F263, F264: the body's surface pressure through its life, Pa, Gyr since it formed: its
+/// present pressure and the air it lost to space after less what its volcanism gave it after,
+/// the ice of its air's main gas, which buffers it, taking as much of the change either way as
+/// it holds today, the ice its climate keeps.
 pub fn atmosphere_pressure_history(c: &Ctx) -> Value {
-    let escape = air_escape_history(c);
-    let lost = escape.last().map_or(0.0, |p| p.1);
+    let (budget, _, _) = air_budget(c);
     let (now, g) = (c.f64("atmosphere.surface_pressure"), c.f64("body.gravity"));
     let main = c
         .map("atmosphere.composition")
@@ -2321,9 +2380,9 @@ pub fn atmosphere_pressure_history(c: &Ctx) -> Value {
     let ice = main
         .and_then(|s| volatile(s).map(|v| c.map_get("volatiles.inventory", s) * v.liquid_density))
         .unwrap_or(0.0);
-    let points = escape
+    let points = budget
         .iter()
-        .map(|&(t, by)| (t, now + (lost - by - ice).max(0.0) * g))
+        .map(|&(t, owed)| (t, (now + (owed - owed.clamp(-ice, ice)) * g).max(0.0)))
         .collect();
     Curve::new(points).into()
 }

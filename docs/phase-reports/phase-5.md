@@ -342,3 +342,14 @@ How it went:
 - **Earth and Venus** keep their hot oxygen and lose their ions, at some 4 and 30 times their measured rates, a small share of their air; **Pluto and Triton** keep their pressure, their nitrogen ice paying.
 - **Outgassing, staged.** Applied with the Earth's measured juvenile yields, Mars's model outgasses some 0.6 to 0.9 bar after 3.5 Ga, as much as it loses: the budget needs its stores of carbonate, and the Earth's its weathering, so the outgassing comes with them (F264).
 - **Not yet:** the outgassing and its stores; light gases' thermal escape; sputtering; hydrogen's escape outside a runaway.
+
+## The twenty-eighth milestone: the air's outgassing by its present balance
+
+- **F264.** Each body's melt gives its air at the one yield at which its melt today gives what it loses to space today, its volcanism's history carrying it back: the air's history from its escape and its outgassing.
+
+How it went:
+
+- **The Earth's yields** on Mars's model give some 0.9 bar after 3.5 Ga, more than it lost and holds, a budget only stores of carbonate would close. **The user** asked for something simpler that fits every body roughly.
+- **The present balance.** Mars's melt gives 101 ppm of carbon dioxide, within what its meteorites' redox allows; it held 0.29 bar 3.5 Ga, 0.61 3.8 Ga and 1.20 4.0 Ga. The Earth's and Venus's yields are tiny, their air hardly touched; Pluto's and Triton's ice buffers both ways.
+- **Tried and set aside:** an air built from nothing by the outgassing, which leaves Mars without air until the present; the climate under the air's history, whose grey greenhouse gives early Mars 289 K under 0.61 bar where 1-D and 3-D models find 210 to 225 K.
+- **Not yet:** a melt's gases by its mantle's redox and the carbonate stores, with 5D; the greenhouse of a thick cold carbon dioxide atmosphere.
