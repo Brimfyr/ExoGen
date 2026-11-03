@@ -2143,6 +2143,12 @@ pub const OROGRAPHIC_SHADOW_NEWTON: usize = 12;
 pub const SNOW_COVER_MASS: f64 = 8.44;
 pub const SNOW_DENSITY: f64 = 300.0;
 pub const SNOW_MOST_MASS: f64 = 1_000.0;
+/// F273: the years the land's snow runs on finer ground to come to its own year; and its melt
+/// for each kelvin of the air past its point, kg/m²/s/K, where the body's own snow never both
+/// lies and melts, so that its own cannot be found: Earth's snow's, some 4.5 mm a day (Hock
+/// 2003: 2.5 to 11.6).
+pub const SNOW_FINE_YEARS: usize = 3;
+pub const SNOW_MELT_PER_DEGREE: f64 = 4.5 / 86_400.0;
 /// F271: the land's snow's colour, linear reflectance: aged snow's some 0.8 to 0.9 across the
 /// visible, bluer than its red (Warren 1982).
 pub const SNOW_COLOUR: [f32; 3] = [0.84, 0.87, 0.90];

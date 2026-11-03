@@ -466,3 +466,15 @@ How it went:
 - **The choice:** the user chose the total to emerge, the diffusion keeping the measured share the wind does not drive, the stated third's rest if that failed; it held the gates.
 - **Known limitations.** The Earth-like's ice edge bends far less than Earth's 45° to 80° across the North Atlantic: its basins are wide and simple; no overturning by density, no flow round islands, no seasons of the currents; the ice's drift next.
 
+## The thirty-seventh milestone: the climate's layers on the terrain's grid
+
+- **F273.** The climate's places read smoothly on the finer grid: the year's sea surface without the rectangles the ice's margin cut in it, the rain's background and its potential evaporation without the places' cells, and the land's snow run again on the terrain's own heights.
+
+How it went:
+
+- **The year's sea surface.** Read smoothly between the places, no edge drawn through its year's mean: the rectangles along the ice's edge gone.
+- **The snow.** Each fine cell's year from the places' precipitation and air lapsed to its height; on the Earth-like from some 40° poleward, deeper and longer on its high ground, perennial on its northern heights; on the locked world on four tenths of its land.
+- **The snapshot's sea ice** keeps F251's margin, round about a locked world's star (0.10° steps where the sea's heat read smoothly stepped 0.83°).
+- **Tried first:** the sea ice from the sea's heat; the melt over the air's degrees where a trace of snow lay (the snow never melted); the height over the finish's datum, not the sea.
+- **Known limitations.** The snapshot's sea ice map still shows its margin's places; the snow's sunny slopes and the orographic snow wait.
+

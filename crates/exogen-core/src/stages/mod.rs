@@ -443,7 +443,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 201;
+pub const FINISH_VERSION: u64 = 202;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3343,7 +3343,7 @@ pub fn finish(
         Some(cryo) => {
             let frost_density = cycle.frost.map_or(1.0, |f| caps::ice_density(f.species));
             let densities = (frost_density, caps::ice_density("H2O"));
-            let ground = (&height, &layers.liquid);
+            let ground = (&height, &layers.liquid, sea_level);
             let [freeze, melt, peak, at, kind] =
                 downscale.seasons(cryo, &cycle.mean, ground, densities);
             // Each ice with what an engine draws it by (F253), and each cell's place among

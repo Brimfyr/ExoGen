@@ -361,9 +361,10 @@ pub struct Seas {
     pub ice_now: Field<f32>,
     pub ice_share: Field<f32>,
     pub ocean: Ocean,
-    /// The surface's mean, the ice at the snapshot's season and the share of the sea it
-    /// covers at each place of the cycle's layout, and the layout's latitudes and longitudes,
-    /// a fast spinner's one.
+    /// The surface's mean, coldest and warmest at each place of the cycle's layout, each
+    /// place without a sea given the mean of the places with one beside it, spreading from the
+    /// sea (F273); the ice at the snapshot's season and the share of the sea it covers at
+    /// each place; and the layout's latitudes and longitudes, a fast spinner's one.
     mean_rows: Vec<f64>,
     min_rows: Vec<f64>,
     max_rows: Vec<f64>,
@@ -386,33 +387,27 @@ impl Seas {
         }
     }
 
-    /// The sea's surface's mean through the year in a direction, K: between places under ice
-    /// and open ones, the open places' past the ice's edge, the ice's top's within it, rising
-    /// to the freezing point at its edge (F251).
+    /// The sea's surface's mean through the year in a direction, K, read smoothly between the
+    /// places (F273): a sea under ice part of its year stands between its ice's top and its
+    /// open water through it, with no edge drawn through its year's mean.
     pub fn mean_at(&self, d: [f64; 3]) -> f64 {
-        self.surface(&self.mean_rows, d)
+        self.smooth(&self.mean_rows, d)
     }
 
     /// The sea's surface's coldest and warmest through the year in a direction, K, read as
-    /// its mean is (F253).
+    /// its mean is (F253, F273).
     pub fn min_at(&self, d: [f64; 3]) -> f64 {
-        self.surface(&self.min_rows, d)
+        self.smooth(&self.min_rows, d)
     }
 
     pub fn max_at(&self, d: [f64; 3]) -> f64 {
-        self.surface(&self.max_rows, d)
+        self.smooth(&self.max_rows, d)
     }
 
-    /// A temperature of the sea's surface, `rows` at the places, in a direction (F251).
-    fn surface(&self, rows: &[f64], d: [f64; 3]) -> f64 {
-        match self.edge(d) {
-            Some((depth, corners)) if depth > 0.0 => {
-                let held = self.among(rows, &corners, true);
-                self.ocean.freezing + depth * (held - self.ocean.freezing)
-            }
-            Some((_, corners)) => self.among(rows, &corners, false),
-            None => self.read(rows, d),
-        }
+    /// `rows` read smoothly between the places in a direction (F273).
+    fn smooth(&self, rows: &[f64], d: [f64; 3]) -> f64 {
+        let (lon, lat) = lon_lat_from_direction(d);
+        crate::insolation::smooth_grid(rows, self.layout.1, lat, lon)
     }
 
     /// The share of the sea its ice covers at the snapshot's season in a direction (F245):
@@ -456,6 +451,57 @@ impl Seas {
             .fold((0.0, 0.0), |(s, t), &(p, w)| (s + w * rows[p], t + w));
         if weight > 0.0 { sum / weight } else { 0.0 }
     }
+}
+
+/// `rows`, a value at each place of a layout of `n_lat` latitudes and `n_lon` longitudes, held
+/// only where `own`, the rest given the mean of their neighbours that hold or were given one,
+/// spreading from the places that hold it until all hold one (F273): so that read smoothly
+/// about a coast a sea's field reads the sea's.
+fn spread_from(rows: &[f64], own: &[bool], (n_lat, n_lon): (usize, usize)) -> Vec<f64> {
+    let n = n_lat * n_lon;
+    let mut out = rows.to_vec();
+    let mut known = own.to_vec();
+    if !known.iter().any(|&k| k) {
+        return out;
+    }
+    let neighbours = |p: usize| {
+        let (i, j) = (p / n_lon, p % n_lon);
+        let mut list = Vec::with_capacity(4);
+        if i > 0 {
+            list.push(p - n_lon);
+        }
+        if i + 1 < n_lat {
+            list.push(p + n_lon);
+        }
+        if n_lon > 1 {
+            list.push(i * n_lon + (j + n_lon - 1) % n_lon);
+            list.push(i * n_lon + (j + 1) % n_lon);
+        }
+        list
+    };
+    while known.iter().any(|&k| !k) {
+        let next: Vec<Option<f64>> = (0..n)
+            .map(|p| {
+                if known[p] {
+                    return None;
+                }
+                let (sum, count) = neighbours(p)
+                    .into_iter()
+                    .filter(|&q| known[q])
+                    .fold((0.0, 0), |(s, c), q| (s + out[q], c + 1));
+                (count > 0).then(|| sum / count as f64)
+            })
+            .collect();
+        if next.iter().all(Option::is_none) {
+            break;
+        }
+        for (p, v) in next.into_iter().enumerate() {
+            if let Some(v) = v {
+                (out[p], known[p]) = (v, true);
+            }
+        }
+    }
+    out
 }
 
 /// The pattern the year's sunlight sets over the body (F251): the diffusive balance's
@@ -1238,10 +1284,29 @@ pub struct Cryosphere {
     guide: Guide,
     sea_margin: Margin,
     land_margin: Margin,
-    snow_margin: Margin,
     /// Each ice's year curve, the land's frost's, the sea's ice's and the land's snow's (F253,
     /// F271).
     pub curves: [Option<(f64, f64)>; 3],
+    /// The land's snow's year at each place, run again on finer ground (F273), and the
+    /// phase of the year of the northern spring equinox, as the cycle's steps count it.
+    snow_year: Option<SnowYear>,
+    equinox: f64,
+}
+
+/// The land's snow's year at the cycle's places (F273): each place's precipitation through
+/// the cycle's steps, kg/m²/s, and its air at the datum, K, none where its land holds no
+/// snow's year; the body's melt for each kelvin of its air past the melting point, kg/m²/s/K,
+/// what melted over the air's degrees past the point where the snow lay short of its most,
+/// Earth's snow's where none both lay and melted;
+/// the step, s, the point, K, and the steps.
+#[derive(Clone, Debug)]
+struct SnowYear {
+    fall: Vec<Vec<f32>>,
+    air: Vec<Vec<f32>>,
+    melt: f64,
+    dt: f64,
+    point: f64,
+    steps: usize,
 }
 
 impl Cryosphere {
@@ -1256,9 +1321,58 @@ impl Cryosphere {
         self.snow.iter().any(|w| w.peak > 0.0)
     }
 
-    /// The window of the land's snow in a direction (F271), as the frost's is read.
-    pub fn snow_at(&self, d: [f64; 3]) -> Window {
-        self.window(d, (&self.snow, &self.snow_margin, SNOW_COVER_MASS))
+    /// The window of the land's snow in a direction on ground `above` m over the datum
+    /// (F273): its year run on the ground there, the precipitation of the places about it
+    /// falling as snow by the share the air's temperature at its height gives (F268), the
+    /// air the places' lapsed to it by `lapse` K/m, and melting by the body's melt for each
+    /// kelvin of the air past the point; so that the snow lies the longer and the deeper on
+    /// higher ground, along the terrain's heights rather than the places' cells.
+    pub fn snow_over(&self, d: [f64; 3], above: f64, lapse: f64) -> Window {
+        let Some(year) = &self.snow_year else {
+            return Window::default();
+        };
+        let (lon, lat) = lon_lat_from_direction(d);
+        let corners = reader(self.layout.0, self.layout.1, lat, lon);
+        let live: Vec<(usize, f64)> = corners
+            .iter()
+            .copied()
+            .filter(|&(p, w)| w > 0.0 && year.fall[p].len() == year.steps)
+            .collect();
+        let total: f64 = live.iter().map(|c| c.1).sum();
+        if total <= 0.0 {
+            return Window::default();
+        }
+        let steps = year.steps;
+        let (mut fall, mut air) = (vec![0.0f64; steps], vec![0.0f64; steps]);
+        for &(p, w) in &live {
+            for k in 0..steps {
+                fall[k] += w / total * year.fall[p][k] as f64;
+                air[k] += w / total * year.air[p][k] as f64;
+            }
+        }
+        let cold = lapse * above.max(0.0);
+        let share = |t: f64| {
+            let x = (t - year.point - RAIN_SNOW_OFFSET) / RAIN_SNOW_WIDTH;
+            1.0 / (1.0 + x.clamp(-50.0, 50.0).exp())
+        };
+        if (0..steps).all(|k| fall[k] * share(air[k] - cold) <= 0.0) {
+            return Window::default();
+        }
+        let (mut m, mut series) = (0.0f64, vec![0.0f32; steps]);
+        for round in 0..SNOW_FINE_YEARS {
+            for k in 0..steps {
+                let t = air[k] - cold;
+                m = (m + year.dt * fall[k] * share(t)).min(SNOW_MOST_MASS);
+                m = (m - year.dt * year.melt * (t - year.point).max(0.0)).max(0.0);
+                if round + 1 == SNOW_FINE_YEARS {
+                    series[k] = m as f32;
+                }
+            }
+        }
+        let cover = SNOW_COVER_MASS * std::f64::consts::LN_2;
+        Window::of(&series, cover, |t| {
+            (t / steps as f64 - self.equinox).rem_euclid(1.0)
+        })
     }
 
     /// The window of an ice in a direction (F246), its land's frost's or, `sea`, its sea's
@@ -2152,9 +2266,53 @@ impl EnergyBalance {
             let land_held = (0..places)
                 .map(|p| dry(p).then(|| land[p].peak > 0.0))
                 .collect();
-            let snow_held = (0..places)
-                .map(|p| dry(p).then(|| snow[p].peak > 0.0))
-                .collect();
+            // The land's snow's year at each place, to be run again on finer ground (F273):
+            // the body's melt for each kelvin of the air past the point, what melted over the
+            // air's degrees past it by the share of the ground the snow covered, where it lay
+            // short of its most.
+            let snow_year = layout.as_ref().filter(|_| self.ice).and_then(|l| {
+                let point = self.liquid?.t_triple;
+                let dt = self.year / steps as f64;
+                let air: Vec<Vec<f32>> = (0..places)
+                    .map(|p| {
+                        (0..steps)
+                            .map(|k| {
+                                let sum: f64 = each.iter().map(|t| t.air[k * places + p]).sum();
+                                (sum / each.len().max(1) as f64) as f32
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let (mut melted, mut degrees) = (0.0, 0.0);
+                for (p, place) in l.places.iter().enumerate() {
+                    let fall = &l.snowfall[p];
+                    let lay = &masses[2][p * steps..(p + 1) * steps];
+                    if fall.len() != steps || lay.iter().any(|&m| m as f64 >= SNOW_MOST_MASS) {
+                        continue;
+                    }
+                    let w = place.weight * place.land();
+                    for k in 0..steps {
+                        let before = lay[(k + steps - 1) % steps] as f64;
+                        let melt = (before + dt * fall[k] as f64 - lay[k] as f64).max(0.0);
+                        let past = (air[p][k] as f64 - point).max(0.0) * dt;
+                        let covered = w * snow_cover(before);
+                        (melted, degrees) = (melted + w * melt, degrees + covered * past);
+                    }
+                }
+                let melt = if degrees > 0.0 {
+                    melted / degrees
+                } else {
+                    SNOW_MELT_PER_DEGREE
+                };
+                Some(SnowYear {
+                    fall: l.falling.clone(),
+                    air,
+                    melt,
+                    dt,
+                    point,
+                    steps,
+                })
+            });
             Cryosphere {
                 land,
                 sea,
@@ -2164,8 +2322,9 @@ impl EnergyBalance {
                 guide: guide.clone(),
                 sea_margin,
                 land_margin: Margin::new((n_lat, n_lon), land_held, &land_shares, &guide),
-                snow_margin: Margin::new((n_lat, n_lon), snow_held, &land_shares, &guide),
                 curves: [0, 1, 2].map(|j| year_curve(&masses[j], steps, covers[j])),
+                snow_year,
+                equinox,
             }
         });
         // The year step by step (F253): the star's place in the sky at each step's end, the
@@ -2265,6 +2424,8 @@ impl EnergyBalance {
             let air: Vec<&[f64]> = each.iter().map(|e| &e.air[..]).collect();
             crate::wind::blow(&self.circulation, &sites, (n_lat, n_lon), &links, &air)
         });
+        // The places with a sea, whose fields the seas spread to the others (F273).
+        let wet_places: Vec<bool> = (0..n_lat * n_lon).map(wet).collect();
         // The seas' currents the year's wind drives (F272).
         let currents = match (&wind, ocean) {
             (Some(w), Some(_)) => self.currents(w, &sites, &each),
@@ -2277,15 +2438,26 @@ impl EnergyBalance {
             ice_now: field(|y| y.sea[3]),
             ice_share: field(|y| y.sea[4]),
             ocean: *ocean,
-            mean_rows: rows.iter().map(|y| y.sea[0]).collect(),
-            min_rows: rows.iter().map(|y| y.sea[1]).collect(),
-            max_rows: rows.iter().map(|y| y.sea[2]).collect(),
+            mean_rows: spread_from(
+                &rows.iter().map(|y| y.sea[0]).collect::<Vec<_>>(),
+                &wet_places,
+                (n_lat, n_lon),
+            ),
+            min_rows: spread_from(
+                &rows.iter().map(|y| y.sea[1]).collect::<Vec<_>>(),
+                &wet_places,
+                (n_lat, n_lon),
+            ),
+            max_rows: spread_from(
+                &rows.iter().map(|y| y.sea[2]).collect::<Vec<_>>(),
+                &wet_places,
+                (n_lat, n_lon),
+            ),
             ice_rows: rows.iter().map(|y| y.sea[3]).collect(),
             cover_rows: rows
                 .iter()
                 .map(|y| 1.0 - (-y.sea[3].max(0.0) / SEA_ICE_COVER_MASS).exp())
                 .collect(),
-            layout: (n_lat, n_lon),
             margin: Margin::new(
                 (n_lat, n_lon),
                 held(&|p| rows[p].sea[3] > SEA_ICE_COVER_MASS * std::f64::consts::LN_2),
@@ -2293,6 +2465,7 @@ impl EnergyBalance {
                 &guide,
             ),
             guide: guide.clone(),
+            layout: (n_lat, n_lon),
         });
         Cycle {
             mean: field(|y| y.mean),
@@ -2495,6 +2668,12 @@ impl EnergyBalance {
                 None => Vec::new(),
             })
             .collect();
+        let falling = (0..n_lat * n_lon)
+            .map(|k| match coupling.filter(|_| self.ice) {
+                Some(c) => c.falling_at((n_lat, n_lon), CYCLE_YEAR_STEPS, k),
+                None => Vec::new(),
+            })
+            .collect();
         let currents = coupling
             .and_then(|c| c.currents.clone())
             .filter(|c| c.layout == (n_lat, n_lon));
@@ -2503,6 +2682,7 @@ impl EnergyBalance {
             links: place_links((n_lat, n_lon)),
             n_lon,
             snowfall,
+            falling,
             currents,
             modes: place_modes(n_lon),
         }
@@ -3891,12 +4071,13 @@ impl Downscale {
     /// the place its slope faces where its own sunlight rules it, its peak's thickness brought
     /// there as the frost is, at `densities.0`. Each its freeze and melt phases, its peak's
     /// thickness and its peak's phase, a field apiece, and which ice lies (F253): 1 the
-    /// land's frost, 2 the sea's ice, 0 none.
+    /// land's frost, 2 the sea's ice, 3 the land's snow, its year run on the ground's own
+    /// height over the sea at `sea_level` (F271, F273), 0 none.
     pub fn seasons(
         &self,
         cryosphere: &Cryosphere,
         mean: &Field<f32>,
-        (height, liquid): (&Field<f32>, &Field<f32>),
+        (height, liquid, sea_level): (&Field<f32>, &Field<f32>, f64),
         densities: (f64, f64),
     ) -> [Field<f32>; 5] {
         let src = mean.grid();
@@ -3929,7 +4110,13 @@ impl Downscale {
                 };
                 // The land's snow where it covers more of the ground than the frost (F271).
                 let frosted = peak > 0.0 && read.peak > 0.0;
-                let snow = cryosphere.snow_at(d);
+                let h = height.get(c) as f64;
+                let above = if sea_level.is_finite() {
+                    (h - sea_level).max(0.0)
+                } else {
+                    h
+                };
+                let snow = cryosphere.snow_over(d, above, self.lapse);
                 let snowier = !frosted || snow.peak / SNOW_COVER_MASS > peak / FROST_COVER_MASS;
                 if snow.peak > 0.0 && snowier {
                     let peak = snow.peak / SNOW_DENSITY;
@@ -4275,19 +4462,26 @@ impl Cycle {
             })
             .collect();
         // The snow that falls on each place's land through the year (F271).
-        let snowfall = match moisture.filter(|m| m.falling.len() == n * m.steps) {
+        let series = |share: bool| match moisture.filter(|m| m.falling.len() == n * m.steps) {
             Some(m) => (0..n * m.steps)
                 .map(|i| {
                     let (p, k) = (i / m.steps, i % m.steps);
-                    m.falling[k * n + p] * m.snow[k * n + p]
+                    let falls = m.falling[k * n + p];
+                    if share {
+                        falls * m.snow[k * n + p]
+                    } else {
+                        falls
+                    }
                 })
                 .collect(),
             None => Vec::new(),
         };
+        let (snowfall, falling) = (series(true), series(false));
         Some(Coupling {
             layout: wind.layout,
             contacts,
             snowfall,
+            falling,
             steps: moisture.map_or(0, |m| m.steps),
             currents: self.currents.clone(),
         })
@@ -4477,6 +4671,9 @@ pub struct Coupling {
     pub layout: (usize, usize),
     pub contacts: Vec<Contact>,
     pub snowfall: Vec<f32>,
+    /// The precipitation on each place through the year's steps, kg/m²/s, laid out as the
+    /// snow is (F273).
+    pub falling: Vec<f32>,
     pub steps: usize,
     /// The seas' currents the year's wind drives (F272).
     pub currents: Option<crate::currents::Currents>,
@@ -4507,12 +4704,29 @@ impl Coupling {
     /// `n_lat` latitudes and `n_lon` longitudes (F271), as `at` reads its contact: the place's
     /// own on the coupling's layout, its row's mean on a layout by latitude alone; none where
     /// the year runs in other steps.
-    fn snowfall_at(&self, (n_lat, n_lon): (usize, usize), steps: usize, k: usize) -> Vec<f32> {
+    fn snowfall_at(&self, layout: (usize, usize), steps: usize, k: usize) -> Vec<f32> {
+        self.series_at(&self.snowfall, layout, steps, k)
+    }
+
+    /// The precipitation on place `k` through a year of `steps`, read as the snow is (F273).
+    fn falling_at(&self, layout: (usize, usize), steps: usize, k: usize) -> Vec<f32> {
+        self.series_at(&self.falling, layout, steps, k)
+    }
+
+    /// A series of `values` at each place through the year's steps, place `k`'s on a layout
+    /// of `n_lat` latitudes and `n_lon` longitudes, as `snowfall_at` reads the snow.
+    fn series_at(
+        &self,
+        values: &[f32],
+        (n_lat, n_lon): (usize, usize),
+        steps: usize,
+        k: usize,
+    ) -> Vec<f32> {
         let (m_lat, m_lon) = self.layout;
-        if steps != self.steps || self.snowfall.len() != m_lat * m_lon * steps {
+        if steps != self.steps || values.len() != m_lat * m_lon * steps {
             return Vec::new();
         }
-        let series = |p: usize| &self.snowfall[p * steps..(p + 1) * steps];
+        let series = |p: usize| &values[p * steps..(p + 1) * steps];
         if (m_lat, m_lon) == (n_lat, n_lon) {
             return series(k).to_vec();
         }
@@ -4565,6 +4779,8 @@ struct Layout {
     /// The snow that falls on each place's land through the year (F271), kg/m²/s, step after
     /// step, where water is the working liquid and the year's snow is known.
     snowfall: Vec<Vec<f32>>,
+    /// The precipitation on each place through the year, kg/m²/s, where its snow is (F273).
+    falling: Vec<Vec<f32>>,
     /// The seas' currents, where they ran on these places (F272).
     currents: Option<crate::currents::Currents>,
     /// A resonant body's longitudes' Fourier modes: the cos and sin of each mode's phase at
@@ -4654,6 +4870,7 @@ impl Layout {
             links: place_links((n_lat, n_lon)),
             n_lon,
             snowfall: Vec::new(),
+            falling: Vec::new(),
             currents: None,
             modes: place_modes(n_lon),
         }

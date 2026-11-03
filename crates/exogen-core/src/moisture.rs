@@ -34,7 +34,6 @@ use crate::fields::{Field, det_sum};
 use crate::geom::{dot, local_basis, normalize};
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, lon_lat_from_direction};
-use crate::insolation::{read_grid, read_row};
 use crate::params::ParamGraph;
 use crate::params::derive::physics::{
     mean_heat_capacity, mean_molecular_mass, vapour_pressure, volatile,
@@ -271,10 +270,8 @@ impl Moisture {
         let mut rain = self.over_relief(above, radius);
         let dry = Field::from_fn(above.grid(), |c, d| {
             let (lon, lat) = lon_lat_from_direction(d);
-            let potential = match n_lon {
-                1 => read_row(&self.potential, lat),
-                _ => read_grid(&self.potential, n_lon, lat, lon),
-            };
+            let potential =
+                crate::insolation::smooth_grid(&self.potential, n_lon, lat, lon).max(0.0);
             let index = if potential > 0.0 {
                 rain.get(c) as f64 / potential
             } else {
@@ -307,6 +304,11 @@ impl Moisture {
         };
         let read = |values: &[f64], at: &[(usize, f64); 4]| -> f64 {
             at.iter().map(|&(p, w)| w * values[p]).sum()
+        };
+        // The places' rain read smoothly between them (F273).
+        let background = |d: [f64; 3]| {
+            let (lon, lat) = lon_lat_from_direction(d);
+            crate::insolation::smooth_grid(&self.precipitation, n_lon, lat, lon).max(0.0)
         };
         // The lifting wind over ground `h` m over the sea, east and north, kg/m²/s for each
         // unit of slope, and its weight, kg/m³: each place's at the ground's height over its
@@ -410,7 +412,7 @@ impl Moisture {
         // implicitly.
         let shadow = CubeSphere::new(OROGRAPHIC_SHADOW_FACE.min(grid.face_size()));
         let gained = Field::from_fn(grid, |c, d| {
-            let background = read(&self.precipitation, &corners(d));
+            let background = background(d);
             (over(background, lifted.get(c) as f64) - background) as f32
         });
         let gained = crate::climate::coarsen(&gained, shadow);
@@ -451,7 +453,7 @@ impl Moisture {
         let short = PaddedField::new(&shadow, short.as_slice());
         let mut rain = Field::from_fn(grid, |c, d| {
             let at = corners(d);
-            let background = read(&self.precipitation, &at);
+            let background = background(d);
             let held = read(&self.saturated, &at).max(1e-30);
             let lost = (sample_bilinear(&shadow, &short, d) as f64).max(0.0);
             let left = background * (-RAIN_SATURATION_SLOPE * lost / held).exp();
@@ -461,7 +463,7 @@ impl Moisture {
         let n = grid.cell_count();
         let want = det_sum(n, |k| {
             let c = grid.cell(k);
-            read(&self.precipitation, &corners(grid.center(c))) * grid.cell_area(c)
+            background(grid.center(c)) * grid.cell_area(c)
         });
         let got = det_sum(n, |k| {
             rain.as_slice()[k] as f64 * grid.cell_area(grid.cell(k))
@@ -795,7 +797,7 @@ mod tests {
     /// F270: air carried east over a ridge along a meridian rains on the ridge's west, its
     /// windward side, more than on its east, its lee, and beyond the lee the less for what the
     /// ridge took from it; the rain over the body is kept; and in calm air the rain is the
-    /// places' own, read between them.
+    /// places' own, read smoothly between them.
     #[test]
     fn a_ridge_rains_on_its_windward_side() {
         let (n_lat, n_lon) = (13, 16);
@@ -871,11 +873,11 @@ mod tests {
             edge > 1.3 * beside && plateau < 0.97 * beside,
             "{edge} {plateau} {beside}"
         );
-        // Calm air: the places' rain read between them.
+        // Calm air: the places' rain read smoothly between them (F273).
         for k in (0..grid.cell_count()).step_by(97) {
             let d = grid.center(grid.cell(k));
             let (lon, lat) = lon_lat_from_direction(d);
-            let read = read_grid(&calm.precipitation, n_lon, lat, lon);
+            let read = crate::insolation::smooth_grid(&calm.precipitation, n_lon, lat, lon);
             let got = still.as_slice()[k] as f64;
             assert!((got / read - 1.0).abs() < 1e-5, "{got} {read}");
         }

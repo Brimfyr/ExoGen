@@ -411,6 +411,48 @@ pub fn spin_orbit_resonance(spins: f64) -> Option<(u32, u32)> {
     })
 }
 
+/// Catmull-Rom's weights at `t`, 0 to 1 between the second and third of four points.
+fn cubic(t: f64) -> [f64; 4] {
+    [
+        ((-t + 2.0) * t - 1.0) * t / 2.0,
+        ((3.0 * t - 5.0) * t * t + 2.0) / 2.0,
+        ((-3.0 * t + 4.0) * t + 1.0) * t / 2.0,
+        (t - 1.0) * t * t / 2.0,
+    ]
+}
+
+/// A table over the cycle's places, latitude (rows, pole to pole) and longitude (columns,
+/// from -180°, wrapping), `n_lon` of them, read in a direction smoothly (F273): Catmull-Rom's
+/// cubic across the four rows and the four longitudes about it, the rows held at the poles,
+/// its slope as smooth as its value; along latitude alone where `n_lon` is one. Read so, a
+/// field the places hold shows none of their cells' edges; where it changes sharply it may
+/// ring a little past the places about it, so that a field that cannot go below none is held
+/// there by its reader.
+pub(crate) fn smooth_grid(table: &[f64], n_lon: usize, lat: f64, lon: f64) -> f64 {
+    let n_lat = table.len() / n_lon.max(1);
+    if n_lat < 2 {
+        return table.first().copied().unwrap_or(0.0);
+    }
+    let y = ((lat + PI / 2.0) / PI * (n_lat - 1) as f64).clamp(0.0, (n_lat - 1) as f64);
+    let i = (y.floor() as usize).min(n_lat - 2) as isize;
+    let wy = cubic(y - i as f64);
+    let row = |r: isize| r.clamp(0, n_lat as isize - 1) as usize;
+    if n_lon <= 1 {
+        return (0..4).map(|a| wy[a] * table[row(i + a as isize - 1)]).sum();
+    }
+    let x = (lon + PI).rem_euclid(TAU) / TAU * n_lon as f64;
+    let j = ((x.floor() as usize) % n_lon) as isize;
+    let wx = cubic(x - x.floor());
+    let at = |r: isize, c: isize| table[row(r) * n_lon + c.rem_euclid(n_lon as isize) as usize];
+    let mut v = 0.0;
+    for (a, &u) in wy.iter().enumerate() {
+        for (b, &w) in wx.iter().enumerate() {
+            v += u * w * at(i + a as isize - 1, j + b as isize - 1);
+        }
+    }
+    v
+}
+
 /// A table over latitude from pole to pole, read linearly.
 pub(crate) fn read_row(table: &[f64], lat: f64) -> f64 {
     let n = table.len();
