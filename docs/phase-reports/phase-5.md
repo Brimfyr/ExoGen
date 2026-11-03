@@ -431,3 +431,15 @@ How it went:
 - **Tried first:** the latent heat beyond a saturated air's given to the air over the ground, which warmed the air near the ground and choked its own evaporation.
 - **Known limitations.** The grey balance has no budget of the ground apart from its column's, nor its air any radiation of its own: the latent heat of the ground's evaporation is neither limited by the sunlight the ground receives nor radiated where it falls. With Titan's transport (the user, 2026-11-03).
 
+## The thirty-fourth milestone: the rain over the relief
+
+- **F270.** The year's precipitation on the finish's grid over its relief, where it was the places' read between them: air carried up rising ground condenses its vapour while it is saturated, the more often the higher the ground stands above its place's (Smith and Barstad 2004, read through Bretherton et al. 2004), carried on before it falls; descending air dries what falls; and the air carried on is short of what it rained, and rains the less downwind until it has made it good: the rain shadows.
+
+How it went:
+
+- **The Earth-like.** Its land rains from 0.57 to 1.45 of the places' rain, its windward slopes wetter and its lee drier; its wettest cell 10,300 kg/m² a year, near Earth's wettest. Its relief is plateaus some 1.2 km over its sea; its ranges come with Phase 6's plates.
+- **The locked world.** Its ice sheets wetter where the wind climbs them, drier where it descends toward the star; the plateau behind its continent's windward edge in its shadow.
+- **Titan.** Unchanged: its slow wind lifts its air too little.
+- **Tried first:** the share of the time the air is saturated read at the places' own height for all their ground, too weak to move the rain by more than a tenth; each place keeping its rain, which dried the ground upwind of a wet edge.
+- **Known limitations.** No flow round the relief nor waves aloft; the places' own rain does not read their relief's, the shadow carried on the finer grid alone; one lifting wind for the year.
+

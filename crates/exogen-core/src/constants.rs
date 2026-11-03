@@ -2117,6 +2117,24 @@ pub const RAIN_SNOW_WIDTH: f64 = 1.0;
 /// full rate of wet ground while BUCKET_FULL_SHARE full and in proportion below.
 pub const SOIL_CAPACITY: f64 = 0.15;
 pub const BUCKET_FULL_SHARE: f64 = 0.75;
+/// F270: the time the water a lift condenses takes to turn to rain and the time the rain
+/// takes to fall, each, s (Smith and Barstad 2004: some 1000 s, from 200 to 2000), through
+/// which the wind carries it on before it falls; the share of the delays' rain traced upwind,
+/// over OROGRAPHIC_MOST_STEPS of the grid's cells at most.
+pub const OROGRAPHIC_DELAY_S: f64 = 1_000.0;
+pub const OROGRAPHIC_KERNEL_TAIL: f64 = 0.999;
+pub const OROGRAPHIC_MOST_STEPS: usize = 64;
+/// F270: the levels the places' lifting wind is read at, of the ground over the place's in its
+/// vapour's scale heights: LIFT_LEVELS of them from LIFT_LOWEST, LIFT_STEP apart.
+pub const LIFT_LEVELS: usize = 25;
+pub const LIFT_LOWEST: f64 = -2.0;
+pub const LIFT_STEP: f64 = 0.25;
+/// F270: the shortfall of the air the relief has rained on, carried downwind on a grid of
+/// faces OROGRAPHIC_SHADOW_FACE cells across, traced upwind over OROGRAPHIC_SHADOW_STEPS of
+/// its cells, each step solved in OROGRAPHIC_SHADOW_NEWTON rounds.
+pub const OROGRAPHIC_SHADOW_FACE: u32 = 128;
+pub const OROGRAPHIC_SHADOW_STEPS: usize = 32;
+pub const OROGRAPHIC_SHADOW_NEWTON: usize = 12;
 /// F268: the aridity index under which land is arid and hyper-arid (UNEP 1992).
 pub const ARID_INDEX: f64 = 0.2;
 pub const HYPER_ARID_INDEX: f64 = 0.05;

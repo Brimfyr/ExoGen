@@ -5036,7 +5036,7 @@ fn ventilation(graph: &ParamGraph) -> (f64, f64) {
 
 /// The places of a layout of `n_lat` latitudes and `n_lon` longitudes a point is read from,
 /// with their weights, as `read_row` and `read_grid` read them.
-fn reader(n_lat: usize, n_lon: usize, lat: f64, lon: f64) -> [(usize, f64); 4] {
+pub(crate) fn reader(n_lat: usize, n_lon: usize, lat: f64, lon: f64) -> [(usize, f64); 4] {
     let y = ((lat + PI / 2.0) / PI * (n_lat - 1) as f64).clamp(0.0, (n_lat - 1) as f64);
     let i = (y.floor() as usize).min(n_lat - 2);
     let fy = y - i as f64;

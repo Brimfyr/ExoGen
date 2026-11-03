@@ -244,8 +244,8 @@ pub struct FinishOutput {
     pub wind: Option<[Field<f32>; 3]>,
     pub wind_summary: Option<crate::wind::Summary>,
     /// The year's water where the body has a working liquid under an atmosphere (F268): its
-    /// precipitation, kg/m² a year, and its aridity index; its liquid's vapour; and the year in
-    /// brief.
+    /// precipitation over its relief (F270), kg/m² a year, and its aridity index; its liquid's
+    /// vapour; and the year in brief.
     pub water: Option<[Field<f32>; 2]>,
     pub water_vapour: Option<&'static str>,
     pub water_summary: Option<crate::moisture::Summary>,
@@ -443,7 +443,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 198;
+pub const FINISH_VERSION: u64 = 199;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3179,19 +3179,24 @@ pub fn finish(
     let wind = cycle.wind.as_ref().map(|w| w.fields(grid));
     let wind_summary = cycle.wind.as_ref().map(crate::wind::Wind::summary);
     // The year's moisture at the cycle's places (F268), each place's ground at its mean
-    // height over the sea, brought to this grid.
-    let moisture = water_air.and_then(|air| {
-        let above = Field::from_fn(grid, |c, _| {
+    // height over the sea, brought to this grid over its relief (F270).
+    let above = water_air.map(|_| {
+        Field::from_fn(grid, |c, _| {
             let h = height.get(c);
             if sea_level.is_finite() {
                 (h - sea_level as f32).max(0.0)
             } else {
                 h
             }
-        });
-        cycle.moisture(&air, &place_heights(&cycle, &above))
+        })
     });
-    let water = moisture.as_ref().map(|m| m.fields(grid));
+    let moisture = water_air
+        .zip(above.as_ref())
+        .and_then(|(air, above)| cycle.moisture(&air, &place_heights(&cycle, above)));
+    let water = moisture
+        .as_ref()
+        .zip(above.as_ref())
+        .map(|(m, above)| m.fields(above, graph.f64("body.radius")));
     let water_vapour = water_air
         .filter(|_| moisture.is_some())
         .map(|a| a.vapour.name);
