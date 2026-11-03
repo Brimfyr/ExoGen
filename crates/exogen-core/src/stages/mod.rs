@@ -443,7 +443,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 199;
+pub const FINISH_VERSION: u64 = 200;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3349,7 +3349,7 @@ pub fn finish(
             // Each ice with what an engine draws it by (F253), and each cell's place among
             // them from 1.
             let mut ices = Vec::new();
-            let mut index = [0.0f32; 3];
+            let mut index = [0.0f32; 4];
             if let Some(f) = cycle.frost.filter(|_| cryo.holds(false)) {
                 ices.push(crate::climate::SeasonalIce {
                     name: format!("{} frost", f.species),
@@ -3373,6 +3373,19 @@ pub fn finish(
                     curve: cryo.curves[1],
                 });
                 index[2] = ices.len() as f32;
+            }
+            // The land's snow (F271).
+            if cryo.holds_snow() {
+                ices.push(crate::climate::SeasonalIce {
+                    name: "snow".to_string(),
+                    species: "H2O",
+                    sea: false,
+                    colour: SNOW_COLOUR,
+                    density: SNOW_DENSITY,
+                    cover_mass: SNOW_COVER_MASS,
+                    curve: cryo.curves[2],
+                });
+                index[3] = ices.len() as f32;
             }
             let ice = Field::from_fn(grid, |c, _| index[kind.get(c) as usize]);
             ([freeze, melt, peak, at], ice, ices, cryo.snapshot)

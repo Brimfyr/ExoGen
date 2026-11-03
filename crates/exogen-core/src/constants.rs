@@ -2135,6 +2135,17 @@ pub const LIFT_STEP: f64 = 0.25;
 pub const OROGRAPHIC_SHADOW_FACE: u32 = 128;
 pub const OROGRAPHIC_SHADOW_STEPS: usize = 32;
 pub const OROGRAPHIC_SHADOW_NEWTON: usize = 12;
+/// F271: the land's snow. Its cover, 1 - exp(-m / SNOW_COVER_MASS), m its water, kg/m², half
+/// the ground at 5.85 kg/m², as Roesch et al. 2001's 0.95 tanh(100 m / 1000) for snow over
+/// land at GCM scales covers half of it; its density, kg/m³, the seasonal snowpack's bulk
+/// density, some 0.22 to 0.35 g/cm³ (Sturm et al. 2010); and the most of it a place keeps
+/// through the years, kg/m², until the glaciers carry what lies past it away (stated).
+pub const SNOW_COVER_MASS: f64 = 8.44;
+pub const SNOW_DENSITY: f64 = 300.0;
+pub const SNOW_MOST_MASS: f64 = 1_000.0;
+/// F271: the land's snow's colour, linear reflectance: aged snow's some 0.8 to 0.9 across the
+/// visible, bluer than its red (Warren 1982).
+pub const SNOW_COLOUR: [f32; 3] = [0.84, 0.87, 0.90];
 /// F268: the aridity index under which land is arid and hyper-arid (UNEP 1992).
 pub const ARID_INDEX: f64 = 0.2;
 pub const HYPER_ARID_INDEX: f64 = 0.05;
@@ -2335,8 +2346,9 @@ pub const OCEAN_TRANSPORT_SHARE: f64 = 0.3;
 // ---------------------------------------------------------------- volatiles
 
 /// Triple point temperature (K), triple point pressure (Pa), latent heat of vaporisation
-/// (J/kg), latent heat of sublimation (J/kg), specific gas constant (J/kg/K), liquid
-/// density (kg/m³), for each volatile species.
+/// (J/kg), latent heat of sublimation (J/kg), latent heat of fusion at the triple point (J/kg,
+/// F271: measured, NIST WebBook's enthalpies of fusion over the molar masses), specific gas
+/// constant (J/kg/K), liquid density (kg/m³), for each volatile species.
 #[derive(Debug)]
 pub struct Volatile {
     pub name: &'static str,
@@ -2344,6 +2356,7 @@ pub struct Volatile {
     pub p_triple: f64,
     pub l_vap: f64,
     pub l_sub: f64,
+    pub l_fus: f64,
     pub r_specific: f64,
     pub liquid_density: f64,
 }
@@ -2358,6 +2371,7 @@ pub const VOLATILES: [Volatile; 7] = [
         p_triple: 611.657,
         l_vap: 2.40e6,
         l_sub: 2.83e6,
+        l_fus: 3.34e5,
         r_specific: 461.5,
         liquid_density: 1_000.0,
     },
@@ -2367,6 +2381,7 @@ pub const VOLATILES: [Volatile; 7] = [
         p_triple: 5.185e5,
         l_vap: 3.5e5,
         l_sub: 5.71e5,
+        l_fus: 1.96e5,
         r_specific: 188.9,
         liquid_density: 1_100.0,
     },
@@ -2376,6 +2391,7 @@ pub const VOLATILES: [Volatile; 7] = [
         p_triple: 1.17e4,
         l_vap: 5.1e5,
         l_sub: 6.0e5,
+        l_fus: 5.86e4,
         r_specific: 518.3,
         liquid_density: 423.0,
     },
@@ -2385,6 +2401,7 @@ pub const VOLATILES: [Volatile; 7] = [
         p_triple: 1.2523e4,
         l_vap: 1.99e5,
         l_sub: 2.25e5,
+        l_fus: 2.55e4,
         r_specific: 296.8,
         liquid_density: 808.0,
     },
@@ -2394,6 +2411,7 @@ pub const VOLATILES: [Volatile; 7] = [
         p_triple: 6.06e3,
         l_vap: 1.37e6,
         l_sub: 1.76e6,
+        l_fus: 3.32e5,
         r_specific: 488.2,
         liquid_density: 682.0,
     },
@@ -2403,6 +2421,7 @@ pub const VOLATILES: [Volatile; 7] = [
         p_triple: 1.67e3,
         l_vap: 3.89e5,
         l_sub: 4.6e5,
+        l_fus: 1.16e5,
         r_specific: 129.8,
         liquid_density: 1_460.0,
     },
@@ -2412,6 +2431,7 @@ pub const VOLATILES: [Volatile; 7] = [
         p_triple: 1.1,
         l_vap: 4.89e5,
         l_sub: 5.8e5,
+        l_fus: 9.51e4,
         r_specific: 276.5,
         liquid_density: 544.0,
     },

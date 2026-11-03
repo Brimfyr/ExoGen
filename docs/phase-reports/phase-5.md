@@ -443,3 +443,14 @@ How it went:
 - **Tried first:** the share of the time the air is saturated read at the places' own height for all their ground, too weak to move the rain by more than a tenth; each place keeping its rain, which dried the ground upwind of a wet edge.
 - **Known limitations.** No flow round the relief nor waves aloft; the places' own rain does not read their relief's, the shadow carried on the finer grid alone; one lifting wind for the year.
 
+## The thirty-fifth milestone: the snowpack
+
+- **F271.** The snow the moisture brings lies on the land through its year where water is the working liquid: it falls by the air's temperature, holds the ground at its melting point while it melts, its cover brightening the ground, and its mass in the cryosphere's maps beside the frost and the sea's ice.
+
+How it went:
+
+- **The Earth-like.** Its northern snow peaks just past its spring equinox at some 14.5 kg/m² over its hemisphere, Earth's some 12, and lies some part of the year on nine tenths of its land past 40°; its climate as before, 285.8 K.
+- **The locked world.** Snow on three tenths of its land; its mean as before, 246.1 K.
+- **Tried first:** the snow at the full brightness of ice and snow until it melted (a cold Earth-like, 268.6 K); the ground held at the melting point through all of a step on a trace of snow (the tropics 22 K too cold); the melting without the freezing's heat in the air (the locked world 1.4 K too cold).
+- **Known limitations.** No rain on snow, no refreezing, no sublimation, no snow on the sea's ice; Titan's methane snow with its methane cycle; the perennial snow kept under 1,000 kg/m² until the glaciers carry it.
+

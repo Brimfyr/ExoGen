@@ -155,6 +155,8 @@ pub struct YearRow {
     pub frost_south_kg_m2: f64,
     pub sea_ice_north_kg_m2: f64,
     pub sea_ice_south_kg_m2: f64,
+    pub snow_north_kg_m2: f64,
+    pub snow_south_kg_m2: f64,
 }
 
 /// A parameter in the sidecar: a number in its display `unit`, its stored SI value `value`
@@ -1163,6 +1165,8 @@ pub fn export(
                         frost_south_kg_m2: y.frost[1][k],
                         sea_ice_north_kg_m2: y.sea_ice[0][k],
                         sea_ice_south_kg_m2: y.sea_ice[1][k],
+                        snow_north_kg_m2: y.snow[0].get(k).copied().unwrap_or(0.0),
+                        snow_south_kg_m2: y.snow[1].get(k).copied().unwrap_or(0.0),
                     })
                     .collect()
             })
