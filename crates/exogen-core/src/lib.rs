@@ -18,6 +18,7 @@ pub mod geom;
 pub mod grid;
 pub mod insolation;
 pub mod mantle;
+pub mod moisture;
 pub mod noise;
 pub mod orbital;
 pub mod params;

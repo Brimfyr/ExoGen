@@ -72,6 +72,22 @@ pub struct CryosphereInfo {
     pub year: Vec<YearRow>,
 }
 
+/// The year's water (F268), where the body has a working liquid under an atmosphere: its
+/// liquid's vapour; kg/m² a year over the body, precipitation and evaporation; over its land,
+/// precipitation, evaporation and runoff; and the shares of the land arid and hyper-arid, its
+/// precipitation under 0.2 and 0.05 of its potential evaporation (UNEP 1992).
+#[derive(Serialize)]
+pub struct WaterInfo {
+    pub vapour: String,
+    pub precipitation_kg_m2_yr: f64,
+    pub evaporation_kg_m2_yr: f64,
+    pub land_precipitation_kg_m2_yr: f64,
+    pub land_evaporation_kg_m2_yr: f64,
+    pub land_runoff_kg_m2_yr: f64,
+    pub arid_land_fraction: f64,
+    pub hyper_arid_land_fraction: f64,
+}
+
 /// The year's surface wind (F267): its mean speed over the body, m/s, the fastest of its
 /// places' year-mean speeds, m/s, the work the atmosphere's heat engine does, W/m² over the
 /// body, the thermal equator's southernmost and northernmost through the year, deg, and where
@@ -349,6 +365,8 @@ pub struct Sidecar {
     pub cryosphere: Option<CryosphereInfo>,
     /// The year's surface wind (F267), none without an atmosphere.
     pub wind: Option<WindInfo>,
+    /// The year's water (F268), none without a working liquid under an atmosphere.
+    pub water: Option<WaterInfo>,
     pub stage_outputs: BTreeMap<String, f64>,
     pub parameters: BTreeMap<String, ParameterInfo>,
     pub warnings: Vec<String>,
@@ -459,6 +477,10 @@ pub fn export(
         "cryosphere_ice.png",
         "wind.exr",
         "wind.png",
+        "precipitation.exr",
+        "precipitation.png",
+        "aridity.exr",
+        "aridity.png",
         "units.png",
         "sidecar.json",
         "features.json",
@@ -1241,6 +1263,80 @@ pub fn export(
             ..Default::default()
         },
     );
+    // The year's water (F268): its precipitation, kg/m² a year, and its aridity index, its
+    // precipitation over its potential evaporation, held under ARIDITY_MAP_MOST, bilinear; all
+    // zero without a working liquid under an atmosphere.
+    let water_maps: Vec<Vec<f32>> = match &out.water {
+        Some(fields) => fields
+            .iter()
+            .map(|f| to_equirectangular(&grid, f.as_slice(), width, height_px))
+            .collect(),
+        None => vec![calm(), calm()],
+    };
+    let wettest = water_maps[0].iter().fold(0.0f32, |a, &v| a.max(v));
+    for (k, (name, unit, most)) in [
+        (
+            "precipitation",
+            "kg/m² a year of the working liquid (mm a year of water), the year's mean; zero without a working liquid under an atmosphere",
+            wettest,
+        ),
+        (
+            "aridity",
+            "the year's precipitation over its potential evaporation, the aridity index (UNEP 1992: under 0.05 hyper-arid, 0.2 arid, 0.5 semi-arid), held under 4; over the sea its open water's; zero without a working liquid under an atmosphere",
+            crate::constants::ARIDITY_MAP_MOST as f32,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        write_exr_f32(
+            &settings.dir.join(format!("{name}.exr")),
+            width,
+            height_px,
+            name,
+            &water_maps[k],
+        )?;
+        maps.insert(
+            name.to_string(),
+            MapInfo {
+                file: format!("{name}.exr"),
+                encoding: format!("float32 EXR, channel {name}"),
+                units: unit.into(),
+                min: 0.0,
+                max: most as f64,
+                ..Default::default()
+            },
+        );
+        write_png16(
+            &settings.dir.join(format!("{name}.png")),
+            width,
+            height_px,
+            &water_maps[k],
+            0.0,
+            most.max(1e-6),
+        )?;
+        maps.insert(
+            format!("{name}_png"),
+            MapInfo {
+                file: format!("{name}.png"),
+                encoding: "16-bit grey PNG, linear from min to max".into(),
+                units: unit.into(),
+                min: 0.0,
+                max: most as f64,
+                ..Default::default()
+            },
+        );
+    }
+    let water = out.water_summary.map(|w| WaterInfo {
+        vapour: out.water_vapour.unwrap_or("").to_string(),
+        precipitation_kg_m2_yr: w.precipitation,
+        evaporation_kg_m2_yr: w.evaporation,
+        land_precipitation_kg_m2_yr: w.land_precipitation,
+        land_evaporation_kg_m2_yr: w.land_evaporation,
+        land_runoff_kg_m2_yr: w.runoff,
+        arid_land_fraction: w.arid,
+        hyper_arid_land_fraction: w.hyper_arid,
+    });
     let wind = out.wind_summary.map(|w| WindInfo {
         mean_speed_m_s: w.speed,
         fastest_m_s: w.fastest,
@@ -1485,6 +1581,7 @@ pub fn export(
             .collect(),
         cryosphere,
         wind,
+        water,
         stage_outputs,
         parameters,
         warnings: graph

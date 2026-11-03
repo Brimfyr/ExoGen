@@ -957,6 +957,12 @@ pub struct Cycle {
     pub clock: Option<Clock>,
     /// The wind through the year at the cycle's places, under an atmosphere (F267).
     pub wind: Option<crate::wind::Wind>,
+    /// The cycle's places under an atmosphere, as the wind and the moisture read them, and
+    /// each place's frost and its sea's ice, kg/m², and its land's surface and its sea's, K,
+    /// at the end of each step, place after place, the tilts' mean (F268).
+    pub sites: Vec<crate::wind::Site>,
+    pub masses: [Vec<f32>; 2],
+    pub surfaces: [Vec<f32>; 2],
     /// Each place's surface temperatures through the cycle, as quantiles, and the albedo its
     /// ground stood at (F256).
     spread: Vec<[f32; CYCLE_SPREAD]>,
@@ -1362,8 +1368,9 @@ struct TiltYear {
     partials: Vec<f64>,
     air: Vec<f64>,
     /// Each place's frost and its sea's ice at the end of each step, kg/m², place after
-    /// place (F246).
+    /// place (F246), and its land's surface and its sea's, K (F268).
     masses: [Vec<f32>; 2],
+    surfaces: [Vec<f32>; 2],
     /// What the frost's own gas's caps gained over each place's area in a year, kg/m²
     /// (F258).
     caps: Vec<f64>,
@@ -1380,8 +1387,9 @@ struct Lockstep {
     partials: Vec<f64>,
     air: Vec<f64>,
     /// Each place's frost and its sea's ice at the end of each step, kg/m², place after
-    /// place (F246).
+    /// place (F246), and its land's surface and its sea's, K (F268).
     masses: [Vec<f32>; 2],
+    surfaces: [Vec<f32>; 2],
     /// What the frost's own gas's caps gained over each place's area in the cycle, kg/m²
     /// (F258).
     caps: Vec<f64>,
@@ -1907,6 +1915,7 @@ impl EnergyBalance {
                     partials: Vec::new(),
                     air: Vec::new(),
                     masses: [Vec::new(), Vec::new()],
+                    surfaces: [Vec::new(), Vec::new()],
                     caps: Vec::new(),
                 })
                 .collect()
@@ -2019,6 +2028,11 @@ impl EnergyBalance {
         let masses: [Vec<f32>; 2] = std::array::from_fn(|j| {
             (0..if steps > 0 { places * steps } else { 0 })
                 .map(|i| each.iter().map(|t| t.masses[j][i]).sum::<f32>() / each.len() as f32)
+                .collect()
+        });
+        let surfaces: [Vec<f32>; 2] = std::array::from_fn(|j| {
+            (0..if steps > 0 { places * steps } else { 0 })
+                .map(|i| each.iter().map(|t| t.surfaces[j][i]).sum::<f32>() / each.len() as f32)
                 .collect()
         });
         let covers = [
@@ -2135,11 +2149,8 @@ impl EnergyBalance {
         });
         // The wind through the year at the places (F267), from the air over each at each step,
         // the tilts' mean; not on the latitudes' rows of the orbit's cycles.
-        let wind = layout.as_ref().filter(|_| !self.rows).and_then(|l| {
-            let water = ocean.map_or(0.0, |_| OCEAN_TRANSPORT_SHARE);
-            let links = l.air_links(self.transport, water);
-            let sites: Vec<crate::wind::Site> = l
-                .places
+        let sites: Vec<crate::wind::Site> = layout.as_ref().map_or_else(Vec::new, |l| {
+            l.places
                 .iter()
                 .map(|p| crate::wind::Site {
                     lat: p.lat,
@@ -2148,7 +2159,11 @@ impl EnergyBalance {
                     sea: p.sea,
                     ice: p.cap,
                 })
-                .collect();
+                .collect()
+        });
+        let wind = layout.as_ref().filter(|_| !self.rows).and_then(|l| {
+            let water = ocean.map_or(0.0, |_| OCEAN_TRANSPORT_SHARE);
+            let links = l.air_links(self.transport, water);
             let air: Vec<&[f64]> = each.iter().map(|e| &e.air[..]).collect();
             crate::wind::blow(&self.circulation, &sites, (n_lat, n_lon), &links, &air)
         });
@@ -2195,6 +2210,9 @@ impl EnergyBalance {
             series,
             clock,
             wind,
+            sites,
+            masses,
+            surfaces,
             spread: rows.iter().map(|y| y.spread).collect(),
             spread_albedo: rows.iter().map(|y| y.albedo).collect(),
         }
@@ -2321,49 +2339,11 @@ impl EnergyBalance {
                 }
             })
             .collect();
-        let links = (0..n_lat * n_lon)
-            .map(|k| {
-                let (i, j) = (k / n_lon, k % n_lon);
-                let (lo, hi) = edges(i);
-                let band = hi.sin() - lo.sin();
-                let mut out = Vec::with_capacity(4);
-                if i > 0 {
-                    out.push((k - n_lon, lo.cos() / (dphi * band)));
-                }
-                if i + 1 < n_lat {
-                    out.push((k + n_lon, hi.cos() / (dphi * band)));
-                }
-                if n_lon > 1 {
-                    let across = (hi - lo) / (dlon * (0.5 * (lo + hi)).cos() * dlon * band);
-                    let row = i * n_lon;
-                    out.push((row + (j + n_lon - 1) % n_lon, across));
-                    out.push((row + (j + 1) % n_lon, across));
-                }
-                out
-            })
-            .collect();
-        let count = if n_lon > 1 { n_lon / 2 + 1 } else { 0 };
-        let phase = |m: usize, j: usize| TAU * (m * j % n_lon) as f64 / n_lon as f64;
-        let by_mode = |f: fn(f64) -> f64| -> Vec<f64> {
-            (0..count * n_lon)
-                .map(|k| f(phase(k / n_lon, k % n_lon)))
-                .collect()
-        };
-        let by_longitude = |f: fn(f64) -> f64| -> Vec<f64> {
-            (0..count * n_lon)
-                .map(|k| f(phase(k % count, k / count)))
-                .collect()
-        };
         Layout {
             places,
-            links,
+            links: place_links((n_lat, n_lon)),
             n_lon,
-            modes: [
-                by_mode(f64::cos),
-                by_mode(f64::sin),
-                by_longitude(f64::cos),
-                by_longitude(f64::sin),
-            ],
+            modes: place_modes(n_lon),
         }
     }
 
@@ -2491,6 +2471,7 @@ impl EnergyBalance {
             partials: lockstep.partials,
             air: lockstep.air,
             masses: lockstep.masses,
+            surfaces: lockstep.surfaces,
             caps: lockstep.caps,
         }
     }
@@ -2543,6 +2524,7 @@ impl EnergyBalance {
             partials: lockstep.partials,
             air: lockstep.air,
             masses: lockstep.masses,
+            surfaces: lockstep.surfaces,
             caps: lockstep.caps.iter().map(|g| g / orbits).collect(),
         }
     }
@@ -2827,6 +2809,14 @@ impl EnergyBalance {
                 .flat_map(|r| r.masses[1].iter().copied())
                 .collect(),
         ];
+        let surfaces = [
+            runs.iter()
+                .flat_map(|r| r.surface.iter().copied())
+                .collect(),
+            runs.iter()
+                .flat_map(|r| r.sea_surface.iter().copied())
+                .collect(),
+        ];
         let caps = runs
             .iter()
             .map(|r| r.cap.as_ref().map_or(0.0, |c| c.share * c.gained))
@@ -2839,6 +2829,7 @@ impl EnergyBalance {
             partials,
             air: series,
             masses,
+            surfaces,
             caps,
             active,
         }
@@ -4028,6 +4019,56 @@ fn surface_normal(height: &Field<f32>, c: crate::grid::Cell, d: [f64; 3], radius
 }
 
 impl Cycle {
+    /// The moisture through the cycle (F268) of the air `air`, each place's ground standing
+    /// `heights` m over the sea: none without the cycle's wind.
+    pub fn moisture(
+        &self,
+        air: &crate::moisture::Air,
+        heights: &[f64],
+    ) -> Option<crate::moisture::Moisture> {
+        let wind = self.wind.as_ref()?;
+        let (n_lat, n_lon) = self.layout;
+        let n = n_lat * n_lon;
+        let steps = wind.steps;
+        let year = self.clock?.cycle_s;
+        if self.sites.len() != n
+            || self.air.is_empty()
+            || self.surfaces[0].len() != n * steps
+            || self.masses[1].len() != n * steps
+        {
+            return None;
+        }
+        let tilts = self.air.len() as f64;
+        let mean: Vec<f64> = (0..steps * n)
+            .map(|i| self.air.iter().map(|a| a[i]).sum::<f64>() / tilts)
+            .collect();
+        let at = |field: &[f32], k: usize| -> Vec<f64> {
+            (0..n).map(|p| field[p * steps + k] as f64).collect()
+        };
+        let weather = |k: usize| crate::moisture::Weather {
+            air: &mean[k * n..(k + 1) * n],
+            east: &wind.east[k * n..(k + 1) * n],
+            north: &wind.north[k * n..(k + 1) * n],
+            land: at(&self.surfaces[0], k),
+            sea: at(&self.surfaces[1], k),
+            ice: at(&self.masses[1], k),
+            gust: wind.speed[k],
+        };
+        let layout = Layout::of_sites(&self.sites, (n_lat, n_lon));
+        let solve = |links: &[Vec<(usize, f64)>], diag: &[f64], rhs: &[f64], x: &mut [f64]| {
+            transport_solve(&layout, links, (diag, rhs), x, true);
+        };
+        crate::moisture::rain(
+            air,
+            &self.sites,
+            (n_lat, n_lon),
+            heights,
+            (year, steps),
+            &weather,
+            &solve,
+        )
+    }
+
     /// The surface's temperatures through its cycle in a direction (F256): the quantiles of
     /// the places about it, read between them, and the albedo their ground stood at.
     pub fn spread_at(&self, d: [f64; 3]) -> ([f64; CYCLE_SPREAD], f64) {
@@ -4167,7 +4208,90 @@ struct Layout {
     modes: [Vec<f64>; 4],
 }
 
+/// The links of a layout of `n_lat` latitudes and `n_lon` longitudes (F245): each place's
+/// neighbours and its conductance to each per unit of its area at unit transport, on the unit
+/// sphere the length of the edge they share over the distance between them, over the place's
+/// area.
+pub(crate) fn place_links((n_lat, n_lon): (usize, usize)) -> Vec<Vec<(usize, f64)>> {
+    let (dphi, dlon) = (PI / (n_lat - 1) as f64, TAU / n_lon as f64);
+    let edges = |i: usize| {
+        let lat = -PI / 2.0 + dphi * i as f64;
+        (
+            (lat - dphi / 2.0).max(-PI / 2.0),
+            (lat + dphi / 2.0).min(PI / 2.0),
+        )
+    };
+    (0..n_lat * n_lon)
+        .map(|k| {
+            let (i, j) = (k / n_lon, k % n_lon);
+            let (lo, hi) = edges(i);
+            let band = hi.sin() - lo.sin();
+            let mut out = Vec::with_capacity(4);
+            if i > 0 {
+                out.push((k - n_lon, lo.cos() / (dphi * band)));
+            }
+            if i + 1 < n_lat {
+                out.push((k + n_lon, hi.cos() / (dphi * band)));
+            }
+            if n_lon > 1 {
+                let across = (hi - lo) / (dlon * (0.5 * (lo + hi)).cos() * dlon * band);
+                let row = i * n_lon;
+                out.push((row + (j + n_lon - 1) % n_lon, across));
+                out.push((row + (j + 1) % n_lon, across));
+            }
+            out
+        })
+        .collect()
+}
+
+/// A resonant body's longitudes' Fourier modes over `n_lon` longitudes (F245): the cos and sin
+/// of each mode's phase at each longitude, mode after mode, and longitude after longitude.
+fn place_modes(n_lon: usize) -> [Vec<f64>; 4] {
+    let count = if n_lon > 1 { n_lon / 2 + 1 } else { 0 };
+    let phase = |m: usize, j: usize| TAU * (m * j % n_lon) as f64 / n_lon as f64;
+    let by_mode = |f: fn(f64) -> f64| -> Vec<f64> {
+        (0..count * n_lon)
+            .map(|k| f(phase(k / n_lon, k % n_lon)))
+            .collect()
+    };
+    let by_longitude = |f: fn(f64) -> f64| -> Vec<f64> {
+        (0..count * n_lon)
+            .map(|k| f(phase(k % count, k / count)))
+            .collect()
+    };
+    [
+        by_mode(f64::cos),
+        by_mode(f64::sin),
+        by_longitude(f64::cos),
+        by_longitude(f64::sin),
+    ]
+}
+
 impl Layout {
+    /// A layout of the cycle's places as the wind and the moisture keep them (F268), for the
+    /// transport's solver: their latitudes, longitudes, areas and shares of sea and caps.
+    fn of_sites(sites: &[crate::wind::Site], (n_lat, n_lon): (usize, usize)) -> Self {
+        Layout {
+            places: sites
+                .iter()
+                .map(|s| Place {
+                    lat: s.lat,
+                    lon: s.lon,
+                    weight: s.weight,
+                    steady: 0.0,
+                    albedo: 0.0,
+                    snow: 0.0,
+                    sea: s.sea,
+                    cap: s.ice,
+                    cap_mass: 0.0,
+                })
+                .collect(),
+            links: place_links((n_lat, n_lon)),
+            n_lon,
+            modes: place_modes(n_lon),
+        }
+    }
+
     /// The transport through the air at `transport` W/m²/K (F245): each place's conductance to
     /// each of its neighbours, less the share `water` a sea's water carries across the sea's
     /// share of their boundary.
@@ -4231,8 +4355,10 @@ struct Run {
     records: Vec<Record>,
     /// The frost and the sea's ice at the end of each step of the cycle, kg/m² (F246).
     masses: [Vec<f32>; 2],
-    /// The surface's temperature at the end of each step of the cycle (F256).
+    /// The surface's temperature at the end of each step of the cycle (F256), and its sea's
+    /// (F268).
     surface: Vec<f32>,
+    sea_surface: Vec<f32>,
     /// The place's share of the frost's own gas's caps (F258).
     cap: Option<Patch>,
 }
@@ -4305,6 +4431,7 @@ impl Run {
             records: Vec::new(),
             masses: [vec![0.0; steps], vec![0.0; steps]],
             surface: vec![0.0; steps],
+            sea_surface: vec![0.0; steps],
         }
     }
 
@@ -4384,6 +4511,7 @@ impl Run {
         self.masses[0][k] = self.mass as f32;
         self.masses[1][k] = self.sea.map_or(0.0, |s| s.ice) as f32;
         self.surface[k] = self.t[0] as f32;
+        self.sea_surface[k] = self.sea.map_or(0.0, |s| s.surface) as f32;
         if every > 0 && k.is_multiple_of(every) {
             self.records.push(Record {
                 k,
@@ -6604,6 +6732,77 @@ mod tests {
             "{:?}",
             brief.equator
         );
+    }
+
+    /// F268: the Earth-like's water through its year: some 1,000 kg/m² a year falls over the
+    /// body, as Earth's 1,000 to 1,100 do (Trenberth et al. 2007), most of it where its air
+    /// converges, at its thermal equator and under its westerlies' storms, its subtropics
+    /// evaporating more than falls on them; its land sheds some 300 a year as runoff, Earth's
+    /// some 300 to 400.
+    #[test]
+    fn the_earth_like_s_water_falls_where_its_air_converges() {
+        let earth = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&earth);
+        let (cycle, _) = graph_cycle(&earth);
+        let air = crate::moisture::Air::from_graph(&earth, eb.transport, OCEAN_TRANSPORT_SHARE)
+            .expect("water");
+        let heights = vec![0.0; cycle.sites.len()];
+        let water = cycle.moisture(&air, &heights).expect("a moisture");
+        let brief = water.summary();
+        println!("Earth-like: {brief:?}");
+        assert!((700.0..1500.0).contains(&brief.precipitation), "{brief:?}");
+        assert!((150.0..600.0).contains(&brief.runoff), "{brief:?}");
+        let (n_lat, n_lon) = water.layout;
+        let year = SECONDS_PER_DAY * 365.25;
+        let zonal = |v: &[f64], lat: f64| {
+            let i = ((lat + 90.0) / 180.0 * (n_lat - 1) as f64).round() as usize;
+            v[i * n_lon..(i + 1) * n_lon].iter().sum::<f64>() / n_lon as f64 * year
+        };
+        let (p, e) = (&water.precipitation, &water.evaporation);
+        for side in [1.0, -1.0] {
+            let (rising, sinking, storms) = (0.0, 26.0 * side, 48.0 * side);
+            assert!(zonal(p, rising) > 3.0 * zonal(p, sinking), "{side}");
+            assert!(zonal(p, storms) > 2.0 * zonal(p, sinking), "{side}");
+            assert!(zonal(e, sinking) > zonal(p, sinking), "{side}");
+            assert!(zonal(p, storms) > zonal(e, storms), "{side}");
+        }
+        assert!(zonal(p, 0.0) > zonal(e, 0.0));
+    }
+
+    /// F268: the locked ocean world's water falls under its star, where its air converges,
+    /// and hardly at all on its night side, which its air leaves cold and dry.
+    #[test]
+    fn a_locked_world_s_water_falls_under_its_star() {
+        let world = locked_ocean_world();
+        let eb = EnergyBalance::from_graph(&world);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let climate = eb.solve(grid);
+        let ocean = Ocean::from_graph(&world).expect("a water sea");
+        let share = Field::filled(grid, 1.0f32);
+        let sea = Some((&ocean, &share));
+        let cycle = eb.cycle(&climate, &Ground::from_graph(&world), sea, None);
+        let air = crate::moisture::Air::from_graph(&world, eb.transport, OCEAN_TRANSPORT_SHARE)
+            .expect("water");
+        let water = cycle
+            .moisture(&air, &vec![0.0; cycle.sites.len()])
+            .expect("a moisture");
+        let (n_lat, n_lon) = water.layout;
+        let year = SECONDS_PER_DAY * 365.25;
+        let at = |lon: f64| {
+            let (i, j) = (
+                n_lat / 2,
+                ((lon + 180.0) / 360.0 * n_lon as f64).round() as usize,
+            );
+            water.precipitation[i * n_lon + j % n_lon] * year
+        };
+        let brief = water.summary();
+        println!(
+            "TRAPPIST-1e: {brief:?}; {:.0} kg/m² a year under its star, {:.0} opposite",
+            at(0.0),
+            at(180.0)
+        );
+        assert!(at(0.0) > 20.0 * at(180.0), "{} {}", at(0.0), at(180.0));
+        assert!((200.0..3000.0).contains(&brief.precipitation), "{brief:?}");
     }
 
     /// F267: the locked ocean world's air blows toward the point under its star: along its

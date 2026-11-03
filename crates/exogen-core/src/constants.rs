@@ -2098,6 +2098,45 @@ pub const WIND_START_SPEED: f64 = 5.0;
 pub const WIND_SETTLED: f64 = 1e-3;
 pub const WIND_ITERATIONS: usize = 16;
 pub const WIND_LEAST_SPEED: f64 = 0.01;
+/// F268: the rain from a column of saturation r, the vapour it holds over what it would hold
+/// saturated: exp(RAIN_SATURATION_SLOPE (r - RAIN_SATURATION_ONSET)) mm a day over the tropical
+/// oceans (Bretherton et al. 2004), whose saturated columns hold some 65 kg/m², so that a
+/// column rains its saturated vapour over RAIN_TIMESCALE_DAYS times that rise; the rise held
+/// under MOISTURE_MOST_RISE.
+pub const RAIN_SATURATION_SLOPE: f64 = 15.6;
+pub const RAIN_SATURATION_ONSET: f64 = 0.603;
+pub const RAIN_TIMESCALE_DAYS: f64 = 65.0;
+pub const MOISTURE_MOST_RISE: f64 = 50.0;
+pub const SECONDS_PER_DAY: f64 = 86_400.0;
+/// F268: the share of the precipitation that falls as snow, half at RAIN_SNOW_OFFSET kelvin
+/// above the liquid's freezing point, the 1 °C Jennings et al. 2018 found over the northern
+/// hemisphere's land, the rest in a logistic RAIN_SNOW_WIDTH kelvin wide.
+pub const RAIN_SNOW_OFFSET: f64 = 1.0;
+pub const RAIN_SNOW_WIDTH: f64 = 1.0;
+/// F268: the land's bucket (Manabe 1969): SOIL_CAPACITY m of the liquid, evaporating at the
+/// full rate of wet ground while BUCKET_FULL_SHARE full and in proportion below.
+pub const SOIL_CAPACITY: f64 = 0.15;
+pub const BUCKET_FULL_SHARE: f64 = 0.75;
+/// F268: the aridity index under which land is arid and hyper-arid (UNEP 1992).
+pub const ARID_INDEX: f64 = 0.2;
+pub const HYPER_ARID_INDEX: f64 = 0.05;
+/// F268: the aridity map holds the index up to ARIDITY_MAP_MOST, past which a place is wet
+/// alike.
+pub const ARIDITY_MAP_MOST: f64 = 4.0;
+/// F268: the moisture's run: the cycle again and again over MOISTURE_SPIN_UP s, at least
+/// MOISTURE_LEAST_YEARS cycles and at most MOISTURE_MOST_STEPS steps, from columns at
+/// MOISTURE_START_SATURATION; the wind's carrying in steps that move no more than MOISTURE_CFL
+/// of a place's vapour; MOISTURE_NEWTON rounds for each step's rain; the vapour's partial
+/// pressure under MOISTURE_MOST_PARTIAL of the air's, the lapse rate at least
+/// MOISTURE_LEAST_LAPSE K/m.
+pub const MOISTURE_SPIN_UP: f64 = 2.0 * 365.25 * SECONDS_PER_DAY;
+pub const MOISTURE_LEAST_YEARS: usize = 2;
+pub const MOISTURE_MOST_STEPS: usize = 4_000;
+pub const MOISTURE_START_SATURATION: f64 = 0.7;
+pub const MOISTURE_CFL: f64 = 0.9;
+pub const MOISTURE_NEWTON: usize = 50;
+pub const MOISTURE_MOST_PARTIAL: f64 = 0.9;
+pub const MOISTURE_LEAST_LAPSE: f64 = 1e-4;
 /// F238: the spin a body is born with, a share of its breakup rate: giant impacts leave
 /// Earth-mass planets turning in 2 to 3 hours, about half the breakup rate (Kokubo and Ida
 /// 2007), and imperfect accretion some 30 percent slower (Kokubo and Genda 2010). Earth's

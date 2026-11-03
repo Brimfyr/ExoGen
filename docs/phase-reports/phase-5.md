@@ -406,3 +406,15 @@ How it went:
 - **A cell heated far from its equator.** Mars's air is warmest at its pole in its southern summer, and the cells followed it there. A cell heated off its equator keeps its edges while its rising branch moves; Mars's thermal equator now stands within 42° of the equator, its solstices' cells crossing the equator each way in turn, and Titan's, whose cell reaches its poles, runs from pole to pole.
 - **The speeds.** Over the body in the year's mean: the Earth-like 4.0 m/s, the weather's gusts apart; TRAPPIST-1e 8.2; Mars 3.9 (its landers some 2 to 7); Venus 0.52 (Venera some 0.3 to 1); Pluto 1.6; Titan 0.11, where Huygens measured some 0.3: its air all but isothermal under its transport's cap (F33), the contrast 5A left to the wind field.
 - **Known limitations.** The Earth-like's westerlies narrower than Earth's and some 5 to 8° nearer the equator, the Rhines scale read at the surface's mean wind; no easterlies at the equator, where the air's momentum would carry the trades'; the exchange of heat and vapour with the ground still at a stated 5 m/s; no winds down cold slopes; the jets aloft wait for the weather model (5G).
+
+## The thirty-second milestone: the moisture
+
+- **F268.** The working liquid's vapour through the cycle's year at its places: evaporated from the sea and the wet land at each place's wind and the weather's gusts about it, carried by the wind and mixed by the eddies, rained out as its column nears saturation as Bretherton et al. (2004) measured over the tropical oceans, the land holding its rain in a bucket. The year's precipitation and aridity are exported.
+
+How it went:
+
+- **The Earth-like.** 1,182 kg/m² a year over the body, near Earth's some 950 to 1,000; its land's runoff 352 kg/m² a year, Earth's some 270; its deserts on its continents' subtropical latitudes, its rain at its thermal equator and under its westerlies.
+- **The locked world.** TRAPPIST-1e's rain falls under its star and none on its night side.
+- **Three fixes.** The evaporation and the rain solved together on each step's end, where the storm tracks' seas had taken vapour from columns left supersaturated within a step; the gusts about the mean wind, without which the subtropics' calm ridges stopped evaporating; the rain bracketed and read from the column's balance, where a column over cold high ground, a hundred times saturated, had rained 10^20 kg/m² a year.
+- **Known limitations.** The rain at the thermal equator too narrow and too strong; no rain shadows yet, the relief only at the places' 4°; Titan's methane some hundred times too much and wettest at its equator, its evaporation drawing on no energy and its air mixed too hard: the next milestone puts the latent heat into the energy balance at each place's wind, before Titan's transport (the user, 2026-11-03).
+

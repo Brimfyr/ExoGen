@@ -243,6 +243,12 @@ pub struct FinishOutput {
     /// speed, m/s, none without an atmosphere; and the year in brief.
     pub wind: Option<[Field<f32>; 3]>,
     pub wind_summary: Option<crate::wind::Summary>,
+    /// The year's water where the body has a working liquid under an atmosphere (F268): its
+    /// precipitation, kg/m² a year, and its aridity index; its liquid's vapour; and the year in
+    /// brief.
+    pub water: Option<[Field<f32>; 2]>,
+    pub water_vapour: Option<&'static str>,
+    pub water_summary: Option<crate::moisture::Summary>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -437,7 +443,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 196;
+pub const FINISH_VERSION: u64 = 197;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3124,6 +3130,52 @@ pub fn finish(
     // The year's wind at the cycle's places, brought to this grid (F267).
     let wind = cycle.wind.as_ref().map(|w| w.fields(grid));
     let wind_summary = cycle.wind.as_ref().map(crate::wind::Wind::summary);
+    // The year's moisture at the cycle's places (F268), each place's ground at its mean
+    // height over the sea, brought to this grid.
+    let water_share = if ocean.is_some() {
+        OCEAN_TRANSPORT_SHARE
+    } else {
+        0.0
+    };
+    let water_air = crate::moisture::Air::from_graph(graph, balance.transport, water_share);
+    let moisture = water_air.and_then(|air| {
+        let above = Field::from_fn(grid, |c, _| {
+            let h = height.get(c);
+            if sea_level.is_finite() {
+                (h - sea_level as f32).max(0.0)
+            } else {
+                h
+            }
+        });
+        let coarse = crate::climate::coarsen(&above, climate.temperature.grid());
+        let heights: Vec<f64> = cycle
+            .sites
+            .iter()
+            .map(|s| {
+                let d = crate::grid::direction_from_lon_lat(s.lon, s.lat);
+                coarse.get(coarse.grid().locate(d).0) as f64
+            })
+            .collect();
+        cycle.moisture(&air, &heights)
+    });
+    let water = moisture.as_ref().map(|m| m.fields(grid));
+    let water_vapour = water_air
+        .filter(|_| moisture.is_some())
+        .map(|a| a.vapour.name);
+    let water_summary = moisture.as_ref().map(crate::moisture::Moisture::summary);
+    if let (Some(w), true) = (&water_summary, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+        eprintln!(
+            "moisture: {} falls at {:.0} kg/m² a year over the body and evaporates at {:.0}; over the land {:.0} falls, {:.0} evaporates and {:.0} runs off; {:.1}% of the land arid, {:.1}% hyper-arid",
+            water_vapour.unwrap_or("?"),
+            w.precipitation,
+            w.evaporation,
+            w.land_precipitation,
+            w.land_evaporation,
+            w.runoff,
+            100.0 * w.arid,
+            100.0 * w.hyper_arid
+        );
+    }
     if let (Some(w), true) = (&wind_summary, std::env::var_os("EXOGEN_DEBUG").is_some()) {
         eprintln!(
             "wind: the year's mean surface wind {:.2} m/s over the body, {:.2} at its fastest place, under a heat engine working at {:.3} W/m²; the thermal equator from {:.1}° to {:.1}°; the trades end at {:.1}° and {:.1}° in the year's mean",
@@ -3360,6 +3412,9 @@ pub fn finish(
         cryosphere_series: cycle.series.clone(),
         wind,
         wind_summary,
+        water,
+        water_vapour,
+        water_summary,
         rays,
         sea_level,
         ocean_fraction,
