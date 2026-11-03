@@ -11,6 +11,7 @@ pub mod climate;
 pub mod constants;
 pub mod convection;
 pub mod crater;
+pub mod currents;
 pub mod export;
 pub mod fields;
 pub mod flexure;

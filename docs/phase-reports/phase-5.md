@@ -454,3 +454,15 @@ How it went:
 - **Tried first:** the snow at the full brightness of ice and snow until it melted (a cold Earth-like, 268.6 K); the ground held at the melting point through all of a step on a trace of snow (the tropics 22 K too cold); the melting without the freezing's heat in the air (the locked world 1.4 K too cold).
 - **Known limitations.** No rain on snow, no refreezing, no sublimation, no snow on the sea's ice; Titan's methane snow with its methane cycle; the perennial snow kept under 1,000 kg/m² until the glaciers carry it.
 
+## The thirty-sixth milestone: the seas' currents
+
+- **F272.** The wind's stress drives the seas' circulation in Stommel's balance: gyres whose return flow presses against their basins' western coasts, the land holding them by a friction that grows as the sea's share of a place falls; the flow carries the seas' heat, and the diffusion keeps only what the wind does not drive.
+
+How it went:
+
+- **The test basin.** A gyre of 18.7 Sv where Sverdrup's balance gives 22.4, its western current poleward.
+- **The Earth-like.** Gyres of some 45 to 49 Sv; its seas warmer toward their basins' east, its ice's edge rising some 3 to 5° there; its climate as before, 286.0 K.
+- **The locked world.** THAI's measures as before.
+- **The choice:** the user chose the total to emerge, the diffusion keeping the measured share the wind does not drive, the stated third's rest if that failed; it held the gates.
+- **Known limitations.** The Earth-like's ice edge bends far less than Earth's 45° to 80° across the North Atlantic: its basins are wide and simple; no overturning by density, no flow round islands, no seasons of the currents; the ice's drift next.
+

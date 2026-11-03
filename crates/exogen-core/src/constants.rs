@@ -2337,6 +2337,24 @@ pub const WARMEST_DEGREES: usize = 32;
 pub const N2_EMISSIVITY: (f64, f64) = (0.3, 0.8);
 pub const N2_PHASE_TRANSITION_K: f64 = 35.61;
 pub const N2_PHASE_HALF_WIDTH_K: f64 = 0.25;
+/// F272: the seas' currents. The bottom's friction on their depth-integrated flow, 1/s
+/// (Stommel 1948: some 1e-6, his gyre's western current some r / β, 50 km, wide); the land's
+/// friction, OCEAN_COAST_FRICTION times the strongest friction across a place by (1 - s) / s
+/// as the sea's share s of a place falls, as strong as it at half the place, without end on
+/// land; the solver's steps at most and its tolerance.
+pub const OCEAN_BOTTOM_FRICTION: f64 = 1e-6;
+pub const OCEAN_COAST_FRICTION: f64 = 1.0;
+pub const OCEAN_SOLVE_STEPS: usize = 2_000;
+pub const OCEAN_SOLVE_TOLERANCE: f64 = 1e-8;
+/// F272: where the currents carry the seas' heat, the share of the water's transport left to
+/// the diffusion, what the wind does not drive, the overturning by density and the eddies:
+/// some half, the Atlantic's overturning's 1.2 PW at 26.5° north (Johns et al. 2011) of the
+/// oceans' some 2 at 25° (Trenberth and Caron 2001), the two parts not cleanly parted; the
+/// currents' heat carried in steps that move no more than OCEAN_CFL of a place's mixed layer,
+/// OCEAN_MOST_SUBSTEPS of them at most.
+pub const OCEAN_UNDRIVEN_SHARE: f64 = 0.5;
+pub const OCEAN_CFL: f64 = 0.5;
+pub const OCEAN_MOST_SUBSTEPS: usize = 400;
 /// F245: the share of the transport a sea's water carries across the sea's share of the
 /// boundary between two places, the air the rest: some third, the ocean's share of the
 /// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated

@@ -958,8 +958,10 @@ pub struct Cycle {
     /// The cycle's year step by step and its clock, under an atmosphere (F253).
     pub series: Option<Series>,
     pub clock: Option<Clock>,
-    /// The wind through the year at the cycle's places, under an atmosphere (F267).
+    /// The wind through the year at the cycle's places, under an atmosphere (F267), and the
+    /// seas' currents it drives (F272).
     pub wind: Option<crate::wind::Wind>,
+    pub currents: Option<crate::currents::Currents>,
     /// The cycle's places under an atmosphere, as the wind and the moisture read them, and
     /// each place's frost, its sea's ice and its land's snow (F271), kg/m², and its land's
     /// surface and its sea's, K, at the end of each step, place after place, the tilts' mean
@@ -2263,6 +2265,11 @@ impl EnergyBalance {
             let air: Vec<&[f64]> = each.iter().map(|e| &e.air[..]).collect();
             crate::wind::blow(&self.circulation, &sites, (n_lat, n_lon), &links, &air)
         });
+        // The seas' currents the year's wind drives (F272).
+        let currents = match (&wind, ocean) {
+            (Some(w), Some(_)) => self.currents(w, &sites, &each),
+            _ => None,
+        };
         let seas = ocean.map(|ocean| Seas {
             mean: field(|y| y.sea[0]),
             min: field(|y| y.sea[1]),
@@ -2306,12 +2313,56 @@ impl EnergyBalance {
             series,
             clock,
             wind,
+            currents,
             sites,
             masses,
             surfaces,
             spread: rows.iter().map(|y| y.spread).collect(),
             spread_albedo: rows.iter().map(|y| y.albedo).collect(),
         }
+    }
+
+    /// The seas' currents the year's `wind` drives at the cycle's places (F272): its stress on
+    /// the sea through the year, rho_a C_D |V| V, the air's density at the surface pressure and
+    /// the tilts' mean air over each place at each step, the sea's drag the law of the wall's
+    /// over its roughness.
+    fn currents(
+        &self,
+        wind: &crate::wind::Wind,
+        sites: &[crate::wind::Site],
+        each: &[TiltYear],
+    ) -> Option<crate::currents::Currents> {
+        let (n_lat, n_lon) = wind.layout;
+        let n = n_lat * n_lon;
+        let steps = wind.steps.max(1);
+        if each.is_empty() || each.iter().any(|e| e.air.len() != steps * n) {
+            return None;
+        }
+        let drag = (VON_KARMAN / (WIND_REFERENCE_HEIGHT / SEA_ROUGHNESS).ln()).powi(2);
+        let air = &self.circulation;
+        let stress: Vec<[f64; 2]> = (0..n)
+            .map(|p| {
+                let mut s = [0.0; 2];
+                for k in 0..steps {
+                    let i = k * n + p;
+                    let t = each.iter().map(|e| e.air[i]).sum::<f64>() / each.len() as f64;
+                    let rho = air.pressure * air.molar_mass / (GAS_CONSTANT * t.max(1.0));
+                    let (u, v) = (wind.east[i] as f64, wind.north[i] as f64);
+                    let pull = rho * drag * u.hypot(v) / steps as f64;
+                    s[0] += pull * u;
+                    s[1] += pull * v;
+                }
+                s
+            })
+            .collect();
+        let density = self.liquid.map_or(1_000.0, |l| l.liquid_density);
+        let spin = (air.omega, air.radius, density);
+        let links = place_links((n_lat, n_lon));
+        let currents = crate::currents::circulate(sites, (n_lat, n_lon), &stress, spin, &links);
+        if let (Some(c), true) = (&currents, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+            eprintln!("currents: the strongest gyre {:.1} Sv", c.strongest() / 1e6);
+        }
+        currents
     }
 
     /// The star's path through a resonant body's sky as its cycle steps it (F245): an airless
@@ -2444,11 +2495,15 @@ impl EnergyBalance {
                 None => Vec::new(),
             })
             .collect();
+        let currents = coupling
+            .and_then(|c| c.currents.clone())
+            .filter(|c| c.layout == (n_lat, n_lon));
         Layout {
             places,
             links: place_links((n_lat, n_lon)),
             n_lon,
             snowfall,
+            currents,
             modes: place_modes(n_lon),
         }
     }
@@ -2757,8 +2812,17 @@ impl EnergyBalance {
                 transport_solve(layout, &air_links, (&diag, &rhs), &mut air, true);
                 series[k * n..(k + 1) * n].copy_from_slice(&air);
                 if let Some(ocean) = ocean.filter(|_| water > 0.0) {
-                    let step = (self.transport * water, dt);
+                    // Where the seas' currents carry their heat (F272), the diffusion carries
+                    // the water's share of the transport the wind does not drive.
+                    let undriven = match layout.currents {
+                        Some(_) => OCEAN_UNDRIVEN_SHARE,
+                        None => 1.0,
+                    };
+                    let step = (self.transport * water * undriven, dt);
                     sea_transport(layout, &mut runs, step, ocean, &mut inflow);
+                    if let Some(currents) = &layout.currents {
+                        sea_currents(layout, &mut runs, (currents, dt), ocean, &mut inflow);
+                    }
                 }
                 let highest = frost.map(|f| f.point_at(partial(held)));
                 // Bare ground stays clear of frost above every point the air can reach, the
@@ -4225,6 +4289,7 @@ impl Cycle {
             contacts,
             snowfall,
             steps: moisture.map_or(0, |m| m.steps),
+            currents: self.currents.clone(),
         })
     }
 
@@ -4413,6 +4478,8 @@ pub struct Coupling {
     pub contacts: Vec<Contact>,
     pub snowfall: Vec<f32>,
     pub steps: usize,
+    /// The seas' currents the year's wind drives (F272).
+    pub currents: Option<crate::currents::Currents>,
 }
 
 impl Coupling {
@@ -4498,6 +4565,8 @@ struct Layout {
     /// The snow that falls on each place's land through the year (F271), kg/m²/s, step after
     /// step, where water is the working liquid and the year's snow is known.
     snowfall: Vec<Vec<f32>>,
+    /// The seas' currents, where they ran on these places (F272).
+    currents: Option<crate::currents::Currents>,
     /// A resonant body's longitudes' Fourier modes: the cos and sin of each mode's phase at
     /// each longitude, mode after mode, and longitude after longitude.
     modes: [Vec<f64>; 4],
@@ -4585,6 +4654,7 @@ impl Layout {
             links: place_links((n_lat, n_lon)),
             n_lon,
             snowfall: Vec::new(),
+            currents: None,
             modes: place_modes(n_lon),
         }
     }
@@ -5609,6 +5679,93 @@ fn sea_transport(
                 inflow[p] = brought / places[p].sea.max(1e-12);
             }
             None => {}
+        }
+    }
+}
+
+/// The seas' currents through a step (F272): the water each boundary between two places with
+/// seas passes brings its upwind place's mixed layer's heat to the place downwind of it, in
+/// steps that move no more than OCEAN_CFL of a place's water, each place's water changing by
+/// what it brings over what it holds, so that where the currents meet the land a sea of one
+/// temperature stays at it; a sea under ice stands at its freezing point, and the heat the
+/// water brings it melts its ice from below, adding to each place's `inflow`, W/m² of its sea.
+fn sea_currents(
+    layout: &Layout,
+    runs: &mut [Run],
+    (currents, dt): (&crate::currents::Currents, f64),
+    ocean: &Ocean,
+    inflow: &mut [f64],
+) {
+    let places = &layout.places;
+    let (n, n_lon) = (places.len(), layout.n_lon);
+    if currents.east.len() != n || n_lon == 0 {
+        return;
+    }
+    let depth = OCEAN_MIXED_LAYER_M;
+    let area: Vec<f64> = places
+        .iter()
+        .map(|p| TAU * currents.radius * currents.radius * p.weight)
+        .collect();
+    let water: Vec<f64> = (0..n).map(|p| depth * area[p] * places[p].sea).collect();
+    let iced: Vec<Option<bool>> = runs
+        .iter()
+        .map(|r| r.sea.as_ref().map(|s| s.ice > 0.0))
+        .collect();
+    let mut temps: Vec<f64> = runs
+        .iter()
+        .zip(&iced)
+        .map(|(r, i)| match (r.sea.as_ref(), i) {
+            (Some(_), Some(true)) => ocean.freezing,
+            (Some(s), _) => s.t,
+            (None, _) => 0.0,
+        })
+        .collect();
+    // Each boundary between two places with seas, and the water it passes from the first to
+    // the second, m³/s.
+    let mut faces = Vec::with_capacity(2 * n);
+    for p in 0..n {
+        let (i, j) = (p / n_lon, p % n_lon);
+        let east = i * n_lon + (j + 1) % n_lon;
+        let north = p + n_lon;
+        for (q, f) in [(east, currents.east[p]), (north, currents.north[p])] {
+            if q < n && q != p && iced[p].is_some() && iced[q].is_some() && f != 0.0 {
+                faces.push(if f > 0.0 { (p, q, f) } else { (q, p, -f) });
+            }
+        }
+    }
+    let mut given = vec![0.0; n];
+    for &(from, _, f) in &faces {
+        given[from] += f;
+    }
+    let fastest = (0..n)
+        .filter(|&p| water[p] > 0.0)
+        .map(|p| given[p] / water[p])
+        .fold(0.0, f64::max);
+    let subs = ((dt * fastest / OCEAN_CFL).ceil() as usize).clamp(1, OCEAN_MOST_SUBSTEPS);
+    let h = dt / subs as f64;
+    let mut brought = vec![0.0; n];
+    let mut change = vec![0.0; n];
+    for _ in 0..subs {
+        change.fill(0.0);
+        for &(from, to, f) in &faces {
+            change[to] += f * h * (temps[from] - temps[to]);
+        }
+        for p in 0..n {
+            match iced[p] {
+                Some(true) => brought[p] += change[p],
+                Some(false) if water[p] > 0.0 => temps[p] += change[p] / water[p],
+                _ => {}
+            }
+        }
+    }
+    let heat = ocean.capacity / depth;
+    for (p, r) in runs.iter_mut().enumerate() {
+        match (r.sea.as_mut(), iced[p]) {
+            (Some(sea), Some(false)) => (sea.t, sea.surface) = (temps[p], temps[p]),
+            (Some(_), Some(true)) if area[p] * places[p].sea > 0.0 => {
+                inflow[p] += brought[p] * heat / (dt * area[p] * places[p].sea);
+            }
+            _ => {}
         }
     }
 }
