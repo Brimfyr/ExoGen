@@ -717,11 +717,20 @@ pub mod physics {
 
     /// F32: Held–Hou cell edge in degrees.
     pub fn held_hou_edge_deg(g: f64, h_trop: f64, delta_h: f64, omega: f64, r: f64) -> f64 {
+        held_hou_reach(g, h_trop, delta_h, omega, r)
+            .min(PI / 2.0)
+            .to_degrees()
+    }
+
+    /// F267: how far the Held–Hou cell reaches from its thermal equator, rad, uncapped: past
+    /// a quarter turn on a slowly spinning body, whose cell runs from pole to pole as its
+    /// thermal equator moves; at most a half turn.
+    pub fn held_hou_reach(g: f64, h_trop: f64, delta_h: f64, omega: f64, r: f64) -> f64 {
         if omega <= 0.0 {
-            return 90.0;
+            return PI;
         }
         let phi2 = 5.0 * g * h_trop * delta_h / (3.0 * omega * omega * r * r);
-        phi2.max(0.0).sqrt().min(PI / 2.0).to_degrees()
+        phi2.max(0.0).sqrt().min(PI)
     }
 
     /// F33: transport coefficient, W/m²/K: Williams and Kasting's scaling, capped at

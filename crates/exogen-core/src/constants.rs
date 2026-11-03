@@ -2072,6 +2072,32 @@ pub const CYCLE_SWING_SAMPLES: usize = 4;
 /// choice until 5C's wind field gives each place its own.
 pub const AIR_EXCHANGE_COEFFICIENT: f64 = 1.5e-3;
 pub const SURFACE_WIND_SPEED: f64 = 5.0;
+/// F267: the ground's drag on the wind at its reference height of 10 m, (kappa / ln(z /
+/// z0))² by the law of the wall, von Kármán's constant 0.4, over the roughness of each
+/// ground: the open sea's 0.2 mm (some 0.1 to 0.3 at moderate winds), its drag 1.4e-3 as
+/// Large and Pond 1981 measured it; ice and snow 1 mm; bare ground 1 cm, as at the Viking
+/// landers (Sutton et al. 1978).
+pub const VON_KARMAN: f64 = 0.4;
+pub const WIND_REFERENCE_HEIGHT: f64 = 10.0;
+pub const SEA_ROUGHNESS: f64 = 2e-4;
+pub const ICE_ROUGHNESS: f64 = 1e-3;
+pub const LAND_ROUGHNESS: f64 = 1e-2;
+/// F267: the depth the ground's drag acts over, as a share of the air's scale height: over
+/// Earth's sea its friction, the drag times the wind over the depth, turns a 7 m/s wind
+/// some 20° across the isobars at 45°, as its surface winds cross them.
+pub const SURFACE_LAYER_SHARE: f64 = 0.03;
+/// F267: the share of the atmosphere's work its winds spend against the ground, half
+/// (Peixoto and Oort 1992), the rest in the free air; and the mean of the cube of a wind's
+/// speed against the cube of its mean, a Rayleigh distribution's 6/pi.
+pub const SURFACE_DISSIPATION_SHARE: f64 = 0.5;
+pub const RAYLEIGH_CUBE: f64 = 6.0 / std::f64::consts::PI;
+/// F267: the wind's search for its speed: it starts at WIND_START_SPEED m/s and settles to
+/// a share WIND_SETTLED within WIND_ITERATIONS rounds; the friction and the belts read at
+/// least WIND_LEAST_SPEED m/s.
+pub const WIND_START_SPEED: f64 = 5.0;
+pub const WIND_SETTLED: f64 = 1e-3;
+pub const WIND_ITERATIONS: usize = 16;
+pub const WIND_LEAST_SPEED: f64 = 0.01;
 /// F238: the spin a body is born with, a share of its breakup rate: giant impacts leave
 /// Earth-mass planets turning in 2 to 3 hours, about half the breakup rate (Kokubo and Ida
 /// 2007), and imperfect accretion some 30 percent slower (Kokubo and Genda 2010). Earth's

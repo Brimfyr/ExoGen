@@ -91,6 +91,8 @@ pub struct EnergyBalance {
     /// Whether a fast spinner's places stand on its latitudes' rows alone (F259): the years
     /// of the orbit's cycles, run cheaply.
     pub rows: bool,
+    /// What the wind reads of the body and its air (F267).
+    pub circulation: crate::wind::Air,
 }
 
 /// The year's mean temperature of a surface at its own albedo, facing where its slope faces
@@ -953,6 +955,8 @@ pub struct Cycle {
     /// The cycle's year step by step and its clock, under an atmosphere (F253).
     pub series: Option<Series>,
     pub clock: Option<Clock>,
+    /// The wind through the year at the cycle's places, under an atmosphere (F267).
+    pub wind: Option<crate::wind::Wind>,
     /// Each place's surface temperatures through the cycle, as quantiles, and the albedo its
     /// ground stood at (F256).
     spread: Vec<[f32; CYCLE_SPREAD]>,
@@ -1537,6 +1541,7 @@ impl EnergyBalance {
             exchange: ventilation * heat,
             evaporation,
             rows: false,
+            circulation: crate::wind::Air::from_graph(graph),
         }
     }
 
@@ -2128,6 +2133,25 @@ impl EnergyBalance {
                 seasons: [0.0, 0.25, 0.5, 0.75].map(season),
             }
         });
+        // The wind through the year at the places (F267), from the air over each at each step,
+        // the tilts' mean; not on the latitudes' rows of the orbit's cycles.
+        let wind = layout.as_ref().filter(|_| !self.rows).and_then(|l| {
+            let water = ocean.map_or(0.0, |_| OCEAN_TRANSPORT_SHARE);
+            let links = l.air_links(self.transport, water);
+            let sites: Vec<crate::wind::Site> = l
+                .places
+                .iter()
+                .map(|p| crate::wind::Site {
+                    lat: p.lat,
+                    lon: p.lon,
+                    weight: p.weight,
+                    sea: p.sea,
+                    ice: p.cap,
+                })
+                .collect();
+            let air: Vec<&[f64]> = each.iter().map(|e| &e.air[..]).collect();
+            crate::wind::blow(&self.circulation, &sites, (n_lat, n_lon), &links, &air)
+        });
         let seas = ocean.map(|ocean| Seas {
             mean: field(|y| y.sea[0]),
             min: field(|y| y.sea[1]),
@@ -2170,6 +2194,7 @@ impl EnergyBalance {
             layout: (n_lat, n_lon),
             series,
             clock,
+            wind,
             spread: rows.iter().map(|y| y.spread).collect(),
             spread_albedo: rows.iter().map(|y| y.albedo).collect(),
         }
@@ -2587,23 +2612,8 @@ impl EnergyBalance {
         let mut series = vec![0.0; steps * n];
         let (mut diag, mut rhs) = (vec![0.0; n], vec![0.0; n]);
         let hold = ground.air / dt;
-        // The transport through the air, less the share a sea's water carries across the
-        // sea's share of each boundary.
         let water = ocean.map_or(0.0, |_| OCEAN_TRANSPORT_SHARE);
-        let air_links: Vec<Vec<(usize, f64)>> = layout
-            .links
-            .iter()
-            .enumerate()
-            .map(|(p, links)| {
-                links
-                    .iter()
-                    .map(|&(q, g)| {
-                        let wet = places[p].sea.min(places[q].sea);
-                        (q, self.transport * g * (1.0 - water * wet))
-                    })
-                    .collect()
-            })
-            .collect();
+        let air_links = layout.air_links(self.transport, water);
         let mut inflow = vec![0.0; n];
         let (mut held, mut load) = (frost.map_or(0.0, |f| f.column), 0.0);
         if let Some(w) = warm {
@@ -4155,6 +4165,27 @@ struct Layout {
     /// A resonant body's longitudes' Fourier modes: the cos and sin of each mode's phase at
     /// each longitude, mode after mode, and longitude after longitude.
     modes: [Vec<f64>; 4],
+}
+
+impl Layout {
+    /// The transport through the air at `transport` W/m²/K (F245): each place's conductance to
+    /// each of its neighbours, less the share `water` a sea's water carries across the sea's
+    /// share of their boundary.
+    fn air_links(&self, transport: f64, water: f64) -> Vec<Vec<(usize, f64)>> {
+        self.links
+            .iter()
+            .enumerate()
+            .map(|(p, links)| {
+                links
+                    .iter()
+                    .map(|&(q, g)| {
+                        let wet = self.places[p].sea.min(self.places[q].sea);
+                        (q, transport * g * (1.0 - water * wet))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 /// A step of a place's ground recorded through the lockstep (F239, F245): the step, the
@@ -6526,6 +6557,84 @@ mod tests {
             equator - poles < 5.0,
             "Titan equator {equator} poles {poles}"
         );
+    }
+
+    /// The zonal mean of a wind's year at a latitude, deg: its eastward and northward wind.
+    fn zonal_wind(wind: &crate::wind::Wind, lat: f64) -> (f64, f64) {
+        let (n_lat, n_lon) = wind.layout;
+        let i = ((lat + 90.0) / 180.0 * (n_lat - 1) as f64).round() as usize;
+        let (east, north, _) = wind.year_mean();
+        let row = i * n_lon..(i + 1) * n_lon;
+        (
+            east[row.clone()].iter().sum::<f64>() / n_lon as f64,
+            north[row].iter().sum::<f64>() / n_lon as f64,
+        )
+    }
+
+    /// F267: the Earth-like's winds through its year blow in Earth's belts: easterly trades
+    /// toward the equator within some 30°, westerlies between some 35 and 55°, easterlies
+    /// poleward of them, as Earth's polar easterlies blow at some 60 to 70°; at some 3 to 9
+    /// m/s over the body, its year's mean wind without the weather's gusts, whose speeds
+    /// over Earth's seas average some 7 m/s (Wentz et al. 2007); the thermal equator
+    /// following the sun to either side of the equator through the year.
+    #[test]
+    fn the_earth_like_s_winds_blow_in_its_belts() {
+        let earth = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let (cycle, _) = graph_cycle(&earth);
+        let wind = cycle.wind.as_ref().expect("a wind under the air");
+        for side in [1.0, -1.0] {
+            let (trades, toward) = zonal_wind(wind, 14.0 * side);
+            let (westerlies, away) = zonal_wind(wind, 46.0 * side);
+            let (polar, _) = zonal_wind(wind, 66.0 * side);
+            assert!(
+                trades < -1.0 && toward * side < 0.0,
+                "{side}: {trades}, {toward}"
+            );
+            assert!(
+                westerlies > 1.0 && away * side > 0.0,
+                "{side}: {westerlies}, {away}"
+            );
+            assert!(polar < 0.0, "{side}: {polar}");
+        }
+        let brief = wind.summary();
+        println!("Earth-like: {brief:?}");
+        assert!((3.0..9.0).contains(&brief.speed), "{} m/s", brief.speed);
+        assert!(
+            brief.equator.0 < -2.0 && brief.equator.1 > 2.0,
+            "{:?}",
+            brief.equator
+        );
+    }
+
+    /// F267: the locked ocean world's air blows toward the point under its star: along its
+    /// equator the wind runs toward the substellar longitude from either side, its night
+    /// side's air flowing out to its day.
+    #[test]
+    fn a_locked_world_s_air_blows_toward_its_star() {
+        let world = locked_ocean_world();
+        let eb = EnergyBalance::from_graph(&world);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let climate = eb.solve(grid);
+        let ocean = Ocean::from_graph(&world).expect("a water sea");
+        let share = Field::filled(grid, 1.0f32);
+        let sea = Some((&ocean, &share));
+        let cycle = eb.cycle(&climate, &Ground::from_graph(&world), sea, None);
+        let wind = cycle.wind.as_ref().expect("a wind under the air");
+        let (n_lat, n_lon) = wind.layout;
+        let (east, ..) = wind.year_mean();
+        let row = (n_lat / 2) * n_lon;
+        let at = |lon: f64| {
+            let j = ((lon + 180.0) / 360.0 * n_lon as f64).round() as usize % n_lon;
+            east[row + j]
+        };
+        let brief = wind.summary();
+        println!(
+            "TRAPPIST-1e: {brief:?}; at its equator {:.2} m/s at 40° W, {:.2} at 40° E",
+            at(-40.0),
+            at(40.0)
+        );
+        assert!(at(-40.0) > 0.5 && at(40.0) < -0.5);
+        assert!((1.0..15.0).contains(&brief.speed), "{} m/s", brief.speed);
     }
 
     /// F235: an airless body's cells balance alone, each at the temperature that radiates

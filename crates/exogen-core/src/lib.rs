@@ -31,6 +31,7 @@ pub mod stages;
 pub mod thermal;
 pub mod units;
 pub mod validate;
+pub mod wind;
 mod sweeps;
 
 /// Version of the engine, written into project files and sidecars.

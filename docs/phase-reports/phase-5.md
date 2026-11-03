@@ -392,3 +392,17 @@ How it went:
 - **The coast now.** The sea at the continent's tip keeps the ice the cold land holds it under and thins into the open sea over some ten degrees.
 - **Elsewhere.** The Earth's sea ice 12.30 percent of its sea where 12.26, its changes along its coasts.
 - **Tried first:** the edges weighted alone, and the reading on its own ground alone, which kept the switch.
+
+## The thirty-first milestone: the climatological wind
+
+5C begins (the user, 2026-11-02, "Start with 5C"), its order in PLAN.md: the wind first, which the moisture, the currents, the sea ice's drift and 5D's sand read; then the moisture, the snowpack, the currents and the ice's drift, the rivers, the glaciers, the slopes' wasting and Titan's methane cycle.
+
+- **F267.** The surface wind at each of the cycle's places at each step of its year. Its pressure follows the air: along each latitude the air's departure from the latitude's mean, a warm place's air lower (Lindzen and Nigam 1987); and the latitudes' belts, rising from the thermal equator through the cell that overturns from it, its edges at the Held and Hou reach from the equator (Lindzen and Hou 1988), the eddies' belts past them at the Rhines scale, as strong as brings the surface's torque on the air to nothing; where the cell reaches the pole, its own westerlies a force where its descending branch brings its momentum down. The ground's drag and the spin turn it across the isobars, and the work of the atmosphere's heat engine sets its strength. The year's mean is exported as `wind.exr` and `wind.png`.
+
+How it went:
+
+- **The belts.** The Earth-like's trades end at its cells' edges at 32.6°, its westerlies strongest at 42° and its polar easterlies at 60°; a faster spinner's belts are the narrower and the more.
+- **A locked world.** TRAPPIST-1e's air flows from its night side and its poles to the point under its star. A first scheme put a ridge of pressure where a slowly spinning body's cell has its own westerlies and sent its high latitudes' air to the poles; the cell's westerlies are now a force on the air, and its surface branch flows toward the thermal equator all the way.
+- **A cell heated far from its equator.** Mars's air is warmest at its pole in its southern summer, and the cells followed it there. A cell heated off its equator keeps its edges while its rising branch moves; Mars's thermal equator now stands within 42° of the equator, its solstices' cells crossing the equator each way in turn, and Titan's, whose cell reaches its poles, runs from pole to pole.
+- **The speeds.** Over the body in the year's mean: the Earth-like 4.0 m/s, the weather's gusts apart; TRAPPIST-1e 8.2; Mars 3.9 (its landers some 2 to 7); Venus 0.52 (Venera some 0.3 to 1); Pluto 1.6; Titan 0.11, where Huygens measured some 0.3: its air all but isothermal under its transport's cap (F33), the contrast 5A left to the wind field.
+- **Known limitations.** The Earth-like's westerlies narrower than Earth's and some 5 to 8° nearer the equator, the Rhines scale read at the surface's mean wind; no easterlies at the equator, where the air's momentum would carry the trades'; the exchange of heat and vapour with the ground still at a stated 5 m/s; no winds down cold slopes; the jets aloft wait for the weather model (5G).

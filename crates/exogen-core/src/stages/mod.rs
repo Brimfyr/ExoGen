@@ -239,6 +239,10 @@ pub struct FinishOutput {
     pub cryosphere_snapshot: f64,
     pub cryosphere_clock: Option<crate::climate::Clock>,
     pub cryosphere_series: Option<crate::climate::Series>,
+    /// The year's mean surface wind (F267): its eastward and northward wind and its mean
+    /// speed, m/s, none without an atmosphere; and the year in brief.
+    pub wind: Option<[Field<f32>; 3]>,
+    pub wind_summary: Option<crate::wind::Summary>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -433,7 +437,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 195;
+pub const FINISH_VERSION: u64 = 196;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3117,6 +3121,15 @@ pub fn finish(
         (climate, cycle)
     };
     let mut temperature_range = cycle.extremes();
+    // The year's wind at the cycle's places, brought to this grid (F267).
+    let wind = cycle.wind.as_ref().map(|w| w.fields(grid));
+    let wind_summary = cycle.wind.as_ref().map(crate::wind::Wind::summary);
+    if let (Some(w), true) = (&wind_summary, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+        eprintln!(
+            "wind: the year's mean surface wind {:.2} m/s over the body, {:.2} at its fastest place, under a heat engine working at {:.3} W/m²; the thermal equator from {:.1}° to {:.1}°; the trades end at {:.1}° and {:.1}° in the year's mean",
+            w.speed, w.fastest, w.work, w.equator.0, w.equator.1, w.ridges.0, w.ridges.1
+        );
+    }
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         let (steady, ..) = crate::climate::bands(&climate.temperature);
         let (mean, equator, poles) = crate::climate::bands(&cycle.mean);
@@ -3345,6 +3358,8 @@ pub fn finish(
         cryosphere_snapshot,
         cryosphere_clock: cycle.clock,
         cryosphere_series: cycle.series.clone(),
+        wind,
+        wind_summary,
         rays,
         sea_level,
         ocean_fraction,

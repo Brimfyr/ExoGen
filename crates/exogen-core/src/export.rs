@@ -72,6 +72,19 @@ pub struct CryosphereInfo {
     pub year: Vec<YearRow>,
 }
 
+/// The year's surface wind (F267): its mean speed over the body, m/s, the fastest of its
+/// places' year-mean speeds, m/s, the work the atmosphere's heat engine does, W/m² over the
+/// body, the thermal equator's southernmost and northernmost through the year, deg, and where
+/// the trades end north and south in the year's mean, deg.
+#[derive(Serialize)]
+pub struct WindInfo {
+    pub mean_speed_m_s: f64,
+    pub fastest_m_s: f64,
+    pub work_w_m2: f64,
+    pub thermal_equator_deg: [f64; 2],
+    pub trades_end_deg: [f64; 2],
+}
+
 /// An ice of the cryosphere's maps (F253): its index in cryosphere_ice.png, its name and its
 /// species, where it lies, its colour, linear reflectance, its density, the mass that hides
 /// 1 - 1/e of what lies under it, the mass it lies at, past which half is hidden, which
@@ -334,6 +347,8 @@ pub struct Sidecar {
     pub maps: BTreeMap<String, MapInfo>,
     /// The ices that come and go, how the cryosphere's maps hold them (F253).
     pub cryosphere: Option<CryosphereInfo>,
+    /// The year's surface wind (F267), none without an atmosphere.
+    pub wind: Option<WindInfo>,
     pub stage_outputs: BTreeMap<String, f64>,
     pub parameters: BTreeMap<String, ParameterInfo>,
     pub warnings: Vec<String>,
@@ -442,6 +457,8 @@ pub fn export(
         "cryosphere_thickness.exr",
         "cryosphere_thickness.png",
         "cryosphere_ice.png",
+        "wind.exr",
+        "wind.png",
         "units.png",
         "sidecar.json",
         "features.json",
@@ -1130,6 +1147,108 @@ pub fn export(
             .unwrap_or_default(),
     });
 
+    // The year's mean surface wind (F267): R its eastward and G its northward wind, B its
+    // mean speed, m/s, bilinear; all zero without an atmosphere. The PNG holds R and G from
+    // minus to plus the fastest component, B from 0 to the fastest mean speed.
+    let calm = || vec![0.0f32; width * height_px];
+    let wind_maps: Vec<Vec<f32>> = match &out.wind {
+        Some(fields) => fields
+            .iter()
+            .map(|f| to_equirectangular(&grid, f.as_slice(), width, height_px))
+            .collect(),
+        None => vec![calm(), calm(), calm()],
+    };
+    let strongest = wind_maps[..2]
+        .iter()
+        .flatten()
+        .fold(0.0f32, |a, &v| a.max(v.abs()));
+    let fastest = wind_maps[2].iter().fold(0.0f32, |a, &v| a.max(v));
+    let wind_channels = |png: bool| {
+        let (lo, hi) = if png {
+            (-strongest as f64, strongest as f64)
+        } else {
+            (
+                wind_maps[0]
+                    .iter()
+                    .chain(&wind_maps[1])
+                    .fold(0.0f32, |a, &v| a.min(v)) as f64,
+                wind_maps[0]
+                    .iter()
+                    .chain(&wind_maps[1])
+                    .fold(0.0f32, |a, &v| a.max(v)) as f64,
+            )
+        };
+        [
+            ("R", "the year's mean eastward wind", lo, hi),
+            ("G", "the year's mean northward wind", lo, hi),
+            ("B", "the year's mean speed", 0.0, fastest as f64),
+        ]
+        .map(|(name, holds, min, max)| ChannelInfo {
+            name: name.into(),
+            holds: holds.into(),
+            unit: "m/s".into(),
+            min,
+            max,
+        })
+        .into_iter()
+        .collect::<Vec<_>>()
+    };
+    let wind_units = "m/s at 10 m above the ground: the year's mean wind, east and north, and its mean speed; all zero without an atmosphere";
+    write_exr_channels(
+        &settings.dir.join("wind.exr"),
+        (width, height_px),
+        "wind",
+        &["R", "G", "B"],
+        &wind_maps,
+    )?;
+    maps.insert(
+        "wind".to_string(),
+        MapInfo {
+            file: "wind.exr".into(),
+            encoding: "float32 EXR, channels R, G, B".into(),
+            units: wind_units.into(),
+            min: 0.0,
+            max: fastest as f64,
+            channels: wind_channels(false),
+            ..Default::default()
+        },
+    );
+    let span = strongest.max(1e-6);
+    let wind_png: Vec<Vec<f32>> = vec![
+        wind_maps[0].iter().map(|&v| 0.5 + 0.5 * v / span).collect(),
+        wind_maps[1].iter().map(|&v| 0.5 + 0.5 * v / span).collect(),
+        wind_maps[2]
+            .iter()
+            .map(|&v| v / fastest.max(1e-6))
+            .collect(),
+    ];
+    write_png_rgb16(
+        &settings.dir.join("wind.png"),
+        (width, height_px),
+        &wind_png,
+    )?;
+    maps.insert(
+        "wind_png".to_string(),
+        MapInfo {
+            file: "wind.png".into(),
+            encoding:
+                "16-bit RGB PNG: R and G linear from the channels' min to max, B from 0 to its max"
+                    .into(),
+            units: wind_units.into(),
+            min: 0.0,
+            max: fastest as f64,
+            channels: wind_channels(true),
+            ..Default::default()
+        },
+    );
+    let wind = out.wind_summary.map(|w| WindInfo {
+        mean_speed_m_s: w.speed,
+        fastest_m_s: w.fastest,
+        work_w_m2: w.work,
+        thermal_equator_deg: [w.equator.0, w.equator.1],
+        trades_end_deg: [w.ridges.0, w.ridges.1],
+    });
+
     // Units, nearest cell per pixel, as an index map: the id times 8.
     let unit_ids = out.layers.unit_id.as_slice();
     let unit_eq: Vec<u8> = (0..width * height_px)
@@ -1365,6 +1484,7 @@ pub fn export(
             })
             .collect(),
         cryosphere,
+        wind,
         stage_outputs,
         parameters,
         warnings: graph
