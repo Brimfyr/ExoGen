@@ -1155,15 +1155,29 @@ impl Lying {
     /// When the ice's mass crosses `cover` on its way into the run and out of it, in steps
     /// from the run's first step's start (F255): the masses stand at their steps' ends, so
     /// that it opens within its first step and closes within the step after its last, where
-    /// the mass between them crosses.
+    /// the mass between them crosses. A step that ends with none of the ice tells nothing of
+    /// when in it the ice came or went, a step taking no more than lies: there the ice comes
+    /// or goes no slower than through the run's step beside it, so that the places whose ice
+    /// runs out within one step do not all close at its end.
     fn crossings(&self, masses: &[f32], cover: f64) -> (f64, f64) {
         let n = masses.len();
         let m = |k: usize| masses[k % n] as f64;
         let (first, last) = (self.start, self.start + self.len - 1);
         let (before, after) = (m(first + n - 1), m(last + 1));
-        let opens = ((cover - before) / (m(first) - before).max(f64::MIN_POSITIVE)).clamp(0.0, 1.0);
-        let closes = self.len as f64
-            + ((m(last) - cover) / (m(last) - after).max(f64::MIN_POSITIVE)).clamp(0.0, 1.0);
+        let (gain, loss) = (m(first) - before, m(last) - after);
+        let steady = |by: f64, beside: f64, none: bool| match none && self.len > 1 {
+            true => by.max(beside),
+            false => by,
+        };
+        let gain_in = steady(gain, m(first + 1) - m(first), before <= 0.0);
+        let loss_out = steady(loss, m(last + n - 1) - m(last), after <= 0.0);
+        let opens = match gain_in > gain {
+            true => 1.0 - (m(first) - cover) / gain_in,
+            false => (cover - before) / gain.max(f64::MIN_POSITIVE),
+        }
+        .clamp(0.0, 1.0);
+        let closes =
+            self.len as f64 + ((m(last) - cover) / loss_out.max(f64::MIN_POSITIVE)).clamp(0.0, 1.0);
         (opens, closes)
     }
 
@@ -6892,13 +6906,17 @@ mod tests {
     #[test]
     fn an_ice_s_window_is_its_longest_run() {
         let phase = |t: f64| (t / 10.0 - 0.25).rem_euclid(1.0);
-        // Lying from step 8 round to step 2, its most at step 0; a shorter run at 5. Its mass
-        // crosses 0.5 halfway from 0 at time 8 to 1 at time 9, and three quarters of the way
-        // from 2 at time 3 to 0 at time 4.
+        // Lying from step 8 round to step 2, its most at step 0; a shorter run at 5. None lies
+        // before it or after it, so it comes in at 3 a step, as through its next step, its
+        // mass crossing 0.5 at time 8 + 5/6, and goes at 3 a step, as through step 2, the 2 it
+        // has left crossing 0.5 at time 3.5.
         let masses = [9.0f32, 5.0, 2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 1.0, 4.0];
         let w = Window::of(&masses, 0.5, phase);
         let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
-        assert!(near(w.freeze, 0.6) && near(w.melt, 0.125), "{w:?}");
+        assert!(
+            near(w.freeze, 0.6 + 1.0 / 30.0) && near(w.melt, 0.1),
+            "{w:?}"
+        );
         assert!(near(w.peak, 9.0) && near(w.at, 0.85), "{w:?}");
         let all = Window::of(
             &[2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
@@ -6992,6 +7010,21 @@ mod tests {
         assert!((w.freeze - 2.5 / 8.0).abs() < 1e-12, "{w:?}");
         assert!((w.melt - 5.0 / 8.0).abs() < 1e-12, "{w:?}");
         assert!((w.peak - 2.0).abs() < 1e-12 && (w.at - 4.0 / 8.0).abs() < 1e-12);
+    }
+
+    /// F255: an ice that runs out within a step, the step's end holding none, goes through
+    /// it as it went through the step before: two places losing 10 a step, one left with 2
+    /// and one with 8, cross 0.5 at 0.15 and 0.75 of the way into the step after, where a
+    /// line to the step's end would take both near it.
+    #[test]
+    fn an_ice_that_runs_out_within_a_step_goes_as_it_went() {
+        let phase = |t: f64| t / 8.0;
+        let melt = |left: f32| {
+            let masses = [0.0, 0.0, 40.0, left + 20.0, left + 10.0, left, 0.0, 0.0];
+            Window::of(&masses, 0.5, phase).melt
+        };
+        assert!((melt(2.0) - 6.15 / 8.0).abs() < 1e-9, "{}", melt(2.0));
+        assert!((melt(8.0) - 6.75 / 8.0).abs() < 1e-9, "{}", melt(8.0));
     }
 
     /// F254: a fast spinner's cycle runs by longitude: at 60° north the Earth-like's land,

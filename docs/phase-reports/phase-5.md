@@ -478,3 +478,12 @@ How it went:
 - **Tried first:** the sea ice from the sea's heat; the melt over the air's degrees where a trace of snow lay (the snow never melted); the height over the finish's datum, not the sea.
 - **Known limitations.** The snapshot's sea ice map still shows its margin's places; the snow's sunny slopes and the orographic snow wait.
 
+## The thirty-eighth milestone: a window's ends within their steps
+
+- **F274.** The cryosphere's windows no longer close at the ends of the climate's steps: where the step after a run ends with none of its ice, the ice goes through it no slower than through the run's last step, and comes so at its start. From the user's demo of the maps and a second session's findings and patch.
+
+How it went:
+
+- **Mars.** Its melts spread through their steps as they would evenly, its polar clearing in no jumps but where its polar rows clear together; its 64° north frost arriving nearer Titus's Ls 225°.
+- **Known limitations.** The northern autumn's freezing in one frame, from the water cap's frost subliming all it holds every other step, waits for the frost's step split where it runs out.
+
