@@ -487,3 +487,13 @@ How it went:
 - **Mars.** Its melts spread through their steps as they would evenly, its polar clearing in no jumps but where its polar rows clear together; its 64° north frost arriving nearer Titus's Ls 225°.
 - **Known limitations.** The northern autumn's freezing in one frame, from the water cap's frost subliming all it holds every other step, waits for the frost's step split where it runs out.
 
+## The thirty-ninth milestone: the frost's step where it runs out
+
+- **F275.** Where a step's frost runs out within it, the rest of the step is the bare ground's: it goes free at its own gain, and frosts again where that would cool it past the point. A frost darker than the cap under it no longer leaves it bare every other step.
+
+How it went:
+
+- **The cause, confirmed.** With the frost's gain held at the bare ground's for one render, Mars's autumn frame was gone: the frost darker than the water cap, subliming all it held under the low sun.
+- **Mars.** Its northern autumn's largest frame 8,078 pixels where 46,577; its air and its frost through the year as before.
+- **Known limitations.** The window still estimates a melt's place in its step (F274) rather than reading the share the step now finds.
+

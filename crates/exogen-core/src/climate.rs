@@ -3096,7 +3096,7 @@ impl EnergyBalance {
                                 e * olr + exchange * (point - a),
                                 e * slope + de * olr + exchange,
                             );
-                            column.finish(
+                            let lasted = column.finish(
                                 &mut r.t,
                                 &r.trial,
                                 dt,
@@ -3105,6 +3105,26 @@ impl EnergyBalance {
                                 f.latent,
                                 &mut r.mass,
                             );
+                            // The frost that ran out within the step leaves its ground the
+                            // rest of it bare, to frost again (F275).
+                            if let Some(lasts) = lasted {
+                                let gains = ((1.0 - r.albedo) * light(k, p), self.heat_flux);
+                                let bare = self.land_shed(a, p.contact);
+                                let rows = (&mut r.work, &mut r.trial);
+                                let ends = (point, shed.0, f.latent);
+                                let (t, start) = (&mut r.t, &r.start);
+                                let step = (dt, lasts);
+                                column.rest_bare(
+                                    t,
+                                    start,
+                                    rows,
+                                    step,
+                                    gains,
+                                    bare,
+                                    ends,
+                                    &mut r.mass,
+                                );
+                            }
                             if let Some(c) = r.cap.as_mut() {
                                 let (t, mass) = (&mut c.t, &mut c.mass);
                                 column.finish(t, &c.trial, dt, point, shed, f.latent, mass);
@@ -4612,6 +4632,8 @@ struct Work {
     b: Vec<f64>,
     c: Vec<f64>,
     d: Vec<f64>,
+    /// The column as a step began, kept to step again where its frost runs out (F275).
+    start: Vec<f64>,
 }
 
 impl Work {
@@ -4621,6 +4643,7 @@ impl Work {
             b: vec![0.0; n],
             c: vec![0.0; n],
             d: vec![0.0; n],
+            start: Vec::with_capacity(n),
         }
     }
 }
@@ -5202,8 +5225,26 @@ impl Column {
         f: &Frost,
         mass: &mut f64,
     ) {
+        let mut start = std::mem::take(&mut w.start);
+        start.clear();
+        start.extend_from_slice(t);
         self.trial(t, (w, tr), dt, gains, bottom, bare, *mass, f.point);
-        self.finish(t, tr, dt, f.point, frosted(f.point), f.latent, mass);
+        let at = frosted(f.point);
+        if let Some(lasts) = self.finish(t, tr, dt, f.point, at, f.latent, mass) {
+            let ends = (f.point, at.0, f.latent);
+            let step = (dt, lasts);
+            self.rest_bare(
+                t,
+                &start,
+                (w, tr),
+                step,
+                (gains.0, bottom),
+                bare,
+                ends,
+                mass,
+            );
+        }
+        w.start = start;
     }
 
     /// A step's trial under the frost (F239). While frost lies on the ground, or the ground
@@ -5313,7 +5354,9 @@ impl Column {
     /// Ends a trial step at the point its air settled at (F239): bare ground the step leaves
     /// above the point keeps its free step; frosted ground, or ground that would cool below
     /// the point, stands at it and takes or gives frost, and where the frost runs out what was
-    /// left to sublime warms the ground past the point.
+    /// left to sublime warms the ground past the point. Returns, where the frost ran out
+    /// within the step, the share of the step it lasted, its mass over what the step would
+    /// have sublimed (F275).
     #[allow(clippy::too_many_arguments)]
     fn finish(
         &self,
@@ -5324,12 +5367,13 @@ impl Column {
         (radiated, slope): (f64, f64),
         latent: f64,
         mass: &mut f64,
-    ) {
+    ) -> Option<f64> {
         if *mass <= 0.0 && (tr.clear || tr.free[0] >= point) {
             t.copy_from_slice(&tr.free);
-            return;
+            return None;
         }
         let (found, taken) = self.deposit(tr, dt, point, radiated, latent, *mass);
+        let lay = *mass;
         for (v, (b, l)) in t.iter_mut().zip(tr.base.iter().zip(&tr.lift)) {
             *v = b + point * l;
         }
@@ -5338,7 +5382,59 @@ impl Column {
             let g = self.conductance.first().copied().unwrap_or(0.0);
             let respond = self.capacity[0] + dt * (slope + g);
             t[0] = point + (taken - found) * latent / respond;
+            return Some((lay / -found).clamp(0.0, 1.0));
         }
+        None
+    }
+
+    /// The step again where its frost ran out within it (F275): from the column `start` the
+    /// step began with, the ground stands at the point through the share `lasts` of the step
+    /// the frost lasted, the column below it as under a surface held there; through the rest
+    /// the bare ground goes free at its own gain and radiation, `gain` and `bare`, and where it
+    /// would cool past the point there it stands at the point again and takes frost, at the
+    /// frosted ground's radiation there, `radiated`: so that a frost darker than its ground,
+    /// which gains enough under the sun to sublime all it holds, leaves its ground the rest of
+    /// the step to frost again, rather than a step bare.
+    #[allow(clippy::too_many_arguments)]
+    fn rest_bare(
+        &self,
+        t: &mut [f64],
+        start: &[f64],
+        (w, tr): (&mut Work, &mut Trial),
+        (dt, lasts): (f64, f64),
+        (gain, bottom): (f64, f64),
+        bare: impl Fn(f64) -> (f64, f64) + Copy,
+        (point, radiated, latent): (f64, f64, f64),
+        mass: &mut f64,
+    ) {
+        let (held, rest) = (lasts * dt, (1.0 - lasts) * dt);
+        t.copy_from_slice(start);
+        if held > 0.0 {
+            tr.start = start[0];
+            self.held(start, w, tr, held, bottom);
+            for (v, (b, l)) in t.iter_mut().zip(tr.base.iter().zip(&tr.lift)) {
+                *v = b + point * l;
+            }
+        }
+        *mass = 0.0;
+        if rest <= 0.0 {
+            return;
+        }
+        tr.free.copy_from_slice(t);
+        self.step(&mut tr.free, w, rest, gain, bottom, bare);
+        if tr.free[0] >= point {
+            t.copy_from_slice(&tr.free);
+            return;
+        }
+        // The bare ground would cool past the point: it stands there and takes frost.
+        let from = t.to_vec();
+        (tr.start, tr.gain, tr.clear) = (from[0], gain, false);
+        self.held(&from, w, tr, rest, bottom);
+        let (found, _) = self.deposit(tr, rest, point, radiated, latent, 0.0);
+        for (v, (b, l)) in t.iter_mut().zip(tr.base.iter().zip(&tr.lift)) {
+            *v = b + point * l;
+        }
+        *mass = found.max(0.0);
     }
 
     /// Ends a step on snow (F271): where snow lies and the step left the surface above the
@@ -7594,6 +7690,61 @@ mod tests {
             println!(
                 "TRAPPIST-1e {label}: mean {mean:.1} K, dayside {day:.1} K, planetary albedo {albedo:.3}, open {open:.2} of the dayside (THAI: 232 to 246 K, 261 to 268 K, 0.22 to 0.28, almost half)"
             );
+        }
+    }
+
+    /// F275: frost darker than its ground, gaining enough under the sun to sublime all it
+    /// holds early in a step, leaves the ground the rest of the step: where the bare ground's
+    /// own gain would cool it past the point it frosts again, the step ending with thin frost
+    /// at the point rather than bare; where its gain keeps it warm the step ends bare past it.
+    #[test]
+    fn frost_that_runs_out_leaves_its_ground_the_rest_of_its_step() {
+        let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let ground = Ground::from_graph(&graph);
+        let column = Column::new(&ground, 88_775.0, 5.94e7);
+        let n = column.len();
+        let dt = 5.94e7 / CYCLE_YEAR_STEPS as f64;
+        let (point, latent) = (148.0, 5.9e5);
+        let shed = |t: f64| (0.95 * SIGMA_SB * t.powi(4), 3.8 * SIGMA_SB * t.powi(3));
+        for (bare, frosts) in [(10.0, true), (200.0, false)] {
+            let start = vec![point; n];
+            let mut t = start.clone();
+            let (mut w, mut tr) = (Work::new(n), Trial::new(n));
+            let mut mass = 5.0;
+            column.trial(
+                &t,
+                (&mut w, &mut tr),
+                dt,
+                (bare, 150.0),
+                0.0,
+                shed,
+                mass,
+                point,
+            );
+            let lasted = column.finish(&mut t, &tr, dt, point, shed(point), latent, &mut mass);
+            let lasts = lasted.expect("the frost runs out within the step");
+            let ends = (point, shed(point).0, latent);
+            let rows = (&mut w, &mut tr);
+            column.rest_bare(
+                &mut t,
+                &start,
+                rows,
+                (dt, lasts),
+                (bare, 0.0),
+                shed,
+                ends,
+                &mut mass,
+            );
+            println!(
+                "bare gain {bare} W/m²: lasted {lasts:.3} of the step, ends {mass:.2} kg/m² at {:.2} K",
+                t[0]
+            );
+            assert!(lasts > 0.0 && lasts < 0.2, "{lasts}");
+            if frosts {
+                assert!(mass > 0.0 && (t[0] - point).abs() < 1e-6, "{mass} {}", t[0]);
+            } else {
+                assert!(mass == 0.0 && t[0] > point, "{mass} {}", t[0]);
+            }
         }
     }
 
