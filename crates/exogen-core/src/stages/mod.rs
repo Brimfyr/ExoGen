@@ -443,7 +443,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 197;
+pub const FINISH_VERSION: u64 = 198;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2851,6 +2851,47 @@ pub fn finish(
     };
     let share = sea_share(&layers, full_sea);
     let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()), None);
+    // The year again with its air exchanging with its ground at each place's own wind and
+    // humidity, and its sea and its wet land giving the air their latent heat (F269), from the
+    // first year's wind and moisture.
+    let water_share = if ocean.is_some() {
+        OCEAN_TRANSPORT_SHARE
+    } else {
+        0.0
+    };
+    let water_air = crate::moisture::Air::from_graph(graph, balance.transport, water_share);
+    let coarse_grid = climate.temperature.grid();
+    let place_heights = |cycle: &crate::climate::Cycle, above: &Field<f32>| -> Vec<f64> {
+        let coarse = crate::climate::coarsen(above, coarse_grid);
+        cycle
+            .sites
+            .iter()
+            .map(|s| {
+                let d = crate::grid::direction_from_lon_lat(s.lon, s.lat);
+                coarse.get(coarse.grid().locate(d).0) as f64
+            })
+            .collect()
+    };
+    let coupling = {
+        let height = layers.height();
+        let above = Field::from_fn(grid, |c, _| {
+            let h = height.get(c);
+            if full_sea.is_finite() {
+                (h - full_sea as f32).max(0.0)
+            } else {
+                h
+            }
+        });
+        let first = water_air.and_then(|air| cycle.moisture(&air, &place_heights(&cycle, &above)));
+        cycle.coupling(first.as_ref())
+    };
+    let cycle = match &coupling {
+        Some(c) => {
+            let sea = ocean.as_ref().zip(share.as_ref());
+            balance.cycle_with(&climate, &ground, sea, None, Some(c))
+        }
+        None => cycle,
+    };
     // The ground's year-mean temperature at its own albedo where its slope faces, which the
     // ice's lag and frost read (F256).
     let year = crate::climate::YearMean::new(&balance, &climate);
@@ -2883,7 +2924,7 @@ pub fn finish(
     if let Some(reservoir) = &reservoir {
         let climate = balance.solve_over(climate_grid, over.as_ref());
         let sea = ocean.as_ref().zip(share.as_ref());
-        let held = balance.cycle(&climate, &ground, sea, Some(reservoir));
+        let held = balance.cycle_with(&climate, &ground, sea, Some(reservoir), coupling.as_ref());
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             let range = held.pressure_range.unwrap_or((f64::NAN, f64::NAN));
             eprintln!(
@@ -2916,6 +2957,7 @@ pub fn finish(
             &ground,
             sea,
             reservoir.as_ref(),
+            coupling.as_ref(),
         );
         let cycled = cycled_traps(graph, &balance, world, &gathering, &levels, &downscale);
         let gathering = caps::Gathering {
@@ -3123,7 +3165,13 @@ pub fn finish(
         let reservoir = balance
             .frost
             .and_then(|f| caps::reservoir(&laid, climate_grid, &balance, f.species));
-        let cycle = balance.cycle(&climate, &ground, sea, reservoir.as_ref());
+        let cycle = balance.cycle_with(
+            &climate,
+            &ground,
+            sea,
+            reservoir.as_ref(),
+            coupling.as_ref(),
+        );
         (climate, cycle)
     };
     let mut temperature_range = cycle.extremes();
@@ -3132,12 +3180,6 @@ pub fn finish(
     let wind_summary = cycle.wind.as_ref().map(crate::wind::Wind::summary);
     // The year's moisture at the cycle's places (F268), each place's ground at its mean
     // height over the sea, brought to this grid.
-    let water_share = if ocean.is_some() {
-        OCEAN_TRANSPORT_SHARE
-    } else {
-        0.0
-    };
-    let water_air = crate::moisture::Air::from_graph(graph, balance.transport, water_share);
     let moisture = water_air.and_then(|air| {
         let above = Field::from_fn(grid, |c, _| {
             let h = height.get(c);
@@ -3147,16 +3189,7 @@ pub fn finish(
                 h
             }
         });
-        let coarse = crate::climate::coarsen(&above, climate.temperature.grid());
-        let heights: Vec<f64> = cycle
-            .sites
-            .iter()
-            .map(|s| {
-                let d = crate::grid::direction_from_lon_lat(s.lon, s.lat);
-                coarse.get(coarse.grid().locate(d).0) as f64
-            })
-            .collect();
-        cycle.moisture(&air, &heights)
+        cycle.moisture(&air, &place_heights(&cycle, &above))
     });
     let water = moisture.as_ref().map(|m| m.fields(grid));
     let water_vapour = water_air
@@ -4173,12 +4206,13 @@ fn gather_levels(heights: &Field<f32>, scale_height: f64) -> Vec<f64> {
 fn cycled_traps(
     graph: &ParamGraph,
     balance: &crate::climate::EnergyBalance,
-    (grid, over, ground, sea, reservoir): (
+    (grid, over, ground, sea, reservoir, coupling): (
         CubeSphere,
         Option<&(Field<f32>, Field<f32>)>,
         &crate::climate::Ground,
         Option<(&crate::climate::Ocean, &Field<f32>)>,
         Option<&crate::climate::Reservoir>,
+        Option<&crate::climate::Coupling>,
     ),
     ices: &[crate::climate::Ice],
     levels: &[f64],
@@ -4186,7 +4220,7 @@ fn cycled_traps(
 ) -> Vec<caps::Cycled> {
     let table = |state: crate::climate::EnergyBalance| {
         let climate = state.solve_over(grid, over);
-        let cycle = state.cycle(&climate, ground, sea, reservoir);
+        let cycle = state.cycle_with(&climate, ground, sea, reservoir, coupling);
         state.trap_table((&climate, ground, &cycle), ices, levels, downscale)
     };
     let sky = balance.sky;
@@ -4273,7 +4307,7 @@ mod tests {
         let ices = crate::climate::Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
         let heights = Field::new(grid);
         let levels = gather_levels(&heights, downscale.scale_height);
-        let world = (grid, None, &ground, None, None);
+        let world = (grid, None, &ground, None, None, None);
         let cycled = cycled_traps(&graph, &balance, world, &ices, &levels, &downscale);
         let gathering = caps::Gathering {
             levels: &levels,

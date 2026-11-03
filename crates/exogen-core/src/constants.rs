@@ -2069,7 +2069,7 @@ pub const CYCLE_FAST_GRID: (usize, usize) = (CYCLE_LATITUDES, 90);
 pub const CYCLE_SWING_SAMPLES: usize = 4;
 /// F237: the air's exchange of heat with the ground, rho c_p C_H U: the bulk transfer
 /// coefficient over land (Garratt 1992: 1e-3 to 2e-3) and a surface wind of 5 m/s, a stated
-/// choice until 5C's wind field gives each place its own.
+/// choice for the body's first year; the year again at each place's own (F269).
 pub const AIR_EXCHANGE_COEFFICIENT: f64 = 1.5e-3;
 pub const SURFACE_WIND_SPEED: f64 = 5.0;
 /// F267: the ground's drag on the wind at its reference height of 10 m, (kappa / ln(z /

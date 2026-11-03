@@ -88,6 +88,9 @@ pub struct EnergyBalance {
     /// above the air's, rho C_H U (M_w / M) / p, kg/m²/s/Pa (F245).
     pub exchange: f64,
     pub evaporation: f64,
+    /// The working liquid's vapour, whose latent heat the sea and the wet land give the air
+    /// (F269): water's, methane's, any liquid's under an atmosphere.
+    pub liquid: Option<&'static crate::constants::Volatile>,
     /// Whether a fast spinner's places stand on its latitudes' rows alone (F259): the years
     /// of the orbit's cycles, run cheaply.
     pub rows: bool,
@@ -1512,8 +1515,11 @@ impl EnergyBalance {
             };
         let airless = graph.f64("atmosphere.surface_pressure") <= 0.0;
         let (ventilation, heat) = ventilation(graph);
-        let evaporation = match volatile("H2O") {
-            Some(w) if graph.str("volatiles.working_liquid") == "water" && ventilation > 0.0 => {
+        let liquid = crate::stages::caps::liquid_species(graph.str("volatiles.working_liquid"))
+            .first()
+            .and_then(|s| volatile(s));
+        let evaporation = match liquid {
+            Some(w) if ventilation > 0.0 => {
                 ventilation * GAS_CONSTANT
                     / w.r_specific
                     / mean_molecular_mass(composition)
@@ -1548,6 +1554,7 @@ impl EnergyBalance {
             ),
             exchange: ventilation * heat,
             evaporation,
+            liquid: if evaporation > 0.0 { liquid } else { None },
             rows: false,
             circulation: crate::wind::Air::from_graph(graph),
         }
@@ -1577,19 +1584,61 @@ impl EnergyBalance {
         self.exchange + 4.0 * SIGMA_SB * t.powi(3) * g / (1.0 + g)
     }
 
-    /// The heat the air exchanges with a sea of water per kelvin (F245), W/m²/K: the
-    /// ground's, and its evaporation's, the latent heat of the vapour the sea gives the air
-    /// for each kelvin it stands above it, the air held near saturation, so that its vapour's
-    /// pressure climbs with its temperature as the sea's does (Clausius and Clapeyron).
-    fn sea_coupling(&self, t: f64) -> f64 {
-        let latent = match volatile("H2O") {
+    /// The latent heat a wet surface at `t` gives the air per kelvin it stands above it, the
+    /// air held saturated, at the stated wind (F245), W/m²/K; none without a working liquid.
+    fn latent_slope(&self, t: f64) -> f64 {
+        match self.liquid {
             Some(w) if self.evaporation > 0.0 => {
                 let l = if t >= w.t_triple { w.l_vap } else { w.l_sub };
                 l * self.evaporation * vapour_pressure(w, t) * l / (w.r_specific * t * t)
             }
             _ => 0.0,
-        };
-        self.coupling(t) + latent
+        }
+    }
+
+    /// The heat the air over a place exchanges with its ground per kelvin at the place's
+    /// contact (F269): its turbulence at the place's own wind, the radiation as before.
+    fn coupling_at(&self, t: f64, contact: &Contact) -> f64 {
+        let turbulence = self.exchange * (contact.breeze - 1.0);
+        (self.coupling(t) + turbulence).max(0.0)
+    }
+
+    /// The heat the air exchanges with a place's land per kelvin at its contact (F269): its
+    /// ground's, and the latent heat of what its wet ground gives the air.
+    fn land_coupling(&self, t: f64, contact: &Contact) -> f64 {
+        self.coupling_at(t, contact) + self.latent_slope(t) * contact.breeze * contact.wet
+    }
+
+    /// The heat the air exchanges with a place's sea per kelvin at its contact (F269).
+    fn sea_coupling_at(&self, t: f64, contact: &Contact) -> f64 {
+        self.coupling_at(t, contact) + self.latent_slope(t) * contact.breeze
+    }
+
+    /// The land's radiation and the heat it gives air at `air` K, its latent heat's among
+    /// it, at the place's contact (F269), with their slope, at the ground's temperature.
+    fn land_shed(&self, air: f64, contact: Contact) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
+        move |t: f64| {
+            let (r, slope) = self.olr_and_slope(t);
+            let h = self.land_coupling(t, &contact);
+            (r + h * (t - air), slope + h)
+        }
+    }
+
+    /// The frost's radiation and the heat it gives air at `air` K at the place's contact
+    /// (F247, F269), with their slope.
+    fn frost_shed_at(
+        &self,
+        air: f64,
+        frost: &Frost,
+        contact: Contact,
+    ) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
+        let f = *frost;
+        move |t: f64| {
+            let (r, slope) = self.olr_and_slope(t);
+            let (e, de) = f.emissivity(t);
+            let h = self.coupling_at(t, &contact);
+            (e * r + h * (t - air), e * slope + de * r + h)
+        }
     }
 
     /// The ground's radiation and the heat it gives air at `air` K (F245), with their slope,
@@ -1839,6 +1888,19 @@ impl EnergyBalance {
         sea: Option<(&Ocean, &Field<f32>)>,
         reservoir: Option<&Reservoir>,
     ) -> Cycle {
+        self.cycle_with(climate, ground, sea, reservoir, None)
+    }
+
+    /// The year as `cycle` runs it, its air's exchange with the ground at each place's
+    /// contact from a year's wind and moisture, `coupling` (F269).
+    pub fn cycle_with(
+        &self,
+        climate: &Climate,
+        ground: &Ground,
+        sea: Option<(&Ocean, &Field<f32>)>,
+        reservoir: Option<&Reservoir>,
+        coupling: Option<&Coupling>,
+    ) -> Cycle {
         let grid = climate.temperature.grid();
         let all = self.sky.obliquities();
         let tilts: Vec<f64> = if all.len() > CYCLE_SWING_SAMPLES {
@@ -1854,8 +1916,8 @@ impl EnergyBalance {
             None => Vec::new(),
         };
         let ocean = sea.map(|s| s.0);
-        let layout =
-            (self.exchange > 0.0).then(|| self.layout(climate, sea.map(|s| s.1), reservoir));
+        let layout = (self.exchange > 0.0)
+            .then(|| self.layout(climate, sea.map(|s| s.1), reservoir, coupling));
         // A fast spinner whose caps hold its air spins its seasons up on its latitudes' rows
         // first, its places started from them (F258).
         let rows = layout
@@ -1865,7 +1927,7 @@ impl EnergyBalance {
             })
             .map(|_| {
                 let rows = (CYCLE_LATITUDES, 1);
-                self.layout_on(climate, sea.map(|s| s.1), reservoir, rows)
+                self.layout_on(climate, sea.map(|s| s.1), reservoir, rows, coupling)
             });
         let each: Vec<TiltYear> = if let Some(layout) = &layout {
             tilts
@@ -2260,8 +2322,9 @@ impl EnergyBalance {
         climate: &Climate,
         sea: Option<&Field<f32>>,
         reservoir: Option<&Reservoir>,
+        coupling: Option<&Coupling>,
     ) -> Layout {
-        self.layout_on(climate, sea, reservoir, self.cycle_grid())
+        self.layout_on(climate, sea, reservoir, self.cycle_grid(), coupling)
     }
 
     /// The cycle's places on a grid of `n_lat` latitudes and `n_lon` longitudes, as `layout`.
@@ -2271,6 +2334,7 @@ impl EnergyBalance {
         sea: Option<&Field<f32>>,
         reservoir: Option<&Reservoir>,
         (n_lat, n_lon): (usize, usize),
+        coupling: Option<&Coupling>,
     ) -> Layout {
         let grid = climate.temperature.grid();
         let (dphi, dlon) = (PI / (n_lat - 1) as f64, TAU / n_lon as f64);
@@ -2336,6 +2400,7 @@ impl EnergyBalance {
                     sea,
                     cap,
                     cap_mass,
+                    contact: coupling.map_or_else(Contact::default, |c| c.at((n_lat, n_lon), k)),
                 }
             })
             .collect();
@@ -2416,7 +2481,7 @@ impl EnergyBalance {
                     });
                     let (flux, decl) = sun[record.k];
                     let (sd, cd) = decl.sin_cos();
-                    let shed = self.shed(record.air);
+                    let shed = self.land_shed(record.air, p.contact);
                     let mut t = record.t.clone();
                     let mut mass = record.mass;
                     let mut sum = 0.0;
@@ -2430,7 +2495,8 @@ impl EnergyBalance {
                                     let gains = (bare, (1.0 - f.albedo) * lit);
                                     let rows = (&mut work, &mut trial);
                                     let heat = self.heat_flux;
-                                    let sheds = (shed, self.frost_shed(record.air, f));
+                                    let sheds =
+                                        (shed, self.frost_shed_at(record.air, f, p.contact));
                                     column.frosty_step(
                                         &mut t, rows, dt, gains, heat, sheds, f, &mut mass,
                                     );
@@ -2532,8 +2598,9 @@ impl EnergyBalance {
     /// Places run in step through their cycles under one atmosphere (F239, F245).
     ///
     /// The air over each place holds its column's heat (F236) and exchanges heat with the
-    /// ground under it, its land's and its sea's by their shares of the place (`coupling`,
-    /// `sea_coupling`), and with the air beside it by the transport, which the cycle answers
+    /// ground under it, its land's and its sea's by their shares of the place
+    /// (`land_coupling`, `sea_coupling_at`, at the place's contact with its ground, F269),
+    /// and with the air beside it by the transport, which the cycle answers
     /// through its seasons as the year's balance does through its year (F235): at each step
     /// the air is solved implicitly from the ground as the last step left it, then the ground
     /// under it, each place's land, its column's surface exchanging heat with the air, and its
@@ -2626,13 +2693,14 @@ impl EnergyBalance {
                 // The air, from the ground under it as the last step left it: its land's, its
                 // sea's and its caps'.
                 for (q, (r, p)) in runs.iter().zip(places).enumerate() {
-                    let land = self.coupling(r.t[0]) * p.land();
+                    let contact = &p.contact;
+                    let land = self.land_coupling(r.t[0], contact) * p.land();
                     let (wet, surface) = match &r.sea {
-                        Some(s) => (self.sea_coupling(s.surface) * p.sea, s.surface),
+                        Some(s) => (self.sea_coupling_at(s.surface, contact) * p.sea, s.surface),
                         None => (0.0, 0.0),
                     };
                     let (iced, top) = match &r.cap {
-                        Some(c) => (self.coupling(c.t[0]) * c.share, c.t[0]),
+                        Some(c) => (self.coupling_at(c.t[0], contact) * c.share, c.t[0]),
                         None => (0.0, 0.0),
                     };
                     diag[q] = hold + land + wet + iced;
@@ -2660,7 +2728,7 @@ impl EnergyBalance {
                         let lit = light(k, p);
                         r.albedo = self.land_albedo((p.albedo, p.snow), r.t[0]);
                         let bare = (1.0 - r.albedo) * lit;
-                        let shed = self.shed(a);
+                        let shed = self.land_shed(a, p.contact);
                         let heat = self.heat_flux;
                         match (frost, ceiling) {
                             (Some(f), Some(top)) => {
@@ -2675,7 +2743,7 @@ impl EnergyBalance {
                             _ => column.step(&mut r.t, &mut r.work, dt, bare, heat, shed),
                         }
                         if let (Some(sea), Some(ocean)) = (r.sea.as_mut(), ocean) {
-                            let exchange = self.sea_coupling(sea.surface);
+                            let exchange = self.sea_coupling_at(sea.surface, &p.contact);
                             let water = (ocean, brought);
                             self.sea_step(sea, dt, (lit, p.albedo), (a, exchange), water);
                         }
@@ -2694,7 +2762,8 @@ impl EnergyBalance {
                                         let lit = light(k, p);
                                         let gains =
                                             ((1.0 - r.albedo) * lit, (1.0 - f.albedo) * lit);
-                                        let (heat, shed) = (self.heat_flux, self.shed(a));
+                                        let shed = self.land_shed(a, p.contact);
+                                        let heat = self.heat_flux;
                                         let rows = (&mut r.work, &mut r.trial);
                                         let open = f64::INFINITY;
                                         column.trial(&r.t, rows, dt, gains, heat, shed, 0.0, open);
@@ -2703,10 +2772,11 @@ impl EnergyBalance {
                             let runs = (&runs[..], &places[..], &air[..]);
                             point = self.frost_point(column, runs, gas, dt, f, highest);
                         }
-                        let ((olr, slope), exchange) =
-                            (self.olr_and_slope(point), self.coupling(point));
+                        let (olr, slope) = self.olr_and_slope(point);
                         let (e, de) = f.emissivity(point);
-                        runs.par_iter_mut().zip(air.par_iter()).for_each(|(r, &a)| {
+                        let each = runs.par_iter_mut().zip(places.par_iter());
+                        each.zip(air.par_iter()).for_each(|((r, p), &a)| {
+                            let exchange = self.coupling_at(point, &p.contact);
                             let shed = (
                                 e * olr + exchange * (point - a),
                                 e * slope + de * olr + exchange,
@@ -2854,21 +2924,22 @@ impl EnergyBalance {
     ) -> f64 {
         // Each place's ground bare of the caps where it takes or gives frost, and its caps:
         // its trial, its frost, its share of the body and the air over it.
-        let mut taking: Vec<(&Trial, f64, f64, f64)> = Vec::new();
+        let mut taking: Vec<(&Trial, f64, f64, f64, Contact)> = Vec::new();
         for ((r, p), &a) in runs.iter().zip(places).zip(air) {
+            let share = p.weight * r.bare_share() / whole;
             if r.mass > 0.0 || !r.trial.clear {
-                taking.push((&r.trial, r.mass, p.weight * r.bare_share() / whole, a));
+                taking.push((&r.trial, r.mass, share, a, p.contact));
             }
             if let Some(c) = &r.cap {
-                taking.push((&c.trial, c.mass, p.weight * c.share / whole, a));
+                taking.push((&c.trial, c.mass, p.weight * c.share / whole, a, p.contact));
             }
         }
         let gap = |point: f64| {
-            let (olr, exchange) = (self.olr(point), self.coupling(point));
-            let olr = olr * frost.emissivity(point).0;
+            let olr = self.olr(point) * frost.emissivity(point).0;
             let taken: f64 = taking
                 .iter()
-                .map(|&(trial, mass, w, a)| {
+                .map(|&(trial, mass, w, a, contact)| {
+                    let exchange = self.coupling_at(point, &contact);
                     let radiated = olr + exchange * (point - a);
                     column
                         .deposit(trial, dt, point, radiated, frost.latent, mass)
@@ -4019,6 +4090,47 @@ fn surface_normal(height: &Field<f32>, c: crate::grid::Cell, d: [f64; 3], radius
 }
 
 impl Cycle {
+    /// What its air exchanges with its ground reads of the year (F269): at each place its
+    /// wind's speed through the weather about it, sqrt(|V|² + U²), U the body's mean wind, as
+    /// the moisture reads it, over the stated SURFACE_WIND_SPEED, and, with `moisture`, the
+    /// air's mean saturation over it and the share of its land kept wet; none without the
+    /// year's wind.
+    pub fn coupling(&self, moisture: Option<&crate::moisture::Moisture>) -> Option<Coupling> {
+        let wind = self.wind.as_ref()?;
+        let n = wind.layout.0 * wind.layout.1;
+        let steps = wind.steps.max(1);
+        let contacts = (0..n)
+            .map(|p| {
+                let breeze = (0..steps)
+                    .map(|k| {
+                        let (u, v) = (wind.east[k * n + p] as f64, wind.north[k * n + p] as f64);
+                        u.hypot(v).hypot(wind.speed[k])
+                    })
+                    .sum::<f64>()
+                    / steps as f64
+                    / SURFACE_WIND_SPEED;
+                let (humidity, wet) =
+                    moisture
+                        .filter(|m| m.saturation.len() == n)
+                        .map_or((1.0, 0.0), |m| {
+                            (
+                                m.saturation[p].clamp(0.0, 1.0),
+                                m.wetness[p].clamp(0.0, 1.0),
+                            )
+                        });
+                Contact {
+                    breeze,
+                    humidity,
+                    wet,
+                }
+            })
+            .collect();
+        Some(Coupling {
+            layout: wind.layout,
+            contacts,
+        })
+    }
+
     /// The moisture through the cycle (F268) of the air `air`, each place's ground standing
     /// `heights` m over the sea: none without the cycle's wind.
     pub fn moisture(
@@ -4172,6 +4284,58 @@ impl Trial {
     }
 }
 
+/// What the air over a place exchanges with its ground reads of the year's wind and moisture
+/// (F269): its wind's speed through the weather about it over the stated SURFACE_WIND_SPEED
+/// the exchange was given at, the air's saturation over it, and the share of its land the
+/// bucket keeps wet, whose latent heat ties it to its air as the sea's ties the sea. By
+/// default the stated wind, saturated air and dry land, the cycle as it ran before the
+/// moisture.
+#[derive(Clone, Copy, Debug)]
+pub struct Contact {
+    pub breeze: f64,
+    pub humidity: f64,
+    pub wet: f64,
+}
+
+impl Default for Contact {
+    fn default() -> Self {
+        Self {
+            breeze: 1.0,
+            humidity: 1.0,
+            wet: 0.0,
+        }
+    }
+}
+
+/// Each place's contact from a year's wind and moisture (F269), on the layout they ran at.
+#[derive(Clone, Debug)]
+pub struct Coupling {
+    pub layout: (usize, usize),
+    pub contacts: Vec<Contact>,
+}
+
+impl Coupling {
+    /// The contact at row `i`, place `k`, of a layout of `n_lat` latitudes and `n_lon`
+    /// longitudes: the place's own on the coupling's layout, its row's mean on a layout by
+    /// latitude alone, the default elsewhere.
+    fn at(&self, (n_lat, n_lon): (usize, usize), k: usize) -> Contact {
+        let (m_lat, m_lon) = self.layout;
+        if (m_lat, m_lon) == (n_lat, n_lon) {
+            return self.contacts[k];
+        }
+        if n_lon == 1 && m_lat == n_lat && m_lon > 0 {
+            let row = &self.contacts[k * m_lon..(k + 1) * m_lon];
+            let mean = |f: fn(&Contact) -> f64| row.iter().map(f).sum::<f64>() / m_lon as f64;
+            return Contact {
+                breeze: mean(|c| c.breeze),
+                humidity: mean(|c| c.humidity),
+                wet: mean(|c| c.wet),
+            };
+        }
+        Contact::default()
+    }
+}
+
 /// A place of the cycle's layout (F239, F245): its latitude and longitude, rad, its share of
 /// the sphere's area, its year's mean temperature, its ground's albedo without ice and snow,
 /// the share of it the sea covers, and the share the frost's own gas's caps cover with the
@@ -4187,6 +4351,8 @@ struct Place {
     sea: f64,
     cap: f64,
     cap_mass: f64,
+    /// What its air exchanges with its ground reads of the year's wind and moisture (F269).
+    contact: Contact,
 }
 
 impl Place {
@@ -4284,6 +4450,7 @@ impl Layout {
                     sea: s.sea,
                     cap: s.ice,
                     cap_mass: 0.0,
+                    contact: Contact::default(),
                 })
                 .collect(),
             links: place_links((n_lat, n_lon)),
@@ -6382,7 +6549,7 @@ mod tests {
         let eb = EnergyBalance::from_graph(&earth);
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
         let (ocean, share) = sea_of(&earth).unwrap();
-        let layout = eb.layout(&climate, Some(&share), None);
+        let layout = eb.layout(&climate, Some(&share), None, None);
         let ground = Ground::from_graph(&earth);
         let year = eb.seasonal_years(&ground, &layout, eb.sky.obliquity, Some(&ocean), None);
         let steps = year.masses[1].len() / layout.places.len();
@@ -6537,7 +6704,7 @@ mod tests {
         graph.set("rotation.period", year).unwrap();
         let eb = EnergyBalance::from_graph(&graph);
         let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
-        let layout = eb.layout(&climate, None, None);
+        let layout = eb.layout(&climate, None, None, None);
         let n = layout.places.len();
         let links: Vec<Vec<(usize, f64)>> = layout
             .links
@@ -6767,6 +6934,78 @@ mod tests {
             assert!(zonal(p, storms) > zonal(e, storms), "{side}");
         }
         assert!(zonal(p, 0.0) > zonal(e, 0.0));
+    }
+
+    /// F269: the year again at each place's own wind and its wet ground's latent heat: the
+    /// Earth-like's mean stays within 5 K of Earth's 288 K, 5A's gate, and its water near
+    /// Earth's some 1,000 kg/m² a year; Titan's ground, its exchange with its air at its
+    /// own slow wind, stands farther from its air, its contrast from its equator to its poles
+    /// some four times its stated wind's.
+    #[test]
+    fn the_year_runs_again_at_its_own_wind() {
+        let mut contrasts = Vec::new();
+        for name in ["Earth", "Titan"] {
+            let graph = crate::presets::preset(name).unwrap().to_graph().0;
+            let eb = EnergyBalance::from_graph(&graph);
+            let ground = Ground::from_graph(&graph);
+            let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+            let ocean = sea_of(&graph);
+            let sea = ocean.as_ref().map(|(o, f)| (o, f));
+            let water = if sea.is_some() {
+                OCEAN_TRANSPORT_SHARE
+            } else {
+                0.0
+            };
+            let air = crate::moisture::Air::from_graph(&graph, eb.transport, water);
+            let first = eb.cycle(&climate, &ground, sea, None);
+            let heights = vec![0.0; first.sites.len()];
+            let wet = air.and_then(|a| first.moisture(&a, &heights));
+            let coupling = first.coupling(wet.as_ref()).expect("a coupling");
+            let second = eb.cycle_with(&climate, &ground, sea, None, Some(&coupling));
+            let again = air.and_then(|a| second.moisture(&a, &heights));
+            let ((mean, equator, poles), (_, e1, p1)) = (bands(&second.mean), bands(&first.mean));
+            println!(
+                "{name}: mean {mean:.2} K, contrast {:.2} K where {:.2} at the stated wind; {:?}",
+                equator - poles,
+                e1 - p1,
+                again.as_ref().map(|m| m.summary())
+            );
+            contrasts.push((equator - poles, e1 - p1));
+            if name == "Earth" {
+                assert!((mean - 288.0).abs() < 5.0, "{mean}");
+                let rain = again.expect("water").summary().precipitation;
+                assert!((800.0..1400.0).contains(&rain), "{rain}");
+            }
+        }
+        let (titan, stated) = contrasts[1];
+        assert!(titan > 3.0 * stated, "{titan} {stated}");
+    }
+
+    /// F269: exploration, THAI's measures of the locked ocean world, coupled.
+    #[test]
+    #[ignore]
+    fn explore_thai_coupled() {
+        let world = locked_ocean_world();
+        let eb = EnergyBalance::from_graph(&world);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let climate = eb.solve(grid);
+        let ocean = Ocean::from_graph(&world).expect("a water sea");
+        let share = Field::filled(grid, 1.0f32);
+        let sea = Some((&ocean, &share));
+        let ground = Ground::from_graph(&world);
+        let first = eb.cycle(&climate, &ground, sea, None);
+        let air = crate::moisture::Air::from_graph(&world, eb.transport, OCEAN_TRANSPORT_SHARE);
+        let heights = vec![0.0; first.sites.len()];
+        let wet = air.and_then(|a| first.moisture(&a, &heights));
+        let coupling = first.coupling(wet.as_ref()).expect("a coupling");
+        let second = eb.cycle_with(&climate, &ground, sea, None, Some(&coupling));
+        for (label, cycle) in [("uncoupled", &first), ("coupled", &second)] {
+            let seas = cycle.seas.clone().expect("a water sea");
+            let [mean, day, albedo, open] = thai_measures(&eb, &seas, &climate);
+            println!(
+                "TRAPPIST-1e {label}: mean {mean:.1} K, dayside {day:.1} K, planetary albedo {albedo:.3}, open {open:.2} of the dayside (THAI: 232 to 246 K, 261 to 268 K, 0.22 to 0.28, almost half)"
+            );
+        }
     }
 
     /// F268: the locked ocean world's water falls under its star, where its air converges,

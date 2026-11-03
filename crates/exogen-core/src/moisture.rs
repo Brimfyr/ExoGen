@@ -157,6 +157,8 @@ pub struct Moisture {
     pub potential: Vec<f64>,
     pub runoff: Vec<f64>,
     pub saturation: Vec<f64>,
+    /// The share of each place's land its bucket keeps wet through the year (F269).
+    pub wetness: Vec<f64>,
     /// Each place's share of the sphere and of its land.
     pub weights: Vec<f64>,
     pub land: Vec<f64>,
@@ -337,6 +339,7 @@ pub fn rain<'a>(
         potential: vec![0.0; n],
         runoff: vec![0.0; n],
         saturation: vec![0.0; n],
+        wetness: vec![0.0; n],
         weights: sites.iter().map(|s| s.weight).collect(),
         land: land.clone(),
     };
@@ -495,6 +498,7 @@ pub fn rain<'a>(
                     out.evaporation[p] += given / steps as f64;
                     out.runoff[p] += ran / steps as f64;
                     out.saturation[p] += r / steps as f64;
+                    out.wetness[p] += beta[p] / steps as f64;
                     // The potential evaporation: the open sea's and the land's wet.
                     let potential = exchange[p]
                         * (sites[p].sea * (sea_q[p] - r * humid[p]).max(0.0)

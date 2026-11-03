@@ -418,3 +418,16 @@ How it went:
 - **Three fixes.** The evaporation and the rain solved together on each step's end, where the storm tracks' seas had taken vapour from columns left supersaturated within a step; the gusts about the mean wind, without which the subtropics' calm ridges stopped evaporating; the rain bracketed and read from the column's balance, where a column over cold high ground, a hundred times saturated, had rained 10^20 kg/m² a year.
 - **Known limitations.** The rain at the thermal equator too narrow and too strong; no rain shadows yet, the relief only at the places' 4°; Titan's methane some hundred times too much and wettest at its equator, its evaporation drawing on no energy and its air mixed too hard: the next milestone puts the latent heat into the energy balance at each place's wind, before Titan's transport (the user, 2026-11-03).
 
+## The thirty-third milestone: the year at its own wind
+
+- **F269.** The exchange of heat between the ground and its air at each place's own wind, where it read a stated 5 m/s, and the latent heat of what wet ground gives the air tying it to its air, for any working liquid: the body's first year at the stated wind, its wind and moisture from it, and every year after at each place's own.
+
+How it went:
+
+- **The Earth-like.** Its mean 285.5 K, within 5A's gate; its sea ice and its water much as before, its land's evaporation 485 kg/m² a year, Earth's some 490.
+- **The locked world.** Its warmest place 12 K cooler under its strong winds; THAI's measures within or near their ranges, its open sea 0.49 of its dayside, nearer THAI's almost half.
+- **Mars, Pluto, Venus.** As before: their air's pressures and their caps within a percent or so.
+- **Titan.** Its ground loosened from its air at its slow wind, its contrast 0.5 K where 0.1, short of the measured 3 K; its methane still far too much.
+- **Tried first:** the latent heat beyond a saturated air's given to the air over the ground, which warmed the air near the ground and choked its own evaporation.
+- **Known limitations.** The grey balance has no budget of the ground apart from its column's, nor its air any radiation of its own: the latent heat of the ground's evaporation is neither limited by the sunlight the ground receives nor radiated where it falls. With Titan's transport (the user, 2026-11-03).
+
