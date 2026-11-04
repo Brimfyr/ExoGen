@@ -16,6 +16,7 @@ pub mod drift;
 pub mod export;
 pub mod fields;
 pub mod flexure;
+pub mod fluvial;
 pub mod geom;
 pub mod grid;
 pub mod insolation;

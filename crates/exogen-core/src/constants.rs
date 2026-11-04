@@ -2378,6 +2378,23 @@ pub const SEA_ICE_STRENGTH_DECAY: f64 = 20.0;
 pub const SEA_ICE_PRESSURE_RELAXATION: f64 = 1.7;
 pub const SEA_ICE_PRESSURE_SWEEPS: usize = 200;
 pub const SEA_ICE_PRESSURE_TOLERANCE: f64 = 1e-4;
+/// F278: the rivers' erosion by stream power, E = K A^m S^n (Howard 1994; Whipple and Tucker
+/// 1999): m 0.5, the rivers' concavity m/n some 0.45 to 0.5 (Harel et al. 2016's reference);
+/// n 1, the implicit solver's (Braun and Willett 2013), where measured rivers often steepen
+/// the faster (DiBiase et al. 2010); A the area draining through a cell at the runoff Earth's
+/// land sheds, some 0.27 m a year (Oki and Kanae 2006), each cell's area weighted by its own
+/// runoff against it; K 2e-6 a year, of the order rivers eroding 0.035 to 1.1 mm a year at
+/// their channels' steepness give (DiBiase et al. 2010; Kirby and Whipple 2012), a stated
+/// value within the measured spread of an order of magnitude. Through FLUVIAL_SPAN_YR of
+/// today's climate in FLUVIAL_STEPS steps, the drainage routed again at each: a stated span,
+/// until the loop carries the erosion through the body's history (the user, 2026-11-04), long
+/// enough for a wet land's beds to come to the rivers' balance, K T over the cells' reach
+/// against their drainage's square root some twice.
+pub const FLUVIAL_AREA_EXPONENT: f64 = 0.5;
+pub const FLUVIAL_REFERENCE_RUNOFF: f64 = 0.27;
+pub const FLUVIAL_ERODIBILITY: f64 = 2e-6;
+pub const FLUVIAL_SPAN_YR: f64 = 2e6;
+pub const FLUVIAL_STEPS: usize = 10;
 /// F245: the share of the transport a sea's water carries across the sea's share of the
 /// boundary between two places, the air the rest: some third, the ocean's share of the
 /// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated

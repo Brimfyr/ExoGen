@@ -250,8 +250,9 @@ pub struct FinishOutput {
     pub water_vapour: Option<&'static str>,
     pub water_summary: Option<crate::moisture::Summary>,
     /// The rivers and the lakes of the year's runoff over the terrain (F277), where it has
-    /// water.
+    /// water, and what the rivers' erosion moved (F278).
     pub rivers: Option<crate::rivers::Rivers>,
+    pub erosion: Option<crate::fluvial::Erosion>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -446,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 206;
+pub const FINISH_VERSION: u64 = 207;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3203,9 +3204,10 @@ pub fn finish(
     let water_vapour = water_air
         .filter(|_| moisture.is_some())
         .map(|a| a.vapour.name);
-    // The rivers and the lakes of the year's runoff over the terrain (F277): its land's water
-    // over the relief, none shed under the caps' ice.
-    let rivers = moisture
+    // The land's water over the relief (F277), none shed under the caps' ice; the rivers'
+    // erosion of the ground through today's climate's span (F278), its relief held over the
+    // lithosphere's flexural wavelength; and the rivers and the lakes on the ground they leave.
+    let land_water = moisture
         .as_ref()
         .zip(water.as_ref())
         .zip(water_air.as_ref())
@@ -3217,10 +3219,46 @@ pub fn finish(
                 }
             }
             let sea: Vec<bool> = layers.liquid.as_slice().iter().map(|&l| l > 0.0).collect();
-            let water = (shed.as_slice(), gain.as_slice());
-            let liquid = (body_radius, air.vapour.liquid_density);
-            crate::rivers::route(grid, height.as_slice(), &sea, water, liquid)
+            (shed, gain, sea, air.vapour.liquid_density)
         });
+    let erosion = land_water.as_ref().map(|(shed, gain, sea, density)| {
+        let started = std::time::Instant::now();
+        let hold = stress::StressField::flexural_wavelength(
+            graph.f64("interior.elastic_thickness"),
+            graph.f64("body.gravity"),
+        );
+        // The ground rebounds by the crust's density over the mantle's (Airy's, F15's pair).
+        let rebound = if ice::is_ice_surface(graph) {
+            DENSITY_CRUST_ICE / DENSITY_ICE
+        } else {
+            DENSITY_CRUST_ROCK / DENSITY_ROCK
+        };
+        let water = (shed.as_slice(), gain.as_slice());
+        let liquid = (body_radius, *density, sea_level);
+        let lithosphere = (hold, rebound);
+        let moved = crate::fluvial::erode(grid, &mut layers, sea, water, liquid, lithosphere);
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            eprintln!(
+                "fluvial: the rivers cut {:.0} km³ through {:.1} Myr, laying {:.0} in lakes and pits and bringing {:.0} to the sea; begun at {:.3} mm a year over the land; {:.1} s",
+                moved.cut / 1e9,
+                FLUVIAL_SPAN_YR / 1e6,
+                moved.laid / 1e9,
+                moved.to_sea / 1e9,
+                1e3 * moved.rate,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        moved
+    });
+    let height = if erosion.is_some() {
+        layers.height()
+    } else {
+        height
+    };
+    let rivers = land_water.as_ref().map(|(shed, gain, sea, density)| {
+        let water = (shed.as_slice(), gain.as_slice());
+        crate::rivers::route(grid, height.as_slice(), sea, water, (body_radius, *density))
+    });
     if let (Some(r), true) = (&rivers, std::env::var_os("EXOGEN_DEBUG").is_some()) {
         let s = &r.summary;
         let (lon, lat) = crate::grid::lon_lat_from_direction(s.mouth);
@@ -3503,6 +3541,7 @@ pub fn finish(
         water_vapour,
         water_summary,
         rivers,
+        erosion,
         rays,
         sea_level,
         ocean_fraction,

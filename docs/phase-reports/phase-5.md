@@ -521,3 +521,16 @@ How it went:
 - **The locked world.** Its rivers run under its star alone.
 - **Known limitations.** The fluvial erosion that would shape the terrain (next); the seas' connection; the lakes not yet in the climate or the colour.
 
+## The forty-second milestone: the rivers' erosion
+
+- **F278.** The rivers cut their beds by stream power, implicitly from their mouths up, through 2 Myr of today's climate in the finish (the user's staged plan: the coarse loop's history next), laying what they cut in the basins their water ends in, by the flood's tree as their lakes settle, the ground rebounding by isostasy over the lithosphere's flexural wavelength. The Earth-like's terrain drains: its pits fill, its lakes from 19 percent of its land to 4.3.
+
+How it went:
+
+- **The tests.** A wet island's pits drain, its land lowering by what did not rebound of its loss; a dry plain's broad basin stays closed while the small pits about it fill.
+- **The sediment, kept.** Laid in each lake only to its water's level, a third of what the rivers cut was lost; passed over the basins' passes one by one, it ran back and forth between two full halves for all of its rounds. Laid by the flood's tree as the water's lakes settle, by volume, it is all laid or brought to the sea.
+- **The rebound.** Holding the relief over the flexural wavelength whole lifted an eroding peninsula's interior by its coasts' whole loss; the ground now rebounds by the crust's density over the mantle's, the rest lowering it.
+- **The Earth-like.** Its rivers branch across its continents; 4.3 percent of its land under lakes, 21 percent closed, Earth's 2 to 4 and some 20.
+- **The locked world.** Its eye's rivers end in terminal lakes in its peninsula's hyper-arid south.
+- **Known limitations.** The erosion not yet through the history in the loop; no deltas or fans; one erodibility for every ground; Titan's methane rivers too wet.
+

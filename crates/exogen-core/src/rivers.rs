@@ -23,8 +23,8 @@ use crate::grid::CubeSphere;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
 
-/// A cell no basin has taken yet.
-const NONE: u32 = u32::MAX;
+/// A cell no basin has taken yet; a cell no lake covers.
+pub const NONE: u32 = u32::MAX;
 /// The sea's basin.
 const SEA: u32 = 0;
 /// The cells about a cell the water may run to.
@@ -92,18 +92,18 @@ impl Ord for Key {
 /// own and theirs, at most none; its own cells, whose heights lie between its halves' meeting
 /// and its pass, by height; and the pits it holds, as a range of the pits in the order of a walk
 /// down the basins.
-struct Basin {
-    spill: f32,
-    pass: (u32, u32),
-    sea: bool,
-    joined_sea: u32,
-    joined: f32,
-    halves: Option<(u32, u32)>,
+pub(crate) struct Basin {
+    pub(crate) spill: f32,
+    pub(crate) pass: (u32, u32),
+    pub(crate) sea: bool,
+    pub(crate) joined_sea: u32,
+    pub(crate) joined: f32,
+    pub(crate) halves: Option<(u32, u32)>,
     catchment: f64,
     below: f64,
     flooded: f64,
-    own: Vec<u32>,
-    span: (u32, u32),
+    pub(crate) own: Vec<u32>,
+    pub(crate) span: (u32, u32),
 }
 
 impl Basin {
@@ -135,6 +135,31 @@ struct Lake {
     spills: f64,
 }
 
+/// The drainage of a year's runoff (F277, F278): each cell's receiver, the cell its water runs
+/// to, itself at sea and at a dry pit; the cells in the order the flood took them, each after
+/// its receiver; the lake that covers each cell, NONE where none does, and each lake's level, m;
+/// the lakes' depth at each cell, m; the water each land cell carries down, kg/s; each full
+/// lake's outlet, the cells either side of its pass, its own first, and what it spills over it,
+/// kg/s (F278); and the year in brief.
+pub struct Drainage {
+    pub receiver: Vec<u32>,
+    pub order: Vec<u32>,
+    pub lake_of: Vec<u32>,
+    pub levels: Vec<f32>,
+    pub depth: Vec<f32>,
+    pub carried: Vec<f64>,
+    pub outlets: Vec<(u32, u32, f64)>,
+    pub summary: Summary,
+    /// The flood's basins, the basins at the top in the order they settle, each spilling into
+    /// one settled after it; each cell's pit; and each pit's basin at the top and its place in
+    /// the walk down the basins (F278).
+    pub(crate) basins: Vec<Basin>,
+    pub(crate) roots: Vec<u32>,
+    pub(crate) label: Vec<u32>,
+    pub(crate) top_of: Vec<u32>,
+    pub(crate) pit_place: Vec<u32>,
+}
+
 /// The rivers and the lakes on a grid of a body of `radius` m (F277), the ground at `height`,
 /// m, the sea where `sea`, under a year whose land sheds `runoff` and whose open water gains
 /// `gain` over its surface, kg/m²/s at each cell, of a liquid of `density` kg/m³.
@@ -142,9 +167,36 @@ pub fn route(
     grid: CubeSphere,
     height: &[f32],
     sea: &[bool],
-    (runoff, gain): (&[f32], &[f32]),
+    water: (&[f32], &[f32]),
     (radius, density): (f64, f64),
 ) -> Rivers {
+    let drainage = drain(grid, height, sea, water, (radius, density));
+    let discharge = Field::from_fn(grid, |c, _| {
+        let k = grid.index(c);
+        if sea[k] || drainage.lake_of[k] != NONE {
+            0.0
+        } else {
+            (drainage.carried[k] / density) as f32
+        }
+    });
+    let mut lakes = Field::new(grid);
+    lakes.as_mut_slice().copy_from_slice(&drainage.depth);
+    Rivers {
+        discharge,
+        lakes,
+        summary: drainage.summary,
+    }
+}
+
+/// The drainage of a year's runoff on a grid (F277), as `route` reads it: the basins of the
+/// flood, their lakes and the rivers between them.
+pub fn drain(
+    grid: CubeSphere,
+    height: &[f32],
+    sea: &[bool],
+    (runoff, gain): (&[f32], &[f32]),
+    (radius, density): (f64, f64),
+) -> Drainage {
     let n = grid.cell_count();
     let area = |k: usize| grid.cell_area(grid.cell(k)) * radius * radius;
     let around = |k: usize| {
@@ -378,8 +430,13 @@ pub fn route(
             }
         }
     }
+    let mut outlets = Vec::new();
     for lake in lakes.iter().filter(|l| l.full && l.spills > 0.0) {
-        let mut c = basins[lake.basin as usize].pass.1;
+        let (own, beyond) = basins[lake.basin as usize].pass;
+        if own != NONE && beyond != NONE {
+            outlets.push((own, beyond, lake.spills));
+        }
+        let mut c = beyond;
         let mut last = NONE;
         while c != NONE && !sea[c as usize] && lake_of[c as usize] == NONE {
             carried[c as usize] += lake.spills;
@@ -458,19 +515,19 @@ pub fn route(
         .filter(|&k| !sea[k] && lake_of[k] == NONE)
         .map(|k| shed[k] as f64)
         .sum();
-    let discharge = Field::from_fn(grid, |c, _| {
-        let k = grid.index(c);
-        if sea[k] || lake_of[k] != NONE {
-            0.0
-        } else {
-            volume(carried[k]) as f32
-        }
-    });
-    let mut lakes_field = Field::new(grid);
-    lakes_field.as_mut_slice().copy_from_slice(&depth);
-    Rivers {
-        discharge,
-        lakes: lakes_field,
+    Drainage {
+        receiver,
+        order,
+        levels: lakes.iter().map(|l| l.level).collect(),
+        lake_of,
+        depth,
+        carried,
+        outlets,
+        basins,
+        roots,
+        label,
+        top_of,
+        pit_place,
         summary: Summary {
             runoff: volume(total),
             lakes_gain: volume(lakes_gain),

@@ -92,7 +92,9 @@ pub struct WaterInfo {
 /// what the lakes' surfaces gain over what they lose to the air, and what reaches the sea,
 /// m³/s; the share of the land whose water ends in a lake that does not spill to the sea
 /// and the share the lakes cover; and the most any one river brings the sea, m³/s, and where,
-/// deg.
+/// deg; and what the rivers' erosion moved through today's climate's span (F278): the ground
+/// they cut, what of it they laid in lakes and pits and what they brought the sea, km³, and the
+/// rate they began at over the land, mm a year.
 #[derive(Serialize)]
 pub struct RiversInfo {
     pub runoff_m3_s: f64,
@@ -102,6 +104,10 @@ pub struct RiversInfo {
     pub lake_land_fraction: f64,
     pub largest_river_m3_s: f64,
     pub largest_mouth_lat_lon_deg: [f64; 2],
+    pub eroded_km3: f64,
+    pub laid_km3: f64,
+    pub brought_to_sea_km3: f64,
+    pub erosion_mm_yr: f64,
 }
 
 /// The year's surface wind (F267): its mean speed over the body, m/s, the fastest of its
@@ -1454,6 +1460,10 @@ pub fn export(
             lake_land_fraction: s.lakes,
             largest_river_m3_s: s.largest,
             largest_mouth_lat_lon_deg: [lat.to_degrees(), lon.to_degrees()],
+            eroded_km3: out.erosion.map_or(0.0, |e| e.cut / 1e9),
+            laid_km3: out.erosion.map_or(0.0, |e| e.laid / 1e9),
+            brought_to_sea_km3: out.erosion.map_or(0.0, |e| e.to_sea / 1e9),
+            erosion_mm_yr: out.erosion.map_or(0.0, |e| 1e3 * e.rate),
         }
     });
     let water = out.water_summary.map(|w| WaterInfo {
