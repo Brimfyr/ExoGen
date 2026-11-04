@@ -74,12 +74,16 @@ pub fn liquid_species(working: &str) -> &'static [&'static str] {
 /// own gas's those where its ice grows the most (F242); an ice that is the body's working
 /// liquid stands only where it never melts, the frost's own gas's where its ice grows. An ice
 /// `gathered` through the body's age (F259) covers the places it gathered the most at first,
-/// its masses on the climate's grid, then its traps' coldest.
+/// its masses on the climate's grid, then its traps' coldest. A working liquid's ice stands
+/// where its own ground keeps it frozen (F282): its place's warmest, read smoothly between the
+/// climate's places, `warmer` at each cell by its own height and slope than at its place's,
+/// K, so that where the ice thins to its margin the ground under it decides where it melts.
 pub fn lay(
     graph: &ParamGraph,
     layers: &mut LayerSet,
     traps: &Traps,
     gathered: &[(&'static str, Field<f32>)],
+    warmer: Option<&Field<f32>>,
 ) -> Vec<Cap> {
     let radius = graph.f64("body.radius");
     let gravity = graph.f64("body.gravity");
@@ -144,6 +148,12 @@ pub fn lay(
         let rho = ice_density(ice.species);
         let wanted = gel * ice.volatile.liquid_density / rho * whole;
         let melts = liquid.contains(&ice.species);
+        // Where an ice stands by how far its warmest keeps under its melting, its own ground's
+        // warmest (F282); the frost's own gas's stands where its ice grows.
+        let by_heat = traps
+            .growth
+            .as_ref()
+            .is_none_or(|(g, _)| g.species != ice.species);
         let ground = layers.height();
         // Each place's region's trap, read smoothly on the climate's grid; where its ice may
         // stand, coldest first.
@@ -156,7 +166,11 @@ pub fn lay(
                     return None;
                 }
                 let d = grid.center(grid.cell(k));
-                if melts && sample_bilinear(&coarse, &stands, d) < 0.0 {
+                let own = match warmer {
+                    Some(w) if by_heat => w.as_slice()[k],
+                    _ => 0.0,
+                };
+                if melts && sample_bilinear(&coarse, &stands, d) - own < 0.0 {
                     return None;
                 }
                 let rank = sample_bilinear(&coarse, &trap, d) as f64;
@@ -781,7 +795,7 @@ mod tests {
     fn mars_s_water_lays_its_polar_caps() {
         let (graph, traps) = traps_of("Mars");
         let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[]);
+        let caps = lay(&graph, &mut layers, &traps, &[], None);
         let cap = caps
             .iter()
             .find(|c| c.ice.species == "H2O")
@@ -801,7 +815,7 @@ mod tests {
     fn an_ice_gathers_in_its_coldest_traps() {
         let (graph, traps) = traps_of("Pluto");
         let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[]);
+        let caps = lay(&graph, &mut layers, &traps, &[], None);
         let cap = caps
             .iter()
             .find(|c| c.ice.species == "CH4")
@@ -821,7 +835,7 @@ mod tests {
     fn the_frost_s_own_gas_lays_its_caps_where_its_ice_grows() {
         let (graph, traps) = traps_of("Mars");
         let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[]);
+        let caps = lay(&graph, &mut layers, &traps, &[], None);
         let species: Vec<&str> = caps.iter().map(|c| c.ice.species).collect();
         assert_eq!(species, ["H2O", "CO2"]);
         let cap = &caps[1];
@@ -840,7 +854,7 @@ mod tests {
     fn pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands() {
         let (graph, traps) = traps_of("Pluto");
         let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[]);
+        let caps = lay(&graph, &mut layers, &traps, &[], None);
         let cap = caps
             .iter()
             .find(|c| c.ice.species == "N2")
@@ -868,7 +882,7 @@ mod tests {
     fn titan_s_methane_lays_no_cap() {
         let (graph, traps) = traps_of("Titan");
         let mut layers = LayerSet::new(CubeSphere::new(32));
-        let caps = lay(&graph, &mut layers, &traps, &[]);
+        let caps = lay(&graph, &mut layers, &traps, &[], None);
         assert!(
             caps.is_empty(),
             "{:?}",
@@ -1050,5 +1064,39 @@ mod tests {
         println!("half way in, of Nye's dome: {rows:.3} along the grid, {diagonals:.3} across it");
         assert!((rows - 1.0).abs() < 0.05, "{rows}");
         assert!((diagonals / rows - 1.0).abs() < 0.02, "{diagonals} {rows}");
+    }
+
+    /// F282: a working liquid's ice stands where its own ground keeps it frozen: on the
+    /// Earth-like, whose water's ice stands nowhere in its tropics on its places' warmest,
+    /// ground standing 40 K colder than its places within 20 degrees of the equator, as high
+    /// ground stands, holds it there.
+    #[test]
+    fn a_working_liquid_s_ice_stands_where_its_own_ground_keeps_it_frozen() {
+        let (graph, traps) = traps_of("Earth");
+        let grid = CubeSphere::new(32);
+        let tropics = |k: usize| {
+            lon_lat_from_direction(grid.center(grid.cell(k))).1.abs() < 20f64.to_radians()
+        };
+        let covered = |warmer: Option<&Field<f32>>| {
+            let mut layers = LayerSet::new(grid);
+            let caps = lay(&graph, &mut layers, &traps, &[], warmer);
+            let Some(water) = caps.iter().find(|c| c.ice.species == "H2O") else {
+                return 0;
+            };
+            let t = water.thickness.as_slice();
+            (0..grid.cell_count())
+                .filter(|&k| tropics(k) && t[k] > 0.0)
+                .count()
+        };
+        let cold = Field::from_fn(
+            grid,
+            |c, _| if tropics(grid.index(c)) { -40.0 } else { 0.0 },
+        );
+        let (flat, high) = (covered(None), covered(Some(&cold)));
+        println!(
+            "the tropics' cells under the water's ice: {flat} on their places' warmest, {high} on their own"
+        );
+        assert_eq!(flat, 0);
+        assert!(high > 0);
     }
 }

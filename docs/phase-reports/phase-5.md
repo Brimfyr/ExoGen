@@ -556,4 +556,16 @@ How it went:
 - **The bodies.** The caps' surfaces stand smooth where they were ruled: Mars's northern caps in their basins, TRAPPIST-1e's southern cap, its surface falling from its crest to its pole by 75 to 110 m a degree, steepening toward its margin, where it fell in runs of 44 m broken by steps of 120 to 200 m, and the Earth-like's. The domes stand thinner on the ground they cover: where a liquid's ice covers all the ground it may, it holds less, TRAPPIST-1e's caps 248 m of its water's global layer where 280, at most 4,775 m thick where 5,234, the Earth-like's 3.3 m where 4.2; where the inventory sets them they cover more ground, Pluto's nitrogen 1.65 percent of the body where 1.53, at most 6,826 m thick where 7,390, its air 0.25 to 2.73 Pa through the year where 0.24 to 2.72; Mars's water 2.53 percent where 2.52, its air through the year unchanged, 506 to 702 Pa.
 - **What it left.** Creases where the margin's ground steps between its points; the blocky edges of the caps whose gathered places rank ahead of their traps, next (F281).
 
+## The forty-fifth milestone: a working liquid's ice where its own ground keeps it frozen
+
+- **F282.** The user saw grid squares, larger than the map's pixels, on the edge of TRAPPIST-1e's southern cap inside its peninsula's western side. Its water, the body's working liquid, covers all the ground where its warmest keeps under its melting, and that warmest was its place's on the climate's grid at the place's mean height. Each cell's warmest now stands from its place's as the year's peak at its own height and slope stands from the peak at its place's height (F237's downscaling): the edge follows the ground.
+
+How it went:
+
+- **First, the gathered caps.** The other session's diagnosis of Mars's blocky edges, the places an ice gathered at ranked ahead of all its traps, came first (F281): each region an ice gathered in, holding its share, grown over the coldest of its traps beside it. Its tests passed; on Pluto, its methane laid 1.1 m of its 5, the regions that had gathered the most hemmed into eight cells each by the floods of regions whose seeds were colder. Kept aside as a patch for a design that grows the regions fairly and passes on what one cannot hold; at preview quality Mars's caps fill their basins, their edges the basins' rims either way.
+- **TRAPPIST-1e's edge was not that.** Its water's caps cover all the ground they may, so their edge is the line where its warmest reaches its melting.
+- **The test.** On the Earth-like, ground 40 K colder than its places in the tropics holds its water's ice there, none without.
+- **The bodies.** TRAPPIST-1e's edge follows its ground, in patches where the unresolved craters' roughness sets each cell's height; the Earth-like's land ice thinner on more ground.
+- **The coast's steps.** The steps along TRAPPIST-1e's coast that the user saw are the continental crust's outline on the coarse loop's grid, carried to the finish: the same before the rivers' erosion, the same on the ground at a map twice as wide.
+
 

@@ -447,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 209;
+pub const FINISH_VERSION: u64 = 210;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2915,8 +2915,21 @@ pub fn finish(
     let water = materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh);
     let ices = crate::climate::Ice::of_inventory(graph, water);
     let mut traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
+    // How much warmer each cell's year peaks at its own height and slope than at its place's
+    // (F282): a working liquid's ice stands where its own ground keeps it frozen.
+    let warmer = {
+        let level = if full_sea.is_finite() { 0.0 } else { f64::NAN };
+        let coarse = climate.temperature.grid();
+        let padded = crate::grid::projection::PaddedField::new(&coarse, heights.as_slice());
+        let place = Field::from_fn(grid, |_, d| {
+            crate::grid::projection::sample_bilinear(&coarse, &padded, d)
+        });
+        let own = downscale.apply(&cycle.max, &above, level);
+        let theirs = downscale.apply(&cycle.max, &place, level);
+        Field::from_fn(grid, |c, _| own.get(c) - theirs.get(c))
+    };
     let bare_ice = layers.ice.clone();
-    let mut laid = caps::lay(graph, &mut layers, &traps, &[]);
+    let mut laid = caps::lay(graph, &mut layers, &traps, &[], Some(&warmer));
     // The frost's own gas's caps hold its air (F258): the year again with them as the
     // reservoir its air draws on, over the caps' albedo, and every ice's caps laid again
     // where its ice keeps under that year.
@@ -2940,7 +2953,7 @@ pub fn finish(
         }
         traps = balance.traps(&climate, &ground, &held, &ices, &heights, &downscale);
         layers.ice.clone_from(&bare_ice);
-        laid = caps::lay(graph, &mut layers, &traps, &[]);
+        laid = caps::lay(graph, &mut layers, &traps, &[], Some(&warmer));
     }
     // Each ice that is not the body's working liquid gathered through the body's age under
     // the orbit's cycles (F259), from a layer over the whole body, and its caps laid where it
@@ -2976,7 +2989,7 @@ pub fn finish(
         let frost = balance.frost.map(|f| f.species);
         let gathered = caps::gather(graph, &heights, &cycled, frost, &gathering);
         layers.ice.clone_from(&bare_ice);
-        laid = caps::lay(graph, &mut layers, &traps, &gathered);
+        laid = caps::lay(graph, &mut layers, &traps, &gathered, Some(&warmer));
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             eprintln!(
                 "gathered: {} through the orbit's cycles in {:.1} s",

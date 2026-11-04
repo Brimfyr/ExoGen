@@ -6842,7 +6842,7 @@ mod tests {
             &downscale,
         );
         let mut layers = crate::fields::LayerSet::new(CubeSphere::new(64));
-        let laid = crate::stages::caps::lay(&graph, &mut layers, &traps, &[]);
+        let laid = crate::stages::caps::lay(&graph, &mut layers, &traps, &[], None);
         let f = eb.frost.expect("Pluto's nitrogen frost");
         let reservoir =
             crate::stages::caps::reservoir(&laid, grid, &eb, f.species).expect("nitrogen caps");
