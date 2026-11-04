@@ -2691,6 +2691,7 @@ impl EnergyBalance {
         let currents = coupling
             .and_then(|c| c.currents.clone())
             .filter(|c| c.layout == (n_lat, n_lon));
+        let wind = coupling.map_or_else(Vec::new, |c| c.wind_on((n_lat, n_lon)));
         Layout {
             places,
             links: place_links((n_lat, n_lon)),
@@ -2698,6 +2699,7 @@ impl EnergyBalance {
             snowfall,
             falling,
             currents,
+            wind,
             modes: place_modes(n_lon),
         }
     }
@@ -2955,6 +2957,17 @@ impl EnergyBalance {
         let water = ocean.map_or(0.0, |_| OCEAN_TRANSPORT_SHARE);
         let air_links = layout.air_links(self.transport, water);
         let mut inflow = vec![0.0; n];
+        // The sea ice's drift, where the year's wind is known on these places (F276).
+        let mut drift = ocean
+            .filter(|_| n > 0 && layout.n_lon > 0 && layout.wind.len() == steps * n)
+            .map(|o| {
+                let sea: Vec<f64> = places.iter().map(|p| p.sea).collect();
+                let weight: Vec<f64> = places.iter().map(|p| p.weight).collect();
+                let grid = (n / layout.n_lon, layout.n_lon);
+                let spin = (self.circulation.omega, self.circulation.radius);
+                let water = self.liquid.map_or(1_000.0, |l| l.liquid_density);
+                crate::drift::Drift::new((&sea, &weight), grid, spin, (water, o.density))
+            });
         let (mut held, mut load) = (frost.map_or(0.0, |f| f.column), 0.0);
         if let Some(w) = warm {
             for (r, p) in runs.iter_mut().zip(places) {
@@ -3063,6 +3076,10 @@ impl EnergyBalance {
                             self.sea_step(sea, dt, (lit, p.albedo), (a, exchange), water);
                         }
                     });
+                if let (Some(drift), Some(ocean)) = (drift.as_mut(), ocean) {
+                    let wind = &layout.wind[k * n..(k + 1) * n];
+                    self.drift_ice(drift, &mut runs, (wind, &air), dt, ocean);
+                }
                 let point = match (frost, highest, ceiling) {
                     (Some(f), Some(highest), Some(top)) => {
                         let gas = (held - load, whole);
@@ -3218,6 +3235,12 @@ impl EnergyBalance {
                     settle(&mut c.t, &c.sums, steps);
                 }
             }
+        }
+        if let (Some(d), true) = (&drift, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+            let (speed, spent, subs, sweeps) = d.summary();
+            eprintln!(
+                "drift: the sea ice's mean speed {speed:.3} m/s; {spent:.2} s, {subs:.1} sub-steps and {sweeps:.1} sweeps a step"
+            );
         }
         // The surface pressure: the other gases' and the frost's gas's.
         let range = frost.map(|f| {
@@ -3545,6 +3568,65 @@ impl EnergyBalance {
                 (*ice, values)
             })
             .collect()
+    }
+
+    /// The sea ice's drift through a step (F276): the wind's stress on the ice at each place,
+    /// rho_a C_a |V| V at the density of the air over it, its drag the law of the wall's over
+    /// the ice's roughness; the ice the drift brings to open water melts in the water's warmth
+    /// over its freezing point, and a sea the drift leaves bare stands open at it.
+    fn drift_ice(
+        &self,
+        drift: &mut crate::drift::Drift,
+        runs: &mut [Run],
+        (wind, air): (&[[f32; 2]], &[f64]),
+        dt: f64,
+        ocean: &Ocean,
+    ) {
+        let before: Vec<f64> = runs
+            .iter()
+            .map(|r| r.sea.as_ref().map_or(0.0, |s| s.ice.max(0.0)))
+            .collect();
+        if before.iter().all(|&m| m <= 0.0) {
+            return;
+        }
+        let drag = (VON_KARMAN / (WIND_REFERENCE_HEIGHT / ICE_ROUGHNESS).ln()).powi(2);
+        let c = &self.circulation;
+        let stress: Vec<[f64; 2]> = wind
+            .iter()
+            .zip(air)
+            .map(|(v, &t)| {
+                let rho = c.pressure * c.molar_mass / (GAS_CONSTANT * t.max(1.0));
+                let (u, w) = (v[0] as f64, v[1] as f64);
+                let pull = rho * drag * u.hypot(w);
+                [pull * u, pull * w]
+            })
+            .collect();
+        let mut ice = before.clone();
+        drift.step(&mut ice, &stress, dt);
+        for ((r, &was), &now) in runs.iter_mut().zip(&before).zip(&ice) {
+            let Some(sea) = r.sea.as_mut() else {
+                continue;
+            };
+            if now == was {
+                continue;
+            }
+            if was > 0.0 {
+                sea.ice = now;
+                if now <= 0.0 {
+                    (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
+                }
+                continue;
+            }
+            // Ice brought to open water melts in its warmth over the freezing point.
+            let melts = ocean.capacity * (sea.t - ocean.freezing).max(0.0) / ocean.latent;
+            if now <= melts {
+                sea.t -= now * ocean.latent / ocean.capacity;
+                sea.surface = sea.t;
+            } else {
+                sea.ice = now - melts;
+                (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
+            }
+        }
     }
 
     /// One step of a sea's mixed layer and its ice (F244, F245), lit by `lit` W/m², its open
@@ -4518,6 +4600,13 @@ impl Cycle {
             falling,
             steps: moisture.map_or(0, |m| m.steps),
             currents: self.currents.clone(),
+            wind: wind
+                .east
+                .iter()
+                .zip(&wind.north)
+                .map(|(&u, &v)| [u, v])
+                .collect(),
+            wind_steps: wind.steps,
         })
     }
 
@@ -4714,9 +4803,42 @@ pub struct Coupling {
     pub steps: usize,
     /// The seas' currents the year's wind drives (F272).
     pub currents: Option<crate::currents::Currents>,
+    /// The wind at each place through the year's `wind_steps`, east and north, m/s, step
+    /// after step, place after place within each, that drifts the sea ice (F276).
+    pub wind: Vec<[f32; 2]>,
+    pub wind_steps: usize,
 }
 
 impl Coupling {
+    /// The year's wind on a layout of `n_lat` latitudes and `n_lon` longitudes (F276), as
+    /// `series_at` reads the snow: each place's own on the coupling's layout, its row's mean on
+    /// a layout by latitude alone, none elsewhere; step after step, place after place within
+    /// each.
+    fn wind_on(&self, (n_lat, n_lon): (usize, usize)) -> Vec<[f32; 2]> {
+        let (m_lat, m_lon) = self.layout;
+        let (m, steps) = (m_lat * m_lon, self.wind_steps);
+        if steps == 0 || self.wind.len() != m * steps {
+            return Vec::new();
+        }
+        if (m_lat, m_lon) == (n_lat, n_lon) {
+            return self.wind.clone();
+        }
+        if n_lon == 1 && m_lat == n_lat && m_lon > 0 {
+            return (0..steps * n_lat)
+                .map(|i| {
+                    let (k, row) = (i / n_lat, i % n_lat);
+                    let mut mean = [0.0f32; 2];
+                    for v in &self.wind[k * m + row * m_lon..k * m + (row + 1) * m_lon] {
+                        mean[0] += v[0] / m_lon as f32;
+                        mean[1] += v[1] / m_lon as f32;
+                    }
+                    mean
+                })
+                .collect();
+        }
+        Vec::new()
+    }
+
     /// The contact at row `i`, place `k`, of a layout of `n_lat` latitudes and `n_lon`
     /// longitudes: the place's own on the coupling's layout, its row's mean on a layout by
     /// latitude alone, the default elsewhere.
@@ -4820,6 +4942,9 @@ struct Layout {
     falling: Vec<Vec<f32>>,
     /// The seas' currents, where they ran on these places (F272).
     currents: Option<crate::currents::Currents>,
+    /// The year's wind at each place, east and north, m/s, step after step, place after place
+    /// within each, where it is known on these places (F276).
+    wind: Vec<[f32; 2]>,
     /// A resonant body's longitudes' Fourier modes: the cos and sin of each mode's phase at
     /// each longitude, mode after mode, and longitude after longitude.
     modes: [Vec<f64>; 4],
@@ -4909,6 +5034,7 @@ impl Layout {
             snowfall: Vec::new(),
             falling: Vec::new(),
             currents: None,
+            wind: Vec::new(),
             modes: place_modes(n_lon),
         }
     }

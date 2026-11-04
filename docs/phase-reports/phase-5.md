@@ -497,3 +497,15 @@ How it went:
 - **Mars.** Its northern autumn's largest frame 8,078 pixels where 46,577; its air and its frost through the year as before.
 - **Known limitations.** The window still estimates a melt's place in its step (F274) rather than reading the share the step now finds.
 
+## The fortieth milestone: the sea ice's drift
+
+- **F276.** The wind drives the sea ice: its free drift some 2 percent of the wind, turned by the spin; where the wind presses it together the ice resists with Hibler's strength, as a fluid that bears a pressure up to its strength and none drawn apart, so that it piles against the coasts the wind drives it on until its pile holds the wind, and opens freely; the ice the drift brings to open water melts there.
+
+How it went:
+
+- **The tests.** The free drift at 1.8 and 2.1 percent of a 3 and a 10 m/s wind, turned 39° and 12°; a metre's ice blown on a coast piling to 2.25 m where the strength's balance gives 2.0 to 2.25, its pressure rising at the wind's stress.
+- **The pressure, converged.** With 50 plain sweeps a step the pressure never settled, each step's carried from the last's, and one of the Earth-like's places by its south pole swung between two years' ice for all 40 of the lockstep's years, the climate stage near twice as long. Over-relaxed sweeps that settle end the swing: the year settles in 17, the stage some 17 percent longer than without the drift.
+- **The Earth-like.** Its ice drifts at 7 cm/s; its thickest ice thinner, its extent as before: its polar easterlies carry its edge's ice poleward, and the weak westerlies round its poles turn the ice out from them.
+- **The locked world.** Its ice drifts toward its star and melts in its eye: open over 0.17 of its dayside where 0.26, as Yang et al. 2019 found sea-ice drift shrinks a locked world's open sea; its ice piles to 19 m against the coasts that face its night.
+- **Known limitations.** The water at rest under the ice; no shear strength; the Earth-like's polar easterlies from 53° (Earth's from some 60° to 65°) and the weak westerlies round its poles, from the wind (F267), which turn its ice out from its poles.
+

@@ -2357,10 +2357,27 @@ pub const OCEAN_SOLVE_TOLERANCE: f64 = 1e-8;
 /// some half, the Atlantic's overturning's 1.2 PW at 26.5° north (Johns et al. 2011) of the
 /// oceans' some 2 at 25° (Trenberth and Caron 2001), the two parts not cleanly parted; the
 /// currents' heat carried in steps that move no more than OCEAN_CFL of a place's mixed layer,
-/// OCEAN_MOST_SUBSTEPS of them at most.
+/// OCEAN_MOST_SUBSTEPS of them at most; the sea ice's drift (F276) in steps that move no more
+/// than OCEAN_CFL of a place's ice.
 pub const OCEAN_UNDRIVEN_SHARE: f64 = 0.5;
 pub const OCEAN_CFL: f64 = 0.5;
 pub const OCEAN_MOST_SUBSTEPS: usize = 400;
+/// F276: the sea ice's drift. The still water's drag on the ice, its coefficient McPhee
+/// 1980's 5.5e-3 from the AIDJEX experiment of 1975 and 1976 (Hibler 1979's), without the
+/// boundary layer's turn of some 23°, which changes sign at the equator: the ice's own mass
+/// turns it 20 to 35° right of the Arctic's gentler winds, within the 20 to 40° Nansen saw.
+/// The ice's strength P* h e^{-C (1 - A)}, h its mean thickness over the sea and A its cover
+/// (Hibler 1979): P* 27.5 kN/m² (Hibler and Walsh 1982; Hibler 1979's 5, Holland et al.
+/// 1993's 10), C 20 (Hibler 1979). The pressure it bears found in sweeps from the last step's,
+/// over-relaxed by SEA_ICE_PRESSURE_RELAXATION (a numerical choice; projected over-relaxation
+/// converges for any factor between 0 and 2, Cryer 1971), SEA_ICE_PRESSURE_SWEEPS at most,
+/// until no place's moves by SEA_ICE_PRESSURE_TOLERANCE of the strongest ice's strength.
+pub const SEA_ICE_WATER_DRAG: f64 = 5.5e-3;
+pub const SEA_ICE_STRENGTH: f64 = 27_500.0;
+pub const SEA_ICE_STRENGTH_DECAY: f64 = 20.0;
+pub const SEA_ICE_PRESSURE_RELAXATION: f64 = 1.7;
+pub const SEA_ICE_PRESSURE_SWEEPS: usize = 200;
+pub const SEA_ICE_PRESSURE_TOLERANCE: f64 = 1e-4;
 /// F245: the share of the transport a sea's water carries across the sea's share of the
 /// boundary between two places, the air the rest: some third, the ocean's share of the
 /// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated

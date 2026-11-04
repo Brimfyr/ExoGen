@@ -12,6 +12,7 @@ pub mod constants;
 pub mod convection;
 pub mod crater;
 pub mod currents;
+pub mod drift;
 pub mod export;
 pub mod fields;
 pub mod flexure;
