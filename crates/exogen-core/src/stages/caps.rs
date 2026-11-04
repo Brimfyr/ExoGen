@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use crate::climate::{Ice, Traps, read_table};
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
-use crate::geom::angle_between;
+use crate::geom::{angle_between, normalize};
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, lon_lat_from_direction};
 use crate::params::ParamGraph;
@@ -246,8 +246,11 @@ impl Ord for Front {
 /// The thickness of the caps an ice covering `cells` stands in (F241), m: its surface the
 /// lowest of the plastic profiles from every point of the margin of the ground it covers,
 /// the margin's ground plus `rise` times the square root of the distance in from it, found
-/// outward from the margin as distances are; where no ground is left uncovered, `whole`
-/// m³ spread evenly.
+/// outward from the margin as distances are, each place carrying the point of the margin it
+/// rises from and its distance the true one from it (F280): summed along the grid's steps,
+/// the distance ran long across them, its domes diamonds, its surface ruled along the grid
+/// and stepped where one margin's point gave way to another's. Where no ground is left
+/// uncovered, `whole` m³ spread evenly.
 fn profile(
     grid: CubeSphere,
     ground: &Field<f32>,
@@ -271,10 +274,20 @@ fn profile(
         let h = ground.as_slice()[k] as f64;
         if h.is_finite() { h } else { 0.0 }
     };
-    // Each covered place's surface, the margin's ground it rises from and its distance in.
-    let mut best: Vec<(f64, f64, f64)> = vec![(f64::INFINITY, 0.0, 0.0); n];
+    // Each covered place's surface, the margin's ground it rises from and that margin's point.
+    let mut best: Vec<(f64, f64, [f64; 3])> = vec![(f64::INFINITY, 0.0, [0.0; 3]); n];
     let mut front = BinaryHeap::new();
     let steps = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+    let around = [
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1),
+        (1, 1),
+        (1, -1),
+        (-1, 1),
+        (-1, -1),
+    ];
     for &(k, _) in cells {
         let c = grid.cell(k);
         let here = grid.center(c);
@@ -285,10 +298,12 @@ fn profile(
                 continue;
             }
             // The margin lies half way to the uncovered ground beside it.
-            let d = 0.5 * angle_between(here, grid.center(nb)) * radius;
+            let there = grid.center(nb);
+            let point = normalize([here[0] + there[0], here[1] + there[1], here[2] + there[2]]);
+            let d = angle_between(here, point) * radius;
             let surface = level(j) + rise * d.sqrt();
             if surface < best[k].0 {
-                best[k] = (surface, level(j), d);
+                best[k] = (surface, level(j), point);
             }
         }
         if best[k].0.is_finite() {
@@ -299,19 +314,18 @@ fn profile(
         if surface > best[k].0 {
             continue;
         }
-        let (_, from, d) = best[k];
+        let (_, from, point) = best[k];
         let c = grid.cell(k);
-        let here = grid.center(c);
-        for (di, dj) in steps {
+        for (di, dj) in around {
             let nb = grid.neighbor(c, di, dj);
             let j = grid.index(nb);
             if !inside[j] {
                 continue;
             }
-            let dj = d + angle_between(here, grid.center(nb)) * radius;
-            let s = from + rise * dj.sqrt();
+            let d = angle_between(point, grid.center(nb)) * radius;
+            let s = from + rise * d.sqrt();
             if s < best[j].0 {
-                best[j] = (s, from, dj);
+                best[j] = (s, from, point);
                 front.push(Front(s, j));
             }
         }
@@ -974,28 +988,67 @@ mod tests {
         assert!(north > 0.9, "{north} {south}");
     }
 
-    /// F241: ice covering a disc on flat ground stands as Nye's plastic dome, its centre
-    /// `rise` times the square root of the disc's radius above the ground.
-    #[test]
-    fn a_disc_of_ice_stands_as_a_plastic_dome() {
-        let grid = CubeSphere::new(128);
+    /// A disc of ice 10 degrees across from the north pole on flat ground on a grid of
+    /// `cells` a face, its profile's thickness at each cell, m, `rise` 5 on a body 1,000 km
+    /// in radius; and the thickness Nye's plastic dome gives at a cell, the square root of its
+    /// centre's distance from the disc's edge.
+    fn disc(cells: u32) -> (CubeSphere, Vec<f32>, impl Fn(usize) -> f64) {
+        let grid = CubeSphere::new(cells);
         let ground = Field::new(grid);
-        let radius = 1.0e6;
-        let cells: Vec<(usize, f64)> = (0..grid.cell_count())
+        let (radius, rise, edge) = (1.0e6, 5.0, 10f64.to_radians());
+        let covered: Vec<(usize, f64)> = (0..grid.cell_count())
             .filter(|&k| {
                 let (_, lat) = lon_lat_from_direction(grid.center(grid.cell(k)));
-                lat > 80f64.to_radians()
+                lat > 90f64.to_radians() - edge
             })
             .map(|k| (k, 0.0))
             .collect();
-        let rise = 5.0;
-        let t = profile(grid, &ground, &cells, rise, radius, 0.0);
+        let t = profile(grid, &ground, &covered, rise, radius, 0.0);
+        let nye = move |k: usize| {
+            let r = angle_between([0.0, 0.0, 1.0], grid.center(grid.cell(k)));
+            rise * ((edge - r) * radius).sqrt()
+        };
+        (grid, t, nye)
+    }
+
+    /// F241: ice covering a disc on flat ground stands as Nye's plastic dome, its centre
+    /// `rise` times the square root of its distance from the disc's edge above the ground:
+    /// the cell by the pole, whose centre lies off it by half a cell's diagonal on a grid of
+    /// an even count of cells a face, the distance from its own centre (F280).
+    #[test]
+    fn a_disc_of_ice_stands_as_a_plastic_dome() {
+        let (grid, t, nye) = disc(128);
         let pole = grid.index(grid.locate([0.0, 0.0, 1.0]).0);
-        let expect = rise * (10f64.to_radians() * radius).sqrt();
-        let centre = t[pole] as f64;
+        let (centre, expect) = (t[pole] as f64, nye(pole));
         assert!(
             (centre / expect - 1.0).abs() < 0.03,
             "{centre} against {expect}"
         );
+    }
+
+    /// F280: the dome is round: half way in from its margin, the ice stands as thick along the
+    /// grid's rows as across them, its distance in the true one from the margin, not summed
+    /// along the grid's steps, which ran long across them by up to the square root of two.
+    #[test]
+    fn a_dome_of_ice_stands_round_across_the_grid() {
+        let (grid, t, nye) = disc(128);
+        let (s, c) = (5f64.to_radians().sin(), 5f64.to_radians().cos());
+        let h = s / 2f64.sqrt();
+        let along = [[s, 0.0, c], [0.0, s, c], [-s, 0.0, c], [0.0, -s, c]];
+        let across = [[h, h, c], [h, -h, c], [-h, h, c], [-h, -h, c]];
+        // Each place's thickness over what Nye's dome gives at its cell's centre.
+        let share = |ds: &[[f64; 3]]| {
+            ds.iter()
+                .map(|&d| {
+                    let k = grid.index(grid.locate(d).0);
+                    t[k] as f64 / nye(k)
+                })
+                .sum::<f64>()
+                / ds.len() as f64
+        };
+        let (rows, diagonals) = (share(&along), share(&across));
+        println!("half way in, of Nye's dome: {rows:.3} along the grid, {diagonals:.3} across it");
+        assert!((rows - 1.0).abs() < 0.05, "{rows}");
+        assert!((diagonals / rows - 1.0).abs() < 0.02, "{diagonals} {rows}");
     }
 }

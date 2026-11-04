@@ -546,4 +546,14 @@ How it went:
 - **What it left.** Ground whose rain falls short of its place's evaporation sheds none, F277's runoff clipped at none, and is never cut; beside rivers that cut their cells to grade it rises by their rebound, by up to 1.5 km on TRAPPIST-1e's peninsula.
 - **The lesson.** F278's check printed its most risen cell, 2,085 m, and did not follow it: a terrain's change is read at its extremes before a milestone closes.
 
+## The forty-fourth milestone: the caps' true distance
+
+- **F280.** The user saw stretched barcodes on TRAPPIST-1e's southern cap, fanning from its margin and rippling toward its pole. A cap's distance in from its margin was summed along the grid's four steps, running long across them: its domes diamonds, its surface ruled along the grid and stepped where one point of the margin gave way to another. Each place now carries the margin's point it rises from and the true distance from it (the other session's patch).
+
+How it went:
+
+- **The test.** Half way in from the margin of a disc of ice, the dome stood 7.7 percent thicker across the grid than along it; it now stands within 0.4 percent. Its centre, on a grid of an even count of cells a face, lies half a cell's diagonal off the pole, which the summed distance's excess had hidden; it is read at its own centre, not by a finer grid.
+- **The bodies.** The caps' surfaces stand smooth where they were ruled: Mars's northern caps in their basins, TRAPPIST-1e's southern cap, its surface falling from its crest to its pole by 75 to 110 m a degree, steepening toward its margin, where it fell in runs of 44 m broken by steps of 120 to 200 m, and the Earth-like's. The domes stand thinner on the ground they cover: where a liquid's ice covers all the ground it may, it holds less, TRAPPIST-1e's caps 248 m of its water's global layer where 280, at most 4,775 m thick where 5,234, the Earth-like's 3.3 m where 4.2; where the inventory sets them they cover more ground, Pluto's nitrogen 1.65 percent of the body where 1.53, at most 6,826 m thick where 7,390, its air 0.25 to 2.73 Pa through the year where 0.24 to 2.72; Mars's water 2.53 percent where 2.52, its air through the year unchanged, 506 to 702 Pa.
+- **What it left.** Creases where the margin's ground steps between its points; the blocky edges of the caps whose gathered places rank ahead of their traps, next (F281).
+
 
