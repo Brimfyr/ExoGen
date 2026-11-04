@@ -457,7 +457,7 @@ impl Seas {
 /// only where `own`, the rest given the mean of their neighbours that hold or were given one,
 /// spreading from the places that hold it until all hold one (F273): so that read smoothly
 /// about a coast a sea's field reads the sea's.
-fn spread_from(rows: &[f64], own: &[bool], (n_lat, n_lon): (usize, usize)) -> Vec<f64> {
+pub(crate) fn spread_from(rows: &[f64], own: &[bool], (n_lat, n_lon): (usize, usize)) -> Vec<f64> {
     let n = n_lat * n_lon;
     let mut out = rows.to_vec();
     let mut known = own.to_vec();
@@ -1011,9 +1011,10 @@ pub struct Cycle {
     /// The cycle's places under an atmosphere, as the wind and the moisture read them, and
     /// each place's frost, its sea's ice and its land's snow (F271), kg/m², and its land's
     /// surface and its sea's, K, at the end of each step, place after place, the tilts' mean
-    /// (F268).
+    /// (F268); and the snow its land's melt took through each step, kg/m², NaN where its year's
+    /// snow is unknown (F277).
     pub sites: Vec<crate::wind::Site>,
-    pub masses: [Vec<f32>; 3],
+    pub masses: [Vec<f32>; 4],
     pub surfaces: [Vec<f32>; 2],
     /// Each place's surface temperatures through the cycle, as quantiles, and the albedo its
     /// ground stood at (F256).
@@ -1522,8 +1523,9 @@ struct TiltYear {
     partials: Vec<f64>,
     air: Vec<f64>,
     /// Each place's frost, its sea's ice and its land's snow at the end of each step, kg/m²,
-    /// place after place (F246, F271), and its land's surface and its sea's, K (F268).
-    masses: [Vec<f32>; 3],
+    /// place after place (F246, F271), and its land's surface and its sea's, K (F268); and the
+    /// snow its land's melt took through each step, kg/m² (F277).
+    masses: [Vec<f32>; 4],
     surfaces: [Vec<f32>; 2],
     /// What the frost's own gas's caps gained over each place's area in a year, kg/m²
     /// (F258).
@@ -1541,8 +1543,9 @@ struct Lockstep {
     partials: Vec<f64>,
     air: Vec<f64>,
     /// Each place's frost, its sea's ice and its land's snow at the end of each step, kg/m²,
-    /// place after place (F246, F271), and its land's surface and its sea's, K (F268).
-    masses: [Vec<f32>; 3],
+    /// place after place (F246, F271), and its land's surface and its sea's, K (F268); and the
+    /// snow its land's melt took through each step, kg/m² (F277).
+    masses: [Vec<f32>; 4],
     surfaces: [Vec<f32>; 2],
     /// What the frost's own gas's caps gained over each place's area in the cycle, kg/m²
     /// (F258).
@@ -2136,7 +2139,7 @@ impl EnergyBalance {
                     growth: None,
                     partials: Vec::new(),
                     air: Vec::new(),
-                    masses: [Vec::new(), Vec::new(), Vec::new()],
+                    masses: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
                     surfaces: [Vec::new(), Vec::new()],
                     caps: Vec::new(),
                 })
@@ -2246,8 +2249,8 @@ impl EnergyBalance {
         let equinox = snapshot_anomaly(0.0, self.sky.perihelion_season, e) / TAU / orbits as f64;
         let phase = |t: f64| (t / steps as f64 - equinox).rem_euclid(1.0);
         // The tilts' mean masses, the land's frost's, the sea's ice's and the land's snow's,
-        // place after place, step after step.
-        let masses: [Vec<f32>; 3] = std::array::from_fn(|j| {
+        // and the snow its melt took, place after place, step after step.
+        let masses: [Vec<f32>; 4] = std::array::from_fn(|j| {
             (0..if steps > 0 { places * steps } else { 0 })
                 .map(|i| each.iter().map(|t| t.masses[j][i]).sum::<f32>() / each.len() as f32)
                 .collect()
@@ -3164,12 +3167,15 @@ impl EnergyBalance {
                         .zip(places.par_iter())
                         .zip(air.par_iter())
                         .for_each(|((r, p), &a)| {
+                            r.melted = 0.0;
                             if r.snow > 0.0 && r.t[0] > melt.0 {
                                 let gains = ((1.0 - r.albedo) * light(k, p), self.heat_flux);
                                 let shed = self.land_shed(a, p.contact)(melt.0);
                                 let rows = (&mut r.work, &mut r.trial);
                                 let (t, snow) = (&mut r.t, &mut r.snow);
+                                let before = *snow;
                                 column.thaw(t, &r.start, rows, dt, gains, shed, melt, snow);
+                                r.melted = before - r.snow;
                             }
                         });
                 }
@@ -4643,6 +4649,8 @@ impl Cycle {
             land: at(&self.surfaces[0], k),
             sea: at(&self.surfaces[1], k),
             ice: at(&self.masses[1], k),
+            snow: (self.masses[3].len() == n * steps)
+                .then(|| (at(&self.masses[2], k), at(&self.masses[3], k))),
             gust: wind.speed[k],
         };
         let layout = Layout::of_sites(&self.sites, (n_lat, n_lon));
@@ -5101,8 +5109,10 @@ struct Run {
     /// The steps recorded.
     records: Vec<Record>,
     /// The frost, the sea's ice and the land's snow at the end of each step of the cycle,
-    /// kg/m² (F246, F271).
-    masses: [Vec<f32>; 3],
+    /// kg/m² (F246, F271), and the snow the land's melt took through each step, kg/m², NaN
+    /// where its year's snow is unknown (F277); and the snow the step's melt took, kg/m².
+    masses: [Vec<f32>; 4],
+    melted: f64,
     /// The land's snow, kg/m² of its water, the snow that falls on it through each step of the
     /// cycle, kg/m²/s, none where its year's snow is unknown, and the column as the step began
     /// (F271).
@@ -5141,6 +5151,13 @@ impl Run {
         frost: Option<&Frost>,
         snowfall: &[f32],
     ) -> Self {
+        // The snow the land's melt takes through each step, NaN where its year's snow is not
+        // known (F277).
+        let melt_unknown = if snowfall.len() == steps {
+            0.0
+        } else {
+            f32::NAN
+        };
         let sea = ocean.filter(|_| place.sea > 0.0).map(|o| {
             let t = place.steady.max(o.freezing);
             Sea {
@@ -5184,7 +5201,13 @@ impl Run {
             iced: 0,
             ice_now: 0.0,
             records: Vec::new(),
-            masses: [vec![0.0; steps], vec![0.0; steps], vec![0.0; steps]],
+            masses: [
+                vec![0.0; steps],
+                vec![0.0; steps],
+                vec![0.0; steps],
+                vec![melt_unknown; steps],
+            ],
+            melted: 0.0,
             snow: 0.0,
             snowfall: if snowfall.len() == steps {
                 snowfall.to_vec()
@@ -5273,6 +5296,9 @@ impl Run {
         self.masses[0][k] = self.mass as f32;
         self.masses[1][k] = self.sea.map_or(0.0, |s| s.ice) as f32;
         self.masses[2][k] = self.snow as f32;
+        if !self.snowfall.is_empty() {
+            self.masses[3][k] = self.melted as f32;
+        }
         self.surface[k] = self.t[0] as f32;
         self.sea_surface[k] = self.sea.map_or(0.0, |s| s.surface) as f32;
         if every > 0 && k.is_multiple_of(every) {
@@ -7930,7 +7956,7 @@ mod tests {
     /// F271: the Earth-like's year at its own wind lays snow on its northern land through its
     /// winter and melts it through its summer: Earth's northern snow covers some 47 million
     /// km² in January, nearly half of its land, and some 2 million in August (Robinson et al.
-    /// 1993).
+    /// 1993). F277: its snow lying until it melts, no place's land sheds more than falls on it.
     #[test]
     fn the_earth_like_s_snow_comes_and_goes() {
         let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
@@ -7969,6 +7995,17 @@ mod tests {
         );
         assert!(most > 0.2 && least < 0.6 * most, "{least} {most}");
         assert!((mean - 288.0).abs() < 5.0, "{mean}");
+        // F277: under the year's snowpack the land's bucket takes its rain and its snow's melt,
+        // its snow lying until it melts: no place's land sheds more than falls on it.
+        let water = air
+            .and_then(|a| year.moisture(&a, &heights))
+            .expect("the year's water");
+        let most_shed = (0..n)
+            .filter(|&p| water.land[p] > 0.0 && water.precipitation[p] > 0.0)
+            .map(|p| water.runoff[p] / water.precipitation[p])
+            .fold(0.0f64, f64::max);
+        println!("the land's runoff at most {most_shed:.3} of its precipitation");
+        assert!(most_shed <= 1.02, "{most_shed}");
     }
 
     /// F268: the locked ocean world's water falls under its star, where its air converges,

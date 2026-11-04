@@ -150,8 +150,10 @@ impl Air {
 pub type Solve<'s> = dyn Fn(&[Vec<(usize, f64)>], &[f64], &[f64], &mut [f64]) + 's;
 
 /// The weather the moisture reads at a step (F268): the air over each place at the datum, K,
-/// the wind, m/s, the land's surface and the sea's at the datum, K, the sea's ice, kg/m², and
-/// the gusts about the wind.
+/// the wind, m/s, the land's surface and the sea's at the datum, K, the sea's ice, kg/m², the
+/// year's snowpack on the land, its snow at the step's end and what its melt took through the
+/// step, kg/m² of the land, NaN where its year's snow is unknown and none without the year's
+/// snowpack (F277), and the gusts about the wind.
 pub struct Weather<'a> {
     pub air: &'a [f64],
     pub east: &'a [f32],
@@ -159,6 +161,7 @@ pub struct Weather<'a> {
     pub land: Vec<f64>,
     pub sea: Vec<f64>,
     pub ice: Vec<f64>,
+    pub snow: Option<(Vec<f64>, Vec<f64>)>,
     /// The body's mean wind at the step, m/s, the weather's gusts about each place's mean
     /// wind.
     pub gust: f64,
@@ -281,6 +284,33 @@ impl Moisture {
         });
         rain.map_in_place(|v| (v as f64 * year) as f32);
         [rain, dry]
+    }
+
+    /// The land's water over the relief (F277), kg/m²/s at each cell of the year's precipitation
+    /// `rain` there, kg/m² a year (`fields`): what its land sheds, the rain less its places'
+    /// land's evaporation read between them, none where that takes all of it, the evaporation
+    /// spread from the places with land over the sea's so that a coast reads its land's; and
+    /// what an open water's surface gains there, the rain less the potential evaporation read
+    /// between the places.
+    pub fn land_water(&self, rain: &Field<f32>) -> [Field<f32>; 2] {
+        let year = SECONDS_PER_DAY * 365.25;
+        let n_lon = self.layout.1;
+        let dries: Vec<f64> = (0..self.precipitation.len())
+            .map(|k| self.land_evaporation(k))
+            .collect();
+        let own: Vec<bool> = self.land.iter().map(|&l| l > 0.0).collect();
+        let dries = crate::climate::spread_from(&dries, &own, self.layout);
+        let read = |table: &[f64], d: [f64; 3]| {
+            let (lon, lat) = lon_lat_from_direction(d);
+            crate::insolation::smooth_grid(table, n_lon, lat, lon).max(0.0)
+        };
+        let shed = Field::from_fn(rain.grid(), |c, d| {
+            (rain.get(c) as f64 / year - read(&dries, d)).max(0.0) as f32
+        });
+        let gain = Field::from_fn(rain.grid(), |c, d| {
+            (rain.get(c) as f64 / year - read(&self.potential, d)) as f32
+        });
+        [shed, gain]
     }
 
     /// The year's precipitation over the relief `above`, the ground's height over the sea on a
@@ -588,6 +618,7 @@ pub fn rain<'a>(
     let (mut diag, mut rhs) = (vec![0.0; n], vec![0.0; n]);
     let (mut gives, mut takes) = (vec![0.0; n], vec![0.0; n]);
     let (mut exchange, mut beta) = (vec![0.0; n], vec![0.0; n]);
+    let mut store = vec![0.0; n];
     let (mut humid, mut sea_q, mut soil_q) = (vec![0.0; n], vec![0.0; n], vec![0.0; n]);
     let (mut east, mut north) = (vec![0.0; n], vec![0.0; n]);
     for round in 0..years {
@@ -723,11 +754,33 @@ pub fn rain<'a>(
                 w[p] = x;
                 let r = x / saturated[p].max(1e-30);
                 // The land's bucket: the rain on it, less what it gives the air, over its
-                // land; what overflows runs off.
+                // land; what overflows runs off. Where the year's snowpack is known its snow
+                // lies on the land until it melts (F277), in the step by the share of what lay on
+                // the snowpack that its melt took, by the air's warmth where none lay, and no
+                // deeper than SNOW_MOST_MASS: the bucket takes the rain and the melt.
                 let mut ran = 0.0;
                 if land[p] > 0.0 {
                     let dried = exchange[p] * beta[p] * (soil_q[p] - r * humid[p]);
-                    bucket[p] = (bucket[p] + dt * (fell - dried)).max(0.0);
+                    let pack = now
+                        .snow
+                        .as_ref()
+                        .map(|(lying, melted)| (lying[p], melted[p]));
+                    let wet = match pack.filter(|&(_, melted)| melted.is_finite()) {
+                        Some((lying, melted)) => {
+                            let cold = air.snow_share(ground[p]);
+                            let share = if lying + melted > 0.0 {
+                                melted / (lying + melted)
+                            } else {
+                                1.0 - cold
+                            };
+                            store[p] = (store[p] + dt * fell * cold).min(SNOW_MOST_MASS);
+                            let melts = store[p] * share.clamp(0.0, 1.0);
+                            store[p] -= melts;
+                            fell * (1.0 - cold) + melts / dt
+                        }
+                        None => fell,
+                    };
+                    bucket[p] = (bucket[p] + dt * (wet - dried)).max(0.0);
                     if bucket[p] > capacity {
                         ran = (bucket[p] - capacity) / dt;
                         bucket[p] = capacity;

@@ -88,6 +88,22 @@ pub struct WaterInfo {
     pub hyper_arid_land_fraction: f64,
 }
 
+/// The rivers and the lakes of the year's runoff (F277): the runoff of the land about the lakes,
+/// what the lakes' surfaces gain over what they lose to the air, and what reaches the sea,
+/// m³/s; the share of the land whose water ends in a lake that does not spill to the sea
+/// and the share the lakes cover; and the most any one river brings the sea, m³/s, and where,
+/// deg.
+#[derive(Serialize)]
+pub struct RiversInfo {
+    pub runoff_m3_s: f64,
+    pub lakes_gain_m3_s: f64,
+    pub to_sea_m3_s: f64,
+    pub closed_land_fraction: f64,
+    pub lake_land_fraction: f64,
+    pub largest_river_m3_s: f64,
+    pub largest_mouth_lat_lon_deg: [f64; 2],
+}
+
 /// The year's surface wind (F267): its mean speed over the body, m/s, the fastest of its
 /// places' year-mean speeds, m/s, the work the atmosphere's heat engine does, W/m² over the
 /// body, the thermal equator's southernmost and northernmost through the year, deg, and where
@@ -369,6 +385,8 @@ pub struct Sidecar {
     pub wind: Option<WindInfo>,
     /// The year's water (F268), none without a working liquid under an atmosphere.
     pub water: Option<WaterInfo>,
+    /// The rivers and the lakes (F277), where the body has water.
+    pub rivers: Option<RiversInfo>,
     pub stage_outputs: BTreeMap<String, f64>,
     pub parameters: BTreeMap<String, ParameterInfo>,
     pub warnings: Vec<String>,
@@ -1331,6 +1349,113 @@ pub fn export(
             },
         );
     }
+    // The rivers (F277): the water each cell's river carries down from it, m³/s, the most of
+    // the cells in each pixel so that a river a cell wide keeps its course; and the lakes'
+    // depth, m, nearest-cell; both zero without the year's water.
+    let (rivers_map, lakes_map) = match &out.rivers {
+        Some(r) => (
+            to_equirectangular_most(&grid, r.discharge.as_slice(), width, height_px),
+            to_equirectangular_nearest(&grid, r.lakes.as_slice(), width, height_px),
+        ),
+        None => (calm(), calm()),
+    };
+    let widest = rivers_map.iter().fold(0.0f32, |a, &v| a.max(v));
+    let deepest = lakes_map.iter().fold(0.0f32, |a, &v| a.max(v));
+    let rivers_unit = "m³/s of the working liquid each cell's river carries down from it, the most of the cells in the pixel; zero at sea, in lakes and without the year's water";
+    let lakes_unit = "m of the lakes' water over the ground, nearest-cell; zero where none stands and without the year's water";
+    write_exr_f32(
+        &settings.dir.join("rivers.exr"),
+        width,
+        height_px,
+        "rivers",
+        &rivers_map,
+    )?;
+    maps.insert(
+        "rivers".into(),
+        MapInfo {
+            file: "rivers.exr".into(),
+            encoding: "float32 EXR, channel rivers".into(),
+            units: rivers_unit.into(),
+            min: 0.0,
+            max: widest as f64,
+            filter: "nearest".into(),
+            ..Default::default()
+        },
+    );
+    let logged: Vec<f32> = rivers_map.iter().map(|&q| (1.0 + q).log10()).collect();
+    let top = (1.0 + widest).log10().max(1e-6);
+    write_png16(
+        &settings.dir.join("rivers.png"),
+        width,
+        height_px,
+        &logged,
+        0.0,
+        top,
+    )?;
+    maps.insert(
+        "rivers_png".into(),
+        MapInfo {
+            file: "rivers.png".into(),
+            encoding: "16-bit grey PNG, log10(1 + discharge) linear from min to max".into(),
+            units: rivers_unit.into(),
+            min: 0.0,
+            max: top as f64,
+            filter: "nearest".into(),
+            ..Default::default()
+        },
+    );
+    write_exr_f32(
+        &settings.dir.join("lakes.exr"),
+        width,
+        height_px,
+        "lakes",
+        &lakes_map,
+    )?;
+    maps.insert(
+        "lakes".into(),
+        MapInfo {
+            file: "lakes.exr".into(),
+            encoding: "float32 EXR, channel lakes".into(),
+            units: lakes_unit.into(),
+            min: 0.0,
+            max: deepest as f64,
+            filter: "nearest".into(),
+            ..Default::default()
+        },
+    );
+    write_png16(
+        &settings.dir.join("lakes.png"),
+        width,
+        height_px,
+        &lakes_map,
+        0.0,
+        deepest.max(1e-6),
+    )?;
+    maps.insert(
+        "lakes_png".into(),
+        MapInfo {
+            file: "lakes.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: lakes_unit.into(),
+            min: 0.0,
+            max: deepest as f64,
+            filter: "nearest".into(),
+            ..Default::default()
+        },
+    );
+    let rivers = out.rivers.as_ref().map(|r| {
+        let s = &r.summary;
+        let (lon, lat) = crate::grid::lon_lat_from_direction(s.mouth);
+        RiversInfo {
+            runoff_m3_s: s.runoff,
+            lakes_gain_m3_s: s.lakes_gain,
+            to_sea_m3_s: s.to_sea,
+            closed_land_fraction: s.closed,
+            lake_land_fraction: s.lakes,
+            largest_river_m3_s: s.largest,
+            largest_mouth_lat_lon_deg: [lat.to_degrees(), lon.to_degrees()],
+        }
+    });
     let water = out.water_summary.map(|w| WaterInfo {
         vapour: out.water_vapour.unwrap_or("").to_string(),
         precipitation_kg_m2_yr: w.precipitation,
@@ -1586,6 +1711,7 @@ pub fn export(
         cryosphere,
         wind,
         water,
+        rivers,
         stage_outputs,
         parameters,
         warnings: graph
@@ -1964,6 +2090,32 @@ fn write_png_rgb16(
     .expect("buffer size");
     retry(|| img.save(path))?;
     Ok(())
+}
+
+/// A field on the cube to equirectangular pixels (F277), each the most of the cells that fall in
+/// it, or where none does the cell its centre falls in: so that a line a cell wide stays
+/// unbroken where the pixels are the coarser.
+fn to_equirectangular_most(
+    grid: &crate::grid::CubeSphere,
+    values: &[f32],
+    width: usize,
+    height: usize,
+) -> Vec<f32> {
+    let mut out = to_equirectangular_nearest(grid, values, width, height);
+    let mut most = vec![f32::NEG_INFINITY; width * height];
+    for (k, &v) in values.iter().enumerate() {
+        let (lon, lat) = crate::grid::lon_lat_from_direction(grid.center(grid.cell(k)));
+        let x = ((lon / (2.0 * std::f64::consts::PI) + 0.5) * width as f64).floor() as usize;
+        let y = ((0.5 - lat / std::f64::consts::PI) * height as f64).floor() as usize;
+        let p = y.min(height - 1) * width + x.min(width - 1);
+        most[p] = most[p].max(v);
+    }
+    for (o, m) in out.iter_mut().zip(most) {
+        if m.is_finite() {
+            *o = m;
+        }
+    }
+    out
 }
 
 /// A field on the cube to equirectangular pixels, each the value of the cell its centre

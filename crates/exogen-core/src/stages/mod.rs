@@ -249,6 +249,9 @@ pub struct FinishOutput {
     pub water: Option<[Field<f32>; 2]>,
     pub water_vapour: Option<&'static str>,
     pub water_summary: Option<crate::moisture::Summary>,
+    /// The rivers and the lakes of the year's runoff over the terrain (F277), where it has
+    /// water.
+    pub rivers: Option<crate::rivers::Rivers>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -443,7 +446,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 205;
+pub const FINISH_VERSION: u64 = 206;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3200,6 +3203,39 @@ pub fn finish(
     let water_vapour = water_air
         .filter(|_| moisture.is_some())
         .map(|a| a.vapour.name);
+    // The rivers and the lakes of the year's runoff over the terrain (F277): its land's water
+    // over the relief, none shed under the caps' ice.
+    let rivers = moisture
+        .as_ref()
+        .zip(water.as_ref())
+        .zip(water_air.as_ref())
+        .map(|((m, w), air)| {
+            let [mut shed, gain] = m.land_water(&w[0]);
+            for (s, &i) in shed.as_mut_slice().iter_mut().zip(layers.ice.as_slice()) {
+                if i > 0.0 {
+                    *s = 0.0;
+                }
+            }
+            let sea: Vec<bool> = layers.liquid.as_slice().iter().map(|&l| l > 0.0).collect();
+            let water = (shed.as_slice(), gain.as_slice());
+            let liquid = (body_radius, air.vapour.liquid_density);
+            crate::rivers::route(grid, height.as_slice(), &sea, water, liquid)
+        });
+    if let (Some(r), true) = (&rivers, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+        let s = &r.summary;
+        let (lon, lat) = crate::grid::lon_lat_from_direction(s.mouth);
+        eprintln!(
+            "rivers: the land sheds {:.0} m³/s, the lakes' surfaces {:+.0}, {:.0} reaches the sea; {:.1}% of the land closed, {:.2}% under lakes; the largest river {:.0} m³/s at {:.1}°, {:.1}°",
+            s.runoff,
+            s.lakes_gain,
+            s.to_sea,
+            100.0 * s.closed,
+            100.0 * s.lakes,
+            s.largest,
+            lat.to_degrees(),
+            lon.to_degrees()
+        );
+    }
     let water_summary = moisture.as_ref().map(crate::moisture::Moisture::summary);
     if let (Some(w), true) = (&water_summary, std::env::var_os("EXOGEN_DEBUG").is_some()) {
         eprintln!(
@@ -3466,6 +3502,7 @@ pub fn finish(
         water,
         water_vapour,
         water_summary,
+        rivers,
         rays,
         sea_level,
         ocean_fraction,

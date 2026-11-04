@@ -509,3 +509,15 @@ How it went:
 - **The locked world.** Its ice drifts toward its star and melts in its eye: open over 0.17 of its dayside where 0.26, as Yang et al. 2019 found sea-ice drift shrinks a locked world's open sea; its ice piles to 19 m against the coasts that face its night.
 - **Known limitations.** The water at rest under the ice; no shear strength; the Earth-like's polar easterlies from 53° (Earth's from some 60° to 65°) and the weak westerlies round its poles, from the wind (F267), which turn its ice out from its poles.
 
+## The forty-first milestone: the rivers and the lakes
+
+- **F277.** The land's water runs down the terrain: the basins found by the priority flood and merged at their passes, a lake in each where its water balances what its surface loses to the air, filled and spilling at its pass, the rivers carrying it to the lakes and the sea. The moisture's bucket takes the snow as it melts, so that snow lying all year sheds nothing.
+
+How it went:
+
+- **The tests.** An island sheds all its runoff to the sea; a bowl's lake stands where its balance puts it, dry and wet; a full lake spills into its neighbour.
+- **The snow's water, balanced.** The bucket first took the year's snowpack's melt beside its own rain, the snowpack fed by the first year's snowfall: TRAPPIST-1e's land shed 982 kg/m² a year of 518. Its snow kept in a store of its own, melting by the snowpack's share, the balance closes: 268 of 464.
+- **The Earth-like.** Its land sheds 1.04 million m³/s, its largest river 128,000; but a lake stands in each small pit of its terrain, 19 percent of its land under lakes, as no river has shaped it.
+- **The locked world.** Its rivers run under its star alone.
+- **Known limitations.** The fluvial erosion that would shape the terrain (next); the seas' connection; the lakes not yet in the climate or the colour.
+
