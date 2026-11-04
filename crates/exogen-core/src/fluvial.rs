@@ -10,13 +10,15 @@
 //! runs to. A full lake's spill cuts the pass it spills over. What the rivers cut lies in the
 //! basins their water ends in, filling them from their deepest ground by the flood's basins as
 //! the water's lakes settle (Fill-Spill-Merge by volume), or is lost to the sea. The ground
-//! rebounds as isostasy gives (Gilchrist and Summerfield 1990): the lithosphere lifts by the
-//! crust's density over the mantle's of the ground the rivers took, averaged over its flexural
-//! wavelength over the land, so that a range eroding lowers by the rest and its rivers shape the
-//! land beneath it. Pits fill and their rims are cut until the land drains, the faster the
-//! wetter its climate, over the span of today's climate the finish erodes by (until the loop
-//! carries the erosion through the body's history, with its tectonics' uplift: the user,
-//! 2026-11-04).
+//! rebounds as the lithosphere's flexure gives (Gilchrist and Summerfield 1990): it lifts by
+//! the crust's density over the mantle's of the ground the rivers took, averaged over its
+//! flexural wavelength, the sea's floor losing none, so that a range wider than the wavelength
+//! rebounds by the crust's share and lowers by the rest, while the plate holds up a loss
+//! narrower than it: a coast's outlets lift the land beside them by the share of their loss the
+//! wavelength spreads to it, the rest spread under the sea, whose floor the finish leaves where
+//! it lies. Pits fill and their rims are cut until the land drains, the faster the wetter its
+//! climate, over the span of today's climate the finish erodes by (until the loop carries the
+//! erosion through the body's history, with its tectonics' uplift: the user, 2026-11-04).
 
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
@@ -58,25 +60,18 @@ pub fn erode(
     let reference = FLUVIAL_REFERENCE_RUNOFF * density / year;
     let body = (radius, reference, sea_level);
     let cell = grid.delta() * radius;
-    // A field's mean over the flexural wavelength over the land.
+    // The plate's flexure under a load: the load's mean over the flexural wavelength, the sea's
+    // floor bearing none of what the land lost. Taken over the land alone, a coast's outlets,
+    // cut to the sea's level in a step, lifted the dry land beside them by their whole loss
+    // each step, by kilometres through the span.
     let held = |values: &[f64]| -> Vec<f64> {
-        let field = |v: &dyn Fn(usize) -> f64| {
-            let mut f = Field::new(grid);
-            for (k, x) in f.as_mut_slice().iter_mut().enumerate() {
-                *x = v(k) as f32;
-            }
-            crate::stages::relaxation::low_pass(&f, cell, hold)
-        };
-        let spread = field(&|k| values[k]);
-        let share = field(&|k| if sea[k] { 0.0 } else { 1.0 });
-        (0..n)
-            .map(|k| {
-                if sea[k] || share[k] <= 0.0 {
-                    0.0
-                } else {
-                    spread[k] as f64 / share[k] as f64
-                }
-            })
+        let mut f = Field::new(grid);
+        for (x, &v) in f.as_mut_slice().iter_mut().zip(values) {
+            *x = v as f32;
+        }
+        crate::stages::relaxation::low_pass(&f, cell, hold)
+            .into_iter()
+            .map(f64::from)
             .collect()
     };
     let mut out = Erosion::default();
@@ -367,55 +362,66 @@ mod tests {
     }
 
     /// F278: on a wet island whose slope is pitted, the rivers fill the pits and cut their
-    /// rims until the land drains: the lakes the pits held are gone, the island lowering by what
-    /// did not rebound of what it lost; what they cut is laid or brought to the sea.
+    /// rims until the land drains: the lakes the pits held are gone; what they cut is laid or
+    /// brought to the sea. The island lowers by its net loss less its rebound: by no less than
+    /// the crust's share leaves, near that under a plate whose flexural wavelength is short
+    /// beside the island, and the more under one whose wavelength spans it, the plate holding up
+    /// a loss narrower than its wavelength.
     #[test]
     fn wet_land_drains_its_pits() {
         let grid = CubeSphere::new(48);
         let top = [0.0, 0.0, 1.0];
         let noise = crate::noise::GradientNoise::new(7);
-        let (mut layers, sea) = ground(grid, |d| {
+        let (start, sea) = ground(grid, |d| {
             let r = dot(d, top).clamp(-1.0, 1.0).acos();
             1_000.0 - 2_000.0 * r + 200.0 * noise.fbm(d, 60.0, 3, 2.0, 0.5)
         });
         let n = grid.cell_count();
         let radius = 2e6;
         let (runoff, gain) = (vec![2e-5f32; n], vec![-1e-6f32; n]);
-        let before = crate::rivers::route(
-            grid,
-            layers.height().as_slice(),
-            &sea,
-            (&runoff, &gain),
-            (radius, 1_000.0),
-        );
+        let route = |l: &LayerSet| {
+            crate::rivers::route(
+                grid,
+                l.height().as_slice(),
+                &sea,
+                (&runoff, &gain),
+                (radius, 1_000.0),
+            )
+        };
+        let area = |k: usize| grid.cell_area(grid.cell(k)) * radius * radius;
+        let land: f64 = (0..n).filter(|&k| !sea[k]).map(area).sum();
         let land_mean = |l: &LayerSet| {
             let h = l.height();
-            let (s, c) = (0..n).filter(|&k| !sea[k]).fold((0.0, 0.0), |(s, c), k| {
-                (s + h.as_slice()[k] as f64, c + 1.0)
-            });
-            s / c
+            (0..n)
+                .filter(|&k| !sea[k])
+                .map(|k| h.as_slice()[k] as f64 * area(k))
+                .sum::<f64>()
+                / land
         };
-        let mean = land_mean(&layers);
         let rebound = DENSITY_CRUST_ROCK / DENSITY_ROCK;
-        let moved = erode(
-            grid,
-            &mut layers,
-            &sea,
-            (&runoff, &gain),
-            (radius, 1_000.0, 0.0),
-            (2e6, rebound),
-        );
-        let after = crate::rivers::route(
-            grid,
-            layers.height().as_slice(),
-            &sea,
-            (&runoff, &gain),
-            (radius, 1_000.0),
-        );
+        // The island's fall over its net loss, under a plate of flexural wavelength `hold`, m.
+        let fall = |hold: f64| {
+            let mut layers = start.clone();
+            let moved = erode(
+                grid,
+                &mut layers,
+                &sea,
+                (&runoff, &gain),
+                (radius, 1_000.0, 0.0),
+                (hold, rebound),
+            );
+            let fell = land_mean(&start) - land_mean(&layers);
+            let share = fell / ((moved.cut - moved.laid) / land);
+            (layers, moved, share)
+        };
+        let (layers, moved, narrow) = fall(2e5);
+        let (_, _, wide) = fall(2e6);
+        let (before, after) = (route(&start), route(&layers));
         println!(
-            "lakes {:.4} of the land before, {:.4} after; the land's mean {mean:.0} m, {:.0} after; cut {:.3e} m³, laid {:.3e}, to the sea {:.3e}; begun at {:.2} mm a year",
+            "lakes {:.4} of the land before, {:.4} after; the land's mean {:.0} m, {:.0} after; cut {:.3e} m³, laid {:.3e}, to the sea {:.3e}; begun at {:.2} mm a year",
             before.summary.lakes,
             after.summary.lakes,
+            land_mean(&start),
             land_mean(&layers),
             moved.cut,
             moved.laid,
@@ -428,18 +434,15 @@ mod tests {
             "{:?}",
             after.summary
         );
-        // The land lowers by what did not rebound of its net loss.
-        let land_area: f64 = (0..n)
-            .filter(|&k| !sea[k])
-            .map(|k| grid.cell_area(grid.cell(k)) * radius * radius)
-            .sum();
-        let expected = (1.0 - rebound) * (moved.cut - moved.laid) / land_area;
-        let fell = mean - land_mean(&layers);
-        println!("the land fell {fell:.0} m where what did not rebound gives {expected:.0}");
-        assert!(
-            fell > 0.5 * expected && fell < 1.5 * expected,
-            "{fell} {expected}"
+        println!(
+            "the island fell by {narrow:.3} of its net loss under a plate whose wavelength is short beside it, {wide:.3} under one that spans it; the crust's share leaves {:.3}",
+            1.0 - rebound
         );
+        assert!(
+            narrow > 0.99 * (1.0 - rebound) && narrow < 1.0 - 0.5 * rebound,
+            "{narrow}"
+        );
+        assert!(wide > narrow && wide < 1.0, "{narrow} {wide}");
         assert!(
             ((moved.laid + moved.to_sea - moved.cut) / moved.cut).abs() < 0.05,
             "{moved:?}"

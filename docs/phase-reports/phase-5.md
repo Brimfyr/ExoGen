@@ -534,3 +534,16 @@ How it went:
 - **The locked world.** Its eye's rivers end in terminal lakes in its peninsula's hyper-arid south.
 - **Known limitations.** The erosion not yet through the history in the loop; no deltas or fans; one erodibility for every ground; Titan's methane rivers too wet.
 
+## The forty-third milestone: the rebound under the sea
+
+- **F279.** Asked for the height, shaded and albedo maps after F278, the height map of TRAPPIST-1e showed a pale rim along its peninsula's west coast: ground that had stood at the sea's level raised by up to 2.6 km, the ground inland of it cut by 300 to 700 m. F278's rebound had averaged the ground's loss over the flexural wavelength over the land alone, so that a coast's dry ground rose by nearly the crust's share of its outlets' whole loss each step. It now averages the loss over the plate, the sea's floor losing none.
+
+How it went:
+
+- **The search.** The finish's height is the erosion's. A run printing each step's most risen cell found it neither cut nor laid, lifted 200 to 350 m in each of the ten steps; the sediment's deepest fills were closed basins filling toward their spills, their volume kept.
+- **The flexure.** A wet island falls by near the crust's share of its loss under a plate whose wavelength is short beside it, by more under one whose wavelength spans it.
+- **The bodies.** The Earth-like's land rising more than 500 m from 0.46 percent of it to 0.21; TRAPPIST-1e's coast's ridge from up to 2.6 km to 1.1.
+- **What it left.** Ground whose rain falls short of its place's evaporation sheds none, F277's runoff clipped at none, and is never cut; beside rivers that cut their cells to grade it rises by their rebound, by up to 1.5 km on TRAPPIST-1e's peninsula.
+- **The lesson.** F278's check printed its most risen cell, 2,085 m, and did not follow it: a terrain's change is read at its extremes before a milestone closes.
+
+
