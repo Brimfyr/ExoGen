@@ -578,4 +578,13 @@ How it went:
 - **The test.** A margin across the loop's grid at a shallow angle: its units 0.48 of a loop's cell off it taken from the nearest, 0.11 drawn again.
 - **The bodies.** TRAPPIST-1e's coastal strip gone but for single cells; the Earth-like's coasts as they were; heights, rivers and lakes untouched.
 
+## The forty-seventh milestone: the snapshot's phase
+
+- **F284.** The other session found the sidecar's snapshot phase at its season's own, 0, while its maps are the record of the step that holds the season, taken at the step's end: a port reading the cryosphere's windows there disagreed with `frost.png` on 4.9 percent of Mars's pixels where at the step's end on 3.2. The sidecar now gives the step's end, the windows' own convention.
+
+How it went:
+
+- **The test.** The snapshot's phase is its step's end, after its season's by less than a step, on a cycle of one orbit and of three.
+- **The stash.** Checking the formatting by setting the tree aside, on a tree with nothing to set aside, brought back the oldest experiment kept aside instead (milestone 39's cracks); the user restored the two files it touched. The formatting is checked against the file's own count of differences now.
+
 

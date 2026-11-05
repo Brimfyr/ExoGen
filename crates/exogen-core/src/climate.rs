@@ -2335,7 +2335,7 @@ impl EnergyBalance {
                 sea,
                 snow,
                 layout: (n_lat, n_lon),
-                snapshot: (self.snapshot / TAU / orbits as f64 - equinox).rem_euclid(1.0),
+                snapshot: snapshot_phase(self.snapshot, steps, orbits as usize, equinox),
                 guide: guide.clone(),
                 sea_margin,
                 land_margin: Margin::new((n_lat, n_lon), land_held, &land_shares, &guide),
@@ -4044,6 +4044,15 @@ fn snapshot_anomaly(season: f64, perihelion: f64, e: f64) -> f64 {
 /// The step of an orbit sampled in `steps` that holds a mean anomaly.
 fn snapshot_step(anomaly: f64, steps: usize) -> usize {
     ((anomaly / TAU * steps as f64) as usize).min(steps.saturating_sub(1))
+}
+
+/// The phase of a cycle of `steps` over `orbits` its snapshot is taken at (F284), counted
+/// from its equinox, `equinox` of the cycle after perihelion: the end of the step of its first
+/// orbit that holds its season's mean `anomaly`, as each step's record is its end and the
+/// windows' phases are their steps' ends; not the season's own, up to a step before it.
+fn snapshot_phase(anomaly: f64, steps: usize, orbits: usize, equinox: f64) -> f64 {
+    let k = snapshot_step(anomaly, steps / orbits.max(1));
+    ((k as f64 + 1.0) / steps as f64 - equinox).rem_euclid(1.0)
 }
 
 /// Moves each layer of the ground below the surface so that its mean over the last cycle
@@ -8087,6 +8096,27 @@ mod tests {
             let t = moon.temperature.get(c) as f64;
             let expect = ((a + eb.heat_flux) / SIGMA_SB).powf(0.25);
             assert!((t - expect).abs() < 0.05, "{t} against {expect}");
+        }
+    }
+
+    /// F284: the snapshot's phase is the moment its maps were taken: the end of the step that
+    /// holds its season, as the windows' phases are their steps' ends, after its season's
+    /// own phase by less than a step, on a cycle of one orbit or of several.
+    #[test]
+    fn the_snapshot_s_phase_is_its_step_s_end() {
+        let steps = 360;
+        for (season, orbits, equinox) in [(0.0, 1, 0.0), (0.37, 1, 0.12), (0.5, 3, 0.05)] {
+            let anomaly = TAU * season;
+            let phase = snapshot_phase(anomaly, steps, orbits, equinox);
+            let k = snapshot_step(anomaly, steps / orbits);
+            let end = ((k as f64 + 1.0) / steps as f64 - equinox).rem_euclid(1.0);
+            assert!((phase - end).abs() < 1e-12, "{phase} {end}");
+            let asked = (anomaly / TAU / orbits as f64 - equinox).rem_euclid(1.0);
+            let after = (phase - asked).rem_euclid(1.0);
+            assert!(
+                after > 0.0 && after <= 1.0 / steps as f64 + 1e-12,
+                "{after}"
+            );
         }
     }
 }

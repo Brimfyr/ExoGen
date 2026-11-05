@@ -20,7 +20,7 @@ The ices that come and go through the year (F246) were exported as one RGBA map,
    - `cryosphere_ice`, an 8-bit grey PNG: which ice lies, its index among the sidecar's `cryosphere.ices` from 1, 0 none. Read at the nearest cell; never filtered.
 2. The sidecar's `cryosphere` block holds:
    - the phase origin and how to read the maps (`evaluation`);
-   - the snapshot's phase and `thickest_m`;
+   - the snapshot's phase, the moment its maps (`frost`, `sea_ice`) were taken, the end of the step that holds its season (F284), and `thickest_m`;
    - for each ice its index, name, species, where it lies (land or sea), colour (linear reflectance), density, its cover mass (the mass that hides 1 − 1/e of what lies under it), its lying mass (where half is hidden, which opens and closes its window) and its year curve's exponents, `rise` and `fall`;
    - the clock: the cycle's length, its orbits and steps, the solar day, the obliquity, the eccentricity, the star's longitude at perihelion and the phases of the equinoxes and solstices;
    - the year step by step: each step's phase, the star's longitude, declination and flux, the surface pressure, and each ice's mean over each hemisphere.
