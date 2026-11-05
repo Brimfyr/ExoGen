@@ -568,4 +568,14 @@ How it went:
 - **The bodies.** TRAPPIST-1e's edge follows its ground, in patches where the unresolved craters' roughness sets each cell's height; the Earth-like's land ice thinner on more ground.
 - **The coast's steps.** The steps along TRAPPIST-1e's coast that the user saw are the continental crust's outline on the coarse loop's grid, carried to the finish: the same before the rivers' erosion, the same on the ground at a map twice as wide.
 
+## The forty-sixth milestone: the continents' outline on the finish's cells
+
+- **F283.** The stair steps the user saw along TRAPPIST-1e's coast were the continental crust's outline, its units taken from the loop's nearest cells, 72 km across: a strip of oceanic crust stood above the sea between it and the coast, which follows the bedrock smoothed over the loop's cell. The finish draws the outline again from the crust smoothed as the bedrock is, continental past the two crusts' mean (the user, 2026-11-05: before the plan goes on).
+
+How it went:
+
+- **Telling them apart.** At a map twice as wide the coast's own edge is a pixel's staircase while the continents' unit steps by the loop's cells, the same size on the ground.
+- **The test.** A margin across the loop's grid at a shallow angle: its units 0.48 of a loop's cell off it taken from the nearest, 0.11 drawn again.
+- **The bodies.** TRAPPIST-1e's coastal strip gone but for single cells; the Earth-like's coasts as they were; heights, rivers and lakes untouched.
+
 

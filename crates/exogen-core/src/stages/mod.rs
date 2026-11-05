@@ -447,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 210;
+pub const FINISH_VERSION: u64 = 211;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1293,10 +1293,15 @@ pub fn finish(
     // The coarse bedrock resampled bilinearly carries the facets of the loop's cells on
     // every slope the loop relaxed or built; smoothed over the loop's cell it carries the
     // same relief without them, and the passes lay their resolved detail on it after.
+    let coarse_cell_m = kf.layers.grid.delta() * body_radius;
     {
-        let coarse_cell_m = kf.layers.grid.delta() * body_radius;
         let smoothed = relaxation::low_pass(&layers.bedrock, cell, coarse_cell_m);
         layers.bedrock.as_mut_slice().copy_from_slice(&smoothed);
+    }
+    // The continents' outline drawn again on this grid's cells (F283), from the crust
+    // smoothed over the loop's cell as its bedrock is.
+    if let Some(divide) = primordial_crust::continental_divide(graph) {
+        primordial_crust::outline_continents(&mut layers, divide, cell, coarse_cell_m);
     }
     if sink.cancelled() {
         return Err(RunError::Cancelled);

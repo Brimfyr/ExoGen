@@ -36,6 +36,42 @@ struct Continents {
     area_fraction: f64,
 }
 
+impl Continents {
+    /// A mobile lid's two crusts; none on any other body.
+    fn of(graph: &ParamGraph) -> Option<Self> {
+        (graph.str("interior.tectonic_regime") == "mobile_lid").then_some(Continents {
+            oceanic_thickness: 8_000.0,
+            continental_thickness: 38_000.0,
+            area_fraction: 0.30,
+        })
+    }
+}
+
+/// The crust's thickness between the oceanic and the continental, m, on a body whose crust
+/// has both (F283): continental crust stands on its thicker side.
+pub fn continental_divide(graph: &ParamGraph) -> Option<f64> {
+    Continents::of(graph).map(|c| 0.5 * (c.oceanic_thickness + c.continental_thickness))
+}
+
+/// The continents' outline on a grid finer than the crust was laid on (F283): the units of
+/// continental and oceanic crust in `layers`, taken from the nearest of the coarser grid's
+/// cells, `coarse` m across, drawn again on the finer grid's, `fine` m across, from the
+/// crust's thickness smoothed over the coarser cell, continental where it is thicker than
+/// `divide`: the outline runs where the crust crosses its divide, not along the coarser
+/// cells' edges, which drew the coasts' units in steps a coarser cell high.
+pub fn outline_continents(layers: &mut LayerSet, divide: f64, fine: f64, coarse: f64) {
+    let smoothed = crate::stages::relaxation::low_pass(&layers.crust_thickness, fine, coarse);
+    for (u, &c) in layers.unit_id.as_mut_slice().iter_mut().zip(&smoothed) {
+        if *u == UNIT_CONTINENTAL || *u == UNIT_OCEANIC {
+            *u = if c as f64 > divide {
+                UNIT_CONTINENTAL
+            } else {
+                UNIT_OCEANIC
+            };
+        }
+    }
+}
+
 /// The height the ground stands per metre of crust, the crust's buoyancy in the mantle
 /// beneath it (Airy): rock on rock, or ice on its ocean.
 pub fn airy_factor(graph: &ParamGraph) -> f64 {
@@ -93,15 +129,7 @@ impl PrimordialCrust {
             * graph.f64("multiplier.relief");
         let relief_frequency = radius / largest.max(1.0);
         let relief_cap = 0.25 * graph.f64("interior.max_relief") * graph.f64("multiplier.relief");
-        let continents = if graph.str("interior.tectonic_regime") == "mobile_lid" {
-            Some(Continents {
-                oceanic_thickness: 8_000.0,
-                continental_thickness: 38_000.0,
-                area_fraction: 0.30,
-            })
-        } else {
-            None
-        };
+        let continents = Continents::of(graph);
         let mut crust = Self {
             grid,
             noise: GradientNoise::new(seed ^ 0x9E37_79B9),
@@ -428,5 +456,69 @@ mod tests {
             rms(&toned),
             rms(&below)
         );
+    }
+
+    /// F283: a continent's margin running at a shallow angle across the loop's grid, its
+    /// crust rising across it as the continents' does, resampled onto a grid four times as
+    /// fine: its units taken from the loop's nearest cells stand in steps along the coarse
+    /// cells' edges, half a coarse cell and more off the margin; drawn again from the crust
+    /// smoothed over the coarse cell, they keep to it.
+    #[test]
+    fn a_continent_s_outline_keeps_to_its_margin_on_a_finer_grid() {
+        let coarse_grid = CubeSphere::new(32);
+        let fine_grid = CubeSphere::new(128);
+        // The margin: a great circle through the +z face's centre, a tenth off its rows.
+        let normal = crate::geom::normalize([0.1, -1.0, 0.0]);
+        let across = |d: [f64; 3]| crate::geom::dot(d, normal).clamp(-1.0, 1.0).asin();
+        let (ocean, continent) = (8_000.0f64, 38_000.0f64);
+        let divide = 0.5 * (ocean + continent);
+        let width = 2.0 * coarse_grid.delta();
+        let mut layers = LayerSet::new(coarse_grid);
+        for k in 0..coarse_grid.cell_count() {
+            let d = coarse_grid.center(coarse_grid.cell(k));
+            let s = (across(d) / width + 0.5).clamp(0.0, 1.0);
+            let crust = ocean + (continent - ocean) * s * s * (3.0 - 2.0 * s);
+            layers.crust_thickness.as_mut_slice()[k] = crust as f32;
+            layers.unit_id.as_mut_slice()[k] = if crust > divide {
+                UNIT_CONTINENTAL
+            } else {
+                UNIT_OCEANIC
+            };
+        }
+        let mut fine = layers.resample(fine_grid);
+        // The farthest any outline between unlike cells on the +z face's middle stands from
+        // the margin, in the coarse grid's cells.
+        let farthest = |l: &LayerSet| {
+            let u = l.unit_id.as_slice();
+            let mut most = 0.0f64;
+            for k in 0..fine_grid.cell_count() {
+                let c = fine_grid.cell(k);
+                let here = fine_grid.center(c);
+                if here[2] < 0.95 {
+                    continue;
+                }
+                for (di, dj) in [(1, 0), (0, 1)] {
+                    let j = fine_grid.index(fine_grid.neighbor(c, di, dj));
+                    if u[j] != u[k] {
+                        let there = fine_grid.center(fine_grid.cell(j));
+                        let mid = crate::geom::normalize([
+                            here[0] + there[0],
+                            here[1] + there[1],
+                            here[2] + there[2],
+                        ]);
+                        most = most.max(across(mid).abs() / coarse_grid.delta());
+                    }
+                }
+            }
+            most
+        };
+        let stepped = farthest(&fine);
+        outline_continents(&mut fine, divide, fine_grid.delta(), coarse_grid.delta());
+        let drawn = farthest(&fine);
+        println!(
+            "the outline off the margin: {stepped:.2} coarse cells nearest, {drawn:.2} drawn again"
+        );
+        assert!(stepped > 0.4, "{stepped}");
+        assert!(drawn < 0.2, "{drawn}");
     }
 }
