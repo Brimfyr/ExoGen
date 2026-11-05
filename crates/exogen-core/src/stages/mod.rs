@@ -447,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 213;
+pub const FINISH_VERSION: u64 = 215;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2917,7 +2917,15 @@ pub fn finish(
         })
     };
     let heights = crate::climate::coarsen(&above, climate.temperature.grid());
-    let water = materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh);
+    // Water's caps as they show (F289): where the land's snow lies through the year, the snow
+    // that builds them, so that no step in shade runs where the seasons' snow meets them; else
+    // the ice itself.
+    let snows = cycle.cryosphere.as_ref().is_some_and(|c| c.holds_snow());
+    let water = if snows {
+        SNOW_COLOUR
+    } else {
+        materials::end_member("water_ice").map_or([0.80, 0.82, 0.86], |m| m.fresh)
+    };
     let ices = crate::climate::Ice::of_inventory(graph, water);
     let mut traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
     // How much warmer each cell's year peaks at its own height and slope than at its place's
@@ -2969,6 +2977,7 @@ pub fn finish(
         .filter(|i| !liquid.contains(&i.species))
         .copied()
         .collect();
+    let mut gathered: Vec<(&'static str, Field<f32>)> = Vec::new();
     if !gathering.is_empty() {
         let clock = std::time::Instant::now();
         let levels = gather_levels(&heights, downscale.scale_height);
@@ -2992,7 +3001,7 @@ pub fn finish(
             airless: balance.exchange <= 0.0,
         };
         let frost = balance.frost.map(|f| f.species);
-        let gathered = caps::gather(graph, &heights, &cycled, frost, &gathering);
+        gathered = caps::gather(graph, &heights, &cycled, frost, &gathering);
         layers.ice.clone_from(&bare_ice);
         laid = caps::lay(graph, &mut layers, &traps, &gathered, Some(&warmer));
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
@@ -3025,8 +3034,24 @@ pub fn finish(
             );
         }
     }
-    let taken: f64 = laid.iter().map(|c| c.from_sea).sum();
-    let (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers, taken);
+    // The caps and the sea they take from settled together (F288): the sea refilled with what
+    // the caps leave it falls and bares the shelves it covered, where the caps then stand too,
+    // until its level moves by less than CAPS_SEA_SETTLED.
+    let taken = |laid: &[caps::Cap]| laid.iter().map(|c| c.from_sea).sum::<f64>();
+    let (mut sea_level, mut ocean_fraction) = hydrosphere_fill(graph, &mut layers, taken(&laid));
+    for _ in 0..CAPS_SEA_ROUNDS {
+        if !sea_level.is_finite() || taken(&laid) <= 0.0 {
+            break;
+        }
+        layers.ice.clone_from(&bare_ice);
+        laid = caps::lay(graph, &mut layers, &traps, &gathered, Some(&warmer));
+        let (level, fraction) = hydrosphere_fill(graph, &mut layers, taken(&laid));
+        let moved = (level - sea_level).abs();
+        (sea_level, ocean_fraction) = (level, fraction);
+        if moved.is_nan() || moved <= CAPS_SEA_SETTLED {
+            break;
+        }
+    }
     let height = layers.height();
     // On ice, each slope sits at the year-mean temperature of where it faces: frost and lag
     // follow it.

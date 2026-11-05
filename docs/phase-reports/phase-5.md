@@ -598,4 +598,17 @@ How it went:
 - **Downstream.** The Earth-like's gyres and sea ice slower with its polar easterlies, its rain a tenth wetter with its trades.
 - **Known.** The westerlies' greatest speed at the middle of their belt, 42 degrees, where Earth's lean poleward; the Earth-like's rain some 15 percent past Earth's.
 
+## The forty-ninth milestone: the rain between its places and the caps by the sea
+
+- **F286, F287, F288, F289.** Asked about the maps (2026-11-05), the user saw TRAPPIST-1e's rain end in steps, its land show through the ice on its frozen side, and its caps and snow in different shades. The steps were Catmull-Rom's cubic ringing below none beside its wet eye, held at none in rectangles: the places' fields are read now by a monotone cubic. The bare land was the shelves the sea bared as it refilled with what the caps had left it, no cap laid on them: the caps and the sea now settle together, a cap's margin stands on its own edge, not on the sea's floor or a cliff's foot, and water's caps wear their snow's colour.
+
+How it went:
+
+- **The rain.** Its terms along a row through a rectangle showed the places' own rain, read between them, at none, the cubic's lobe below none beside a place raining 10,000 kg/m² a year.
+- **The frozen side.** Every cell of it was under ice when the caps were laid; the sea's refill after them bared what it had covered, and settled, the sea stands 70 m lower still.
+- **The high coasts.** From the sea's surface, a plateau ending in cliffs at its coast stood bare its first cells in: the margin stands on its own edge.
+- **The shades.** Water's caps wear their snow where it lies; the Earth-like's, the brighter, cover a little more of its poles.
+- **The colours.** The sea's colour shades from its deep to its shallow by its depth over 60 m and an ice hides what lies under it by its mass's cover; the shallow water does not show its bed, and a thin sea ice is as bright as a thick one.
+- **Known.** The sea's ice's squares on the places at its edge where the guide draws none, the Earth-like's edge along a latitude east of its southern continent: next.
+
 

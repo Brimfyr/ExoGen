@@ -411,23 +411,37 @@ pub fn spin_orbit_resonance(spins: f64) -> Option<(u32, u32)> {
     })
 }
 
-/// Catmull-Rom's weights at `t`, 0 to 1 between the second and third of four points.
-fn cubic(t: f64) -> [f64; 4] {
-    [
-        ((-t + 2.0) * t - 1.0) * t / 2.0,
-        ((3.0 * t - 5.0) * t * t + 2.0) / 2.0,
-        ((-3.0 * t + 4.0) * t + 1.0) * t / 2.0,
-        (t - 1.0) * t * t / 2.0,
-    ]
+/// Steffen's (1990) cubic at `t`, 0 to 1 between the second and third of four values a unit
+/// apart, `v`: Hermite's between them, each one's slope the gentlest of twice the steps either
+/// side and their mean, none where the values turn, so that it never passes the two values it
+/// lies between and makes no new extreme.
+fn monotone(v: [f64; 4], t: f64) -> f64 {
+    let slope = |a: f64, b: f64, c: f64| {
+        let (s0, s1) = (b - a, c - b);
+        if s0 * s1 <= 0.0 {
+            0.0
+        } else {
+            s0.signum()
+                * (2.0 * s0.abs())
+                    .min(2.0 * s1.abs())
+                    .min(0.5 * (s0 + s1).abs())
+        }
+    };
+    let (m1, m2) = (slope(v[0], v[1], v[2]), slope(v[1], v[2], v[3]));
+    let (t2, t3) = (t * t, t * t * t);
+    (2.0 * t3 - 3.0 * t2 + 1.0) * v[1]
+        + (t3 - 2.0 * t2 + t) * m1
+        + (-2.0 * t3 + 3.0 * t2) * v[2]
+        + (t3 - t2) * m2
 }
 
 /// A table over the cycle's places, latitude (rows, pole to pole) and longitude (columns,
-/// from -180°, wrapping), `n_lon` of them, read in a direction smoothly (F273): Catmull-Rom's
-/// cubic across the four rows and the four longitudes about it, the rows held at the poles,
-/// its slope as smooth as its value; along latitude alone where `n_lon` is one. Read so, a
-/// field the places hold shows none of their cells' edges; where it changes sharply it may
-/// ring a little past the places about it, so that a field that cannot go below none is held
-/// there by its reader.
+/// from -180°, wrapping), `n_lon` of them, read in a direction smoothly (F273): a monotone
+/// cubic (Steffen 1990, F286) along the four longitudes about it on each of the four rows
+/// about it, then across the rows, held at the poles, its slope as smooth as its value; along
+/// latitude alone where `n_lon` is one. Read so, a field the places hold shows none of their
+/// cells' edges, and passes no place's value about it: Catmull-Rom's cubic rang past a sharp
+/// change, below none beside a wet place, which its reader held at none in a place's square.
 pub(crate) fn smooth_grid(table: &[f64], n_lon: usize, lat: f64, lon: f64) -> f64 {
     let n_lat = table.len() / n_lon.max(1);
     if n_lat < 2 {
@@ -435,22 +449,21 @@ pub(crate) fn smooth_grid(table: &[f64], n_lon: usize, lat: f64, lon: f64) -> f6
     }
     let y = ((lat + PI / 2.0) / PI * (n_lat - 1) as f64).clamp(0.0, (n_lat - 1) as f64);
     let i = (y.floor() as usize).min(n_lat - 2) as isize;
-    let wy = cubic(y - i as f64);
+    let ty = y - i as f64;
     let row = |r: isize| r.clamp(0, n_lat as isize - 1) as usize;
     if n_lon <= 1 {
-        return (0..4).map(|a| wy[a] * table[row(i + a as isize - 1)]).sum();
+        let v = std::array::from_fn(|a| table[row(i + a as isize - 1)]);
+        return monotone(v, ty);
     }
     let x = (lon + PI).rem_euclid(TAU) / TAU * n_lon as f64;
     let j = ((x.floor() as usize) % n_lon) as isize;
-    let wx = cubic(x - x.floor());
+    let tx = x - x.floor();
     let at = |r: isize, c: isize| table[row(r) * n_lon + c.rem_euclid(n_lon as isize) as usize];
-    let mut v = 0.0;
-    for (a, &u) in wy.iter().enumerate() {
-        for (b, &w) in wx.iter().enumerate() {
-            v += u * w * at(i + a as isize - 1, j + b as isize - 1);
-        }
-    }
-    v
+    let rows: [f64; 4] = std::array::from_fn(|a| {
+        let r = i + a as isize - 1;
+        monotone(std::array::from_fn(|b| at(r, j + b as isize - 1)), tx)
+    });
+    monotone(rows, ty)
 }
 
 /// A table over latitude from pole to pole, read linearly.
@@ -699,5 +712,29 @@ mod tests {
         assert_eq!(spin_orbit_resonance(366.256), None);
         assert_eq!(spin_orbit_resonance(0.9246), None);
         assert_eq!(spin_orbit_resonance(1.51), None);
+    }
+
+    /// F286: a field the places hold, read smoothly between them, passes none of their values
+    /// about it: a wet place among dry ones reads its own rain at its centre and none below
+    /// nothing anywhere beside it, where Catmull-Rom's cubic rang below none.
+    #[test]
+    fn a_smooth_read_passes_no_place_s_value() {
+        let (n_lat, n_lon) = (19, 36);
+        let mut table = vec![0.0; n_lat * n_lon];
+        table[9 * n_lon + 18] = 1_000.0;
+        let lat_of = |i: f64| -PI / 2.0 + PI * i / (n_lat - 1) as f64;
+        let lon_of = |j: f64| -PI + TAU * j / n_lon as f64;
+        let (mut least, mut most) = (f64::MAX, f64::MIN);
+        for a in 0..=160 {
+            for b in 0..=160 {
+                let lat = lat_of(7.0 + 4.0 * a as f64 / 160.0);
+                let lon = lon_of(16.0 + 4.0 * b as f64 / 160.0);
+                let v = smooth_grid(&table, n_lon, lat, lon);
+                (least, most) = (least.min(v), most.max(v));
+            }
+        }
+        let centre = smooth_grid(&table, n_lon, lat_of(9.0), lon_of(18.0));
+        assert!((centre - 1_000.0).abs() < 1e-9, "{centre}");
+        assert!(least >= 0.0 && most <= 1_000.0 + 1e-9, "{least} {most}");
     }
 }

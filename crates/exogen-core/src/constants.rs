@@ -2269,6 +2269,12 @@ pub const ICE_DENSITIES: [(&str, f64); 5] = [
 /// shear stress under the ice sheets, 50 to 150 kPa (Cuffey and Paterson 2010), the least a
 /// stated choice for every ice until its flow comes with 5C.
 pub const CAP_YIELD_STRESS: f64 = 50_000.0;
+
+/// The caps and the sea they take from (F288): the most rounds of laying the caps on the land
+/// the sea leaves and refilling the sea with what they leave it, and the move of the sea's
+/// level, m, under which they have settled.
+pub const CAPS_SEA_ROUNDS: usize = 8;
+pub const CAPS_SEA_SETTLED: f64 = 1.0;
 /// F243: the poles' shadows: a place is tested only where the star never climbs past
 /// SHADOW_SUN_LIMIT_DEG, steeper than the walls of the craters the finish resolves stand
 /// over their floors; its horizon traced in SHADOW_AZIMUTHS directions out to SHADOW_STEPS

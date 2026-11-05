@@ -154,7 +154,7 @@ pub fn lay(
             .growth
             .as_ref()
             .is_none_or(|(g, _)| g.species != ice.species);
-        let ground = layers.height();
+        let ground = standing(layers);
         // Each place's region's trap, read smoothly on the climate's grid; where its ice may
         // stand, coldest first.
         let trap = PaddedField::new(&coarse, &rank);
@@ -239,6 +239,24 @@ pub fn lay(
     caps
 }
 
+/// The surface the caps stand on and their margins rise from (F287): the ground, and over the
+/// sea the sea's surface, where an ice that ends at the sea meets the water; from the sea's
+/// floor beside it, its plastic profile stood below the sea a cell and more in, and left the
+/// low ground along its coasts bare.
+fn standing(layers: &LayerSet) -> Field<f32> {
+    let mut surface = layers.height();
+    for (h, &l) in surface
+        .as_mut_slice()
+        .iter_mut()
+        .zip(layers.liquid.as_slice())
+    {
+        if l > 0.0 {
+            *h += l;
+        }
+    }
+    surface
+}
+
 /// A place on the margin's front, by its surface: the lowest first.
 #[derive(PartialEq)]
 struct Front(f64, usize);
@@ -260,7 +278,10 @@ impl Ord for Front {
 /// The thickness of the caps an ice covering `cells` stands in (F241), m: its surface the
 /// lowest of the plastic profiles from every point of the margin of the ground it covers,
 /// the margin's ground plus `rise` times the square root of the distance in from it, found
-/// outward from the margin as distances are, each place carrying the point of the margin it
+/// outward from the margin as distances are, the margin's ground the higher of its edge's own
+/// and the surface beyond it (F287): so that an ice fills a basin toward its rim, and on a
+/// plateau ending in a cliff stands from the plateau's edge, not from the ground or the sea
+/// below it, which left a high coast bare; each place carrying the point of the margin it
 /// rises from and its distance the true one from it (F280): summed along the grid's steps,
 /// the distance ran long across them, its domes diamonds, its surface ruled along the grid
 /// and stepped where one margin's point gave way to another's. Where no ground is left
@@ -315,9 +336,10 @@ fn profile(
             let there = grid.center(nb);
             let point = normalize([here[0] + there[0], here[1] + there[1], here[2] + there[2]]);
             let d = angle_between(here, point) * radius;
-            let surface = level(j) + rise * d.sqrt();
+            let base = level(j).max(level(k));
+            let surface = base + rise * d.sqrt();
             if surface < best[k].0 {
-                best[k] = (surface, level(j), point);
+                best[k] = (surface, base, point);
             }
         }
         if best[k].0.is_finite() {
@@ -1098,5 +1120,36 @@ mod tests {
         );
         assert_eq!(flat, 0);
         assert!(high > 0);
+    }
+
+    /// F287: an ice cap over an island in a sea 3 km deep stands from the higher of its edge's
+    /// own ground and the sea's surface, every cell it covers under ice, a low island's and a
+    /// high plateau's ending in cliffs alike; from the sea's floor its plastic profile stood
+    /// below the coast's ground near its margin and left it bare, and from the sea's surface
+    /// below the plateau's edge.
+    #[test]
+    fn an_island_s_cap_stands_from_its_own_edge() {
+        let grid = CubeSphere::new(64);
+        for high in [200.0f32, 1_500.0] {
+            let mut layers = LayerSet::new(grid);
+            let mut cells = Vec::new();
+            for k in 0..grid.cell_count() {
+                let (_, lat) = lon_lat_from_direction(grid.center(grid.cell(k)));
+                if lat > 70f64.to_radians() {
+                    layers.bedrock.as_mut_slice()[k] = high;
+                    cells.push((k, 0.0));
+                } else {
+                    layers.bedrock.as_mut_slice()[k] = -3_000.0;
+                    layers.liquid.as_mut_slice()[k] = 3_000.0;
+                }
+            }
+            let t = profile(grid, &standing(&layers), &cells, 5.0, 1.0e6, 0.0);
+            let bare = cells.iter().filter(|&&(k, _)| t[k] <= 0.0).count();
+            println!(
+                "an island {high} m high: {bare} of {} cells bare",
+                cells.len()
+            );
+            assert_eq!(bare, 0, "{high}");
+        }
     }
 }
