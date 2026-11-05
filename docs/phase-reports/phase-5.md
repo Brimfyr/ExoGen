@@ -587,4 +587,15 @@ How it went:
 - **The test.** The snapshot's phase is its step's end, after its season's by less than a step, on a cycle of one orbit and of three.
 - **The stash.** Checking the formatting by setting the tree aside, on a tree with nothing to set aside, brought back the oldest experiment kept aside instead (milestone 39's cracks); the user restored the two files it touched. The formatting is checked against the file's own count of differences now.
 
+## The forty-eighth milestone: the eddies' belts at their own wind
+
+- **F285.** The user chose the wind before the erosion through the history (2026-11-05). The wind's belts past its cells' edges were spaced at the Rhines scale of the body's mean wind, some 4 m/s on the Earth-like: its westerlies from 32 to 50 degrees, polar easterlies from 52, westerlies again about its poles, its trades weak. The belts are now spaced by their own wind, the flow the spin's beta arrests: the Earth-like's westerlies to 56 degrees, its polar easterlies from 56 and weaker, none westerly about its poles, its trades a quarter stronger.
+
+How it went:
+
+- **The aquaplanet.** Its westerlies reach past 55 degrees, its easterlies blowing by 65; read at the body's mean speed they turned by 55.
+- **The bodies.** Mars's winter westerlies as before; TRAPPIST-1e, Titan and Venus unchanged, their cells reaching past where belts would stand.
+- **Downstream.** The Earth-like's gyres and sea ice slower with its polar easterlies, its rain a tenth wetter with its trades.
+- **Known.** The westerlies' greatest speed at the middle of their belt, 42 degrees, where Earth's lean poleward; the Earth-like's rain some 15 percent past Earth's.
+
 

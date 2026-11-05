@@ -13,7 +13,8 @@
 //! by the fall of their temperature through the cell that overturns from it, as far as the
 //! cell reaches (Held and Hou 1980), its edges at that reach from the equator while its rising
 //! branch moves between them (Lindzen and Hou 1988); past them the eddies' belts, westerlies
-//! first, alternating at the Rhines scale (Rhines 1975), their strength the one that brings
+//! first, alternating at the Rhines scale (Rhines 1975) of their own wind, the flow the spin's
+//! beta arrests, not the body's mean (F285), their strength the one that brings
 //! the surface's torque on the air to nothing on each side of the thermal equator, as the
 //! atmosphere's angular momentum requires. Where the cell reaches the pole, on a slowly
 //! spinning body, its surface branch flows toward the thermal equator all the way, and its
@@ -387,6 +388,10 @@ fn step(
     let departure: Vec<f64> = (0..n).map(|p| t[p] - zonal[p / n_lon]).collect();
     let depth = air.surface_layer();
     let mut speed = WIND_START_SPEED;
+    // The speed the eddies' belts are spaced by (F285): the belts' own wind, the latitudes'
+    // mean eastward wind's root mean square past the cells' edges, the flow the spin's beta
+    // arrests; the body's mean speed where no belt blows.
+    let mut belting = WIND_START_SPEED;
     let mut out = Blown {
         east: vec![0.0; n],
         north: vec![0.0; n],
@@ -409,7 +414,7 @@ fn step(
             // belts, and where its trades end and its own westerlies begin.
             let edge = side * reach;
             let room = FRAC_PI_2 - side * edge;
-            let width = air.belt(edge, speed);
+            let width = air.belt(edge, belting);
             let held = (1.0 - room / width).clamp(0.0, 1.0);
             let ridge = equator + (edge - equator) * (1.0 - (1.0 - 1.0 / 3f64.sqrt()) * held);
             if side > 0.0 {
@@ -441,7 +446,7 @@ fn step(
                     }
                 } else {
                     let (lo, hi) = if side > 0.0 { (edge, lat) } else { (lat, edge) };
-                    belt[i] = -side * air.phase(lo, hi, speed).sin() * lat.cos();
+                    belt[i] = -side * air.phase(lo, hi, belting).sin() * lat.cos();
                 }
             }
             // The surface's torque on the air through each row, rho eps h u cos(lat) over its
@@ -526,12 +531,27 @@ fn step(
             .map(|p| sites[p].weight * east[p].hypot(north[p]))
             .sum::<f64>()
             / whole;
-        let settled = (mean - speed).abs() <= WIND_SETTLED * speed.max(WIND_LEAST_SPEED);
+        let (mut sum, mut area) = (0.0, 0.0);
+        for i in 1..n_lat - 1 {
+            if (lat_of(i) - equator).abs() > reach {
+                let u = (0..n_lon).map(|j| east[i * n_lon + j]).sum::<f64>() / n_lon as f64;
+                sum += row_weight[i] * u * u;
+                area += row_weight[i];
+            }
+        }
+        let belts = if area > 0.0 {
+            (sum / area).sqrt()
+        } else {
+            mean
+        };
+        let settled = (mean - speed).abs() <= WIND_SETTLED * speed.max(WIND_LEAST_SPEED)
+            && (belts - belting).abs() <= WIND_SETTLED * belting.max(WIND_LEAST_SPEED);
         out.east = east;
         out.north = north;
         out.ridges = ridges;
         out.speed = mean;
         speed = mean;
+        belting = belts;
         if settled {
             break;
         }
@@ -764,5 +784,31 @@ mod tests {
         let (high, back) = zonal(&wind, 70.0);
         assert!(low < 0.0 && high > 0.0, "{low} {high}");
         assert!(toward < 0.0 && back < 0.0, "{toward} {back}");
+    }
+
+    /// F285: the eddies' belts are spaced at the Rhines scale of their own wind, the flow the
+    /// spin's beta arrests, not of the body's mean, which the trades and the calm under the
+    /// cells' edges keep slow: an Earth-like aquaplanet's westerlies reach past 55°, as
+    /// Earth's reach some 60°, its easterlies blowing by 65°; read at the body's mean speed
+    /// they turned to easterlies by 55°.
+    #[test]
+    fn an_earth_like_s_westerlies_reach_past_55() {
+        let layout = (91, 90);
+        let sites = sites(layout, 1.0);
+        let air: Vec<f64> = sites
+            .iter()
+            .map(|s| 300.0 - 50.0 * s.lat.sin().powi(2))
+            .collect();
+        let wind = blow(&earth(), &sites, layout, &links(layout, 0.6), &[&air]).unwrap();
+        let at = |lat: f64| zonal(&wind, lat).0;
+        println!(
+            "55°: {:.1} and {:.1} m/s; 65°: {:.1} and {:.1}",
+            at(55.0),
+            at(-55.0),
+            at(65.0),
+            at(-65.0)
+        );
+        assert!(at(55.0) > 0.0 && at(-55.0) > 0.0);
+        assert!(at(65.0) < 0.0 && at(-65.0) < 0.0);
     }
 }
