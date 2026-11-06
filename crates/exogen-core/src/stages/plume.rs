@@ -2143,9 +2143,12 @@ impl PlumeProcess {
             let boost = self.boost_at(t1);
             let shares = floods.capture_shares(layers, Some(&boost), &vents, 0.5 * (t0 + t1));
             let budget = floods.step_budget(t0, t1);
+            // The rises take no more than the whole budget, their shares' rounding past one
+            // held to it.
+            let held = 1.0 / shares.iter().sum::<f64>().max(1.0);
             let mut took = 0.0;
             for (r, share) in shares.iter().enumerate() {
-                let supply = budget * share;
+                let supply = budget * share * held;
                 // Each started shield gathers dikes from its own vents' area and from where its
                 // weight's stress, its weight over the area, outweighs the regional stress
                 // (F165), so that the leading volcano takes more as it grows. The regional

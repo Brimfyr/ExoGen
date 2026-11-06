@@ -18,6 +18,19 @@ pub const SIGMA_SB: f64 = 5.670_374_419e-8;
 pub const K_B: f64 = 1.380_649e-23;
 /// The second radiation constant, h c / k_B, CODATA 2018, in µm K.
 pub const RADIATION_C2_UM_K: f64 = 14_387.768_775;
+/// The same in cm K, and the first radiation constant for radiance per wavenumber, 2 h c²,
+/// W/m²/sr per (cm^-1)⁴, CODATA 2018.
+pub const RADIATION_C2_CM_K: f64 = 1.438_776_877;
+pub const RADIATION_C1: f64 = 1.191_042_972e-8;
+/// Avogadro's constant, exact in the 2019 SI, and Loschmidt's, the molecules in a cubic metre
+/// of gas at 273.15 K and 101,325 Pa, which make an amagat.
+pub const AVOGADRO: f64 = 6.022_140_76e23;
+pub const LOSCHMIDT: f64 = 2.686_780_111e25;
+pub const AMAGAT_TEMPERATURE: f64 = 273.15;
+pub const AMAGAT_PRESSURE: f64 = 101_325.0;
+/// F293: the share of its equilibrium temperature's fourth power a grey skin over an air
+/// radiates at, one half (Pierrehumbert 2010).
+pub const SKIN_SHARE: f64 = 0.5;
 pub const SECONDS_PER_GYR: f64 = 3.155_76e16;
 pub const WATER_MOLECULE_MASS: f64 = 2.991e-26;
 /// Atomic mass unit, CODATA 2018.
@@ -1788,9 +1801,13 @@ pub const MOBILE_LID_MIN_RADIUS: f64 = 4.0e6;
 /// capacities, J/kg/K. The lid breaks where the convecting sublayer's stress along a cell as
 /// long as the mantle is deep exceeds its friction over its thickness; its effective
 /// friction is far below the laboratory's, as a lid that mobilizes needs (Moresi and
-/// Solomatov 1998), and is a stated choice set so that Venus last overturned within the
-/// half gigayear its craters record. A lid that broke within this share of the body's life
-/// before the present makes an episodic lid. Steps over the body's life.
+/// Solomatov 1998), and is a stated choice set so that Venus last overturned within the half
+/// gigayear its craters record, set again at its measured 737 K (F293): 0.661 Gyr ago, where at
+/// 0.0112 its overturn stood at 0.67 under the grey law's 756 K. Its lids founder as they
+/// mature, on a grid of times, so that its last overturn steps by some 0.3 Gyr as the friction
+/// or its surface's temperature changes, until the regional lid (PLAN.md 5C). A lid that broke
+/// within this share of the body's life before the present makes an episodic lid. Steps over
+/// the body's life.
 pub const MANTLE_START_K: f64 = 1_750.0;
 pub const MANTLE_VISCOSITY_REF: f64 = 5e19;
 pub const MANTLE_VISCOSITY_REF_K: f64 = 1_600.0;
@@ -1800,7 +1817,7 @@ pub const MANTLE_EXPANSIVITY: f64 = 3e-5;
 pub const MANTLE_DIFFUSIVITY: f64 = 1e-6;
 pub const MANTLE_HEAT_CAPACITY: f64 = 1_250.0;
 pub const CORE_HEAT_CAPACITY: f64 = 800.0;
-pub const LID_FRICTION: f64 = 0.0112;
+pub const LID_FRICTION: f64 = 0.0107;
 /// The iron a mantle keeps in its silicates, as FeO, mass fraction (F125): what the warmth
 /// where the body formed left oxidized, from a reduced body formed hot in the inner nebula
 /// to an oxidized one formed cool, linear in its blackbody temperature between these anchors,
@@ -1902,18 +1919,89 @@ pub const MANTLE_STEPS: usize = 4_000;
 
 // ---------------------------------------------------------------- atmosphere and climate
 
-/// Grey greenhouse optical depth per species: tau = a u^b with u the species column mass in
-/// kg/m². CO2 fit to Venus (tau 148 at 1.0e6 kg/m²) and Mars (0.076 at 156 kg/m²); methane
-/// and the N2 collision-induced term fit to Titan (0.30 and 0.37). Provisional, Phase 5.
-pub const TAU_CO2: (f64, f64) = (9.7e-4, 0.864);
-/// Water vapour's optical depth saturates as its bands fill, tau = a ln(1 + u / u0) (F235):
-/// set so that Earth's zero-dimensional greenhouse is kept (291.6 K) and its outgoing
-/// radiation rises by 2.1 W/m² per kelvin of the surface, the slope Earth's zonal means show
-/// (North 1975; Warren and Schneider 1979 give 1.6 to 2.2). The square root it replaces gave
-/// 0.31, and in the energy balance ran the tropics away.
-pub const TAU_H2O: (f64, f64) = (0.1656, 0.1028);
-pub const TAU_CH4: (f64, f64) = (5.3e-3, 0.5);
-pub const TAU_N2_CIA: (f64, f64) = (1.09e-8, 1.5);
+/// The grey absorbers of the air's column (F293), each tau = a u^b of its column u, kg/m², its
+/// depth above a level thinning as the pressure there to the b: methane and nitrogen's
+/// collisions, set together by Titan's measured 93.7 K (Fulchignoni et al. 2005) under its
+/// measured Bond albedo 0.265; carbon dioxide is the column's own, by its band and its
+/// collisions. Water vapour's depth saturates as its bands fill, tau = a ln(1 + u / u0) (F235),
+/// lying where the column's moist profile holds it: set so that Earth's zero-dimensional greenhouse is kept
+/// (291.6 K) and its outgoing radiation rises by 2.1 W/m² per kelvin of the surface, the slope
+/// Earth's zonal means show (North 1975; Warren and Schneider 1979 give 1.6 to 2.2), carbon
+/// dioxide's band beside it.
+pub const TAU_H2O: (f64, f64) = (0.09328, 0.02754);
+pub const TAU_CH4: (f64, f64) = (5.739e-3, 0.5);
+pub const TAU_N2_CIA: (f64, f64) = (1.180e-8, 1.5);
+/// F293: the air's radiation (radiation.rs). Its wavenumbers, cm^-1, from, to and step, finer
+/// over carbon dioxide's band; its levels from the ground up through so many decades of the
+/// pressure, crowded toward the ground (within 0.3 W/m² of 2,000 levels where water's vapour
+/// thins at a fifth of the air's scale height); the diffusivity of its two streams (Elsasser 1942); the ground's temperature
+/// found in so many halvings of its span; the table of its outgoing share every so much of
+/// the logarithm of the temperature.
+pub const RADIATION_BINS: [(f64, f64, f64); 4] = [
+    (1.0, 400.0, 20.0),
+    (400.0, 950.0, 4.0),
+    (950.0, 2_000.0, 25.0),
+    (2_000.0, 5_000.0, 50.0),
+];
+pub const RADIATION_LEVELS: usize = 48;
+pub const RADIATION_DECADES: f64 = 6.0;
+pub const DIFFUSIVITY: f64 = 1.66;
+pub const RADIATION_SOLVE_STEPS: usize = 48;
+pub const OUTGOING_STEP: f64 = 0.01;
+/// F293: the downscaling's table of the share over the ground's height: every so much of the
+/// logarithms of the temperature and of the ground's share of the surface pressure, over that
+/// logarithm's span, from four scale heights up to one and a half down.
+pub const HEIGHTS_STEP: (f64, f64) = (0.02, 0.25);
+pub const HEIGHTS_RATIO: (f64, f64) = (-4.0, 1.5);
+/// F293: carbon dioxide's 15 um band, kappa_0 e^(-|nu - nu_0| / l): kappa_0 110 m²/kg at the
+/// reference pressure, 500 hPa, its centre 667 cm^-1, its wings falling by e every 12 cm^-1,
+/// broadened in proportion to the pressure (Williams 2025, the coarse-grained HITRAN2016
+/// spectrum at 260 K).
+pub const CO2_BAND: (f64, f64, f64) = (110.0, 667.0, 12.0);
+pub const CO2_BAND_PRESSURE: f64 = 5.0e4;
+/// F293: carbon dioxide's molecules' collisions in the far infrared, their absorption by the
+/// square of their density: its integral over 60 to 250 cm^-1, 3.11e-3 cm^-2 amagat^-2, as
+/// measured at room temperature (Ho et al. 1971, Turbet et al. 2019 within its errors), in a
+/// band peaking at 50 cm^-1, a stated shape, (nu / 50) e^(1 - nu / 50).
+pub const CO2_COLLISIONS: (f64, f64, f64, f64) = (3.11e-3, 60.0, 250.0, 50.0);
+/// F293: the sulfuric clouds an atmosphere's sulfur dioxide makes, their grey depth in the
+/// infrared per kg/m² of it, well mixed: set by Venus's measured 737 K, where they close the
+/// windows its gas's other bands and far wings leave: some 80 over its 229 kg/m², its gas's
+/// emission lifted to under a bar, in its cloud deck.
+pub const SULFURIC_CLOUD_DEPTH: f64 = 0.3479;
+/// F293: the sulfuric clouds' reflection, s per kg/m² of sulfur dioxide, the clouds reflecting
+/// s / (1 + s) of the light over the air below them: set by Venus's measured Bond albedo,
+/// 0.76, over the 0.716 its air's scattering gives: they reflect 0.394.
+pub const SULFURIC_CLOUD_REFLECTION: f64 = 2.839e-3;
+/// F293: the albedo beneath the air's own scattering, its dust, its clouds and its ground:
+/// Mars's measured Bond albedo, under air too thin to scatter, and what Earth's 0.30 leaves
+/// under its own scattering, 0.255; stated until the weather's clouds (5G).
+pub const ALBEDO_BENEATH: f64 = 0.25;
+/// F293: from AIRLESS_PRESSURE to this, Mars's, the thinnest air whose dust and clouds its
+/// measured albedo holds, a body's albedo passes from its ground's own reflectance to its
+/// air's, smoothly in the logarithm of the pressure.
+pub const THIN_AIR_PRESSURE: f64 = 610.0;
+/// F293: the Rayleigh scattering's span of wavelengths, um, and the wavelengths over it the
+/// star's light is weighted at; each gas's refractive index less one at 550 nm and STP, and
+/// its King factor (Bates 1984; Sneep and Ubachs 2005; Peck and Khanna 1966 for nitrogen).
+pub const RAYLEIGH_SPAN: (f64, f64) = (0.2, 10.0);
+pub const RAYLEIGH_WAVELENGTHS: usize = 400;
+pub const RAYLEIGH_GASES: [(&str, f64, f64); 10] = [
+    ("N2", 2.98e-4, 1.035),
+    ("O2", 2.72e-4, 1.10),
+    ("Ar", 2.81e-4, 1.0),
+    ("CO2", 4.49e-4, 1.15),
+    ("CH4", 4.44e-4, 1.0),
+    ("H2", 1.39e-4, 1.0),
+    ("He", 3.5e-5, 1.0),
+    ("H2O", 2.54e-4, 1.0),
+    ("SO2", 6.86e-4, 1.06),
+    ("NH3", 3.79e-4, 1.0),
+];
+/// F293: the share of the light a methane haze absorbs per unit of its production (the
+/// haze's index) on each pass through it: set by Titan's measured Bond albedo, 0.265, against
+/// the 0.449 its air's scattering alone would give.
+pub const HAZE_ABSORPTION: f64 = 6.743;
 /// Water vapour column model: 25 kg/m² at 288 K and 70% relative humidity, scaled by
 /// Clausius–Clapeyron with L / R_v = 5420 K and capped by the inventory.
 pub const WATER_COLUMN_REF: f64 = 25.0;
@@ -1921,16 +2009,10 @@ pub const WATER_COLUMN_REF_T: f64 = 288.0;
 pub const WATER_COLUMN_REF_RH: f64 = 0.7;
 pub const WATER_L_OVER_RV: f64 = 5_420.0;
 pub const WATER_COLUMN_MAX: f64 = 1.0e4;
-/// Bond albedo guesses by class before the climate stage exists. Provisional, Phase 5.
-/// Below this pressure, Pa, a body is airless for its albedo: the surface's own
-/// reflectance stands for the Bond albedo (F52). Above it dust, haze and clouds take
-/// part, and until the climate stage computes them the pressure classes below stand in.
+/// Below this pressure, Pa, a body is airless for its albedo: the surface's own reflectance
+/// stands for the Bond albedo (F52); above it its air takes part, all of it from
+/// THIN_AIR_PRESSURE (F293).
 pub const AIRLESS_PRESSURE: f64 = 10.0;
-pub const ALBEDO_THIN_ATMOSPHERE: f64 = 0.25;
-pub const ALBEDO_EARTHLIKE: f64 = 0.30;
-pub const ALBEDO_THICK_ATMOSPHERE: f64 = 0.75;
-pub const THICK_ATMOSPHERE_PRESSURE: f64 = 10.0e5;
-pub const THIN_ATMOSPHERE_PRESSURE: f64 = 0.1e5;
 /// Jeans parameter below which a species is flagged as escaping. The rule of thumb that a
 /// gas survives when the escape speed exceeds six times its most probable thermal speed is
 /// lambda = G M m / (k T R) above 36, evaluated at the exobase temperature.

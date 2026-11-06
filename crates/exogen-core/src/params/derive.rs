@@ -516,14 +516,6 @@ pub mod physics {
         (l_watts * (1.0 - albedo) / (16.0 * PI * SIGMA_SB * d * d)).powf(0.25)
     }
 
-    /// Grey optical depth from the dry columns (F21).
-    pub fn tau_dry(columns: &BTreeMap<String, f64>) -> f64 {
-        let u = |s: &str| columns.get(s).copied().unwrap_or(0.0);
-        TAU_CO2.0 * u("CO2").powf(TAU_CO2.1)
-            + TAU_CH4.0 * u("CH4").powf(TAU_CH4.1)
-            + TAU_N2_CIA.0 * u("N2").powf(TAU_N2_CIA.1)
-    }
-
     /// Water vapour column at temperature `t`, kg/m², capped by the available inventory.
     pub fn water_column(t: f64, inventory_gel_m: f64) -> f64 {
         let u = WATER_COLUMN_REF * (WATER_L_OVER_RV * (1.0 / WATER_COLUMN_REF_T - 1.0 / t)).exp();
@@ -551,15 +543,6 @@ pub mod physics {
         let heat = regolith_heat(ice);
         (REGOLITH_INERTIA_VACUUM * REGOLITH_INERTIA_VACUUM + pore_gas_conductivity(p_pa) * heat)
             .sqrt()
-    }
-
-    /// F235: water vapour's greenhouse optical depth at a surface temperature, saturating as
-    /// its bands fill; none without water.
-    pub fn water_optical_depth(t: f64, inventory_gel_m: f64) -> f64 {
-        if inventory_gel_m <= 0.0 {
-            return 0.0;
-        }
-        TAU_H2O.0 * (water_column(t, inventory_gel_m) / TAU_H2O.1).ln_1p()
     }
 
     /// F249: the warmest place's year-mean surface temperature, K, from the body's
@@ -619,39 +602,6 @@ pub mod physics {
             })
             .sum();
         (15.0 / PI.powi(4) * sum).clamp(0.0, 1.0)
-    }
-
-    pub fn grey_surface_temperature(t_eq: f64, tau: f64) -> f64 {
-        t_eq * (1.0 + 0.75 * tau).powf(0.25)
-    }
-
-    /// Surface temperature with the water vapour feedback: the smallest root of
-    /// T = T_eq (1 + 3 tau(T) / 4)^(1/4) above T_eq, by scan and bisection.
-    pub fn surface_temperature(t_eq: f64, tau_dry: f64, water_inventory_gel_m: f64) -> f64 {
-        let tau = |t: f64| tau_dry + water_optical_depth(t, water_inventory_gel_m);
-        let f = |t: f64| t - grey_surface_temperature(t_eq, tau(t));
-        let t0 = t_eq.max(1.0);
-        if f(t0) >= 0.0 {
-            return t0;
-        }
-        let mut lo = t0;
-        let mut hi = t0;
-        let step = (t0 * 0.02).max(0.5);
-        for _ in 0..4000 {
-            hi += step;
-            if f(hi) >= 0.0 {
-                break;
-            }
-            lo = hi;
-        }
-        if f(hi) < 0.0 {
-            return hi;
-        }
-        for _ in 0..60 {
-            let mid = 0.5 * (lo + hi);
-            if f(mid) < 0.0 { lo = mid } else { hi = mid }
-        }
-        0.5 * (lo + hi)
     }
 
     /// F23: Jeans parameter of a species at temperature `t`.
@@ -2089,15 +2039,24 @@ pub fn atmosphere_column_mass(c: &Ctx) -> Value {
 /// the climate stage will compute (Phase 5); until then a guess by pressure class.
 pub fn atmosphere_bond_albedo(c: &Ctx) -> Value {
     let p = c.f64("atmosphere.surface_pressure");
-    if p >= AIRLESS_PRESSURE {
-        return if p < THIN_ATMOSPHERE_PRESSURE {
-            ALBEDO_THIN_ATMOSPHERE
-        } else if p < THICK_ATMOSPHERE_PRESSURE {
-            ALBEDO_EARTHLIKE
-        } else {
-            ALBEDO_THICK_ATMOSPHERE
-        }
-        .into();
+    // F293: under an atmosphere its air's scattering of its star's light over the albedo
+    // beneath, its haze absorbing; from its ground's own reflectance under the thinnest air,
+    // smoothly in the logarithm of the pressure.
+    let share = air_share(p);
+    let air = || {
+        crate::radiation::albedo(
+            c.map("atmosphere.composition"),
+            c.f64("atmosphere.column_mass"),
+            c.f64("star.teff"),
+            crate::radiation::tholin_production(
+                c.map_get("atmosphere.composition", "CH4"),
+                c.f64("star.xuv_relative"),
+                p,
+            ),
+        )
+    };
+    if share >= 1.0 {
+        return air().into();
     }
     // An airless surface is gardened, its basalt with the mantle's iron (F125) and its dirty
     // ice with its crust's rock (F126).
@@ -2129,7 +2088,63 @@ pub fn atmosphere_bond_albedo(c: &Ctx) -> Value {
     };
     // A plume's fallout is fresh frost.
     let frosted = crate::stages::cryo::mean_frost_share(c.f64("volcanism.plume_fallout_rate"));
-    (mature + (lum(ice.fresh) - mature) * frosted).into()
+    let ground = mature + (lum(ice.fresh) - mature) * frosted;
+    if share > 0.0 {
+        (ground + share * (air() - ground)).into()
+    } else {
+        ground.into()
+    }
+}
+
+/// F293: the share of a body's albedo its air sets, none at AIRLESS_PRESSURE and below, all at
+/// THIN_AIR_PRESSURE and above, smoothly in the logarithm of the pressure between.
+pub fn air_share(pressure: f64) -> f64 {
+    if pressure <= AIRLESS_PRESSURE {
+        return 0.0;
+    }
+    let x = ((pressure / AIRLESS_PRESSURE).ln() / (THIN_AIR_PRESSURE / AIRLESS_PRESSURE).ln())
+        .clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// F293: the air's column (radiation.rs) at `pressure`, its skin under `t_eq`: none without an
+/// atmosphere.
+fn air_column(c: &Ctx, pressure: f64, t_eq: f64) -> Option<crate::radiation::Column> {
+    if pressure <= 0.0 {
+        return None;
+    }
+    Some(crate::radiation::Column::new(
+        c.map("atmosphere.composition"),
+        pressure,
+        c.f64("body.gravity"),
+        air_water(c),
+        t_eq * SKIN_SHARE.powf(0.25),
+    ))
+}
+
+/// The water a warm air can hold vapour from, metres of global layer: its inventory, and a
+/// metre where its air holds water vapour (F21).
+fn air_water(c: &Ctx) -> f64 {
+    c.map_get("volatiles.inventory", "H2O")
+        + if c.map_get("atmosphere.composition", "H2O") > 0.0 {
+            1.0
+        } else {
+            0.0
+        }
+}
+
+/// F293: the share of a black body's radiation the air lets out at each ground temperature, its
+/// column's, from a third of the equilibrium temperature to four times it and a hundred kelvin
+/// more; none held back without an atmosphere.
+pub fn atmosphere_outgoing_share(c: &Ctx) -> Value {
+    let t_eq = c.f64("atmosphere.equilibrium_temperature");
+    let table = match air_column(c, c.f64("atmosphere.surface_pressure"), t_eq) {
+        Some(column) => {
+            crate::radiation::Outgoing::of(&column, (t_eq / 3.0).max(5.0), 4.0 * t_eq + 100.0)
+        }
+        None => crate::radiation::Outgoing::none(),
+    };
+    Curve::new(table.points()).into()
 }
 
 pub fn atmosphere_equilibrium_temperature(c: &Ctx) -> Value {
@@ -2141,55 +2156,79 @@ pub fn atmosphere_equilibrium_temperature(c: &Ctx) -> Value {
     .into()
 }
 
+/// F293: the ground's temperature at which its air lets out the sunlight it absorbs, never below
+/// the frost point of its air's bulk gas, its frost holding it there.
 pub fn atmosphere_surface_temperature_mean(c: &Ctx) -> Value {
     let t_eq = c.f64("atmosphere.equilibrium_temperature");
     let p = c.f64("atmosphere.surface_pressure");
     if p <= 0.0 {
         return t_eq.into();
     }
-    let columns = species_columns(
-        c.map("atmosphere.composition"),
-        c.f64("atmosphere.column_mass"),
-    );
-    let water = c.map_get("volatiles.inventory", "H2O")
-        + if c.map_get("atmosphere.composition", "H2O") > 0.0 {
-            1.0
-        } else {
-            0.0
-        };
-    surface_temperature(t_eq, tau_dry(&columns), water).into()
+    match air_column(c, p, t_eq) {
+        Some(column) => column.surface_temperature(SIGMA_SB * t_eq.powi(4)).into(),
+        None => t_eq.into(),
+    }
 }
 
 /// F260: the body's mean surface temperature through its life, K, Gyr since it formed: its
-/// zero-dimensional balance (F21) under its star's light then, its albedo and atmosphere the
-/// present's: under its air's history (F263, F264) the grey law (F21) warms a thick cold
-/// carbon dioxide atmosphere far past what its bands' saturation, its Rayleigh scattering and its
-/// condensation allow.
+/// zero-dimensional balance under its star's light then and its air then (F293), the pressure
+/// its escape and its outgassing left it (F263, F264), its column's greenhouse and its air's
+/// scattering at that pressure, the ground beneath and its water the present's; an airless
+/// body's albedo the present's.
 pub fn atmosphere_surface_temperature_history(c: &Ctx) -> Value {
-    let t_eq = c.f64("atmosphere.equilibrium_temperature");
+    use rayon::prelude::*;
     let present = c.f64("star.luminosity").max(1e-300);
-    let air = (c.f64("atmosphere.surface_pressure") > 0.0).then(|| {
-        let columns = species_columns(
-            c.map("atmosphere.composition"),
-            c.f64("atmosphere.column_mass"),
-        );
-        let water = c.map_get("volatiles.inventory", "H2O")
-            + if c.map_get("atmosphere.composition", "H2O") > 0.0 {
-                1.0
-            } else {
-                0.0
-            };
-        (tau_dry(&columns), water)
-    });
+    let albedo = c.f64("atmosphere.bond_albedo");
+    let sunlight =
+        SIGMA_SB * c.f64("atmosphere.equilibrium_temperature").powi(4) / (1.0 - albedo).max(1e-9);
+    let now = c.f64("atmosphere.surface_pressure");
+    let pressures = c.curve("atmosphere.pressure_history");
+    let composition = c.map("atmosphere.composition").clone();
+    let gravity = c.f64("body.gravity");
+    let water = air_water(c);
+    let (teff, xuv) = (c.f64("star.teff"), c.f64("star.xuv_relative"));
+    let methane = c.map_get("atmosphere.composition", "CH4");
+    // The ground beneath the air: what the present albedo leaves of it under the present air,
+    // or the albedo beneath where the air sets it all.
+    let air_albedo = |p: f64| {
+        crate::radiation::albedo(
+            &composition,
+            p / gravity.max(1e-300),
+            teff,
+            crate::radiation::tholin_production(methane, xuv, p),
+        )
+    };
+    let share_now = air_share(now);
+    let ground = if share_now < 1.0 {
+        (albedo - share_now * air_albedo(now)) / (1.0 - share_now)
+    } else {
+        ALBEDO_BENEATH
+    };
     let points = c
         .curve("star.luminosity_history")
         .points
-        .iter()
+        .par_iter()
         .map(|&(t, l)| {
-            let t_eq = t_eq * (l / present).max(0.0).powf(0.25);
-            let surface = match air {
-                Some((tau, water)) => surface_temperature(t_eq, tau, water),
-                None => t_eq,
+            let light = sunlight * (l / present).max(0.0);
+            if now <= 0.0 {
+                return (t, (light * (1.0 - albedo) / SIGMA_SB).powf(0.25));
+            }
+            let p = pressures.eval(t).max(0.0);
+            let share = air_share(p);
+            let a = ground + share * (air_albedo(p) - ground);
+            let absorbed = light * (1.0 - a);
+            let t_eq = (absorbed / SIGMA_SB).powf(0.25);
+            let surface = if p > 0.0 {
+                crate::radiation::Column::new(
+                    &composition,
+                    p,
+                    gravity,
+                    water,
+                    t_eq * SKIN_SHARE.powf(0.25),
+                )
+                .surface_temperature(absorbed)
+            } else {
+                t_eq
             };
             (t, surface)
         })
@@ -2403,22 +2442,9 @@ pub fn atmosphere_pressure_history(c: &Ctx) -> Value {
 /// vapour's with it, and the transport.
 pub fn atmosphere_surface_temperature_warmest(c: &Ctx) -> Value {
     let mean = c.f64("atmosphere.surface_temperature_mean");
-    let (tau, water) = if c.f64("atmosphere.surface_pressure") > 0.0 {
-        let columns = species_columns(
-            c.map("atmosphere.composition"),
-            c.f64("atmosphere.column_mass"),
-        );
-        let water = c.map_get("volatiles.inventory", "H2O")
-            + if c.map_get("atmosphere.composition", "H2O") > 0.0 {
-                1.0
-            } else {
-                0.0
-            };
-        (tau_dry(&columns), water)
-    } else {
-        (0.0, 0.0)
-    };
-    let olr = |t: f64| SIGMA_SB * t.powi(4) / (1.0 + 0.75 * (tau + water_optical_depth(t, water)));
+    let outgoing =
+        crate::radiation::Outgoing::from_points(&c.curve("atmosphere.outgoing_share").points);
+    let olr = |t: f64| outgoing.olr(t);
     let slope = (olr(mean + 0.5) - olr(mean - 0.5)).max(1e-9);
     let e = c.f64("orbit.star_eccentricity");
     let flux = c.f64("orbit.insolation") / (1.0 - e * e).max(1e-9).sqrt();
@@ -2513,7 +2539,11 @@ pub fn atmosphere_oxidant_availability(c: &Ctx) -> Value {
 pub fn atmosphere_haze_production(c: &Ctx) -> Value {
     let xuv = c.f64("star.xuv_relative");
     let p_bar = c.f64("atmosphere.surface_pressure") / 1e5;
-    let tholin = c.map_get("atmosphere.composition", "CH4") * xuv * 50.0 * p_bar.min(2.0);
+    let tholin = crate::radiation::tholin_production(
+        c.map_get("atmosphere.composition", "CH4"),
+        xuv,
+        c.f64("atmosphere.surface_pressure"),
+    );
     let sulfuric = c.map_get("atmosphere.composition", "SO2") * xuv * 50.0 * p_bar.min(2.0);
     (tholin + sulfuric).into()
 }
@@ -3719,24 +3749,23 @@ mod tests {
         assert!(p > 0.5e14 && p < 2.0e14, "Io tidal power {p:e}");
     }
 
+    /// F293: the zero-dimensional means of the reference atmospheres on their columns: Venus's
+    /// and Titan's at their measured 737 and 93.7 K, set by their clouds and their methane and
+    /// nitrogen; Earth's at the 291.6 K its water is set by, at its own albedo; Mars's from its
+    /// carbon dioxide's band alone, against its measured some 210 K.
     #[test]
     fn surface_temperatures_of_the_reference_atmospheres() {
-        // Venus: CO2 column from 92 bar.
-        let mut venus = BTreeMap::new();
-        venus.insert("CO2".to_string(), 1.0e6);
-        let t = surface_temperature(226.6, tau_dry(&venus), 0.0);
-        assert!((t - 737.0).abs() < 15.0, "Venus {t}");
-        // Earth: trace CO2 plus the water feedback.
-        let mut earth = BTreeMap::new();
-        earth.insert("CO2".to_string(), 6.3);
-        earth.insert("N2".to_string(), 7_800.0);
-        let t = surface_temperature(254.6, tau_dry(&earth), 2_700.0);
-        assert!((t - 288.0).abs() < 4.0, "Earth {t}");
-        // Mars.
-        let mut mars = BTreeMap::new();
-        mars.insert("CO2".to_string(), 156.0);
-        let t = surface_temperature(210.1, tau_dry(&mars), 25.0);
-        assert!((t - 213.0).abs() < 4.0, "Mars {t}");
+        let mean = |name: &str| {
+            let (g, _) = crate::presets::preset(name).unwrap().to_graph();
+            g.f64("atmosphere.surface_temperature_mean")
+        };
+        let (venus, earth, mars, titan) =
+            (mean("Venus"), mean("Earth"), mean("Mars"), mean("Titan"));
+        println!("Venus {venus:.1} K, Earth {earth:.1} K, Mars {mars:.1} K, Titan {titan:.1} K");
+        assert!((venus - 737.0).abs() < 15.0, "Venus {venus}");
+        assert!((earth - 291.6).abs() < 4.0, "Earth {earth}");
+        assert!((mars - 213.0).abs() < 6.0, "Mars {mars}");
+        assert!((titan - 93.7).abs() < 3.0, "Titan {titan}");
     }
 
     #[test]

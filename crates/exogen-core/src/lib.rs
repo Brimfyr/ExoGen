@@ -27,6 +27,7 @@ pub mod orbital;
 pub mod params;
 pub mod presets;
 pub mod project;
+pub mod radiation;
 pub mod rivers;
 pub mod rng;
 pub mod shade;
