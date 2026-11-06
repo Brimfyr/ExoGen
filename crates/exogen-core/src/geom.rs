@@ -147,6 +147,30 @@ pub fn symmetric_eigen(m: [[f64; 3]; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
     (values, vectors)
 }
 
+/// Steffen's (1990) cubic at `t`, 0 to 1 between the second and third of four values a unit
+/// apart, `v`: Hermite's between them, each one's slope the gentlest of twice the steps either
+/// side and their mean, none where the values turn, so that it never passes the two values it
+/// lies between and makes no new extreme.
+pub(crate) fn monotone(v: [f64; 4], t: f64) -> f64 {
+    let slope = |a: f64, b: f64, c: f64| {
+        let (s0, s1) = (b - a, c - b);
+        if s0 * s1 <= 0.0 {
+            0.0
+        } else {
+            s0.signum()
+                * (2.0 * s0.abs())
+                    .min(2.0 * s1.abs())
+                    .min(0.5 * (s0 + s1).abs())
+        }
+    };
+    let (m1, m2) = (slope(v[0], v[1], v[2]), slope(v[1], v[2], v[3]));
+    let (t2, t3) = (t * t, t * t * t);
+    (2.0 * t3 - 3.0 * t2 + 1.0) * v[1]
+        + (t3 - 2.0 * t2 + t) * m1
+        + (-2.0 * t3 + 3.0 * t2) * v[2]
+        + (t3 - t2) * m2
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

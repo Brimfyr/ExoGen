@@ -120,6 +120,37 @@ fn sample_bilinear_with(grid: &CubeSphere, get: &dyn Fn(u8, i64, i64) -> f32, d:
         + v(i0 + 1, j0 + 1) * fx * fy) as f32
 }
 
+/// A field on a cubesphere read at a direction by Steffen's monotone cubic (F291): along the
+/// face's rows over the four columns about the direction, then across the four rows, a cell
+/// past the face's edge read where its centre falls, by the bilinear reading the ghost ring
+/// takes; so that, read so, a field shows none of its cells' edges and passes none of the
+/// values about it.
+pub fn sample_monotone(grid: &CubeSphere, values: &[f32], d: [f64; 3]) -> f32 {
+    let (c, x, y) = grid.locate(d);
+    let f = grid.face_size() as i64;
+    let (i0, j0) = ((x - 0.5).floor() as i64, (y - 0.5).floor() as i64);
+    let (tx, ty) = (x - 0.5 - i0 as f64, y - 0.5 - j0 as f64);
+    let delta = grid.delta();
+    let cell = |i: i64, j: i64| -> f64 {
+        if (0..f).contains(&i) && (0..f).contains(&j) {
+            values[grid.index(Cell {
+                face: c.face,
+                i: i as u32,
+                j: j as u32,
+            })] as f64
+        } else {
+            let alpha = -FRAC_PI_4 + (i as f64 + 0.5) * delta;
+            let beta = -FRAC_PI_4 + (j as f64 + 0.5) * delta;
+            interior_bilinear(grid, values, CubeSphere::direction(c.face, alpha, beta)) as f64
+        }
+    };
+    let rows: [f64; 4] = std::array::from_fn(|b| {
+        let j = j0 + b as i64 - 1;
+        crate::geom::monotone(std::array::from_fn(|a| cell(i0 + a as i64 - 1, j)), tx)
+    });
+    crate::geom::monotone(rows, ty) as f32
+}
+
 /// A field that is zero except on a few cells, sampled exactly as a `PaddedField` of the
 /// same values would be: ghost cells across face edges are built on demand by the same
 /// in-face interpolation the padding uses.
@@ -284,5 +315,30 @@ mod tests {
             "ghost error {e64} -> {e128} is not second order"
         );
         assert!(e128 < 1e-3, "ghost error at f=128 is {e128}");
+    }
+
+    /// F291: a field read by the monotone cubic passes none of the values about it, a high
+    /// cell among cells of none reading its own value at its centre and nothing below none
+    /// about it, across the face's edges as within them.
+    #[test]
+    fn a_monotone_read_passes_no_cell_s_value() {
+        let grid = CubeSphere::new(16);
+        let mut values = vec![0.0f32; grid.cell_count()];
+        let at = grid.index(grid.locate([1.0, 0.02, 0.0]).0);
+        values[at] = 100.0;
+        let edge = grid.index(grid.locate(crate::geom::normalize([1.0, 0.98, 0.0])).0);
+        values[edge] = 50.0;
+        let (mut least, mut most) = (f32::MAX, f32::MIN);
+        for a in 0..=400 {
+            for b in 0..=40 {
+                let lon = -1.2 + 2.4 * a as f64 / 400.0;
+                let lat = -0.3 + 0.6 * b as f64 / 40.0;
+                let v = sample_monotone(&grid, &values, direction_from_lon_lat(lon, lat));
+                (least, most) = (least.min(v), most.max(v));
+            }
+        }
+        let centre = sample_monotone(&grid, &values, grid.center(grid.cell(at)));
+        assert!((centre - 100.0).abs() < 1e-3, "{centre}");
+        assert!(least >= 0.0 && most <= 100.0 + 1e-3, "{least} {most}");
     }
 }

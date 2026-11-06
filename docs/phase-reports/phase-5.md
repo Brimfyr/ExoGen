@@ -611,4 +611,13 @@ How it went:
 - **The colours.** The sea's colour shades from its deep to its shallow by its depth over 60 m and an ice hides what lies under it by its mass's cover; the shallow water does not show its bed, and a thin sea ice is as bright as a thick one.
 - **Known.** The sea's ice's squares on the places at its edge where the guide draws none, the Earth-like's edge along a latitude east of its southern continent: next.
 
+## The fiftieth milestone: the snow on its own rain and the ice at the guide's edge
 
+- **F290, F291, F292.** Looking closer at the maps (2026-11-05), the user saw three patches of clear ground with sharp, square edges on TRAPPIST-1e's southern continent, and blocky sea ice along its eye. The patches were the places' own precipitation and warmest read between them, the snow and the caps' edge squared and kinked at the places' cells: each cell's snow now falls by its own rain over the relief, and the caps' edge is read by a monotone cubic. The squares along the eye were the share under ice standing where the guide drew none: a place stands at the edge now by every place it shares a cell with, and the share under ice draws its ice from half way between the places, as the guided edge does.
+
+How it went:
+
+- **The rain.** Read on its own rain, the snow left bare more than the squares had, the lee of the peninsula's ranges, its rain some 18 kg/m² a year; organic in outline, the user said, its edge the rain shadow's.
+- **The squares.** A probe at one found the cell's corner under ice at the edge and its far corner, open, at none, the share under ice standing 0.062 into the ice where the guide drew none. Each place by its own standing took the squares away but left a notch where each had stood; standing at the edge by the cells' far corners too, the eye's rim is one curve, and the user's choice stands: the guide draws the edge.
+- **The coast.** The eye's ice ended along a row of places where its sea meets the peninsula's coast, a coast's place under ice standing at the edge by its third of sea; from half way between the places it ends between them.
+- **Known.** Where the guide and the places disagree, at a coast whose sea its land's air freezes, the guide's edge and the coast's ice meet along the places' column, a channel of open water a pixel or two wide south of the eye; the places' rain in TRAPPIST-1e's dry south steps at the places in a logarithmic stretch, at a few kg/m² a year; the Earth-like's sea ice's edge along a latitude east of its southern continent, the guide's sunlight zonal.

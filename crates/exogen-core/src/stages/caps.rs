@@ -20,7 +20,7 @@ use crate::climate::{Ice, Traps, read_table};
 use crate::constants::*;
 use crate::fields::{Field, LayerSet};
 use crate::geom::{angle_between, normalize};
-use crate::grid::projection::{PaddedField, sample_bilinear};
+use crate::grid::projection::sample_monotone;
 use crate::grid::{CubeSphere, lon_lat_from_direction};
 use crate::params::ParamGraph;
 
@@ -157,8 +157,8 @@ pub fn lay(
         let ground = standing(layers);
         // Each place's region's trap, read smoothly on the climate's grid; where its ice may
         // stand, coldest first.
-        let trap = PaddedField::new(&coarse, &rank);
-        let stands = PaddedField::new(&coarse, &stands);
+        // Read by the monotone cubic (F291): read bilinearly, the edge where the ice may stand
+        // kinked at the climate's cells where their warmest hovers at its melting.
         let mut ranks: Vec<(usize, f64)> = (0..grid.cell_count())
             .into_par_iter()
             .filter_map(|k| {
@@ -170,10 +170,10 @@ pub fn lay(
                     Some(w) if by_heat => w.as_slice()[k],
                     _ => 0.0,
                 };
-                if melts && sample_bilinear(&coarse, &stands, d) - own < 0.0 {
+                if melts && sample_monotone(&coarse, &stands, d) - own < 0.0 {
                     return None;
                 }
-                let rank = sample_bilinear(&coarse, &trap, d) as f64;
+                let rank = sample_monotone(&coarse, &rank, d) as f64;
                 rank.is_finite().then_some((k, rank))
             })
             .collect();

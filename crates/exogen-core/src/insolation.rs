@@ -411,30 +411,6 @@ pub fn spin_orbit_resonance(spins: f64) -> Option<(u32, u32)> {
     })
 }
 
-/// Steffen's (1990) cubic at `t`, 0 to 1 between the second and third of four values a unit
-/// apart, `v`: Hermite's between them, each one's slope the gentlest of twice the steps either
-/// side and their mean, none where the values turn, so that it never passes the two values it
-/// lies between and makes no new extreme.
-fn monotone(v: [f64; 4], t: f64) -> f64 {
-    let slope = |a: f64, b: f64, c: f64| {
-        let (s0, s1) = (b - a, c - b);
-        if s0 * s1 <= 0.0 {
-            0.0
-        } else {
-            s0.signum()
-                * (2.0 * s0.abs())
-                    .min(2.0 * s1.abs())
-                    .min(0.5 * (s0 + s1).abs())
-        }
-    };
-    let (m1, m2) = (slope(v[0], v[1], v[2]), slope(v[1], v[2], v[3]));
-    let (t2, t3) = (t * t, t * t * t);
-    (2.0 * t3 - 3.0 * t2 + 1.0) * v[1]
-        + (t3 - 2.0 * t2 + t) * m1
-        + (-2.0 * t3 + 3.0 * t2) * v[2]
-        + (t3 - t2) * m2
-}
-
 /// A table over the cycle's places, latitude (rows, pole to pole) and longitude (columns,
 /// from -180°, wrapping), `n_lon` of them, read in a direction smoothly (F273): a monotone
 /// cubic (Steffen 1990, F286) along the four longitudes about it on each of the four rows
@@ -453,7 +429,7 @@ pub(crate) fn smooth_grid(table: &[f64], n_lon: usize, lat: f64, lon: f64) -> f6
     let row = |r: isize| r.clamp(0, n_lat as isize - 1) as usize;
     if n_lon <= 1 {
         let v = std::array::from_fn(|a| table[row(i + a as isize - 1)]);
-        return monotone(v, ty);
+        return crate::geom::monotone(v, ty);
     }
     let x = (lon + PI).rem_euclid(TAU) / TAU * n_lon as f64;
     let j = ((x.floor() as usize) % n_lon) as isize;
@@ -461,9 +437,9 @@ pub(crate) fn smooth_grid(table: &[f64], n_lon: usize, lat: f64, lon: f64) -> f6
     let at = |r: isize, c: isize| table[row(r) * n_lon + c.rem_euclid(n_lon as isize) as usize];
     let rows: [f64; 4] = std::array::from_fn(|a| {
         let r = i + a as isize - 1;
-        monotone(std::array::from_fn(|b| at(r, j + b as isize - 1)), tx)
+        crate::geom::monotone(std::array::from_fn(|b| at(r, j + b as isize - 1)), tx)
     });
-    monotone(rows, ty)
+    crate::geom::monotone(rows, ty)
 }
 
 /// A table over latitude from pole to pole, read linearly.
