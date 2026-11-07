@@ -1762,6 +1762,7 @@ mod tests {
 
     /// Bodies with no tidal heating episode, or with an ocean under the ice, have none.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn no_coronae_without_an_episode_or_over_an_ocean() {
         for name in [
             "Ganymede",

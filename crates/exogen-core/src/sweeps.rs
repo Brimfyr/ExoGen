@@ -22,6 +22,7 @@ mod tests {
     /// chaos gives way to lanes and the craters' retention grows, with no step between
     /// neighbouring bodies of the sweep.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_shell_renews_itself_by_degrees_between_europa_and_ganymede() {
         let (europa, _) = preset("Europa").unwrap().to_graph();
         let e0 = europa.f64("orbit.eccentricity");
@@ -59,6 +60,7 @@ mod tests {
     /// Enceladus's tides are turned up from a fifth of its own, the cracks' reach passes one
     /// and the fallout comes in by degrees.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn plumes_begin_where_the_ocean_reaches_the_surface() {
         let (enceladus, _) = preset("Enceladus").unwrap().to_graph();
         let e0 = enceladus.f64("orbit.eccentricity");
@@ -97,6 +99,7 @@ mod tests {
     /// and a half times its peak-ring onset, the central pit gives way to a peak ring, none of
     /// them by a step.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn craters_go_from_ice_to_rock_by_degrees() {
         use crate::crater::{Scaling, dimensions, hold_diameter};
         let (callisto, _) = preset("Callisto").unwrap().to_graph();
@@ -158,6 +161,7 @@ mod tests {
     /// coming in by degrees as its last overturn nears the present, none by the cut on half
     /// its life that stepped its magma fivefold.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_lid_turns_episodic_by_degrees() {
         let (venus, _) = preset("Venus").unwrap().to_graph();
         let r0 = venus.f64("body.radius");
@@ -199,6 +203,7 @@ mod tests {
     /// turns clean as the ocean grows to OCEAN_SHARE_WIDTH of its ice layer, neither
     /// stepping where the ocean first forms.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_shell_comes_afloat_by_degrees() {
         let (pluto, _) = preset("Pluto").unwrap().to_graph();
         let r0 = pluto.f64("body.radius");

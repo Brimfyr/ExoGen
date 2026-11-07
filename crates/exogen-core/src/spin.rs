@@ -385,6 +385,7 @@ mod tests {
     /// F238: a moon of a planet defaults to locked, its period its orbit's; the present state
     /// of every preset is one its history reaches, without a pin.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_presets_reach_their_present_spins() {
         for name in ["Moon", "Europa", "Titan", "Charon"] {
             let g = graph(name);

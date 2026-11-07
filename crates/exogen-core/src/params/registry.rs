@@ -371,6 +371,7 @@ const THERMAL_DEPS: &[&str] = &[
     "body.rock_mass_fraction",
     "body.core_mass_fraction",
     "interior.secular_cooling_fraction",
+    "interior.radiogenic_flux",
     "interior.tidal_flux",
     "orbit.eccentricity",
     "orbit.eccentricity_history",
@@ -4068,6 +4069,51 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeSet;
 
+    /// The graph's later passes derive again only the nodes whose reads changed, which holds
+    /// only while every derivation reads what it declares: on every preset, each derivation
+    /// reads nothing undeclared, and the graph its passes settle holds the same values as
+    /// one that derives every node in every pass.
+    #[test]
+    fn every_preset_reads_what_it_declares_and_settles_as_a_full_recompute() {
+        use rayon::prelude::*;
+        let graphs: Vec<(&str, ParamGraph)> = crate::presets::PRESET_NAMES
+            .par_iter()
+            .map(|&name| (name, crate::presets::preset(name).unwrap().to_graph().0))
+            .collect();
+        let mut undeclared = BTreeSet::new();
+        for (name, g) in &graphs {
+            for def in g.defs() {
+                let Some(f) = def.derive else { continue };
+                let accessed = RefCell::new(BTreeSet::new());
+                f(&Ctx::tracking(g, &accessed));
+                for r in accessed.into_inner() {
+                    if !def.deps.contains(&r.as_str()) && !def.lagged.contains(&r.as_str()) {
+                        undeclared.insert(format!("{} reads {r} ({name})", def.id));
+                    }
+                }
+            }
+        }
+        assert!(undeclared.is_empty(), "undeclared reads: {undeclared:#?}");
+        let full: Vec<ParamGraph> = crate::presets::PRESET_NAMES
+            .par_iter()
+            .map(|&name| {
+                super::super::FULL_RECOMPUTE.with(|f| f.set(true));
+                let g = crate::presets::preset(name).unwrap().to_graph().0;
+                super::super::FULL_RECOMPUTE.with(|f| f.set(false));
+                g
+            })
+            .collect();
+        for ((name, g), full) in graphs.iter().zip(&full) {
+            for def in g.defs() {
+                assert!(
+                    super::super::same_value(g.get(def.id), full.get(def.id)),
+                    "{name}: {} settles otherwise than a full recompute",
+                    def.id
+                );
+            }
+        }
+    }
+
     #[test]
     fn graph_builds_and_every_derivation_declares_what_it_reads() {
         let g = ParamGraph::new();
@@ -4106,7 +4152,8 @@ mod tests {
     /// volatile inventory, its rotation state).
     #[test]
     fn presets_set_only_inputs() {
-        for name in crate::presets::PRESET_NAMES {
+        use rayon::prelude::*;
+        crate::presets::PRESET_NAMES.par_iter().for_each(|name| {
             let (g, _) = crate::presets::preset(name).unwrap().to_graph();
             let pinned: Vec<&str> = g
                 .defs()
@@ -4115,7 +4162,7 @@ mod tests {
                 .map(|d| d.id)
                 .collect();
             assert!(pinned.is_empty(), "{name} pins {pinned:?}");
-        }
+        });
     }
 
     /// The Bond albedo is the surface's own: Enceladus's plume frost, the Moon's

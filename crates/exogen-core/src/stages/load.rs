@@ -906,6 +906,7 @@ mod tests {
     /// about it sunk into a moat, deepest at its foot, and raised in a bulge beyond; a flood
     /// with no edifice sinks with the ground.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_shield_fills_the_sag_beneath_it_and_stands_in_a_moat() {
         let (r, g, te) = (3.39e6, 3.71, 70e3);
         let grid = CubeSphere::new(128);
@@ -948,6 +949,7 @@ mod tests {
     /// again on a thick lid, while the lid's strength keeps it within a few times the sag of
     /// the edifice alone; where no edifice stands the lid bends as before.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn an_edifice_s_root_deepens_its_sag_and_its_moat() {
         let (r, g, te) = (3.39e6, 3.71, 70e3);
         let grid = CubeSphere::new(128);

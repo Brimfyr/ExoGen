@@ -794,6 +794,45 @@ mod tests {
         (graph, traps)
     }
 
+    /// A preset's caps laid on its traps over a 64-cell face, laid once for the whole-body
+    /// checks that read them, each of which laid them on its own before (the tests' tiers).
+    struct Laid {
+        layers: LayerSet,
+        caps: Vec<Cap>,
+    }
+
+    impl Laid {
+        fn of(name: &str) -> Self {
+            let (graph, traps) = traps_of(name);
+            let mut layers = LayerSet::new(CubeSphere::new(64));
+            let caps = lay(&graph, &mut layers, &traps, &[], None);
+            Self { layers, caps }
+        }
+    }
+
+    /// Mars's and Pluto's caps, each read by each check of them.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn mars_s_and_pluto_s_caps() {
+        let (mars, pluto) = rayon::join(|| Laid::of("Mars"), || Laid::of("Pluto"));
+        crate::testkit::checks(&[
+            ("mars_s_water_lays_its_polar_caps", &|| {
+                mars_s_water_lays_its_polar_caps(&mars)
+            }),
+            (
+                "the_frost_s_own_gas_lays_its_caps_where_its_ice_grows",
+                &|| the_frost_s_own_gas_lays_its_caps_where_its_ice_grows(&mars),
+            ),
+            (
+                "pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands",
+                &|| pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands(&pluto),
+            ),
+            ("an_ice_gathers_in_its_coldest_traps", &|| {
+                an_ice_gathers_in_its_coldest_traps(&pluto)
+            }),
+        ]);
+    }
+
     /// A cap's share of the sphere, its thickest and the lowest latitude it reaches, deg.
     fn reach(cap: &Cap) -> (f64, f64, f64) {
         let grid = cap.thickness.grid();
@@ -813,11 +852,8 @@ mod tests {
     /// F241: Mars's 25 m of water lays all of itself in caps at its poles, a few kilometres
     /// thick at most over a few percent of the body, as its polar layered deposits stand:
     /// some 3 km thick over some 2.6 percent of it (Zuber et al. 1998; Plaut et al. 2007).
-    #[test]
-    fn mars_s_water_lays_its_polar_caps() {
-        let (graph, traps) = traps_of("Mars");
-        let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[], None);
+    fn mars_s_water_lays_its_polar_caps(laid: &Laid) {
+        let Laid { layers, caps, .. } = laid;
         let cap = caps
             .iter()
             .find(|c| c.ice.species == "H2O")
@@ -833,11 +869,8 @@ mod tests {
 
     /// F241: an ice spreads over every place only when no fewer hold it: Pluto's 5 m of
     /// methane gathers in caps at its coldest traps rather than lying over the whole body.
-    #[test]
-    fn an_ice_gathers_in_its_coldest_traps() {
-        let (graph, traps) = traps_of("Pluto");
-        let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[], None);
+    fn an_ice_gathers_in_its_coldest_traps(laid: &Laid) {
+        let Laid { caps, .. } = laid;
         let cap = caps
             .iter()
             .find(|c| c.ice.species == "CH4")
@@ -853,11 +886,8 @@ mod tests {
     /// caps of the ices less volatile: Mars's carbon dioxide on ground at the datum at its
     /// poles, its whole inventory, the 0.12 m of its residual cap and the deposits buried
     /// under its south polar layered deposits (Phillips et al. 2011).
-    #[test]
-    fn the_frost_s_own_gas_lays_its_caps_where_its_ice_grows() {
-        let (graph, traps) = traps_of("Mars");
-        let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[], None);
+    fn the_frost_s_own_gas_lays_its_caps_where_its_ice_grows(laid: &Laid) {
+        let Laid { caps, .. } = laid;
         let species: Vec<&str> = caps.iter().map(|c| c.ice.species).collect();
         assert_eq!(species, ["H2O", "CO2"]);
         let cap = &caps[1];
@@ -872,11 +902,8 @@ mod tests {
     /// F258: Pluto's nitrogen lays its caps in the bands some 30° from its equator that its
     /// tilt of 120° and its ground's seasons leave the coldest, where volatile transport
     /// models gather it (Bertrand et al. 2018), Sputnik Planitia's 25° north among them.
-    #[test]
-    fn pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands() {
-        let (graph, traps) = traps_of("Pluto");
-        let mut layers = LayerSet::new(CubeSphere::new(64));
-        let caps = lay(&graph, &mut layers, &traps, &[], None);
+    fn pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands(laid: &Laid) {
+        let Laid { caps, .. } = laid;
         let cap = caps
             .iter()
             .find(|c| c.ice.species == "N2")
@@ -901,6 +928,7 @@ mod tests {
     /// F242: a working liquid that is the frost's own gas lays its ice only where the ice
     /// grows: Titan's methane, its air over 90 K holding its ice above its point, lays none.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn titan_s_methane_lays_no_cap() {
         let (graph, traps) = traps_of("Titan");
         let mut layers = LayerSet::new(CubeSphere::new(32));
@@ -1093,6 +1121,7 @@ mod tests {
     /// ground standing 40 K colder than its places within 20 degrees of the equator, as high
     /// ground stands, holds it there.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_working_liquid_s_ice_stands_where_its_own_ground_keeps_it_frozen() {
         let (graph, traps) = traps_of("Earth");
         let grid = CubeSphere::new(32);

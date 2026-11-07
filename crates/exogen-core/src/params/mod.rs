@@ -9,12 +9,14 @@
 //! artistic scale factors that are never derived. Stage outputs are filled in by the
 //! pipeline and are read-only in the UI.
 //!
-//! Recomputation is a full pass over the topological order. With a few hundred nodes this
-//! costs microseconds, which keeps the logic simple and makes every value consistent after
-//! every change. A node may also declare lagged dependencies: the far side of a feedback
-//! (the surface's reflectance sets the temperature that sets the surface), read from the
-//! previous pass and left out of the order so the graph stays acyclic; recomputation
-//! repeats its pass until nothing changes, a few passes at most.
+//! Recomputation is a pass over the topological order, every node derived in the first. A
+//! node may also declare lagged dependencies: the far side of a feedback (the surface's
+//! reflectance sets the temperature that sets the surface), read from the previous pass and
+//! left out of the order so the graph stays acyclic; recomputation repeats its pass until
+//! nothing changes, a few passes at most, each later pass deriving again only the nodes
+//! whose reads changed: in it, or, for a lagged read, in it or the pass before. So that this
+//! holds, every derivation reads only what it declares, on every preset (the registry's
+//! tests).
 
 pub mod derive;
 pub mod registry;
@@ -22,6 +24,7 @@ pub mod rules;
 pub mod value;
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::OnceLock;
 
 pub use value::{Curve, Value, ValueType};
 
@@ -198,6 +201,13 @@ pub enum SetError {
 /// Passes a recompute makes at most while lagged feedbacks settle.
 const RECOMPUTE_PASSES: usize = 4;
 
+#[cfg(test)]
+thread_local! {
+    /// Whether this thread's graphs derive every node in every pass: what the later passes'
+    /// skipping must agree with (the registry's tests).
+    pub(crate) static FULL_RECOMPUTE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Equality that lets a NaN settle (a NaN is never equal to itself).
 fn same_value(a: &Value, b: &Value) -> bool {
     match (a, b) {
@@ -211,6 +221,8 @@ pub struct ParamGraph {
     defs: &'static [NodeDef],
     index: HashMap<&'static str, usize>,
     order: Vec<usize>,
+    /// Each node's reads, as indices: those of this pass and the lagged ones.
+    reads: &'static [(Vec<usize>, Vec<usize>)],
     values: Vec<Value>,
     state: Vec<LockState>,
 }
@@ -221,10 +233,31 @@ impl Clone for ParamGraph {
             defs: self.defs,
             index: self.index.clone(),
             order: self.order.clone(),
+            reads: self.reads,
             values: self.values.clone(),
             state: self.state.clone(),
         }
     }
+}
+
+/// Each node's reads, as indices into the registry's nodes: those of this pass and the
+/// lagged ones, read from the pass before.
+fn reads_of(
+    defs: &'static [NodeDef],
+    index: &HashMap<&'static str, usize>,
+) -> &'static [(Vec<usize>, Vec<usize>)] {
+    static READS: OnceLock<Vec<(Vec<usize>, Vec<usize>)>> = OnceLock::new();
+    READS.get_or_init(|| {
+        let at = |id: &&str| *index.get(id).unwrap_or_else(|| panic!("unknown node {id}"));
+        defs.iter()
+            .map(|d| {
+                (
+                    d.deps.iter().map(at).collect(),
+                    d.lagged.iter().map(at).collect(),
+                )
+            })
+            .collect()
+    })
 }
 
 impl std::default::Default for ParamGraph {
@@ -246,6 +279,7 @@ impl ParamGraph {
             );
         }
         let order = topological_order(defs, &index);
+        let reads = reads_of(defs, &index);
         let mut values = Vec::with_capacity(defs.len());
         let mut state = Vec::with_capacity(defs.len());
         for d in defs {
@@ -265,6 +299,7 @@ impl ParamGraph {
             defs,
             index,
             order,
+            reads,
             values,
             state,
         };
@@ -378,18 +413,28 @@ impl ParamGraph {
 
     /// Recompute every unpinned derived node in topological order, and again while any
     /// value changed, up to a few passes, so that the feedbacks the lagged dependencies
-    /// express settle. Without lagged edges the second pass changes nothing.
+    /// express settle, each later pass deriving again only the nodes whose reads changed.
+    /// Without lagged edges the second pass changes nothing.
     pub fn recompute(&mut self) {
+        let mut before: Option<Vec<bool>> = None;
         for _ in 0..RECOMPUTE_PASSES {
-            if !self.recompute_pass() {
+            let changed = self.recompute_pass(before.as_deref());
+            if !changed.iter().any(|&c| c) {
                 break;
             }
+            #[cfg(test)]
+            if FULL_RECOMPUTE.with(|f| f.get()) {
+                continue;
+            }
+            before = Some(changed);
         }
     }
 
-    /// One pass over the order; whether any derived value changed.
-    fn recompute_pass(&mut self) -> bool {
-        let mut changed = false;
+    /// One pass over the order: every node where `before` is none, the first pass's, and
+    /// otherwise only those whose reads changed, in this pass, or, for a lagged read, in this
+    /// pass or `before`'s; which derived values changed.
+    fn recompute_pass(&mut self, before: Option<&[bool]>) -> Vec<bool> {
+        let mut changed = vec![false; self.defs.len()];
         for k in 0..self.order.len() {
             let i = self.order[k];
             let d = &self.defs[i];
@@ -397,6 +442,14 @@ impl ParamGraph {
                 continue;
             }
             let Some(f) = d.derive else { continue };
+            if let Some(before) = before {
+                let (deps, lagged) = &self.reads[i];
+                let stale = deps.iter().any(|&j| changed[j])
+                    || lagged.iter().any(|&j| changed[j] || before[j]);
+                if !stale {
+                    continue;
+                }
+            }
             let v = {
                 let ctx = Ctx::new(self);
                 f(&ctx)
@@ -405,7 +458,7 @@ impl ParamGraph {
             debug_assert!(d.ty.accepts(&v), "derivation of {} produced {:?}", d.id, v);
             if !same_value(&self.values[i], &v) {
                 self.values[i] = v;
-                changed = true;
+                changed[i] = true;
             }
         }
         changed

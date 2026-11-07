@@ -7,6 +7,12 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+# The whole-body tests: each body's pipeline, its climate's year, its loop and its finish,
+# minutes each; left out of the fast tier run while iterating and run before each milestone
+# (`cargo nextest run --features whole-body`).
+whole-body = []
+
 [dependencies]
 exr = "1.74.2"
 half = "2.7.1"

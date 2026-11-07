@@ -531,6 +531,7 @@ mod tests {
     /// their lids stretch as their oceans freeze (Charon's some 1 percent of its area, Beyer
     /// et al. 2017; Pluto's extension, Bierson et al. 2020).
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn an_ocean_freezes_on_its_floor_as_the_high_pressure_ices() {
         // The melting curves: ice Ih at 100 MPa (IAPWS R14-08: 264.2 K), ice V at 260 K.
         assert!((ice_one_melting(100e6) - 264.2).abs() < 0.1);
@@ -577,6 +578,7 @@ mod tests {
     /// lets them and deeper than its short ones, and a lid stretched little opens few faults
     /// rather than one each time it stretches.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_lid_s_faults_grow_deeper_with_their_length() {
         let (g, _) = crate::presets::preset("Pluto").unwrap().to_graph();
         let thermal = ThermalHistory::from_graph(&g);

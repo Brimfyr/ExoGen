@@ -4435,6 +4435,7 @@ mod tests {
     /// alike, where the present season's traps alone would give it all to the north; its
     /// carbon dioxide, moving in years, lies where the present season puts it.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn mars_s_water_gathers_at_both_its_poles() {
         use super::*;
         let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
@@ -4510,6 +4511,139 @@ mod tests {
         let (mut g, _) = preset(name).unwrap().to_graph();
         g.set("detail.quality", quality).unwrap();
         g
+    }
+
+    /// A preset's preview run, its loop and its finish, built once for the whole-body checks
+    /// that read it, each of which ran it on its own before (the tests' tiers).
+    struct Body {
+        graph: ParamGraph,
+        out: PipelineResult,
+    }
+
+    impl Body {
+        fn of(name: &str) -> Self {
+            let graph = preset_graph(name, "preview");
+            let out = Runner::new().run(&graph, &NoProgress).unwrap();
+            Self { graph, out }
+        }
+    }
+
+    /// Mars's run, read by each check of it.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn mars_s_body() {
+        let body = Body::of("Mars");
+        crate::testkit::checks(&[
+            ("mars_raises_a_rise_with_shields_and_a_canyon", &|| {
+                mars_raises_a_rise_with_shields_and_a_canyon(&body)
+            }),
+            ("mars_s_largest_shield_s_moat_holds_its_lava", &|| {
+                mars_s_largest_shield_s_moat_holds_its_lava(&body)
+            }),
+            ("mars_s_rise_gathers_its_pile", &|| {
+                mars_s_rise_gathers_its_pile(&body)
+            }),
+            ("mars_s_thrusts_run_round_tharsis", &|| {
+                mars_s_thrusts_run_round_tharsis(&body)
+            }),
+        ]);
+    }
+
+    /// Venus's run, read by each check of it.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn venus_s_body() {
+        let body = Body::of("Venus");
+        crate::testkit::checks(&[
+            ("venus_renews_its_surface_and_keeps_tessera", &|| {
+                venus_renews_its_surface_and_keeps_tessera(&body)
+            }),
+            ("venus_s_ridges_keep_to_its_lows", &|| {
+                venus_s_ridges_keep_to_its_lows(&body)
+            }),
+        ]);
+    }
+
+    /// The Moon's, the Earth-like's and Mercury's runs, built side by side, read by each
+    /// check of them and by those that set them against each other.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn the_moon_the_earth_like_and_mercury() {
+        let (moon, (earth, mercury)) = rayon::join(
+            || Body::of("Moon"),
+            || rayon::join(|| Body::of("Earth"), || Body::of("Mercury")),
+        );
+        crate::testkit::checks(&[
+            ("the_moon_is_heavily_cratered_and_earth_is_not", &|| {
+                the_moon_is_heavily_cratered_and_earth_is_not(&moon, &earth)
+            }),
+            (
+                "nothing_older_than_a_loop_crater_survives_inside_it",
+                &|| nothing_older_than_a_loop_crater_survives_inside_it(&moon),
+            ),
+            (
+                "later_impacts_erase_some_loop_craters_and_most_basins_stay_visible",
+                &|| later_impacts_erase_some_loop_craters_and_most_basins_stay_visible(&moon),
+            ),
+            ("the_moon_floods_its_thin_crust_basins", &|| {
+                the_moon_floods_its_thin_crust_basins(&moon)
+            }),
+            ("moon_height_spectrum_has_a_terrain_like_slope", &|| {
+                moon_height_spectrum_has_a_terrain_like_slope(&moon)
+            }),
+            ("the_moon_raises_no_rise", &|| {
+                let lo = &moon.out.loop_output;
+                assert!(lo.rises.is_empty() && lo.shields.is_empty());
+            }),
+            ("earth_gets_an_ocean_covering_most_of_the_surface", &|| {
+                earth_gets_an_ocean_covering_most_of_the_surface(&earth)
+            }),
+            ("mercury_takes_up_its_contraction_in_scarps", &|| {
+                mercury_takes_up_its_contraction_in_scarps(&mercury, &moon)
+            }),
+            ("the_ground_stands_on_the_mantle_s_flow", &|| {
+                the_ground_stands_on_the_mantle_s_flow(&mercury)
+            }),
+        ]);
+    }
+
+    /// The icy moons' runs, Enceladus's, Europa's and Ganymede's, each read by each check of
+    /// it.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn the_icy_moons_bodies() {
+        use rayon::prelude::*;
+        ["Enceladus", "Europa", "Ganymede"]
+            .par_iter()
+            .for_each(|&name| {
+                let body = Body::of(name);
+                match name {
+                    "Enceladus" => crate::testkit::checks(&[
+                        ("enceladus_fallout_keeps_it_bright", &|| {
+                            enceladus_fallout_keeps_it_bright(&body)
+                        }),
+                        ("enceladus_keeps_the_terrains_of_its_past_episodes", &|| {
+                            enceladus_keeps_the_terrains_of_its_past_episodes(&body)
+                        }),
+                    ]),
+                    "Europa" => crate::testkit::checks(&[
+                        ("europa_cracks_follow_the_tidal_stress", &|| {
+                            europa_cracks_follow_the_tidal_stress(&body)
+                        }),
+                        ("europa_breaks_into_chaos_and_renews_its_plains", &|| {
+                            europa_breaks_into_chaos_and_renews_its_plains(&body)
+                        }),
+                    ]),
+                    _ => crate::testkit::checks(&[
+                        ("ganymede_has_two_terrains", &|| {
+                            ganymede_has_two_terrains(&body)
+                        }),
+                        ("ganymede_relaxes_its_large_craters_first", &|| {
+                            ganymede_relaxes_its_large_craters_first(&body)
+                        }),
+                    ]),
+                }
+            });
     }
 
     /// Prints each body's elastic lid through time and the loads its floods lay: the lava's
@@ -4774,6 +4908,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_same_seed_gives_identical_output_on_different_thread_counts() {
         let g = preset_graph("Moon", "preview");
         let run_with = |threads: usize| {
@@ -4791,6 +4926,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn keyframes_change_over_time_and_the_cache_is_used() {
         let g = preset_graph("Moon", "preview");
         let mut r = Runner::new();
@@ -4814,11 +4950,8 @@ mod tests {
         assert!(other.finish.epoch_time_gyr < out.finish.epoch_time_gyr);
     }
 
-    #[test]
-    fn earth_gets_an_ocean_covering_most_of_the_surface() {
-        let g = preset_graph("Earth", "preview");
-        let mut r = Runner::new();
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn earth_gets_an_ocean_covering_most_of_the_surface(body: &Body) {
+        let out = &body.out;
         assert!(out.finish.sea_level.is_finite());
         assert!(
             out.finish.ocean_fraction > 0.5 && out.finish.ocean_fraction < 0.9,
@@ -4827,15 +4960,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_moon_is_heavily_cratered_and_earth_is_not() {
-        let mut r = Runner::new();
-        let moon = r
-            .run(&preset_graph("Moon", "preview"), &NoProgress)
-            .unwrap();
-        let earth = r
-            .run(&preset_graph("Earth", "preview"), &NoProgress)
-            .unwrap();
+    fn the_moon_is_heavily_cratered_and_earth_is_not(moon_body: &Body, earth_body: &Body) {
+        let (moon, earth) = (&moon_body.out, &earth_body.out);
         assert!(
             moon.loop_output.craters.len() > 100,
             "loop craters {}",
@@ -4877,12 +5003,8 @@ mod tests {
     /// Nothing older than a loop crater survives inside it: the finishing pass stamps in
     /// age order and the restore removes what the impact destroyed, so every cell inside
     /// the rim dates from the crater or from something younger.
-    #[test]
-    fn nothing_older_than_a_loop_crater_survives_inside_it() {
-        let mut r = Runner::new();
-        let moon = r
-            .run(&preset_graph("Moon", "preview"), &NoProgress)
-            .unwrap();
+    fn nothing_older_than_a_loop_crater_survives_inside_it(body: &Body) {
+        let moon = &body.out;
         let grid = moon.finish.grid;
         let ages = moon.finish.layers.surface_age.as_slice();
         let mut stamper = Stamper::new(&grid);
@@ -4909,12 +5031,8 @@ mod tests {
 
     /// Craters erase each other: a share of the loop craters lose their relief to later
     /// cavities and ejecta, while most basins, which nothing relaxes yet, stay visible.
-    #[test]
-    fn later_impacts_erase_some_loop_craters_and_most_basins_stay_visible() {
-        let mut r = Runner::new();
-        let moon = r
-            .run(&preset_graph("Moon", "preview"), &NoProgress)
-            .unwrap();
+    fn later_impacts_erase_some_loop_craters_and_most_basins_stay_visible(body: &Body) {
+        let moon = &body.out;
         let all = &moon.loop_output.craters;
         let erased = all.iter().filter(|c| !c.visible).count();
         assert!(all.len() > 50, "loop craters {}", all.len());
@@ -4943,13 +5061,8 @@ mod tests {
 
     /// Mercury takes up its contraction in scarps: many, up to hundreds of kilometres long
     /// and kilometres high, carrying most of the shortening budget; the Moon far less.
-    #[test]
-    fn mercury_takes_up_its_contraction_in_scarps() {
-        let mut r = Runner::new();
-        let mercury = r
-            .run(&preset_graph("Mercury", "preview"), &NoProgress)
-            .unwrap();
-        let g = preset_graph("Mercury", "preview");
+    fn mercury_takes_up_its_contraction_in_scarps(mercury_body: &Body, moon_body: &Body) {
+        let (g, mercury) = (&mercury_body.graph, &mercury_body.out);
         let radius = g.f64("body.radius");
         let area = 4.0 * std::f64::consts::PI * radius * radius;
         let budget = 2.0 * g.f64("interior.contraction_total") / radius * area;
@@ -4971,16 +5084,14 @@ mod tests {
             taken > 0.3 * budget && taken <= 1.05 * budget,
             "taken {taken} of {budget}"
         );
-        let moon = r
-            .run(&preset_graph("Moon", "preview"), &NoProgress)
-            .unwrap();
+        let moon = &moon_body.out;
         let moon_taken: f64 = moon
             .loop_output
             .scarps
             .iter()
             .map(|s| s.length * tectonics::scarp_shortening(s.height))
             .sum();
-        let moon_radius = preset_graph("Moon", "preview").f64("body.radius");
+        let moon_radius = moon_body.graph.f64("body.radius");
         let per_area = |t: f64, r: f64| t / (4.0 * std::f64::consts::PI * r * r);
         assert!(per_area(moon_taken, moon_radius) < 0.3 * per_area(taken, radius));
     }
@@ -4989,10 +5100,8 @@ mod tests {
     /// laid where the melt rises from, gathers beneath Mars's rise as Tharsis's some 3 × 10⁸
     /// km³ (Phillips et al. 2001), and all the loop lays is the melt's intrusive share and the
     /// magma the full edifices could not lift, the melt one budget.
-    #[test]
-    fn mars_s_rise_gathers_its_pile() {
-        let g = preset_graph("Mars", "preview");
-        let out = run_coarse_loop(&g, &NoProgress).unwrap();
+    fn mars_s_rise_gathers_its_pile(body: &Body) {
+        let (g, out) = (&body.graph, &*body.out.loop_output);
         let r = g.f64("body.radius");
         let grid = out.grid;
         let rise = &out.rises[0];
@@ -5006,8 +5115,8 @@ mod tests {
                 under += laid * a;
             }
         }
-        let thermal = ThermalHistory::from_graph(&g);
-        let floods = volcanism::FloodProcess::new(&g, grid, &thermal, &out.rises).unwrap();
+        let thermal = ThermalHistory::from_graph(g);
+        let floods = volcanism::FloodProcess::new(g, grid, &thermal, &out.rises).unwrap();
         let steps = out.steps;
         let dt = out.age_gyr / steps as f64;
         let intrusive: f64 = (0..steps)
@@ -5047,10 +5156,8 @@ mod tests {
     /// pattern beneath it changes, late in its life by as much as the ground the flow holds
     /// up changes, little else moving it then, and the flow's highs and lows reach some
     /// hundreds of metres.
-    #[test]
-    fn the_ground_stands_on_the_mantle_s_flow() {
-        let g = preset_graph("Mercury", "preview");
-        let out = run_coarse_loop(&g, &NoProgress).unwrap();
+    fn the_ground_stands_on_the_mantle_s_flow(body: &Body) {
+        let out = &*body.out.loop_output;
         let support = out.support.as_ref().unwrap();
         let grid = out.grid;
         let frames = &out.keyframes;
@@ -5081,10 +5188,8 @@ mod tests {
     /// (F155, F156), and Venus's ridges keep to its lows, where the relief squeezes the
     /// plains and its highs stretch them (Bilotti and Suppe 1999); its thrusts form soon after
     /// its last overturn (F185).
-    #[test]
-    fn mars_s_thrusts_run_round_tharsis_and_venus_s_ridges_keep_to_its_lows() {
-        let g = preset_graph("Mars", "preview");
-        let mars = run_coarse_loop(&g, &NoProgress).unwrap();
+    fn mars_s_thrusts_run_round_tharsis(body: &Body) {
+        let (g, mars) = (&body.graph, &*body.out.loop_output);
         let r = g.f64("body.radius");
         let rise = &mars.rises[0];
         assert!(!mars.scarps.is_empty());
@@ -5122,11 +5227,15 @@ mod tests {
             near > 100 && round * 10 > near * 6,
             "{round} of {near} round"
         );
+    }
 
-        let g = preset_graph("Venus", "preview");
-        let venus = run_coarse_loop(&g, &NoProgress).unwrap();
+    /// Venus's ridges keep to its lows, where the relief squeezes the plains and its highs
+    /// stretch them (Bilotti and Suppe 1999); its thrusts form soon after its last overturn
+    /// (F185).
+    fn venus_s_ridges_keep_to_its_lows(body: &Body) {
+        let (g, venus) = (&body.graph, &*body.out.loop_output);
         // Its thrusts form on the lid its last overturn left (F185).
-        let overturn = ThermalHistory::from_graph(&g)
+        let overturn = ThermalHistory::from_graph(g)
             .mantle
             .unwrap()
             .last_overturn()
@@ -5179,10 +5288,8 @@ mod tests {
     /// off, and still the ground just past its foot stands below the ground beyond; its
     /// summit still stands three quarters of the height it built above the ground beyond;
     /// and the loop keeps how far the ground sank for the finish.
-    #[test]
-    fn mars_s_largest_shield_s_moat_holds_its_lava() {
-        let g = preset_graph("Mars", "preview");
-        let mars = run_coarse_loop(&g, &NoProgress).unwrap();
+    fn mars_s_largest_shield_s_moat_holds_its_lava(body: &Body) {
+        let (g, mars) = (&body.graph, &*body.out.loop_output);
         assert!(!mars.flexure.is_empty());
         let r = g.f64("body.radius");
         let grid = mars.grid;
@@ -5245,11 +5352,8 @@ mod tests {
 
     /// The Moon's magma floods its thin-crust lowlands: a sixth of the surface or so,
     /// mostly on the thin-crust side, and the finishing pass keeps that extent.
-    #[test]
-    fn the_moon_floods_its_thin_crust_basins() {
-        let mut r = Runner::new();
-        let g = preset_graph("Moon", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn the_moon_floods_its_thin_crust_basins(body: &Body) {
+        let (g, out) = (&body.graph, &body.out);
         let layers = &out.loop_output.keyframes.last().unwrap().layers;
         let fraction = volcanism::lava_fraction(layers);
         assert!(
@@ -5372,11 +5476,8 @@ mod tests {
         println!("deepest standing {deepest:.0} m");
     }
 
-    #[test]
-    fn mars_raises_a_rise_with_shields_and_a_canyon() {
-        let mut r = Runner::new();
-        let g = preset_graph("Mars", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn mars_raises_a_rise_with_shields_and_a_canyon(body: &Body) {
+        let (g, out) = (&body.graph, &body.out);
         let lo = &out.loop_output;
         assert_eq!(lo.rises.len(), 1);
         assert!(lo.shields.len() >= 4, "{} shields", lo.shields.len());
@@ -5486,11 +5587,6 @@ mod tests {
             .map(relief)
             .fold(f64::NEG_INFINITY, f64::max);
         assert!(deepest > 1_000.0, "deepest standing trough {deepest} m");
-        // The Moon raises none.
-        let moon = r
-            .run(&preset_graph("Moon", "preview"), &NoProgress)
-            .unwrap();
-        assert!(moon.loop_output.rises.is_empty() && moon.loop_output.shields.is_empty());
     }
 
     /// F197 diagnostic: the lid that holds an icy body's relief up through its life against
@@ -5661,11 +5757,8 @@ mod tests {
 
     /// Venus renews its surface: most of it is plains the age of the event, a few per
     /// cent is older tessera, coronae and domes dot the plains, and the craters are few.
-    #[test]
-    fn venus_renews_its_surface_and_keeps_tessera() {
-        let mut r = Runner::new();
-        let g = preset_graph("Venus", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn venus_renews_its_surface_and_keeps_tessera(body: &Body) {
+        let (g, out) = (&body.graph, &body.out);
         let lo = &out.loop_output;
         assert!(!lo.rises.is_empty() && !lo.shields.is_empty());
         let event = lo.resurfacing.as_ref().expect("an event").time_gyr;
@@ -5764,12 +5857,9 @@ mod tests {
     }
 
     /// Europa's cracks open perpendicular to the most tensile tidal stress of their moment.
-    #[test]
-    fn europa_cracks_follow_the_tidal_stress() {
-        let mut r = Runner::new();
-        let g = preset_graph("Europa", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
-        let cracks = lineae::Cracks::new(&g).expect("Europa cracks");
+    fn europa_cracks_follow_the_tidal_stress(body: &Body) {
+        let (g, out) = (&body.graph, &body.out);
+        let cracks = lineae::Cracks::new(g).expect("Europa cracks");
         let lineae = &out.finish.lineae;
         assert!(lineae.len() > 200, "{} lineae", lineae.len());
         let cycloids = lineae
@@ -5815,11 +5905,8 @@ mod tests {
     /// plains are as young as its surface: the fabric of narrow ridges renews them (F81),
     /// so the surface's mean age is its retention age and little of it is older than
     /// three of them.
-    #[test]
-    fn europa_breaks_into_chaos_and_renews_its_plains() {
-        let mut r = Runner::new();
-        let g = preset_graph("Europa", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn europa_breaks_into_chaos_and_renews_its_plains(body: &Body) {
+        let (g, out) = (&body.graph, &body.out);
         assert!(
             out.finish.chaos.len() == CHAOS_GENERATIONS,
             "{} chaos generations",
@@ -5858,6 +5945,7 @@ mod tests {
     /// Ceres builds domes of brine-rich ice and brightens the floors of its deep young
     /// craters with salts.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn ceres_builds_domes_and_bright_floors() {
         let mut r = Runner::new();
         let g = preset_graph("Ceres", "preview");
@@ -6014,11 +6102,8 @@ mod tests {
 
     /// Enceladus's plume keeps its surface in fresh frost and buries the salts in its
     /// cracks before they can show.
-    #[test]
-    fn enceladus_fallout_keeps_it_bright() {
-        let mut r = Runner::new();
-        let g = preset_graph("Enceladus", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn enceladus_fallout_keeps_it_bright(body: &Body) {
+        let out = &body.out;
         let m = out.finish.maturity.as_slice();
         let mean = m.iter().map(|&v| v as f64).sum::<f64>() / m.len() as f64;
         assert!(mean < 0.1, "mean maturity {mean:.3}");
@@ -6040,11 +6125,8 @@ mod tests {
 
     /// Ganymede has two terrains: the old dark cratered one and the lanes of bright
     /// grooved terrain that cut it, which carry far fewer craters.
-    #[test]
-    fn ganymede_has_two_terrains() {
-        let mut r = Runner::new();
-        let g = preset_graph("Ganymede", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn ganymede_has_two_terrains(body: &Body) {
+        let (g, out) = (&body.graph, &body.out);
         let grooved = out.finish.lane_coverage;
         assert!(
             (0.45..=0.85).contains(&grooved),
@@ -6081,11 +6163,8 @@ mod tests {
     /// Enceladus carries the terrains of its past episodes of focusing (F53): several of
     /// them, which with the present one and the lanes take a good share of the surface
     /// from the cratered plains.
-    #[test]
-    fn enceladus_keeps_the_terrains_of_its_past_episodes() {
-        let mut r = Runner::new();
-        let g = preset_graph("Enceladus", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn enceladus_keeps_the_terrains_of_its_past_episodes(body: &Body) {
+        let out = &body.out;
         let n = out.finish.episodes.len();
         assert!(n >= 3, "{n} past episodes");
         let renewed = out.finish.renewed_fraction;
@@ -6099,11 +6178,8 @@ mod tests {
 
     /// Ganymede's ice relaxes its large craters into palimpsests and keeps its small ones
     /// shallow but present, as the dark terrain's craters are.
-    #[test]
-    fn ganymede_relaxes_its_large_craters_first() {
-        let mut r = Runner::new();
-        let g = preset_graph("Ganymede", "preview");
-        let out = r.run(&g, &NoProgress).unwrap();
+    fn ganymede_relaxes_its_large_craters_first(body: &Body) {
+        let (g, out) = (&body.graph, &body.out);
         let grid = out.finish.grid;
         let radius = g.f64("body.radius");
         let height = out.finish.height.as_slice();
@@ -6164,6 +6240,7 @@ mod tests {
     /// its surface is as bright and as pale a yellow as Io's measured colour (F204: green
     /// albedo 0.62 to 0.74, blue some 0.72 of green).
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn io_is_craterless_with_paterae_and_mountains() {
         let mut r = Runner::new();
         let g = preset_graph("Io", "preview");
@@ -6255,12 +6332,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn moon_height_spectrum_has_a_terrain_like_slope() {
-        let mut r = Runner::new();
-        let moon = r
-            .run(&preset_graph("Moon", "preview"), &NoProgress)
-            .unwrap();
+    fn moon_height_spectrum_has_a_terrain_like_slope(body: &Body) {
+        let moon = &body.out;
         let width = 1024usize;
         let row = crate::grid::projection::to_equirectangular(
             &moon.finish.grid,

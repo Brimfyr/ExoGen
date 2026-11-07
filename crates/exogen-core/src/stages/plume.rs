@@ -4397,6 +4397,7 @@ mod tests {
     /// fall, where they stood up to 280 km thick; Olympus Mons's lobes stand some 1 to 2 km
     /// as its own do (DLR and ESA 2023).
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_shield_sheds_no_more_than_its_flanks_hold() {
         let mars = crate::presets::preset("Mars").unwrap().to_graph().0;
         let mut old = crate::presets::preset("Earth").unwrap().to_graph().0;
@@ -5027,6 +5028,7 @@ mod tests {
     /// faults of every body start where the field passes the yield, none a single step long;
     /// Mars's one plume has no limb.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn venus_s_rifts_run_from_rise_to_rise_along_its_limbs() {
         let (g, _) = crate::presets::preset("Venus").unwrap().to_graph();
         let thermal = ThermalHistory::from_graph(&g);
@@ -6238,6 +6240,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_shield_buries_the_craters_it_grows_over() {
         // F115: a crater on the ground a shield grows over fills with its lava rather than
         // riding up on it. Runs of Mars's plume, one on flat ground and others with bowls

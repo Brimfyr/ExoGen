@@ -1059,6 +1059,7 @@ mod tests {
     /// wear away step by step, and no ripples spread out from its rim. Split afresh at every
     /// step, as the bands were, the same relief wears down and rings.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_relaxed_crater_neither_rings_nor_wears_away() {
         let grid = CubeSphere::new(128);
         let center = [1.0f64, 0.0, 0.0];

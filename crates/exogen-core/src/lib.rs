@@ -34,6 +34,8 @@ pub mod shade;
 pub mod spharm;
 pub mod spin;
 pub mod stages;
+#[cfg(test)]
+pub(crate) mod testkit;
 pub mod thermal;
 pub mod units;
 pub mod validate;

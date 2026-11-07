@@ -543,6 +543,7 @@ mod tests {
     /// of craters above twice the threshold, the number formed in the last 1 Gyr, and the
     /// rarity of young giant basins.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn loop_population_follows_the_production_function() {
         let (mut g, _) = preset("Moon").unwrap().to_graph();
         g.set("detail.quality", "preview").unwrap();
@@ -629,6 +630,7 @@ mod tests {
     /// area today against Nesvorny et al. 2023's, whose rates are Jupiter's 1 km impactor
     /// every 230 years times each moon's share.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_outer_moons_meet_their_comets_at_their_speeds_and_rates() {
         let jupiter_per_year = 1.0 / 230.0;
         for (name, speed_kms, share) in [
@@ -664,6 +666,7 @@ mod tests {
     /// starts with its crust, takes no debris, and keeps the comets' craters at 0.6 of its
     /// counts.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_moons_keep_the_craters_they_were_counted_with() {
         let (miranda, _) = preset("Miranda").unwrap().to_graph();
         let cases = [
@@ -740,6 +743,7 @@ mod tests {
     /// the large moons keep their record from when their crust solidified, the Moon from
     /// within a few tens of millions of years of it.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_small_ice_moon_holds_no_crater_wider_than_itself() {
         let mut small = vec![("Mimas".to_string(), mimas())];
         for name in ["Enceladus", "Miranda"] {

@@ -486,6 +486,7 @@ mod tests {
     /// thins it over the upwellings, the whole kept; the ground rises over the thickened
     /// crust by its root's share. Mars's stagnant lid, thicker than its crust, carries none.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_flow_piles_the_crust_over_the_downwellings_beneath_a_thin_lid() {
         let grid = CubeSphere::new(16);
         let run = |name: &str, from: Option<f64>| {

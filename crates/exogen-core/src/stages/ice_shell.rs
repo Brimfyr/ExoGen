@@ -4379,6 +4379,7 @@ mod tests {
     /// episode has thinned, during that episode, on a lid thinner than the mean; and none
     /// is wider than a lane can be.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_lane_opens_where_the_lid_lets_it() {
         // A less heated Enceladus three times as far from the Sun, its eccentricity 0.95
         // of the real one's, erupts (F228) and its colder surface keeps a lid too thick for
@@ -4475,6 +4476,7 @@ mod tests {
     /// few and then many; a fully heated one half again as large, where it is, makes most
     /// of its lanes on the lid of the time and some in its episodes.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn lanes_come_in_by_degrees_as_the_lid_thins_against_the_body() {
         let mut outside_counts = Vec::new();
         let mut inside_counts = Vec::new();
@@ -4639,6 +4641,7 @@ mod tests {
     /// the later sets are turned by degrees to tens of degrees; on Enceladus the tidal
     /// field barely turns within an episode, and they run nearly parallel to the first.
     #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn later_pulses_take_the_field_as_it_turns() {
         let turns_of = |name: &str| -> Vec<f64> {
             let (g, _) = crate::presets::preset(name).unwrap().to_graph();

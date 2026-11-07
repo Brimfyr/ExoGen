@@ -57,11 +57,12 @@ mod tests {
 
     #[test]
     fn every_preset_parses_and_only_sets_known_nodes() {
-        for name in PRESET_NAMES {
+        use rayon::prelude::*;
+        PRESET_NAMES.par_iter().for_each(|name| {
             let p = preset(name).unwrap();
             let (g, unknown) = p.to_graph();
             assert!(unknown.is_empty(), "{name}: unknown ids {unknown:?}");
             assert!(g.f64("body.gravity") > 0.0);
-        }
+        });
     }
 }
