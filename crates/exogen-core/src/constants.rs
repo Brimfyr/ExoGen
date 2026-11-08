@@ -1932,16 +1932,24 @@ pub const TAU_H2O: (f64, f64) = (0.09328, 0.02754);
 pub const TAU_CH4: (f64, f64) = (5.739e-3, 0.5);
 pub const TAU_N2_CIA: (f64, f64) = (1.180e-8, 1.5);
 /// F293: the air's radiation (radiation.rs). Its wavenumbers, cm^-1, from, to and step, finer
-/// over carbon dioxide's band; its levels from the ground up through so many decades of the
+/// over carbon dioxide's band and at the far infrared's end, out to where a 2,500 K ground's
+/// light has all but ended, so that an air that neither absorbs nor emits lets out sigma T⁴
+/// within a percent from 5 to 2,500 K (F295; from 1 to 5,000 cm^-1 by 20 cm^-1 at the end, a
+/// clear air let out 32% too much at 5 K and lost a twentieth at 1,000 K, a half at 2,000 K);
+/// its levels from the ground up through so many decades of the
 /// pressure, crowded toward the ground (within 0.3 W/m² of 2,000 levels where water's vapour
 /// thins at a fifth of the air's scale height); the diffusivity of its two streams (Elsasser 1942); the ground's temperature
 /// found in so many halvings of its span; the table of its outgoing share every so much of
 /// the logarithm of the temperature.
-pub const RADIATION_BINS: [(f64, f64, f64); 4] = [
-    (1.0, 400.0, 20.0),
+pub const RADIATION_BINS: [(f64, f64, f64); 8] = [
+    (0.0, 21.0, 1.0),
+    (21.0, 61.0, 4.0),
+    (61.0, 400.0, 20.0),
     (400.0, 950.0, 4.0),
     (950.0, 2_000.0, 25.0),
     (2_000.0, 5_000.0, 50.0),
+    (5_000.0, 10_000.0, 250.0),
+    (10_000.0, 25_000.0, 750.0),
 ];
 pub const RADIATION_LEVELS: usize = 48;
 pub const RADIATION_DECADES: f64 = 6.0;

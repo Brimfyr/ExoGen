@@ -820,4 +820,137 @@ mod tests {
             "Titan: scattered {scattered:.4}, haze {haze:.5}, HAZE_ABSORPTION {absorption:.5}"
         );
     }
+
+    /// F295: the column's spectrum holds a black body's light: an air that neither absorbs nor
+    /// emits lets out the ground's sigma T⁴, within a percent, from the coldest ground a
+    /// body's table reads, 5 K, to 2,000 K, where a hot world's thin air would stand (the
+    /// tests' tiers); the spectrum from 1 to 5,000 cm^-1 let out 32% too much at 5 K and lost
+    /// a twentieth at 1,000 K, a half at 2,000 K.
+    #[test]
+    fn a_clear_air_lets_out_a_black_body_s_light() {
+        let clear: BTreeMap<String, f64> = [("Ar".to_string(), 1.0)].into_iter().collect();
+        let column = Column::new(&clear, 100.0, 9.81, 0.0, 100.0);
+        let shares: Vec<(f64, f64)> = (0..=40)
+            .map(|k| {
+                let t = 5.0 * 400f64.powf(k as f64 / 40.0);
+                (t, column.olr(t) / (SIGMA_SB * t.powi(4)))
+            })
+            .collect();
+        for &(t, share) in &shares {
+            println!("{t:7.1} K: {share:.5}");
+        }
+        for &(t, share) in &shares {
+            assert!((share - 1.0).abs() < 0.01, "{t:.1} K lets out {share:.4}");
+        }
+    }
+
+    /// Conservative scattering layers stack as one of their summed depth: a layer reflecting
+    /// s / (1 + s) of the light, its two-stream law, over one reflecting q / (1 + q) reflects
+    /// (s + q) / (1 + s + q), in either order; over a black ground a layer reflects its own
+    /// share, over a white one all (the tests' tiers).
+    #[test]
+    fn scattering_layers_stack_as_one_of_their_summed_depth() {
+        let r = |s: f64| s / (1.0 + s);
+        let depths = [0.0, 1e-3, 0.05, 0.3, 1.0, 4.0, 50.0];
+        for &s in &depths {
+            assert!((over(r(s), 0.0) - r(s)).abs() < 1e-12, "{s}");
+            assert!((over(r(s), 1.0) - 1.0).abs() < 1e-12, "{s}");
+            for &q in &depths {
+                let (one, other) = (over(r(s), r(q)), over(r(q), r(s)));
+                assert!((one - r(s + q)).abs() < 1e-12, "{s} {q}: {one}");
+                assert!((one - other).abs() < 1e-12, "{s} {q}: {one} {other}");
+            }
+        }
+    }
+
+    /// An air's molecules scatter each on its own: its Rayleigh depth is its gases' depths
+    /// each over its own column, and grows as the column; what it reflects of its star's light
+    /// grows with the depth and with the star's warmth, bluer, never reaching all of it (the
+    /// tests' tiers).
+    #[test]
+    fn an_air_s_molecules_scatter_each_on_its_own() {
+        let mix: BTreeMap<String, f64> = [("N2", 0.6), ("CO2", 0.3), ("CH4", 0.1)]
+            .into_iter()
+            .map(|(s, f)| (s.to_string(), f))
+            .collect();
+        let column = 1e4;
+        let mu = mean_molecular_mass(&mix);
+        let depth = rayleigh_depth(&mix, column);
+        let parts: f64 = mix
+            .iter()
+            .map(|(s, &f)| {
+                let pure: BTreeMap<String, f64> = [(s.clone(), 1.0)].into_iter().collect();
+                rayleigh_depth(&pure, column * f * molar_mass(s) / mu)
+            })
+            .sum();
+        assert!((parts - depth).abs() < 1e-12 * depth, "{parts} {depth}");
+        let twice = rayleigh_depth(&mix, 2.0 * column);
+        assert!(
+            (twice - 2.0 * depth).abs() < 1e-12 * depth,
+            "{twice} {depth}"
+        );
+        let mut last = 0.0;
+        for tau in [1e-4, 1e-2, 0.1, 1.0, 10.0, 100.0] {
+            let r = rayleigh_reflectance(tau, 5_772.0);
+            assert!(r > last && r < 1.0, "{tau}: {r} after {last}");
+            last = r;
+        }
+        let mut last = 0.0;
+        for teff in [2_500.0, 3_500.0, 5_772.0, 10_000.0] {
+            let r = rayleigh_reflectance(0.1, teff);
+            assert!(r > last && r < 1.0, "{teff} K: {r} after {last}");
+            last = r;
+        }
+    }
+
+    /// The outgoing radiation rises with the ground's warmth and falls as more air stands
+    /// over it: dry airs of carbon dioxide and nitrogen, from a thin Martian air to a
+    /// Venusian, each from 150 to 1,000 K, never let out more over a colder ground, to
+    /// rounding, nor under a thicker air over a ground its air may stand on, at or over its
+    /// bulk gas's frost point; under that the air would freeze out on the ground, and a
+    /// thicker air's frost point holds its column the warmer (the tests' tiers).
+    #[test]
+    fn the_outgoing_radiation_rises_with_the_warmth_and_falls_with_the_air() {
+        for x in [4.2e-4, 0.05, 0.95] {
+            let composition: BTreeMap<String, f64> =
+                [("N2".to_string(), 1.0 - x), ("CO2".to_string(), x)]
+                    .into_iter()
+                    .collect();
+            let temperatures: Vec<f64> = (0..=24)
+                .map(|k| 150.0 * (1_000f64 / 150.0).powf(k as f64 / 24.0))
+                .collect();
+            let (olr, floors): (Vec<Vec<f64>>, Vec<f64>) = [600.0, 1e4, 1e5, 1e6, 9.2e6]
+                .iter()
+                .map(|&p| {
+                    let column = Column::new(&composition, p, 9.81, 0.0, 150.0);
+                    let floor = column
+                        .bulk
+                        .map_or(0.0, |(v, share)| saturation_temperature(v, share * p));
+                    let row = temperatures.iter().map(|&t| column.olr(t)).collect();
+                    (row, floor)
+                })
+                .unzip();
+            for (i, row) in olr.iter().enumerate() {
+                for k in 1..row.len() {
+                    assert!(
+                        row[k] >= row[k - 1] * (1.0 - 1e-12),
+                        "CO2 {x}, air {i}: {:.1} K lets out {:.3}, {:.1} K {:.3}",
+                        temperatures[k - 1],
+                        row[k - 1],
+                        temperatures[k],
+                        row[k]
+                    );
+                    if i > 0 && temperatures[k] >= floors[i] {
+                        assert!(
+                            row[k] <= olr[i - 1][k] * (1.0 + 1e-9),
+                            "CO2 {x}, {:.1} K: air {i} lets out {:.3}, the thinner {:.3}",
+                            temperatures[k],
+                            row[k],
+                            olr[i - 1][k]
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
