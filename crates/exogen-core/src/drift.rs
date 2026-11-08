@@ -418,4 +418,61 @@ mod tests {
         println!("its pressure rising {rise:.4} N/m² against the wind's {tau}");
         assert!(rise > 0.6 * tau && rise < 1.4 * tau, "{rise}");
     }
+
+    /// The drift keeps the ice: over seas covering every share of their places, land among
+    /// them, under a spin and a wind that turns from place to place and step to step, a season
+    /// of steps neither makes nor loses ice and leaves none below none (the tests' tiers).
+    #[test]
+    fn the_drift_keeps_the_ice() {
+        let (n_lat, n_lon) = (19, 36);
+        let n = n_lat * n_lon;
+        let dphi = PI / (n_lat - 1) as f64;
+        let rng = crate::rng::Rng::new(7);
+        let weight: Vec<f64> = (0..n)
+            .map(|p| {
+                let la = -PI / 2.0 + dphi * (p / n_lon) as f64;
+                let (lo, hi) = (
+                    (la - dphi / 2.0).max(-PI / 2.0),
+                    (la + dphi / 2.0).min(PI / 2.0),
+                );
+                (hi.sin() - lo.sin()) / n_lon as f64
+            })
+            .collect();
+        let sea: Vec<f64> = (0..n as u64)
+            .map(|p| match rng.uniform(p, 0) {
+                x if x < 0.3 => 0.0,
+                x if x < 0.5 => 1.0,
+                x => x,
+            })
+            .collect();
+        let mut drift = Drift::new(
+            (&sea, &weight),
+            (n_lat, n_lon),
+            (7.292e-5, 6.371e6),
+            (1_025.0, 917.0),
+        );
+        let mut ice: Vec<f64> = (0..n)
+            .map(|p| 3.0 * 917.0 * rng.uniform(p as u64, 1) * sea[p].min(1.0).ceil())
+            .collect();
+        let area = drift.area.clone();
+        let total = |ice: &[f64]| ice.iter().zip(&area).map(|(m, a)| m * a).sum::<f64>();
+        let before = total(&ice);
+        for step in 0..90u64 {
+            let stress: Vec<[f64; 2]> = (0..n as u64)
+                .map(|p| {
+                    [
+                        rng.range(p, 2 + 2 * step, -0.2, 0.2),
+                        rng.range(p, 3 + 2 * step, -0.2, 0.2),
+                    ]
+                })
+                .collect();
+            drift.step(&mut ice, &stress, 86_400.0);
+        }
+        let after = total(&ice);
+        println!("the ice {before:.6e} kg before, {after:.6e} after");
+        assert!(((after - before) / before).abs() < 1e-9, "{before} {after}");
+        for (p, &m) in ice.iter().enumerate() {
+            assert!(m.is_finite() && m >= 0.0, "place {p}: {m}");
+        }
+    }
 }

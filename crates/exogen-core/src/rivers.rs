@@ -826,4 +826,64 @@ mod tests {
         assert!(lake_in(&together, true) > 0);
         assert!(together.summary.closed > 0.9, "{:?}", together.summary);
     }
+
+    /// The rivers keep the water: on rough ground of many nested basins, under a wet year, a
+    /// dry one and one wet in places and dry in others, the sea takes the land's runoff and
+    /// what the lakes' surfaces gain, each closed lake losing to the air all its catchment
+    /// brings it; under the wet year every lake spills and all the land drains to the sea;
+    /// and each land cell's water runs to the sea, a lake or a pit without turning back (the
+    /// tests' tiers).
+    #[test]
+    fn the_rivers_keep_the_water() {
+        let grid = CubeSphere::new(48);
+        let n = grid.cell_count();
+        for seed in 0..3u64 {
+            let ground = crate::noise::GradientNoise::new(seed);
+            let weather = crate::noise::GradientNoise::new(seed + 100);
+            let (heights, sea) =
+                terrain(grid, |d| 3_000.0 * ground.fbm(d, 4.0, 6, 2.0, 0.55) + 200.0);
+            let at = |k: usize, f: f64| weather.fbm(grid.center(grid.cell(k)), f, 3, 2.0, 0.5);
+            let runoff: Vec<f32> = (0..n)
+                .map(|k| (1e-5 * (1.0 + 0.5 * at(k, 3.0))) as f32)
+                .collect();
+            for year in ["wet", "dry", "mixed"] {
+                let gain: Vec<f32> = (0..n)
+                    .map(|k| match year {
+                        "wet" => 2e-5,
+                        "dry" => -3e-5,
+                        _ => (3e-5 * at(k, 7.0)) as f32,
+                    })
+                    .collect();
+                let drainage = drain(grid, &heights, &sea, (&runoff, &gain), (1e6, 1_000.0));
+                let s = drainage.summary;
+                let off = (s.to_sea - s.runoff - s.lakes_gain).abs() / s.runoff;
+                println!(
+                    "seed {seed}, {year}: {} lakes, runoff {:.1} m³/s, lakes gain {:.1}, to the sea {:.1}, closed {:.3}, off {off:.1e}",
+                    drainage.levels.len(),
+                    s.runoff,
+                    s.lakes_gain,
+                    s.to_sea,
+                    s.closed
+                );
+                assert!(off < 1e-6, "seed {seed}, {year}: {s:?}");
+                if year == "wet" {
+                    assert!(s.closed == 0.0, "seed {seed}: {s:?}");
+                }
+                for k in (0..n).filter(|&k| !sea[k]) {
+                    let (mut c, mut steps) = (k, 0);
+                    while !sea[c] && drainage.lake_of[c] == NONE {
+                        let r = drainage.receiver[c] as usize;
+                        if r == c {
+                            break;
+                        }
+                        (c, steps) = (r, steps + 1);
+                        assert!(
+                            steps <= n,
+                            "seed {seed}, {year}: cell {k}'s water turns back"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

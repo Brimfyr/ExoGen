@@ -1054,16 +1054,13 @@ mod tests {
         assert!(survival(260e3, 0.02, &mimas) > 0.85);
     }
 
-    /// F134: a crater whose long bands relax and short bands hold, stepped many times with
-    /// the same survivals, is relaxed once and then left alone: the bands it keeps do not
-    /// wear away step by step, and no ripples spread out from its rim. Split afresh at every
-    /// step, as the bands were, the same relief wears down and rings.
-    #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn a_relaxed_crater_neither_rings_nor_wears_away() {
-        let grid = CubeSphere::new(128);
+    /// A crater of `radius`, rad, on a face of `face` cells, its long bands relaxing and its
+    /// three finest holding at each of 60 steps: the most its kept relief changes from one
+    /// step's, m; the most relief beyond 2.5 radii, kept and split afresh at every step, m;
+    /// and the most the relief split afresh loses from one step's, m.
+    fn relaxed_crater(face: u32, radius: f64) -> (f32, f32, f32, f32) {
+        let grid = CubeSphere::new(face);
         let center = [1.0f64, 0.0, 0.0];
-        let radius = 0.12;
         let crater = Field::from_fn(grid, |_, d| {
             let r = crate::geom::angle_between(center, d) / radius;
             let bowl = if r < 1.0 {
@@ -1090,18 +1087,13 @@ mod tests {
             }
             h.as_slice().to_vec()
         };
-        let once = run(1, false);
-        let many = run(60, false);
-        let worst = once
-            .iter()
-            .zip(&many)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
-        assert!(
-            worst < 1e-2,
-            "kept bands changed by {worst} m over 60 steps"
-        );
-        // Far outside the crater, beyond two radii, nothing.
+        let most = |a: &[f32], b: &[f32]| {
+            a.iter()
+                .zip(b)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max)
+        };
+        // Far outside the crater, beyond 2.5 radii.
         let far = |h: &[f32]| -> f32 {
             (0..grid.cell_count())
                 .filter(|&k| {
@@ -1110,23 +1102,36 @@ mod tests {
                 .map(|k| h[k].abs())
                 .fold(0.0f32, f32::max)
         };
-        assert!(
-            far(&many) < 30.0,
-            "ripples of {} m beyond the crater",
-            far(&many)
-        );
-        // The old way, split afresh at every step: the kept relief wears down.
-        let fresh = run(60, true);
-        let lost = once
-            .iter()
-            .zip(&fresh)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
-        eprintln!(
-            "kept bands changed {worst} m; beyond the crater {} m held, {} m split afresh; lost {lost} m",
+        let (once, many, fresh) = (run(1, false), run(60, false), run(60, true));
+        (
+            most(&once, &many),
             far(&many),
-            far(&fresh)
+            far(&fresh),
+            most(&once, &fresh),
+        )
+    }
+
+    /// F134: a crater whose long bands relax and short bands hold, stepped many times with
+    /// the same survivals, is relaxed once and then left alone: the bands it keeps do not
+    /// wear away step by step, and no ripples spread out from its rim. Split afresh at every
+    /// step, as the bands were, the same relief wears down and rings. On a 64-cell face, the
+    /// crater 0.24 rad across, it is the same in cells as on a 128-cell face at 0.12, and
+    /// measures alike (the tests' tiers): 0.38 m beyond it kept, 40.5 m split afresh, 570 m
+    /// lost.
+    #[test]
+    fn a_relaxed_crater_neither_rings_nor_wears_away() {
+        let (worst, held, fresh, lost) = relaxed_crater(64, 0.24);
+        eprintln!(
+            "kept bands changed {worst} m; beyond the crater {held} m held, {fresh} m split afresh; lost {lost} m"
         );
+        assert!(
+            worst < 1e-2,
+            "kept bands changed by {worst} m over 60 steps"
+        );
+        // Far outside the crater, beyond 2.5 radii, nothing.
+        assert!(held < 30.0, "ripples of {held} m beyond the crater");
+        // The old way, split afresh at every step: the relief rings and wears down.
+        assert!(fresh > 30.0, "split afresh: {fresh} m beyond the crater");
         assert!(lost > 10.0 * worst.max(1.0), "split afresh: {lost} m");
     }
 

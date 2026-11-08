@@ -1,0 +1,53 @@
+# The longest tests start first, so that the run does not wait on one begun late: each
+# priority's tests took about as long as its tier's under the whole suite (2026-11-07,
+# cargo nextest 0.9.151). Higher runs sooner; the rest stand at 0.
+
+[[profile.default.overrides]]
+filter = 'test(=stages::tests::mars_s_body) | test(=stages::tests::the_moon_the_earth_like_and_mercury)'
+priority = 100
+
+[[profile.default.overrides]]
+filter = '''
+    test(=climate::tests::the_earth_like_s_year)
+    | test(=climate::tests::mars_s_year)
+    | test(=climate::tests::pluto_s_and_triton_s_years)
+    | test(=climate::tests::the_locked_ocean_world_s_year)
+    | test(=stages::tests::the_icy_moons_bodies)
+    | test(=stages::tests::the_same_seed_gives_identical_output_on_different_thread_counts)
+'''
+priority = 90
+
+[[profile.default.overrides]]
+filter = '''
+    test(=stages::tests::keyframes_change_over_time_and_the_cache_is_used)
+    | test(=stages::tests::venus_s_body)
+    | test(=climate::tests::a_continent_s_year_swings_wider_than_its_sea_s)
+    | test(=climate::tests::titan_s_and_venus_s_years)
+    | test(=stages::impacts::tests::loop_population_follows_the_production_function)
+    | test(=stages::caps::tests::mars_s_caps)
+'''
+priority = 80
+
+[[profile.default.overrides]]
+filter = '''
+    test(=stages::tests::ceres_builds_domes_and_bright_floors)
+    | test(=sweeps::tests::craters_go_from_ice_to_rock_by_degrees)
+    | test(=stages::caps::tests::a_working_liquid_s_ice_stands_where_its_own_ground_keeps_it_frozen)
+    | test(=stages::ice_shell::tests::lanes_come_in_by_degrees_as_the_lid_thins_against_the_body)
+    | test(=sweeps::tests::a_shell_renews_itself_by_degrees_between_europa_and_ganymede)
+    | test(=sweeps::tests::plumes_begin_where_the_ocean_reaches_the_surface)
+    | test(=stages::tests::mars_s_water_gathers_at_both_its_poles)
+    | test(=sweeps::tests::a_lid_turns_episodic_by_degrees)
+'''
+priority = 70
+
+# The fast tier's longest.
+[[profile.default.overrides]]
+filter = '''
+    test(=params::registry::tests::every_preset_reads_what_it_declares_and_settles_as_a_full_recompute)
+    | test(=presets::tests::every_preset_parses_and_only_sets_known_nodes)
+    | test(=climate::tests::every_body_s_balance_keeps_its_invariants)
+    | test(=validate::tests::every_reference_check_passes)
+    | test(=spin::tests::the_presets_reach_their_present_spins)
+'''
+priority = 60

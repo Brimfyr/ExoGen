@@ -775,7 +775,7 @@ fn vapour(v: &[f64], th: &[f64], area: &[f64], exposed: &dyn Fn(usize) -> bool) 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::climate::{Downscale, EnergyBalance, Ground};
     use crate::grid::lon_lat_from_direction;
@@ -796,9 +796,9 @@ mod tests {
 
     /// A preset's caps laid on its traps over a 64-cell face, laid once for the whole-body
     /// checks that read them, each of which laid them on its own before (the tests' tiers).
-    struct Laid {
-        layers: LayerSet,
-        caps: Vec<Cap>,
+    pub(crate) struct Laid {
+        pub(crate) layers: LayerSet,
+        pub(crate) caps: Vec<Cap>,
     }
 
     impl Laid {
@@ -810,11 +810,12 @@ mod tests {
         }
     }
 
-    /// Mars's and Pluto's caps, each read by each check of them.
+    /// Mars's caps, read by each check of them; Pluto's are laid on the year its climate's
+    /// checks read (climate.rs, `pluto_s_and_triton_s_years`).
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn mars_s_and_pluto_s_caps() {
-        let (mars, pluto) = rayon::join(|| Laid::of("Mars"), || Laid::of("Pluto"));
+    fn mars_s_caps() {
+        let mars = Laid::of("Mars");
         crate::testkit::checks(&[
             ("mars_s_water_lays_its_polar_caps", &|| {
                 mars_s_water_lays_its_polar_caps(&mars)
@@ -823,13 +824,6 @@ mod tests {
                 "the_frost_s_own_gas_lays_its_caps_where_its_ice_grows",
                 &|| the_frost_s_own_gas_lays_its_caps_where_its_ice_grows(&mars),
             ),
-            (
-                "pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands",
-                &|| pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands(&pluto),
-            ),
-            ("an_ice_gathers_in_its_coldest_traps", &|| {
-                an_ice_gathers_in_its_coldest_traps(&pluto)
-            }),
         ]);
     }
 
@@ -869,7 +863,7 @@ mod tests {
 
     /// F241: an ice spreads over every place only when no fewer hold it: Pluto's 5 m of
     /// methane gathers in caps at its coldest traps rather than lying over the whole body.
-    fn an_ice_gathers_in_its_coldest_traps(laid: &Laid) {
+    pub(crate) fn an_ice_gathers_in_its_coldest_traps(laid: &Laid) {
         let Laid { caps, .. } = laid;
         let cap = caps
             .iter()
@@ -902,7 +896,7 @@ mod tests {
     /// F258: Pluto's nitrogen lays its caps in the bands some 30° from its equator that its
     /// tilt of 120° and its ground's seasons leave the coldest, where volatile transport
     /// models gather it (Bertrand et al. 2018), Sputnik Planitia's 25° north among them.
-    fn pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands(laid: &Laid) {
+    pub(crate) fn pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands(laid: &Laid) {
         let Laid { caps, .. } = laid;
         let cap = caps
             .iter()

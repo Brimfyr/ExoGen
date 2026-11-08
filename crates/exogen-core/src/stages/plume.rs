@@ -4397,7 +4397,6 @@ mod tests {
     /// fall, where they stood up to 280 km thick; Olympus Mons's lobes stand some 1 to 2 km
     /// as its own do (DLR and ESA 2023).
     #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_shield_sheds_no_more_than_its_flanks_hold() {
         let mars = crate::presets::preset("Mars").unwrap().to_graph().0;
         let mut old = crate::presets::preset("Earth").unwrap().to_graph().0;

@@ -901,32 +901,91 @@ mod tests {
         assert!(o6 > 5e6 && r6 > 0.0, "{o6} {r6}");
     }
 
+    /// A shield 300 km across and 20 km high on Mars's lid, 70 km thick, on a 128-cell face:
+    /// the lid's deflection under it bare and with its root filling its sag (F162, F166),
+    /// laid once for the whole-body checks that read them, each of which laid them on its own
+    /// before (the tests' tiers).
+    struct Sag {
+        grid: CubeSphere,
+        r: f64,
+        g: f64,
+        te: f64,
+        radius: f64,
+        shield: Vec<f32>,
+        bare: Vec<f32>,
+        root: Vec<f32>,
+    }
+
+    impl Sag {
+        fn new() -> Self {
+            let (r, g, te) = (3.39e6, 3.71, 70e3);
+            let grid = CubeSphere::new(128);
+            let n = grid.cell_count();
+            let centre = [1.0, 0.0, 0.0];
+            let (radius, height) = (300e3, 20e3);
+            let shield: Vec<f32> = (0..n)
+                .map(|k| {
+                    let x = angle_between(centre, grid.center(grid.cell(k))) * r / radius;
+                    if x < 1.0 {
+                        (height * (1.0 - x * x)) as f32
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            let (bare, root) = rayon::join(
+                || lay(grid, &shield, r, g, te, 2_900.0, None).unwrap(),
+                || lay(grid, &shield, r, g, te, 2_900.0, Some(&shield)).expect("a load"),
+            );
+            Self {
+                grid,
+                r,
+                g,
+                te,
+                radius,
+                shield,
+                bare: bare.deflection_on(grid),
+                root: root.deflection_on(grid),
+            }
+        }
+
+        /// The cell at a distance from the shield's centre along the equator, m.
+        fn at(&self, d: f64) -> usize {
+            let r = self.r;
+            self.grid
+                .index(self.grid.locate([(d / r).cos(), (d / r).sin(), 0.0]).0)
+        }
+    }
+
+    /// A shield's sag, read by each check of it.
+    #[test]
+    fn a_shield_s_sag() {
+        let sag = Sag::new();
+        crate::testkit::checks(&[
+            (
+                "a_shield_fills_the_sag_beneath_it_and_stands_in_a_moat",
+                &|| a_shield_fills_the_sag_beneath_it_and_stands_in_a_moat(&sag),
+            ),
+            ("an_edifice_s_root_deepens_its_sag_and_its_moat", &|| {
+                an_edifice_s_root_deepens_its_sag_and_its_moat(&sag)
+            }),
+        ]);
+    }
+
     /// The ground sinks under its load (F162), but an edifice fills the sag beneath it as
     /// far as it is thick: a shield on a plate stands where it built itself, the ground
     /// about it sunk into a moat, deepest at its foot, and raised in a bulge beyond; a flood
     /// with no edifice sinks with the ground.
-    #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn a_shield_fills_the_sag_beneath_it_and_stands_in_a_moat() {
-        let (r, g, te) = (3.39e6, 3.71, 70e3);
-        let grid = CubeSphere::new(128);
-        let n = grid.cell_count();
-        let centre = [1.0, 0.0, 0.0];
-        let (radius, height) = (300e3, 20e3);
-        let shield: Vec<f32> = (0..n)
-            .map(|k| {
-                let x = angle_between(centre, grid.center(grid.cell(k))) * r / radius;
-                if x < 1.0 {
-                    (height * (1.0 - x * x)) as f32
-                } else {
-                    0.0
-                }
-            })
-            .collect();
-        let laid = lay(grid, &shield, r, g, te, 2_900.0, Some(&shield)).expect("a load");
-        let w = laid.deflection_on(grid);
-        let sunk = sink(&w, Some(&shield));
-        let at = |d: f64| grid.index(grid.locate([(d / r).cos(), (d / r).sin(), 0.0]).0);
+    fn a_shield_fills_the_sag_beneath_it_and_stands_in_a_moat(sag: &Sag) {
+        let Sag {
+            radius,
+            shield,
+            root: w,
+            ..
+        } = sag;
+        let radius = *radius;
+        let sunk = sink(w, Some(shield));
+        let at = |d: f64| sag.at(d);
         // The summit: the lid sags kilometres beneath it, and the edifice fills it all.
         let summit = at(0.0);
         assert!(w[summit] > 2_000.0, "{}", w[summit]);
@@ -939,7 +998,7 @@ mod tests {
             .fold(f32::MAX, f32::min);
         assert!(far < 0.0, "{far}");
         // Without an edifice the ground sinks with the lid.
-        let bare = sink(&w, None);
+        let bare = sink(w, None);
         assert_eq!(bare[summit], w[summit]);
     }
 
@@ -948,31 +1007,20 @@ mod tests {
     /// so that the lid sinks further beneath it and its moat deepens with it, by some half
     /// again on a thick lid, while the lid's strength keeps it within a few times the sag of
     /// the edifice alone; where no edifice stands the lid bends as before.
-    #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn an_edifice_s_root_deepens_its_sag_and_its_moat() {
-        let (r, g, te) = (3.39e6, 3.71, 70e3);
-        let grid = CubeSphere::new(128);
+    fn an_edifice_s_root_deepens_its_sag_and_its_moat(sag: &Sag) {
+        let Sag {
+            grid,
+            r,
+            g,
+            te,
+            radius,
+            shield,
+            bare,
+            root,
+        } = sag;
+        let (grid, r, g, te, radius) = (*grid, *r, *g, *te, *radius);
         let n = grid.cell_count();
-        let centre = [1.0, 0.0, 0.0];
-        let (radius, height) = (300e3, 20e3);
-        let shield: Vec<f32> = (0..n)
-            .map(|k| {
-                let x = angle_between(centre, grid.center(grid.cell(k))) * r / radius;
-                if x < 1.0 {
-                    (height * (1.0 - x * x)) as f32
-                } else {
-                    0.0
-                }
-            })
-            .collect();
-        let at = |d: f64| grid.index(grid.locate([(d / r).cos(), (d / r).sin(), 0.0]).0);
-        let bare = lay(grid, &shield, r, g, te, 2_900.0, None)
-            .unwrap()
-            .deflection_on(grid);
-        let root = lay(grid, &shield, r, g, te, 2_900.0, Some(&shield))
-            .unwrap()
-            .deflection_on(grid);
+        let at = |d: f64| sag.at(d);
         let (summit, moat) = (at(0.0), at(1.1 * radius));
         assert!(
             root[summit] > 1.3 * bare[summit],
@@ -993,10 +1041,10 @@ mod tests {
             bare[moat]
         );
         // The edifice still fills its own sag, standing where it built itself.
-        assert!(sink(&root, Some(&shield))[summit].abs() < 1.0);
+        assert!(sink(root, Some(shield))[summit].abs() < 1.0);
         // A flood with no edifice bends the lid as an empty sag does.
         let none = vec![0.0f32; n];
-        let open = lay(grid, &shield, r, g, te, 2_900.0, Some(&none))
+        let open = lay(grid, shield, r, g, te, 2_900.0, Some(&none))
             .unwrap()
             .deflection_on(grid);
         assert_eq!(open[summit], bare[summit]);

@@ -6359,6 +6359,135 @@ mod tests {
         }
     }
 
+    /// Every body's balance keeps what its year's solutions stand on, each preset's checked
+    /// under its own name (the tests' tiers): its air's outgoing radiation rises with its
+    /// ground's warmth; its year's sunlight falls alike on each hemisphere; its balance on a
+    /// small grid makes no heat; and without a tilt its hemispheres mirror each other.
+    #[test]
+    fn every_body_s_balance_keeps_its_invariants() {
+        use rayon::prelude::*;
+        let bodies: Vec<(&str, EnergyBalance)> = crate::presets::PRESET_NAMES
+            .par_iter()
+            .map(|&name| {
+                let graph = crate::presets::preset(name).unwrap().to_graph().0;
+                (name, EnergyBalance::from_graph(&graph))
+            })
+            .collect();
+        let grid = CubeSphere::new(8);
+        let mut list: Vec<(String, Box<dyn Fn() + '_>)> = Vec::new();
+        for (name, eb) in &bodies {
+            list.push((
+                format!("the outgoing radiation rises with the warmth: {name}"),
+                Box::new(move || outgoing_rises_with_the_warmth(eb)),
+            ));
+            list.push((
+                format!("the year's sunlight is alike in each hemisphere: {name}"),
+                Box::new(move || sunlight_alike_in_each_hemisphere(eb)),
+            ));
+            list.push((
+                format!("the balance makes no heat: {name}"),
+                Box::new(move || balance_makes_no_heat(eb, grid)),
+            ));
+            list.push((
+                format!("without a tilt the hemispheres mirror each other: {name}"),
+                Box::new(move || untilted_hemispheres_mirror(eb, grid)),
+            ));
+        }
+        let checks: Vec<(&str, &dyn Fn())> = list
+            .iter()
+            .map(|(label, check)| (label.as_str(), check.as_ref()))
+            .collect();
+        crate::testkit::checks(&checks);
+    }
+
+    /// The outgoing radiation over its table's temperatures rises with them, as the balance's
+    /// Newton steps and the zero-dimensional climate's halving take it; to rounding, where a
+    /// thick air's whole column stands on its frost point over a ground colder than that, the
+    /// ground hidden under it, and lets out the same over any such ground (Venus's under
+    /// some 300 K).
+    fn outgoing_rises_with_the_warmth(eb: &EnergyBalance) {
+        let points = eb.outgoing.points();
+        for w in points.windows(2) {
+            let (low, high) = (eb.olr(w[0].0), eb.olr(w[1].0));
+            assert!(
+                high >= low * (1.0 - 1e-12),
+                "{:.1} K lets out {low:.4} W/m², {:.1} K {high:.4}, {:.1e} less",
+                w[0].0,
+                w[1].0,
+                1.0 - high / low
+            );
+        }
+    }
+
+    /// The year's sunlight on each latitude's ring, the north's as the south's: a body spends
+    /// its time at each distance from its star as the square of the distance, which takes the
+    /// distance's dimming back, so that each half of the orbit lights each hemisphere alike
+    /// (Kepler's second law), whatever its eccentricity and its season at perihelion.
+    fn sunlight_alike_in_each_hemisphere(eb: &EnergyBalance) {
+        let table = eb.sky.annual_table();
+        let ring = |lat: f64| {
+            (0..72)
+                .map(|j| {
+                    let lon = j as f64 / 72.0 * std::f64::consts::TAU;
+                    table.flux_at(crate::grid::direction_from_lon_lat(lon, lat))
+                })
+                .sum::<f64>()
+                / 72.0
+        };
+        let mean = eb.sky.flux / 4.0;
+        let worst = (0..=18)
+            .map(|i| {
+                let lat = (5.0 * i as f64).to_radians();
+                (ring(lat) - ring(-lat)).abs() / mean
+            })
+            .fold(0.0, f64::max);
+        assert!(worst < 1e-3, "the rings differ by {worst:.2e} of the mean");
+    }
+
+    /// The balance on a small grid: the transport brings each cell what its neighbours lose,
+    /// the body as a whole none, and the body lets out what it absorbs and its own heat.
+    fn balance_makes_no_heat(eb: &EnergyBalance, grid: CubeSphere) {
+        let climate = eb.solve(grid);
+        let (mut brought, mut moved, mut taken, mut left) = (0.0, 0.0, 0.0, 0.0);
+        for k in 0..grid.cell_count() {
+            let a = grid.cell_area(grid.cell(k));
+            let transport = climate.transport.as_slice()[k] as f64;
+            brought += a * transport;
+            moved += a * transport.abs();
+            taken += a * (climate.absorbed.as_slice()[k] as f64 + eb.heat_flux);
+            left += a * eb.olr(climate.temperature.as_slice()[k] as f64);
+        }
+        assert!(
+            brought.abs() <= 1e-5 * moved.max(1e-30),
+            "the transport brings {brought:.3e} of {moved:.3e}"
+        );
+        assert!(
+            (left - taken).abs() < 1e-3 * taken,
+            "lets out {left:.6e} of {taken:.6e} in {} steps",
+            climate.iterations
+        );
+    }
+
+    /// Without a tilt, nor a moon's axis swinging about one, the star stands over the equator
+    /// at every moment: the balance's hemispheres mirror each other cell by cell, on a grid
+    /// that does.
+    fn untilted_hemispheres_mirror(eb: &EnergyBalance, grid: CubeSphere) {
+        let mut flat = eb.at_state(0.0, eb.sky.perihelion_season);
+        flat.sky.swing = 0.0;
+        let t = flat.solve(grid).temperature;
+        let mut worst = 0.0f64;
+        for k in 0..grid.cell_count() {
+            let d = grid.center(grid.cell(k));
+            let m = [d[0], d[1], -d[2]];
+            let (c, _, _) = grid.locate(m);
+            let e = grid.center(c);
+            let off = (e[0] - m[0]).abs() + (e[1] - m[1]).abs() + (e[2] - m[2]).abs();
+            assert!(off < 1e-9, "the grid's mirror of {d:?} is {e:?}");
+            worst = worst.max((t.as_slice()[k] - t.get(c)).abs() as f64);
+        }
+        assert!(worst < 1e-3, "the hemispheres differ by {worst:.2e} K");
+    }
+
     /// A body's sea, where water is its working liquid, over Earth's share of every cell of
     /// the climate's grid, 0.71, or EXOGEN_SEA_SHARE's.
     fn sea_of(graph: &ParamGraph) -> Option<(Ocean, Field<f32>)> {
@@ -6390,6 +6519,7 @@ mod tests {
         graph: ParamGraph,
         cycle: Cycle,
         climate: Climate,
+        traps: std::sync::OnceLock<Traps>,
     }
 
     impl Year {
@@ -6400,15 +6530,23 @@ mod tests {
                 graph,
                 cycle,
                 climate,
+                traps: std::sync::OnceLock::new(),
             }
         }
 
-        /// Where each of the inventory's ices would last on flat ground (F240), as `traps_of`
-        /// finds them.
-        fn traps(&self) -> Traps {
+        /// Where each of the inventory's ices would last on flat ground (F240), found once.
+        fn traps(&self) -> &Traps {
+            self.traps.get_or_init(|| self.traps_over(|_| 0.0))
+        }
+
+        /// Where each of the inventory's ices would last (F240) over ground at `height` of
+        /// its longitude, m.
+        fn traps_over(&self, height: impl Fn(f64) -> f64 + Sync) -> Traps {
             let eb = EnergyBalance::from_graph(&self.graph);
             let ices = Ice::of_inventory(&self.graph, [0.80, 0.82, 0.86]);
-            let heights = Field::new(self.climate.temperature.grid());
+            let heights = Field::from_fn(self.climate.temperature.grid(), |_, d| {
+                height(lon_lat_from_direction(d).0) as f32
+            });
             eb.traps(
                 &self.climate,
                 &Ground::from_graph(&self.graph),
@@ -6418,6 +6556,43 @@ mod tests {
                 &Downscale::from_graph(&self.graph),
             )
         }
+
+        /// The year run again at each place's own wind and its wet ground's latent heat (F269),
+        /// from its year at its stated wind.
+        fn again(&self) -> Again {
+            let eb = EnergyBalance::from_graph(&self.graph);
+            let ocean = sea_of(&self.graph);
+            let sea = ocean.as_ref().map(|(o, f)| (o, f));
+            let water = if sea.is_some() {
+                OCEAN_TRANSPORT_SHARE
+            } else {
+                0.0
+            };
+            let air = crate::moisture::Air::from_graph(&self.graph, eb.transport, water);
+            let heights = vec![0.0; self.cycle.sites.len()];
+            let wet = air.and_then(|a| self.cycle.moisture(&a, &heights));
+            let coupling = self.cycle.coupling(wet.as_ref()).expect("a coupling");
+            let ground = Ground::from_graph(&self.graph);
+            let cycle = eb.cycle_with(&self.climate, &ground, sea, None, Some(&coupling));
+            let water = air.and_then(|a| cycle.moisture(&a, &heights));
+            Again { cycle, water }
+        }
+
+        /// The inventory's caps laid on the year's traps over a 64-cell face, as the caps'
+        /// stage's checks read them.
+        fn laid(&self) -> crate::stages::caps::tests::Laid {
+            let mut layers = crate::fields::LayerSet::new(CubeSphere::new(64));
+            let caps = crate::stages::caps::lay(&self.graph, &mut layers, self.traps(), &[], None);
+            crate::stages::caps::tests::Laid { layers, caps }
+        }
+    }
+
+    /// A preset's year run again at its own wind (F269), and its water through it, solved
+    /// once for the whole-body checks that read it, each of which solved it on its own before
+    /// (the tests' tiers).
+    struct Again {
+        cycle: Cycle,
+        water: Option<crate::moisture::Moisture>,
     }
 
     /// The Earth-like's year, read by each check of it.
@@ -6425,6 +6600,7 @@ mod tests {
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_earth_like_s_year() {
         let y = Year::of("Earth");
+        let again = y.again();
         crate::testkit::checks(&[
             (
                 "an_earth_like_world_is_within_five_kelvin_of_earth",
@@ -6456,6 +6632,12 @@ mod tests {
             ("each_ice_finds_its_coldest_trap", &|| {
                 each_ice_finds_its_coldest_trap("Earth", "H2O", (-90.0, -75.0), &y)
             }),
+            ("the_year_runs_again_at_its_own_wind", &|| {
+                the_year_runs_again_at_its_own_wind(&again)
+            }),
+            ("the_earth_like_s_snow_comes_and_goes", &|| {
+                the_earth_like_s_snow_comes_and_goes(&again)
+            }),
         ]);
     }
 
@@ -6480,29 +6662,47 @@ mod tests {
             ("each_ice_finds_its_coldest_trap", &|| {
                 each_ice_finds_its_coldest_trap("Mars", "H2O", (75.0, 90.0), &y)
             }),
+            ("a_basin_traps_better_than_a_height", &|| {
+                a_basin_traps_better_than_a_height(&y)
+            }),
         ]);
     }
 
-    /// Titan's and Venus's years, read by each check of them.
+    /// Titan's and Venus's years, read by each check of them; Titan's again at its own wind.
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn titan_s_and_venus_s_years() {
-        for name in ["Titan", "Venus"] {
-            let y = Year::of(name);
-            crate::testkit::checks(&[
-                ("a_thick_atmosphere_keeps_its_steady_mean", &|| {
-                    a_thick_atmosphere_keeps_its_steady_mean(name, 0.5, &y)
-                }),
-                ("no_frost_where_the_ground_stays_above_its_point", &|| {
-                    no_frost_where_the_ground_stays_above_its_point(name, &y)
-                }),
-            ]);
-        }
+        let ((titan, again), venus) = rayon::join(
+            || {
+                let y = Year::of("Titan");
+                let again = y.again();
+                (y, again)
+            },
+            || Year::of("Venus"),
+        );
+        crate::testkit::checks(&[
+            ("a_thick_atmosphere_keeps_its_steady_mean: Titan", &|| {
+                a_thick_atmosphere_keeps_its_steady_mean("Titan", 0.5, &titan)
+            }),
+            (
+                "no_frost_where_the_ground_stays_above_its_point: Titan",
+                &|| no_frost_where_the_ground_stays_above_its_point("Titan", &titan),
+            ),
+            ("titan_s_ground_stands_farther_from_its_air", &|| {
+                titan_s_ground_stands_farther_from_its_air(&titan, &again)
+            }),
+            ("a_thick_atmosphere_keeps_its_steady_mean: Venus", &|| {
+                a_thick_atmosphere_keeps_its_steady_mean("Venus", 0.5, &venus)
+            }),
+            (
+                "no_frost_where_the_ground_stays_above_its_point: Venus",
+                &|| no_frost_where_the_ground_stays_above_its_point("Venus", &venus),
+            ),
+        ]);
     }
 
     /// The Moon's year, read by each check of it.
     #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_moon_s_year() {
         let y = Year::of("Moon");
         crate::testkit::checks(&[
@@ -6518,23 +6718,37 @@ mod tests {
         ]);
     }
 
-    /// Pluto's and Triton's years, read by each check of them.
+    /// Pluto's and Triton's years, read by each check of them; Pluto's caps laid on its traps,
+    /// read by the caps' stage's checks of them and by the year they hold the air of.
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn pluto_s_and_triton_s_years() {
-        let pluto = Year::of("Pluto");
+        use crate::stages::caps::tests as caps;
+        let (pluto, triton) = rayon::join(|| Year::of("Pluto"), || Year::of("Triton"));
+        let laid = pluto.laid();
         crate::testkit::checks(&[
-            ("a_thin_atmosphere_s_frost_draws_on_its_own_gas", &|| {
-                a_thin_atmosphere_s_frost_draws_on_its_own_gas("Pluto", 1.0, &pluto)
-            }),
+            (
+                "a_thin_atmosphere_s_frost_draws_on_its_own_gas: Pluto",
+                &|| a_thin_atmosphere_s_frost_draws_on_its_own_gas("Pluto", 1.0, &pluto),
+            ),
             ("each_ice_finds_its_coldest_trap", &|| {
                 each_ice_finds_its_coldest_trap("Pluto", "CH4", (-35.0, 35.0), &pluto)
             }),
+            (
+                "pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands",
+                &|| caps::pluto_s_nitrogen_lays_its_caps_in_its_coldest_bands(&laid),
+            ),
+            ("an_ice_gathers_in_its_coldest_traps", &|| {
+                caps::an_ice_gathers_in_its_coldest_traps(&laid)
+            }),
+            ("the_caps_hold_the_air", &|| {
+                the_caps_hold_the_air(&pluto, &laid.caps)
+            }),
+            (
+                "a_thin_atmosphere_s_frost_draws_on_its_own_gas: Triton",
+                &|| a_thin_atmosphere_s_frost_draws_on_its_own_gas("Triton", 1.4, &triton),
+            ),
         ]);
-        let triton = Year::of("Triton");
-        crate::testkit::checks(&[("a_thin_atmosphere_s_frost_draws_on_its_own_gas", &|| {
-            a_thin_atmosphere_s_frost_draws_on_its_own_gas("Triton", 1.4, &triton)
-        })]);
     }
 
     /// A year's mean over the body, its land's and its sea's by their shares (F245).
@@ -6954,26 +7168,6 @@ mod tests {
         }
     }
 
-    /// A body's cold traps (F240) on ground at `height`, m, by longitude.
-    fn traps_of(name: &str, height: impl Fn(f64) -> f64 + Sync) -> Traps {
-        let graph = crate::presets::preset(name).unwrap().to_graph().0;
-        let eb = EnergyBalance::from_graph(&graph);
-        let (cycle, climate) = graph_cycle(&graph);
-        let ground = Ground::from_graph(&graph);
-        let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
-        let heights = Field::from_fn(climate.temperature.grid(), |_, d| {
-            height(lon_lat_from_direction(d).0) as f32
-        });
-        eb.traps(
-            &climate,
-            &ground,
-            &cycle,
-            &ices,
-            &heights,
-            &Downscale::from_graph(&graph),
-        )
-    }
-
     /// F240: each ice finds its coldest trap: Mars's water its north pole, its summer under
     /// the aphelion milder than the south's under the perihelion (the north residual cap's
     /// water ice, Kieffer et al. 1976); Earth's a pole; Pluto's methane its low latitudes,
@@ -6996,31 +7190,15 @@ mod tests {
     /// its year run again with them as the reservoir its air draws on, its pressure no longer
     /// falling a hundredfold as its winter's frost takes the air, its year's mean the body's;
     /// the caps standing at the frost point, the warmer the lower they lie.
-    #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn the_caps_hold_the_air() {
-        let graph = crate::presets::preset("Pluto").unwrap().to_graph().0;
-        let eb = EnergyBalance::from_graph(&graph);
-        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
-        let climate = eb.solve(grid);
-        let ground = Ground::from_graph(&graph);
-        let bare = eb.cycle(&climate, &ground, None, None);
-        let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
-        let downscale = Downscale::from_graph(&graph);
-        let traps = eb.traps(
-            &climate,
-            &ground,
-            &bare,
-            &ices,
-            &Field::new(grid),
-            &downscale,
-        );
-        let mut layers = crate::fields::LayerSet::new(CubeSphere::new(64));
-        let laid = crate::stages::caps::lay(&graph, &mut layers, &traps, &[], None);
+    fn the_caps_hold_the_air(year: &Year, laid: &[crate::stages::caps::Cap]) {
+        let (graph, bare) = (&year.graph, &year.cycle);
+        let eb = EnergyBalance::from_graph(graph);
+        let grid = year.climate.temperature.grid();
+        let ground = Ground::from_graph(graph);
         let f = eb.frost.expect("Pluto's nitrogen frost");
         let reservoir =
-            crate::stages::caps::reservoir(&laid, grid, &eb, f.species).expect("nitrogen caps");
-        let over = crate::stages::caps::on_climate(&laid, grid, &eb);
+            crate::stages::caps::reservoir(laid, grid, &eb, f.species).expect("nitrogen caps");
+        let over = crate::stages::caps::on_climate(laid, grid, &eb);
         let held = eb.cycle(
             &eb.solve_over(grid, Some(&over)),
             &ground,
@@ -7051,10 +7229,8 @@ mod tests {
     /// frost's point, so that Mars's carbon dioxide ice 5 km down grows more than 5 km up,
     /// and its water there needs less vapour in the air (the trapping that gathers Pluto's
     /// nitrogen in Sputnik Planitia, Bertrand and Forget 2016).
-    #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn a_basin_traps_better_than_a_height() {
-        let traps = traps_of("Mars", |lon| 5000.0 * lon.sin());
+    fn a_basin_traps_better_than_a_height(year: &Year) {
+        let traps = year.traps_over(|lon| 5000.0 * lon.sin());
         let (_, growth) = traps.growth.as_ref().expect("Mars's CO2 ice");
         let (low, high) = (at(growth, 80.0, -90.0), at(growth, 80.0, 90.0));
         println!("CO2 at 80° north grows {low:.0} kg/m² a year 5 km down, {high:.0} 5 km up");
@@ -7773,7 +7949,6 @@ mod tests {
     /// F245: the zonal mean of a system the same along each latitude is the system: the
     /// preconditioned conjugate gradients solve it in a step or two.
     #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_uniform_air_is_its_own_zonal_mean() {
         let mut graph = crate::presets::preset("Mars").unwrap().to_graph().0;
         let year = graph.f64("orbit.year");
@@ -7853,7 +8028,6 @@ mod tests {
     /// Maxwell Montes stands (Pettengill et al. 1992); Mars's thin air cools its heights by
     /// less than half a kelvin a kilometre; an airless body's not at all.
     #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_summit_stands_under_less_greenhouse() {
         let earth = downscale_of("Earth");
         let t = earth.at(288.0, 288.0, 3000.0);
@@ -8008,47 +8182,27 @@ mod tests {
 
     /// F269: the year again at each place's own wind and its wet ground's latent heat: the
     /// Earth-like's mean stays within 5 K of Earth's 288 K, 5A's gate, and its water near
-    /// Earth's some 1,000 kg/m² a year; Titan's ground, its exchange with its air at its
-    /// own slow wind, stands farther from its air, its contrast from its equator to its poles
-    /// some four times its stated wind's.
-    #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn the_year_runs_again_at_its_own_wind() {
-        let mut contrasts = Vec::new();
-        for name in ["Earth", "Titan"] {
-            let graph = crate::presets::preset(name).unwrap().to_graph().0;
-            let eb = EnergyBalance::from_graph(&graph);
-            let ground = Ground::from_graph(&graph);
-            let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
-            let ocean = sea_of(&graph);
-            let sea = ocean.as_ref().map(|(o, f)| (o, f));
-            let water = if sea.is_some() {
-                OCEAN_TRANSPORT_SHARE
-            } else {
-                0.0
-            };
-            let air = crate::moisture::Air::from_graph(&graph, eb.transport, water);
-            let first = eb.cycle(&climate, &ground, sea, None);
-            let heights = vec![0.0; first.sites.len()];
-            let wet = air.and_then(|a| first.moisture(&a, &heights));
-            let coupling = first.coupling(wet.as_ref()).expect("a coupling");
-            let second = eb.cycle_with(&climate, &ground, sea, None, Some(&coupling));
-            let again = air.and_then(|a| second.moisture(&a, &heights));
-            let ((mean, equator, poles), (_, e1, p1)) = (bands(&second.mean), bands(&first.mean));
-            println!(
-                "{name}: mean {mean:.2} K, contrast {:.2} K where {:.2} at the stated wind; {:?}",
-                equator - poles,
-                e1 - p1,
-                again.as_ref().map(|m| m.summary())
-            );
-            contrasts.push((equator - poles, e1 - p1));
-            if name == "Earth" {
-                assert!((mean - 288.0).abs() < 5.0, "{mean}");
-                let rain = again.expect("water").summary().precipitation;
-                assert!((800.0..1400.0).contains(&rain), "{rain}");
-            }
-        }
-        let (titan, stated) = contrasts[1];
+    /// Earth's some 1,000 kg/m² a year.
+    fn the_year_runs_again_at_its_own_wind(again: &Again) {
+        let (mean, ..) = bands(&again.cycle.mean);
+        let brief = again.water.as_ref().expect("water").summary();
+        println!("Earth: mean {mean:.2} K; {brief:?}");
+        assert!((mean - 288.0).abs() < 5.0, "{mean}");
+        assert!(
+            (800.0..1400.0).contains(&brief.precipitation),
+            "{}",
+            brief.precipitation
+        );
+    }
+
+    /// F269: Titan's ground, its exchange with its air at its own slow wind, stands farther
+    /// from its air: its contrast from its equator to its poles some four times its stated
+    /// wind's.
+    fn titan_s_ground_stands_farther_from_its_air(year: &Year, again: &Again) {
+        let ((_, equator, poles), (_, e1, p1)) =
+            (bands(&again.cycle.mean), bands(&year.cycle.mean));
+        let (titan, stated) = (equator - poles, e1 - p1);
+        println!("Titan: contrast {titan:.2} K where {stated:.2} at the stated wind");
         assert!(titan > 3.0 * stated, "{titan} {stated}");
     }
 
@@ -8191,21 +8345,8 @@ mod tests {
     /// winter and melts it through its summer: Earth's northern snow covers some 47 million
     /// km² in January, nearly half of its land, and some 2 million in August (Robinson et al.
     /// 1993). F277: its snow lying until it melts, no place's land sheds more than falls on it.
-    #[test]
-    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
-    fn the_earth_like_s_snow_comes_and_goes() {
-        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
-        let eb = EnergyBalance::from_graph(&graph);
-        let ground = Ground::from_graph(&graph);
-        let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
-        let ocean = sea_of(&graph);
-        let sea = ocean.as_ref().map(|(o, f)| (o, f));
-        let air = crate::moisture::Air::from_graph(&graph, eb.transport, OCEAN_TRANSPORT_SHARE);
-        let first = eb.cycle(&climate, &ground, sea, None);
-        let heights = vec![0.0; first.sites.len()];
-        let wet = air.and_then(|a| first.moisture(&a, &heights));
-        let coupling = first.coupling(wet.as_ref()).expect("a coupling");
-        let year = eb.cycle_with(&climate, &ground, sea, None, Some(&coupling));
+    fn the_earth_like_s_snow_comes_and_goes(again: &Again) {
+        let year = &again.cycle;
         let n = year.sites.len();
         let steps = year.masses[2].len() / n.max(1);
         assert!(steps > 0, "no snow's year");
@@ -8232,9 +8373,7 @@ mod tests {
         assert!((mean - 288.0).abs() < 5.0, "{mean}");
         // F277: under the year's snowpack the land's bucket takes its rain and its snow's melt,
         // its snow lying until it melts: no place's land sheds more than falls on it.
-        let water = air
-            .and_then(|a| year.moisture(&a, &heights))
-            .expect("the year's water");
+        let water = again.water.as_ref().expect("the year's water");
         let most_shed = (0..n)
             .filter(|&p| water.land[p] > 0.0 && water.precipitation[p] > 0.0)
             .map(|p| water.runoff[p] / water.precipitation[p])
