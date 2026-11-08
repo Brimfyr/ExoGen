@@ -29,11 +29,11 @@ use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
 use crate::stages::ridges::RidgeRecord;
-use crate::stages::stress::{Compression, FieldHistory, Squeeze, shrinking};
+use crate::stages::stress::{Compression, FieldHistory, Squeeze, shrinking_since};
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 6;
+pub const VERSION: u64 = 7;
 
 /// A scarp that was emplaced, kept for the sidecar and for re-stamping its face at the
 /// finishing resolution.
@@ -510,9 +510,14 @@ pub struct ContractionProcess {
     compression: Compression,
     stiffness: f64,
     high: Vec<f64>,
-    /// When the lid foundered, which takes what it bore with it (F185), and the time the
-    /// overstress was last read to.
+    /// When the lid foundered, which takes what it bore with it (F185), and the regions each
+    /// overturn renewed; each region's overturns, oldest first, and each coarse cell's
+    /// region once the regions stand on the ground (F296); and the time the overstress was
+    /// last read to.
     overturns: Vec<f64>,
+    renewed: Vec<Vec<u16>>,
+    region_overturns: Vec<Vec<f64>>,
+    cell_region: Option<Vec<u16>>,
     read_to: f64,
     pub records: Vec<ScarpRecord>,
     /// The thrusts beneath the plains, which fold them into ridges (F155).
@@ -576,6 +581,21 @@ impl ContractionProcess {
                 .as_ref()
                 .map(|m| m.overturns.clone())
                 .unwrap_or_default(),
+            renewed: thermal
+                .mantle
+                .as_ref()
+                .map(|m| m.renewed.clone())
+                .unwrap_or_default(),
+            region_overturns: thermal.mantle.as_ref().map_or_else(Vec::new, |m| {
+                let mut each = vec![Vec::new(); m.regions];
+                for (&o, regions) in m.overturns.iter().zip(&m.renewed) {
+                    for &r in regions {
+                        each[r as usize].push(o);
+                    }
+                }
+                each
+            }),
+            cell_region: None,
             read_to: 0.0,
             records: Vec::new(),
             ridges: Vec::new(),
@@ -583,16 +603,55 @@ impl ContractionProcess {
         })
     }
 
-    /// The uniform compression's excess over the lid's strength at a time, Pa: what the
-    /// body's shrinking puts on the lid alike every way, over its stiffness.
-    fn drive(&self, t: f64) -> f64 {
-        shrinking(&self.thermal, self.body_radius, t) - self.compression.yield_compression
+    /// The uniform compression's excess over the lid's strength at a coarse cell at a
+    /// time, Pa: what the body's shrinking puts on the lid alike every way since its region
+    /// last formed (F296), over its stiffness.
+    fn drive(&self, i: usize, t: f64) -> f64 {
+        let formed = match &self.cell_region {
+            Some(map) => {
+                let own = &self.region_overturns[map[i] as usize];
+                own[..own.partition_point(|&o| o <= t)]
+                    .last()
+                    .copied()
+                    .unwrap_or(0.0)
+            }
+            None => self
+                .overturns
+                .iter()
+                .rev()
+                .find(|&&o| o <= t)
+                .copied()
+                .unwrap_or(0.0),
+        };
+        shrinking_since(&self.thermal, self.body_radius, formed, t)
+            - self.compression.yield_compression
     }
 
     /// Scarps formed between two times, in order of formation, not yet emplaced. The
     /// budget is spent on the whole population; those the loop grid can carry are marked
-    /// so, and the rest are left to the finish.
-    pub fn sample(&mut self, t0: f64, t1: f64, history: &FieldHistory) -> Vec<ScarpRecord> {
+    /// so, and the rest are left to the finish. Once the lid's regions stand on the ground,
+    /// `lid` (F296), each cell reads its own region.
+    pub fn sample(
+        &mut self,
+        t0: f64,
+        t1: f64,
+        history: &FieldHistory,
+        lid: Option<(&CubeSphere, &crate::stages::episodic::Resurfacing)>,
+    ) -> Vec<ScarpRecord> {
+        if let (None, Some((loop_grid, rec))) = (&self.cell_region, lid) {
+            let score = crate::grid::projection::PaddedField::new(loop_grid, &rec.score);
+            let grid = self.compression.grid;
+            self.cell_region = Some(
+                (0..grid.cell_count())
+                    .map(|i| {
+                        let d = grid.center(grid.cell(i));
+                        rec.region_of(crate::grid::projection::sample_bilinear(
+                            loop_grid, &score, d,
+                        )) as u16
+                    })
+                    .collect(),
+            );
+        }
         let mut out = Vec::new();
         for (bin, b0, b1) in crate::stages::time_bins(self.age, t0, t1) {
             self.sample_bin(bin, b0, b1, history, &mut out);
@@ -612,28 +671,46 @@ impl ContractionProcess {
     ) {
         let step_index = bin;
         // A lid that founders takes what it bore with it: the new one has borne nothing, and
-        // its thrusts come after it.
+        // its thrusts come after it; on a lid of regions, each region's where it foundered
+        // (F296).
         let mut t0 = t0;
-        if let Some(&o) = self
-            .overturns
-            .iter()
-            .rev()
-            .find(|&&o| o > self.read_to && o <= t1)
-        {
-            self.high.iter_mut().for_each(|h| *h = 0.0);
-            t0 = t0.max(o);
+        for k in 0..self.overturns.len() {
+            let o = self.overturns[k];
+            if o <= self.read_to || o > t1 {
+                continue;
+            }
+            match &self.cell_region {
+                Some(map) => {
+                    let mut renewed = vec![false; self.region_overturns.len()];
+                    for &r in &self.renewed[k] {
+                        renewed[r as usize] = true;
+                    }
+                    for (h, &r) in self.high.iter_mut().zip(map) {
+                        if renewed[r as usize] {
+                            *h = 0.0;
+                        }
+                    }
+                }
+                None => {
+                    self.high.iter_mut().for_each(|h| *h = 0.0);
+                    t0 = t0.max(o);
+                }
+            }
         }
         self.read_to = t1;
         // Where the lid's overstress grew in the bin, and the shortening it asks.
         self.compression.at(t1, history);
-        let drive = self.drive(t1);
-        let shrink = drive + self.compression.yield_compression;
-        // The shrinking still to come, which every place's strain will take up as well.
-        let to_come = (self.drive(self.age) - drive).max(0.0);
         let mut weights = Vec::with_capacity(self.high.len());
         let mut sum = 0.0;
         let mut budget = self.carry;
+        let mut drives = vec![0.0; self.high.len()];
+        let mut to_come = vec![0.0; self.high.len()];
         for (i, q) in self.compression.squeeze.iter().enumerate() {
+            let drive = self.drive(i, t1);
+            let shrink = drive + self.compression.yield_compression;
+            drives[i] = drive;
+            // The shrinking still to come, which every place's strain will take up as well.
+            to_come[i] = (self.drive(i, self.age) - drive).max(0.0);
             // A thrust where both horizontal stresses press harder than the overburden.
             let over = if q.least <= shrink {
                 (drive + q.stress).max(0.0)
@@ -675,7 +752,7 @@ impl ContractionProcess {
                 2.0 * std::f64::consts::PI * self.rng.uniform(step_index, draw + 2),
             );
             let reach = longest_thrust(
-                2.0 * (self.high[i] + to_come) / self.stiffness,
+                2.0 * (self.high[i] + to_come[i]) / self.stiffness,
                 self.body_radius,
             );
             if reach <= self.l_min {
@@ -741,8 +818,8 @@ impl ContractionProcess {
                         spacing,
                         self.body_radius,
                         &|p| compression.reading(p),
-                        drive,
-                        shrink,
+                        drives[i],
+                        drives[i] + compression.yield_compression,
                         Some(&stop),
                     );
                     (points, spacing)
@@ -814,7 +891,7 @@ impl ContractionProcess {
 
     /// Sample and emplace a step's scarps.
     pub fn step(&mut self, layers: &mut LayerSet, t0: f64, t1: f64, history: &FieldHistory) {
-        for rec in self.sample(t0, t1, history) {
+        for rec in self.sample(t0, t1, history, None) {
             self.apply(layers, rec);
         }
     }

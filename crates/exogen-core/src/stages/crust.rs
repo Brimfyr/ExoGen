@@ -383,7 +383,7 @@ mod tests {
             convection: Convection::from_graph(&g, &thermal).unwrap(),
             turn: Turn::default(),
         };
-        let overturn = mantle.last_overturn().unwrap();
+        let overturn = mantle.last_overturn_of(0.5).unwrap();
         let c0 = g.f64("tectonics.initial_crust_thickness") as f32;
         let mut crust = vec![c0; grid.cell_count()];
         let mut bedrock = vec![0.0f32; grid.cell_count()];
@@ -522,7 +522,7 @@ mod tests {
         let overturn = ThermalHistory::from_graph(&g)
             .mantle
             .unwrap()
-            .last_overturn()
+            .last_overturn_of(0.5)
             .unwrap();
         let (support, _, crust, bedrock, moved, c0, t0) = run("Venus", Some(overturn));
         assert!(moved.carried > 0 && moved.most > 100.0, "{moved:?}");

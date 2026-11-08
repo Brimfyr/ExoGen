@@ -33,7 +33,7 @@ use crate::stages::plume::RiseVent;
 use crate::thermal::ThermalHistory;
 use crate::units::*;
 
-pub const VERSION: u64 = 27;
+pub const VERSION: u64 = 28;
 
 /// The drift of a body's lavas from their material's mean at a time, -1 to 1 (F55): a
 /// smooth function of the eruptive history with the composition period, so units close in
@@ -266,9 +266,10 @@ pub struct FloodProcess {
     plume_weight: Vec<f64>,
     /// The share of the surface over the plumes' heads, where they melt (F165).
     plume_area: f64,
-    /// On an episodic lid, when the ambient mantle stops melting after the overturn, whose
-    /// own resurfacing the melt till then is (F165).
-    surge_end: Option<f64>,
+    /// On an episodic lid, each overturn since the oldest standing region formed and when
+    /// the ambient mantle stops melting after it, whose own resurfacing the melt till then is
+    /// (F165, F296).
+    surges: Vec<(f64, f64)>,
     /// Cumulative lava thickness and the time of the last flood, per coarse cell, for
     /// laying out the ridges at the end.
     pub thickness: Vec<f32>,
@@ -279,7 +280,8 @@ pub struct FloodProcess {
     heap: BinaryHeap<Reverse<Key>>,
     /// Extrusive volume carried between steps, m³.
     carry: f64,
-    /// On an episodic lid: when the surface was renewed, before which no flows are kept.
+    /// On an episodic lid: when its oldest standing region formed, before which no flows
+    /// are kept (F296).
     event_time: Option<f64>,
     /// The share of the ice magma budget that floods rather than builds domes.
     flood_share: f64,
@@ -325,7 +327,11 @@ impl FloodProcess {
         let event_time = match graph.str("interior.tectonic_regime") {
             "stagnant_lid" => None,
             "episodic_lid" => Some(
-                (graph.f64("body.age") - graph.f64("tectonics.resurfacing_event_age")).max(0.0),
+                thermal
+                    .mantle
+                    .as_ref()
+                    .and_then(|m| m.oldest_standing())
+                    .unwrap_or(0.0),
             ),
             // Cryolava on an ice shell over rock, from the ice magma budget: slush that
             // is buoyant through the shell. Water under a shell over an ocean is denser
@@ -388,19 +394,27 @@ impl FloodProcess {
             .map(|(w, a)| w.min(1.0) * a)
             .sum::<f64>()
             / whole.max(1.0);
-        // The overturn's resurfacing lasts while the ambient mantle melts after it.
-        let surge_end = event_time.map(|event| {
-            let age = graph.f64("body.age");
-            let mut t = event;
-            while t < age {
-                let s = thermal.at(t);
-                if s.magma_rate * s.ambient <= 1e-9 {
-                    break;
-                }
-                t += 0.005;
-            }
-            t.min(age)
-        });
+        // Each overturn's resurfacing lasts while the ambient mantle melts after it.
+        let age = graph.f64("body.age");
+        let surges: Vec<(f64, f64)> = match (event_time, &thermal.mantle) {
+            (Some(window), Some(mantle)) => mantle
+                .overturns
+                .iter()
+                .filter(|&&o| o >= window)
+                .map(|&o| {
+                    let mut t = o;
+                    while t < age {
+                        let s = thermal.at(t);
+                        if s.magma_rate * s.ambient <= 1e-9 {
+                            break;
+                        }
+                        t += 0.005;
+                    }
+                    (o, t.min(age))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         Some(Self {
             grid,
             body_radius,
@@ -412,7 +426,7 @@ impl FloodProcess {
             rise_province,
             plume_weight,
             plume_area,
-            surge_end,
+            surges,
             thickness: vec![0.0; grid.cell_count()],
             last_time: vec![f32::NEG_INFINITY; grid.cell_count()],
             visited: vec![0; grid.cell_count()],
@@ -452,7 +466,7 @@ impl FloodProcess {
             rise_province: Vec::new(),
             plume_weight: vec![0.0; n],
             plume_area: 0.0,
-            surge_end: None,
+            surges: Vec::new(),
             thickness: vec![0.0; n],
             last_time: vec![f32::NEG_INFINITY; n],
             visited: vec![0; n],
@@ -530,24 +544,31 @@ impl FloodProcess {
 
     /// The melt between two times, m³, by midpoint rule over sub-intervals, each time's
     /// taking `share` of it. The ambient mantle's melt comes anywhere and the plumes' only
-    /// under their heads (F165). On an episodic lid nothing before the event is kept, nor
-    /// what comes while the ambient mantle still melts after the overturn, which is the
-    /// overturn's own resurfacing, laid as the event.
+    /// under their heads (F165). On an episodic lid nothing before its oldest standing
+    /// region formed is kept, nor what comes while the ambient mantle still melts after each
+    /// overturn since, which is the overturn's own resurfacing, laid as its flood (F296).
     fn melt_between(&self, t0: f64, t1: f64, share: impl Fn(f64) -> f64) -> f64 {
         let t0 = match self.event_time {
-            Some(event) if t1 <= event => return 0.0,
-            Some(event) => t0.max(event).max(self.surge_end.unwrap_or(event)),
+            Some(event) => t0.max(event),
             None => t0,
         };
-        if t1 <= t0 {
-            return 0.0;
+        // The span less the surges within it.
+        let mut pieces = vec![(t0, t1)];
+        for &(s, e) in &self.surges {
+            pieces = pieces
+                .into_iter()
+                .flat_map(|(a, b)| [(a, b.min(s)), (a.max(e), b)])
+                .filter(|&(a, b)| b > a)
+                .collect();
         }
         let n = 8;
-        let dt = (t1 - t0) / n as f64;
         let mut v = 0.0;
-        for i in 0..n {
-            let t = t0 + (i as f64 + 0.5) * dt;
-            v += self.melt_rate(t) * share(t) * dt * GYR;
+        for (a, b) in pieces {
+            let dt = (b - a) / n as f64;
+            for i in 0..n {
+                let t = a + (i as f64 + 0.5) * dt;
+                v += self.melt_rate(t) * share(t) * dt * GYR;
+            }
         }
         v * self.flood_share
     }
@@ -564,24 +585,24 @@ impl FloodProcess {
         self.melt_rate(t) * self.eruptive_fraction(t) * YEAR * self.flood_share
     }
 
-    /// The overturn's own lava, m³ (audit M29): what the mantle erupts from the event while its
-    /// ambient mantle still melts after it, the surge the event's resurfacing is, which the
-    /// floods after it leave out; none on a lid that does not founder.
+    /// The overturns' own lava, m³ (audit M29): what the mantle erupts from each overturn
+    /// since the oldest standing region formed while its ambient mantle still melts after
+    /// it, the surge its resurfacing is, which the floods after it leave out (F296); none on
+    /// a lid that does not founder.
     pub fn surge_lava(&self) -> f64 {
-        let (Some(event), Some(end)) = (self.event_time, self.surge_end) else {
-            return 0.0;
-        };
-        if end <= event {
-            return 0.0;
-        }
-        let n = 64;
-        let dt = (end - event) / n as f64;
         let mut v = 0.0;
-        for i in 0..n {
-            let t = event + (i as f64 + 0.5) * dt;
-            let s = self.thermal.at(t);
-            let melts = s.ambient + (1.0 - s.ambient) * self.plume_area;
-            v += s.magma_rate * melts * self.eruptive_fraction(t) * dt * GYR;
+        for &(event, end) in &self.surges {
+            if end <= event {
+                continue;
+            }
+            let n = 64;
+            let dt = (end - event) / n as f64;
+            for i in 0..n {
+                let t = event + (i as f64 + 0.5) * dt;
+                let s = self.thermal.at(t);
+                let melts = s.ambient + (1.0 - s.ambient) * self.plume_area;
+                v += s.magma_rate * melts * self.eruptive_fraction(t) * dt * GYR;
+            }
         }
         v * self.flood_share
     }
@@ -2531,7 +2552,7 @@ mod tests {
         let thermal = ThermalHistory::from_graph(&g);
         let f = FloodProcess::new(&g, CubeSphere::new(32), &thermal, &[]).unwrap();
         let area = 4.0 * std::f64::consts::PI * g.f64("body.radius").powi(2);
-        let (event, end) = (f.event_time.unwrap(), f.surge_end.unwrap());
+        let (event, end) = *f.surges.last().unwrap();
         println!(
             "Venus: event {event:.3}, surge to {end:.3} Gyr, lava {:.0} m per unit area, eruptive share at the event {:.3}, at the end {:.3}",
             f.surge_lava() / area,

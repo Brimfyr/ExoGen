@@ -30,12 +30,12 @@ use crate::geom::{cross, dot, normalize};
 use crate::grid::CubeSphere;
 use crate::params::ParamGraph;
 use crate::rng::Rng;
-use crate::stages::stress::{FieldHistory, Squeeze, shrinking};
+use crate::stages::stress::{FieldHistory, Squeeze, shrinking, shrinking_since};
 use crate::stages::tectonics::Systems;
 use crate::stages::volcanism::is_lava_unit;
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 /// A wrinkle ridge, kept for the sidecar and for stamping at the finishing resolution.
 #[derive(Clone, Debug)]
@@ -107,30 +107,39 @@ pub fn plains_squeeze(
     history: &FieldHistory,
     grid: CubeSphere,
     last_time: &[f32],
+    lid: Option<&crate::stages::episodic::Resurfacing>,
 ) -> (Vec<f64>, Vec<Squeeze>) {
-    // A whole lid's shrinking, since it last formed on an episodic lid (F185).
+    // A whole lid's shrinking, since it last formed on an episodic lid (F185): each place's
+    // since its region last did, on a lid of regions (F296).
     let whole = matches!(
         graph.str("interior.tectonic_regime"),
         "stagnant_lid" | "episodic_lid"
     );
-    let shrink = |t: f64| {
-        if whole {
-            shrinking(thermal, history.body_radius, t)
-        } else {
+    let formed: Option<Vec<f64>> = lid.map(|rec| {
+        (0..grid.cell_count())
+            .map(|k| rec.formed[rec.region_of(rec.score[k])] as f64)
+            .collect()
+    });
+    let shrink = |k: usize, t: f64| {
+        if !whole {
             0.0
+        } else if let Some(formed) = &formed {
+            shrinking_since(thermal, history.body_radius, formed[k], t)
+        } else {
+            shrinking(thermal, history.body_radius, t)
         }
     };
     squeeze_plains(history, grid, last_time, graph.f64("body.age"), &shrink)
 }
 
 /// The plains' squeeze at each cell given the body's age, Gyr, and what its shrinking puts
-/// on the lid at a time, Pa.
+/// on the lid at each cell at a time, Pa.
 pub fn squeeze_plains(
     history: &FieldHistory,
     grid: CubeSphere,
     last_time: &[f32],
     age: f64,
-    shrink: &(dyn Fn(f64) -> f64 + Sync),
+    shrink: &(dyn Fn(usize, f64) -> f64 + Sync),
 ) -> (Vec<f64>, Vec<Squeeze>) {
     let n = grid.cell_count();
     // Each plains cell at its time, grouped by the epochs read by then.
@@ -160,7 +169,7 @@ pub fn squeeze_plains(
                 // The plains stand at their strength at least, brought there by drives the
                 // field does not hold (a stated choice): Venus's climate warming its plains
                 // after their renewal (Solomon et al. 1999), the plains' own cooling.
-                let squeeze = shrink(t).max(strength);
+                let squeeze = shrink(k, t).max(strength);
                 let drive = squeeze - strength;
                 // A ridge's thrust where both horizontal stresses press harder than the
                 // overburden (F157).
@@ -604,7 +613,7 @@ mod tests {
                 },
             ],
         };
-        let (squeezed, squeeze) = squeeze_plains(&history, grid, &last_time, 4.5, &|_| 0.0);
+        let (squeezed, squeeze) = squeeze_plains(&history, grid, &last_time, 4.5, &|_, _| 0.0);
         // The fill squeezes the lid's top through the basin, past its strength, and
         // stretches it outward beyond the margin (as the Hankel transform's solution of a
         // disc load does: -47 MPa at the middle, -54 at two thirds out, +44 radially at

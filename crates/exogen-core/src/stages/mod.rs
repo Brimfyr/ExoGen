@@ -447,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 218;
+pub const FINISH_VERSION: u64 = 219;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -558,21 +558,13 @@ pub fn run_coarse_loop(
         plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
         plume.as_ref().map_or(&no_limbs, |p| &p.limbs),
     );
-    // The strain the lid the last overturn keeps took from the mantle's flow since the
-    // overturn before (F187), which the tesserae's fabric records.
-    let mut lid_strain = episodic.as_ref().and_then(|e| {
-        let to = e.event_time();
-        let from = thermal
-            .mantle
-            .as_ref()?
-            .overturns
-            .iter()
-            .rev()
-            .find(|&&o| o < to - 1e-9)
-            .copied()
-            .unwrap_or(0.0);
-        Some(crust::StrainRecord::new(from, to))
-    });
+    // The strain the lid the tesserae keep took from the mantle's flow from when their
+    // regions formed to when the plains about them did (F187, F296), which their fabric
+    // records.
+    let mut lid_strain = episodic
+        .as_ref()
+        .and_then(|e| e.strain_window())
+        .map(|(from, to)| crust::StrainRecord::new(from, to));
     let mut io = io::IoProcess::new(graph, grid);
     // Io's lava erupts as floods, from its paterae (F117).
     let mut io_floods = io
@@ -787,12 +779,13 @@ pub fn run_coarse_loop(
             plume.as_ref().map(|p| p.load.as_slice()),
             support.as_ref().map(|_| lifted.as_slice()),
         );
-        if let Some(e) = &mut episodic
-            && let Some(fill) = e.step(&mut layers, t0, t1, held.as_deref())
-            && let Some(f) = &mut floods
-        {
-            f.note_resurfacing(&fill, e.event_time());
-            renewed = true;
+        if let Some(e) = &mut episodic {
+            for (fill, time) in e.step(&mut layers, t0, t1, held.as_deref()) {
+                if let Some(f) = &mut floods {
+                    f.note_resurfacing(&fill, time);
+                }
+                renewed = true;
+            }
         }
         if let Some(i) = &mut io {
             let lay = s % keep_every == 0 || s == steps;
@@ -836,9 +829,13 @@ pub fn run_coarse_loop(
         // Everything that happens in the step, in order of time: craters, scarps and
         // eruptions interleaved as they come, so what is older is cut by what is younger.
         let craters = impacts.sample(t0, t1);
-        let scarps = contraction
-            .as_mut()
-            .map_or_else(Vec::new, |c| c.sample(t0, t1, &history));
+        let scarps = contraction.as_mut().map_or_else(Vec::new, |c| {
+            let lid = episodic
+                .as_ref()
+                .and_then(|e| e.resurfacing.as_ref())
+                .map(|r| (&grid, r));
+            c.sample(t0, t1, &history, lid)
+        });
         let mut eruptions = floods.as_mut().map_or_else(Vec::new, |f| {
             f.sample(
                 &layers,
@@ -1080,22 +1077,34 @@ pub fn run_coarse_loop(
     let hash = hash_words(&hashes);
     let loop_threshold = impacts.loop_threshold();
     let craters = impacts.into_records(&layers);
-    let (scarps, thrust_ridges) = match contraction {
+    let (mut scarps, mut thrust_ridges) = match contraction {
         Some(c) => (c.records, c.ridges),
         None => (Vec::new(), Vec::new()),
     };
-    if std::env::var_os("EXOGEN_DEBUG").is_some() && !scarps.is_empty() {
-        eprintln!("thrusts: {}", tectonics::strike_summary(&scarps));
-    }
-    let contraction_records = &scarps;
     let (paterae, mountains, io_base) = match io {
         Some(i) => (i.paterae, i.mountains, i.base.map(|b| b.bedrock)),
         None => (Vec::new(), Vec::new(), None),
     };
     let (mut resurfacing, coronae, domes, novae) = match episodic {
-        Some(e) => (e.resurfacing, e.coronae, e.domes, e.novae),
+        Some(e) => e.standing(),
         None => (None, Vec::new(), Vec::new(), Vec::new()),
     };
+    // On a lid of regions the thrusts stand on ground laid before them, a later overturn's
+    // flood taking those on its own regions, the loop's own under it (F296).
+    if let Some(r) = &resurfacing {
+        let score = crate::grid::projection::PaddedField::new(&grid, &r.score);
+        let stands = |t: f64, d: [f64; 3]| t as f32 >= r.formed_at(&grid, &score, d);
+        scarps.retain(|s| {
+            s.points
+                .get(s.points.len() / 2)
+                .is_none_or(|&p| stands(s.time_gyr, p))
+        });
+        thrust_ridges.retain(|q| stands(q.time_gyr, q.midpoint()));
+    }
+    if std::env::var_os("EXOGEN_DEBUG").is_some() && !scarps.is_empty() {
+        eprintln!("thrusts: {}", tectonics::strike_summary(&scarps));
+    }
+    let contraction_records = &scarps;
     // The tesserae keep the strain their lid took, each set with the lid of its time.
     if let (Some(r), Some(record)) = (resurfacing.as_mut(), lid_strain) {
         r.strain = record
@@ -1130,8 +1139,14 @@ pub fn run_coarse_loop(
             // The plains' ridges stand where the lid squeezes them, read when each place's
             // would stand, and follow the lava's thickness where the field leaves them free
             // (F156).
-            let (squeezed, squeeze) =
-                ridges::plains_squeeze(graph, &thermal, &history, grid, &f.last_time);
+            let (squeezed, squeeze) = ridges::plains_squeeze(
+                graph,
+                &thermal,
+                &history,
+                grid,
+                &f.last_time,
+                resurfacing.as_ref(),
+            );
             let ridges = ridges::plan_ridges(
                 &grid,
                 graph.f64("body.radius"),
@@ -5230,25 +5245,23 @@ mod tests {
     }
 
     /// Venus's ridges keep to its lows, where the relief squeezes the plains and its highs
-    /// stretch them (Bilotti and Suppe 1999); its thrusts form soon after its last overturn
-    /// (F185).
+    /// stretch them (Bilotti and Suppe 1999); its thrusts form soon after the overturn that
+    /// laid their ground (F185, F296).
     fn venus_s_ridges_keep_to_its_lows(body: &Body) {
-        let (g, venus) = (&body.graph, &*body.out.loop_output);
-        // Its thrusts form on the lid its last overturn left (F185).
-        let overturn = ThermalHistory::from_graph(g)
-            .mantle
-            .unwrap()
-            .last_overturn()
-            .unwrap();
+        let venus = &*body.out.loop_output;
+        // Its thrusts form on the lid each region's last overturn left (F185, F296).
+        let rec = venus.resurfacing.as_ref().expect("its overturns");
+        let score = crate::grid::projection::PaddedField::new(&venus.grid, &rec.score);
         assert!(!venus.scarps.is_empty());
         let length: f64 = venus.scarps.iter().map(|s| s.length).sum();
         let mut by_age = [0.0f64; 5];
         for s in &venus.scarps {
-            assert!(s.time_gyr > overturn, "{} after {overturn}", s.time_gyr);
-            let k = (((s.time_gyr - overturn) / 0.05) as usize).min(4);
+            let formed = rec.formed_at(&venus.grid, &score, s.points[s.points.len() / 2]) as f64;
+            assert!(s.time_gyr >= formed, "{} after {formed}", s.time_gyr);
+            let k = (((s.time_gyr - formed) / 0.05) as usize).min(4);
             by_age[k] += s.length / length;
         }
-        eprintln!("Venus's thrusts by 50 Myr since the overturn: {by_age:.2?}, {:.0} km", length / 1e3);
+        eprintln!("Venus's thrusts by 50 Myr since their ground's overturn: {by_age:.2?}, {:.0} km", length / 1e3);
         let grid = venus.grid;
         let height = venus.keyframes.last().unwrap().layers.bedrock.as_slice();
         let (mut sum, mut area) = (0.0, 0.0);
@@ -5267,10 +5280,9 @@ mod tests {
                 }
             }
         }
-        // KNOWN (F293): at Venus's measured 737 K, its lid's friction set again so that it last
-        // overturned 0.661 Gyr ago, some three fifths of its ridges' points lie below its mean,
-        // where four fifths did under the grey law's 756 K: held at over half until the
-        // regional lid (PLAN.md 5C).
+        // KNOWN (F293): at Venus's measured 737 K some three fifths of its ridges' points lay
+        // below its mean, where four fifths did under the grey law's 756 K; under its regions
+        // (F296), 64 percent: held at over half.
         assert!(
             all > 1000 && below * 2 > all,
             "{below} of {all} below the mean"
@@ -5755,15 +5767,23 @@ mod tests {
         }
     }
 
-    /// Venus renews its surface: most of it is plains the age of the event, a few per
-    /// cent is older tessera, coronae and domes dot the plains, and the craters are few.
+    /// Venus renews its surface by its lid's regions (F296): most of it is plains the age of
+    /// the overturn that laid their region, a few per cent is older tessera, coronae and domes
+    /// dot the plains, and the craters are few.
     fn venus_renews_its_surface_and_keeps_tessera(body: &Body) {
         let (g, out) = (&body.graph, &body.out);
         let lo = &out.loop_output;
         assert!(!lo.rises.is_empty() && !lo.shields.is_empty());
-        let event = lo.resurfacing.as_ref().expect("an event").time_gyr;
-        let expected = g.f64("body.age") - g.f64("tectonics.resurfacing_event_age");
-        assert!((event - expected).abs() < 1e-9);
+        // Its overturns since its oldest standing region formed laid the whole surface, its
+        // mean age what the craters record.
+        let mantle = ThermalHistory::from_graph(g).mantle.unwrap();
+        let age = g.f64("body.age");
+        let event = lo.resurfacing.as_ref().expect("its overturns").time_gyr;
+        let oldest = mantle.oldest_standing().unwrap();
+        assert!((event - oldest).abs() < 1e-9, "{event} {oldest}");
+        let mean = g.f64("tectonics.resurfacing_event_age");
+        assert!((mean - mantle.mean_surface_age(age)).abs() < 1e-9, "{mean}");
+        assert!(age - event >= mean, "{event} {mean}");
         assert!(lo.coronae.len() > 50 && !lo.domes.is_empty());
         let tessera = episodic::tessera_fraction(&out.finish.layers);
         assert!(tessera > 0.04 && tessera < 0.14, "tessera {tessera}");
@@ -5825,23 +5845,35 @@ mod tests {
         }
         let units = layers.unit_id.as_slice();
         let ages = layers.surface_age.as_slice();
-        let (mut plains, mut plains_at_event) = (0usize, 0usize);
-        let mut tessera_older = 0usize;
+        let rec = lo.resurfacing.as_ref().unwrap();
+        let coarse = crate::grid::CubeSphere::new(((rec.score.len() / 6) as f64).sqrt() as u32);
+        let score = crate::grid::projection::PaddedField::new(&coarse, &rec.score);
+        let grid = layers.grid;
+        let (mut plains, mut plains_at_event, mut plains_age) = (0usize, 0usize, 0.0f64);
         for k in 0..units.len() {
             if units[k] == crate::units::UNIT_LAVA {
+                let formed = rec.formed_at(&coarse, &score, grid.center(grid.cell(k)));
                 plains += 1;
-                if (ages[k] as f64 - event).abs() < 0.3 {
+                plains_age += ages[k] as f64;
+                if (ages[k] - formed).abs() < 0.3 {
                     plains_at_event += 1;
                 }
-            } else if units[k] == crate::units::UNIT_TESSERA && (ages[k] as f64) < event - 0.1 {
-                tessera_older += 1;
             }
         }
         assert!(
             plains_at_event * 10 > plains * 7,
             "{plains_at_event} of {plains}"
         );
-        assert!(tessera_older > 0);
+        let plains_age = plains_age / plains.max(1) as f64;
+        let tessera_older = (0..units.len())
+            .filter(|&k| {
+                units[k] == crate::units::UNIT_TESSERA && (ages[k] as f64) < plains_age - 0.1
+            })
+            .count();
+        assert!(
+            tessera_older > 0,
+            "plains formed {plains_age} Gyr on average"
+        );
         // Few craters, none older than the event.
         assert!(
             out.finish.craters.len() < 2_000,
@@ -6306,7 +6338,10 @@ mod tests {
             } else {
                 vec![1.5 * g.f64("tectonics.initial_crust_thickness")]
             };
-            let overturn = thermal.mantle.as_ref().and_then(|m| m.last_overturn());
+            let overturn = thermal
+                .mantle
+                .as_ref()
+                .and_then(|m| m.last_overturn_of(0.5));
             let after: Vec<f64> = overturn
                 .map(|o| [0.005, 0.02, 0.05, 0.1, 0.3].iter().map(|d| o + d).collect())
                 .unwrap_or_default();

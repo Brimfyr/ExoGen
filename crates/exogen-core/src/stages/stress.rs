@@ -697,7 +697,22 @@ pub fn shrinking(thermal: &crate::thermal::ThermalHistory, body_radius: f64, t: 
         .mantle
         .as_ref()
         .and_then(|m| m.overturns.iter().rev().find(|&&o| o <= t).copied());
-    let before = formed.map_or(0.0, |o| thermal.at(o).contraction);
+    shrinking_since(thermal, body_radius, formed.unwrap_or(0.0), t)
+}
+
+/// The compression the body's shrinking puts on a lid that formed at `formed`, Gyr, alike
+/// every way at a time, Pa (F154, F296): its region's, on a lid of regions.
+pub fn shrinking_since(
+    thermal: &crate::thermal::ThermalHistory,
+    body_radius: f64,
+    formed: f64,
+    t: f64,
+) -> f64 {
+    let before = if formed > 0.0 {
+        thermal.at(formed).contraction
+    } else {
+        0.0
+    };
     ROCK_YOUNG_MODULUS / (1.0 - ROCK_POISSON) * (thermal.at(t).contraction - before) / body_radius
 }
 

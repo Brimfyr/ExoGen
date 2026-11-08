@@ -171,9 +171,85 @@ pub(crate) fn monotone(v: [f64; 4], t: f64) -> f64 {
         + (t3 - t2) * m2
 }
 
+/// The standard normal distribution's quantile at `p`, 0 to 1: Acklam's rational
+/// approximation, its relative error under 1.2e-9.
+pub fn normal_quantile(p: f64) -> f64 {
+    const A: [f64; 6] = [
+        -3.969683028665376e1,
+        2.209460984245205e2,
+        -2.759285104469687e2,
+        1.38357751867269e2,
+        -3.066479806614716e1,
+        2.506628277459239,
+    ];
+    const B: [f64; 5] = [
+        -5.447609879822406e1,
+        1.615858368580409e2,
+        -1.556989798598866e2,
+        6.680131188771972e1,
+        -1.328068155288572e1,
+    ];
+    const C: [f64; 6] = [
+        -7.784894002430293e-3,
+        -3.223964580411365e-1,
+        -2.400758277161838,
+        -2.549732539343734,
+        4.374664141464968,
+        2.938163982698783,
+    ];
+    const D: [f64; 4] = [
+        7.784695709041462e-3,
+        3.224671290700398e-1,
+        2.445134137142996,
+        3.754408661907416,
+    ];
+    // The tails by their own approximation in sqrt(-2 ln p), the middle by its own in p.
+    let tail = |q: f64| {
+        (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+    };
+    let p = p.clamp(1e-300, 1.0 - 1e-16);
+    if p < 0.02425 {
+        tail((-2.0 * p.ln()).sqrt())
+    } else if p > 1.0 - 0.02425 {
+        -tail((-2.0 * (1.0 - p).ln()).sqrt())
+    } else {
+        let q = p - 0.5;
+        let r = q * q;
+        (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
+            / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The normal quantile at the measured points of the distribution, symmetric about its
+    /// middle and rising through it.
+    #[test]
+    fn the_normal_quantile_stands_where_the_distribution_does() {
+        for (p, z) in [
+            (0.5, 0.0),
+            (0.841_344_746_068_543, 1.0),
+            (0.975, 1.959_963_984_540_054),
+            (0.999, 3.090_232_306_167_813),
+            (1e-6, -4.753_424_308_822_899),
+        ] {
+            let q = normal_quantile(p);
+            assert!(
+                (q - z).abs() < 1e-8 * z.abs().max(1.0),
+                "{p}: {q} against {z}"
+            );
+            assert!((normal_quantile(1.0 - p) + q).abs() < 1e-7, "{p}");
+        }
+        let mut last = f64::NEG_INFINITY;
+        for k in 1..1000 {
+            let q = normal_quantile(k as f64 / 1000.0);
+            assert!(q > last, "{k}");
+            last = q;
+        }
+    }
 
     #[test]
     fn rotation_preserves_length_and_rotates_by_the_angle() {

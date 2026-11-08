@@ -1186,16 +1186,15 @@ pub const LANDSLIDE_BACK: (f64, f64) = (0.3, 0.8);
 pub const LANDSLIDE_GAP: (f64, f64) = (0.5, 3.0);
 pub const LANDSLIDE_REACH: (f64, f64) = (7.0, 14.0);
 pub const LANDSLIDE_SPREAD: f64 = 0.5;
-/// The episodic lid (PLAN.md 4.3, Venus). The event fills every depression this far
-/// towards its spill point and lays this veneer everywhere else on the plains, m; the
-/// tessera are the highest-standing fraction of the surface by a height smoothed over the
+/// The episodic lid (PLAN.md 4.3, Venus). Each overturn fills every depression on its regions
+/// this far towards its spill point and lays this veneer everywhere else on their plains, m;
+/// the lid's regions stand, as their strength ranks them, on a height smoothed over the
 /// flexural parameter of the elastic lid the overturn broke (audit W3), less what the plumes
 /// and the mantle's flow hold up, which is the crust the flow thickened over its
-/// downwellings (F184), and keep the surface the overturn before the
-/// event laid (F121), or one this much older than the event where there was none, Gyr.
-/// After the event the eruptions follow the mantle's history (F165).
+/// downwellings (F184); the tesserae are its strongest regions, this share of the surface
+/// (Ivanov and Head 1996, some 8 percent), each keeping the ground its region last formed
+/// on (F296). After the overturns the eruptions follow the mantle's history (F165).
 pub const TESSERA_FRACTION: f64 = 0.08;
-pub const TESSERA_AGE_LEAD_GYR: f64 = 0.5;
 /// The tesserae's fabric from the strain their lid took (F187). A strong layer shortened
 /// over a weaker one buckles at this many times its thickness (a stated choice within
 /// buckling theory's 4 to 6 for a layer of plastic strength over a viscous one; with the
@@ -1801,11 +1800,11 @@ pub const MOBILE_LID_MIN_RADIUS: f64 = 4.0e6;
 /// capacities, J/kg/K. The lid breaks where the convecting sublayer's stress along a cell as
 /// long as the mantle is deep exceeds its friction over its thickness; its effective
 /// friction is far below the laboratory's, as a lid that mobilizes needs (Moresi and
-/// Solomatov 1998), and is a stated choice set so that Venus last overturned within the half
-/// gigayear its craters record, set again at its measured 737 K (F293): 0.661 Gyr ago, where at
-/// 0.0112 its overturn stood at 0.67 under the grey law's 756 K. Its lids founder as they
-/// mature, on a grid of times, so that its last overturn steps by some 0.3 Gyr as the friction
-/// or its surface's temperature changes, until the regional lid (PLAN.md 5C). A lid that broke
+/// Solomatov 1998), and is a stated choice set so that Venus's surface's mean age stands within
+/// the half gigayear its craters record: 0.62 Gyr under its regions (F296), where its lid of one
+/// piece, set again at its measured 737 K (F293), last overturned 0.661 Gyr ago, its last
+/// overturn stepping by some 0.3 Gyr as the friction or its surface's temperature changed, on the
+/// times its lid matured; its regions' surface ages by degrees with them. A lid that broke
 /// within this share of the body's life before the present makes an episodic lid. Steps over
 /// the body's life.
 pub const MANTLE_START_K: f64 = 1_750.0;
@@ -1818,6 +1817,15 @@ pub const MANTLE_DIFFUSIVITY: f64 = 1e-6;
 pub const MANTLE_HEAT_CAPACITY: f64 = 1_250.0;
 pub const CORE_HEAT_CAPACITY: f64 = 800.0;
 pub const LID_FRICTION: f64 = 0.0107;
+/// F296: the lid's regions, each an equal share of the surface, and the spread of their
+/// friction about LID_FRICTION, the standard deviation of its logarithm: set by Venus's
+/// tesserae, the eighth of its surface (Ivanov and Head 1996) its strongest regions keep,
+/// whose large craters stand 1.4 times as dense as on the rest of the planet (Ivanov and
+/// Basilevsky 1993), the strongest eighth of the regions' surface 1.4 times as old as the
+/// rest's. A narrow spread: Venus's lid founders nearly at once, the weakest renewed after
+/// the main renewal and the strongest surviving one before it.
+pub const LID_REGIONS: usize = 256;
+pub const LID_FRICTION_SPREAD: f64 = 0.02;
 /// The iron a mantle keeps in its silicates, as FeO, mass fraction (F125): what the warmth
 /// where the body formed left oxidized, from a reduced body formed hot in the inner nebula
 /// to an oxidized one formed cool, linear in its blackbody temperature between these anchors,

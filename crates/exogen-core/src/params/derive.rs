@@ -1670,9 +1670,9 @@ fn lid_has_broken(c: &Ctx) -> bool {
     mantle_keeps_heat(c) && mantle_history(c).last_overturn().is_some()
 }
 
-/// Audit S1: how far a lid that has broken is episodic now, 1 while it last overturned
-/// within EPISODIC_RECENT_SHARE's first share of the body's age, none past its second or
-/// on a lid that never broke, by degrees between.
+/// Audit S1: how far a lid that has broken is episodic now, 1 while its surface's mean age
+/// (F296) lies within EPISODIC_RECENT_SHARE's first share of the body's age, none past its
+/// second or on a lid that never broke, by degrees between.
 pub fn interior_episodic_degree(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "episodic_lid" {
         return 0.0.into();
@@ -3110,12 +3110,14 @@ pub fn tectonics_resurfacing_event_age(c: &Ctx) -> Value {
     if c.str("interior.tectonic_regime") != "episodic_lid" {
         return 0.0.into();
     }
-    // When the mantle last broke the lid (F121).
+    // The mean age of the surface its lid's regions laid when the mantle last broke each
+    // (F121, F296), what its craters record.
     let age = c.f64("body.age");
-    mantle_history(c)
-        .last_overturn()
-        .map_or(0.0, |t| (age - t).max(0.0))
-        .into()
+    let mantle = mantle_history(c);
+    if mantle.last_overturn().is_none() {
+        return 0.0.into();
+    }
+    mantle.mean_surface_age(age).max(0.0).into()
 }
 
 pub fn tectonics_tessera_fraction(c: &Ctx) -> Value {
@@ -3319,8 +3321,8 @@ pub fn cratering_retention_age(c: &Ctx) -> Value {
     };
     let mut retention = match regime {
         "mobile_lid" => RETENTION_MOBILE_LID_GYR,
-        // The surface the lid's last overturn laid (F121), within what the lid would keep
-        // without it (audit S1).
+        // The surface the lid's regions laid when they last overturned, its mean age (F121,
+        // F296), within what the lid would keep without it (audit S1).
         "episodic_lid" => c.f64("tectonics.resurfacing_event_age").min(stagnant),
         // A thin shell renews its surface within RETENTION_ICE_OCEAN_GYR over the degree
         // of its renewal (audit S6).

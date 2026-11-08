@@ -158,18 +158,29 @@ mod tests {
     /// What an overturn does follows the overturns, and the episodic lid's constants its
     /// degree (audit S1): along Venus's radius from 0.6 of its own, the lid breaks from 0.7
     /// and has broken ever later, its melt's efficiency, its rises' width and its domes
-    /// coming in by degrees as its last overturn nears the present, none by the cut on half
-    /// its life that stepped its magma fivefold.
+    /// coming in by degrees as its surface's mean age nears the present, none by the cut on
+    /// half its life that stepped its magma fivefold. Its surface's mean age moves by degrees
+    /// with the radius (F296), by under 0.06 Gyr each thousandth of it from 0.86 to 0.90,
+    /// where it renews fastest: steps of an eightieth, where a fortieth moved its degree by
+    /// over a half there.
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn a_lid_turns_episodic_by_degrees() {
         let (venus, _) = preset("Venus").unwrap().to_graph();
         let r0 = venus.f64("body.radius");
         assert_eq!(venus.f64("interior.episodic_degree"), 1.0);
+        let graphs: Vec<(f64, ParamGraph)> = {
+            use rayon::prelude::*;
+            (0..=40)
+                .into_par_iter()
+                .map(|k| {
+                    let f = 0.6 + 0.0125 * k as f64;
+                    (f, swept("Venus", "body.radius", r0 * f))
+                })
+                .collect()
+        };
         let mut last: Option<[f64; 4]> = None;
-        for k in 0..=20 {
-            let f = 0.6 + 0.025 * k as f64;
-            let g = swept("Venus", "body.radius", r0 * f);
+        for (f, g) in &graphs {
             let degree = g.f64("interior.episodic_degree");
             let magma = g.f64("interior.magma_production_rate");
             let domes = g.f64("volcanism.dome_count");
@@ -177,7 +188,7 @@ mod tests {
             let broken = g.str("interior.tectonic_regime") == "episodic_lid";
             let since = g.f64("tectonics.resurfacing_event_age");
             eprintln!(
-                "{f:.3}: {}, last overturn {since:.2} Gyr ago, degree {degree:.3}, magma {magma:.1} km3/yr, domes {domes}, rises {rise:.2} R, tesserae {:.2}, retention {:.2} Gyr",
+                "{f:.3}: {}, surface {since:.2} Gyr old, degree {degree:.3}, magma {magma:.1} km3/yr, domes {domes}, rises {rise:.2} R, tesserae {:.2}, retention {:.2} Gyr",
                 g.str("interior.tectonic_regime"),
                 g.f64("tectonics.tessera_fraction"),
                 g.f64("cratering.retention_age")
@@ -196,6 +207,21 @@ mod tests {
             }
             last = Some([degree, magma, domes, rise]);
         }
+        let fine: Vec<f64> = {
+            use rayon::prelude::*;
+            (0..=40)
+                .into_par_iter()
+                .map(|k| {
+                    swept("Venus", "body.radius", r0 * (0.86 + 0.001 * k as f64))
+                        .f64("tectonics.resurfacing_event_age")
+                })
+                .collect()
+        };
+        let step = fine
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f64, f64::max);
+        assert!(step < 0.06, "the surface's mean age steps by {step} Gyr");
     }
 
     /// Between Pluto, its shell frozen to its rock, and a larger Pluto whose shell floats on

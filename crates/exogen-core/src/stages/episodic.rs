@@ -3,12 +3,14 @@
 
 //! The episodic lid (PLAN.md 4.3, Venus type).
 //!
-//! The lid founders once in a while and the whole surface is renewed. The event floods
-//! the plains: every depression fills most of the way to its spill point, which takes
-//! the old craters with it and leaves smooth lowlands under the regional slopes, while
-//! the highest-standing terrain, a small fraction, survives as tessera, deformed into a
-//! fabric of intersecting ridges: the plateaus of crust the mantle's flow thickened over
-//! its downwellings after the overturn before (F184), compensated on their roots.
+//! The lid's regions founder once in a while, each renewing its share of the surface (F296).
+//! Each overturn floods its regions' plains: every depression fills most of the way to its
+//! spill point, which takes the old craters with it and leaves smooth lowlands under the
+//! regional slopes. The regions stand on the old crust's smoothed height as their strength
+//! ranks them, the weakest on the lowest ground and the strongest on the plateaus of crust
+//! the mantle's flow thickened over its downwellings (F184), compensated on their roots: the
+//! strongest eighth, the tesserae, outlast the overturns that renew the plains about them,
+//! deformed into a fabric of intersecting ridges.
 //! Afterwards the surface ages again under a sparse, un-degraded crater population, with
 //! flow fields, coronae over the mantle's diapirs (F145, the corona process) and
 //! steep-sided pancake domes on the plains.
@@ -32,27 +34,79 @@ use crate::stages::tessera::TesseraFabric;
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 14;
+pub const VERSION: u64 = 15;
 
-/// The resurfacing event, kept for the finishing pass.
+/// The overturns' resurfacing, kept for the finishing pass (F296).
 #[derive(Clone, Debug)]
 pub struct Resurfacing {
+    /// When the oldest standing region of the lid formed, Gyr since formation.
     pub time_gyr: f64,
-    /// Thickness the event added per coarse cell, m.
+    /// Thickness the overturns added per coarse cell, m.
     pub fill: Vec<f32>,
-    /// The surface the plains were filled towards, per coarse cell: the terrain with its
-    /// depressions filled.
+    /// The surface each cell's plains were last filled towards, per coarse cell: the terrain
+    /// with its depressions filled.
     pub filled: Vec<f32>,
-    /// Smoothed height, whose high end is the tessera.
+    /// Smoothed height, on which the lid's regions stand as their strength ranks them, the
+    /// tesserae its high end.
     pub score: Vec<f32>,
     pub threshold: f32,
-    /// Surface age the tessera keep, Gyr since formation.
-    pub tessera_age: f32,
+    /// The score at each region's upper edge, the weakest's first; the first of the
+    /// tesserae; and when each region last formed, Gyr since formation.
+    pub edges: Vec<f32>,
+    pub tesserae_from: usize,
+    pub formed: Vec<f32>,
     /// The body's surface gravity, m/s².
     pub gravity: f64,
     /// The strain the lid the event keeps took from the mantle's flow, a set for each state
     /// of the flow (F187).
     pub strain: Vec<LidStrain>,
+}
+
+impl Resurfacing {
+    /// The lid's region at a score.
+    pub fn region_of(&self, score: f32) -> usize {
+        self.edges
+            .partition_point(|&e| e < score)
+            .min(self.edges.len().saturating_sub(1))
+    }
+
+    /// When the ground at a direction last formed, Gyr since formation: its region's, by its
+    /// score read on the coarse grid.
+    pub fn formed_at(&self, coarse: &CubeSphere, score: &PaddedField, d: [f64; 3]) -> f32 {
+        self.formed[self.region_of(sample_bilinear(coarse, score, d))]
+    }
+
+    /// When the plains at a direction last formed, Gyr since formation: within the
+    /// tesserae, those at their edge, which its lava ponded from.
+    pub fn plains_at(&self, coarse: &CubeSphere, score: &PaddedField, d: [f64; 3]) -> f32 {
+        let region = self.region_of(sample_bilinear(coarse, score, d));
+        self.formed[region.min(self.tesserae_from.saturating_sub(1))]
+    }
+}
+
+/// The score at each of `regions` equal shares of the surface's upper edge, the lowest's
+/// first and the highest's unbounded (F296).
+fn region_edges(grid: &CubeSphere, score: &[f32], regions: usize) -> Vec<f32> {
+    let mut cells: Vec<(f32, f64)> = score
+        .iter()
+        .enumerate()
+        .map(|(k, &s)| (s, grid.cell_area(grid.cell(k))))
+        .collect();
+    cells.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: f64 = cells.iter().map(|c| c.1).sum();
+    let mut edges = Vec::with_capacity(regions);
+    let mut acc = 0.0;
+    let mut i = 0;
+    for r in 0..regions - 1 {
+        let upto = (r + 1) as f64 / regions as f64 * total;
+        while i < cells.len() - 1 && acc + cells[i].1 < upto {
+            acc += cells[i].1;
+            i += 1;
+        }
+        edges.push(cells[i].0);
+    }
+    edges.push(f32::INFINITY);
+    edges
 }
 
 /// The strain one state of the mantle's flow put on the lid an overturn keeps (F187).
@@ -143,25 +197,6 @@ pub fn smooth(grid: &CubeSphere, values: &[f32], passes: usize) -> Vec<f32> {
     a
 }
 
-/// The event's score threshold: the value a fraction of the area lies above.
-fn upper_quantile(grid: &CubeSphere, score: &[f32], fraction: f64) -> f32 {
-    let mut cells: Vec<(f32, f64)> = score
-        .iter()
-        .enumerate()
-        .map(|(k, &s)| (s, grid.cell_area(grid.cell(k))))
-        .collect();
-    cells.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let total: f64 = cells.iter().map(|c| c.1).sum();
-    let mut acc = 0.0;
-    for (s, a) in cells {
-        acc += a;
-        if acc >= fraction * total {
-            return s;
-        }
-    }
-    f32::NEG_INFINITY
-}
-
 /// Pancake dome profile at a fraction of the radius: flat top, steep sides.
 pub fn dome_profile(x: f64) -> f64 {
     if x >= 1.0 {
@@ -171,19 +206,24 @@ pub fn dome_profile(x: f64) -> f64 {
     }
 }
 
-/// The episodic lid through the loop: the event, then the coronae and domes.
+/// The episodic lid through the loop: its overturns, then the coronae and domes.
 pub struct EpisodicProcess {
     grid: CubeSphere,
     body_radius: f64,
-    event_time: f64,
-    /// The surface age the tessera keep, Gyr since formation (F121).
-    tessera_age: f64,
-    tessera_fraction: f64,
+    /// When the oldest standing region of the lid formed, Gyr since formation; the
+    /// overturns since, each with the regions it renewed, and the next to come (F296).
+    window: f64,
+    overturns: Vec<(f64, Vec<u16>)>,
+    next: usize,
+    /// The lid's regions, the first of the strongest, the tesserae, and when each formed
+    /// last, Gyr since formation (F296).
+    regions: usize,
+    tesserae_from: usize,
+    formed: Vec<f64>,
     /// The passes of the one-cell kernel that smooth the old crust's height over the
     /// flexural parameter of the elastic lid the overturn broke (audit W3).
     tessera_smoothing: usize,
     gravity: f64,
-    done: bool,
     pub resurfacing: Option<Resurfacing>,
     /// The coronae over the mantle's diapirs since the lid formed (F145).
     pub coronae: Vec<crate::stages::corona::Corona>,
@@ -205,17 +245,23 @@ impl EpisodicProcess {
         }
         let body_radius = graph.f64("body.radius");
         let age = graph.f64("body.age");
-        let event_time = (age - graph.f64("tectonics.resurfacing_event_age")).max(0.0);
-        // The tessera keep the surface the overturn before the event laid (F121), or one
-        // TESSERA_AGE_LEAD_GYR older than the event where the mantle gives none before it.
+        // The overturns since the oldest standing region of the lid formed, which laid every
+        // region's surface (F296); the strongest TESSERA_FRACTION of the regions, the
+        // tesserae.
         let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph));
-        let tessera_age = mantle
+        let window = mantle.oldest_standing()?;
+        let overturns: Vec<(f64, Vec<u16>)> = mantle
             .overturns
             .iter()
-            .rev()
-            .find(|&&t| t < event_time - 1e-6)
-            .copied()
-            .unwrap_or((event_time - TESSERA_AGE_LEAD_GYR).max(0.0));
+            .zip(&mantle.renewed)
+            .filter(|&(&o, _)| o >= window)
+            .map(|(&o, r)| (o, r.clone()))
+            .collect();
+        let regions = mantle.regions;
+        let tessera = graph.f64("tectonics.tessera_fraction");
+        let tesserae_from = regions
+            - ((tessera * regions as f64).round() as usize).clamp(1, regions.saturating_sub(1));
+        let formed = mantle.formed_by(age);
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xE915_0D1C);
         // The coronae over the mantle's diapirs (F145).
         let coronae = crate::stages::corona::rock_coronae(graph, &mantle, rises, limbs);
@@ -228,7 +274,7 @@ impl EpisodicProcess {
                 center: rng.unit_direction(1_000 + k, 5),
                 radius: 0.5 * diameter,
                 height: DOME_HEIGHT * (0.6 + 0.8 * rng.uniform(1_000 + k, 3)),
-                time_gyr: (event_time + (age - event_time) * rng.uniform(1_000 + k, 4)).min(age),
+                time_gyr: (window + (age - window) * rng.uniform(1_000 + k, 4)).min(age),
                 id: 1_000 + k,
             });
         }
@@ -280,7 +326,7 @@ impl EpisodicProcess {
         // is not the plateaus of crust that stand on their roots (audit W3): the elastic
         // lid the overturn broke, down to ELASTIC_ISOTHERM_ROCK, and the passes whose
         // spread, half the square root of their number in cells, reaches its parameter.
-        let before = (event_time - 1e-3).max(0.0);
+        let before = (window - 1e-3).max(0.0);
         let ts = mantle.surface_temperature;
         let elastic = mantle.lid_at(before)
             * ((ELASTIC_ISOTHERM_ROCK - ts) / (mantle.temperature_at(before) - ts).max(1.0))
@@ -290,12 +336,14 @@ impl EpisodicProcess {
         Some(Self {
             grid,
             body_radius,
-            event_time,
-            tessera_age,
-            tessera_fraction: graph.f64("tectonics.tessera_fraction"),
+            window,
+            overturns,
+            next: 0,
+            regions,
+            tesserae_from,
+            formed,
             tessera_smoothing,
             gravity: graph.f64("body.gravity"),
-            done: false,
             resurfacing: None,
             coronae,
             domes,
@@ -304,38 +352,97 @@ impl EpisodicProcess {
         })
     }
 
-    pub fn event_time(&self) -> f64 {
-        self.event_time
+    /// When the oldest standing region of the lid formed, Gyr since formation (F296).
+    pub fn window(&self) -> f64 {
+        self.window
     }
 
-    /// Apply what falls in the step: the event, and the coarse part of the coronae.
-    /// Returns the event's fill when it happens, for the lava ledger. The tessera are
-    /// chosen on the height less what the plume rises' domes and the mantle's flow hold up
-    /// (`held`), which is young dynamic topography, not the crust: the plateaus of crust
-    /// the flow thickened stand highest (F184), and keep their ground as it is.
+    /// The time over which the mantle's flow strained the lid the tesserae keep (F187,
+    /// F296): from when their regions formed to when the plains about them did, each by its
+    /// share; none where the plains are no younger.
+    pub fn strain_window(&self) -> Option<(f64, f64)> {
+        let mean = |f: &[f64]| f.iter().sum::<f64>() / f.len().max(1) as f64;
+        let (plains, tesserae) = self.formed.split_at(self.tesserae_from);
+        let (from, to) = (mean(tesserae), mean(plains));
+        (to > from + 1e-9).then_some((from, to))
+    }
+
+    /// The coronae and domes on the ground as it stands, each on ground its region's last
+    /// overturn laid before it (F296), and what the overturns did.
+    pub fn standing(
+        self,
+    ) -> (
+        Option<Resurfacing>,
+        Vec<crate::stages::corona::Corona>,
+        Vec<Dome>,
+        Vec<Trough>,
+    ) {
+        let Self {
+            grid,
+            resurfacing,
+            mut coronae,
+            mut domes,
+            novae,
+            ..
+        } = self;
+        if let Some(r) = &resurfacing {
+            let score = PaddedField::new(&grid, &r.score);
+            coronae.retain(|c| c.time_gyr as f32 >= r.formed_at(&grid, &score, c.center));
+            domes.retain(|d| d.time_gyr as f32 >= r.formed_at(&grid, &score, d.center));
+        }
+        (resurfacing, coronae, domes, novae)
+    }
+
+    /// Apply what falls in the step: the overturns, and the coarse part of the coronae.
+    /// Returns each overturn's fill and time as it happens, for the lava ledger. The lid's
+    /// regions are ranked, at the first overturn since its oldest standing region formed, on
+    /// the height less what the plume rises' domes and the mantle's flow hold up (`held`),
+    /// which is young dynamic topography, not the crust: the plateaus of crust the flow
+    /// thickened stand highest (F184), the strongest regions on them, and the tesserae among
+    /// them keep their ground as it is (F296).
     pub fn step(
         &mut self,
         layers: &mut LayerSet,
         t0: f64,
         t1: f64,
         held: Option<&[f32]>,
-    ) -> Option<Vec<f32>> {
+    ) -> Vec<(Vec<f32>, f64)> {
         let grid = self.grid;
         let body_radius = self.body_radius;
-        let mut event_fill = None;
-        if !self.done && self.event_time > t0 && self.event_time <= t1 {
-            self.done = true;
+        let mut fills = Vec::new();
+        while self.next < self.overturns.len() && self.overturns[self.next].0 <= t1 {
+            let (time, renewing) = self.overturns[self.next].clone();
+            self.next += 1;
             let heights = layers.bedrock.as_slice().to_vec();
-            let old_crust: Vec<f32> = match held {
-                Some(l) => heights.iter().zip(l).map(|(h, l)| h - l).collect(),
-                None => heights.clone(),
-            };
-            let score = smooth(&grid, &old_crust, self.tessera_smoothing);
-            let threshold = upper_quantile(&grid, &score, self.tessera_fraction);
-            let filled = fill_depressions(&grid, &heights);
             let n = grid.cell_count();
+            if self.resurfacing.is_none() {
+                let old_crust: Vec<f32> = match held {
+                    Some(l) => heights.iter().zip(l).map(|(h, l)| h - l).collect(),
+                    None => heights.clone(),
+                };
+                let score = smooth(&grid, &old_crust, self.tessera_smoothing);
+                let edges = region_edges(&grid, &score, self.regions);
+                self.resurfacing = Some(Resurfacing {
+                    time_gyr: time,
+                    fill: vec![0.0; n],
+                    filled: heights.clone(),
+                    threshold: edges[self.tesserae_from - 1],
+                    score,
+                    edges,
+                    tesserae_from: self.tesserae_from,
+                    formed: vec![0.0; self.regions],
+                    gravity: self.gravity,
+                    strain: Vec::new(),
+                });
+            }
+            let rec = self.resurfacing.as_mut().expect("the lid's regions");
+            let mut renewed = vec![false; self.regions];
+            for &r in &renewing {
+                renewed[r as usize] = true;
+                rec.formed[r as usize] = time as f32;
+            }
+            let filled = fill_depressions(&grid, &heights);
             let mut fill = vec![0.0f32; n];
-            let tessera_age = self.tessera_age as f32;
             {
                 let bedrock = layers.bedrock.as_mut_slice();
                 let ages = layers.surface_age.as_mut_slice();
@@ -345,39 +452,36 @@ impl EpisodicProcess {
                 let cover = layers.cover.as_mut_slice();
                 let composition = layers.composition.as_mut_slice();
                 let lava_age = layers.lava_age.as_mut_slice();
-                let lava = overturn_composition(self.event_time);
+                let lava = overturn_composition(time);
                 for k in 0..n {
-                    if score[k] > threshold {
+                    let region = rec.region_of(rec.score[k]);
+                    if !renewed[region] {
+                        continue;
+                    }
+                    if region >= self.tesserae_from {
                         units[k] = UNIT_TESSERA;
-                        ages[k] = ages[k].min(tessera_age);
+                        ages[k] = time as f32;
                         cover[k] = 0.0;
                         continue;
                     }
                     let t = (EPISODIC_FILL_FRACTION as f32 * (filled[k] - heights[k])).max(0.0)
                         + EPISODIC_VENEER as f32;
                     fill[k] = t;
+                    rec.fill[k] += t;
+                    rec.filled[k] = filled[k];
                     bedrock[k] += t;
-                    ages[k] = self.event_time as f32;
+                    ages[k] = time as f32;
                     units[k] = UNIT_LAVA;
                     deep[k] = 0.0;
                     melt[k] = 0.0;
                     cover[k] = 1.0;
-                    // Its lava rose everywhere, each place's from the mantle under it.
+                    // Its lava rose everywhere it renewed, each place's from the mantle under
+                    // it.
                     composition[k] = lava;
-                    lava_age[k] = self.event_time as f32;
+                    lava_age[k] = time as f32;
                 }
             }
-            event_fill = Some(fill.clone());
-            self.resurfacing = Some(Resurfacing {
-                time_gyr: self.event_time,
-                fill,
-                filled,
-                score,
-                threshold,
-                tessera_age,
-                gravity: self.gravity,
-                strain: Vec::new(),
-            });
+            fills.push((fill, time));
         }
         // Coronae (F145): the lava their cores flood renews the coarse ground at their
         // time; their profile and fabric are the finish's, on top of what the loop left.
@@ -398,7 +502,7 @@ impl EpisodicProcess {
                 }
             }
         }
-        event_fill
+        fills
     }
 }
 
@@ -481,26 +585,28 @@ pub fn resurfacing_compute(
     let ages = layers.surface_age.as_slice();
     let deep = layers.deep.as_slice();
     let melt = layers.melt.as_slice();
-    let time = rec.time_gyr as f32;
     let n = grid.cell_count();
     let mut cells = Vec::with_capacity(n);
-    // The event's lava rose everywhere, each place's from the mantle under it: its
-    // composition at this resolution, not the coarse cells' tint of the floods after it.
+    // The overturns' lava rose everywhere they renewed, each place's from the mantle under
+    // it: its composition at this resolution, not the coarse cells' tint of the floods after
+    // it.
     let mut compositions = Vec::with_capacity(n);
-    let lava = overturn_composition(rec.time_gyr);
     let mut taken = Vec::with_capacity(n);
     for idx in 0..n {
         let d = grid.center(grid.cell(idx));
         let own = sample_bilinear(coarse, &padded_fill, d);
         taken.push((idx as u32, own));
+        // When its region's plains, and its tesserae, last formed (F296).
+        let time = rec.plains_at(coarse, &padded_score, d);
+        let formed = rec.formed_at(coarse, &padded_score, d);
         if smear.crater_time[idx] > time + 1e-6 {
             continue;
         }
-        // The ground as the event found it: the base less the smears not yet taken out
-        // and less what the rises, shields and coronae have added since; both ride on
+        // The ground as its last overturn found it: the base less the smears not yet taken
+        // out and less what the rises, shields and coronae have added since; both ride on
         // top of whatever is written.
         let remaining = smear.total[idx] - smear.done[idx];
-        let later = deform.since_event(d, rec.time_gyr) as f32;
+        let later = deform.since_event(d, time as f64) as f32;
         let ground = bedrock[idx] - remaining - later;
         let carry = remaining - own + later;
         // The fabric less the burial at a cell; beyond its highest ridges' reach all of it
@@ -548,17 +654,17 @@ pub fn resurfacing_compute(
             idx: idx as u32,
             bedrock: surface,
             surface: true,
-            age: if whole {
-                ages[idx].min(rec.tessera_age)
-            } else {
-                time
-            },
+            age: if whole { ages[idx].min(formed) } else { time },
             unit: if whole { UNIT_TESSERA } else { UNIT_LAVA },
             deep: held * deep[idx],
             melt: held * melt[idx],
             cover: 1.0 - held,
         });
-        compositions.push(if held < 1.0 { lava } else { 0.0 });
+        compositions.push(if held < 1.0 {
+            overturn_composition(time as f64)
+        } else {
+            0.0
+        });
     }
     (
         StampOutput {

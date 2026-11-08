@@ -3224,7 +3224,7 @@ static NODES: &[NodeDef] = &[
             "body.age",
         ],
         d::interior_episodic_degree,
-        "How far a lid that has broken is episodic now (audit S1): 1 while its last overturn lies within 0.4 of the body's age, 0 past 0.6 or on a lid that never broke, by degrees between. Sets the mantle's melt efficiency, geometrically from the stagnant lid's 0.01 to the episodic lid's 0.05, the rises' width and the domes. Venus 1.",
+        "How far a lid that has broken is episodic now (audit S1): 1 while its surface's mean age (F296) lies within 0.4 of the body's age, 0 past 0.6 or on a lid that never broke, by degrees between. Sets the mantle's melt efficiency, geometrically from the stagnant lid's 0.01 to the episodic lid's 0.05, the rises' width and the domes. Venus 1.",
         "stated width",
     ),
     derived(
@@ -3249,7 +3249,7 @@ static NODES: &[NodeDef] = &[
             "tectonics.initial_crust_thickness",
         ],
         d::tectonics_resurfacing_event_age,
-        "How long before the present an episodic lid last foundered and renewed the whole surface: when its mantle last broke it (F121). Pin to choose.",
+        "The mean age of an episodic lid's surface, each of its regions' since the mantle last broke it and it foundered (F121, F296): what its craters record, 0.62 Gyr on Venus. Pin to choose.",
         "PLAN.md 4.3",
     ),
     derived(
@@ -3658,7 +3658,7 @@ static NODES: &[NodeDef] = &[
             "tectonics.resurfacing_event_age",
         ],
         d::cratering_retention_age,
-        "Longest surface age used for crater counting until the erosion stages exist: the body age when airless, 3.5 Gyr under a thin atmosphere, the time since the lid last foundered on an episodic lid (F121), 0.1 Gyr on a mobile lid or a young ice shell, and the burial time at the volcanic resurfacing rate.",
+        "Longest surface age used for crater counting until the erosion stages exist: the body age when airless, 3.5 Gyr under a thin atmosphere, the mean age of its surface's regions since each last foundered on an episodic lid (F121, F296), 0.1 Gyr on a mobile lid or a young ice shell, and the burial time at the volcanic resurfacing rate.",
         "provisional, Phase 5",
     ),
     expert_root(

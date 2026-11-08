@@ -926,9 +926,10 @@ pub fn rock_coronae<P: Reads>(
     let gravity = graph.num("body.gravity");
     let age = graph.num("body.age");
     let area = 4.0 * std::f64::consts::PI * body_radius * body_radius;
-    // Since the lid last formed and the surface has kept a record.
+    // Since the oldest standing region of the lid formed and the surface has kept a record
+    // (F296); a later overturn's flood takes those on its own regions.
     let start = mantle
-        .last_overturn()
+        .oldest_standing()
         .unwrap_or(0.0)
         .max(graph.num("cratering.record_start"))
         .min(age);
@@ -1473,7 +1474,7 @@ mod tests {
                 coronae.len(),
                 t0.elapsed().as_secs_f64(),
                 mantle
-                    .last_overturn()
+                    .oldest_standing()
                     .unwrap_or(0.0)
                     .max(g.f64("cratering.record_start")),
                 rises.len()

@@ -24,6 +24,14 @@
 //! breaks, and how often, comes out of its size, its heat, its surface temperature and its
 //! lid's friction.
 //!
+//! The lid is a set of regions, each an equal share of the surface, whose friction spreads
+//! about the lid's as a log-normal distribution (F296): each matures, breaks and founders on
+//! its own under the mantle as it stands, the mantle taking up each one's cold by its share,
+//! so that the weakest go first and the strongest outlast them, and the share of the surface
+//! an overturn renews changes by degrees with every input where the whole lid foundered at
+//! once on the times it matured. The spread's width is Venus's: its tesserae, the eighth of
+//! its surface its strongest regions keep, carry 1.4 times the craters of the rest.
+//!
 //! The crust holds a share of the heat-producing elements, which the melts that made it took
 //! from the mantle, and its heat leaves through the surface without heating the mantle
 //! (F123). The mantle melts only while it stands above the rock's solidus at the base of its
@@ -109,8 +117,12 @@ pub struct MantleHistory {
     pub heat_flux: Vec<f64>,
     pub temperature: Vec<f64>,
     pub lid: Vec<f64>,
-    /// When the lid broke and foundered, Gyr after formation, oldest first.
+    /// When some of the lid's regions broke and foundered, Gyr after formation, oldest
+    /// first, and the regions each time, weakest first by index (F296).
     pub overturns: Vec<f64>,
+    pub renewed: Vec<Vec<u16>>,
+    /// The lid's regions, each an equal share of the surface, from the weakest (F296).
+    pub regions: usize,
     /// The crust's share of the heat-producing elements.
     pub crust_share: f64,
     /// The body's surface gravity, m/s², and temperature, K, for the stiff lid's base.
@@ -201,9 +213,55 @@ impl MantleHistory {
         self.heat_flux.iter().sum::<f64>() / self.heat_flux.len() as f64
     }
 
-    /// The last time the lid foundered, if it ever did.
+    /// The last time any of the lid's regions foundered, if any ever did.
     pub fn last_overturn(&self) -> Option<f64> {
         self.overturns.last().copied()
+    }
+
+    /// The last time an overturn renewed at least `share` of the lid, if one ever did (F296).
+    pub fn last_overturn_of(&self, share: f64) -> Option<f64> {
+        (0..self.overturns.len())
+            .rev()
+            .find(|&k| self.renewed_share(k) >= share)
+            .map(|k| self.overturns[k])
+    }
+
+    /// The share of the lid the `k`th overturn renewed (F296).
+    pub fn renewed_share(&self, k: usize) -> f64 {
+        self.renewed[k].len() as f64 / self.regions.max(1) as f64
+    }
+
+    /// When each of the lid's regions last formed by a time, Gyr after the body's formation:
+    /// the last overturn that renewed it, the first lid's at the body's formation (F296).
+    pub fn formed_by(&self, t: f64) -> Vec<f64> {
+        let mut formed = vec![0.0; self.regions];
+        for (&o, regions) in self.overturns.iter().zip(&self.renewed) {
+            if o > t {
+                break;
+            }
+            for &r in regions {
+                formed[r as usize] = o;
+            }
+        }
+        formed
+    }
+
+    /// The mean age of the lid's surface at a time, Gyr: each region's since its lid last
+    /// formed, by its share, what the surface's craters record (F296).
+    pub fn mean_surface_age(&self, t: f64) -> f64 {
+        let formed = self.formed_by(t);
+        if formed.is_empty() {
+            return t;
+        }
+        formed.iter().map(|f| t - f).sum::<f64>() / formed.len() as f64
+    }
+
+    /// The oldest lid standing at the history's end: when the region formed that has stood
+    /// the longest, none on a lid that never broke. Every region's surface was laid since.
+    pub fn oldest_standing(&self) -> Option<f64> {
+        let end = *self.times.last()?;
+        self.last_overturn()?;
+        self.formed_by(end).into_iter().reduce(f64::min)
     }
 }
 
@@ -277,13 +335,14 @@ fn breaks(t: f64, depth: f64, lid: f64, q: f64, friction: f64) -> bool {
         > friction * lid * lid * q
 }
 
-/// The mantle's history from formation to the present (F121).
+/// The mantle's history from formation to the present (F121, F296).
 pub fn evolve(inp: &MantleInputs) -> MantleHistory {
-    evolve_with(inp, LID_FRICTION)
+    evolve_with(inp, LID_FRICTION, LID_FRICTION_SPREAD)
 }
 
-/// The mantle's history under a lid of this effective friction.
-fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
+/// The mantle's history under a lid of regions whose effective friction spreads
+/// log-normally about `friction` by `spread`, the standard deviation of its logarithm.
+fn evolve_with(inp: &MantleInputs, friction: f64, spread: f64) -> MantleHistory {
     let r = inp.radius;
     let area = 4.0 * std::f64::consts::PI * r * r;
     let mantle = inp.mass * inp.rock_fraction;
@@ -310,9 +369,21 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
     // temperature rising evenly from the surface's to the mantle's.
     let shell = |d: f64| (r.powi(3) - (r - d.min(depth)).powi(3)) / (3.0 * r * r);
     let deficit = |t: f64, d: f64| rho_c * shell(d) * (t - ts).max(0.0) / 2.0;
+    // The lid's regions, each an equal share of the surface, their friction at their
+    // quantiles of the spread, the weakest first (F296).
+    let n_regions = LID_REGIONS;
+    let share = 1.0 / n_regions as f64;
+    let strength: Vec<f64> = (0..n_regions)
+        .map(|i| {
+            let z = crate::geom::normal_quantile((i as f64 + 0.5) / n_regions as f64);
+            friction * (spread * z).exp()
+        })
+        .collect();
     // The mantle's heat per unit area, J/m²: all of it at the mantle's temperature, less the
-    // lid's deficit.
-    let energy = |t: f64, d: f64| capacity * t - deficit(t, d);
+    // regions' lids' deficits by their shares.
+    let energy = |t: f64, lids: &[f64]| {
+        capacity * t - lids.iter().map(|&d| share * deficit(t, d)).sum::<f64>()
+    };
     let tides = |t: f64| {
         let e = inp.eccentricity_history.eval(t).max(0.0);
         let scale = if inp.eccentricity_now > 0.0 {
@@ -331,6 +402,8 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         temperature: Vec::with_capacity(n),
         lid: Vec::with_capacity(n),
         overturns: Vec::new(),
+        renewed: Vec::new(),
+        regions: n_regions,
         crust_share,
         gravity: inp.gravity,
         surface_temperature: ts,
@@ -343,9 +416,10 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
     // The core starts hotter than the mantle's adiabat at their boundary by what its
     // formation left it.
     let mut core_temp = MANTLE_START_K * adiabat + CORE_SUPERHEAT_K;
-    // The first lid grows from the surface as the body's magma ocean freezes.
-    let mut lid = 0.0_f64;
-    let mut formed = 0.0;
+    // The first lid grows from the surface as the body's magma ocean freezes, every region's
+    // at once.
+    let mut lids = vec![0.0_f64; n_regions];
+    let mut formed = vec![0.0_f64; n_regions];
     let mut t = 0.0;
     let mut k = 0;
     let step = dt * GYR;
@@ -363,43 +437,63 @@ fn evolve_with(inp: &MantleInputs, friction: f64) -> MantleHistory {
         let q = stagnant_flux(temp, inp.gravity);
         let steady = (K_ROCK * (temp - ts) / q).min(0.99 * depth);
         // Grown as thick as a stagnant lid: by the time a half space would have, since the
-        // lid under a cooling mantle only nears that thickness.
-        let mature = std::f64::consts::PI * kappa * (t - formed) * GYR >= steady * steady;
-        if mature && breaks(temp, depth, lid, q, friction) {
-            // The lid founders, and the whole mantle takes up its cold; the core answers
-            // through its boundary.
-            temp -= deficit(temp, lid) / capacity;
-            lid = 0.0;
-            formed = t;
+        // lid under a cooling mantle only nears that thickness. Each region that has, and
+        // breaks under the mantle as it stands, founders (F296).
+        let breaking: Vec<usize> = (0..n_regions)
+            .filter(|&i| {
+                std::f64::consts::PI * kappa * (t - formed[i]) * GYR >= steady * steady
+                    && breaks(temp, depth, lids[i], q, strength[i])
+            })
+            .collect();
+        if !breaking.is_empty() {
+            // The regions founder, and the whole mantle takes up their cold by their shares;
+            // the core answers through its boundary.
+            let cold: f64 = breaking
+                .iter()
+                .map(|&i| share * deficit(temp, lids[i]))
+                .sum();
+            temp -= cold / capacity;
+            for &i in &breaking {
+                lids[i] = 0.0;
+                formed[i] = t;
+            }
             out.overturns.push(t);
+            out.renewed
+                .push(breaking.iter().map(|&i| i as u16).collect());
             continue;
         }
-        // The mantle keeps its heat less what it convects into the lid's base; the lid's
+        // The mantle keeps its heat less what it convects into the lids' bases; each lid's
         // deficit moves with its base's temperature by half its volume.
-        let convecting = (capacity - 0.5 * rho_c * shell(lid)).max(0.05 * capacity);
+        let held: f64 = lids.iter().map(|&d| share * shell(d)).sum();
+        let convecting = (capacity - 0.5 * rho_c * held).max(0.05 * capacity);
         let next = temp + (heat - q) * step / convecting;
-        // The lid's base takes up the heat it conducts beyond what reaches it, so its square
+        // Each lid's base takes up the heat it conducts beyond what reaches it, so its square
         // grows at 4 kappa (1 - d q / (k dT)) per its base's share of the surface: a half
         // space's from nothing, none at a stagnant lid's thickness, shrinking past it.
         let dtemp = (temp - ts).max(1.0);
-        let base_share = ((r - lid.min(depth)) / r).powi(2).max(1e-3);
-        let square =
-            lid * lid + step * 4.0 * kappa * (1.0 - lid * q / (K_ROCK * dtemp)) / base_share;
-        let grown = square.max(0.0).sqrt().min(0.99 * depth);
+        let grown: Vec<f64> = lids
+            .iter()
+            .map(|&lid| {
+                let base_share = ((r - lid.min(depth)) / r).powi(2).max(1e-3);
+                let square = lid * lid
+                    + step * 4.0 * kappa * (1.0 - lid * q / (K_ROCK * dtemp)) / base_share;
+                square.max(0.0).sqrt().min(0.99 * depth)
+            })
+            .collect();
         // The surface loses the heat made less the heat the body keeps, and the crust's.
         let surface =
-            heat - (energy(next, grown) - energy(temp, lid)) / step + crust_share * radioactive;
+            heat - (energy(next, &grown) - energy(temp, &lids)) / step + crust_share * radioactive;
         if core_capacity > 0.0 {
             core_temp -= from_core * area * step / core_capacity;
         }
         temp = next;
-        lid = grown;
+        lids = grown;
         t += dt;
         k += 1;
         out.times.push(t);
         out.heat_flux.push(surface);
         out.temperature.push(temp);
-        out.lid.push(lid);
+        out.lid.push(lids.iter().sum::<f64>() * share);
         out.core_temperature.push(core_temp);
         out.core_flux.push(from_core);
     }
@@ -516,38 +610,57 @@ mod tests {
         }
     }
 
-    /// Diagnostic: Venus's overturns under a range of frictions; run with `--ignored
-    /// --nocapture`.
+    /// Venus's strongest eighth's surface's mean age over the rest's (F296), the lid's regions
+    /// weakest first.
+    fn tesserae_over_the_rest(h: &MantleHistory, age: f64) -> f64 {
+        let ages: Vec<f64> = h.formed_by(age).iter().map(|f| age - f).collect();
+        let strong = (TESSERA_FRACTION * ages.len() as f64).round() as usize;
+        let (rest, tesserae) = ages.split_at(ages.len() - strong);
+        let mean = |a: &[f64]| a.iter().sum::<f64>() / a.len().max(1) as f64;
+        mean(tesserae) / mean(rest)
+    }
+
+    /// F296: the anchors, found: the friction by Venus's surface's mean age, the spread by its
+    /// tesserae's craters, 1.4 times as dense as the rest's. Each friction's mean age and the
+    /// strongest eighth's over the rest's, at each spread; EXOGEN_MU_START and EXOGEN_MU_STEP
+    /// narrow the scan.
     #[test]
-    #[ignore]
-    fn print_friction_scan() {
+    #[ignore = "calibration: the regional lid's anchors"]
+    fn calibrate_the_regional_lid() {
+        use rayon::prelude::*;
         let (g, _) = preset("Venus").unwrap().to_graph();
         let inp = MantleInputs::from_graph(&g);
         let age = g.f64("body.age");
-        // EXOGEN_MU_START and EXOGEN_MU_STEP narrow the scan.
         let start = std::env::var("EXOGEN_MU_START")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(0.004);
+            .unwrap_or(0.0100);
         let stride = std::env::var("EXOGEN_MU_STEP")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0005);
-        for i in 0..=40 {
-            let mu: f64 = start + stride * i as f64;
-            let h = evolve_with(&inp, mu);
-            let ago: Vec<String> = h
-                .overturns
-                .iter()
-                .rev()
-                .take(4)
-                .map(|t| format!("{:.2}", age - t))
+            .unwrap_or(0.0001);
+        for spread in [0.015, 0.02, 0.025] {
+            let rows: Vec<String> = (0..=20)
+                .into_par_iter()
+                .map(|i| {
+                    let mu = start + stride * i as f64;
+                    let h = evolve_with(&inp, mu, spread);
+                    format!(
+                        "mu {mu:.5}: {:>3} overturns, mean age {:.3} Gyr, tesserae {:.2} times the rest's, now {:.1} mW/m²",
+                        h.overturns.len(),
+                        h.mean_surface_age(age),
+                        tesserae_over_the_rest(&h, age),
+                        1e3 * h.heat_flux.last().unwrap()
+                    )
+                })
                 .collect();
             println!(
-                "mu {mu:.4}: {:>3} overturns, last Ga {:?}, now {:.1} mW/m²",
-                h.overturns.len(),
-                ago,
-                1e3 * h.heat_flux.last().unwrap()
+                "spread {spread}:
+  {}",
+                rows.join(
+                    "
+  "
+                )
             );
         }
     }
@@ -573,15 +686,13 @@ mod tests {
     #[test]
     fn venus_s_lid_breaks_again_and_again_and_the_small_bodies_never() {
         // F121: Venus's mantle heats under its lid until the lid founders, again and again,
-        // the last time within the half gigayear its craters record; the smaller bodies'
-        // mantles cool under lids that never break, their present heat flows as measured.
+        // its surface's mean age within the half gigayear its craters record (F296); the
+        // smaller bodies' mantles cool under lids that never break, their present heat flows
+        // as measured.
         let (venus, age) = history("Venus");
         assert!(venus.overturns.len() >= 3, "{:?}", venus.overturns);
-        let last = age - venus.last_overturn().unwrap();
-        assert!(
-            last > 0.3 && last < 0.7,
-            "Venus last overturned {last} Gyr ago"
-        );
+        let mean = venus.mean_surface_age(age);
+        assert!(mean > 0.3 && mean < 0.7, "Venus's surface {mean} Gyr old");
         for (name, lo, hi) in [
             ("Mars", 0.015, 0.045),
             ("Moon", 0.009, 0.021),
@@ -601,5 +712,103 @@ mod tests {
                 h.heat_flux[0]
             );
         }
+    }
+
+    /// Diagnostic (F296): Venus's last overturns, the share each renewed, and its lid and
+    /// mantle after the last that renewed half of it.
+    #[test]
+    #[ignore = "diagnostic: Venus's regional overturns"]
+    fn print_venus_s_overturns() {
+        let (h, age) = history("Venus");
+        let n = h.overturns.len();
+        for k in n.saturating_sub(8)..n {
+            println!(
+                "{:.3} Gyr ago: {:.3} of the lid",
+                age - h.overturns[k],
+                h.renewed_share(k)
+            );
+        }
+        let (g, _) = preset("Venus").unwrap().to_graph();
+        let thermal = crate::thermal::ThermalHistory::from_graph(&g);
+        for ago in [
+            0.70, 0.66, 0.6, 0.4, 0.36, 0.35, 0.34, 0.32, 0.30, 0.25, 0.1, 0.05, 0.045, 0.04, 0.03,
+            0.0,
+        ] {
+            let s = thermal.at(age - ago);
+            println!(
+                "{ago:.3} Gyr ago: flux {:.1} mW/m², lithosphere {:.0} km, elastic {:.0} km, mean lid {:.0} km",
+                1e3 * s.heat_flux,
+                s.lithosphere / 1e3,
+                s.elastic / 1e3,
+                h.lid_at(age - ago) / 1e3
+            );
+        }
+        let main = h.last_overturn_of(0.5).unwrap();
+        for d in [0.0, 0.01, 0.05, 0.1, 0.2, 0.3, 0.31] {
+            println!(
+                "main + {d}: lid {:.0} km, mantle {:.0} K",
+                h.lid_at(main + d) / 1e3,
+                h.temperature_at(main + d)
+            );
+        }
+    }
+
+    /// F296: a lid whose regions all share its friction founders whole, every overturn
+    /// renewing every region, as the lid of one piece did.
+    #[test]
+    fn a_lid_of_one_friction_founders_whole() {
+        let (g, _) = preset("Venus").unwrap().to_graph();
+        let h = evolve_with(&MantleInputs::from_graph(&g), LID_FRICTION, 0.0);
+        assert!(h.overturns.len() >= 3, "{:?}", h.overturns);
+        for k in 0..h.overturns.len() {
+            assert_eq!(
+                h.renewed_share(k),
+                1.0,
+                "overturn {k} at {}",
+                h.overturns[k]
+            );
+        }
+    }
+
+    /// F296: Venus's regions renew by degrees: across frictions from 0.0100 to 0.0120 its
+    /// surface's mean age, what its craters record, never steps by a sixth of a gigayear
+    /// where the lid of one piece's last overturn stepped by a quarter at a time, on the times
+    /// its lid matured; its strongest eighth, its tesserae, stands some 1.4 times as old as
+    /// the rest, as their craters are dense (Ivanov and Basilevsky 1993).
+    #[test]
+    fn venus_s_lid_renews_by_degrees() {
+        use rayon::prelude::*;
+        let (g, _) = preset("Venus").unwrap().to_graph();
+        let inp = MantleInputs::from_graph(&g);
+        let age = g.f64("body.age");
+        let scan = |spread: f64| -> Vec<f64> {
+            (0..=20)
+                .into_par_iter()
+                .map(|i| {
+                    let h = evolve_with(&inp, 0.0100 + 0.0001 * i as f64, spread);
+                    if spread > 0.0 {
+                        h.mean_surface_age(age)
+                    } else {
+                        age - h.last_overturn().unwrap()
+                    }
+                })
+                .collect()
+        };
+        let step = |ages: &[f64]| {
+            ages.windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0f64, f64::max)
+        };
+        let (regions, whole) = (scan(LID_FRICTION_SPREAD), scan(0.0));
+        println!(
+            "the surface's mean age steps by {:.3} Gyr at most, the whole lid's last overturn by {:.3}",
+            step(&regions),
+            step(&whole)
+        );
+        assert!(step(&regions) < 0.15, "{regions:?}");
+        assert!(step(&whole) > 0.25, "{whole:?}");
+        let (venus, _) = history("Venus");
+        let tesserae = tesserae_over_the_rest(&venus, age);
+        assert!((1.2..1.7).contains(&tesserae), "{tesserae}");
     }
 }

@@ -29,7 +29,7 @@ use crate::rng::Rng;
 use crate::spharm::{Harmonics, LatLon};
 use crate::thermal::ThermalHistory;
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 
 /// The mantle's convection under its lid at a time.
 #[derive(Clone, Copy, Debug, Default)]
@@ -414,7 +414,7 @@ mod tests {
         let rng = Rng::new(17);
         for name in ["Mercury", "Venus", "Moon", "Mars"] {
             let (c, mantle, age) = convection(name);
-            let overturn = mantle.last_overturn().map(|o| o + 0.01);
+            let overturn = mantle.last_overturn_of(0.5).map(|o| o + 0.01);
             for t in [0.5, 1.0, 2.0, 3.0]
                 .into_iter()
                 .chain(overturn)
