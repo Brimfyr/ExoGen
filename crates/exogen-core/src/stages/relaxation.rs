@@ -28,7 +28,7 @@
 use crate::constants::*;
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 
 use crate::fields::Field;
 use crate::grid::{Cell, CubeSphere};
@@ -545,22 +545,59 @@ pub struct Local<'a> {
     pub fine: Option<&'a [f32]>,
 }
 
+/// The shell over a crust of a thickness, m, at a time, Gyr, under the lid that formed at a
+/// time where each place reads its own region's (F297), the body's where none.
+pub type ShellAt = dyn Fn(f64, f64, Option<f64>) -> Shell + Sync;
+
+/// Each band's survival under each lid standing, over the crusts from the thinnest to the
+/// thickest the lid holds (F184, F297), and those two crusts, m.
+type SurvivalTables = (Vec<Vec<Vec<f32>>>, f32, f32);
+
 /// A rocky lid's crust for relaxation (F184): its thickness under each cell, m, the shell
 /// of the lid at a time over a crust of a thickness, and the step's substeps, (time,
 /// duration) Gyr, over which the lid changes.
 #[derive(Clone, Copy)]
 pub struct RockCrust<'a> {
     pub crust: &'a [f32],
-    pub shell_at: &'a (dyn Fn(f64, f64) -> Shell + Sync),
+    pub shell_at: &'a ShellAt,
     pub steps: &'a [(f64, f64)],
+    /// When each cell's lid formed, Gyr since formation, where each place reads its own
+    /// region's (F297).
+    pub formed: Option<&'a [f64]>,
+}
+
+impl RockCrust<'_> {
+    /// The lids standing, each once, and each cell's among them (F297): the body's alone
+    /// where the cells read no lid of their own.
+    fn lids(&self) -> (Vec<Option<f64>>, Vec<usize>) {
+        match self.formed {
+            Some(formed) => {
+                let mut standing = formed.to_vec();
+                standing.sort_by(f64::total_cmp);
+                standing.dedup();
+                let of = formed
+                    .iter()
+                    .map(|f| standing.partition_point(|s| s < f))
+                    .collect();
+                (standing.into_iter().map(Some).collect(), of)
+            }
+            None => (vec![None], vec![0; self.crust.len()]),
+        }
+    }
 }
 
 /// The share of a wavelength's relief a rocky lid lets survive over a step's substeps under
-/// a crust of `thickness`, m (F184): the survivals of the lid as it stood at each.
-pub fn rock_survival(wavelength: f64, rock: &RockCrust, thickness: f64) -> f64 {
+/// a crust of `thickness`, m (F184), the lid that formed at `formed` where the place reads its
+/// own (F297): the survivals of the lid as it stood at each.
+pub fn rock_survival(
+    wavelength: f64,
+    rock: &RockCrust,
+    thickness: f64,
+    formed: Option<f64>,
+) -> f64 {
     rock.steps
         .iter()
-        .map(|&(t, dt)| survival(wavelength, dt, &(rock.shell_at)(t, thickness)))
+        .map(|&(t, dt)| survival(wavelength, dt, &(rock.shell_at)(t, thickness, formed)))
         .product()
 }
 
@@ -591,15 +628,18 @@ pub fn relax(
             .saturating_sub(2)
             .max(1);
         let levels = pyramid_depth(&grid, depth).max(1);
-        // Under each cell's own crust, the thickest relaxes most.
+        // Under each cell's own crust, the thickest relaxes most, under each lid standing.
         let thickest = local
             .rock
             .as_ref()
             .map(|r| r.crust.iter().fold(0.0f32, |m, &c| m.max(c)) as f64);
+        let lids = local.rock.as_ref().map(|r| r.lids().0);
         let still = (0..=levels).all(|l| {
             let w = 2.0 * cell * (2u32.pow(l as u32 + 1) as f64);
-            match (&local.rock, thickest) {
-                (Some(r), Some(c)) => rock_survival(w, r, c) as f32 > 0.999,
+            match (&local.rock, thickest, &lids) {
+                (Some(r), Some(c), Some(lids)) => lids
+                    .iter()
+                    .all(|&f| rock_survival(w, r, c, f) as f32 > 0.999),
                 // An ice lid holds a load only up to its strength (F195): still only where
                 // the ice below would not flow from under what the lid cannot hold.
                 _ => band_still(w, dt_gyr, shell),
@@ -670,45 +710,66 @@ fn relax_deviation(
         .map(|l| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64))
         .collect();
     // Under a rocky lid's crust each cell keeps each band by its own crust's survival
-    // (F184), from a table over the crusts the lid holds, the global shape under the
-    // median crust.
-    let tables: Option<(Vec<Vec<f32>>, f32, f32)> = local.rock.as_ref().map(|r| {
-        let (lo, hi) = r
-            .crust
-            .iter()
-            .fold((f32::MAX, f32::MIN), |(a, b), &c| (a.min(c), b.max(c)));
-        let tables = wavelengths
-            .iter()
-            .map(|&w| {
-                (0..=ROCK_CRUST_TABLE)
-                    .map(|j| {
-                        let c = lo + (hi - lo) * j as f32 / ROCK_CRUST_TABLE as f32;
-                        rock_survival(w, r, c as f64) as f32
+    // (F184) under its own lid (F297), from a table over the crusts the lid holds for each
+    // lid standing, the global shape under the median crust under each lid by its cells.
+    let lids = local.rock.as_ref().map(|r| r.lids());
+    let tables: Option<SurvivalTables> =
+        local
+            .rock
+            .as_ref()
+            .zip(lids.as_ref())
+            .map(|(r, (standing, _))| {
+                let (lo, hi) = r
+                    .crust
+                    .iter()
+                    .fold((f32::MAX, f32::MIN), |(a, b), &c| (a.min(c), b.max(c)));
+                let tables = standing
+                    .iter()
+                    .map(|&f| {
+                        wavelengths
+                            .iter()
+                            .map(|&w| {
+                                (0..=ROCK_CRUST_TABLE)
+                                    .map(|j| {
+                                        let c = lo + (hi - lo) * j as f32 / ROCK_CRUST_TABLE as f32;
+                                        rock_survival(w, r, c as f64, f) as f32
+                                    })
+                                    .collect()
+                            })
+                            .collect()
                     })
-                    .collect()
-            })
-            .collect();
-        (tables, lo, hi)
-    });
-    let under = |l: usize, thickness: f32| -> f32 {
+                    .collect();
+                (tables, lo, hi)
+            });
+    let under = |lid: usize, l: usize, thickness: f32| -> f32 {
         match &tables {
             Some((tables, lo, hi)) => {
                 let x = ((thickness - lo) / (hi - lo).max(1e-3)).clamp(0.0, 1.0)
                     * ROCK_CRUST_TABLE as f32;
                 let i = (x.floor() as usize).min(ROCK_CRUST_TABLE - 1);
                 let f = x - i as f32;
-                tables[l][i] + (tables[l][i + 1] - tables[l][i]) * f
+                tables[lid][l][i] + (tables[lid][l][i + 1] - tables[lid][l][i]) * f
             }
             None => 1.0,
         }
     };
-    let factors: Vec<f32> = match (&local.rock, &tables) {
-        (Some(r), Some(_)) => {
+    let factors: Vec<f32> = match (&local.rock, &tables, &lids) {
+        (Some(r), Some(_), Some((standing, of))) => {
             let mut sorted = r.crust.to_vec();
             sorted.sort_by(f32::total_cmp);
             let median = sorted[sorted.len() / 2];
+            let mut cells = vec![0usize; standing.len()];
+            for &g in of {
+                cells[g] += 1;
+            }
+            let longest = |l: usize| {
+                (0..standing.len())
+                    .map(|g| under(g, l, median) * cells[g] as f32)
+                    .sum::<f32>()
+                    / of.len().max(1) as f32
+            };
             (0..wavelengths.len())
-                .map(|l| if l + 1 < wavelengths.len() { 1.0 } else { under(l, median) })
+                .map(|l| if l + 1 < wavelengths.len() { 1.0 } else { longest(l) })
                 .collect()
         }
         _ => wavelengths
@@ -732,7 +793,9 @@ fn relax_deviation(
             .collect()
     });
     let still = match &tables {
-        Some((tables, _, _)) => tables.iter().all(|t| t.iter().all(|&f| f > 0.999)),
+        Some((tables, _, _)) => tables
+            .iter()
+            .all(|lid| lid.iter().all(|t| t.iter().all(|&f| f > 0.999))),
         None => wavelengths.iter().all(|&w| band_still(w, dt_gyr, shell)),
     };
     if local.renew.is_none() && still {
@@ -825,9 +888,9 @@ fn relax_deviation(
             return relaxed;
         }
         let own = if thin { keep * beside(l, k) } else { 1.0 };
-        match &local.rock {
-            Some(r) => relaxed * own * under(l, r.crust[k]),
-            None => relaxed * own,
+        match (&local.rock, &lids) {
+            (Some(r), Some((_, of))) => relaxed * own * under(of[k], l, r.crust[k]),
+            _ => relaxed * own,
         }
     });
     // What a renewed cell gave up of the short bands it takes back from the base relief
@@ -963,8 +1026,12 @@ mod tests {
         let thermal = crate::thermal::ThermalHistory::from_graph(&g);
         let surface = g.f64("atmosphere.surface_temperature_mean");
         let gravity = g.f64("body.gravity");
-        let shell_at = move |t: f64, crust: f64| {
-            let state = thermal.at(t);
+        let formed_at = thermal.clone();
+        let shell_at = move |t: f64, crust: f64, formed: Option<f64>| {
+            let state = match formed {
+                Some(f) => thermal.lid_state(t, f),
+                None => thermal.at(t),
+            };
             let share = (crust / state.lithosphere.max(1.0)).min(1.0);
             Shell {
                 thickness: crust,
@@ -977,8 +1044,9 @@ mod tests {
                 strength: STRENGTH_ROCK,
             }
         };
-        let overturn = crate::thermal::ThermalHistory::from_graph(&g)
+        let overturn = formed_at
             .mantle
+            .as_ref()
             .unwrap()
             .last_overturn_of(0.5)
             .unwrap();
@@ -990,9 +1058,10 @@ mod tests {
             crust: &crust,
             shell_at: &shell_at,
             steps: &steps,
+            formed: None,
         };
-        let thin = rock_survival(1_000e3, &rock, 40e3);
-        let thick = rock_survival(1_000e3, &rock, 65e3);
+        let thin = rock_survival(1_000e3, &rock, 40e3, Some(overturn));
+        let thick = rock_survival(1_000e3, &rock, 65e3, Some(overturn));
         assert!(thick < 0.1 && thin > 0.3, "{thick} {thin}");
         let later: Vec<(f64, f64)> = (0..10)
             .map(|i| (overturn + 0.3 + 0.005 * (i as f64 + 0.5), 0.005))
@@ -1001,15 +1070,10 @@ mod tests {
             steps: &later,
             ..rock
         };
-        // KNOWN (F296): its weakest regions' renewal 0.35 Gyr ago, a tenth of the lid, thins
-        // every place's lithosphere with the body's mean heat flow, by a sixth for some 30 Myr,
-        // where only its own regions' should: 0.976 kept where all of it was; held at 0.95
-        // until each place reads its own region's lid.
-        let later = rock_survival(1_000e3, &rock, 65e3);
-        assert!(later > 0.95, "{later}");
-        if later <= 0.99 {
-            eprintln!("KNOWN SHORTFALL (F296): {later} kept, all of it wanted");
-        }
+        // Under its own lid (F297): its weakest regions' renewal 0.35 Gyr ago, a tenth of the
+        // lid, thins theirs, not this one's, where the body's mean lid thinned by a sixth.
+        let later = rock_survival(1_000e3, &rock, 65e3, Some(overturn));
+        assert!(later > 0.99, "{later}");
     }
 
     #[test]

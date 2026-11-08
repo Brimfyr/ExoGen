@@ -660,3 +660,15 @@ How it went:
 - **The checks.** Venus's renewal by its regions' ages, its tesserae older than its plains, its thrusts after their ground; the episodic sweep along its radius at steps of an eightieth, where a fortieth moved its degree by a half where the surface renews fastest, and its surface's mean age by under 0.06 Gyr each thousandth.
 - **Known.** Every place reads the lid's mean state: the weakest tenth's renewal thins every place's lithosphere with the mean heat flow by up to a fifth for some 30 Myr, a 65 km crust 0.3 Gyr after the overturn keeping 0.976 of a thousand-kilometre relief where all of it was (held at 0.95); each place under its own region's lid is the next step. Venus's wrinkle ridges stand 64 percent below its mean height, where three fifths since F293, the four fifths Bilotti and Suppe 1999 measured still short (known); its thrusts, 1,011 km of them, four fifths 50 to 100 Myr after the overturn that laid their ground.
 - **The suite.** 375 tests passed with the whole-body tests; in one run Mars's, the icy moons' and the Moon's, the Earth-like's and Mercury's bodies, started together, ran the machine out of memory and passed alone.
+
+## The fifty-fourth milestone: each place under its own region's lid
+
+- **F297.** The regional lid's places read the lid's mean state (F296): when Venus's weakest tenth renewed, every place's lithosphere thinned with the body's mean heat flow by up to a fifth for some 30 Myr. The user chose this before anything else (2026-11-08). The history keeps each cohort of regions an overturn renewed together, its lid and its surface's heat flow, the cohorts' heat the body's by their shares; each place's crust relaxes, and the mantle's flow carries it, under its own region's lid.
+
+How it went:
+
+- **The heat.** A cohort's surface loses the mantle's share of the heat made less what the mantle keeps, alike under every region, and what its own lid gives up as it thickens; by their shares the cohorts lose the body's heat at every step, to 1e-4. Read at a step's end, a cohort an overturn had just formed seemed to lose heat the step before it formed: the history's steps are read within themselves.
+- **The lid.** Through the weak renewal 0.348 Gyr ago the main overturn's lid stays at 127 to 128 km where the body's mean fell from 128 to 95, the renewed tenth's 30 km; the 65 km crust 0.3 Gyr after the main overturn keeps all its relief again, its check back at all of it.
+- **Venus.** Its ridges 66.5 percent below its mean height, where 64 (four fifths measured; known); its thrusts 954 km, 86 percent of them 50 to 100 Myr after the overturn that laid their ground.
+- **Still the body's.** The flexure of loads and the stress field, which take one elastic thickness for the body; the coronae's lids, drawn before the regions stand on the ground; every place before the oldest standing region formed, where Venus's lid foundered whole.
+- **The suite.** 377 tests passed with the whole-body tests in 13.3 minutes, the bodies' pipelines two at a time (a test group) where three at once had run the machine out of memory.

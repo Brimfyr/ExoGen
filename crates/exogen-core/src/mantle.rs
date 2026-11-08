@@ -123,6 +123,9 @@ pub struct MantleHistory {
     pub renewed: Vec<Vec<u16>>,
     /// The lid's regions, each an equal share of the surface, from the weakest (F296).
     pub regions: usize,
+    /// The lid's cohorts, the regions each overturn renewed together, oldest first, the
+    /// first lid's among them (F297).
+    pub cohorts: Vec<Cohort>,
     /// The crust's share of the heat-producing elements.
     pub crust_share: f64,
     /// The body's surface gravity, m/s², and temperature, K, for the stiff lid's base.
@@ -135,6 +138,18 @@ pub struct MantleHistory {
     /// surface, W/m², at each step's end (F124).
     pub core_temperature: Vec<f64>,
     pub core_flux: Vec<f64>,
+}
+
+/// The regions an overturn renewed together, which grow alike under the one mantle (F297):
+/// when they formed, Gyr after the body's formation, the history's step their record starts
+/// at, and their lid, m, and the heat their surface loses, W/m², at each step while any of
+/// them stands.
+#[derive(Clone, Debug, Default)]
+pub struct Cohort {
+    pub formed: f64,
+    from: usize,
+    lid: Vec<f32>,
+    heat_flux: Vec<f32>,
 }
 
 impl MantleHistory {
@@ -199,10 +214,27 @@ impl MantleHistory {
             return 0.0;
         }
         let k = self.times.partition_point(|&x| x < t).min(n - 1);
+        self.lid[k] * self.stiff_share(k)
+    }
+
+    /// The stiff lid's base at a time under the lid that formed at `formed`, Gyr after the
+    /// body's formation, m (F297): its cohort's.
+    pub fn stiff_lid_formed(&self, formed: f64, t: f64) -> f64 {
+        let n = self.times.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let k = self.times.partition_point(|&x| x < t).min(n - 1);
+        self.lid_formed(formed, t) * self.stiff_share(k)
+    }
+
+    /// The share of the lid stiff at the history's `k`th step, down to where its conductive
+    /// profile reaches LID_BASE_SCALES rheological scales below the mantle's temperature.
+    fn stiff_share(&self, k: usize) -> f64 {
         let temp = self.temperature[k];
         let ts = self.surface_temperature;
         let rheological = GAS_CONSTANT * temp * temp / MANTLE_ACTIVATION;
-        self.lid[k] * (temp - LID_BASE_SCALES * rheological - ts).max(0.0) / (temp - ts).max(1.0)
+        (temp - LID_BASE_SCALES * rheological - ts).max(0.0) / (temp - ts).max(1.0)
     }
 
     /// The surface heat flux averaged over the body's life, W/m².
@@ -216,6 +248,42 @@ impl MantleHistory {
     /// The last time any of the lid's regions foundered, if any ever did.
     pub fn last_overturn(&self) -> Option<f64> {
         self.overturns.last().copied()
+    }
+
+    /// The cohort of the lid that formed at a time, Gyr after the body's formation (F297).
+    fn cohort(&self, formed: f64) -> Option<&Cohort> {
+        let i = self.cohorts.partition_point(|c| c.formed < formed - 1e-6);
+        self.cohorts
+            .get(i)
+            .filter(|c| (c.formed - formed).abs() <= 1e-6 && !c.lid.is_empty())
+    }
+
+    /// A cohort's record at a time, `of` its lid or its heat flow; the body's, `body`, where
+    /// no cohort formed then.
+    fn cohort_at(&self, formed: f64, t: f64, of: fn(&Cohort) -> &[f32], body: &[f64]) -> f64 {
+        let n = self.times.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let k = self.times.partition_point(|&x| x < t).min(n - 1);
+        match self.cohort(formed) {
+            Some(c) => {
+                let record = of(c);
+                record[k.saturating_sub(c.from).min(record.len() - 1)] as f64
+            }
+            None => body[k],
+        }
+    }
+
+    /// The heat lost at a time through the surface of the lid that formed at `formed`, Gyr
+    /// after the body's formation, W/m² (F297): its cohort's.
+    pub fn heat_flux_formed(&self, formed: f64, t: f64) -> f64 {
+        self.cohort_at(formed, t, |c| &c.heat_flux, &self.heat_flux)
+    }
+
+    /// The thickness at a time of the lid that formed at `formed`, m (F297): its cohort's.
+    pub fn lid_formed(&self, formed: f64, t: f64) -> f64 {
+        self.cohort_at(formed, t, |c| &c.lid, &self.lid)
     }
 
     /// The last time an overturn renewed at least `share` of the lid, if one ever did (F296).
@@ -404,6 +472,7 @@ fn evolve_with(inp: &MantleInputs, friction: f64, spread: f64) -> MantleHistory 
         overturns: Vec::new(),
         renewed: Vec::new(),
         regions: n_regions,
+        cohorts: vec![Cohort::default()],
         crust_share,
         gravity: inp.gravity,
         surface_temperature: ts,
@@ -420,6 +489,8 @@ fn evolve_with(inp: &MantleInputs, friction: f64, spread: f64) -> MantleHistory 
     // at once.
     let mut lids = vec![0.0_f64; n_regions];
     let mut formed = vec![0.0_f64; n_regions];
+    // Each region's cohort (F297).
+    let mut cohort_of = vec![0usize; n_regions];
     let mut t = 0.0;
     let mut k = 0;
     let step = dt * GYR;
@@ -453,9 +524,15 @@ fn evolve_with(inp: &MantleInputs, friction: f64, spread: f64) -> MantleHistory 
                 .map(|&i| share * deficit(temp, lids[i]))
                 .sum();
             temp -= cold / capacity;
+            out.cohorts.push(Cohort {
+                formed: t,
+                from: k,
+                ..Default::default()
+            });
             for &i in &breaking {
                 lids[i] = 0.0;
                 formed[i] = t;
+                cohort_of[i] = out.cohorts.len() - 1;
             }
             out.overturns.push(t);
             out.renewed
@@ -480,9 +557,22 @@ fn evolve_with(inp: &MantleInputs, friction: f64, spread: f64) -> MantleHistory 
                 square.max(0.0).sqrt().min(0.99 * depth)
             })
             .collect();
-        // The surface loses the heat made less the heat the body keeps, and the crust's.
+        // The surface loses the heat made less the heat the body keeps, and the crust's: each
+        // cohort the mantle's share of it and what its own lid gives up as it thickens
+        // (F297), the whole surface theirs by their shares.
         let surface =
             heat - (energy(next, &grown) - energy(temp, &lids)) / step + crust_share * radioactive;
+        let common = heat - capacity * (next - temp) / step + crust_share * radioactive;
+        let mut recorded = vec![false; out.cohorts.len()];
+        for i in 0..n_regions {
+            let c = cohort_of[i];
+            if !recorded[c] {
+                recorded[c] = true;
+                let own = (deficit(next, grown[i]) - deficit(temp, lids[i])) / step;
+                out.cohorts[c].lid.push(grown[i] as f32);
+                out.cohorts[c].heat_flux.push((common + own) as f32);
+            }
+        }
         if core_capacity > 0.0 {
             core_temp -= from_core * area * step / core_capacity;
         }
@@ -810,5 +900,30 @@ mod tests {
         let (venus, _) = history("Venus");
         let tesserae = tesserae_over_the_rest(&venus, age);
         assert!((1.2..1.7).contains(&tesserae), "{tesserae}");
+    }
+
+    /// F297: the lid's cohorts lose the body's heat between them: at every step of Venus's
+    /// history each region's cohort's surface heat flow, by its share, sums to the body's.
+    #[test]
+    fn the_cohorts_lose_the_body_s_heat_between_them() {
+        let (h, _) = history("Venus");
+        assert!(h.cohorts.len() > 1, "{} cohorts", h.cohorts.len());
+        let mut worst = 0.0f64;
+        let dt = h.times[1] - h.times[0];
+        for (k, &end) in h.times.iter().enumerate() {
+            // Within the step, after any overturn at its start.
+            let t = end - 0.5 * dt;
+            let formed = h.formed_by(t);
+            let sum: f64 = formed
+                .iter()
+                .map(|&f| h.heat_flux_formed(f, t))
+                .sum::<f64>()
+                / formed.len() as f64;
+            worst = worst.max((sum - h.heat_flux[k]).abs() / h.heat_flux[k].abs().max(1e-3));
+        }
+        assert!(
+            worst < 1e-4,
+            "the cohorts' heat off the body's by {worst:.2e}"
+        );
     }
 }

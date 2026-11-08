@@ -258,6 +258,23 @@ impl ThermalHistory {
     }
 
     /// The state at a time since formation, interpolated between samples.
+    /// The state at a time over a place whose lid formed at `formed`, Gyr since formation
+    /// (F297): its own cohort's heat flow and the mantle temperature, lithosphere and elastic
+    /// thickness it gives, the body's the rest; the body's where no mantle history is kept.
+    pub fn lid_state(&self, time_gyr: f64, formed: f64) -> ThermalState {
+        let mut state = self.at(time_gyr);
+        if let Some(m) = &self.mantle {
+            let heat_flux = m.heat_flux_formed(formed, time_gyr);
+            let (mantle_temperature, lithosphere, elastic) =
+                rock_lid(heat_flux, m.surface_temperature, m.radius);
+            state.heat_flux = heat_flux;
+            state.mantle_temperature = mantle_temperature;
+            state.lithosphere = lithosphere;
+            state.elastic = elastic;
+        }
+        state
+    }
+
     pub fn at(&self, time_gyr: f64) -> ThermalState {
         let last = self.samples.len() - 1;
         if last == 0 {
@@ -317,6 +334,20 @@ pub fn ice_melt_gate(radius: f64, conductive: f64, surface: f64, melting: f64) -
     let excess = (melting - surface).max(0.0) * (radius / conductive.max(1.0) - 1.0);
     let scale = GAS_CONSTANT * melting * melting / ICE_CREEP_ACTIVATION;
     (excess / scale.max(1e-9)).clamp(0.0, 1.0)
+}
+
+/// A rocky lid's mantle temperature, lithosphere and elastic thickness under a surface heat
+/// flow, W/m², at a surface temperature, K, on a body of `radius` m: the present-day
+/// relations the thermal history reads.
+pub fn rock_lid(heat_flux: f64, surface_temperature: f64, radius: f64) -> (f64, f64, f64) {
+    let mantle_temperature =
+        MANTLE_T_BASE + MANTLE_T_SCALE * (heat_flux / EARTH_HEAT_FLUX).max(0.0).sqrt();
+    let dt = (mantle_temperature - surface_temperature).max(1.0);
+    let lithosphere =
+        conductive_thickness(K_ROCK, dt, MANTLE_FLUX_FRACTION * heat_flux).min(radius);
+    let elastic =
+        lithosphere * ((ELASTIC_ISOTHERM_ROCK - surface_temperature) / dt).clamp(0.0, 1.0);
+    (mantle_temperature, lithosphere, elastic)
 }
 
 /// The interior at `t` Gyr since formation from the present-day relations.
@@ -712,5 +743,39 @@ mod tests {
         assert_eq!(ice_melt_gate(4.7e5, 3.35e5, 168.0, 273.15), 1.0);
         let half = ice_melt_gate(1.0e5, 1.0e5 / (1.0 + 5.0 / 221.15), 52.0, 273.15);
         assert!(half > 0.3 && half < 0.7, "{half}");
+    }
+
+    /// F297: each place stands under its own region's lid: after Venus's weakest tenth renews,
+    /// 0.348 Gyr ago, the lid its main overturn left keeps its lithosphere within a twentieth
+    /// of what it was just before, where the body's mean thinned by a sixth, and the renewed
+    /// tenth's stands thin.
+    #[test]
+    fn each_place_stands_under_its_own_region_s_lid() {
+        let (g, _) = preset("Venus").unwrap().to_graph();
+        let thermal = ThermalHistory::from_graph(&g);
+        let mantle = thermal.mantle.as_ref().unwrap();
+        let main = mantle.last_overturn_of(0.5).unwrap();
+        let weak = *mantle.overturns.iter().find(|&&o| o > main).unwrap();
+        let (before, after) = (weak - 0.002, weak + 0.003);
+        let old = (
+            thermal.lid_state(before, main).lithosphere,
+            thermal.lid_state(after, main).lithosphere,
+        );
+        let mean = (
+            thermal.at(before).lithosphere,
+            thermal.at(after).lithosphere,
+        );
+        let young = thermal.lid_state(after, weak).lithosphere;
+        println!(
+            "the old lid {:.0} km to {:.0}, the body's mean {:.0} to {:.0}, the renewed {:.0}",
+            old.0 / 1e3,
+            old.1 / 1e3,
+            mean.0 / 1e3,
+            mean.1 / 1e3,
+            young / 1e3
+        );
+        assert!((old.1 / old.0 - 1.0).abs() < 0.05, "{old:?}");
+        assert!(mean.1 < 0.95 * mean.0, "{mean:?}");
+        assert!(young < 0.5 * old.1, "{young} {old:?}");
     }
 }

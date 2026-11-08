@@ -212,6 +212,7 @@ pub fn drag(
     bedrock: &mut [f32],
     support: &Support,
     mantle: &MantleHistory,
+    formed: Option<&[f64]>,
     t0: f64,
     t1: f64,
     mut record: Option<&mut StrainRecord>,
@@ -223,9 +224,25 @@ pub fn drag(
     let mut moved = Moved::default();
     for i in 0..n {
         let t = t0 + (i as f64 + 0.5) * dt;
-        let stiff = mantle.stiff_lid_at(t) as f32;
-        let thickest = crust.iter().fold(0.0f32, |m, &c| m.max(c));
-        if thickest <= stiff {
+        // Each place's stiff lid its own region's, where it reads its own (F297): read once
+        // for each lid standing.
+        let stiff: Vec<f32> = match formed {
+            Some(formed) => {
+                let mut standing = formed.to_vec();
+                standing.sort_by(f64::total_cmp);
+                standing.dedup();
+                let depth: Vec<f32> = standing
+                    .iter()
+                    .map(|&f| mantle.stiff_lid_formed(f, t) as f32)
+                    .collect();
+                formed
+                    .iter()
+                    .map(|f| depth[standing.partition_point(|s| s < f)])
+                    .collect()
+            }
+            None => vec![mantle.stiff_lid_at(t) as f32; crust.len()],
+        };
+        if crust.iter().zip(&stiff).all(|(c, s)| c <= s) {
             continue;
         }
         let c = cells(mantle, t);
@@ -245,7 +262,7 @@ pub fn drag(
         let changes: Vec<f32> = (0..grid.cell_count())
             .into_par_iter()
             .map(|k| {
-                let carried = (crust[k] - stiff) as f64;
+                let carried = (crust[k] - stiff[k]) as f64;
                 if carried <= 0.0 {
                     return 0.0;
                 }
@@ -278,7 +295,7 @@ pub fn drag(
                 .into_par_iter()
                 .map(|k| {
                     let dc = changes[k] as f64;
-                    let carried = (crust[k] - stiff) as f64;
+                    let carried = (crust[k] - stiff[k]) as f64;
                     if dc == 0.0 || carried <= 0.0 {
                         return None;
                     }
@@ -388,12 +405,15 @@ mod tests {
         let mut crust = vec![c0; grid.cell_count()];
         let mut bedrock = vec![0.0f32; grid.cell_count()];
         let mut record = StrainRecord::new(overturn, overturn + 0.02);
+        // Every place under the lid the overturn formed (F297).
+        let formed = vec![overturn; grid.cell_count()];
         drag(
             grid,
             &mut crust,
             &mut bedrock,
             &support,
             &mantle,
+            Some(&formed),
             overturn,
             overturn + 0.05,
             Some(&mut record),
@@ -507,6 +527,7 @@ mod tests {
                 &mut bedrock,
                 &support,
                 &mantle,
+                None,
                 t0,
                 t0 + 0.05,
                 None,

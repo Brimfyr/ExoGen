@@ -447,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 219;
+pub const FINISH_VERSION: u64 = 220;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -658,6 +658,16 @@ pub fn run_coarse_loop(
         } else if let Some(crust_at) = &rock_crust {
             // The mantle's flow carries the crust beneath the stiff lid toward its
             // downwellings (F184), before the lower crust's own flow spreads what piles up.
+            // Each cell under its own region's lid, as its region's last overturn formed it,
+            // once the regions stand on the ground (F297); the body's before.
+            let formed: Option<Vec<f64>> = episodic
+                .as_ref()
+                .and_then(|e| e.resurfacing.as_ref())
+                .zip(thermal.mantle.as_ref())
+                .map(|(rec, m)| {
+                    let by = m.formed_by(t1);
+                    rec.score.iter().map(|&s| by[rec.region_of(s)]).collect()
+                });
             if let (Some(sup), Some(mantle)) = (&support, &thermal.mantle) {
                 let moved = crust::drag(
                     grid,
@@ -665,6 +675,7 @@ pub fn run_coarse_loop(
                     layers.bedrock.as_mut_slice(),
                     sup,
                     mantle,
+                    formed.as_deref(),
                     t0,
                     t1,
                     lid_strain.as_mut(),
@@ -685,7 +696,7 @@ pub fn run_coarse_loop(
             // stood through the step (F184).
             let crust: Vec<f32> = layers.crust_thickness.as_slice().to_vec();
             let thickest = crust.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
-            let shell = crust_at(t1, thickest);
+            let shell = crust_at(t1, thickest, None);
             let substeps: Vec<(f64, f64)> = (0..RELAX_SUBSTEPS)
                 .map(|i| {
                     let sub = (t1 - t0) / RELAX_SUBSTEPS as f64;
@@ -740,6 +751,7 @@ pub fn run_coarse_loop(
                         crust: &crust,
                         shell_at: &**crust_at,
                         steps: &substeps,
+                        formed: formed.as_deref(),
                     }),
                     ..Default::default()
                 },
@@ -3693,7 +3705,7 @@ fn ice_shell_history(
 fn rock_crust_history(
     graph: &ParamGraph,
     thermal: &ThermalHistory,
-) -> Option<Box<dyn Fn(f64, f64) -> relaxation::Shell + Sync>> {
+) -> Option<Box<relaxation::ShellAt>> {
     if ice::is_ice_surface(graph)
         || !matches!(
             graph.str("interior.tectonic_regime"),
@@ -3707,8 +3719,13 @@ fn rock_crust_history(
     let surface_temperature = graph.f64("atmosphere.surface_temperature_mean");
     let gravity = graph.f64("body.gravity");
     let strength = graph.f64("interior.crust_strength");
-    Some(Box::new(move |t: f64, crust: f64| {
-        let state = thermal.at(t);
+    Some(Box::new(move |t: f64, crust: f64, formed: Option<f64>| {
+        // Under the lid that formed at `formed` where each place reads its own region's
+        // (F297), the body's where none.
+        let state = match formed {
+            Some(f) => thermal.lid_state(t, f),
+            None => thermal.at(t),
+        };
         let share = (crust / state.lithosphere.max(1.0)).min(1.0);
         relaxation::Shell {
             thickness: crust,
@@ -6355,12 +6372,12 @@ mod tests {
                         let mut k = 1.0;
                         for i in 0..steps {
                             let t = from + (i as f64 + 0.5) * dt;
-                            k *= relaxation::survival(w, dt, &crust_at(t, crust));
+                            k *= relaxation::survival(w, dt, &crust_at(t, crust, None));
                         }
                         format!("{:.0} km {:.3}", w / 1e3, k)
                     })
                     .collect();
-                let s = crust_at(from, crust);
+                let s = crust_at(from, crust, None);
                 println!("{name} crust {:.0} km from {from} Gyr (base {:.0} K, lid {:.0} km): {}", crust / 1e3, s.basal_temperature, s.elastic / 1e3, kept.join(", "));
             }
             }
