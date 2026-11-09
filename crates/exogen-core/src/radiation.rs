@@ -20,14 +20,18 @@
 //!
 //! Carbon dioxide's 15 um band, the bending mode's, absorbs by its lines' wings falling off
 //! exponentially from its centre, kappa_0 e^(-|nu - nu_0| / l) per kg/m² at a reference
-//! pressure and broadened in proportion to the pressure (Williams 2025, from HITRAN2016), so
-//! that its band widens with the logarithm of its column and saturates; carbon dioxide's
-//! molecules colliding absorb in the far infrared as the square of their density (Ho et al.
-//! 1971), which a thick cold atmosphere's window below 250 cm^-1 closes with. Water vapour,
-//! methane and nitrogen's collisions stay grey, as the zero-dimensional climate had them
-//! (F21, F235), and the sulfuric clouds an atmosphere's sulfur dioxide makes, grey and well
-//! mixed: water set by Earth's mean temperature and the slope of its outgoing radiation,
-//! methane and nitrogen by Titan's measured mean, the clouds by Venus's.
+//! pressure and broadened in proportion to the pressure, and water vapour's rotation and
+//! vibration-rotation bands alike, with its continuum by its own pressure and its temperature
+//! (Williams 2026, from HITRAN2016 and MT_CKD), so that their bands widen with the logarithm of
+//! their columns and saturate; carbon dioxide's molecules colliding absorb in the far infrared as
+//! the square of their density (Ho et al. 1971), which a thick cold atmosphere's window below 250
+//! cm^-1 closes with, and nitrogen's, methane's and hydrogen's by HITRAN's tables of their pairs
+//! (M55). The sulfuric clouds an atmosphere's sulfur dioxide makes stay grey and well mixed, set
+//! by Venus's measured mean; the clouds and the other absorbers of a water-bearing air, grey and
+//! well mixed, a power of its vapour's column, set by Earth's, until the weather's clouds (5G).
+//! Each layer's source is linear in its depth (Clough et al. 1992), and the column gives what it
+//! lets out to space, the share of the ground's own radiation that reaches space through it, and
+//! what its air sends down to the ground (M55).
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -55,6 +59,10 @@ struct Spectrum {
     width: Vec<f64>,
     band: Vec<f64>,
     collisions: Vec<f64>,
+    /// Water vapour's lines per kg/m² at the reference pressure, and its continuum per kg/m²
+    /// at its reference state (M55).
+    water: Vec<f64>,
+    continuum: Vec<f64>,
 }
 
 fn spectrum() -> &'static Spectrum {
@@ -84,13 +92,128 @@ fn spectrum() -> &'static Spectrum {
             .iter()
             .map(|&n| integral / over * (n / peak) * (1.0 - n / peak).exp())
             .collect();
+        let water = nu.iter().map(|&n| water_lines(n)).collect();
+        let continuum = nu
+            .iter()
+            .map(|&n| {
+                H2O_CONTINUUM
+                    .iter()
+                    .find(|&&(to, _)| n < to)
+                    .map_or(0.0, |&(_, k)| k)
+            })
+            .collect();
         Spectrum {
             nu,
             width,
             band,
             collisions,
+            water,
+            continuum,
         }
     })
+}
+
+/// The gases' collisions (M55): each pair's absorption, cm^-1 amagat^-2, on the spectrum's
+/// wavenumbers at each of its tables' temperatures, from HITRAN's tables coarse-grained by 10
+/// cm^-1 (data/collisions.txt): nitrogen's (Chistikov et al. 2019), nitrogen and methane's
+/// (Finenko et al. 2022, fitted to Cassini's spectra of Titan), methane's (Borysow and
+/// Frommhold 1987), nitrogen and hydrogen's (Borysow and Frommhold 1986).
+struct Collisions {
+    pairs: Vec<Pair>,
+}
+
+struct Pair {
+    gases: (String, String),
+    temperatures: Vec<f64>,
+    /// The absorption at each temperature on each of the spectrum's wavenumbers.
+    absorption: Vec<Vec<f64>>,
+}
+
+impl Pair {
+    /// The table's temperatures about `t`, K, the lower's index and the share of the upper's,
+    /// held at the ends.
+    fn bracket(&self, t: f64) -> (usize, f64) {
+        let ts = &self.temperatures;
+        if ts.len() < 2 || t <= ts[0] {
+            return (0, 0.0);
+        }
+        let j = ts.partition_point(|&x| x <= t).clamp(1, ts.len() - 1) - 1;
+        (j, ((t - ts[j]) / (ts[j + 1] - ts[j])).clamp(0.0, 1.0))
+    }
+}
+
+fn collision_tables() -> &'static Collisions {
+    static COLLISIONS: OnceLock<Collisions> = OnceLock::new();
+    COLLISIONS.get_or_init(|| {
+        let spectrum = spectrum();
+        let mut pairs: Vec<Pair> = Vec::new();
+        let mut rows: Vec<(f64, Vec<f64>)> = Vec::new();
+        let mut gases = (String::new(), String::new());
+        let mut temperatures: Vec<f64> = Vec::new();
+        let finish = |gases: &(String, String), temperatures: &[f64], rows: &[(f64, Vec<f64>)]| {
+            if rows.is_empty() {
+                return None;
+            }
+            // Each wavenumber's absorption between the table's, none past its end.
+            let at = |j: usize, nu: f64| {
+                let k = rows.partition_point(|r| r.0 <= nu);
+                if k == 0 || k >= rows.len() {
+                    return if k == 0 { rows[0].1[j] } else { 0.0 };
+                }
+                let (a, b) = (&rows[k - 1], &rows[k]);
+                a.1[j] + (nu - a.0) / (b.0 - a.0) * (b.1[j] - a.1[j])
+            };
+            Some(Pair {
+                gases: gases.clone(),
+                temperatures: temperatures.to_vec(),
+                absorption: (0..temperatures.len())
+                    .map(|j| spectrum.nu.iter().map(|&nu| at(j, nu)).collect())
+                    .collect(),
+            })
+        };
+        for line in include_str!("../data/collisions.txt").lines() {
+            let mut words = line.split_whitespace();
+            match words.next() {
+                None | Some("#") => {}
+                Some(w) if w.starts_with('#') => {}
+                Some("pair") => {
+                    pairs.extend(finish(&gases, &temperatures, &rows));
+                    rows.clear();
+                    let a = words.next().unwrap_or_default().to_string();
+                    let b = words.next().unwrap_or_default().to_string();
+                    gases = (a, b);
+                }
+                Some("T") => temperatures = words.filter_map(|w| w.parse().ok()).collect(),
+                Some(nu) => {
+                    if let Ok(nu) = nu.parse::<f64>() {
+                        rows.push((nu, words.filter_map(|w| w.parse().ok()).collect()));
+                    }
+                }
+            }
+        }
+        pairs.extend(finish(&gases, &temperatures, &rows));
+        Collisions { pairs }
+    })
+}
+
+/// Water vapour's lines at a wavenumber, cm^-1, per kg/m² at the reference pressure (M55): its
+/// rotation band's below the split, its vibration-rotation band's above it to the end.
+fn water_lines(nu: f64) -> f64 {
+    let (rotation, flat, l) = H2O_ROTATION;
+    let (vibration, from, to, below, above) = H2O_VIBRATION;
+    if nu < flat {
+        rotation
+    } else if nu < H2O_LINES_SPLIT {
+        rotation * (-(nu - flat) / l).exp()
+    } else if nu < from {
+        vibration * (-(from - nu) / below).exp()
+    } else if nu < to {
+        vibration
+    } else if nu < H2O_LINES_END {
+        vibration * (-(nu - to) / above).exp()
+    } else {
+        0.0
+    }
 }
 
 /// A column of air over the ground, as its outgoing radiation reads it (F293).
@@ -115,10 +238,13 @@ pub struct Column {
     /// The grey absorbers' depths at the surface, and how they thin with the pressure:
     /// methane's and nitrogen's collisions', and the sulfuric clouds'.
     grey: Vec<(f64, f64)>,
-    /// The water a warm air can hold vapour from, metres of global layer, and its vapour's
-    /// grey depth's law, a ln(1 + u / u0) of its column u, kg/m² (F235).
+    /// The pairs of its gases whose collisions absorb, each its index among the tables' and
+    /// the product of the two gases' shares of the molecules (M55).
+    pairs: Vec<(usize, f64)>,
+    /// The water a warm air can hold vapour from, metres of global layer (F235).
     water: f64,
-    water_tau: (f64, f64),
+    /// The clouds' grey depth's law, a u^b of the column's vapour u, kg/m² (M55).
+    cloud: (f64, f64),
 }
 
 impl Column {
@@ -141,11 +267,16 @@ impl Column {
         let column = pressure / gravity.max(1e-300);
         let bulk = bulk_of(composition);
         let u = |s: &str| mass(s) * column;
-        let grey = vec![
-            (TAU_CH4.0 * u("CH4").powf(TAU_CH4.1), TAU_CH4.1),
-            (TAU_N2_CIA.0 * u("N2").powf(TAU_N2_CIA.1), TAU_N2_CIA.1),
-            (SULFURIC_CLOUD_DEPTH * u("SO2"), 1.0),
-        ];
+        let grey = vec![(SULFURIC_CLOUD_DEPTH * u("SO2"), 1.0)];
+        // The pairs of its gases whose collisions absorb, by the product of their shares of
+        // the molecules (M55).
+        let pairs = collision_tables()
+            .pairs
+            .iter()
+            .enumerate()
+            .map(|(k, p)| (k, share(&p.gases.0) * share(&p.gases.1)))
+            .filter(|&(_, x)| x > 0.0)
+            .collect();
         Self {
             pressure,
             gravity,
@@ -158,8 +289,9 @@ impl Column {
             bulk,
             skin,
             grey,
+            pairs,
             water,
-            water_tau: TAU_H2O,
+            cloud: WATER_CLOUD_DEPTH,
         }
     }
 
@@ -183,9 +315,10 @@ impl Column {
 
     /// The air's temperatures at `levels` over ground at `t` K, the first level the ground's:
     /// up the adiabat by midpoint steps in the pressure's logarithm, never colder than the bulk
-    /// gas's frost nor the skin; and the water vapour above each level, by the saturated
-    /// vapour each holds, in the units of its ground's (none without water).
-    fn profile(&self, t: f64, levels: &[f64]) -> (Vec<f64>, Vec<f64>) {
+    /// gas's frost nor the skin; the water vapour above each level, by the saturated vapour
+    /// each holds, in the units of its ground's; and each level's saturated vapour's share of
+    /// the pressure (none without water).
+    fn profile(&self, t: f64, levels: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
         let n = levels.len();
         let mut adiabat = vec![t; n];
         for k in 0..n - 1 {
@@ -204,14 +337,17 @@ impl Column {
                 a.max(frost).max(self.skin)
             })
             .collect();
-        let mut vapour = vec![0.0; n];
+        let (mut vapour, mut humid) = (vec![0.0; n], vec![0.0; n]);
         if let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) {
-            let q = |k: usize| vapour_pressure(water, temps[k]).min(0.5 * levels[k]) / levels[k];
+            for (k, h) in humid.iter_mut().enumerate() {
+                *h = vapour_pressure(water, temps[k]).min(0.5 * levels[k]) / levels[k];
+            }
             for k in (0..n - 1).rev() {
-                vapour[k] = vapour[k + 1] + 0.5 * (q(k) + q(k + 1)) * (levels[k] - levels[k + 1]);
+                let mean = 0.5 * (humid[k] + humid[k + 1]);
+                vapour[k] = vapour[k + 1] + mean * (levels[k] - levels[k + 1]);
             }
         }
-        (temps, vapour)
+        (temps, vapour, humid)
     }
 
     /// The outgoing radiation, W/m², of the column over ground at `t` K.
@@ -223,9 +359,28 @@ impl Column {
     /// the surface pressure: the air above it, and of the water vapour the air over the datum
     /// at `t` holds (F235), the share its profile holds above it.
     pub fn olr_at(&self, t: f64, ratio: f64) -> f64 {
+        self.streams_at(t, ratio).olr
+    }
+
+    /// The column's streams over ground at `t` K, W/m² (M55): what it lets out to space, the
+    /// share of the ground's own radiation that reaches space through it, and what its air
+    /// sends down to the ground.
+    pub fn streams(&self, t: f64) -> Streams {
+        self.streams_at(t, 1.0)
+    }
+
+    /// The column's streams over ground at `t` K standing at `ratio` of the surface pressure,
+    /// as `olr_at` reads the column. The air's downward stream sums each layer's emission into
+    /// the transmission below it to the ground, as the outgoing stream sums it into the
+    /// transmission above it to space.
+    fn streams_at(&self, t: f64, ratio: f64) -> Streams {
         let ground = self.pressure * ratio;
         if ground <= 0.0 || t <= 0.0 {
-            return SIGMA_SB * t.max(0.0).powi(4);
+            return Streams {
+                olr: SIGMA_SB * t.max(0.0).powi(4),
+                window: 1.0,
+                down: 0.0,
+            };
         }
         let n = RADIATION_LEVELS;
         // Crowded toward the ground as the square of their rank, where the water vapour's
@@ -236,7 +391,7 @@ impl Column {
                 ground * (-RADIATION_DECADES * std::f64::consts::LN_10 * u * u).exp()
             })
             .collect();
-        let (temps, vapour) = self.profile(t, &levels);
+        let (temps, vapour, humid) = self.profile(t, &levels);
         // Carbon dioxide's band's path above each level, kg/m² at the reference pressure, and
         // its molecules' collisions', amagat² cm.
         let band: Vec<f64> = levels
@@ -245,9 +400,16 @@ impl Column {
             .collect();
         let mut collisions = vec![0.0; n];
         let density = self.co2_volume * AMAGAT_TEMPERATURE / AMAGAT_PRESSURE;
+        // Each layer's path for the molecules' collisions at unit shares, amagat² cm (M55).
+        let mut pressed = vec![0.0; n - 1];
         for k in (0..n - 1).rev() {
             let (p0, p1) = (levels[k + 1], levels[k]);
             let mean = 0.5 * (p0 / temps[k + 1] + p1 / temps[k]);
+            let unit = (AMAGAT_TEMPERATURE / AMAGAT_PRESSURE).powi(2) * 100.0 * self.gas_constant
+                / self.gravity
+                * mean
+                * (p1 - p0);
+            pressed[k] = unit;
             collisions[k] = collisions[k + 1]
                 + density * density * 100.0 * self.gas_constant / self.gravity * mean * (p1 - p0);
         }
@@ -264,33 +426,99 @@ impl Column {
         } else {
             0.0
         };
-        let (a, u0) = self.water_tau;
+        // The vapour's share of saturation, its column against the saturated column's
+        // (M55): the saturated vapour's mass above a level eps / g of its profile's.
+        let saturation = column * self.gravity / self.epsilon;
+        // The clouds, well mixed in the air's mass, a u^b of the vapour u the datum's column
+        // holds, kg/m² (M55).
+        let held = column * datum;
+        let clouds = if held > 0.0 {
+            self.cloud.0 * held.powf(self.cloud.1)
+        } else {
+            0.0
+        };
         let grey: Vec<f64> = levels
             .iter()
-            .zip(&vapour)
-            .map(|(&p, &v)| {
+            .map(|&p| {
                 let x = p / self.pressure;
                 let dry: f64 = self.grey.iter().map(|&(tau, b)| tau * x.powf(b)).sum();
-                dry + a * (column * v / u0).ln_1p()
+                dry + clouds * x
+            })
+            .collect();
+        // Water vapour's paths through each layer (M55): its lines' broadened by the pressure,
+        // kg/m² at the reference pressure, and its continuum's by its own pressure and its
+        // temperature, kg/m² at the reference state.
+        let (reference, warmth, sigma) = H2O_CONTINUUM_STATE;
+        let water: Vec<(f64, f64)> = (0..n - 1)
+            .map(|k| {
+                let (p0, p1) = (levels[k], levels[k + 1]);
+                let mass = column * (vapour[k] - vapour[k + 1]);
+                let pressed = 0.5 * (humid[k] * p0 + humid[k + 1] * p1);
+                let lines = column * pressed * (p0 - p1) / CO2_BAND_PRESSURE;
+                let own = saturation * pressed / reference;
+                let cold = (sigma * (warmth - 0.5 * (temps[k] + temps[k + 1]))).exp();
+                (lines, mass * own * cold)
             })
             .collect();
         let spectrum = spectrum();
-        let mut total = 0.0;
+        // The depth above each level at each wavenumber: what lies over the top level, and
+        // each layer's own depth summed down from it, each absorber's at the layer's own state.
+        let layers: Vec<Layer> = (0..n - 1)
+            .map(|k| Layer {
+                band: band[k] - band[k + 1],
+                collisions: collisions[k] - collisions[k + 1],
+                grey: grey[k] - grey[k + 1],
+                water: water[k].0,
+                continuum: water[k].1,
+                pairs: self
+                    .pairs
+                    .iter()
+                    .map(|&(p, x)| {
+                        let warmth = 0.5 * (temps[k] + temps[k + 1]);
+                        let (j, w) = collision_tables().pairs[p].bracket(warmth);
+                        (p, j, w, x * pressed[k])
+                    })
+                    .collect(),
+            })
+            .collect();
+        let (mut total, mut through, mut ground_light, mut down) = (0.0, 0.0, 0.0, 0.0);
+        let (mut depths, mut light) = (vec![0.0; n], vec![0.0; n]);
         for (i, &nu) in spectrum.nu.iter().enumerate() {
-            let depth = |k: usize| {
-                band[k] * spectrum.band[i] + collisions[k] * spectrum.collisions[i] + grey[k]
-            };
-            let mut above = (-DIFFUSIVITY * depth(n - 1)).exp();
-            let mut out = 0.0;
+            depths[n - 1] = band[n - 1] * spectrum.band[i]
+                + collisions[n - 1] * spectrum.collisions[i]
+                + grey[n - 1];
             for k in (0..n - 1).rev() {
-                let below = (-DIFFUSIVITY * depth(k)).exp();
-                out += planck(nu, 0.5 * (temps[k] + temps[k + 1])) * (above - below);
-                above = below;
+                depths[k] = depths[k + 1] + layers[k].depth(spectrum, i);
             }
-            out += planck(nu, t) * above;
+            for (b, &temp) in light.iter_mut().zip(&temps) {
+                *b = planck(nu, temp);
+            }
+            let (mut out, mut sent) = (0.0, 0.0);
+            // Each layer emits up at its top and down at its bottom, its source linear in its
+            // depth between its levels (Clough et al. 1992): the mean of its levels' where it is
+            // thin, the emitting level's where it is thick.
+            for k in 0..n - 1 {
+                let x = DIFFUSIVITY * (depths[k] - depths[k + 1]);
+                let (emits, slope) = linear_source(x);
+                let up = light[k + 1] * emits + (light[k] - light[k + 1]) * slope;
+                let dn = light[k] * emits + (light[k + 1] - light[k]) * slope;
+                out += up * (-DIFFUSIVITY * depths[k + 1]).exp();
+                sent += dn * (-DIFFUSIVITY * (depths[0] - depths[k])).exp();
+            }
+            let above = (-DIFFUSIVITY * depths[0]).exp();
+            let own = planck(nu, t);
+            out += own * above;
             total += out * spectrum.width[i];
+            through += own * above * spectrum.width[i];
+            ground_light += own * spectrum.width[i];
+            down += sent * spectrum.width[i];
         }
-        std::f64::consts::PI * total
+        let pi = std::f64::consts::PI;
+        Streams {
+            olr: pi * total,
+            window: through / ground_light.max(1e-300),
+            down: pi * down,
+        }
     }
 
     /// The ground's temperature at which the column lets out `absorbed` W/m², K: never below
@@ -301,6 +529,67 @@ impl Column {
             .map_or(0.0, |(v, x)| saturation_temperature(v, x * self.pressure));
         balance(|t| self.olr(t), absorbed).max(floor)
     }
+}
+
+/// A layer of slant depth `x`'s emission at its edge per its source there, its emissivity
+/// 1 - e^(-x), and per its source's change across it, (1 - e^(-x)) / x - e^(-x): its source
+/// linear in its depth (Clough et al. 1992), x / 2 - x² / 3 where it is thin.
+fn linear_source(x: f64) -> (f64, f64) {
+    if x < 1e-4 {
+        return (x - 0.5 * x * x, 0.5 * x - x * x / 3.0);
+    }
+    let through = (-x).exp();
+    let emits = 1.0 - through;
+    (emits, emits / x - through)
+}
+
+/// A layer of the column between two levels, as its absorbers' paths through it read it: carbon
+/// dioxide's band's, kg/m² at the reference pressure, its molecules' collisions', amagat² cm, and
+/// the grey depth.
+struct Layer {
+    band: f64,
+    collisions: f64,
+    grey: f64,
+    /// Water vapour's lines' path, kg/m² at the reference pressure, and its continuum's, kg/m²
+    /// at its reference state (M55).
+    water: f64,
+    continuum: f64,
+    /// Each pair's collisions: its table, the table's temperatures about the layer's, the
+    /// lower's index and the upper's share, and its path, amagat² cm (M55).
+    pairs: Vec<(usize, usize, f64, f64)>,
+}
+
+impl Layer {
+    /// The layer's optical depth at the spectrum's `i`th wavenumber.
+    fn depth(&self, spectrum: &Spectrum, i: usize) -> f64 {
+        let tables = &collision_tables().pairs;
+        let pairs: f64 = self
+            .pairs
+            .iter()
+            .map(|&(p, j, w, path)| {
+                let k = &tables[p].absorption;
+                let upper = k.get(j + 1).map_or(k[j][i], |row| row[i]);
+                path * (k[j][i] + w * (upper - k[j][i]))
+            })
+            .sum();
+        self.band * spectrum.band[i]
+            + self.collisions * spectrum.collisions[i]
+            + self.grey
+            + self.water * spectrum.water[i]
+            + self.continuum * spectrum.continuum[i]
+            + pairs
+    }
+}
+
+/// A column's streams over its ground (M55).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Streams {
+    /// What it lets out to space, W/m².
+    pub olr: f64,
+    /// The share of the ground's own radiation that reaches space through it.
+    pub window: f64,
+    /// What its air sends down to the ground, W/m².
+    pub down: f64,
 }
 
 /// The air's bulk gas, its largest but its water vapour, where it has a frost, and its share of
@@ -363,12 +652,16 @@ fn balance(olr: impl Fn(f64) -> f64, absorbed: f64) -> f64 {
 }
 
 /// The share of a black body's radiation a column lets out at each ground temperature (F293),
-/// tabulated over the logarithm of the temperature and read between the entries.
+/// tabulated over the logarithm of the temperature and read between the entries; with the share
+/// of the ground's own radiation that reaches space through it and the share its air sends down
+/// to the ground (M55).
 #[derive(Clone, Debug)]
 pub struct Outgoing {
     from: f64,
     step: f64,
     share: Vec<f64>,
+    window: Vec<f64>,
+    down: Vec<f64>,
 }
 
 impl Outgoing {
@@ -378,50 +671,97 @@ impl Outgoing {
             from: 0.0,
             step: 1.0,
             share: vec![1.0],
+            window: vec![1.0],
+            down: vec![0.0],
         }
     }
 
-    /// The column's share from `low` to `high` K.
+    /// The column's shares from `low` to `high` K.
     pub fn of(column: &Column, low: f64, high: f64) -> Self {
         use rayon::prelude::*;
         let (from, to) = (low.max(1.0).ln(), high.max(low + 1.0).ln());
         let n = ((to - from) / OUTGOING_STEP).ceil() as usize + 1;
         let step = (to - from) / (n - 1) as f64;
-        let share = (0..n)
+        let streams: Vec<(f64, f64, f64)> = (0..n)
             .into_par_iter()
             .map(|k| {
                 let t = (from + step * k as f64).exp();
-                column.olr(t) / (SIGMA_SB * t.powi(4))
+                let black = SIGMA_SB * t.powi(4);
+                let s = column.streams(t);
+                (s.olr / black, s.window, s.down / black)
             })
             .collect();
-        Self { from, step, share }
+        // Past water's runaway plateau, where its vapour's growth stalls the outgoing radiation
+        // (Simpson 1927; Nakajima et al. 1992), held at its highest (M55).
+        let mut highest = 0.0f64;
+        let share = streams
+            .iter()
+            .enumerate()
+            .map(|(k, s)| {
+                let black = SIGMA_SB * (from + step * k as f64).exp().powi(4);
+                highest = highest.max(s.0 * black);
+                highest / black
+            })
+            .collect();
+        Self {
+            from,
+            step,
+            share,
+            window: streams.iter().map(|s| s.1).collect(),
+            down: streams.iter().map(|s| s.2).collect(),
+        }
     }
 
-    /// The table from its entries, (temperature, share).
+    /// The table from its entries, (temperature, share), its window and downward shares
+    /// those of a column that lets the ground's radiation through and sends none down until
+    /// they are given (`with_streams`).
     pub fn from_points(points: &[(f64, f64)]) -> Self {
-        match points {
-            [] => Self::none(),
-            [only] => Self {
-                from: only.0.max(1.0).ln(),
-                step: 1.0,
-                share: vec![only.1],
-            },
+        let share: Vec<f64> = points.iter().map(|p| p.1).collect();
+        let (from, step) = match points {
+            [] => return Self::none(),
+            [only] => (only.0.max(1.0).ln(), 1.0),
             _ => {
                 let from = points[0].0.max(1.0).ln();
-                let step =
-                    (points[points.len() - 1].0.max(1.0).ln() - from) / (points.len() - 1) as f64;
-                Self {
-                    from,
-                    step,
-                    share: points.iter().map(|p| p.1).collect(),
-                }
+                let last = points[points.len() - 1].0.max(1.0).ln();
+                (from, (last - from) / (points.len() - 1) as f64)
             }
+        };
+        Self {
+            from,
+            step,
+            window: vec![1.0; share.len()],
+            down: vec![0.0; share.len()],
+            share,
         }
+    }
+
+    /// The table with its window's and downward shares' entries, (temperature, share), on its
+    /// own temperatures.
+    pub fn with_streams(mut self, window: &[(f64, f64)], down: &[(f64, f64)]) -> Self {
+        if window.len() == self.share.len() && down.len() == self.share.len() {
+            self.window = window.iter().map(|p| p.1).collect();
+            self.down = down.iter().map(|p| p.1).collect();
+        }
+        self
     }
 
     /// The entries, (temperature, share).
     pub fn points(&self) -> Vec<(f64, f64)> {
-        self.share
+        self.entries(&self.share)
+    }
+
+    /// The window's entries, (temperature, share of the ground's radiation reaching space).
+    pub fn window_points(&self) -> Vec<(f64, f64)> {
+        self.entries(&self.window)
+    }
+
+    /// The downward entries, (temperature, share of a black body's radiation sent down).
+    pub fn down_points(&self) -> Vec<(f64, f64)> {
+        self.entries(&self.down)
+    }
+
+    fn entries(&self, values: &[f64]) -> Vec<(f64, f64)> {
+        values
             .iter()
             .enumerate()
             .map(|(k, &s)| ((self.from + self.step * k as f64).exp(), s))
@@ -430,14 +770,34 @@ impl Outgoing {
 
     /// The share at `t` K, held at the table's ends past them.
     pub fn share(&self, t: f64) -> f64 {
-        if self.share.len() == 1 {
-            return self.share[0];
+        self.read(&self.share, t)
+    }
+
+    /// The share of the ground's own radiation that reaches space through the column over
+    /// ground at `t` K.
+    pub fn window(&self, t: f64) -> f64 {
+        self.read(&self.window, t)
+    }
+
+    /// What the column's air over ground at `t` K sends down to it, W/m².
+    pub fn down(&self, t: f64) -> f64 {
+        self.read(&self.down, t) * SIGMA_SB * t.powi(4)
+    }
+
+    /// What the column's air over ground at `t` K lets out to space of its own, W/m²: the
+    /// outgoing radiation less the ground's through the window.
+    pub fn air_up(&self, t: f64) -> f64 {
+        (self.share(t) - self.window(t)) * SIGMA_SB * t.powi(4)
+    }
+
+    fn read(&self, values: &[f64], t: f64) -> f64 {
+        if values.len() == 1 {
+            return values[0];
         }
-        let x =
-            ((t.max(1e-9).ln() - self.from) / self.step).clamp(0.0, (self.share.len() - 1) as f64);
-        let k = (x.floor() as usize).min(self.share.len() - 2);
+        let x = ((t.max(1e-9).ln() - self.from) / self.step).clamp(0.0, (values.len() - 1) as f64);
+        let k = (x.floor() as usize).min(values.len() - 2);
         let f = x - k as f64;
-        self.share[k] + f * (self.share[k + 1] - self.share[k])
+        values[k] + f * (values[k + 1] - values[k])
     }
 
     /// The outgoing radiation at `t` K, W/m².
@@ -569,6 +929,30 @@ pub fn over(r: f64, beneath: f64) -> f64 {
 /// pressure in bar up to two.
 pub fn tholin_production(methane: f64, xuv: f64, pressure: f64) -> f64 {
     methane * xuv * 50.0 * (pressure / 1e5).min(2.0)
+}
+
+/// The share of its star's light over the lit hemisphere a layer of grey depth `tau` absorbs on
+/// the light's way down (M55), its mean over the sun's heights, 1 - 2 E3(tau).
+pub fn hemisphere_absorbed(tau: f64) -> f64 {
+    if tau <= 0.0 {
+        return 0.0;
+    }
+    let n = HEMISPHERE_HEIGHTS;
+    let through: f64 = (0..n)
+        .map(|k| {
+            let mu = (k as f64 + 0.5) / n as f64;
+            2.0 * mu * (-tau / mu).exp()
+        })
+        .sum::<f64>()
+        / n as f64;
+    1.0 - through
+}
+
+/// The share of its star's light a methane haze of index `haze` absorbs high over the air and
+/// its stratosphere sends back to space (M55; McKay et al. 1991's anti-greenhouse), over the lit
+/// hemisphere.
+pub fn haze_returned(haze: f64) -> f64 {
+    HAZE_RETURNED * hemisphere_absorbed(HAZE_SUNLIGHT * haze)
 }
 
 /// The Bond albedo of a body under an atmosphere (F293): its air's Rayleigh scattering of its
@@ -744,43 +1128,89 @@ mod tests {
     fn calibrate_the_greenhouse_s_anchors() {
         let titan = graph("Titan");
         let (base, absorbed) = column_of(&titan, 0.265);
-        let scale = halve(
-            |f| {
-                let mut c = base.clone();
-                c.grey[0].0 *= f;
-                c.grey[1].0 *= f;
-                c.surface_temperature(absorbed) - 93.7
-            },
-            1e-3,
-            1e3,
+        let s = base.streams(93.7);
+        let black = SIGMA_SB * 93.7f64.powi(4);
+        println!(
+            "Titan at 93.7 K: olr {:.3}, window {:.4} (3.8%), down {:.3} (3.92 to 3.98), net at the ground {:.3} (0.379); the mean under all {absorbed:.3} W/m2 absorbed {:.2} K",
+            s.olr,
+            s.window,
+            s.down,
+            black - s.down,
+            base.surface_temperature(absorbed)
+        );
+        // The haze's depth in the sunlight: its stratosphere's 1.5 of 3.6 W/m2; and the share
+        // of it sent back to space that keeps Titan's 93.7 K.
+        let index = tholin_production(
+            entry(&titan, "atmosphere.composition", "CH4"),
+            titan.f64("star.xuv_relative"),
+            titan.f64("atmosphere.surface_pressure"),
+        );
+        let tau = halve(|t| hemisphere_absorbed(t) - 1.5 / 3.6, 1e-6, 1e2);
+        let light = absorbed / (1.0 - 0.265);
+        let high = hemisphere_absorbed(tau) * light;
+        let share = halve(
+            |f| 93.7 - base.surface_temperature(absorbed - f * high),
+            1e-4,
+            1.0,
         );
         println!(
-            "Titan: methane's and nitrogen's depths x {scale:.5}: TAU_CH4.0 {:.5e}, TAU_N2_CIA.0 {:.5e}",
-            TAU_CH4.0 * scale,
-            TAU_N2_CIA.0 * scale
+            "Titan: haze index {index:.5}, its depth in the sunlight {tau:.5}: HAZE_SUNLIGHT {:.5}; it absorbs {high:.3} of {light:.3} W/m2, sends {share:.4} of it back (HAZE_RETURNED): {:.3} W/m2; the anti-greenhouse {:.2} K",
+            tau / index,
+            share * high,
+            base.surface_temperature(absorbed) - 93.7
         );
         let earth = graph("Earth");
         let (mut base, absorbed) = column_of(&earth, rayleigh_of(&earth));
-        base.grey[1].0 *= scale;
-        let at = |u0: f64| {
-            let a = halve(
-                |a| {
-                    let mut c = base.clone();
-                    c.water_tau = (a, u0);
-                    c.surface_temperature(absorbed) - 291.6
-                },
-                1e-3,
-                1e2,
-            );
+        base.cloud = (0.0, 1.0);
+        let clear = base.surface_temperature(absorbed);
+        let s = base.streams(288.0);
+        println!(
+            "Earth clear: {clear:.2} K; at 288 K olr {:.2} (CERES 267), down {:.2} (314), window {:.4}, slope {:.3}",
+            s.olr,
+            s.down,
+            s.window,
+            (base.olr(289.0) - base.olr(287.0)) / 2.0
+        );
+        // The clouds' a that keeps Earth's zero-dimensional 291.6 K, and their b that keeps its
+        // outgoing radiation's slope, 2.1 W/m² per kelvin.
+        let with = |cloud: (f64, f64)| {
             let mut c = base.clone();
-            c.water_tau = (a, u0);
+            c.cloud = cloud;
+            c
+        };
+        let at = |b: f64| {
+            let a = halve(
+                |a| with((a, b)).surface_temperature(absorbed) - 291.6,
+                1e-6,
+                1e3,
+            );
+            let c = with((a, b));
             (a, (c.olr(292.6) - c.olr(290.6)) / 2.0)
         };
-        let u0 = halve(|u| 2.1 - at(u).1, 1e-3, 1e2);
-        let (a, slope) = at(u0);
+        for b in [0.0, 0.1, 0.2, 0.3, 0.5] {
+            let (a, slope) = at(b);
+            let c = with((a, b));
+            println!(
+                "  clouds a u^{b}: a {a:.4}, slope {slope:.3}, olr at 250 K {:.1}, 230 K {:.1}",
+                c.olr(250.0),
+                c.olr(230.0)
+            );
+        }
+        let b = 1.0 - halve(|x| at(1.0 - x).1 - 2.1, 1e-3, 1.0);
+        let (k, _) = at(b);
+        let m0 = b;
+        let (c, cs) = (with((k, b)), base.streams(291.6));
+        let s = c.streams(291.6);
         println!(
-            "Earth: albedo {:.4}, water a {a:.5}, u0 {u0:.5} kg/m², slope {slope:.3}",
-            rayleigh_of(&earth)
+            "Earth: albedo {:.4}, clouds {k:.5} u^{m0:.4}: olr {:.2} (clear {:.2}: effect {:.2}, CERES 28), down {:.2} (clear {:.2}; 342, 314), window {:.4}, slope {:.3}",
+            rayleigh_of(&earth),
+            s.olr,
+            cs.olr,
+            cs.olr - s.olr,
+            s.down,
+            cs.down,
+            s.window,
+            (c.olr(292.6) - c.olr(290.6)) / 2.0
         );
         let venus = graph("Venus");
         let scattered = rayleigh_of(&venus);
@@ -796,13 +1226,12 @@ mod tests {
             clouds / (1.0 - clouds) / so2_column
         );
         let a_v = 0.76;
-        let (mut base, absorbed) = column_of(&venus, a_v);
-        base.grey[1].0 *= scale;
-        let so2 = base.grey[2].0 / SULFURIC_CLOUD_DEPTH;
+        let (base, absorbed) = column_of(&venus, a_v);
+        let so2 = base.grey[0].0 / SULFURIC_CLOUD_DEPTH;
         let k = halve(
             |k| {
                 let mut c = base.clone();
-                c.grey[2].0 = k * so2;
+                c.grey[0].0 = k * so2;
                 c.surface_temperature(absorbed) - 737.0
             },
             1e-6,
@@ -819,6 +1248,106 @@ mod tests {
         println!(
             "Titan: scattered {scattered:.4}, haze {haze:.5}, HAZE_ABSORPTION {absorption:.5}"
         );
+    }
+
+    /// M55: the column's streams meet what is measured. Earth's clear air at 288 K lets out
+    /// CERES's 267 W/m² within 8 (Wild et al. 2019); with its stated clouds its air over its
+    /// 291.6 K ground sends down the measured 342 W/m² within 10 (Kato et al. 2018 give 6 of
+    /// uncertainty), its window between the cloudy 0.055 and the clear 0.17 of its ground's
+    /// light (Costa and Shine 2012). Titan's air over its 93.7 K ground lets 2 to 6 percent of
+    /// the ground's light through to space (3.8 on the Huygens probe's profile), sends down
+    /// 3.7 to 4.1 W/m², and leaves its ground losing 0.2 to 0.6 W/m² net (0.379, McKay et al.
+    /// 1989), where the grey column's window was 0.30. Its haze sends back to space between
+    /// half and all of the 1.5 of 3.6 W/m² its stratosphere takes (McKay et al. 1991); Earth's
+    /// air none. A clear air lets all its ground's light through and sends none down.
+    #[test]
+    fn the_air_s_streams_meet_the_measured() {
+        let earth = || {
+            let g = graph("Earth");
+            let (column, _) = column_of(&g, g.f64("atmosphere.bond_albedo"));
+            let mut clear = column.clone();
+            clear.cloud = (0.0, 0.0);
+            let (s, c) = (column.streams(291.6), clear.streams(288.0));
+            assert!((c.olr - 267.0).abs() < 8.0, "clear {:.1}", c.olr);
+            assert!((s.down - 342.0).abs() < 10.0, "down {:.1}", s.down);
+            assert!((0.055..0.17).contains(&s.window), "window {:.3}", s.window);
+            assert_eq!(g.f64("atmosphere.sunlight_returned"), 0.0);
+        };
+        let titan = || {
+            let g = graph("Titan");
+            let (column, _) = column_of(&g, g.f64("atmosphere.bond_albedo"));
+            let s = column.streams(93.7);
+            let net = SIGMA_SB * 93.7f64.powi(4) - s.down;
+            assert!((0.02..0.06).contains(&s.window), "window {:.4}", s.window);
+            assert!((3.7..4.1).contains(&s.down), "down {:.3}", s.down);
+            assert!((0.2..0.6).contains(&net), "net {net:.3}");
+            let returned = g.f64("atmosphere.sunlight_returned") * 3.6;
+            assert!(
+                (0.75..1.5).contains(&returned),
+                "returned {returned:.3} of 3.6 W/m²"
+            );
+        };
+        let clear = || {
+            let argon: BTreeMap<String, f64> = [("Ar".to_string(), 1.0)].into_iter().collect();
+            let s = Column::new(&argon, 1e5, 9.81, 0.0, 200.0).streams(288.0);
+            assert!(
+                (s.window - 1.0).abs() < 1e-9 && s.down.abs() < 1e-9,
+                "{s:?}"
+            );
+        };
+        crate::testkit::checks(&[
+            ("Earth's streams", &earth),
+            ("Titan's streams", &titan),
+            ("a clear air's streams", &clear),
+        ]);
+    }
+
+    /// M55: Earth's outgoing radiation over its zonal means' temperatures, against the zonal
+    /// law Graves, Lee and North 1993 fit, 203.3 + 2.09 (T - 273.15) W/m².
+    #[test]
+    #[ignore]
+    fn print_earth_s_outgoing_radiation() {
+        let g = graph("Earth");
+        let (column, _) = column_of(&g, g.f64("atmosphere.bond_albedo"));
+        let mut clear = column.clone();
+        clear.cloud = (0.0, 1.0);
+        for t in [
+            220.0, 230.0, 240.0, 250.0, 260.0, 270.0, 280.0, 291.6, 300.0, 310.0,
+        ] {
+            let law = 203.3 + 2.09 * (t - 273.15);
+            println!(
+                "{t:.1} K: olr {:.1} (clear {:.1}), zonal law {law:.1}; down {:.1}; vapour {:.2} kg/m2",
+                column.olr(t),
+                clear.olr(t),
+                column.streams(t).down,
+                water_column(t, column.water)
+            );
+        }
+    }
+
+    /// M55: the streams of each body's column at its mean temperature.
+    #[test]
+    #[ignore]
+    fn print_the_streams() {
+        for name in ["Earth", "Titan", "Venus", "Mars", "Triton", "Pluto"] {
+            let g = graph(name);
+            let (column, absorbed) = column_of(&g, g.f64("atmosphere.bond_albedo"));
+            let t = g.f64("atmosphere.surface_temperature_mean");
+            for dt in [-10.0, 0.0, 10.0] {
+                let s = column.streams(t + dt);
+                let b = SIGMA_SB * (t + dt).powi(4);
+                println!(
+                    "{name} {:.1} K: absorbed {absorbed:.2}, black {b:.2}, olr {:.3}, window {:.4}, up from the air {:.3}, down {:.3} ({:.4} of black), net at the ground {:.3}",
+                    t + dt,
+                    s.olr,
+                    s.window,
+                    s.olr - s.window * b,
+                    s.down,
+                    s.down / b,
+                    b - s.down
+                );
+            }
+        }
     }
 
     /// F295: the column's spectrum holds a black body's light: an air that neither absorbs nor

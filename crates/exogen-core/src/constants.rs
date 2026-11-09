@@ -1927,18 +1927,6 @@ pub const MANTLE_STEPS: usize = 4_000;
 
 // ---------------------------------------------------------------- atmosphere and climate
 
-/// The grey absorbers of the air's column (F293), each tau = a u^b of its column u, kg/m², its
-/// depth above a level thinning as the pressure there to the b: methane and nitrogen's
-/// collisions, set together by Titan's measured 93.7 K (Fulchignoni et al. 2005) under its
-/// measured Bond albedo 0.265; carbon dioxide is the column's own, by its band and its
-/// collisions. Water vapour's depth saturates as its bands fill, tau = a ln(1 + u / u0) (F235),
-/// lying where the column's moist profile holds it: set so that Earth's zero-dimensional greenhouse is kept
-/// (291.6 K) and its outgoing radiation rises by 2.1 W/m² per kelvin of the surface, the slope
-/// Earth's zonal means show (North 1975; Warren and Schneider 1979 give 1.6 to 2.2), carbon
-/// dioxide's band beside it.
-pub const TAU_H2O: (f64, f64) = (0.09328, 0.02754);
-pub const TAU_CH4: (f64, f64) = (5.739e-3, 0.5);
-pub const TAU_N2_CIA: (f64, f64) = (1.180e-8, 1.5);
 /// F293: the air's radiation (radiation.rs). Its wavenumbers, cm^-1, from, to and step, finer
 /// over carbon dioxide's band and at the far infrared's end, out to where a 2,500 K ground's
 /// light has all but ended, so that an air that neither absorbs nor emits lets out sigma T⁴
@@ -1964,6 +1952,10 @@ pub const RADIATION_DECADES: f64 = 6.0;
 pub const DIFFUSIVITY: f64 = 1.66;
 pub const RADIATION_SOLVE_STEPS: usize = 48;
 pub const OUTGOING_STEP: f64 = 0.01;
+/// M55: the columns' tables of streams the graph keeps, so that its three curves read one.
+pub const STREAMS_TABLES_KEPT: usize = 32;
+/// M55: the sun's heights a hemisphere's mean is taken over, evenly in their cosine.
+pub const HEMISPHERE_HEIGHTS: usize = 64;
 /// F293: the downscaling's table of the share over the ground's height: every so much of the
 /// logarithms of the temperature and of the ground's share of the surface pressure, over that
 /// logarithm's span, from four scale heights up to one and a half down.
@@ -1971,10 +1963,36 @@ pub const HEIGHTS_STEP: (f64, f64) = (0.02, 0.25);
 pub const HEIGHTS_RATIO: (f64, f64) = (-4.0, 1.5);
 /// F293: carbon dioxide's 15 um band, kappa_0 e^(-|nu - nu_0| / l): kappa_0 110 m²/kg at the
 /// reference pressure, 500 hPa, its centre 667 cm^-1, its wings falling by e every 12 cm^-1,
-/// broadened in proportion to the pressure (Williams 2025, the coarse-grained HITRAN2016
-/// spectrum at 260 K).
+/// broadened in proportion to the pressure (Williams 2026, Table 1: the HITRAN2016 spectrum at
+/// 260 K coarse-grained, each 25 cm^-1's median).
 pub const CO2_BAND: (f64, f64, f64) = (110.0, 667.0, 12.0);
 pub const CO2_BAND_PRESSURE: f64 = 5.0e4;
+/// M55: water vapour's lines, per kg/m² of the vapour at the reference pressure, carbon
+/// dioxide's 500 hPa, broadened in proportion to the pressure, without a temperature's scaling
+/// (Williams 2026, Table 1: HITRAN2016 lines and the MT_CKD 3.2 continuum at 260 K, 500 hPa and
+/// saturation, each 25 cm^-1's median, the same fit as carbon dioxide's band): the rotation
+/// band's 37 m²/kg, flat to 200 cm^-1 and falling by e every 56 cm^-1 above it to 1,000; the
+/// vibration-rotation band's 5 m²/kg, flat from 1,450 to 1,700 cm^-1, falling by e every 37
+/// cm^-1 below it to 1,000 and every 52 above it to 2,500; none past 2,500. The fit's flat 37
+/// m²/kg under-reads the rotation band's peak (its tropopause 184 hPa where RRTMG's is 136).
+pub const H2O_ROTATION: (f64, f64, f64) = (37.0, 200.0, 56.0);
+pub const H2O_VIBRATION: (f64, f64, f64, f64, f64) = (5.0, 1_450.0, 1_700.0, 37.0, 52.0);
+pub const H2O_LINES_SPLIT: f64 = 1_000.0;
+pub const H2O_LINES_END: f64 = 2_500.0;
+/// M55: water vapour's continuum, grey over its spans, per kg/m² of the vapour at the reference
+/// vapour pressure, 224.92 Pa (the saturation over liquid water at 260 K, the fit's state), and
+/// 260 K: 0.004 m²/kg to 1,700 cm^-1 and 2e-4 to 2,500; scaled by the vapour's pressure, its
+/// own molecules broadening it, and by e^(0.02 (260 - T)) (Williams 2026, after Mlawer et al.).
+pub const H2O_CONTINUUM: [(f64, f64); 2] = [(1_700.0, 0.004), (2_500.0, 2.0e-4)];
+pub const H2O_CONTINUUM_STATE: (f64, f64, f64) = (224.92, 260.0, 0.02);
+/// M55: the clouds and the air's other absorbers, its ozone and its trace gases, stated until
+/// the weather's clouds (5G): grey in the infrared and well mixed in the air's mass, a u^b of the
+/// column's water vapour u, kg/m², so that the drier the air the thinner its clouds, yet a polar
+/// air's kilogram holds some (Earth's Arctic lets out some 190 W/m² over its 258 K ground); set
+/// so that Earth's zero-dimensional greenhouse is kept (291.6 K, F21) and its outgoing radiation
+/// rises by 2.1 W/m² per kelvin of the surface, the slope Earth's zonal means show (North 1975;
+/// Warren and Schneider 1979 give 1.6 to 2.2), as F293's grey water was.
+pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.1625, 0.2346);
 /// F293: carbon dioxide's molecules' collisions in the far infrared, their absorption by the
 /// square of their density: its integral over 60 to 250 cm^-1, 3.11e-3 cm^-2 amagat^-2, as
 /// measured at room temperature (Ho et al. 1971, Turbet et al. 2019 within its errors), in a
@@ -1984,7 +2002,7 @@ pub const CO2_COLLISIONS: (f64, f64, f64, f64) = (3.11e-3, 60.0, 250.0, 50.0);
 /// infrared per kg/m² of it, well mixed: set by Venus's measured 737 K, where they close the
 /// windows its gas's other bands and far wings leave: some 80 over its 229 kg/m², its gas's
 /// emission lifted to under a bar, in its cloud deck.
-pub const SULFURIC_CLOUD_DEPTH: f64 = 0.3479;
+pub const SULFURIC_CLOUD_DEPTH: f64 = 0.3447;
 /// F293: the sulfuric clouds' reflection, s per kg/m² of sulfur dioxide, the clouds reflecting
 /// s / (1 + s) of the light over the air below them: set by Venus's measured Bond albedo,
 /// 0.76, over the 0.716 its air's scattering gives: they reflect 0.394.
@@ -2018,6 +2036,19 @@ pub const RAYLEIGH_GASES: [(&str, f64, f64); 10] = [
 /// haze's index) on each pass through it: set by Titan's measured Bond albedo, 0.265, against
 /// the 0.449 its air's scattering alone would give.
 pub const HAZE_ABSORPTION: f64 = 6.743;
+/// M55: the methane haze's depth in its star's light per unit of its index, absorbing over the
+/// air on the light's way down: set so that over the lit hemisphere it takes 1.5 of Titan's
+/// 3.6 W/m², what its stratosphere absorbs (McKay et al. 1991, after Robinson and Catling 2012;
+/// the Huygens probe's radiometers found 40 percent of the light absorbed above 80 km, Tomasko
+/// et al. 2008).
+pub const HAZE_SUNLIGHT: f64 = 8.128;
+/// M55: the share of what the haze absorbs its stratosphere sends back to space, the rest
+/// warming the air under it (McKay et al. 1991's anti-greenhouse): half where the stratosphere
+/// is thin in the infrared everywhere, all where nothing it sends down reaches the air; set by
+/// Titan's measured 93.7 K (Fulchignoni et al. 2005), where its column's troposphere stands on
+/// the adiabat from its ground (known: Titan's is radiative above some kilometres, warmer
+/// aloft, letting out more).
+pub const HAZE_RETURNED: f64 = 0.7031;
 /// Water vapour column model: 25 kg/m² at 288 K and 70% relative humidity, scaled by
 /// Clausius–Clapeyron with L / R_v = 5420 K and capped by the inventory.
 pub const WATER_COLUMN_REF: f64 = 25.0;

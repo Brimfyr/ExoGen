@@ -2137,14 +2137,67 @@ fn air_water(c: &Ctx) -> f64 {
 /// column's, from a third of the equilibrium temperature to four times it and a hundred kelvin
 /// more; none held back without an atmosphere.
 pub fn atmosphere_outgoing_share(c: &Ctx) -> Value {
+    Curve::new(streams_table(c).points()).into()
+}
+
+/// M55: the share of the ground's own radiation that reaches space through its air at each
+/// ground temperature, its column's; all of it without an atmosphere.
+pub fn atmosphere_window_share(c: &Ctx) -> Value {
+    Curve::new(streams_table(c).window_points()).into()
+}
+
+/// M55: the share of a black body's radiation the air sends down to its ground at each ground
+/// temperature, its column's; none without an atmosphere.
+pub fn atmosphere_downward_share(c: &Ctx) -> Value {
+    Curve::new(streams_table(c).down_points()).into()
+}
+
+/// The share of the sunlight a body absorbs that its air and ground keep (M55): all but what
+/// its haze sends back to space.
+pub fn sunlight_kept(c: &Ctx) -> f64 {
+    let absorbed = 1.0 - c.f64("atmosphere.bond_albedo");
+    (1.0 - c.f64("atmosphere.sunlight_returned") / absorbed.max(1e-9)).clamp(0.0, 1.0)
+}
+
+/// The column's streams over the ground's temperatures, from a third of the equilibrium
+/// temperature to four times it and a hundred kelvin more (F293, M55): computed once for each
+/// column, its three curves reading the same table.
+fn streams_table(c: &Ctx) -> std::sync::Arc<crate::radiation::Outgoing> {
+    use std::sync::{Arc, Mutex};
+    type Tables = Mutex<Vec<(Vec<u64>, Arc<crate::radiation::Outgoing>)>>;
+    static TABLES: Tables = Mutex::new(Vec::new());
     let t_eq = c.f64("atmosphere.equilibrium_temperature");
-    let table = match air_column(c, c.f64("atmosphere.surface_pressure"), t_eq) {
+    let pressure = c.f64("atmosphere.surface_pressure");
+    let mut key = vec![
+        t_eq.to_bits(),
+        pressure.to_bits(),
+        c.f64("body.gravity").to_bits(),
+        air_water(c).to_bits(),
+    ];
+    for (s, f) in c.map("atmosphere.composition") {
+        key.extend(s.bytes().map(u64::from));
+        key.push(f.to_bits());
+    }
+    let found = TABLES
+        .lock()
+        .ok()
+        .and_then(|t| t.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone()));
+    if let Some(table) = found {
+        return table;
+    }
+    let table = Arc::new(match air_column(c, pressure, t_eq) {
         Some(column) => {
             crate::radiation::Outgoing::of(&column, (t_eq / 3.0).max(5.0), 4.0 * t_eq + 100.0)
         }
         None => crate::radiation::Outgoing::none(),
-    };
-    Curve::new(table.points()).into()
+    });
+    if let Ok(mut tables) = TABLES.lock() {
+        if tables.len() >= STREAMS_TABLES_KEPT {
+            tables.remove(0);
+        }
+        tables.push((key, table.clone()));
+    }
+    table
 }
 
 pub fn atmosphere_equilibrium_temperature(c: &Ctx) -> Value {
@@ -2164,8 +2217,13 @@ pub fn atmosphere_surface_temperature_mean(c: &Ctx) -> Value {
     if p <= 0.0 {
         return t_eq.into();
     }
+    // What the air and the ground keep of the sunlight: all it absorbs but what its haze
+    // sends back to space (M55).
+    let returned = c.f64("atmosphere.sunlight_returned") * c.f64("orbit.insolation") / 4.0;
     match air_column(c, p, t_eq) {
-        Some(column) => column.surface_temperature(SIGMA_SB * t_eq.powi(4)).into(),
+        Some(column) => column
+            .surface_temperature((SIGMA_SB * t_eq.powi(4) - returned).max(1e-9))
+            .into(),
         None => t_eq.into(),
     }
 }
@@ -2216,7 +2274,8 @@ pub fn atmosphere_surface_temperature_history(c: &Ctx) -> Value {
             let p = pressures.eval(t).max(0.0);
             let share = air_share(p);
             let a = ground + share * (air_albedo(p) - ground);
-            let absorbed = light * (1.0 - a);
+            let haze = crate::radiation::tholin_production(methane, xuv, p);
+            let absorbed = light * (1.0 - a - crate::radiation::haze_returned(haze)).max(1e-9);
             let t_eq = (absorbed / SIGMA_SB).powf(0.25);
             let surface = if p > 0.0 {
                 crate::radiation::Column::new(
@@ -2469,9 +2528,11 @@ pub fn atmosphere_surface_temperature_warmest(c: &Ctx) -> Value {
         LOW_SUN_ALBEDO * (c.f64("atmosphere.column_mass") / LOW_SUN_COLUMN).clamp(0.0, 1.0);
     let bond = c.f64("atmosphere.bond_albedo");
     let held = (slope, c.f64("climate.transport_coefficient"));
+    // What the haze sends back to space never warms the ground (M55).
+    let kept = sunlight_kept(c);
     warmest_temperature(mean, held, |mu| {
         let (q, height) = sun(mu);
-        (1.0 - (bond + low_sun * (mean_height - height)).clamp(0.0, 1.0)) * q
+        (1.0 - (bond + low_sun * (mean_height - height)).clamp(0.0, 1.0)) * q * kept
     })
     .into()
 }
@@ -2534,6 +2595,22 @@ pub fn atmosphere_oxidant_availability(c: &Ctx) -> Value {
         * p_bar)
         .clamp(0.0, 1.0)
         .into()
+}
+
+/// M55: the share of its star's light the air's methane haze absorbs high and sends back to
+/// space (McKay et al. 1991's anti-greenhouse), never warming the ground or the air under it;
+/// none without an atmosphere.
+pub fn atmosphere_sunlight_returned(c: &Ctx) -> Value {
+    let p = c.f64("atmosphere.surface_pressure");
+    if p <= 0.0 {
+        return 0.0.into();
+    }
+    crate::radiation::haze_returned(crate::radiation::tholin_production(
+        c.map_get("atmosphere.composition", "CH4"),
+        c.f64("star.xuv_relative"),
+        p,
+    ))
+    .into()
 }
 
 pub fn atmosphere_haze_production(c: &Ctx) -> Value {
