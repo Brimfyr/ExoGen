@@ -31,6 +31,7 @@ pub mod radiation;
 pub mod rivers;
 pub mod rng;
 pub mod shade;
+pub mod snapshot;
 pub mod spharm;
 pub mod spin;
 pub mod stages;

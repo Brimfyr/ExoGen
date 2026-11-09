@@ -371,6 +371,21 @@ pub struct UnitInfo {
     pub name: String,
 }
 
+/// The working liquid (ADR 0007): what `liquid.exr` holds and how the ground shows through it.
+/// Where its depth H is above 0, ground of albedo A shows through it as, in each channel,
+/// R = R_deep + (A - R_deep) exp(-2 K H) (Maritorena, Morel and Gentili 1994).
+#[derive(Serialize)]
+pub struct LiquidInfo {
+    pub working_liquid: String,
+    /// The sea's surface above the datum, m, none where only lakes lie.
+    pub sea_level_m: Option<f64>,
+    pub deep_reflectance_linear: [f32; 3],
+    pub attenuation_per_m: [f32; 3],
+    /// The wavelengths the channels' attenuation is read at, nm.
+    pub channel_wavelengths_nm: [f64; 3],
+    pub evaluation: String,
+}
+
 #[derive(Serialize)]
 pub struct Sidecar {
     pub exogen_version: String,
@@ -393,6 +408,8 @@ pub struct Sidecar {
     pub water: Option<WaterInfo>,
     /// The rivers and the lakes (F277), where the body has water.
     pub rivers: Option<RiversInfo>,
+    /// The working liquid's depth and optics (ADR 0007), none where no liquid lies.
+    pub liquid: Option<LiquidInfo>,
     pub stage_outputs: BTreeMap<String, f64>,
     pub parameters: BTreeMap<String, ParameterInfo>,
     pub warnings: Vec<String>,
@@ -480,6 +497,10 @@ pub fn export(
         "height.png",
         "albedo.exr",
         "albedo.png",
+        "liquid.exr",
+        "liquid.png",
+        "snapshot.exr",
+        "snapshot.png",
         "shaded.png",
         "mask_liquid.png",
         "surface_age.exr",
@@ -603,7 +624,7 @@ pub fn export(
         MapInfo {
             file: "albedo.exr".into(),
             encoding: "float16 EXR RGB, linear reflectance".into(),
-            units: "reflectance".into(),
+            units: "reflectance of the ground itself, under its liquid too (ADR 0007)".into(),
             min: 0.0,
             max: 1.0,
             ..Default::default()
@@ -620,36 +641,131 @@ pub fn export(
         MapInfo {
             file: "albedo.png".into(),
             encoding: "8-bit sRGB PNG".into(),
-            units: "reflectance".into(),
+            units: "reflectance of the ground itself, under its liquid too (ADR 0007)".into(),
             min: 0.0,
             max: 1.0,
             ..Default::default()
         },
     );
 
-    // Shaded relief preview: the albedo, exposed to a common mean, lit from one fixed sun
-    // over the height map, the slopes exaggerated where the terrain is gentle.
+    // The liquid (ADR 0007): its depth over the ground, m, seas and lakes alike, its surface
+    // flat; an engine draws the ground through it by the optics the sidecar gives, at the sea
+    // level it sets.
+    let liquid_eq = to_equirectangular(&grid, out.layers.liquid.as_slice(), width, height_px);
+    let depth: Vec<f32> = liquid_eq.iter().map(|d| d.max(0.0)).collect();
+    let deepest = depth.iter().fold(0.0f32, |a, &d| a.max(d));
+    let depth_units =
+        "m of the working liquid over the ground, its surface flat; 0 where none lies";
+    write_exr_f32(
+        &settings.dir.join("liquid.exr"),
+        width,
+        height_px,
+        "depth",
+        &depth,
+    )?;
+    maps.insert(
+        "liquid".to_string(),
+        MapInfo {
+            file: "liquid.exr".into(),
+            encoding: "float32 EXR, channel depth".into(),
+            units: depth_units.into(),
+            min: 0.0,
+            max: deepest as f64,
+            ..Default::default()
+        },
+    );
+    write_png16(
+        &settings.dir.join("liquid.png"),
+        width,
+        height_px,
+        &depth,
+        0.0,
+        deepest.max(1e-6),
+    )?;
+    maps.insert(
+        "liquid_png".to_string(),
+        MapInfo {
+            file: "liquid.png".into(),
+            encoding: "16-bit grey PNG, linear from min to max".into(),
+            units: depth_units.into(),
+            min: 0.0,
+            max: deepest as f64,
+            ..Default::default()
+        },
+    );
+    let working = graph.str("volatiles.working_liquid");
+    let optics = crate::stages::materials::LiquidOptics::of(working);
+    let liquid = (deepest > 0.0).then(|| LiquidInfo {
+        working_liquid: working.to_string(),
+        sea_level_m: out.sea_level.is_finite().then_some(out.sea_level - datum_offset),
+        deep_reflectance_linear: optics.deep,
+        attenuation_per_m: optics.attenuation,
+        channel_wavelengths_nm: [612.0, 549.0, 464.0],
+        evaluation: "Where liquid.exr's depth H is above 0, the liquid's surface stands H over the ground, and the ground, of albedo A in albedo.exr, shows through it as R = R_deep + (A - R_deep) exp(-2 K H) in each channel, R_deep its deep reflectance and K its attenuation (Maritorena, Morel and Gentili 1994). At another sea level H is that level less height.exr's ground. snapshot.exr is this at ExoGen's own level, with the ices at the snapshot's phase over it.".into(),
+    });
+
+    // The snapshot (ADR 0007): the surface as it looks at the snapshot's season, the albedo
+    // under its liquid and the ices over it at the snapshot's phase as the cryosphere's maps
+    // draw them, composed on the grid and read between its cells as the albedo is.
+    let composed = crate::snapshot::snapshot(out, working);
+    let snap: Vec<Vec<f32>> = (0..3)
+        .map(|ch| {
+            let plane: Vec<f32> = composed.as_slice().iter().map(|c| c[ch]).collect();
+            to_equirectangular(&grid, &plane, width, height_px)
+        })
+        .collect();
+    let snapshot_units = "reflectance of the surface at the snapshot's season: the albedo under its liquid, the ices over it at the snapshot's phase (ADR 0007)";
+    write_exr_rgb(&settings.dir.join("snapshot.exr"), width, height_px, &snap)?;
+    maps.insert(
+        "snapshot".to_string(),
+        MapInfo {
+            file: "snapshot.exr".into(),
+            encoding: "float16 EXR RGB, linear reflectance".into(),
+            units: snapshot_units.into(),
+            min: 0.0,
+            max: 1.0,
+            ..Default::default()
+        },
+    );
+    write_png_srgb(&settings.dir.join("snapshot.png"), width, height_px, &snap)?;
+    maps.insert(
+        "snapshot_png".to_string(),
+        MapInfo {
+            file: "snapshot.png".into(),
+            encoding: "8-bit sRGB PNG".into(),
+            units: snapshot_units.into(),
+            min: 0.0,
+            max: 1.0,
+            ..Default::default()
+        },
+    );
+
+    // Shaded relief preview: the snapshot, exposed to a common mean, lit from one fixed sun
+    // over its surface, a liquid's flat (ADR 0007), the slopes exaggerated where the ground is
+    // gentle.
     let exaggeration =
         crate::shade::preview_exaggeration(&height_eq, width, height_px, graph.f64("body.radius"));
+    let surface_eq = to_equirectangular(
+        &grid,
+        crate::snapshot::surface(out).as_slice(),
+        width,
+        height_px,
+    );
     let shade = crate::shade::hillshade(
-        &height_eq,
+        &surface_eq,
         width,
         height_px,
         graph.f64("body.radius"),
         exaggeration,
     );
     let gain = crate::shade::preview_gain(
-        (0..width * height_px).map(|k| (channels[0][k] + channels[1][k] + channels[2][k]) / 3.0),
+        (0..width * height_px).map(|k| (snap[0][k] + snap[1][k] + snap[2][k]) / 3.0),
     );
     let lit: Vec<Vec<f32>> = (0..3)
         .map(|ch| {
             (0..width * height_px)
                 .map(|k| {
-                    crate::shade::lit(
-                        [channels[0][k], channels[1][k], channels[2][k]],
-                        shade[k],
-                        gain,
-                    )[ch]
+                    crate::shade::lit([snap[0][k], snap[1][k], snap[2][k]], shade[k], gain)[ch]
                 })
                 .collect()
         })
@@ -660,7 +776,7 @@ pub fn export(
         MapInfo {
             file: "shaded.png".into(),
             encoding: "8-bit sRGB PNG".into(),
-            units: "preview: albedo exposed to a common mean, lit from the upper left".into(),
+            units: "preview: the snapshot exposed to a common mean, lit from the upper left over its surface, a liquid's flat".into(),
             min: 0.0,
             max: 1.0,
             ..Default::default()
@@ -668,7 +784,6 @@ pub fn export(
     );
 
     // Ocean mask.
-    let liquid_eq = to_equirectangular(&grid, out.layers.liquid.as_slice(), width, height_px);
     let mask: Vec<u8> = liquid_eq
         .iter()
         .map(|d| if *d > 0.0 { 255 } else { 0 })
@@ -1722,6 +1837,7 @@ pub fn export(
         wind,
         water,
         rivers,
+        liquid,
         stage_outputs,
         parameters,
         warnings: graph

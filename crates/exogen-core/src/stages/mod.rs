@@ -447,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 224;
+pub const FINISH_VERSION: u64 = 225;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -4633,6 +4633,9 @@ mod tests {
             ("earth_gets_an_ocean_covering_most_of_the_surface", &|| {
                 earth_gets_an_ocean_covering_most_of_the_surface(&earth)
             }),
+            ("the_sea_shows_its_floor_only_through_its_water", &|| {
+                the_sea_shows_its_floor_only_through_its_water(&earth)
+            }),
             ("mercury_takes_up_its_contraction_in_scarps", &|| {
                 mercury_takes_up_its_contraction_in_scarps(&mercury, &moon)
             }),
@@ -4992,6 +4995,60 @@ mod tests {
             out.finish.ocean_fraction > 0.5 && out.finish.ocean_fraction < 0.9,
             "liquid fraction {}",
             out.finish.ocean_fraction
+        );
+    }
+
+    /// ADR 0007: the Earth-like's albedo is its ground's own under its sea, none of it the
+    /// water's deep colour; its snapshot the water's deep colour over the open deep sea and the
+    /// albedo itself on its land bare of ice; and the surface its relief is lit over flat at
+    /// its sea's level over all of its liquid but its lakes.
+    fn the_sea_shows_its_floor_only_through_its_water(body: &Body) {
+        use crate::constants::WATER_DEEP_REFLECTANCE;
+        let out = &body.out.finish;
+        let grid = out.grid;
+        let liquid = out.layers.liquid.as_slice();
+        let ice = out.cryosphere_ice.as_slice();
+        let snapshot = crate::snapshot::snapshot(out, body.graph.str("volatiles.working_liquid"));
+        let surface = crate::snapshot::surface(out);
+        let (mut red, mut sea, mut level, mut whole) = (0.0, 0.0, 0.0, 0.0);
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            let (a, s) = (out.albedo.get(c), snapshot.get(c));
+            if liquid[k] <= 0.0 {
+                if ice[k] == 0.0 {
+                    assert_eq!(a, s, "bare land at {k}");
+                }
+                continue;
+            }
+            let area = grid.cell_area(c);
+            assert!(
+                a.iter()
+                    .zip(&WATER_DEEP_REFLECTANCE)
+                    .any(|(x, w)| (x - w).abs() > 1e-3),
+                "the sea's colour as the ground's at {k}: {a:?}"
+            );
+            if liquid[k] > 500.0 && ice[k] == 0.0 {
+                for (x, w) in s.iter().zip(&WATER_DEEP_REFLECTANCE) {
+                    assert!((x - w).abs() < 2e-3, "deep sea at {k}: {s:?}");
+                }
+            }
+            red += area * a[0] as f64;
+            sea += area;
+            let off = surface.get(c) as f64 - out.sea_level;
+            if off.abs() < 1.0 {
+                level += area;
+            }
+            whole += area;
+        }
+        let red = red / sea;
+        assert!(
+            red > 3.0 * WATER_DEEP_REFLECTANCE[0] as f64,
+            "the seabed's red {red}"
+        );
+        assert!(
+            level > 0.95 * whole,
+            "{} of the liquid at the sea's level",
+            level / whole
         );
     }
 

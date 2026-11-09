@@ -96,12 +96,12 @@ impl App {
             result_finish_key: 0,
             previews: Default::default(),
             pending_preview: None,
-            channel: Channel::Albedo,
+            channel: Channel::Snapshot,
             view: View::Map,
             keyframe: None,
             globe: GlobeView::default(),
             image: None,
-            image_key: (Channel::Albedo, None, 0),
+            image_key: (Channel::Snapshot, None, 0),
             map_texture: None,
             globe_texture: None,
             globe_dirty: true,
@@ -235,7 +235,10 @@ impl App {
             &out,
             self.channel,
             PREVIEW_WIDTH,
-            self.graph.f64("body.radius"),
+            (
+                self.graph.f64("body.radius"),
+                self.graph.str("volatiles.working_liquid"),
+            ),
         ));
         let color = preview::to_color_image(&img, self.globe.exposure);
         self.map_texture =
@@ -518,6 +521,7 @@ impl App {
                 }
             }
             if let Some(img) = &self.image
+                && self.channel != Channel::Snapshot
                 && self.channel != Channel::Albedo
                 && self.channel != Channel::Shaded
                 && self.channel != Channel::Unit

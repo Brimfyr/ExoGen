@@ -13,6 +13,7 @@ use exogen_core::stages::FinishOutput;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Channel {
+    Snapshot,
     Albedo,
     Shaded,
     Height,
@@ -25,7 +26,8 @@ pub enum Channel {
 }
 
 impl Channel {
-    pub const ALL: [Channel; 9] = [
+    pub const ALL: [Channel; 10] = [
+        Channel::Snapshot,
         Channel::Albedo,
         Channel::Shaded,
         Channel::Height,
@@ -39,6 +41,7 @@ impl Channel {
 
     pub fn label(self) -> &'static str {
         match self {
+            Channel::Snapshot => "snapshot",
             Channel::Albedo => "albedo",
             Channel::Shaded => "shaded relief",
             Channel::Height => "height",
@@ -106,12 +109,13 @@ fn unit_colour(id: u16) -> [f32; 3] {
     }
 }
 
-/// Render a channel of a finished state to an equirectangular image.
+/// Render a channel of a finished state to an equirectangular image, `working` the body's
+/// working liquid, whose optics the snapshot draws its liquid by (ADR 0007).
 pub fn build_equirect(
     out: &FinishOutput,
     channel: Channel,
     width: usize,
-    body_radius: f64,
+    (body_radius, working): (f64, &str),
 ) -> EquirectRgb {
     let height = width / 2;
     let grid = out.grid;
@@ -119,9 +123,15 @@ pub fn build_equirect(
     let mut rgb = vec![[0.0f32; 3]; n];
     let mut range = (0.0f32, 1.0f32);
     match channel {
-        Channel::Albedo | Channel::Shaded => {
+        Channel::Snapshot | Channel::Albedo | Channel::Shaded => {
+            // The albedo is the ground's own; the snapshot draws its liquid and its ices over
+            // it, and the shaded relief lights the snapshot (ADR 0007).
+            let colour = match channel {
+                Channel::Albedo => out.albedo.clone(),
+                _ => exogen_core::snapshot::snapshot(out, working),
+            };
             for ch in 0..3 {
-                let plane: Vec<f32> = out.albedo.as_slice().iter().map(|c| c[ch]).collect();
+                let plane: Vec<f32> = colour.as_slice().iter().map(|c| c[ch]).collect();
                 let eq = to_equirectangular(&grid, &plane, width, height);
                 for (k, v) in eq.iter().enumerate() {
                     rgb[k][ch] = *v;
@@ -131,6 +141,8 @@ pub fn build_equirect(
                 let eq = to_equirectangular(&grid, out.height.as_slice(), width, height);
                 let exaggeration =
                     exogen_core::shade::preview_exaggeration(&eq, width, height, body_radius);
+                let surface = exogen_core::snapshot::surface(out);
+                let eq = to_equirectangular(&grid, surface.as_slice(), width, height);
                 let shade =
                     exogen_core::shade::hillshade(&eq, width, height, body_radius, exaggeration);
                 let gain = exogen_core::shade::preview_gain(

@@ -10,3 +10,4 @@ One file per decision. Each record states the context, the decision and its cons
 | [0004](0004-determinism.md) | Determinism and random numbers | Accepted |
 | [0005](0005-stack.md) | Language, libraries and workspace layout | Accepted |
 | [0006](0006-cryosphere-export.md) | The cryosphere's export | Accepted |
+| [0007](0007-liquid-and-snapshot.md) | The liquid apart from the albedo, and the snapshot | Accepted |

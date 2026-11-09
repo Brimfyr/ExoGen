@@ -729,6 +729,21 @@ How it went:
 - **The invariants.** The sunlight's split keeps what a place absorbs; the air's own radiation rises as it warms where its air stands; a bare step settles under its sunlight; a frozen body's air holds its ice's vapour; a wet surface dries under an unsaturated air; Mars's air never stands under its frost point; a thin place behind an edge does not notch it: each failed under its planted bug.
 - **The suite.** 384 tests passed with the whole-body tests in 14.8 minutes; the Earth-like's pole's sea ice 3.8 m thick by the end of its winter, inside the 0.5 to 4.4 measured, where 5.4 under F298: its check's bound restored. FINISH_VERSION 224.
 
+## The sixtieth milestone: the liquid apart and the snapshot
+
+- **F310.** The albedo the ground's own colour under its liquid too; the liquid its own map, its depth, with its optics in the sidecar, an engine composing them at any sea level (the user's choice, 2026-11-09; ADR 0007).
+- **F311.** The snapshot: the surface at the snapshot's season, the ground under its liquid and the season's ices over it.
+- **F312.** The shaded preview lit over its liquid's flat surface.
+
+How it went:
+
+- **What the user saw.** The full map sets of Earth, Venus, Mars and TRAPPIST-1e: a noise texture over the seas in the shaded maps, the albedo without its season's ice, and planet maps whose beaches turn blue. The shaded preview lit the seabed; the albedo drew a submerged cell in the liquid's colour alone, its depth's tint carrying the seabed's relief into the coastal water. A scan of every map's texture over the liquid against its land found these two alone; the climate's maps lie smooth over the sea.
+- **The design.** One meaning per map, as the cryosphere's (ADR 0006): the ground, the liquid's depth, the ices; the snapshot their composite at ExoGen's own sea level and season, for viewing and for an engine that wants it baked.
+- **The invariants.** The ground shows through its liquid by the shallow-water model, the red going first; the Earth-like's seabed keeps its own colour, its snapshot the water's deep colour over the open deep sea and the albedo itself on its bare land, and the surface its relief is lit over flat at its sea's level: each failed under its planted bug.
+- **Mars.** The user's two spots: a lower triangle with straight edges where the great basin's ejecta, the dichotomy's edge and a curved rim meet, and a staircase just east of it where a highland crater drops to the lowlands, are the next milestone; the jagged patches north of them are lava stopped at the dichotomy's wall under ejecta, as the user read them.
+- **Seen on the way.** The snapshot shows snow lying on TRAPPIST-1e's continent under its star, which stands cooler than the sea about it with a warm fringe along its coast; and Mars's ground is near grey, some 88, 84 and 81 of 255 in sRGB's red, green and blue, where Mars's is orange-red. Both are noted to look into.
+- **The suite.** 385 tests passed with the whole-body tests in 15.3 minutes. FINISH_VERSION 225.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

@@ -2444,6 +2444,18 @@ pub const SEA_ICE_BASE_FLUX: f64 = 2.0;
 pub const SEA_ICE_COLOUR: [f32; 3] = [0.74, 0.78, 0.82];
 pub const SEA_ICE_THINNEST_M: f64 = 0.01;
 pub const SEA_ICE_NEWTON_STEPS: usize = 8;
+/// ADR 0007: a deep body of the working liquid's reflectance, linear RGB, as the albedo drew
+/// it: water's dark blue, the hydrocarbons' near black, the others grey; stated.
+pub const WATER_DEEP_REFLECTANCE: [f32; 3] = [0.012, 0.035, 0.085];
+pub const HYDROCARBON_DEEP_REFLECTANCE: [f32; 3] = [0.02, 0.02, 0.015];
+pub const LIQUID_DEEP_REFLECTANCE: [f32; 3] = [0.03, 0.03, 0.03];
+/// ADR 0007: water's light's diffuse attenuation, 1/m, in the red, green and blue channels:
+/// pure water's absorption at the sRGB primaries' dominant wavelengths, 612, 549 and 464 nm
+/// (Pope and Fry 1997), clear water's attenuation; red light gone within a few metres, blue
+/// seen through tens.
+pub const WATER_ATTENUATION: [f32; 3] = [0.267, 0.0565, 0.0101];
+/// ADR 0007: the other liquids' attenuation, grey at water's green until measured; stated.
+pub const LIQUID_STATED_ATTENUATION: [f32; 3] = [0.0565, 0.0565, 0.0565];
 /// M59: the most times the ground a frost leaves bare within a step re-linearises its implicit
 /// step about its own end, and the change in its surface's temperature, K, under which it has
 /// settled: Newton's steps on its radiation, which from the frost's point, its slope small,

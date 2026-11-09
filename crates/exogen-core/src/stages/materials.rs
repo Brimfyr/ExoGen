@@ -981,8 +981,51 @@ fn renewed_ice_mature(graph: &ParamGraph, ice: [f32; 3], regolith: [f32; 3]) -> 
     lerp3(ice, regolith, (REGOLITH_EXCHANGE * old) as f32)
 }
 
+/// The optics of a body's working liquid (ADR 0007): the reflectance of a body of it too deep
+/// to show its floor, linear RGB, and its light's diffuse attenuation, 1/m, in each channel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LiquidOptics {
+    pub deep: [f32; 3],
+    pub attenuation: [f32; 3],
+}
+
+impl LiquidOptics {
+    /// The working liquid's optics: water's its own absorption (WATER_ATTENUATION), the
+    /// others' stated until measured.
+    pub fn of(working: &str) -> Self {
+        match working {
+            "water" | "ammonia_water" => Self {
+                deep: WATER_DEEP_REFLECTANCE,
+                attenuation: WATER_ATTENUATION,
+            },
+            "methane_ethane" => Self {
+                deep: HYDROCARBON_DEEP_REFLECTANCE,
+                attenuation: LIQUID_STATED_ATTENUATION,
+            },
+            _ => Self {
+                deep: LIQUID_DEEP_REFLECTANCE,
+                attenuation: LIQUID_STATED_ATTENUATION,
+            },
+        }
+    }
+
+    /// What ground of reflectance `ground` reflects under `depth` m of the liquid (ADR 0007),
+    /// by the shallow-water model of Maritorena, Morel and Gentili 1994: in each channel
+    /// R = R_deep + (A - R_deep) e^(-2 K H), the ground's own where no liquid lies.
+    pub fn over(&self, ground: [f32; 3], depth: f32) -> [f32; 3] {
+        if depth <= 0.0 {
+            return ground;
+        }
+        std::array::from_fn(|i| {
+            let shown = (-2.0 * self.attenuation[i] * depth).exp();
+            self.deep[i] + (ground[i] - self.deep[i]) * shown
+        })
+    }
+}
+
 /// Linear-reflectance albedo of the surface, an icy surface's frost where `year`'s mean
-/// temperatures leave it cold (F256).
+/// temperatures leave it cold (F256): the ground's own colour, under a liquid too, whose own
+/// colour its optics give (ADR 0007).
 pub fn albedo(
     graph: &ParamGraph,
     layers: &LayerSet,
@@ -1050,13 +1093,7 @@ pub fn albedo(
             lava_member.mature
         },
     };
-    let (deep, shallow): ([f32; 3], [f32; 3]) = match graph.str("volatiles.working_liquid") {
-        "water" | "ammonia_water" => ([0.012, 0.035, 0.085], [0.06, 0.22, 0.26]),
-        "methane_ethane" => ([0.02, 0.02, 0.015], [0.07, 0.07, 0.05]),
-        _ => ([0.03, 0.03, 0.03], [0.08, 0.08, 0.08]),
-    };
     let grid = layers.grid;
-    let liquid = layers.liquid.as_slice();
     let units = layers.unit_id.as_slice();
     let deep_f = layers.deep.as_slice();
     let melt_f = layers.melt.as_slice();
@@ -1211,122 +1248,117 @@ pub fn albedo(
                     _ => lerp3(ground, frost_colour, frost),
                 };
             }
-            if liquid[k] > 0.0 {
-                let t = (-liquid[k] / 60.0).exp();
-                lerp3(deep, shallow, t)
-            } else {
-                let pair = match units[k] {
-                    UNIT_CONTINENTAL => continental,
-                    UNIT_OCEANIC => oceanic,
-                    _ => base,
-                };
-                // Ice renewed from below stays clean under whatever cuts it.
-                let pair = if clean_f[k] > 0.0 {
-                    Pair {
-                        fresh: lerp3(pair.fresh, clean_ice.fresh, clean_f[k]),
-                        mature: lerp3(pair.mature, clean_ice.mature, clean_f[k]),
-                    }
-                } else {
-                    pair
-                };
-                // The substrate: deep-sourced material by its fraction. Lava lies over it
-                // by its coverage, mixed sideways into its surroundings, so a thin flow
-                // shows the substrate through and an old contact is blurred; then melt
-                // over the fresh surface.
-                let fresh = lerp3(pair.fresh, deep_pair.fresh, deep_f[k]);
-                let mature = lerp3(pair.mature, deep_pair.mature, deep_f[k]);
-                let c = mixed[k].clamp(0.0, 1.0);
-                let (fresh, mature) = if c > 0.0
-                    && !salted(units[k])
-                    && units[k] != UNIT_CONTINENTAL
-                    && units[k] != UNIT_OCEANIC
-                {
-                    // The lava's tint, mixed sideways with its coverage (F95).
-                    let t = if mixed[k] > 1e-4 {
-                        mixed_tinted[k] / mixed[k]
-                    } else {
-                        tint(k)
-                    };
-                    let tinted = |v: [f32; 3]| [v[0] * t, v[1] * t, v[2] * t];
-                    (
-                        lerp3(fresh, tinted(lava.fresh), c),
-                        lerp3(mature, tinted(lava.mature), c),
-                    )
-                } else {
-                    (fresh, mature)
-                };
-                // A ray freshens the ground its secondaries dug up, not the melt of an
-                // older crater it crosses, which keeps the maturity of its own age (F91).
-                let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
-                let colour = lerp3(
-                    lerp3(fresh, mature, effective),
-                    lerp3(melt_pair.fresh, mature, m[k]),
-                    melt_f[k],
-                );
-                // A crack's margins, stained red-brown by the non-ice material it brought
-                // up, under whatever frost lies on them (F78).
-                let colour = if stain_f[k] > 0.0 {
-                    lerp3(colour, salt_colour, stain_f[k].clamp(0.0, 1.0))
-                } else {
-                    colour
-                };
-                match &frost {
-                    Some(f) => {
-                        let d = grid.center(grid.cell(k));
-                        // Frost: what the cold latitudes keep, and what a plume lays down.
-                        let tilt = slope.map_or(0.0, |s| s.as_slice()[k] as f64);
-                        let mut frost_share = f.at_slope(d, tilt);
-                        let mut burial = f64::INFINITY;
-                        if let Some(fall) = &fallout {
-                            frost_share = frost_share.max(fall.frost_at(d));
-                            burial = fall.burial_gyr(d);
-                        }
-                        let colour = lerp3(colour, frost_colour, frost_share as f32);
-                        // The ocean's salts: in a crack or a chaos matrix fading under
-                        // frost, on a dome or a deep crater's floor darkening with age,
-                        // and under a plume buried as fast as they fall.
-                        let fade = match units[k] {
-                            UNIT_LINEA | UNIT_BAND | UNIT_CHAOS => Some(SALT_FADE_GYR),
-                            UNIT_CRYODOME | UNIT_CRATER_FLOOR | UNIT_DEEP_FLOOR => {
-                                Some(FACULA_FADE_GYR)
-                            }
-                            _ => None,
-                        };
-                        let colour = match fade {
-                            Some(fade) if cover_f[k] > 0.0 => {
-                                let age = (present - ages_f[k] as f64).max(0.0);
-                                let salt = cover_f[k] * (-age / fade.min(burial)).exp() as f32;
-                                lerp3(colour, salt_colour, salt.clamp(0.0, 1.0))
-                            }
-                            _ => colour,
-                        };
-                        // The trailing hemisphere's plasma darkens and reddens the ice
-                        // in the time it takes to process the optical surface (F58); a
-                        // plume's fallout that buries that surface first hides the
-                        // darkening by the ratio of the two times.
-                        if trailing > 0.0 {
-                            let tau = TRAILING_DARKENING_GYR / trailing;
-                            let exposed = if burial.is_finite() {
-                                burial / (burial + tau)
-                            } else {
-                                1.0
-                            };
-                            let w = (trailing
-                                * exposed
-                                * dot(d, crate::stages::cryo::TRAILING_APEX).max(0.0).powi(2))
-                                as f32;
-                            let tinted = [
-                                colour[0] * TRAILING_TINT[0],
-                                colour[1] * TRAILING_TINT[1],
-                                colour[2] * TRAILING_TINT[2],
-                            ];
-                            lerp3(colour, tinted, w)
-                        } else {
-                            colour
-                        }
-                    }
-                    None => colour,
+            let pair = match units[k] {
+                UNIT_CONTINENTAL => continental,
+                UNIT_OCEANIC => oceanic,
+                _ => base,
+            };
+            // Ice renewed from below stays clean under whatever cuts it.
+            let pair = if clean_f[k] > 0.0 {
+                Pair {
+                    fresh: lerp3(pair.fresh, clean_ice.fresh, clean_f[k]),
+                    mature: lerp3(pair.mature, clean_ice.mature, clean_f[k]),
                 }
+            } else {
+                pair
+            };
+            // The substrate: deep-sourced material by its fraction. Lava lies over it
+            // by its coverage, mixed sideways into its surroundings, so a thin flow
+            // shows the substrate through and an old contact is blurred; then melt
+            // over the fresh surface.
+            let fresh = lerp3(pair.fresh, deep_pair.fresh, deep_f[k]);
+            let mature = lerp3(pair.mature, deep_pair.mature, deep_f[k]);
+            let c = mixed[k].clamp(0.0, 1.0);
+            let (fresh, mature) = if c > 0.0
+                && !salted(units[k])
+                && units[k] != UNIT_CONTINENTAL
+                && units[k] != UNIT_OCEANIC
+            {
+                // The lava's tint, mixed sideways with its coverage (F95).
+                let t = if mixed[k] > 1e-4 {
+                    mixed_tinted[k] / mixed[k]
+                } else {
+                    tint(k)
+                };
+                let tinted = |v: [f32; 3]| [v[0] * t, v[1] * t, v[2] * t];
+                (
+                    lerp3(fresh, tinted(lava.fresh), c),
+                    lerp3(mature, tinted(lava.mature), c),
+                )
+            } else {
+                (fresh, mature)
+            };
+            // A ray freshens the ground its secondaries dug up, not the melt of an
+            // older crater it crosses, which keeps the maturity of its own age (F91).
+            let effective = (m[k] * (1.0 - r[k])).clamp(0.0, 1.0);
+            let colour = lerp3(
+                lerp3(fresh, mature, effective),
+                lerp3(melt_pair.fresh, mature, m[k]),
+                melt_f[k],
+            );
+            // A crack's margins, stained red-brown by the non-ice material it brought
+            // up, under whatever frost lies on them (F78).
+            let colour = if stain_f[k] > 0.0 {
+                lerp3(colour, salt_colour, stain_f[k].clamp(0.0, 1.0))
+            } else {
+                colour
+            };
+            match &frost {
+                Some(f) => {
+                    let d = grid.center(grid.cell(k));
+                    // Frost: what the cold latitudes keep, and what a plume lays down.
+                    let tilt = slope.map_or(0.0, |s| s.as_slice()[k] as f64);
+                    let mut frost_share = f.at_slope(d, tilt);
+                    let mut burial = f64::INFINITY;
+                    if let Some(fall) = &fallout {
+                        frost_share = frost_share.max(fall.frost_at(d));
+                        burial = fall.burial_gyr(d);
+                    }
+                    let colour = lerp3(colour, frost_colour, frost_share as f32);
+                    // The ocean's salts: in a crack or a chaos matrix fading under
+                    // frost, on a dome or a deep crater's floor darkening with age,
+                    // and under a plume buried as fast as they fall.
+                    let fade = match units[k] {
+                        UNIT_LINEA | UNIT_BAND | UNIT_CHAOS => Some(SALT_FADE_GYR),
+                        UNIT_CRYODOME | UNIT_CRATER_FLOOR | UNIT_DEEP_FLOOR => {
+                            Some(FACULA_FADE_GYR)
+                        }
+                        _ => None,
+                    };
+                    let colour = match fade {
+                        Some(fade) if cover_f[k] > 0.0 => {
+                            let age = (present - ages_f[k] as f64).max(0.0);
+                            let salt = cover_f[k] * (-age / fade.min(burial)).exp() as f32;
+                            lerp3(colour, salt_colour, salt.clamp(0.0, 1.0))
+                        }
+                        _ => colour,
+                    };
+                    // The trailing hemisphere's plasma darkens and reddens the ice
+                    // in the time it takes to process the optical surface (F58); a
+                    // plume's fallout that buries that surface first hides the
+                    // darkening by the ratio of the two times.
+                    if trailing > 0.0 {
+                        let tau = TRAILING_DARKENING_GYR / trailing;
+                        let exposed = if burial.is_finite() {
+                            burial / (burial + tau)
+                        } else {
+                            1.0
+                        };
+                        let w = (trailing
+                            * exposed
+                            * dot(d, crate::stages::cryo::TRAILING_APEX).max(0.0).powi(2))
+                            as f32;
+                        let tinted = [
+                            colour[0] * TRAILING_TINT[0],
+                            colour[1] * TRAILING_TINT[1],
+                            colour[2] * TRAILING_TINT[2],
+                        ];
+                        lerp3(colour, tinted, w)
+                    } else {
+                        colour
+                    }
+                }
+                None => colour,
             }
         })
         .collect();
@@ -1339,6 +1371,38 @@ pub fn albedo(
 mod tests {
     use super::*;
     use crate::grid::Cell;
+
+    /// ADR 0007: the ground shows through its liquid by the shallow-water model: all of it
+    /// under none, the deep reflectance under a deep sea, the red going first: a sandy floor
+    /// under a metre of water still its own colour, more than half of it in every channel, its
+    /// red still near its blue where the albedo drew the liquid's shallow tint over it, its red
+    /// a quarter of its blue; under ten metres its red gone and its blue still mostly its own.
+    #[test]
+    fn the_ground_shows_through_its_liquid_the_red_going_first() {
+        let water = LiquidOptics::of("water");
+        let sand = [0.4f32, 0.35, 0.25];
+        assert_eq!(water.over(sand, 0.0), sand);
+        let deep = water.over(sand, 2000.0);
+        for (d, w) in deep.iter().zip(&WATER_DEEP_REFLECTANCE) {
+            assert!((d - w).abs() < 1e-4, "{deep:?}");
+        }
+        let one = water.over(sand, 1.0);
+        assert!(one.iter().zip(&sand).all(|(a, b)| *a > 0.5 * b), "{one:?}");
+        assert!(one[0] > 0.8 * one[2], "{one:?}");
+        let ten = water.over(sand, 10.0);
+        assert!(ten[0] < 0.02 && ten[2] > 0.2, "{ten:?}");
+        let mut last = sand;
+        for depth in [0.5f32, 2.0, 8.0, 30.0, 120.0] {
+            let now = water.over(sand, depth);
+            for i in 0..3 {
+                assert!(now[i] <= last[i] + 1e-6, "{depth}: {now:?} after {last:?}");
+            }
+            last = now;
+        }
+        let hydrocarbons = LiquidOptics::of("methane_ethane");
+        let grey = hydrocarbons.over([0.3; 3], 5.0);
+        assert!((grey[0] - grey[2]).abs() < 0.02, "{grey:?}");
+    }
 
     #[test]
     fn materials_come_from_the_processes_that_make_them() {
