@@ -2052,6 +2052,20 @@ pub const HAZE_SUNLIGHT: f64 = 8.128;
 /// the adiabat from its ground (known: Titan's is radiative above some kilometres, warmer
 /// aloft, letting out more).
 pub const HAZE_RETURNED: f64 = 0.7031;
+/// M58: methane's grey depth in its star's light per kg/m² of it over the ground, absorbing
+/// under the haze in the air the cycle carries: set so that 10 percent of Titan's light
+/// reaches its ground (Horst 2017; 11 percent, Tomasko et al. 2005) as the cycle's split
+/// reads it at its Bond albedo over the lit hemisphere, its methane 3,113 kg/m².
+pub const METHANE_SUNLIGHT: f64 = 2.872e-4;
+/// M58: the magnification of the vertical path for the light the ground reflects up through
+/// its air, diffuse (Lacis and Hansen 1974).
+pub const SUNLIGHT_UP_PATH: f64 = 1.66;
+/// M58: the clouds' grey depth in its star's light per unit of their stated depth in the
+/// infrared (WATER_CLOUD_DEPTH), absorbing in the air the cycle carries with what else takes
+/// the light there but water vapour, ozone and aerosols with them: set so that Earth's ground
+/// keeps 161 of its 340 W/m² (Wild et al. 2013) as the cycle's split reads it at the planet's
+/// albedo over the lit hemisphere, its air then taking 77 (79 measured).
+pub const CLOUD_SUNLIGHT: f64 = 0.1633;
 /// Water vapour column model: 25 kg/m² at 288 K and 70% relative humidity, scaled by
 /// Clausius–Clapeyron with L / R_v = 5420 K and capped by the inventory.
 pub const WATER_COLUMN_REF: f64 = 25.0;
@@ -2430,6 +2444,11 @@ pub const SEA_ICE_BASE_FLUX: f64 = 2.0;
 pub const SEA_ICE_COLOUR: [f32; 3] = [0.74, 0.78, 0.82];
 pub const SEA_ICE_THINNEST_M: f64 = 0.01;
 pub const SEA_ICE_NEWTON_STEPS: usize = 8;
+/// M59: the most times the ground a frost leaves bare within a step re-linearises its implicit
+/// step about its own end, and the change in its surface's temperature, K, under which it has
+/// settled: Newton's steps on its radiation, which from the frost's point, its slope small,
+/// overshot by some 80 K once.
+pub const BARE_STEP_NEWTON: (usize, f64) = (16, 1e-3);
 /// F244: the sea ice that hides the sea's colour, kg/m²: some 5 cm, a floe's marginal ice.
 pub const SEA_ICE_COVER_MASS: f64 = 50.0;
 /// F244: the albedo of melting sea ice, its snow wet and its ponds open (the Arctic's

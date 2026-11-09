@@ -710,6 +710,25 @@ How it went:
 - **Venus.** Its ridges 60.4 percent below its mean height, its thrusts 524 km.
 - **The suite.** 378 tests passed with the whole-body tests in 15.7 minutes, the climate's work in the tree set aside for the run. The ground's own budget is now the fifty-ninth milestone.
 
+## The fifty-ninth milestone: the ground's own budget
+
+- **F303.** The ground and its air keep their own radiation, the ground taking its air's downward stream and the air its ground's light outside its window, exchanging heat by turbulence alone: the budget Titan's methane needs (the user, 2026-11-08).
+- **F304.** The sunlight split by the sun's height: the haze high, water vapour on its slant path, methane and the clouds grey, set by Titan's ground's 10 percent and Earth's 161 W/m².
+- **F305.** Penman and Monteith's drying: a wet surface gives its air the latent heat its deficit under saturation draws, at each place's own wind and saturation.
+- **F306.** The frost's own gas snows out of air cooled past its point, its latent heat holding the air there.
+- **F307.** A body whose water has no liquid to evaporate holds the vapour of its ice, the column at its equilibrium temperature.
+- **F308.** The ground a frost leaves bare within a step settles where its sunlight holds it.
+- **F309.** The ice behind its edge read along it, as its position is.
+
+How it went:
+
+- **The split alone.** With the sunlight split and the ground and air apart, four whole-body checks failed: the Earth-like's year 291.2 K against its steady 286.5 and its rain 1,800 kg/m² a year, Titan's contrast, TRAPPIST-1e's eye edge and Mars's water, gathered all at its north pole. The Earth-like's ground ran 4 to 5 K over its air, since its latent heat went only by its warmth over an air held saturated; Penman and Monteith's term for the air's deficit brought it to 288.2 K at its own wind, its rain 1,292.
+- **The first pass.** The year's first pass runs before its moisture, its air saturated. The user chose to read the checks of a year's mean, its seasons' air and its water from the pass at its own wind, and to mark Titan's shortfalls known: its ground wet everywhere, its unsaturated air cools it to 90.5 K against its steady 94.0, its contrast none. The Earth-like's seasons' mean stands 1.08 K over its steady balance, its ground over the balance's one temperature by what it sheds to its air: the user widened the bound to 1.5 K.
+- **Mars's water.** The vapour over the water's ice in its traps stood four orders of magnitude above what it was, by two causes found in turn. Its polar winter air fell to 61 K, the share of its frost's light it takes read at its own warmth coming to nothing: now its carbon dioxide snows out at its frost point (F306); reading that share at the ground's warmth instead ran its summer air away and was dropped. Its south polar summer air stood at 349 K for a step, over its air's column made opaque by an Earth-like vapour: the user chose the frozen body's vapour (F307), and the spike was the frost's last step bare, linearised about the frost's point (F308), which stood before this milestone too (343 K) without reaching the ice. Mars's water now gathers 0.59 north and 0.41 south.
+- **The eye's edge.** The user saw the whole body's map, then the edge's close-up: four notches under places whose ice only just held. With the ice behind the edge read along it the edge steps 0.10 degrees. The eye is round, its wind blowing in from both sides alike; the superrotation that shifts it east waits for the weather model (5G).
+- **The invariants.** The sunlight's split keeps what a place absorbs; the air's own radiation rises as it warms where its air stands; a bare step settles under its sunlight; a frozen body's air holds its ice's vapour; a wet surface dries under an unsaturated air; Mars's air never stands under its frost point; a thin place behind an edge does not notch it: each failed under its planted bug.
+- **The suite.** 384 tests passed with the whole-body tests in 14.8 minutes; the Earth-like's pole's sea ice 3.8 m thick by the end of its winter, inside the 0.5 to 4.4 measured, where 5.4 under F298: its check's bound restored. FINISH_VERSION 224.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

@@ -2163,6 +2163,13 @@ pub fn sunlight_kept(c: &Ctx) -> f64 {
 /// temperature to four times it and a hundred kelvin more (F293, M55): computed once for each
 /// column, its three curves reading the same table.
 fn streams_table(c: &Ctx) -> std::sync::Arc<crate::radiation::Outgoing> {
+    streams_table_to(c, f64::INFINITY)
+}
+
+/// The column's streams as `streams_table`'s, its vapour no more than the vapour law's column
+/// at `most` K (M59): the climate's where the body's water has no liquid to evaporate, which
+/// its working liquid, read after the mean temperature these streams set, tells.
+pub fn streams_table_to(c: &Ctx, most: f64) -> std::sync::Arc<crate::radiation::Outgoing> {
     use std::sync::{Arc, Mutex};
     type Tables = Mutex<Vec<(Vec<u64>, Arc<crate::radiation::Outgoing>)>>;
     static TABLES: Tables = Mutex::new(Vec::new());
@@ -2173,6 +2180,7 @@ fn streams_table(c: &Ctx) -> std::sync::Arc<crate::radiation::Outgoing> {
         pressure.to_bits(),
         c.f64("body.gravity").to_bits(),
         air_water(c).to_bits(),
+        most.to_bits(),
     ];
     for (s, f) in c.map("atmosphere.composition") {
         key.extend(s.bytes().map(u64::from));
@@ -2185,12 +2193,14 @@ fn streams_table(c: &Ctx) -> std::sync::Arc<crate::radiation::Outgoing> {
     if let Some(table) = found {
         return table;
     }
-    let table = Arc::new(match air_column(c, pressure, t_eq) {
-        Some(column) => {
-            crate::radiation::Outgoing::of(&column, (t_eq / 3.0).max(5.0), 4.0 * t_eq + 100.0)
-        }
-        None => crate::radiation::Outgoing::none(),
-    });
+    let table = Arc::new(
+        match air_column(c, pressure, t_eq).map(|k| k.with_vapour_most(most)) {
+            Some(column) => {
+                crate::radiation::Outgoing::of(&column, (t_eq / 3.0).max(5.0), 4.0 * t_eq + 100.0)
+            }
+            None => crate::radiation::Outgoing::none(),
+        },
+    );
     if let Ok(mut tables) = TABLES.lock() {
         if tables.len() >= STREAMS_TABLES_KEPT {
             tables.remove(0);

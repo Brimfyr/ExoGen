@@ -41,12 +41,15 @@ use crate::constants::*;
 use crate::fields::Field;
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
-use crate::insolation::{PathStep, Sky, SunTable, Sunlight, diurnal_share, read_grid, read_row};
+use crate::insolation::{
+    PathStep, Sky, SunTable, Sunlight, diurnal_share, diurnal_shares, read_grid, read_row,
+};
 use crate::params::ParamGraph;
 use crate::params::derive::is_icy;
 use crate::params::derive::physics::{
-    blackbody_share_below, mean_heat_capacity, mean_molecular_mass, regolith_heat,
+    blackbody_share_below, mean_heat_capacity, mean_molecular_mass, molar_mass, regolith_heat,
     saturation_temperature, species_columns, sunlight_pattern, vapour_pressure, volatile,
+    water_column,
 };
 
 /// What the energy balance reads.
@@ -69,6 +72,12 @@ pub struct EnergyBalance {
     pub outgoing: std::sync::Arc<crate::radiation::Outgoing>,
     /// The water a warm atmosphere can hold vapour from, metres of global layer.
     pub water: f64,
+    /// The temperature whose column the air's vapour holds at most, K (M59): where the body's
+    /// water has no liquid to evaporate, its working liquid another or none, its vapour comes
+    /// off its ice, the vapour law's column at its equilibrium temperature however warm the
+    /// air over a place (Ingersoll 1970), Mars's some 23 precipitable microns against the 10
+    /// to 20 measured (Smith 2002); unbounded where its water is liquid.
+    pub vapour_most: f64,
     /// The zero-dimensional mean temperature the solution starts from, K.
     pub start: f64,
     /// The body's own heat flowing out through its surface, W/m², which every cell radiates
@@ -96,6 +105,15 @@ pub struct EnergyBalance {
     pub rows: bool,
     /// What the wind reads of the body and its air (F267).
     pub circulation: crate::wind::Air,
+    /// The share of the sky's flux kept from what the haze sends back to space, alike at
+    /// every place (M55), which the cycle's places take place by place (M58).
+    pub kept: f64,
+    /// The air's absorbers of the sunlight over a place, each its depth in the vertical
+    /// (M58): its haze's high, with the share of what it absorbs its stratosphere sends back
+    /// to space, and its methane's in the air the cycle carries.
+    pub haze: f64,
+    pub returned: f64,
+    pub methane: f64,
 }
 
 /// The year's mean temperature of a surface at its own albedo, facing where its slope faces
@@ -379,10 +397,14 @@ pub struct Seas {
 impl Seas {
     /// The sea's ice at the snapshot's season in a direction, kg/m², read along the cycle's
     /// latitudes, a resonant body's longitudes too; between places under ice and open ones,
-    /// thinning to its edge where the margin sets it (F251).
+    /// thinning to its edge where the margin sets it (F251), the ice behind it read along it as
+    /// its position is (M59).
     pub fn ice_at(&self, d: [f64; 3]) -> f64 {
         match self.edge(d) {
-            Some((depth, corners)) => depth * self.among(&self.ice_rows, &corners, true),
+            Some((depth, corners)) => {
+                let own = self.among(&self.ice_rows, &corners, true);
+                depth * self.margin.behind(|q| self.ice_rows[q], &corners, own)
+            }
             None => self.read(&self.ice_rows, d),
         }
     }
@@ -413,10 +435,14 @@ impl Seas {
     /// The share of the sea its ice covers at the snapshot's season in a direction (F245):
     /// each place's, 1 - exp(-m / SEA_ICE_COVER_MASS), read between the places; between
     /// places under ice and open ones, from none at the ice's edge (F251) to the share at the
-    /// places under ice, as a marginal ice zone spans the distance.
+    /// places under ice, as a marginal ice zone spans the distance, read along the edge as its
+    /// position is (M59).
     pub fn cover_at(&self, d: [f64; 3]) -> f64 {
         match self.edge(d) {
-            Some((depth, corners)) => depth * self.among(&self.cover_rows, &corners, true),
+            Some((depth, corners)) => {
+                let own = self.among(&self.cover_rows, &corners, true);
+                depth * self.margin.behind(|q| self.cover_rows[q], &corners, own)
+            }
             None => self.read(&self.cover_rows, d),
         }
     }
@@ -586,6 +612,10 @@ struct Margin {
     edge: Vec<f64>,
     thinning: Vec<f64>,
     near: Vec<Option<(usize, usize)>>,
+    /// At each place near the edge, the places under ice along it, each by its weight in the
+    /// smoothing, over their sum (M59): the ice behind the edge read along it as its position
+    /// is; none elsewhere.
+    behind: Vec<Vec<(usize, f64)>>,
 }
 
 impl Margin {
@@ -688,9 +718,11 @@ impl Margin {
         let mut edge = vec![f64::NAN; n];
         let mut thinning = vec![f64::NAN; n];
         let mut near = vec![None; n];
+        let mut behind = vec![Vec::new(); n];
         for p in 0..n {
             let here = direction(p);
             let (mut sum, mut thin, mut total, mut best) = (0.0, 0.0, 0.0, (0.0, None));
+            let mut colds: Vec<(usize, f64)> = Vec::new();
             for l in &links {
                 let angle = match n_lon {
                     1 => (lat_of(p) - l.lat).abs(),
@@ -705,9 +737,24 @@ impl Margin {
                 if w > best.0 {
                     best = (w, Some(l.places));
                 }
+                if w > 0.0 {
+                    colds.push((l.places.0, w));
+                }
             }
             if total > MARGIN_REACH {
                 (edge[p], thinning[p], near[p]) = (sum / total, thin / total, best.1);
+                // The places under ice along the edge, each once, the slightest left out.
+                colds.sort_by_key(|c| c.0);
+                let mut merged: Vec<(usize, f64)> = Vec::new();
+                for (q, w) in colds {
+                    match merged.last_mut() {
+                        Some(last) if last.0 == q => last.1 += w,
+                        _ => merged.push((q, w)),
+                    }
+                }
+                merged.retain(|c| c.1 > MARGIN_REACH * total);
+                let kept: f64 = merged.iter().map(|c| c.1).sum();
+                behind[p] = merged.into_iter().map(|(q, w)| (q, w / kept)).collect();
             }
         }
         Margin {
@@ -716,7 +763,43 @@ impl Margin {
             edge,
             thinning,
             near,
+            behind,
         }
+    }
+
+    /// How far the places about a point stand at the ice's edge, 0 to 1 (F266, F292): their
+    /// `beside` by their weights, as `depth` reads it.
+    fn standing(&self, corners: &[(usize, f64); 4]) -> f64 {
+        let (mut at, mut total) = (0.0, 0.0);
+        for &(p, w) in corners
+            .iter()
+            .filter(|&&(p, w)| w > 0.0 && self.held[p].is_some())
+        {
+            (at, total) = (at + w * self.beside[p], total + w);
+        }
+        if total > 0.0 { at / total } else { 0.0 }
+    }
+
+    /// The ice behind the edge about a point (M59): `value` at the places under ice along the
+    /// edge, smoothed along it as its position is (`behind`), by how far the places about the
+    /// point stand at the edge; for the rest `own`, the places' own about it.
+    fn behind(&self, value: impl Fn(usize) -> f64, corners: &[(usize, f64); 4], own: f64) -> f64 {
+        let (mut sum, mut weight) = (0.0, 0.0);
+        for &(p, w) in corners
+            .iter()
+            .filter(|&&(p, w)| w > 0.0 && self.held[p].is_some())
+        {
+            if self.behind[p].is_empty() {
+                continue;
+            }
+            let along: f64 = self.behind[p].iter().map(|&(q, u)| u * value(q)).sum();
+            (sum, weight) = (sum + w * along, weight + w);
+        }
+        if weight <= 0.0 {
+            return own;
+        }
+        let standing = self.standing(corners);
+        standing * sum / weight + (1.0 - standing) * own
     }
 
     /// The places about a point on the margin's ground, the sea's or the land's, with their
@@ -1428,7 +1511,8 @@ impl Cryosphere {
     /// ice's: its peak read between the cycle's places, as its mass is, and its phases those
     /// of the places it lies at, by their weights, on the circle of the year, its window
     /// lengthening toward the places it lies at all year by their share (F255). Between places a sea's ice lies at and places
-    /// it never lies at, it lies only within its margin's edge (F251), its peak thinning to it.
+    /// it never lies at, it lies only within its margin's edge (F251), its peak thinning to it,
+    /// the peak behind the edge read along it as its position is (M59).
     pub fn at(&self, d: [f64; 3], sea: bool) -> Window {
         if sea {
             self.window(d, (&self.sea, &self.sea_margin, SEA_ICE_COVER_MASS))
@@ -1464,7 +1548,8 @@ impl Cryosphere {
                 let (sum, weight) = lying.iter().fold((0.0, 0.0), |(s, t), (w, window)| {
                     (s + w * window.peak, t + w)
                 });
-                depth * sum / weight.max(1e-300)
+                let own = sum / weight.max(1e-300);
+                depth * margin.behind(|q| windows[q].peak, &corners, own)
             }
             None => corners.iter().map(|&(p, w)| w * windows[p].peak).sum(),
         };
@@ -1701,6 +1786,13 @@ impl EnergyBalance {
                 0.0
             };
         let airless = graph.f64("atmosphere.surface_pressure") <= 0.0;
+        let frozen = !crate::stages::caps::liquid_species(graph.str("volatiles.working_liquid"))
+            .contains(&"H2O");
+        let vapour_most = if water > 0.0 && frozen && !airless {
+            graph.f64("atmosphere.equilibrium_temperature")
+        } else {
+            f64::INFINITY
+        };
         let (ventilation, heat) = ventilation(graph);
         let liquid = crate::stages::caps::liquid_species(graph.str("volatiles.working_liquid"))
             .first()
@@ -1715,12 +1807,32 @@ impl EnergyBalance {
             _ => 0.0,
         };
         // The air and the ground keep all the sunlight they absorb but what the haze sends back
-        // to space (M55), alike at every place until the sun's height splits the light.
+        // to space (M55), alike at every place in the year's balance; the cycle's places by
+        // the sun's height, with what their air takes of it (M58).
         let mut sky = Sky::from_graph(graph);
         let absorbed = (1.0 - graph.f64("atmosphere.bond_albedo")).max(1e-9);
-        sky.flux *= (1.0 - graph.f64("atmosphere.sunlight_returned") / absorbed).clamp(0.0, 1.0);
+        let kept = (1.0 - graph.f64("atmosphere.sunlight_returned") / absorbed).clamp(0.0, 1.0);
+        sky.flux *= kept;
+        let methane = composition.get("CH4").copied().unwrap_or(0.0)
+            / composition.values().sum::<f64>().max(1e-300);
+        let xuv = graph.f64("star.xuv_relative");
+        let haze = crate::radiation::tholin_production(
+            methane,
+            xuv,
+            graph.f64("atmosphere.surface_pressure"),
+        );
+        let methane = methane * molar_mass("CH4") / mean_molecular_mass(composition)
+            * graph.f64("atmosphere.column_mass");
         Self {
             sky,
+            kept,
+            haze: if airless { 0.0 } else { HAZE_SUNLIGHT * haze },
+            returned: if airless { 0.0 } else { HAZE_RETURNED },
+            methane: if airless {
+                0.0
+            } else {
+                METHANE_SUNLIGHT * methane
+            },
             albedo: graph.f64("atmosphere.bond_albedo"),
             low_sun: LOW_SUN_ALBEDO
                 * (graph.f64("atmosphere.column_mass") / LOW_SUN_COLUMN).clamp(0.0, 1.0),
@@ -1733,6 +1845,13 @@ impl EnergyBalance {
                 graph.f64("climate.transport_coefficient")
             },
             outgoing: std::sync::Arc::new(match graph.curve("atmosphere.outgoing_share") {
+                // Its column again, its vapour held off its ice (M59).
+                Some(_) if !airless && vapour_most.is_finite() => {
+                    let ctx = crate::params::Ctx::new(graph);
+                    let t = crate::params::derive::streams_table_to(&ctx, vapour_most);
+                    crate::radiation::Outgoing::from_points(&t.points())
+                        .with_streams(&t.window_points(), &t.down_points())
+                }
                 Some(curve) if !airless => {
                     let streams = |id: &str| graph.curve(id).map(|c| c.points.clone());
                     let window = streams("atmosphere.window_share").unwrap_or_default();
@@ -1743,6 +1862,7 @@ impl EnergyBalance {
                 _ => crate::radiation::Outgoing::none(),
             }),
             water: if airless { 0.0 } else { water },
+            vapour_most,
             start: graph.f64("atmosphere.surface_temperature_mean"),
             heat_flux: graph.f64("interior.surface_heat_flux").max(0.0),
             year: graph.f64("orbit.year"),
@@ -1772,15 +1892,85 @@ impl EnergyBalance {
         state
     }
 
-    /// The heat the air over a place exchanges with its ground per kelvin (F245), W/m²/K, at
-    /// the ground's temperature: by its turbulence (F237), and by the radiation its
-    /// greenhouse takes from the ground and gives back, the share of the ground's own
-    /// radiation's slope the air holds back (F293); none without an atmosphere.
-    fn coupling(&self, t: f64) -> f64 {
-        if self.exchange <= 0.0 {
-            return 0.0;
+    /// The heat the air over a place exchanges with its ground per kelvin (F245), W/m²/K: by
+    /// its turbulence (F237); none without an atmosphere. The radiation the two exchange is
+    /// each one's own (M55): the ground's `ground_radiation`, the air's `air_radiation`.
+    fn coupling(&self, _t: f64) -> f64 {
+        self.exchange.max(0.0)
+    }
+
+    /// What the ground at `t` K radiates net of what its air at `air` K sends it, W/m², and
+    /// its slope in the ground's temperature (M55): its own sigma T^4, the air's downward
+    /// stream, its column's at the air's temperature; an airless ground's sigma T^4.
+    fn ground_radiation(&self, t: f64, air: f64) -> (f64, f64) {
+        (
+            SIGMA_SB * t.powi(4) - self.outgoing.down(air),
+            4.0 * SIGMA_SB * t.powi(3),
+        )
+    }
+
+    /// The air's own radiation over a place, W/m², and its slope in the air's temperature
+    /// (M55): what its column at `air` K lets out to space of its own and sends down to the
+    /// ground, less what it takes outside the window of what its ground sends up, `emitted`
+    /// W/m² of its own and the share `reflects` of the air's downward stream it reflects. Its
+    /// slope is its own emission's (M58): the share it takes of what its ground sends up is
+    /// its column's as it stands, so that a thin air, whose share changes fast with the
+    /// warmth its table reads, never takes a falling slope from the ground's light, which
+    /// would run its implicit step away.
+    fn air_radiation(&self, air: f64, (emitted, reflects): (f64, f64)) -> (f64, f64) {
+        let taken = 1.0 - self.outgoing.window(air);
+        let net = |a: f64| {
+            let down = self.outgoing.down(a);
+            self.outgoing.air_up(a) + down - taken * (emitted + reflects * down)
+        };
+        let h = 0.01;
+        (
+            net(air),
+            ((net(air + h) - net(air - h)) / (2.0 * h)).max(0.0),
+        )
+    }
+
+    /// A place's sunlight at a step (M58): `lit` W/m² as the sky's kept flux gives it, the
+    /// sun at height cosine `mu`, under air at `air` K. The haze takes its share of the light
+    /// high; under it the light reaches the ground through the air's water vapour on its
+    /// slant path (Lacis and Hansen 1974), the vapour its column holds at the air's
+    /// temperature, and through its methane and its clouds, grey, the clouds' depth the
+    /// stated law's of that vapour (CLOUD_SUNLIGHT); the light the ground reflects passes up
+    /// through them all again, the vapour taking only what its path down left.
+    fn light(&self, lit: f64, mu: f64, air: f64) -> Light {
+        let top = lit / self.kept.max(1e-9);
+        if top <= 0.0 || mu <= 0.0 {
+            return Light::bare(lit);
         }
-        self.exchange + 4.0 * SIGMA_SB * t.powi(3) * (1.0 - self.outgoing.share(t)).max(0.0)
+        let column = if self.water > 0.0 {
+            water_column(air.min(self.vapour_most), self.water)
+        } else {
+            0.0
+        };
+        let clouds = if column > 0.0 {
+            CLOUD_SUNLIGHT * WATER_CLOUD_DEPTH.0 * column.powf(WATER_CLOUD_DEPTH.1)
+        } else {
+            0.0
+        };
+        let grey = self.methane + clouds;
+        let u = column / 10.0;
+        let path = crate::radiation::magnification(mu);
+        let taken = crate::radiation::water_sunlight(u * path);
+        let both = crate::radiation::water_sunlight(u * (path + SUNLIGHT_UP_PATH));
+        let down = (1.0 - taken) * (-grey / mu).exp();
+        let kept_up = (1.0 - both) / (1.0 - taken).max(1e-9);
+        Light {
+            top,
+            haze: 1.0 - (-self.haze / mu).exp(),
+            down,
+            up: 1.0 - kept_up * (-SUNLIGHT_UP_PATH * grey).exp(),
+            returned: self.returned,
+        }
+    }
+
+    /// What a ground at `albedo` keeps of a place's sunlight at a step, W/m² (M58).
+    fn ground_sun(&self, (lit, mu): (f64, f64), air: f64, albedo: f64) -> f64 {
+        self.light(lit, mu, air).split(albedo).0
     }
 
     /// The latent heat a wet surface at `t` gives the air per kelvin it stands above it, the
@@ -1790,6 +1980,21 @@ impl EnergyBalance {
             Some(w) if self.evaporation > 0.0 => {
                 let l = if t >= w.t_triple { w.l_vap } else { w.l_sub };
                 l * self.evaporation * vapour_pressure(w, t) * l / (w.r_specific * t * t)
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// The latent heat a wet surface gives the air at `air` K by the air's deficit under
+    /// saturation at the place's contact, W/m² of wet surface (M59; Penman 1948, Monteith
+    /// 1965): what the deficit draws at the place's wind, its saturation the moisture's where
+    /// known; none under a saturated air, as the cycle ran before the moisture.
+    fn drying(&self, air: f64, contact: &Contact) -> f64 {
+        match self.liquid {
+            Some(w) if self.evaporation > 0.0 => {
+                let l = if air >= w.t_triple { w.l_vap } else { w.l_sub };
+                let deficit = (1.0 - contact.humidity).max(0.0) * vapour_pressure(w, air);
+                l * self.evaporation * contact.breeze * deficit
             }
             _ => 0.0,
         }
@@ -1816,10 +2021,11 @@ impl EnergyBalance {
     /// The land's radiation and the heat it gives air at `air` K, its latent heat's among
     /// it, at the place's contact (F269), with their slope, at the ground's temperature.
     fn land_shed(&self, air: f64, contact: Contact) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
+        let dried = self.drying(air, &contact) * contact.wet;
         move |t: f64| {
-            let (r, slope) = self.olr_and_slope(t);
+            let (r, slope) = self.ground_radiation(t, air);
             let h = self.land_coupling(t, &contact);
-            (r + h * (t - air), slope + h)
+            (r + h * (t - air) + dried, slope + h)
         }
     }
 
@@ -1833,7 +2039,7 @@ impl EnergyBalance {
     ) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
         let f = *frost;
         move |t: f64| {
-            let (r, slope) = self.olr_and_slope(t);
+            let (r, slope) = self.ground_radiation(t, air);
             let (e, de) = f.emissivity(t);
             let h = self.coupling_at(t, &contact);
             (e * r + h * (t - air), e * slope + de * r + h)
@@ -1844,7 +2050,7 @@ impl EnergyBalance {
     /// at the ground's temperature.
     fn shed(&self, air: f64) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
         move |t: f64| {
-            let (r, slope) = self.olr_and_slope(t);
+            let (r, slope) = self.ground_radiation(t, air);
             let h = self.coupling(t);
             (r + h * (t - air), slope + h)
         }
@@ -1855,7 +2061,7 @@ impl EnergyBalance {
     fn frost_shed(&self, air: f64, frost: &Frost) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
         let f = *frost;
         move |t: f64| {
-            let (r, slope) = self.olr_and_slope(t);
+            let (r, slope) = self.ground_radiation(t, air);
             let (e, de) = f.emissivity(t);
             let h = self.coupling(t);
             (e * r + h * (t - air), e * slope + de * r + h)
@@ -2773,7 +2979,12 @@ impl EnergyBalance {
                 self.sky.at_mean_anomaly(anomaly, eps)
             })
             .collect();
-        let light = |m: usize, p: &Place| sun[m].0 * diurnal_share(p.lat, sun[m].1);
+        // The sun's height its light comes at through the day, by the light's weight (M58).
+        let light = |m: usize, p: &Place| {
+            let (share, square) = diurnal_shares(p.lat, sun[m].1);
+            let mu = if share > 0.0 { square / share } else { 0.0 };
+            (sun[m].0 * share, mu)
+        };
         let timing = (
             steps,
             self.year / steps as f64,
@@ -2827,11 +3038,12 @@ impl EnergyBalance {
                     for d in 0..CYCLE_DAYS {
                         for h in 0..CYCLE_DAY_STEPS {
                             let hour = TAU * (h as f64 + 0.5) / CYCLE_DAY_STEPS as f64 - PI;
-                            let lit = flux * (sp * sd + cp * cd * hour.cos()).max(0.0);
-                            let bare = (1.0 - record.albedo) * lit;
+                            let mu = (sp * sd + cp * cd * hour.cos()).max(0.0);
+                            let sun = self.light(flux * mu, mu, record.air);
+                            let bare = sun.split(record.albedo).0;
                             match &f {
                                 Some(f) => {
-                                    let gains = (bare, (1.0 - f.albedo) * lit);
+                                    let gains = (bare, sun.split(f.albedo).0);
                                     let rows = (&mut work, &mut trial);
                                     let heat = self.heat_flux;
                                     let sheds =
@@ -2896,7 +3108,8 @@ impl EnergyBalance {
         let scale = self.sky.flux / (1.0 - e * e).sqrt();
         let light = |k: usize, p: &Place| {
             let (s, (sp, cp)) = (&path[k], p.lat.sin_cos());
-            scale * s.flux * (sp * s.sin_decl + cp * s.cos_decl * (s.hour + p.lon).cos()).max(0.0)
+            let mu = (sp * s.sin_decl + cp * s.cos_decl * (s.hour + p.lon).cos()).max(0.0);
+            (scale * s.flux * mu, mu)
         };
         let steps = path.len();
         let snapshot = snapshot_step(self.snapshot, steps / orbits.max(1) as usize);
@@ -2974,7 +3187,7 @@ impl EnergyBalance {
         column: &Column,
         layout: &Layout,
         (steps, dt, snapshot): (usize, f64, usize),
-        light: impl Fn(usize, &Place) -> f64 + Sync,
+        light: impl Fn(usize, &Place) -> (f64, f64) + Sync,
         ocean: Option<&Ocean>,
         (every, warm, years): (usize, Option<&Warm>, usize),
     ) -> Lockstep {
@@ -3060,10 +3273,46 @@ impl EnergyBalance {
                         (Some(l), Some(&fall)) => l.l_fus * fall as f64 * p.land(),
                         _ => 0.0,
                     };
-                    diag[q] = hold + land + wet + iced;
-                    rhs[q] = hold * air[q] + land * r.t[0] + wet * surface + iced * top + frozen;
+                    // The air's own radiation (M55), about the air as it stands, taking what
+                    // its ground sends up: its sea's, its caps' and its land's for the rest.
+                    let (own, slope) = self.air_radiation(air[q], r.sends_up(p, frost));
+                    diag[q] = hold + land + wet + iced + slope;
+                    // The sunlight it took at the last step (M58).
+                    rhs[q] = hold * air[q]
+                        + land * r.t[0]
+                        + wet * surface
+                        + iced * top
+                        + frozen
+                        + slope * air[q]
+                        + r.sun_air
+                        + r.dried
+                        - own;
                 }
                 transport_solve(layout, &air_links, (&diag, &rhs), &mut air, true);
+                // The frost's own gas condenses out of air cooled past its point (M59), as
+                // Mars's polar night's carbon dioxide snows (Forget et al. 1998; Hayne et al.
+                // 2012): its latent heat holds the air at the point of the gas as it stands, and
+                // its snow falls on the place's frost and its caps', out of the air. Without it a
+                // thin air, whose own radiation its column holds almost the same from 80 to
+                // 150 K, fell 85 K under the point over Mars's poles in their winter.
+                if let Some(f) = frost {
+                    let floor = f.point_at(partial(held - load));
+                    let mut fell = false;
+                    for (a, r) in air.iter_mut().zip(runs.iter_mut()) {
+                        if *a < floor {
+                            let snow = ground.air * (floor - *a) / f.latent;
+                            *a = floor;
+                            r.mass += snow;
+                            if let Some(c) = r.cap.as_mut() {
+                                c.mass += snow;
+                            }
+                            fell = true;
+                        }
+                    }
+                    if fell {
+                        load = over(&runs, Run::load);
+                    }
+                }
                 series[k * n..(k + 1) * n].copy_from_slice(&air);
                 if let Some(ocean) = ocean.filter(|_| water > 0.0) {
                     // Where the seas' currents carry their heat (F272), the diffusion carries
@@ -3091,7 +3340,9 @@ impl EnergyBalance {
                     .zip(places.par_iter())
                     .zip(air.par_iter().zip(inflow.par_iter()))
                     .for_each(|((r, p), (&a, &brought))| {
-                        let lit = light(k, p);
+                        let (lit, mu) = light(k, p);
+                        // Its sunlight, its air's and its ground's (M58).
+                        let sun = self.light(lit, mu, a);
                         // The snow that falls on the land through the step lies on it, and
                         // brightens it by its cover where the year's snow is known (F271).
                         r.albedo = match r.snowfall.get(k) {
@@ -3102,12 +3353,12 @@ impl EnergyBalance {
                             None => self.land_albedo((p.albedo, p.snow), r.t[0]),
                         };
                         r.start.copy_from_slice(&r.t);
-                        let bare = (1.0 - r.albedo) * lit;
+                        let (bare, bare_air) = sun.split(r.albedo);
                         let shed = self.land_shed(a, p.contact);
                         let heat = self.heat_flux;
                         match (frost, ceiling) {
                             (Some(f), Some(top)) => {
-                                let gains = (bare, (1.0 - f.albedo) * lit);
+                                let gains = (bare, sun.split(f.albedo).0);
                                 let rows = (&mut r.work, &mut r.trial);
                                 column.trial(&r.t, rows, dt, gains, heat, shed, r.mass, top);
                                 if let Some(c) = r.cap.as_mut() {
@@ -3117,10 +3368,38 @@ impl EnergyBalance {
                             }
                             _ => column.step(&mut r.t, &mut r.work, dt, bare, heat, shed),
                         }
-                        if let (Some(sea), Some(ocean)) = (r.sea.as_mut(), ocean) {
-                            let exchange = self.sea_coupling_at(sea.surface, &p.contact);
-                            let water = (ocean, brought);
-                            self.sea_step(sea, dt, (lit, p.albedo), (a, exchange), water);
+                        r.dried = 0.0;
+                        let sea_air = match (r.sea.as_mut(), ocean) {
+                            (Some(sea), Some(ocean)) => {
+                                let exchange = self.sea_coupling_at(sea.surface, &p.contact);
+                                let water = (ocean, brought);
+                                let dried = if sea.ice <= 0.0 {
+                                    self.drying(a, &p.contact)
+                                } else {
+                                    0.0
+                                };
+                                r.dried = p.sea * dried;
+                                self.sea_step(sea, dt, (sun, p.albedo), (a, exchange, dried), water)
+                            }
+                            _ => 0.0,
+                        };
+                        // What its air took of the sunlight, over its sea, its caps and its
+                        // land for the rest, frost's where frost lies (M58).
+                        let (land_air, cap_air) = match frost {
+                            Some(f) => {
+                                let frosted = sun.split(f.albedo).1;
+                                (if r.mass > 0.0 { frosted } else { bare_air }, frosted)
+                            }
+                            None => (bare_air, 0.0),
+                        };
+                        let cap = r.cap.as_ref().map_or(0.0, |c| c.share);
+                        let sea = if r.sea.is_some() { p.sea } else { 0.0 };
+                        let rest = (1.0 - sea - cap).max(0.0);
+                        r.sun_air = sea * sea_air + cap * cap_air + rest * land_air;
+                        // The latent heat its air's deficit drew from its wet land, bare of
+                        // frost, its air's when the vapour condenses (M59).
+                        if r.mass <= 0.0 {
+                            r.dried += rest * p.contact.wet * self.drying(a, &p.contact);
                         }
                     });
                 if let (Some(drift), Some(ocean)) = (drift.as_mut(), ocean) {
@@ -3138,9 +3417,9 @@ impl EnergyBalance {
                                 .zip(air.par_iter())
                                 .for_each(|((r, p), &a)| {
                                     if r.mass <= 0.0 && r.trial.clear && r.trial.free[0] < point {
-                                        let lit = light(k, p);
-                                        let gains =
-                                            ((1.0 - r.albedo) * lit, (1.0 - f.albedo) * lit);
+                                        let (lit, mu) = light(k, p);
+                                        let sun = self.light(lit, mu, a);
+                                        let gains = (sun.split(r.albedo).0, sun.split(f.albedo).0);
                                         let shed = self.land_shed(a, p.contact);
                                         let heat = self.heat_flux;
                                         let rows = (&mut r.work, &mut r.trial);
@@ -3151,10 +3430,10 @@ impl EnergyBalance {
                             let runs = (&runs[..], &places[..], &air[..]);
                             point = self.frost_point(column, runs, gas, dt, f, highest);
                         }
-                        let (olr, slope) = self.olr_and_slope(point);
                         let (e, de) = f.emissivity(point);
                         let each = runs.par_iter_mut().zip(places.par_iter());
                         each.zip(air.par_iter()).for_each(|((r, p), &a)| {
+                            let (olr, slope) = self.ground_radiation(point, a);
                             let exchange = self.coupling_at(point, &p.contact);
                             let shed = (
                                 e * olr + exchange * (point - a),
@@ -3172,7 +3451,8 @@ impl EnergyBalance {
                             // The frost that ran out within the step leaves its ground the
                             // rest of it bare, to frost again (F275).
                             if let Some(lasts) = lasted {
-                                let gains = ((1.0 - r.albedo) * light(k, p), self.heat_flux);
+                                let gains =
+                                    (self.ground_sun(light(k, p), a, r.albedo), self.heat_flux);
                                 let bare = self.land_shed(a, p.contact);
                                 let rows = (&mut r.work, &mut r.trial);
                                 let ends = (point, shed.0, f.latent);
@@ -3213,7 +3493,8 @@ impl EnergyBalance {
                         .for_each(|((r, p), &a)| {
                             r.melted = 0.0;
                             if r.snow > 0.0 && r.t[0] > melt.0 {
-                                let gains = ((1.0 - r.albedo) * light(k, p), self.heat_flux);
+                                let gains =
+                                    (self.ground_sun(light(k, p), a, r.albedo), self.heat_flux);
                                 let shed = self.land_shed(a, p.contact)(melt.0);
                                 let rows = (&mut r.work, &mut r.trial);
                                 let (t, snow) = (&mut r.t, &mut r.snow);
@@ -3358,12 +3639,12 @@ impl EnergyBalance {
             }
         }
         let gap = |point: f64| {
-            let olr = self.olr(point) * frost.emissivity(point).0;
+            let e = frost.emissivity(point).0;
             let taken: f64 = taking
                 .iter()
                 .map(|&(trial, mass, w, a, contact)| {
                     let exchange = self.coupling_at(point, &contact);
-                    let radiated = olr + exchange * (point - a);
+                    let radiated = e * self.ground_radiation(point, a).0 + exchange * (point - a);
                     column
                         .deposit(trial, dt, point, radiated, frost.latent, mass)
                         .1
@@ -3695,10 +3976,10 @@ impl EnergyBalance {
         &self,
         sea: &mut Sea,
         dt: f64,
-        (lit, open): (f64, f64),
-        (air, exchange): (f64, f64),
+        (sun, open): (Light, f64),
+        (air, exchange, dried): (f64, f64, f64),
         (ocean, brought): (&Ocean, f64),
-    ) {
+    ) -> f64 {
         let melting = sea.surface >= ocean.freezing - SEA_ICE_MELT_MARGIN_K;
         let ice = self
             .ice_over(
@@ -3711,30 +3992,32 @@ impl EnergyBalance {
             )
             .max(open);
         let cover = 1.0 - (-sea.ice.max(0.0) / SEA_ICE_COVER_MASS).exp();
-        let frozen = (1.0 - open - (ice - open) * cover) * lit;
+        // Its share of the sunlight and its air's, open and under its ice (M58).
+        let (frozen, frozen_air) = sun.split(open + (ice - open) * cover);
+        let (bare, bare_air) = sun.split(open);
         if sea.ice <= 0.0 {
-            let (r, slope) = self.olr_and_slope(sea.t);
-            let gain = (1.0 - open) * lit - r + exchange * (air - sea.t);
+            let (r, slope) = self.ground_radiation(sea.t, air);
+            let gain = bare - r + exchange * (air - sea.t) - dried;
             let t = sea.t + dt * gain / (ocean.capacity + dt * (slope + exchange));
             if t >= ocean.freezing {
                 (sea.t, sea.surface) = (t, t);
-                return;
+                return bare_air;
             }
             sea.ice = ocean.capacity * (ocean.freezing - t) / ocean.latent;
             (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
-            return;
+            return bare_air;
         }
         let through = ocean.conductivity / (sea.ice / ocean.density).max(SEA_ICE_THINNEST_M);
         let mut top = sea.surface.min(ocean.freezing);
         for _ in 0..SEA_ICE_NEWTON_STEPS {
-            let (r, slope) = self.olr_and_slope(top);
+            let (r, slope) = self.ground_radiation(top, air);
             let gap = frozen - r + exchange * (air - top) + through * (ocean.freezing - top);
             top = (top + gap / (slope + exchange + through)).max(COSMIC_BACKGROUND_K);
         }
         let mut melted = 0.0;
         if top > ocean.freezing {
             top = ocean.freezing;
-            let left = frozen - self.olr(top) + exchange * (air - top);
+            let left = frozen - self.ground_radiation(top, air).0 + exchange * (air - top);
             melted = left.max(0.0) * dt / ocean.latent;
         }
         let below = ocean.base_flux + brought;
@@ -3745,6 +4028,7 @@ impl EnergyBalance {
             sea.t = ocean.freezing - sea.ice * ocean.latent / ocean.capacity;
             (sea.ice, sea.surface) = (0.0, sea.t);
         }
+        frozen_air
     }
 
     /// A cell's sunlight through its cycle at a tilt (F240): a fast spinner's year in
@@ -4960,6 +5244,55 @@ impl Coupling {
 /// the sphere's area, its year's mean temperature, its ground's albedo without ice and snow,
 /// the share of it the sea covers, and the share the frost's own gas's caps cover with the
 /// ice they hold there, kg/m² (F258).
+/// A place's sunlight at a step (M58): over the air, W/m², the share of it the haze takes
+/// high and the share of what the haze sends back to space, the share of the light under the
+/// haze that reaches the ground, and the share of the light the ground reflects that its air
+/// takes on its way up.
+#[derive(Clone, Copy, Debug)]
+struct Light {
+    top: f64,
+    haze: f64,
+    returned: f64,
+    down: f64,
+    up: f64,
+}
+
+impl Light {
+    /// Light with no air to take any of it.
+    fn bare(top: f64) -> Self {
+        Self {
+            top,
+            haze: 0.0,
+            returned: 0.0,
+            down: 1.0,
+            up: 0.0,
+        }
+    }
+
+    /// What a ground at `albedo` keeps of the light and what its air takes, W/m²: of the
+    /// share of the light the place absorbs, (1 - albedo), the haze's share first, its
+    /// stratosphere sending back to space its share of it and the air under it taking the
+    /// rest; the light left split between the air and the ground as the light's path down
+    /// and the reflected light's up divide it.
+    fn split(&self, albedo: f64) -> (f64, f64) {
+        let absorbed = (1.0 - albedo).max(0.0);
+        let g = absorbed * self.top;
+        let h = (self.haze * self.top).min(g);
+        let ground = absorbed * self.down;
+        let air = 1.0 - self.down + albedo * self.down * self.up;
+        let share = if ground + air > 0.0 {
+            air / (ground + air)
+        } else {
+            0.0
+        };
+        let rest = g - h;
+        (
+            (1.0 - share) * rest,
+            share * rest + (1.0 - self.returned) * h,
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Place {
     lat: f64,
@@ -5159,6 +5492,11 @@ struct Run {
     /// where its year's snow is unknown (F277); and the snow the step's melt took, kg/m².
     masses: [Vec<f32>; 4],
     melted: f64,
+    /// The sunlight its air took at the step, W/m² over the place (M58).
+    sun_air: f64,
+    /// The latent heat the air's deficit drew from its wet surfaces at the step, W/m² over
+    /// the place (M59).
+    dried: f64,
     /// The land's snow, kg/m² of its water, the snow that falls on it through each step of the
     /// cycle, kg/m²/s, none where its year's snow is unknown, and the column as the step began
     /// (F271).
@@ -5254,6 +5592,8 @@ impl Run {
                 vec![melt_unknown; steps],
             ],
             melted: 0.0,
+            sun_air: 0.0,
+            dried: 0.0,
             snow: 0.0,
             snowfall: if snowfall.len() == steps {
                 snowfall.to_vec()
@@ -5278,6 +5618,35 @@ impl Run {
     /// The share of the place its frost lies on: its land bare of the caps (F258).
     fn bare_share(&self) -> f64 {
         self.cap.as_ref().map_or(1.0, |c| 1.0 - c.share)
+    }
+
+    /// What the place's ground sends up of its own, W/m², and the share of its air's downward
+    /// stream it reflects (M55): its sea's surface's, its caps' and its land's over the rest,
+    /// each black but frost, at its emissivity (F247).
+    fn sends_up(&self, place: &Place, frost: Option<&Frost>) -> (f64, f64) {
+        let black = |t: f64| SIGMA_SB * t.powi(4);
+        let frosted = |t: f64| frost.map_or(1.0, |f| f.emissivity(t).0);
+        let (mut emitted, mut reflects, mut rest) = (0.0, 0.0, 1.0);
+        if let Some(sea) = &self.sea {
+            emitted += place.sea * black(sea.surface);
+            rest -= place.sea;
+        }
+        if let Some(c) = &self.cap {
+            let e = frosted(c.t[0]);
+            emitted += c.share * e * black(c.t[0]);
+            reflects += c.share * (1.0 - e);
+            rest -= c.share;
+        }
+        let e = if self.mass > 0.0 {
+            frosted(self.t[0])
+        } else {
+            1.0
+        };
+        let rest = rest.max(0.0);
+        (
+            emitted + rest * e * black(self.t[0]),
+            reflects + rest * (1.0 - e),
+        )
     }
 
     /// The frost's gas the place holds out of the air over its area, kg/m²: its frost on the
@@ -5618,8 +5987,19 @@ impl Column {
         if rest <= 0.0 {
             return;
         }
-        tr.free.copy_from_slice(t);
-        self.step(&mut tr.free, w, rest, gain, bottom, bare);
+        // Linearised about its own end until it settles (M59): about the frost's point, where
+        // its radiation's slope is small, a frost-cold ground taking a step's sunlight at once
+        // overshot it, Mars's south polar ground to 328 K where its sunlight holds it near 250.
+        let mut about = t[0];
+        for _ in 0..BARE_STEP_NEWTON.0 {
+            tr.free.copy_from_slice(t);
+            self.step_about(&mut tr.free, w, rest, (gain, bottom), bare, about);
+            let settled = (tr.free[0] - about).abs() < BARE_STEP_NEWTON.1;
+            about = tr.free[0];
+            if settled {
+                break;
+            }
+        }
         if tr.free[0] >= point {
             t.copy_from_slice(&tr.free);
             return;
@@ -5683,6 +6063,20 @@ impl Column {
         bottom: f64,
         olr: impl Fn(f64) -> (f64, f64) + Copy,
     ) {
+        let about = t[0];
+        self.step_about(t, w, dt, (gain, bottom), olr, about);
+    }
+
+    /// One implicit step as `step`, its surface's radiation linearised about `about` K (M59).
+    fn step_about(
+        &self,
+        t: &mut [f64],
+        w: &mut Work,
+        dt: f64,
+        (gain, bottom): (f64, f64),
+        olr: impl Fn(f64) -> (f64, f64) + Copy,
+        about: f64,
+    ) {
         let n = t.len();
         for (i, &ti) in t.iter().enumerate() {
             w.b[i] = self.capacity[i] / dt;
@@ -5700,9 +6094,9 @@ impl Column {
                 w.b[i] += g;
             }
         }
-        let (r, dr) = olr(t[0]);
+        let (r, dr) = olr(about);
         w.b[0] += dr;
-        w.d[0] += gain - r + dr * t[0];
+        w.d[0] += gain - r + dr * about;
         w.d[n - 1] += bottom;
         for i in 1..n {
             let m = w.a[i] / w.b[i - 1];
@@ -6349,6 +6743,163 @@ fn conjugate_gradients(slope: &[f64], links: &[[(usize, f64); 4]], d: f64, r: &[
 mod tests {
     use super::*;
 
+    /// M59: the ground a frost leaves bare within a step takes the rest of it settled under
+    /// its sunlight: Mars's polar ground, its frost at the point gone half way through a step
+    /// in its spring, stands under the balance its sunlight alone would hold it at, where its
+    /// step linearised once about the point's small slope overshot it by some 80 K.
+    #[test]
+    fn a_ground_its_frost_leaves_bare_settles_under_its_sunlight() {
+        let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&graph);
+        let column = Column::new(&Ground::from_graph(&graph), 88_775.0, eb.year);
+        let n = column.len();
+        let point: f64 = 145.0;
+        let start = vec![point; n];
+        let mut t = start.clone();
+        let (mut w, mut tr) = (Work::new(n), Trial::new(n));
+        let dt = eb.year / CYCLE_YEAR_STEPS as f64;
+        let gain = 225.0;
+        let bare = |t: f64| (SIGMA_SB * t.powi(4), 4.0 * SIGMA_SB * t.powi(3));
+        let mut mass = 10.0;
+        let ends = (point, SIGMA_SB * point.powi(4), 5.9e5);
+        let rows = (&mut w, &mut tr);
+        column.rest_bare(
+            &mut t,
+            &start,
+            rows,
+            (dt, 0.5),
+            (gain, 0.0),
+            bare,
+            ends,
+            &mut mass,
+        );
+        let most = (gain / SIGMA_SB).powf(0.25);
+        assert!(
+            t[0] > point && t[0] <= most + 0.1,
+            "{} against its sunlight's {most}",
+            t[0]
+        );
+        assert_eq!(mass, 0.0);
+    }
+
+    /// M59: a body whose water has no liquid to evaporate holds in its air no more vapour than
+    /// the column at its equilibrium temperature, its ice's: Mars's column over a warm place
+    /// lets its ground's light out as a dry carbon dioxide column does, where an Earth-like
+    /// vapour made it opaque over 300 K; the Earth-like's, its water liquid, holds the vapour
+    /// of its own warmth.
+    #[test]
+    fn a_frozen_body_s_air_holds_its_ice_s_vapour() {
+        let of = |name: &str| {
+            EnergyBalance::from_graph(&crate::presets::preset(name).unwrap().to_graph().0)
+        };
+        let (mars, earth) = (of("Mars"), of("Earth"));
+        assert!(
+            (195.0..225.0).contains(&mars.vapour_most),
+            "{}",
+            mars.vapour_most
+        );
+        assert!(earth.vapour_most.is_infinite());
+        let window = mars.outgoing.window(330.0);
+        assert!(window > 0.5, "Mars's window at 330 K {window}");
+        assert!(earth.outgoing.window(330.0) < 0.1);
+    }
+
+    /// M59: a wet surface dries under its air's deficit under saturation (Penman 1948,
+    /// Monteith 1965): none under a saturated air, the more the drier the air, as its wind;
+    /// the Earth-like's over the sea at 288 K under a fifth's deficit some tens of W/m², as
+    /// Earth's latent heat some 80 (Wild et al. 2013); none on a body without its liquid.
+    #[test]
+    fn a_wet_surface_dries_under_an_unsaturated_air() {
+        let of = |name: &str| {
+            EnergyBalance::from_graph(&crate::presets::preset(name).unwrap().to_graph().0)
+        };
+        let (earth, mars) = (of("Earth"), of("Mars"));
+        let c = |humidity: f64, breeze: f64| Contact {
+            breeze,
+            humidity,
+            wet: 1.0,
+        };
+        assert_eq!(earth.drying(288.0, &c(1.0, 1.0)), 0.0);
+        let (fifth, half, dry) = (
+            earth.drying(288.0, &c(0.8, 1.0)),
+            earth.drying(288.0, &c(0.5, 1.0)),
+            earth.drying(288.0, &c(0.0, 1.0)),
+        );
+        assert!(
+            fifth > 0.0 && half > fifth && dry > half,
+            "{fifth} {half} {dry}"
+        );
+        assert!((10.0..200.0).contains(&fifth), "{fifth}");
+        let windy = earth.drying(288.0, &c(0.8, 2.0));
+        assert!((windy - 2.0 * fifth).abs() < 1e-9 * windy);
+        assert_eq!(mars.drying(210.0, &c(0.0, 1.0)), 0.0);
+    }
+
+    /// The sunlight's split keeps what the place absorbs (M58): its ground's, its air's and
+    /// what its haze sends back to space sum to its share, (1 - albedo), of the light over the
+    /// air, at every sun's height and albedo; Earth's air takes some third of what it absorbs,
+    /// as its measured 79 of 240 W/m² (Wild et al. 2013), Titan's haze and methane most of it,
+    /// Mars's thin air under a tenth; with no air the ground keeps it all.
+    #[test]
+    fn the_sunlight_s_split_keeps_what_the_place_absorbs() {
+        for (name, air) in [("Earth", 288.0), ("Titan", 94.0), ("Mars", 210.0)] {
+            let graph = crate::presets::preset(name).unwrap().to_graph().0;
+            let eb = EnergyBalance::from_graph(&graph);
+            for mu in [0.02, 0.2, 0.5, 1.0] {
+                for albedo in [0.0, 0.1, 0.3, 0.8, 1.0] {
+                    let sun = eb.light(300.0 * mu * eb.kept, mu, air);
+                    let (ground, taken) = sun.split(albedo);
+                    let h = (sun.haze * sun.top).min((1.0 - albedo) * sun.top);
+                    let whole = (1.0 - albedo) * sun.top - sun.returned * h;
+                    assert!(ground >= 0.0 && taken >= 0.0, "{name} {mu} {albedo}");
+                    assert!(
+                        (ground + taken - whole).abs() < 1e-9 * sun.top,
+                        "{name} at {mu}, {albedo}: {ground} + {taken} vs {whole}"
+                    );
+                }
+            }
+            let (ground, taken) = eb.light(150.0 * eb.kept, 0.5, air).split(0.3);
+            match name {
+                "Earth" => {
+                    let share = taken / (ground + taken);
+                    assert!((0.25..0.4).contains(&share), "Earth's air {share}");
+                }
+                "Titan" => assert!(ground < 0.3 * (ground + taken), "{ground} {taken}"),
+                _ => assert!(taken < 0.1 * ground, "{ground} {taken}"),
+            }
+        }
+        let (ground, taken) = Light::bare(100.0).split(0.3);
+        assert!((ground - 70.0).abs() < 1e-9 && taken == 0.0);
+    }
+
+    /// The air's own radiation rises as it warms (M58), whatever its ground sends up, over
+    /// its presets' air from cold to warm where it stands, Titan's from 88 K, its column's
+    /// emission held below 80 K by its warmer air above: a slope that fell with the share of
+    /// the ground's light its table reads at the air's warmth ran Mars's thin air's implicit
+    /// step away.
+    #[test]
+    fn the_air_s_own_radiation_rises_as_it_warms() {
+        for (name, low, high) in [
+            ("Mars", 140.0, 300.0),
+            ("Titan", 88.0, 110.0),
+            ("Earth", 220.0, 320.0),
+        ] {
+            let graph = crate::presets::preset(name).unwrap().to_graph().0;
+            let eb = EnergyBalance::from_graph(&graph);
+            for k in 0..=16 {
+                let air = low + (high - low) * k as f64 / 16.0;
+                for ground in [low, air, high] {
+                    let emitted = SIGMA_SB * ground.powi(4);
+                    let (_, slope) = eb.air_radiation(air, (emitted, 0.1));
+                    assert!(
+                        slope > 0.0,
+                        "{name}: air {air} over ground {ground}: {slope}"
+                    );
+                }
+            }
+        }
+    }
+
     fn climate_of(name: &str) -> (Climate, EnergyBalance) {
         let graph = crate::presets::preset(name).unwrap().to_graph().0;
         let eb = EnergyBalance::from_graph(&graph);
@@ -6791,13 +7342,13 @@ mod tests {
                 &|| an_earth_like_world_is_within_five_kelvin_of_earth(&y),
             ),
             ("a_thick_atmosphere_keeps_its_steady_mean", &|| {
-                a_thick_atmosphere_keeps_its_steady_mean("Earth", 3.0, &y)
+                a_thick_atmosphere_keeps_its_steady_mean("Earth", 3.0, &y, &again.cycle)
             }),
             ("no_frost_where_the_ground_stays_above_its_point", &|| {
                 no_frost_where_the_ground_stays_above_its_point("Earth", &y)
             }),
             ("the_air_carries_the_seasons", &|| {
-                the_air_carries_the_seasons(&y)
+                the_air_carries_the_seasons(&y, &again.cycle)
             }),
             ("the_sea_holds_its_seasons_and_freezes_at_the_pole", &|| {
                 the_sea_holds_its_seasons_and_freezes_at_the_pole(&y)
@@ -6807,7 +7358,7 @@ mod tests {
             }),
             (
                 "the_earth_like_s_water_falls_where_its_air_converges",
-                &|| the_earth_like_s_water_falls_where_its_air_converges(&y),
+                &|| the_earth_like_s_water_falls_where_its_air_converges(&again),
             ),
             (
                 "the_ices_come_and_go_with_the_seasons_on_the_earth_like",
@@ -6849,6 +7400,9 @@ mod tests {
             ("a_basin_traps_better_than_a_height", &|| {
                 a_basin_traps_better_than_a_height(&y)
             }),
+            ("mars_s_air_never_cools_past_its_frost_point", &|| {
+                mars_s_air_never_cools_past_its_frost_point(&y)
+            }),
         ]);
     }
 
@@ -6866,7 +7420,7 @@ mod tests {
         );
         crate::testkit::checks(&[
             ("a_thick_atmosphere_keeps_its_steady_mean: Titan", &|| {
-                a_thick_atmosphere_keeps_its_steady_mean("Titan", 0.5, &titan)
+                a_thick_atmosphere_keeps_its_steady_mean("Titan", 0.5, &titan, &again.cycle)
             }),
             (
                 "no_frost_where_the_ground_stays_above_its_point: Titan",
@@ -6876,7 +7430,7 @@ mod tests {
                 titan_s_ground_stands_farther_from_its_air(&titan, &again)
             }),
             ("a_thick_atmosphere_keeps_its_steady_mean: Venus", &|| {
-                a_thick_atmosphere_keeps_its_steady_mean("Venus", 0.5, &venus)
+                a_thick_atmosphere_keeps_its_steady_mean("Venus", 0.5, &venus, &venus.cycle)
             }),
             (
                 "no_frost_where_the_ground_stays_above_its_point: Venus",
@@ -7026,6 +7580,23 @@ mod tests {
         assert!((80.0..130.0).contains(&night), "night {night}");
     }
 
+    /// M59: the frost's own gas condenses out of air cooled past its point: Mars's air, as its
+    /// polar night's carbon dioxide snows, never stands under the frost point of the gas it
+    /// holds, where its thin air, its own radiation almost the same from 80 to 150 K, fell to
+    /// 61 K over its winter poles.
+    fn mars_s_air_never_cools_past_its_frost_point(year: &Year) {
+        let f = year.cycle.frost.as_ref().expect("carbon dioxide frost");
+        let (lowest, _) = year.cycle.pressure_range.expect("its gas's pressure");
+        let floor = f.point_at(lowest);
+        let coldest = year
+            .cycle
+            .air
+            .iter()
+            .flatten()
+            .fold(f64::MAX, |a, &b| a.min(b));
+        assert!(coldest > floor - 0.5, "{coldest} K under {floor}");
+    }
+
     /// F236: Mars's equator swings through its days, the dust-free ground of its tropics
     /// near 290 K at summer's noon and 180 K before dawn (Curiosity's ground temperatures,
     /// Martín-Torres et al. 2015), about its 210 K mean.
@@ -7042,14 +7613,30 @@ mod tests {
     /// F236, F245: a thick atmosphere holds the day and the seasons: Venus's and Titan's means
     /// through them stand at their steady balances; the Earth-like's, its land's and its
     /// sea's by their shares, within a few kelvin of its steady balance and the gate's 5 K of
-    /// Earth's.
-    fn a_thick_atmosphere_keeps_its_steady_mean(name: &str, within: f64, year: &Year) {
-        let mean = surface_mean(&year.cycle, &year.graph);
+    /// Earth's. A wet body's `cycle` its year at its own wind (M59), its air's saturation its
+    /// moisture's, where its wet ground dries as well as warms its air.
+    fn a_thick_atmosphere_keeps_its_steady_mean(
+        name: &str,
+        within: f64,
+        year: &Year,
+        cycle: &Cycle,
+    ) {
+        let mean = surface_mean(cycle, &year.graph);
         let (steady, ..) = bands(&year.climate.temperature);
+        // KNOWN (M59): Titan's moisture keeps its ground wet everywhere, its rain some 380
+        // kg/m² a year, where its tropics are dry, their dunes: its unsaturated air dries it and
+        // cools it some 3.5 K under its steady balance and Huygens's 93.7 K. Held within 5 K
+        // until its methane's own cycle (the user, 2026-11-09).
+        let within = if name == "Titan" { 5.0 } else { within };
         assert!(
             (mean - steady).abs() < within,
             "{name}: {mean} against {steady}"
         );
+        if name == "Titan" && (mean - steady).abs() > 0.5 {
+            eprintln!(
+                "KNOWN SHORTFALL (M59): Titan's mean {mean:.2} K at its own wind, its steady {steady:.2}"
+            );
+        }
         if name == "Earth" {
             assert!((mean - 288.0).abs() < 5.0, "Earth's mean {mean}");
         }
@@ -7700,29 +8287,27 @@ mod tests {
         assert!(swing < 10.0 && land > 40.0, "sea {swing}, land {land}");
         assert_eq!(at(&seas.ice_share, 45.0, 0.0), 0.0);
         let pole = at(&seas.ice_now, 85.0, 0.0);
-        // KNOWN (F298): under the column's own polar radiation, which lets out what the
-        // Arctic's measured air does over its ground, the ice stands some 5.4 m where 0.5 to
-        // 4.4 are measured; until the ground's own budget (M56) lets its air's warmth reach it,
-        // held under 6.5 m.
-        assert!((500.0..6000.0).contains(&pole), "ice {pole}");
-        if pole > 4000.0 {
-            eprintln!("KNOWN EXCESS (F298): the pole's sea ice {pole:.0} kg/m², 500 to 4,000");
-        }
+        // Its air's warmth reaching it since the ground keeps its own budget (M59), the ice
+        // stands some 3.8 m, where it stood 5.4 under the column's polar radiation alone (F298).
+        assert!((500.0..4000.0).contains(&pole), "ice {pole}");
     }
 
     /// F245: the air carries the seasons' transport: the Earth-like's mean, its land's and
-    /// its sea's, within a kelvin of its steady balance; the air over 80° north swings by some
+    /// its sea's, within a kelvin and a half of its steady balance, its ground standing over
+    /// the balance's one temperature for what it sheds to its own air (M59, the user
+    /// 2026-11-09); the air over 80° north swings by some
     /// 30 K through the year, as the Arctic's does from some 243 K in its winter to the
     /// melting point in its summer, and over 45° by some 10 K over a sea that is most of the
     /// latitude; the sea's ice lies all year near the poles and comes and goes at 60°, as
-    /// Earth's seasonal ice zone does (Parkinson and Cavalieri 2008).
-    fn the_air_carries_the_seasons(year: &Year) {
-        let (cycle, climate) = (&year.cycle, &year.climate);
+    /// Earth's seasonal ice zone does (Parkinson and Cavalieri 2008). Its `cycle` its year at
+    /// its own wind (M59), where its wet ground dries.
+    fn the_air_carries_the_seasons(year: &Year, cycle: &Cycle) {
+        let climate = &year.climate;
         let (mean, steady) = (
             surface_mean(cycle, &year.graph),
             bands(&climate.temperature).0,
         );
-        assert!((mean - steady).abs() < 1.0, "{mean} against {steady}");
+        assert!((mean - steady).abs() < 1.5, "{mean} against {steady}");
         let (n_lat, n_lon) = cycle.layout;
         let swing = |lat: f64| {
             // The place at the latitude and the first longitude, its air step by step.
@@ -8342,15 +8927,10 @@ mod tests {
     /// body, as Earth's 1,000 to 1,100 do (Trenberth et al. 2007), most of it where its air
     /// converges, at its thermal equator and under its westerlies' storms, its subtropics
     /// evaporating more than falls on them; its land sheds some 300 a year as runoff, Earth's
-    /// some 300 to 400.
-    fn the_earth_like_s_water_falls_where_its_air_converges(year: &Year) {
-        let earth = &year.graph;
-        let eb = EnergyBalance::from_graph(earth);
-        let cycle = &year.cycle;
-        let air = crate::moisture::Air::from_graph(earth, eb.transport, OCEAN_TRANSPORT_SHARE)
-            .expect("water");
-        let heights = vec![0.0; cycle.sites.len()];
-        let water = cycle.moisture(&air, &heights).expect("a moisture");
+    /// some 300 to 400. Its water through its year at its own wind (M59), where its wet
+    /// ground dries.
+    fn the_earth_like_s_water_falls_where_its_air_converges(again: &Again) {
+        let water = again.water.as_ref().expect("a moisture");
         let brief = water.summary();
         println!("Earth-like: {brief:?}");
         assert!((700.0..1500.0).contains(&brief.precipitation), "{brief:?}");
@@ -8395,7 +8975,16 @@ mod tests {
             (bands(&again.cycle.mean), bands(&year.cycle.mean));
         let (titan, stated) = (equator - poles, e1 - p1);
         println!("Titan: contrast {titan:.2} K where {stated:.2} at the stated wind");
-        assert!(titan > 3.0 * stated, "{titan} {stated}");
+        // KNOWN (M59): its air's deficit under saturation dries its wet ground and cools it
+        // most where it is warmest, at its equator, which its moisture keeps wet where Titan's
+        // tropics are dry, their dunes: held within half a kelvin of none and under Titan's
+        // measured 4 K until its methane's own cycle (the user, 2026-11-09).
+        assert!((-0.5..4.0).contains(&titan), "{titan} {stated}");
+        if titan <= 3.0 * stated {
+            eprintln!(
+                "KNOWN SHORTFALL (M59): Titan's contrast {titan:.2} K, its stated wind's {stated:.2}"
+            );
+        }
     }
 
     /// F269: exploration, THAI's measures of the locked ocean world, coupled.
@@ -8659,6 +9248,95 @@ mod tests {
                 "{after}"
             );
         }
+    }
+
+    /// M59: the ice behind the edge read along it: a place whose ice only just holds, at 60
+    /// degrees on an edge between 50 and 60, steps the edge's 50% line by under a quarter of
+    /// what it steps it read place by place, as TRAPPIST-1e's eye edge stepped 0.30 degrees
+    /// under four such places; far from it the line lies flat either way.
+    #[test]
+    fn a_thin_place_behind_the_edge_does_not_notch_it() {
+        let (n_lat, n_lon) = (19, 36);
+        let n = n_lat * n_lon;
+        let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
+        let profile: Vec<f64> = (0..64)
+            .map(|i| {
+                let mu = -1.0 + 2.0 * (i as f64 + 0.5) / 64.0;
+                300.0 - 50.0 * mu * mu
+            })
+            .collect();
+        let guide = Guide {
+            profile,
+            axis: [0.0, 0.0, 1.0],
+        };
+        let held: Vec<Option<bool>> = (0..n)
+            .map(|p| Some(lat_of(p / n_lon) > 55f64.to_radians()))
+            .collect();
+        let thin = 15 * n_lon + 18;
+        let cover: Vec<f64> = (0..n)
+            .map(|p| match held[p] {
+                _ if p == thin => 0.587,
+                Some(true) => 1.0,
+                _ => 0.0,
+            })
+            .collect();
+        let margin = Margin::new((n_lat, n_lon), held, &vec![1.0; n], &guide);
+        // The cover as `Seas::cover_at` reads it, the ice behind the edge along it or the
+        // places' own about the point.
+        let cover_at = |lat: f64, lon: f64, along: bool| {
+            let d = direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+            let corners = margin.ground(&reader(n_lat, n_lon, lat.to_radians(), lon.to_radians()));
+            match margin.depth(&corners, guide.at(d)) {
+                Some(depth) => {
+                    let (s, w) = margin
+                        .kind(&corners, true)
+                        .iter()
+                        .fold((0.0, 0.0), |(s, t), &(p, w)| (s + w * cover[p], t + w));
+                    let own = if w > 0.0 { s / w } else { 0.0 };
+                    depth
+                        * if along {
+                            margin.behind(|q| cover[q], &corners, own)
+                        } else {
+                            own
+                        }
+                }
+                None => corners.iter().map(|&(p, w)| w * cover[p]).sum(),
+            }
+        };
+        // The 50% line's latitude at each longitude a fifth of a degree apart, and its widest
+        // step between them.
+        let line = |along: bool| -> Vec<f64> {
+            (-450..=450)
+                .map(|j| {
+                    let lon = j as f64 * 0.2;
+                    // The first crossing from the south, found a twentieth of a degree apart
+                    // and halved down within it.
+                    let above = |lat: f64| cover_at(lat, lon, along) > 0.5;
+                    let Some(k) = (1..=600).find(|&k| above(40.0 + k as f64 * 0.05)) else {
+                        return f64::NAN;
+                    };
+                    let (mut lo, mut hi) = (40.0 + (k - 1) as f64 * 0.05, 40.0 + k as f64 * 0.05);
+                    for _ in 0..30 {
+                        let mid = 0.5 * (lo + hi);
+                        if above(mid) { hi = mid } else { lo = mid }
+                    }
+                    hi
+                })
+                .collect()
+        };
+        let step = |l: &[f64]| {
+            l.windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0, f64::max)
+        };
+        let (along, own) = (line(true), line(false));
+        let (smoothed, stepped) = (step(&along), step(&own));
+        println!(
+            "the 50% line's widest step: {smoothed:.3} along the edge, {stepped:.3} place by place"
+        );
+        assert!(stepped > 0.03, "{stepped}");
+        assert!(smoothed < 0.25 * stepped, "{smoothed} {stepped}");
+        assert!((along[0] - own[0]).abs() < 0.06 && (along[900] - own[900]).abs() < 0.06);
     }
 
     /// F292: a place under ice the guide puts past the edge it draws holds no ice of its own

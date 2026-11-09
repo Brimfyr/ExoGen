@@ -243,6 +243,10 @@ pub struct Column {
     pairs: Vec<(usize, f64)>,
     /// The water a warm air can hold vapour from, metres of global layer (F235).
     water: f64,
+    /// The temperature whose column the air's vapour holds at most, K (M59): a body whose
+    /// water has no liquid to evaporate draws its vapour off its ice, however warm the ground
+    /// under the column; unbounded where its water is liquid.
+    vapour_most: f64,
     /// The clouds' grey depth's law, a u^b of the column's vapour u, kg/m² (M55).
     cloud: (f64, f64),
 }
@@ -291,8 +295,16 @@ impl Column {
             grey,
             pairs,
             water,
+            vapour_most: f64::INFINITY,
             cloud: WATER_CLOUD_DEPTH,
         }
+    }
+
+    /// The column with its vapour no more than the vapour law's column at `most` K, its
+    /// profile's and its adiabat's no more than saturated at it (M59).
+    pub fn with_vapour_most(mut self, most: f64) -> Self {
+        self.vapour_most = most;
+        self
     }
 
     /// The adiabat's exponent, d ln T / d ln p, at `t` K and `p` Pa: the dry air's, slowed where
@@ -302,7 +314,7 @@ impl Column {
         let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) else {
             return self.adiabat;
         };
-        let e = vapour_pressure(water, t).min(0.5 * p);
+        let e = vapour_pressure(water, t.min(self.vapour_most)).min(0.5 * p);
         let r = self.epsilon * e / (p - e);
         let l = if t >= water.t_triple {
             water.l_vap
@@ -340,7 +352,8 @@ impl Column {
         let (mut vapour, mut humid) = (vec![0.0; n], vec![0.0; n]);
         if let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) {
             for (k, h) in humid.iter_mut().enumerate() {
-                *h = vapour_pressure(water, temps[k]).min(0.5 * levels[k]) / levels[k];
+                let most = temps[k].min(self.vapour_most);
+                *h = vapour_pressure(water, most).min(0.5 * levels[k]) / levels[k];
             }
             for k in (0..n - 1).rev() {
                 let mean = 0.5 * (humid[k] + humid[k + 1]);
@@ -422,7 +435,7 @@ impl Column {
             self.profile(t, &datum_levels).1[0]
         };
         let column = if datum > 0.0 {
-            water_column(t, self.water) / datum
+            water_column(t.min(self.vapour_most), self.water) / datum
         } else {
             0.0
         };
@@ -953,6 +966,22 @@ pub fn hemisphere_absorbed(tau: f64) -> f64 {
 /// hemisphere.
 pub fn haze_returned(haze: f64) -> f64 {
     HAZE_RETURNED * hemisphere_absorbed(HAZE_SUNLIGHT * haze)
+}
+
+/// The share of its star's light water vapour absorbs on a path of `u` cm of precipitable
+/// water (M58): Lacis and Hansen 1974's fit over the Sun's spectrum to its bands,
+/// 2.9 u / ((1 + 141.5 u)^0.635 + 5.925 u), saturating towards a half.
+pub fn water_sunlight(u: f64) -> f64 {
+    if u <= 0.0 {
+        return 0.0;
+    }
+    2.9 * u / ((1.0 + 141.5 * u).powf(0.635) + 5.925 * u)
+}
+
+/// The magnification of a vertical path towards a sun at height cosine `mu` (Lacis and Hansen
+/// 1974), 35 / sqrt(1224 mu² + 1): the slant path through a curved air.
+pub fn magnification(mu: f64) -> f64 {
+    35.0 / (1224.0 * mu * mu + 1.0).sqrt()
 }
 
 /// The Bond albedo of a body under an atmosphere (F293): its air's Rayleigh scattering of its
