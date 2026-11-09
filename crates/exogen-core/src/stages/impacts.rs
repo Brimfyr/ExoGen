@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 38;
+pub const VERSION: u64 = 39;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -434,6 +434,22 @@ impl ImpactProcess {
             // about the basin (F168; the lunar basins' annuli, Wieczorek et al. 2013).
             let thinning = BASIN_CRUST_THINNING * EXCAVATION_DEPTH_FRACTION * rec.diameter;
             let radius = dim.radius * rec.ellipticity.sqrt();
+            // The collar rises across the wall to the rim and thins beyond it as the ejecta
+            // does, its crust the thickest at the rim (M61): thrown whole from the rim, the crust
+            // stepped there by its whole collar, a step the loop's cells drew as stairs, and two
+            // basins' collars overlapping stood twice as thick in a wedge whose relief relaxed
+            // away between two straight edges.
+            let wall = (dim.radius - dim.floor_radius).max(0.0) * rec.ellipticity.sqrt();
+            let collar = |r: f64| {
+                if r >= radius {
+                    (r / radius).powf(dim.ejecta_exponent)
+                } else if wall > 0.0 {
+                    let t = ((r - (radius - wall)) / wall).clamp(0.0, 1.0);
+                    t * t * (3.0 - 2.0 * t)
+                } else {
+                    0.0
+                }
+            };
             let area = |idx: usize| self.grid.cell_area(self.grid.cell(idx));
             let crust = layers.crust_thickness.as_mut_slice();
             let mut volume = 0.0;
@@ -450,15 +466,11 @@ impl ImpactProcess {
                 .stamper
                 .footprint
                 .iter()
-                .filter(|&&(_, r, _)| r >= radius)
-                .map(|&(idx, r, _)| (r / radius).powf(dim.ejecta_exponent) * area(idx))
+                .map(|&(idx, r, _)| collar(r) * area(idx))
                 .sum();
             if volume > 0.0 && spread > 0.0 {
                 for &(idx, r, _) in &self.stamper.footprint {
-                    if r >= radius {
-                        crust[idx] += (volume * (r / radius).powf(dim.ejecta_exponent) / spread)
-                            as f32;
-                    }
+                    crust[idx] += (volume * collar(r) / spread) as f32;
                 }
             }
         }

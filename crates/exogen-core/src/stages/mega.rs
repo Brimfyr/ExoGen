@@ -48,6 +48,19 @@ pub fn excavated(x: f64) -> f64 {
     1.0 - smooth(1.0 - MEGA_WALL_SHARE, 1.0, x)
 }
 
+/// The crust a mega-basin throws at a cell, by its elliptical distance from the centre in
+/// basin radii, as a share of what lands at the rim (M61): rising across the wall to the rim as
+/// the excavation gives way there, thinning beyond it as a basin's ejecta does. Thrown whole
+/// from the rim, the crust and the ground its buoyancy holds stepped there, a step the loop's
+/// cells drew as stairs.
+pub fn thrown(x: f64) -> f64 {
+    if x >= 1.0 {
+        x.powf(BASIN_EJECTA_EXPONENT)
+    } else {
+        smooth(1.0 - MEGA_WALL_SHARE, 1.0, x)
+    }
+}
+
 /// Emplace a mega-impact on the layers as they are now. `floor_crust` is the thickness of
 /// the crust the basin's melt sheet makes, m, and `airy` the height the ground stands per
 /// metre of crust, the crust's buoyancy in the mantle.
@@ -92,24 +105,11 @@ pub fn emplace(
         .map(|(&(x, _), &h)| (excavated(x) * (h as f64 - floor_crust)).max(0.0))
         .collect();
     let volume: f64 = removed.iter().zip(&geo).map(|(r, (_, a))| r * a).sum();
-    // The excavated crust lands beyond the rim, thinning with distance as a basin's ejecta
-    // does.
-    let spread: f64 = geo
-        .iter()
-        .filter(|(x, _)| *x > 1.0)
-        .map(|(x, a)| x.powf(BASIN_EJECTA_EXPONENT) * a)
-        .sum();
+    // The excavated crust lands about the rim, rising across the wall and thinning beyond it
+    // (`thrown`, M61).
+    let spread: f64 = geo.iter().map(|&(x, a)| thrown(x) * a).sum();
     let at_rim = if spread > 0.0 { volume / spread } else { 0.0 };
-    let ejecta: Vec<f64> = geo
-        .iter()
-        .map(|&(x, _)| {
-            if x > 1.0 {
-                at_rim * x.powf(BASIN_EJECTA_EXPONENT)
-            } else {
-                0.0
-            }
-        })
-        .collect();
+    let ejecta: Vec<f64> = geo.iter().map(|&(x, _)| at_rim * thrown(x)).collect();
     // The crust, and the ground its buoyancy holds up.
     {
         let time = rec.time_gyr as f32;
@@ -143,9 +143,11 @@ pub fn emplace(
             let x = geo[k].0;
             let b = bed[k] as f64;
             let inside = x <= 1.0;
-            let bedrock = if inside {
-                b + (level - b) * excavated(x)
-            } else if lows.is_empty() {
+            // The old ground the ejecta bury by their thickness (F169), giving way across the
+            // wall to the floor the basin levelled where it excavated (M61): the burial only of
+            // the ground that is left, the floor at its own level, so that neither steps at
+            // the rim nor the burial draws the floor towards the old ground's lows.
+            let buried = if lows.is_empty() || ejecta[k] <= 0.0 {
                 b
             } else {
                 let l = crate::stages::relaxation::blend_levels(
@@ -156,6 +158,7 @@ pub fn emplace(
                 let relief = b - l;
                 l + relief * burial_factor(relief, ejecta[k])
             };
+            let bedrock = buried + (level - buried) * excavated(x);
             CellWrite {
                 idx: k as u32,
                 bedrock: bedrock as f32,
@@ -216,11 +219,7 @@ pub fn renew_compute(
         .iter()
         .map(|&(x, a)| excavated(x) * excavated_crust * a)
         .sum();
-    let spread: f64 = geo
-        .iter()
-        .filter(|(x, _)| *x > 1.0)
-        .map(|(x, a)| x.powf(BASIN_EJECTA_EXPONENT) * a)
-        .sum();
+    let spread: f64 = geo.iter().map(|&(x, a)| thrown(x) * a).sum();
     let at_rim = if spread > 0.0 { volume / spread } else { 0.0 };
     let bed = layers.bedrock.as_slice();
     let time = rec.time_gyr as f32;
@@ -233,7 +232,7 @@ pub fn renew_compute(
                 base[k]
             } else {
                 let relief = (bed[k] - base[k]) as f64;
-                let thickness = at_rim * x.powf(BASIN_EJECTA_EXPONENT);
+                let thickness = at_rim * thrown(x);
                 (base[k] as f64 + relief * burial_factor(relief, thickness)) as f32
             };
             CellWrite {
@@ -280,6 +279,28 @@ mod tests {
             visible: true,
             on_lava: false,
             id: 7,
+        }
+    }
+
+    /// M61: the crust a mega-basin throws rises across its wall to the rim and thins beyond
+    /// it: none at the wall's foot, its whole at the rim from either side, rising across the
+    /// wall and falling beyond, where thrown whole from the rim it stepped there.
+    #[test]
+    fn a_mega_basin_throws_its_crust_continuously_across_its_rim() {
+        assert_eq!(thrown(1.0 - MEGA_WALL_SHARE), 0.0);
+        let (inside, outside) = (thrown(1.0 - 1e-9), thrown(1.0 + 1e-9));
+        assert!((inside - 1.0).abs() < 1e-6, "{inside}");
+        assert!((outside - 1.0).abs() < 1e-6, "{outside}");
+        let mut last = 0.0;
+        for i in 0..=50 {
+            let x = 1.0 - MEGA_WALL_SHARE * (1.0 - i as f64 / 50.0);
+            assert!(thrown(x) >= last - 1e-12, "rising at {x}");
+            last = thrown(x);
+        }
+        for i in 1..=50 {
+            let x = 1.0 + 0.05 * i as f64;
+            assert!(thrown(x) < last, "falling at {x}");
+            last = thrown(x);
         }
     }
 

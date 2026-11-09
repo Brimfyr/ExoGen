@@ -4563,6 +4563,26 @@ mod tests {
         }
     }
 
+    /// M61: Mars's crust changes across its basins' rims as their walls do: no two
+    /// neighbouring cells of the loop's grid differ by 30 km, where the crust a basin threw
+    /// stepped up at its rim by its whole collar, its dichotomy's some 40 km and more in a cell,
+    /// and two collars overlapping stood a wedge between two straight edges.
+    fn mars_s_crust_steps_nowhere_at_its_basins_rims(body: &Body) {
+        let lo = &body.out.loop_output;
+        let grid = lo.grid;
+        let last = lo.keyframes.last().expect("a keyframe");
+        let crust = last.layers.crust_thickness.as_slice();
+        let mut most = 0.0f32;
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            for (di, dj) in [(1, 0), (0, 1)] {
+                let j = grid.index(grid.neighbor(c, di, dj));
+                most = most.max((crust[k] - crust[j]).abs());
+            }
+        }
+        assert!(most < 30e3, "the crust steps {most} m between cells");
+    }
+
     /// Mars's run, read by each check of it.
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
@@ -4580,6 +4600,9 @@ mod tests {
             }),
             ("mars_s_thrusts_run_round_tharsis", &|| {
                 mars_s_thrusts_run_round_tharsis(&body)
+            }),
+            ("mars_s_crust_steps_nowhere_at_its_basins_rims", &|| {
+                mars_s_crust_steps_nowhere_at_its_basins_rims(&body)
             }),
         ]);
     }

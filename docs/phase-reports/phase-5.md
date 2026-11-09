@@ -744,6 +744,19 @@ How it went:
 - **Seen on the way.** The snapshot shows snow lying on TRAPPIST-1e's continent under its star, which stands cooler than the sea about it with a warm fringe along its coast; and Mars's ground is near grey, some 88, 84 and 81 of 255 in sRGB's red, green and blue, where Mars's is orange-red. Both are noted to look into.
 - **The suite.** 385 tests passed with the whole-body tests in 15.3 minutes. FINISH_VERSION 225.
 
+## The sixty-first milestone: the crust continuous across a basin's rim
+
+- **F313.** The crust a basin throws rises across its wall to its rim and thins beyond it: no step at the rim, the dichotomy's edge no stairs, no triangle where two collars overlap.
+- **F314.** The mega-basin buries the ground it leaves, giving way to its levelled floor across its wall.
+
+How it went:
+
+- **The user's spots.** On Mars's height map a lower triangle with straight edges in the highlands near 0°E 25°N, and a staircase just east of it where a highland crater drops to the lowlands. The keyframes showed the triangle born between 0.60 and 0.80 Gyr into the body's life, and the dumps after each impact over 500 km showed no impact drew it: it appeared at a step's boundary after the dichotomy's impact, in the lid's relaxation. The crust's map showed why: a step of some 40 km at every basin's rim, a staircase along the loop's cells, and a wedge 130 km thick where the dichotomy's collar and a 3,860 km basin's overlapped, which relaxed its relief fastest.
+- **A collar from the rim outward, tried.** Rising beyond the rim it moved the crust's peak a wall's width out; the crust's thickest stands at a basin's rim, so it rises across the wall instead.
+- **A trough, found and removed.** Burying the levelled floor's relief inside the wall cut a trough a kilometre deep and more along the dichotomy's foot, where the burial drew the floor towards the old ground's lows; the burial now takes only the ground the basin leaves. A trough some half a kilometre deep remains at 14 to 16°E, as before this milestone.
+- **The invariants.** A mega-basin throws its crust continuously across its rim; Mars's crust steps under 30 km between neighbouring cells of the loop's grid, 48 km under the step planted back: each failed under its planted bug.
+- **The suite.** 386 tests passed with the whole-body tests in 14.9 minutes. The impacts' VERSION 39.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.
