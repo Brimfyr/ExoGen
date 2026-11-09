@@ -548,6 +548,40 @@ pub fn resurfacing_compute(
     let padded_fill = PaddedField::new(coarse, &rec.fill);
     let padded_filled = PaddedField::new(coarse, &rec.filled);
     let padded_score = PaddedField::new(coarse, &rec.score);
+    // Each plains' fill level read from the coarse cells its own overturn laid alone (F302):
+    // a young plain's spill point never blended with the older plains' about it, nor theirs
+    // with its, which drew a lip inside the young plains' edge and a moat outside it. Each
+    // overturn's level and its cells' mask, read together, their ratio the level.
+    let plains_time =
+        |s: f32| rec.formed[rec.region_of(s).min(rec.tesserae_from.saturating_sub(1))];
+    let times: Vec<f32> = rec.score.iter().map(|&s| plains_time(s)).collect();
+    let mut overturns = times.clone();
+    overturns.sort_by(f32::total_cmp);
+    overturns.dedup();
+    let levels: Vec<(f32, PaddedField, PaddedField)> = overturns
+        .iter()
+        .map(|&t| {
+            let mask: Vec<f32> = times
+                .iter()
+                .map(|&p| if p == t { 1.0 } else { 0.0 })
+                .collect();
+            let held: Vec<f32> = rec.filled.iter().zip(&mask).map(|(f, m)| f * m).collect();
+            (
+                t,
+                PaddedField::new(coarse, &held),
+                PaddedField::new(coarse, &mask),
+            )
+        })
+        .collect();
+    let target_at = |e: [f64; 3], time: f32| -> f32 {
+        if let Some((_, held, mask)) = levels.iter().find(|l| l.0 == time) {
+            let w = sample_bilinear(coarse, mask, e);
+            if w > 1e-3 {
+                return sample_bilinear(coarse, held, e) / w;
+            }
+        }
+        sample_bilinear(coarse, &padded_filled, e)
+    };
     // How far the old ground's smoothed height stands below the tesserae's edge, m:
     // beyond them the old ground sinking beneath the plains, which thicken away from the
     // edge in an onlap wedge, and within them the lava ponded at the edge's level below the
@@ -641,7 +675,7 @@ pub fn resurfacing_compute(
             }
         };
         let plains_depth = |e: [f64; 3]| -> f32 {
-            let target = sample_bilinear(coarse, &padded_filled, e);
+            let target = target_at(e, time);
             (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0) + EPISODIC_VENEER as f32
         };
         // A lid whose last overturn renewed every region keeps no tesserae (F300): plains

@@ -699,6 +699,17 @@ How it went:
 - **Venus.** The young plains' edges run into the old plains' slopes, the young plains some 500 m lower; its heights spread 1,318 m where 1,279, its lowest hundredth below −2,093 m where −1,634; the tesserae's margins and their share, 7.2 percent, as they were; its ridges 60.4 percent below its mean height, its thrusts 524 km.
 - **The suite.** 378 tests passed with the whole-body tests in 16.2 minutes; the depression test checks that a liquid spills onto a lower outlet beside it.
 
+## The fifty-eighth milestone: each plains' own fill level
+
+- **F302.** The user saw a cliff and a moat still about the southernmost of Venus's young floods after F301 (2026-11-09).
+
+How it went:
+
+- **The diagnosis.** Profiles pixel by pixel across the flood's west edge: the older plains falling 300 to 500 m into a moat two pixels wide, then a lip as high two pixels inside the young plains; its south edge smooth. The finish lays each overturn's plains from the level the loop filled towards, read between the coarse cells: within a coarse cell of the edge it blended the young plains' spill point, their edge's own ground since F301, with the older plains' far higher one, the young plains standing thicker there and the older thinner.
+- **The fix.** Each plains' level read from its own overturn's coarse cells alone. The lip and the moat went; the contact is a change of texture.
+- **Venus.** Its ridges 60.4 percent below its mean height, its thrusts 524 km.
+- **The suite.** 378 tests passed with the whole-body tests in 15.7 minutes, the climate's work in the tree set aside for the run. The ground's own budget is now the fifty-ninth milestone.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.
