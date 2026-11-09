@@ -687,6 +687,18 @@ How it went:
 - **Venus.** Its finish keeps 7.2 percent tessera, the lid of one piece's 7.8, each tessera's fabric over the whole of it and its margins onlapped as before F297. Venus's wrinkle ridges stand 59.5 percent below its mean height, where 66.5 under F297, whose drag had carried the renewed regions' crust before their overturn (61.3 with F299 at the friction before, about the lid of one piece's three fifths; four fifths measured; known); its thrusts 524 km, 83 percent of them 50 to 100 Myr after the overturn that laid their ground.
 - **The suite.** 378 tests passed with the whole-body tests in 15.6 minutes. A broken lid keeps tesserae only where its last overturn left some of it: the sweep's check that tesserae stand exactly where the lid broke now runs one way.
 
+## The fifty-seventh milestone: the plains' own spill point
+
+- **F301.** The user asked what the large landforms in Venus's deepest ground were, with a hard edge into a moat about them (2026-11-09), then for them fixed before the ground's own budget.
+
+How it went:
+
+- **The diagnosis.** The landforms are the plains of Venus's latest overturns, its weakest regions renewed again 0.348 and 0.050 Gyr ago: their outlines are those of the youngest surface age exactly, on the lowest of the old ground, as the regions stand by its height. Profiles across their edges: the old plains falling into a trough up to some 350 m deep and 150 to 250 km wide, then a step of 500 to 730 m onto the young plains, which sag inwards from a lip. F296's Venus had the step, some 600 m; F299 had not touched it.
+- **The cause.** Each overturn fills the depressions on its plains towards their spill point, and the spill point came from a flood of the whole body from its lowest cell: the basins the late renewals lay in spilled far up the old plains about them, and the lava stopped at the regions' outlines standing all that above the old lid. Its load bent the lid into the moat (F162).
+- **The fix.** The flood takes the ground beyond the plains an overturn lays as outlets, each at its own height: the lava spills onto the old lid wherever that stands lower than its surface, never more than its veneer above it. Its load tapers to the veneer at the edge, and the moat goes with the step.
+- **Venus.** The young plains' edges run into the old plains' slopes, the young plains some 500 m lower; its heights spread 1,318 m where 1,279, its lowest hundredth below −2,093 m where −1,634; the tesserae's margins and their share, 7.2 percent, as they were; its ridges 60.4 percent below its mean height, its thrusts 524 km.
+- **The suite.** 378 tests passed with the whole-body tests in 16.2 minutes; the depression test checks that a liquid spills onto a lower outlet beside it.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

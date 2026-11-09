@@ -5303,7 +5303,8 @@ mod tests {
         // KNOWN (F293): at Venus's measured 737 K some three fifths of its ridges' points lay
         // below its mean, where four fifths did under the grey law's 756 K; under its regions
         // (F296), 64 percent; each place under its own lid as it stood (F299) and the friction
-        // set by the tesserae (F300), 59.5: held at over half.
+        // set by the tesserae (F300), 59.5; the plains filled to their own spill point (F301),
+        // 60.4: held at over half.
         assert!(
             all > 1000 && below * 2 > all,
             "{below} of {all} below the mean"

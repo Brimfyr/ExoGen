@@ -1187,7 +1187,9 @@ pub const LANDSLIDE_GAP: (f64, f64) = (0.5, 3.0);
 pub const LANDSLIDE_REACH: (f64, f64) = (7.0, 14.0);
 pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// The episodic lid (PLAN.md 4.3, Venus). Each overturn fills every depression on its regions
-/// this far towards its spill point and lays this veneer everywhere else on their plains, m;
+/// this far towards its spill point and lays this veneer everywhere else on their plains, m,
+/// its lava spilling onto the ground beyond the plains it lays wherever that stands lower than
+/// its surface (F301): the spill point is the plains' own, never above the old lid about them;
 /// the lid's regions stand, as their strength ranks them, on a height smoothed over the
 /// flexural parameter of the elastic lid the overturn broke (audit W3), less what the plumes
 /// and the mantle's flow hold up, which is the crust the flow thickened over its

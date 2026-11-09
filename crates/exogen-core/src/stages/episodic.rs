@@ -34,7 +34,7 @@ use crate::stages::tessera::TesseraFabric;
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 16;
+pub const VERSION: u64 = 17;
 
 /// The overturns' resurfacing, kept for the finishing pass (F296).
 #[derive(Clone, Debug)]
@@ -157,6 +157,17 @@ impl Ord for Key {
 /// The terrain with every depression filled to its spill point (priority flood from the
 /// lowest cell, Barnes et al. 2014).
 pub fn fill_depressions(grid: &CubeSphere, heights: &[f32]) -> Vec<f32> {
+    fill_depressions_to(grid, heights, |_| false)
+}
+
+/// The terrain with every depression filled to its spill point, a liquid on it spilling
+/// onto the cells `outlet` names wherever they stand lower than its surface, as well as
+/// towards the lowest cell: each outlet keeps its own height (F301).
+pub fn fill_depressions_to(
+    grid: &CubeSphere,
+    heights: &[f32],
+    outlet: impl Fn(usize) -> bool,
+) -> Vec<f32> {
     let n = grid.cell_count();
     let mut filled = vec![f32::INFINITY; n];
     let mut visited = vec![false; n];
@@ -164,8 +175,10 @@ pub fn fill_depressions(grid: &CubeSphere, heights: &[f32]) -> Vec<f32> {
         .min_by(|&a, &b| heights[a].total_cmp(&heights[b]))
         .unwrap_or(0);
     let mut heap = BinaryHeap::new();
-    heap.push(Reverse(Key(heights[start], start)));
-    visited[start] = true;
+    for k in (0..n).filter(|&k| k == start || outlet(k)) {
+        heap.push(Reverse(Key(heights[k], k)));
+        visited[k] = true;
+    }
     while let Some(Reverse(Key(level, idx))) = heap.pop() {
         filled[idx] = level;
         let cell = grid.cell(idx);
@@ -442,7 +455,14 @@ impl EpisodicProcess {
                 renewed[r as usize] = true;
                 rec.formed[r as usize] = time as f32;
             }
-            let filled = fill_depressions(&grid, &heights);
+            // The lava fills the depressions on the plains it lays, spilling onto the ground
+            // beyond them wherever that stands lower than its surface (F301): it never stands
+            // above the old lid about it, its edge onlapping that lid's ground.
+            let lays_none = |k: usize| {
+                let region = rec.region_of(rec.score[k]);
+                !renewed[region] || region >= self.tesserae_from
+            };
+            let filled = fill_depressions_to(&grid, &heights, lays_none);
             let mut fill = vec![0.0f32; n];
             {
                 let bedrock = layers.bedrock.as_mut_slice();
@@ -839,6 +859,24 @@ mod tests {
                 assert!((filled[k] - h[k]).abs() < 1e-3);
             }
         }
+        // A liquid laid beside ground it does not cover spills onto it where that stands
+        // lower than its spill point (F301): with one of the pit's neighbours lowered and
+        // named an outlet, the pit fills only to it, and the outlet keeps its height.
+        let low = grid.index(grid.neighbor(cell, 1, 0));
+        h[low] = before - 450.0;
+        let filled = fill_depressions_to(&grid, &h, |k| k == low);
+        assert!(
+            (filled[pit] - h[low]).abs() < 1e-3,
+            "{} vs {}",
+            filled[pit],
+            h[low]
+        );
+        assert!((filled[low] - h[low]).abs() < 1e-3);
+        // Without the outlet the two fill together to the lowest of their rim, two cells
+        // from the pit at most, under 400 m down the plane.
+        let closed = fill_depressions(&grid, &h);
+        assert!(closed[pit] > h[low] + 1.0, "{} vs {}", closed[pit], h[low]);
+        assert!((closed[pit] - closed[low]).abs() < 1e-3);
     }
 
     #[test]
