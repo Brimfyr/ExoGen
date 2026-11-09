@@ -331,6 +331,69 @@ impl MantleHistory {
         self.last_overturn()?;
         self.formed_by(end).into_iter().reduce(f64::min)
     }
+
+    /// Each place's lid's formation over a step, by its region (F299): its region's at the
+    /// step's start and at its end.
+    pub fn formed_over(&self, t0: f64, t1: f64) -> Vec<Formed> {
+        self.formed_by(t0)
+            .into_iter()
+            .zip(self.formed_by(t1))
+            .map(|(before, after)| Formed { before, after })
+            .collect()
+    }
+
+    /// How many of the lid's strongest regions are its tesserae at the history's end (F300):
+    /// those standing since its oldest standing region formed, counted down from the
+    /// strongest while they stand, the ground older than the plains every later overturn laid
+    /// about them (Ivanov and Head 2011). None where its last overturn renewed every region.
+    pub fn tesserae(&self) -> usize {
+        let Some(&end) = self.times.last() else {
+            return 0;
+        };
+        let formed = self.formed_by(end);
+        let oldest = formed.iter().copied().fold(f64::INFINITY, f64::min);
+        let standing = formed.iter().rev().take_while(|&&f| f <= oldest).count();
+        if standing >= formed.len() {
+            0
+        } else {
+            standing
+        }
+    }
+}
+
+/// When a place's lid formed, Gyr after the body's formation, as it stood at the start of a
+/// step and at its end (F299): an overturn within the step renews it only from its own time
+/// on, the lid before standing until then.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Formed {
+    pub before: f64,
+    pub after: f64,
+}
+
+impl Formed {
+    /// A lid standing through the whole step, formed at `t`.
+    pub fn standing(t: f64) -> Self {
+        Self {
+            before: t,
+            after: t,
+        }
+    }
+
+    /// When the lid standing at `t` within the step formed.
+    pub fn at(self, t: f64) -> f64 {
+        if t < self.after {
+            self.before
+        } else {
+            self.after
+        }
+    }
+
+    /// The order of lids by their formations, the step's end's first.
+    pub fn order(&self, other: &Self) -> std::cmp::Ordering {
+        self.after
+            .total_cmp(&other.after)
+            .then(self.before.total_cmp(&other.before))
+    }
 }
 
 /// The stagnant-lid convective flux at a mantle temperature, W/m² (Solomatov and Moresi
@@ -700,20 +763,19 @@ mod tests {
         }
     }
 
-    /// Venus's strongest eighth's surface's mean age over the rest's (F296), the lid's regions
+    /// Venus's tesserae's surface's mean age over the rest's (F296, F300), the lid's regions
     /// weakest first.
     fn tesserae_over_the_rest(h: &MantleHistory, age: f64) -> f64 {
         let ages: Vec<f64> = h.formed_by(age).iter().map(|f| age - f).collect();
-        let strong = (TESSERA_FRACTION * ages.len() as f64).round() as usize;
-        let (rest, tesserae) = ages.split_at(ages.len() - strong);
+        let (rest, tesserae) = ages.split_at(ages.len() - h.tesserae());
         let mean = |a: &[f64]| a.iter().sum::<f64>() / a.len().max(1) as f64;
         mean(tesserae) / mean(rest)
     }
 
     /// F296: the anchors, found: the friction by Venus's surface's mean age, the spread by its
-    /// tesserae's craters, 1.4 times as dense as the rest's. Each friction's mean age and the
-    /// strongest eighth's over the rest's, at each spread; EXOGEN_MU_START and EXOGEN_MU_STEP
-    /// narrow the scan.
+    /// tesserae's craters, 1.4 times as dense as the rest's. Each friction's mean age, the
+    /// tesserae's share of the surface and their age over the rest's (F300), at each spread;
+    /// EXOGEN_MU_START, EXOGEN_MU_STEP and EXOGEN_SPREADS narrow the scan.
     #[test]
     #[ignore = "calibration: the regional lid's anchors"]
     fn calibrate_the_regional_lid() {
@@ -729,16 +791,21 @@ mod tests {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0001);
-        for spread in [0.015, 0.02, 0.025] {
+        let spreads: Vec<f64> = std::env::var("EXOGEN_SPREADS")
+            .ok()
+            .map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect())
+            .unwrap_or_else(|| vec![0.015, 0.02, 0.025]);
+        for spread in spreads {
             let rows: Vec<String> = (0..=20)
                 .into_par_iter()
                 .map(|i| {
                     let mu = start + stride * i as f64;
                     let h = evolve_with(&inp, mu, spread);
                     format!(
-                        "mu {mu:.5}: {:>3} overturns, mean age {:.3} Gyr, tesserae {:.2} times the rest's, now {:.1} mW/m²",
+                        "mu {mu:.5}: {:>3} overturns, mean age {:.3} Gyr, tesserae {:.3} of the surface {:.2} times the rest's age, now {:.1} mW/m²",
                         h.overturns.len(),
                         h.mean_surface_age(age),
+                        h.tesserae() as f64 / h.regions as f64,
                         tesserae_over_the_rest(&h, age),
                         1e3 * h.heat_flux.last().unwrap()
                     )
@@ -863,8 +930,9 @@ mod tests {
     /// F296: Venus's regions renew by degrees: across frictions from 0.0100 to 0.0120 its
     /// surface's mean age, what its craters record, never steps by a sixth of a gigayear
     /// where the lid of one piece's last overturn stepped by a quarter at a time, on the times
-    /// its lid matured; its strongest eighth, its tesserae, stands some 1.4 times as old as
-    /// the rest, as their craters are dense (Ivanov and Basilevsky 1993).
+    /// its lid matured; its tesserae, the strongest regions that outlast its overturns (F300),
+    /// stand some 1.4 times as old as the rest, as their craters are dense (Ivanov and
+    /// Basilevsky 1993).
     #[test]
     fn venus_s_lid_renews_by_degrees() {
         use rayon::prelude::*;

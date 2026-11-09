@@ -212,7 +212,7 @@ pub fn drag(
     bedrock: &mut [f32],
     support: &Support,
     mantle: &MantleHistory,
-    formed: Option<&[f64]>,
+    formed: Option<&[crate::mantle::Formed]>,
     t0: f64,
     t1: f64,
     mut record: Option<&mut StrainRecord>,
@@ -224,19 +224,19 @@ pub fn drag(
     let mut moved = Moved::default();
     for i in 0..n {
         let t = t0 + (i as f64 + 0.5) * dt;
-        // Each place's stiff lid its own region's, where it reads its own (F297): read once
-        // for each lid standing.
+        // Each place's stiff lid its own region's, where it reads its own (F297), as it stood
+        // at the substep (F299): read once for each lid standing.
         let stiff: Vec<f32> = match formed {
             Some(formed) => {
-                let mut standing = formed.to_vec();
+                let now: Vec<f64> = formed.iter().map(|f| f.at(t)).collect();
+                let mut standing = now.clone();
                 standing.sort_by(f64::total_cmp);
                 standing.dedup();
                 let depth: Vec<f32> = standing
                     .iter()
                     .map(|&f| mantle.stiff_lid_formed(f, t) as f32)
                     .collect();
-                formed
-                    .iter()
+                now.iter()
                     .map(|f| depth[standing.partition_point(|s| s < f)])
                     .collect()
             }
@@ -406,7 +406,7 @@ mod tests {
         let mut bedrock = vec![0.0f32; grid.cell_count()];
         let mut record = StrainRecord::new(overturn, overturn + 0.02);
         // Every place under the lid the overturn formed (F297).
-        let formed = vec![overturn; grid.cell_count()];
+        let formed = vec![crate::mantle::Formed::standing(overturn); grid.cell_count()];
         drag(
             grid,
             &mut crust,

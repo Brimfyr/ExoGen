@@ -28,7 +28,7 @@
 use crate::constants::*;
 
 /// Bumped when the behaviour changes, so caches are not reused across versions.
-pub const VERSION: u64 = 5;
+pub const VERSION: u64 = 6;
 
 use crate::fields::Field;
 use crate::grid::{Cell, CubeSphere};
@@ -562,22 +562,22 @@ pub struct RockCrust<'a> {
     pub shell_at: &'a ShellAt,
     pub steps: &'a [(f64, f64)],
     /// When each cell's lid formed, Gyr since formation, where each place reads its own
-    /// region's (F297).
-    pub formed: Option<&'a [f64]>,
+    /// region's (F297), at the step's start and its end (F299).
+    pub formed: Option<&'a [crate::mantle::Formed]>,
 }
 
 impl RockCrust<'_> {
     /// The lids standing, each once, and each cell's among them (F297): the body's alone
     /// where the cells read no lid of their own.
-    fn lids(&self) -> (Vec<Option<f64>>, Vec<usize>) {
+    fn lids(&self) -> (Vec<Option<crate::mantle::Formed>>, Vec<usize>) {
         match self.formed {
             Some(formed) => {
                 let mut standing = formed.to_vec();
-                standing.sort_by(f64::total_cmp);
+                standing.sort_by(|a, b| a.order(b));
                 standing.dedup();
                 let of = formed
                     .iter()
-                    .map(|f| standing.partition_point(|s| s < f))
+                    .map(|f| standing.partition_point(|s| s.order(f).is_lt()))
                     .collect();
                 (standing.into_iter().map(Some).collect(), of)
             }
@@ -588,16 +588,22 @@ impl RockCrust<'_> {
 
 /// The share of a wavelength's relief a rocky lid lets survive over a step's substeps under
 /// a crust of `thickness`, m (F184), the lid that formed at `formed` where the place reads its
-/// own (F297): the survivals of the lid as it stood at each.
+/// own (F297): the survivals of the lid as it stood at each (F299).
 pub fn rock_survival(
     wavelength: f64,
     rock: &RockCrust,
     thickness: f64,
-    formed: Option<f64>,
+    formed: Option<crate::mantle::Formed>,
 ) -> f64 {
     rock.steps
         .iter()
-        .map(|&(t, dt)| survival(wavelength, dt, &(rock.shell_at)(t, thickness, formed)))
+        .map(|&(t, dt)| {
+            survival(
+                wavelength,
+                dt,
+                &(rock.shell_at)(t, thickness, formed.map(|f| f.at(t))),
+            )
+        })
         .product()
 }
 
@@ -1060,8 +1066,9 @@ mod tests {
             steps: &steps,
             formed: None,
         };
-        let thin = rock_survival(1_000e3, &rock, 40e3, Some(overturn));
-        let thick = rock_survival(1_000e3, &rock, 65e3, Some(overturn));
+        let lid = Some(crate::mantle::Formed::standing(overturn));
+        let thin = rock_survival(1_000e3, &rock, 40e3, lid);
+        let thick = rock_survival(1_000e3, &rock, 65e3, lid);
         assert!(thick < 0.1 && thin > 0.3, "{thick} {thin}");
         let later: Vec<(f64, f64)> = (0..10)
             .map(|i| (overturn + 0.3 + 0.005 * (i as f64 + 0.5), 0.005))
@@ -1072,7 +1079,7 @@ mod tests {
         };
         // Under its own lid (F297): its weakest regions' renewal 0.35 Gyr ago, a tenth of the
         // lid, thins theirs, not this one's, where the body's mean lid thinned by a sixth.
-        let later = rock_survival(1_000e3, &rock, 65e3, Some(overturn));
+        let later = rock_survival(1_000e3, &rock, 65e3, lid);
         assert!(later > 0.99, "{later}");
     }
 

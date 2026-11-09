@@ -447,7 +447,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 221;
+pub const FINISH_VERSION: u64 = 222;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -558,9 +558,8 @@ pub fn run_coarse_loop(
         plume.as_ref().map_or(&[], |p| p.rises.as_slice()),
         plume.as_ref().map_or(&no_limbs, |p| &p.limbs),
     );
-    // The strain the lid the tesserae keep took from the mantle's flow from when their
-    // regions formed to when the plains about them did (F187, F296), which their fabric
-    // records.
+    // The strain the lid the tesserae keep took from the mantle's flow from when they formed
+    // to when the oldest plains about them were laid (F187, F300), which their fabric records.
     let mut lid_strain = episodic
         .as_ref()
         .and_then(|e| e.strain_window())
@@ -659,14 +658,16 @@ pub fn run_coarse_loop(
             // The mantle's flow carries the crust beneath the stiff lid toward its
             // downwellings (F184), before the lower crust's own flow spreads what piles up.
             // Each cell under its own region's lid, as its region's last overturn formed it,
-            // once the regions stand on the ground (F297); the body's before.
-            let formed: Option<Vec<f64>> = episodic
+            // once the regions stand on the ground (F297); the body's before. The lid an
+            // overturn within the step renewed stands only from that overturn on, the one
+            // before it until then (F299).
+            let formed: Option<Vec<crate::mantle::Formed>> = episodic
                 .as_ref()
                 .and_then(|e| e.resurfacing.as_ref())
                 .zip(thermal.mantle.as_ref())
                 .map(|(rec, m)| {
-                    let by = m.formed_by(t1);
-                    rec.score.iter().map(|&s| by[rec.region_of(s)]).collect()
+                    let over = m.formed_over(t0, t1);
+                    rec.score.iter().map(|&s| over[rec.region_of(s)]).collect()
                 });
             if let (Some(sup), Some(mantle)) = (&support, &thermal.mantle) {
                 let moved = crust::drag(
@@ -1117,8 +1118,10 @@ pub fn run_coarse_loop(
         eprintln!("thrusts: {}", tectonics::strike_summary(&scarps));
     }
     let contraction_records = &scarps;
-    // The tesserae keep the strain their lid took, each set with the lid of its time.
+    // The tesserae keep the strain their lid took, each set with their own lid as it stood at
+    // its time, the one that formed with them (F300).
     if let (Some(r), Some(record)) = (resurfacing.as_mut(), lid_strain) {
+        let formed = r.time_gyr;
         r.strain = record
             .sets
             .into_iter()
@@ -1126,7 +1129,7 @@ pub fn run_coarse_loop(
             .filter(|s| s.strain.iter().any(|v| v.iter().any(|&x| x != 0.0)))
             .map(|s| episodic::LidStrain {
                 time: s.time,
-                elastic: thermal.at(s.time).elastic,
+                elastic: thermal.lid_state(s.time, formed).elastic,
                 strain: s.strain,
                 pressed: s.pressed,
                 pulled: s.pulled,
@@ -5299,7 +5302,8 @@ mod tests {
         }
         // KNOWN (F293): at Venus's measured 737 K some three fifths of its ridges' points lay
         // below its mean, where four fifths did under the grey law's 756 K; under its regions
-        // (F296), 64 percent: held at over half.
+        // (F296), 64 percent; each place under its own lid as it stood (F299) and the friction
+        // set by the tesserae (F300), 59.5: held at over half.
         assert!(
             all > 1000 && below * 2 > all,
             "{below} of {all} below the mean"

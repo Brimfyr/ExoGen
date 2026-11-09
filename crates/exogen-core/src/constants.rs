@@ -1191,10 +1191,9 @@ pub const LANDSLIDE_SPREAD: f64 = 0.5;
 /// the lid's regions stand, as their strength ranks them, on a height smoothed over the
 /// flexural parameter of the elastic lid the overturn broke (audit W3), less what the plumes
 /// and the mantle's flow hold up, which is the crust the flow thickened over its
-/// downwellings (F184); the tesserae are its strongest regions, this share of the surface
-/// (Ivanov and Head 1996, some 8 percent), each keeping the ground its region last formed
-/// on (F296). After the overturns the eruptions follow the mantle's history (F165).
-pub const TESSERA_FRACTION: f64 = 0.08;
+/// downwellings (F184); the tesserae are its strongest regions that outlasted every overturn
+/// since they formed (F300), each keeping the ground its region formed on (F296). After the
+/// overturns the eruptions follow the mantle's history (F165).
 /// The tesserae's fabric from the strain their lid took (F187). A strong layer shortened
 /// over a weaker one buckles at this many times its thickness (a stated choice within
 /// buckling theory's 4 to 6 for a layer of plastic strength over a viscous one; with the
@@ -1800,13 +1799,15 @@ pub const MOBILE_LID_MIN_RADIUS: f64 = 4.0e6;
 /// capacities, J/kg/K. The lid breaks where the convecting sublayer's stress along a cell as
 /// long as the mantle is deep exceeds its friction over its thickness; its effective
 /// friction is far below the laboratory's, as a lid that mobilizes needs (Moresi and
-/// Solomatov 1998), and is a stated choice set so that Venus's surface's mean age stands within
-/// the half gigayear its craters record: 0.62 Gyr under its regions (F296), where its lid of one
-/// piece, set again at its measured 737 K (F293), last overturned 0.661 Gyr ago, its last
-/// overturn stepping by some 0.3 Gyr as the friction or its surface's temperature changed, on the
-/// times its lid matured; its regions' surface ages by degrees with them. A lid that broke
-/// within this share of the body's life before the present makes an episodic lid. Steps over
-/// the body's life.
+/// Solomatov 1998), and is a stated choice set by Venus's tesserae (F300): its strongest
+/// regions that outlast its overturns stand on 7.8 percent of its surface, where 7.3 to 8 are
+/// mapped (Ivanov and Head 1996, 2011), its surface's mean age then 0.64 Gyr, within the half
+/// gigayear its craters record (0.63 at 0.0107, where 5.5 percent stood); the share rises by a
+/// region, 0.4 percent, every 0.000005 of it. Its lid of one piece, set again at its measured
+/// 737 K (F293), last overturned 0.661 Gyr ago at 0.0107, its last overturn stepping by some
+/// 0.3 Gyr as the friction or its surface's temperature changed, on the times its lid matured;
+/// its regions' surface ages by degrees with them (F296). A lid that broke within this share of
+/// the body's life before the present makes an episodic lid. Steps over the body's life.
 pub const MANTLE_START_K: f64 = 1_750.0;
 pub const MANTLE_VISCOSITY_REF: f64 = 5e19;
 pub const MANTLE_VISCOSITY_REF_K: f64 = 1_600.0;
@@ -1816,14 +1817,14 @@ pub const MANTLE_EXPANSIVITY: f64 = 3e-5;
 pub const MANTLE_DIFFUSIVITY: f64 = 1e-6;
 pub const MANTLE_HEAT_CAPACITY: f64 = 1_250.0;
 pub const CORE_HEAT_CAPACITY: f64 = 800.0;
-pub const LID_FRICTION: f64 = 0.0107;
+pub const LID_FRICTION: f64 = 0.01074;
 /// F296: the lid's regions, each an equal share of the surface, and the spread of their
 /// friction about LID_FRICTION, the standard deviation of its logarithm: set by Venus's
-/// tesserae, the eighth of its surface (Ivanov and Head 1996) its strongest regions keep,
-/// whose large craters stand 1.4 times as dense as on the rest of the planet (Ivanov and
-/// Basilevsky 1993), the strongest eighth of the regions' surface 1.4 times as old as the
-/// rest's. A narrow spread: Venus's lid founders nearly at once, the weakest renewed after
-/// the main renewal and the strongest surviving one before it.
+/// tesserae, whose large craters stand 1.4 times as dense as on the rest of the planet
+/// (Ivanov and Basilevsky 1993): the strongest eighth of the regions' surface 1.44 times as
+/// old as the rest's (F296); the tesserae its strongest regions keep (F300) 1.53 times, where
+/// 0.015 gives 1.45 and 0.025 some 1.8. A narrow spread: Venus's lid founders nearly at once,
+/// the weakest renewed after the main renewal and the strongest surviving one before it.
 pub const LID_REGIONS: usize = 256;
 pub const LID_FRICTION_SPREAD: f64 = 0.02;
 /// The iron a mantle keeps in its silicates, as FeO, mass fraction (F125): what the warmth

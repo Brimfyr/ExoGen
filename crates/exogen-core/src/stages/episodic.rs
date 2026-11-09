@@ -9,7 +9,7 @@
 //! regional slopes. The regions stand on the old crust's smoothed height as their strength
 //! ranks them, the weakest on the lowest ground and the strongest on the plateaus of crust
 //! the mantle's flow thickened over its downwellings (F184), compensated on their roots: the
-//! strongest eighth, the tesserae, outlast the overturns that renew the plains about them,
+//! strongest that outlast the overturns that renew the plains about them, the tesserae (F300),
 //! deformed into a fabric of intersecting ridges.
 //! Afterwards the surface ages again under a sparse, un-degraded crater population, with
 //! flow fields, coronae over the mantle's diapirs (F145, the corona process) and
@@ -34,7 +34,7 @@ use crate::stages::tessera::TesseraFabric;
 use crate::stages::volcanism::{LavaSmear, overturn_composition};
 use crate::units::{UNIT_LAVA, UNIT_TESSERA};
 
-pub const VERSION: u64 = 15;
+pub const VERSION: u64 = 16;
 
 /// The overturns' resurfacing, kept for the finishing pass (F296).
 #[derive(Clone, Debug)]
@@ -51,7 +51,8 @@ pub struct Resurfacing {
     pub score: Vec<f32>,
     pub threshold: f32,
     /// The score at each region's upper edge, the weakest's first; the first of the
-    /// tesserae; and when each region last formed, Gyr since formation.
+    /// tesserae, the regions' count where there are none (F300); and when each region last
+    /// formed, Gyr since formation.
     pub edges: Vec<f32>,
     pub tesserae_from: usize,
     pub formed: Vec<f32>,
@@ -246,8 +247,7 @@ impl EpisodicProcess {
         let body_radius = graph.f64("body.radius");
         let age = graph.f64("body.age");
         // The overturns since the oldest standing region of the lid formed, which laid every
-        // region's surface (F296); the strongest TESSERA_FRACTION of the regions, the
-        // tesserae.
+        // region's surface (F296).
         let mantle = crate::mantle::evolve(&crate::mantle::MantleInputs::from_graph(graph));
         let window = mantle.oldest_standing()?;
         let overturns: Vec<(f64, Vec<u16>)> = mantle
@@ -258,9 +258,10 @@ impl EpisodicProcess {
             .map(|(&o, r)| (o, r.clone()))
             .collect();
         let regions = mantle.regions;
-        let tessera = graph.f64("tectonics.tessera_fraction");
-        let tesserae_from = regions
-            - ((tessera * regions as f64).round() as usize).clamp(1, regions.saturating_sub(1));
+        // The tesserae: its strongest regions that outlasted every overturn since they
+        // formed, older than the plains about them (F300); none where the last overturn
+        // renewed the whole lid.
+        let tesserae_from = regions - mantle.tesserae();
         let formed = mantle.formed_by(age);
         let rng = Rng::new(graph.f64("seed.tectonics") as u64 ^ 0xE915_0D1C);
         // The coronae over the mantle's diapirs (F145).
@@ -358,12 +359,12 @@ impl EpisodicProcess {
     }
 
     /// The time over which the mantle's flow strained the lid the tesserae keep (F187,
-    /// F296): from when their regions formed to when the plains about them did, each by its
-    /// share; none where the plains are no younger.
+    /// F300): from when they formed, all at once, to when the oldest plains standing about
+    /// them were laid; none without tesserae.
     pub fn strain_window(&self) -> Option<(f64, f64)> {
-        let mean = |f: &[f64]| f.iter().sum::<f64>() / f.len().max(1) as f64;
         let (plains, tesserae) = self.formed.split_at(self.tesserae_from);
-        let (from, to) = (mean(tesserae), mean(plains));
+        let from = tesserae.iter().copied().reduce(f64::max)?;
+        let to = plains.iter().copied().reduce(f64::min)?;
         (to > from + 1e-9).then_some((from, to))
     }
 
@@ -623,6 +624,22 @@ pub fn resurfacing_compute(
             let target = sample_bilinear(coarse, &padded_filled, e);
             (EPISODIC_FILL_FRACTION as f32 * (target - ground)).max(0.0) + EPISODIC_VENEER as f32
         };
+        // A lid whose last overturn renewed every region keeps no tesserae (F300): plains
+        // everywhere.
+        if rec.tesserae_from >= rec.edges.len() {
+            cells.push(CellWrite {
+                idx: idx as u32,
+                bedrock: ground + plains_depth(d) + carry,
+                surface: true,
+                age: time,
+                unit: UNIT_LAVA,
+                deep: 0.0,
+                melt: 0.0,
+                cover: 1.0,
+            });
+            compositions.push(overturn_composition(time as f64));
+            continue;
+        }
         // The share of the cell the lava left standing above its surface, by where the
         // fabric crosses it across the cell, read from the cells beside it (F131): a contact
         // drawn by share, not by whole cells.

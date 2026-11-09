@@ -193,8 +193,9 @@ mod tests {
                 g.f64("tectonics.tessera_fraction"),
                 g.f64("cratering.retention_age")
             );
-            // What an overturn does follows the overturns themselves.
-            assert_eq!(g.f64("tectonics.tessera_fraction") > 0.0, broken);
+            // What an overturn does follows the overturns themselves: only a lid that broke
+            // keeps tesserae, and only where its last overturn left some of it (F300).
+            assert!(g.f64("tectonics.tessera_fraction") == 0.0 || broken);
             if broken {
                 assert!((g.f64("cratering.retention_age") - since.min(3.5)).abs() < 1e-9);
             }

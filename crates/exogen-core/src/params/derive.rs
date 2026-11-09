@@ -3198,11 +3198,13 @@ pub fn tectonics_resurfacing_event_age(c: &Ctx) -> Value {
 }
 
 pub fn tectonics_tessera_fraction(c: &Ctx) -> Value {
-    if c.str("interior.tectonic_regime") == "episodic_lid" {
-        TESSERA_FRACTION.into()
-    } else {
-        0.0.into()
+    if c.str("interior.tectonic_regime") != "episodic_lid" {
+        return 0.0.into();
     }
+    // The strongest regions of the lid that outlasted every overturn since they formed, older
+    // than the plains about them (F300).
+    let mantle = mantle_history(c);
+    (mantle.tesserae() as f64 / mantle.regions.max(1) as f64).into()
 }
 
 pub fn volcanism_corona_count(c: &Ctx) -> Value {
