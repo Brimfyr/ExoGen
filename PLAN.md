@@ -1,6 +1,6 @@
 # ExoGen: process-based planetary map generator
 
-Project plan, revision 0.1, 2026-10-10. Working title taken from the folder name.
+Project plan, revision 0.1, 2026-10-10. Working title taken from the folder name. Scope widened on 2026-11-10 (the user): section 0, principle 17, sections 4.13 to 4.18 and Phases 5F, 6, 6R and 6G. The sources named in those parts are starting points recalled from the literature, and each phase opens with its own research.
 
 This document is the design baseline. It records what the software is, what it is not, the physical models each stage uses, how the stages fit together, how correctness will be checked, and the order in which it will be built. Numbers quoted in the model sections are starting values recalled from the literature. Every one of them is re-checked against the cited source during Phase 0 before it is coded.
 
@@ -8,9 +8,11 @@ This document is the design baseline. It records what the software is, what it i
 
 ## 0. Purpose and scope
 
-ExoGen is a desktop application and command-line tool that generates full-planet texture sets for solid-surface bodies. Surfaces are produced by simulating the processes that shape real planets, scaled to the body's size, composition, thermal state, atmosphere and orbital environment. The outputs are equirectangular (plate carrée) maps at up to 16k: albedo, height, roughness, specular, plus masks and auxiliary layers, with a globe preview.
+ExoGen is a desktop application and command-line tool that generates full-planet texture sets for the planets and moons that gravity has rounded: solid surfaces from airless moons to magma worlds and, where the air over a surface deepens until it hides it, the cloud decks of hycean worlds, sub-Neptunes and giants, with their rings. Surfaces are produced by simulating the processes that shape real planets, scaled to the body's size, composition, thermal state, atmosphere and orbital environment. The outputs are equirectangular (plate carrée) maps at up to 16k: albedo, height, roughness, specular, plus masks and auxiliary layers, with a globe preview.
 
 The defining design choice: terrain and albedo come from a sequence of physical processes acting over simulated time on a layered global field. Noise seeds initial conditions, perturbs the fields the processes read, and warps and varies the shapes and colours they leave, but it never decides on its own where a feature is or what a surface is made of. This is what separates the result from a noise field.
+
+The scope was widened on 2026-11-10 (the user). The project began as a generator of terrestrial surfaces. Its processes change by degrees with their inputs and switch nowhere, so the classes it left out were bounds it did not need: molten rock is one more liquid a surface can hold, a giant is the far end of a deepening atmosphere, a ring is a radial profile under one law (principle 17). The scope now runs from a moon a few hundred kilometres across to a giant at the edge of burning its deuterium, some 11 to 16 Jupiter masses by its composition. It stops where a shape cannot be derived (irregular bodies) and where a body burns its own fuel (brown dwarfs and stars). The terrestrial phases keep their order, and the new classes are built after them (section 10).
 
 ### Target output set
 
@@ -23,9 +25,12 @@ The defining design choice: terrain and albedo come from a sequence of physical 
 | Normal | 8/16-bit tangent space | Gradients computed on the sphere, not on the image |
 | Masks | 8-bit | Ocean, ice, snow, cloud, lava, dust, vegetation |
 | Cloud | One map set per cloud class: optical depth, base and top height; cloud type ID; optional composite, shadow bake, sequences | From the weather and cloud stage. Classes in section 4.7 |
-| Atmosphere | Sidecar parameters only | Derived scattering and aerosol parameters for the renderer's own atmosphere. No maps |
+| Atmosphere | Sidecar parameters and a profile table by height | Derived scattering and aerosol parameters and the column's profile (section 4.13) for the renderer's own atmosphere. No maps |
 | Unit ID | 16-bit integer | Geological unit per pixel, with a legend in the sidecar |
 | Auxiliary | float | Temperature, precipitation, surface age, crust age, slope, wind |
+| Emissive | Linear radiance, EXR float | The surface's own light, or the visible deck's, where it stands above some 800 K: magma seas, lava lakes, fresh flows, a young or hot giant's deck (sections 4.15 and 4.16) |
+| Rings | A radial strip one pixel high: optical depth (linear EXR float32), colour, dust share | Radii and plane in the sidecar (section 4.17) |
+| Figure | Sidecar | The equilibrium figure's three semi-axes; the maps are drawn on it (section 4.14) |
 | Sequence | Any of the above at a list of epochs | Formation sequence for animation; CLI batch |
 | Sidecar | JSON | All parameters, derived values, seeds, software version, legend, epoch |
 
@@ -33,12 +38,13 @@ Single-file export to 16384 x 8192. Tiled export to 32768 x 16384. Cube-map expo
 
 ### Non-goals
 
-- 3D terrain meshes, flyover rendering or an in-app renderer beyond the preview globe.
-- Gas giants, ice giants, rings.
-- Irregular small bodies. Below roughly 400 km radius the spheroid assumption weakens. Smaller radii are allowed with a warning.
+- 3D terrain meshes, flyover rendering or an in-app renderer beyond the preview globe. An equilibrium figure (section 4.14) is three semi-axes in the sidecar, not a mesh.
+- Irregular bodies (the user, 2026-11-10): Proteus, Hyperion, contact binaries. Their shape is a record of the impacts that broke and carved them and cannot be derived; their gravity does not point to their centre, their craters form by the strength and porosity of the target, most of their ejecta escapes and some of them tumble. Most stages would need a revisit: a future vision. Whether a body rounded itself is derived (section 4.14); one that would not have is allowed with a warning and generated as a sphere.
+- Bodies that burn their own fuel: brown dwarfs and stars. No fixed mass draws the line: the share of its deuterium a body has burned by its age is derived from its mass and composition (section 4.16), and the plausibility warning comes by degrees with it and says what the model then lacks. Such a body is allowed, as any implausible input is; it is not a target, with no preset and no gate.
+- Carbon planets and other exotic mineralogy (the user, 2026-11-10): crusts of graphite and carbides need chemistry and measured spectra the material system does not hold. A user may supply the materials (section 1, exotic chemistry colours); the program does not invent them.
 - A general circulation model or a mantle convection model. Reduced models are used wherever they produce the right morphology.
 - Civilisation features.
-- Atmospheric maps. Haze and background aerosol are properties of the atmosphere, not layers that vary across the surface. They are described by derived parameters in the sidecar for the renderer's own scattering term. The scattering toggle on the globe is a preview, and nothing in the export depends on it.
+- Atmospheric maps. Haze and background aerosol are properties of the atmosphere, not layers that vary across the surface. They are described by derived parameters and a profile by height in the sidecar (section 4.13) for the renderer's own scattering term. The scattering toggle on the globe is a preview, and nothing in the export depends on it.
 - Browser deployment.
 
 ---
@@ -93,6 +99,7 @@ Single-file export to 16384 x 8192. Tiled export to 32768 x 16384. Cube-map expo
 14. Features from fields. Where a feature is, when it forms, how large it is and what form it takes are read from fields at its place and time: stress, lid thickness, heat flow, slope, age, deposit thickness. A feature that is an event (an impact, an eruption, a rift) is still an object, but nothing about it is a fixed shape, so no two are alike and a new seed gives a new world, not the same parts rearranged. The fields are physical; noise may perturb them and warp the shapes read from them (principle 12), but never stands in for them.
 15. In-between worlds. The bodies between and beyond the reference ones are what the program is for. Calibrating on a real body fixes a constant of a process and never the outcome for that body, so that a body whose inputs lie between two references gets a surface between theirs wherever the model allows one. Along a path through parameter space a class of feature appears or disappears only where a named physical threshold is crossed, and by degrees where the physics is gradual. A rule that only one reference body triggers is reported as such. The validation suite carries bodies interpolated between the references.
 16. Physics places, noise realises. The goal is a photorealistic look on a physics-driven model, and neither half reaches it alone: physics alone gives an analytic look, and noise alone gives the same-looking worlds of a noise-built generator. Physics decides what is where and why: the placement, organisation, timing, size and materials of features and units, and the large-scale structure they make. Noise then carries that to a realistic surface at every scale, the global look included: the regional shades across a unit (the lunar highlands' tones, Io's grey-green regions), features merging into fields, the texture inside a unit. Noise at the large scale is welcome as long as a physical field modulates it (a unit's age, a deposit's or a flow field's density, the crust's composition), so that its pattern follows the world's own history and reads differently on another body. Where the modelled physics has gone as far as it usefully can, the rest of the variation a real surface shows comes from noise modulated this way, not from physics pressed past its means (the user, 2026-10-29). Its use waits for the end of the surface phases, after Phase 6: one pass over every body at once, calibrated against them together once each body's look is final, so that it neither stands in for nor gets in the way of the processes still to come, Mars's dust transport among them (the user, 2026-10-30).
+17. One model from a moon to a giant. No class of body is a branch in the code. A magma sea is the surface's liquid where rock melts; a giant is a body whose air hides its ground, the ground's part in every map weighed by the optical depth of the column over it; a ring is a point on one law of optical depth, grain and composition against radius. The scope ends only where the physics changes kind or a shape cannot be derived: a body that burns its own fuel, and a body whose shape is a record of the impacts that broke it. A stage whose result nothing can show may be skipped, and only by the measure that hides it.
 
 ---
 
@@ -209,7 +216,7 @@ Determinism: the CPU path is bit-exact for a given version. The GPU path is visu
 
 ### 4.0 Body and environment derivation
 
-Root inputs: star (mass or spectral type, luminosity, age), orbit (semi-major axis, eccentricity), parent planet if the body is a moon (mass, distance), body (radius and mass, or radius and density), rotation (period, obliquity, or locked), atmosphere (surface pressure, composition by volume), volatile inventory (mass of H2O, CO2, CH4, N2, NH3, SO2 available at the surface), age.
+Root inputs: star (mass or spectral type, luminosity, age), orbit (semi-major axis, eccentricity), parent planet if the body is a moon (mass, distance), body (radius and mass, or radius and density), rotation (period, obliquity, or locked), atmosphere (surface pressure, composition by volume), volatile inventory (mass of H2O, CO2, CH4, N2, NH3, SO2 available at the surface), age. From Phases 6R and 6G also its moons (the mass and orbit of each, where one satellite stands today), its ring (mass, source, age) and its envelope (hydrogen and helium by mass, or derived from mass and radius).
 
 Derived nodes and their basis:
 
@@ -234,10 +241,17 @@ Derived nodes and their basis:
 | Space weathering rate | Scaled by 1/a² for solar wind and micrometeorites; zero under a dense atmosphere |
 | Scale height | H = kT / (μ g); used by the climate and scattering preview |
 | Stellar luminosity history | Main-sequence evolution from stellar mass and age (a Sun-like star was about 70% as bright 4.5 Gyr ago); sampled by the loop's climate steps |
+| Figure (Phase 6R) | The equilibrium figure of spin, tide and interior, three semi-axes (section 4.14). Today the Darwin and Radau flattening to first order, a number nothing reads |
+| Roundness (Phase 6R) | Whether the body rounded itself: the relaxation of its longest relief against its age, by its thermal history and material (section 4.14). In place of the 400 km guide |
+| Melt fraction at the surface (5F) | The surface's temperature against the crust's solidus and liquidus (section 4.15) |
+| Envelope (Phase 6G) | A hydrogen and helium layer in the mass-radius fit (Lopez and Fortney 2014), without which a sub-Neptune reads as an ice-rich body (section 4.16) |
+| Deuterium burned (Phase 6G) | The share of its deuterium a body has burned by its age, from its mass and composition (Spiegel et al. 2011; section 4.16). The plausibility warning, in place of a fixed mass |
 
 ### 4.1 Primordial crust
 
 Initial crustal thickness field: low-degree spherical harmonics (l ≤ 8) with an explicit l=1 term for a hemispheric dichotomy (Mars strong, Moon moderate, Earth weak) plus noise. Option: a giant impact as the dichotomy source (a Borealis-type basin, Andrews-Hanna et al. 2008). Elevation follows from Airy isostasy: a 35 km continental crust at Earth densities gives about +0.8 km, matching Earth's mean land height; a 30 km difference on Mars gives the 5 km dichotomy step. For mobile-lid worlds, continental nuclei (cratons) are seeded here.
+
+From Phase 6 the crust's mean thickness and type come from the magma ocean's crystallisation (section 4.15); the low-degree pattern stays this stated field or a giant impact until a cause is modelled.
 
 ### 4.2 Interior and heat budget
 
@@ -494,6 +508,77 @@ See the table in section 0. Height is exported in metres relative to a chosen da
 
 Atmosphere: no maps. The sidecar carries the derived scattering parameters (Rayleigh coefficients from composition and pressure, scale height from section 4.0, and per-aerosol optical depth, scale height, asymmetry, colour and latitude profile) so a renderer can build its own atmosphere and haze. The globe preview's scattering toggle uses precomputed single and multiple scattering (Bruneton and Neyret 2008) from the same parameters. It is a preview, not an export, and it is deferrable.
 
+Atmosphere profile (the user, 2026-11-10). A single exponential with one scale height describes an isothermal air of one gas. The sidecar therefore also carries the radiative-convective column's profile as a table by height, from its hydrostatic integration: altitude, pressure, temperature, density and mean molar mass; the Rayleigh scattering coefficient at reference wavelengths, from the composition's refractive indices and the gas's density (Bodhaine et al. 1999); the gases' absorption in the visible where it colours an air (ozone's Chappuis band, which colours Earth's twilight; methane's red bands, which make an ice giant blue); and for each haze or aerosol the model holds, its extinction, single-scattering albedo and asymmetry by height. The body's mean profile first, then a warm and a cold one where they differ (equator and pole, day and night). The single exponential fails chiefly on what is not Rayleigh's: Venus's scale height falling to a third toward its cloud tops, Mars's dust, Titan's haze with its own distribution. The table's main gain is the temperature's structure and the hazes' place in it. The first version is smooth and climatological: detached hazes and dust layers need microphysics and the weather, and an air warmed aloft by an absorber the model does not hold (Earth's ozone) stands near isothermal above its tropopause. Checked against the US Standard Atmosphere (1976), VIRA (Seiff et al. 1985), Huygens's descent (Fulchignoni et al. 2005) and Titan-GRAM, the Mars Climate Database and Mars-GRAM, and the Galileo probe (Seiff et al. 1998).
+
+The emissive map, the rings' strip and the figure's axes: sections 4.15, 4.17 and 4.14.
+
+### 4.14 Figure and roundness
+
+Added 2026-11-10 (the user); built in Phase 6R.
+
+Every body is today a sphere: the grid, gravity, sunlight and the export assume it. The flattening of section 4.0 (Darwin and Radau's, to first order in the spin) is a derived number that nothing reads, and the export treats the ellipsoid datum as the mean radius.
+
+**The figure.** A body that can flow takes the equilibrium figure of its spin, its tide and its interior: a flattened spheroid at a slow spin (Maclaurin's), stretching by degrees into three unequal axes past a critical spin (Jacobi's; Chandrasekhar 1969), and drawn out toward its parent where it is locked. One law gives Earth's flattening of 1/298, Saturn's 0.098, the three axes of Io and Mimas and a fast spinner's stretch. The spin is an input, as now. A layered interior needs a numerical solve (Tricarico 2014).
+
+- **Output.** Three semi-axes and their orientation in the sidecar; the maps drawn on that figure, the height relative to it, the latitudes' convention stated. A renderer scales a sphere by three numbers: no mesh.
+- **The stages reading it**, in a second step and by degrees: gravity over the figure, weaker at the long axis's ends; sunlight on a surface whose normal is not its radius; the cells' areas; the craters' scaling at the local gravity. A giant needs it: Saturn is a tenth flattened.
+- **Haumea**, the test and an open question. Its occultation gave semi-axes of some 1,161, 852 and 513 km and a ring (Ortiz et al. 2017): its shortest axis 0.44 of its longest, where the estimates that took it for a homogeneous fluid gave some 0.52, and whether a layered Haumea stands in equilibrium is not settled (Dunham, Desch and Probst 2019). The preset tests the law's stretch and records its distance from the measured axes; nothing is pinned to them (principle 11).
+
+**Roundness.** Whether a body ever rounded itself is derived, in place of the 400 km guide: the time its longest relief takes to relax under its own gravity, by the viscous law of F39 at the warmest its interior stood through its thermal history, against its age; and where it never warmed, its own weight's stress against its material's strength. Proteus is larger than Mimas and is not round: composition and thermal history decide it, not a radius. A body that would not have rounded itself gets the warning and is generated as a sphere all the same. An irregular shape is a record of the impacts that broke and carved the body and cannot be derived (non-goals).
+
+### 4.15 Molten rock: magma seas and the first crust
+
+Added 2026-11-10 (the user); the present-day part with 5F, the first crust with Phase 6.
+
+**Rock as a liquid.** The surface's liquid is today one of seven volatiles (water, carbon dioxide, methane, nitrogen, ammonia, sulfur dioxide, ethane), whichever of the inventory is liquid at the surface. Molten rock joins them as a kind of its own, since it is not a volatile of one composition: it melts over a range, from its solidus to its liquidus, so that a place holds a melt fraction and not a phase, and its vapour is not its own composition (sodium and potassium first, then silicon monoxide, oxygen, iron and magnesium; Schaefer and Fegley 2009).
+
+- **The melt field.** The surface's temperature, from every source the climate already sums (starlight, tides, the interior's flux), against the crust's melting range gives the melt fraction at each place and time.
+- **The relief.** Partly molten rock flows: its viscosity falls by orders of magnitude as the melt fraction crosses the range where its crystals lose contact, some 0.4 to 0.6. Relief relaxes by the law that relaxes an ice shell's (F39) at that viscosity: erased by degrees toward a pool, kept on the solid ground beyond it. The pool's level is a liquid's level set, as any sea's; its depth where the melt's profile meets the solidus.
+- **The rock-vapour atmosphere.** The vapour stands in balance with the melt, thickest over the hottest, flows to the cold side and condenses there: the law of the frost-held atmospheres (Pluto's nitrogen, F258; Io's sulfur dioxide, F210) with rock's vapour pressures, and its own absorbers in the column (sodium, potassium, silicon monoxide). Its condensate, a mineral snow, is laid on the cold side as a material, and the pool is left the more refractory (Léger et al. 2011; Kite et al. 2016); the melt's low albedo from measurement (Essack et al. 2020).
+- **The emissive map.** The surface's own light: its temperature's radiance in the visible, from some 800 K, at its material's emissivity. Magma seas, and also Io's lava lakes and a fresh flow on any body; and the visible deck's own light where no ground shows (section 4.16).
+- **In-between.** A magma world by starlight and by tides (an Io pushed harder), with surfaces between Io's and theirs.
+- **Checks (the user, 2026-11-10).** No body of the Solar System, but four hot rocky planets with measured phase curves stand along the path, each a point to meet and none to pin. LHS 3844b, a dark bare rock some 1,040 K on its dayside, which must not melt (Kreidberg et al. 2019). GJ 367b, dark and airless, most of its dayside molten by its authors' reckoning (Zhang et al. 2024). K2-141b, the magma worlds' test body as TRAPPIST-1e is the locked worlds': its dayside some 2,050 K, its nightside cold, no hot spot carried east and a hint of a thin rock-vapour air (Zieba et al. 2022), with models made for it (Nguyen et al. 2020). And Janssen (55 Cancri e), whose emission points to an air of carbon dioxide or monoxide over its magma and not rock vapour alone (Hu et al. 2024): the test of a magma sea under a deep air, with section 4.16. Io is the near end. Known and open: K2-141b reflects more than a lava's measured albedo allows, 0.28 against some 0.1.
+
+**The first crust.** An early magma ocean is the same melt field at a body's birth. It crystallises as it cools (Elkins-Tanton 2008, 2012), the slower under the air it degasses (Hamano et al. 2013; the runaway greenhouse of F260 to F262). What it leaves is the first crust: a flotation crust where plagioclase floats, on a small dry body (the Moon's anorthosite), and none on a large or wet one; its thickness from the ocean's depth and composition. This takes the place of section 4.1's stated mean thickness and type, the least emergent part of the model. It does not give the pattern: the cause of a hemispheric dichotomy is unsettled, and stays a stated field or a giant impact until a cause is modelled. Every body's starting point moves with it, so every earlier gate is held again.
+
+### 4.16 Deep atmospheres: hycean worlds, sub-Neptunes and giants
+
+Added 2026-11-10 (the user); built in Phase 6G.
+
+As the air over a surface deepens, less of the ground shows, and past some depth none of it. Nothing switches. The ground's part in every map is weighed by the column's optical depth over it; the smallest crater already grows with the column's mass until none forms (section 4.5); and a surface stage whose result nothing can show is skipped by that measure alone (principle 17). Where the profile crosses no phase boundary at all, in a hydrogen envelope past its critical point, the body has no surface and the surface stages have nothing to run on: that is the body's physics, not a class.
+
+- **The body.** A hydrogen and helium envelope as a layer in the mass-radius fit (Lopez and Fortney 2014): today mass and radius are fitted with iron, rock and ice, so that a sub-Neptune reads as an ice-rich body, and the column holds no hydrogen opacity. The interior's heat by mass and age, an input where it is unexplained (Jupiter radiates some 1.7 times the sunlight it absorbs, Uranus scarcely more than it absorbs).
+- **The column.** The radiative-convective column of 5C to any depth, on an adiabat below, its base the interior's heat.
+- **The decks.** Each condensable forms a deck where its saturation curve crosses the profile, its thickness and grain by the balance of mixing and settling (Ackerman and Marley 2001): ammonia, ammonium hydrosulfide and water on a Jupiter, methane on an ice giant, water on a temperate world, silicates and iron on a hot one. The highest deck of any depth is what is seen. The albedo classes of giants (Sudarsky et al. 2000) come out as stretches of one path through temperature.
+- **The weather.** The model of section 4.7, with the interior's heat driving it from below: bands by the rotation and the Rhines scale, long-lived vortices where the shear holds them, a day and night on a locked giant with its hot spot carried east. A known limit: shallow models set the jets' number and width well, and the direction of a giant's equatorial jet is a known difficulty (Scott and Polvani 2008; Lian and Showman 2010); it matters little to a map and is recorded.
+- **Colour, the part that is not first-principles.** What colours Jupiter's belts is not settled (Carlson et al. 2016 among the candidates), and the ice giants' blue is methane's absorption under hazes whose depth sets the hue (Irwin et al. 2022). Physics places the decks, bands and vortices; the chromophores and hazes are measured end-members in the material system, as Titan's tholin is, their amounts from fields where a law is known and stated where none is.
+- **The in-between.** Hycean worlds (an ocean under a hydrogen air; Madhusudhan et al. 2021) and sub-Neptunes have no anchors: they are the interpolation between the terrestrial bodies and the four giants, which are the gate.
+- **Stripped cores.** An envelope is lost to space through the body's life by the law that already takes an air (F261 to F263), the star's XUV by its mass and age: a sub-Neptune near its star ends a bare core, a super-Earth or a magma world (section 4.15), and one farther out keeps its envelope. The path between this section and the molten surfaces; the valley in the measured radii of small planets is its check (Fulton et al. 2017; Owen and Wu 2017, the core's own heat a second cause).
+- **Steam worlds.** A wet body inside the runaway's limit (F260 to F262) holds its ocean in its air. Past water's critical point, 647 K and 221 bar, no sea's surface stands, as under a hydrogen envelope, and the ground under it is often molten (Hamano et al. 2013). Between an Earth-like, Venus and a hycean world.
+- **Decks that shine.** A young giant and the hottest Jupiters glow by their own heat: the emissive map holds the visible deck's light as it holds the ground's (section 4.15).
+- **The limit, derived (the user, 2026-11-10).** No fixed mass. A body burns its deuterium where its centre grows hot and dense enough, which its mass, its helium, its metals and its deuterium decide: half of it burned at some 13 Jupiter masses for the usual mix, a tenth at 11 for a metal-rich body and nine tenths at 16.3 for a metal-free one (Spiegel, Burrows and Milsom 2011). The share burned by the body's age is a derived node, from the interior's cooling that the envelope's heat already needs, and the warning comes by degrees with it. What the model then lacks is the fusion's heat while it burns; an old body past it has cooled as a giant cools. Past some 75 to 80 Jupiter masses hydrogen burns and the body is a star, the model's other input.
+- **Outputs.** The cloud map set per deck (section 0); the sidecar states the pressure each map stands at, and where no ground shows the surface maps are not written.
+
+### 4.17 Rings
+
+Added 2026-11-10 (the user); built in Phase 6R.
+
+A ring is a radial profile under one law: optical depth, grain size and composition against radius. Saturn's bright ice, Uranus's and Neptune's dark narrow rings, Jupiter's dust and a small body's ring (Chariklo, Haumea, Quaoar) are points on it. A ring is not derivable from its planet: its mass, its source (a broken icy moon, a rocky one, dust knocked off small moons) and its age are inputs, with the moons' masses and orbits.
+
+- **Where.** Inside the Roche limit of its material's density a ring cannot gather into moons; outside it gathers by degrees, the limit a tendency and not a wall: Quaoar's ring stands at 7.4 of its radii, over twice its Roche limit (Morgado et al. 2023). Its spread from its mass and age by its own viscosity (Salmon et al. 2010).
+- **What of.** Ice where ice lasts at the ring's temperature, rock otherwise; darkened and reddened by the dust that falls on it, by its exposure over its surface density (Cuzzi and Estrada 1998). What that says of a ring's age is contested, so the age is the input and the colour follows.
+- **Structure from the moons.** A gap where a moon is embedded, by its Hill radius (Encke, Keeler); an edge at a strong resonance (the B ring's at Mimas's 2:1, the A ring's at Janus's 7:6); density and bending waves at the weaker ones (Goldreich and Tremaine 1982; Colwell et al. 2009); narrow rings held between shepherds; dust rings fed by small moons (Burns et al. 1999).
+- **Fine structure.** Most of it has no known cause (the B ring's irregular structure, the C ring's plateaus). Principle 16 holds: physics places the edges, gaps, waves and materials, and noise realises the rest, its statistics from Cassini's occultation profiles and its strength by the optical depth, in the one noise pass.
+- **Outputs.** A strip one pixel high along the radius: optical depth as linear float EXR, since it spans orders of magnitude; colour (the single-scattering albedo); and the share of the optical depth in grains near a wavelength's size, by which a renderer blends its phase functions, so that a dusty ring brightens when backlit and a ring of boulders dims. Inner and outer radii, the ring's plane and its grains' sizes in the sidecar.
+- **Optional.** The ring's shadow in the planet's sunlight through its year (F234).
+
+### 4.18 Starlight: none, two suns and a giant's light
+
+Added 2026-11-10 (the user); built in Phase 6R. The sunlight law (F234) takes one star.
+
+- **No star.** A rogue planet is the far end of the path along which a star dims to nothing, and every law must run there. Its air snows out onto its ground in the order of its gases' frost points, by the frost's laws of 5B; or under a deep hydrogen air the interior's heat keeps a liquid at its surface (Stevenson 1999), with section 4.16.
+- **More than one light.** The sunlight is a sum over its sources through the cycle, each with its own colour, path and eclipses. Two suns: a circumbinary planet's seasons carry its year and its stars' period both. A moon of a giant: its star eclipsed by its parent each orbit, and its parent's reflected light and heat on the side that faces it. The ice's albedo under each source's colour (F250).
+
 ---
 
 ## 5. Signature features per reference body
@@ -537,6 +622,8 @@ Run by `exogen validate` and in CI. Three layers.
 
 **Regression tests**: perceptual hashes of each preset's output at 1k so a change in one stage that alters another body's look is caught.
 
+**Scope tests** (added 2026-11-10, each with its phase): the flattening of Earth (1/298), Mars, Jupiter (0.065) and Saturn (0.098) and the three axes of Io and Mimas from the figure's one law, Haumea's with its distance from the occultation's axes recorded; the roundness check on Proteus and Mimas. The atmosphere's profile against the US Standard Atmosphere, VIRA, Huygens's descent and the Galileo probe. The hot rocky planets' measured daysides and nightsides along one path (LHS 3844b, GJ 367b, K2-141b), and K2-141b's pool and vapour against its published models. The giants' decks, heat and jets against the four giants; the deuterium check half burned near 13 Jupiter masses at the usual mix; a sub-Neptune's envelope kept or lost along its distance from its star, against the valley in the measured radii; every law run at no sunlight. Saturn's rings' optical depth by radius against Cassini's occultations.
+
 Reference inputs:
 
 | Body | R km | ρ g/cm³ | g m/s² | P surface | T mean K |
@@ -555,6 +642,11 @@ Reference inputs:
 | Triton | 1353 | 2.06 | 0.78 | 14 µbar | 38 |
 | Pluto | 1188 | 1.85 | 0.62 | 10 µbar | 44 |
 | Ceres | 470 | 2.16 | 0.28 | 0 | 168 |
+| Haumea | 798 (semi-axes some 1161 x 852 x 513) | 1.89 | 0.42 mean | 0 | under 50 |
+| Jupiter | 69911 | 1.33 | 24.8 | none | 165 at 1 bar |
+| Saturn | 58232 | 0.69 | 10.4 | none | 134 at 1 bar |
+| Uranus | 25362 | 1.27 | 8.87 | none | 76 at 1 bar |
+| Neptune | 24622 | 1.64 | 11.15 | none | 72 at 1 bar |
 
 Public domain reference maps for side-by-side comparison in the developer harness: LOLA and LRO WAC (Moon), MOLA and Viking/MGS colour (Mars), MESSENGER MDIS (Mercury), Magellan (Venus), Galileo and Voyager (Jovian moons), Cassini ISS and RADAR (Saturnian moons), New Horizons LORRI/MVIC (Pluto), Dawn (Ceres).
 
@@ -736,6 +828,7 @@ Gate: the locked ocean world's sea-ice edge on the freezing isoline; Mars's resi
 - Glacial flow and erosion by shallow ice: ice sheets, valley glaciers, calving fronts and shelves; the same code for nitrogen and carbon dioxide glaciers, a collapsed atmosphere's frost flowing back from its night side to the day side that sublimes it, which sets the pressure it keeps (Turbet et al. 2017; the user, 2026-11-01).
 - Mass wasting and creep (audit W4), with the scarps' wear and the lowlands' sediments (audit T5).
 - The methane cycle on Titan. Its loop held to its ground's energy by the surface layer's stability (F318, M63): its rain 1.0 kg/m² a year where 380, under the 5 to 45 of its GCMs, its ground cut off under its air. Next the sea's ice (the user, 2026-11-10): snow lying on it from the moisture, keeping the winter's cold from its base, its year at each place's own wind run until its ice settles, and its pole's check read at that year with the measured 0.5 to 4.4 m restored; then the radiative-convective column on every body, its troposphere's profile from its own air where the column now stands on the adiabat, which also sets what the polar air sends down in winter; then the loop's erosion on Titan.
+- The radiative-convective column (the user, 2026-11-10), after the sea's ice: each body's profile from its own air, radiative where its radiation balances and convective where that would stand steeper than the adiabat, where the column now stands on the adiabat up to its skin. Built with no ground assumed, its base an interior's heat at any depth and any species of the inventory condensing along it, for the deep atmospheres of Phase 6G; its profile exported as the sidecar's table (section 4.13).
 
 Gate: an Earth-like's deserts and rain shadows in the right places; the locked ocean world's lobate ice margins over land and calving fronts at open coasts; valley networks on the early-wet Mars's old terrain; Titan's polar seas.
 
@@ -764,13 +857,14 @@ Gate: Mars's dust albedo correlates with its topography and wind as on Mars, its
 
 Gate: on crops of Mars, Titan and Pluto, the terms of Phase 4F's gate for every new process (no analytic outline, no one-cell contact, no single-scale repetition), and no regression on the Moon, Io and Enceladus.
 
-**5F Io and Thaumasia.**
+**5F Io, Thaumasia and molten surfaces.**
 
 - Io's activity on the general pipeline (moved from Phase 4F, audit S3, whose survey lists what the Io regime switches): paterae, plumes, flows and mountains by the heat-pipe share, laid on a surface that accumulates its history and that burial renews, Io the limit; the mantle with its heat pipe; the sulfur and SO2 from the volatile inventory and the plasma's alteration from the parent's magnetosphere; with Io's water lost beside Mars's (5B), so that bodies between the Moon and Io and between Io and Europa come in by degrees.
 - Io's frost to its coldest ground (moved from 5B, the user, 2026-11-02; audit M7): the frost's temperature through the day since F256; the gas its frost sublimes condensing on the coldest ground its atmosphere reaches, so that bright frost at the equator traps it before the mid-latitudes, with Io's surface on the general pipeline.
 - A plateau's spreading on a weak layer and the belt it piles at its toe (moved from Phase 4F, audit M42): Mars's Thaumasia highlands as the toe of the Thaumasia plateau sliding on the salt and ice its early water left (Montgomery et al. 2009), and Phlegra Montes if its origin allows.
+- Molten surfaces (the user, 2026-11-10; section 4.15): the emissive map, Io's lava lakes and fresh flows first; molten rock as a kind of liquid with a melt fraction; the relief relaxing by the melt's viscosity; the rock-vapour atmosphere by the frost-held atmospheres' law, its mineral snow laid on the cold side; a magma world by starlight (K2-141b's inputs) and by tides (an Io pushed harder).
 
-Gate: Io's look at the standard of Phase 4F's gate; sweeps from the Moon to Io and from Io to Europa with surfaces between theirs; a belt at the Thaumasia plateau's toe.
+Gate: Io's look at the standard of Phase 4F's gate; sweeps from the Moon to Io and from Io to Europa with surfaces between theirs; a belt at the Thaumasia plateau's toe; a sweep from Io to a magma world by tides, and along the starlit path LHS 3844b's dayside solid, GJ 367b's molten without an air and K2-141b's a pool under a thin vapour, each within its measured dayside and nightside; a pool's relief erased by degrees and a solid nightside that keeps its craters; K2-141b's pool and vapour within its published models'.
 
 **5G Weather and clouds.** Nothing on the surface reads it, so it comes last.
 
@@ -780,7 +874,7 @@ Gate: Io's look at the standard of Phase 4F's gate; sweeps from the Moon to Io a
 
 Gate: Earth-like cloud fraction and its zonal profile match the climatology within tolerance; the Mars preset shows a winter polar hood and afternoon orographic clouds over the large shields; the locked ocean world shows a substellar cloud shield that shifts east as the rotation period shortens.
 
-Presets: Mars complete, Titan, Pluto complete, an Earth-like with simple continents from the primordial crust stage, a tidally locked eyeball world, and an early-wet Mars that dries out along its pressure history.
+Presets: Mars complete, Titan, Pluto complete, an Earth-like with simple continents from the primordial crust stage, a tidally locked eyeball world, and an early-wet Mars that dries out along its pressure history; with 5F, K2-141b, the magma worlds' test body.
 
 Gate of the phase: every sub-phase's gate, held again at the close on fresh renders of every preset.
 
@@ -790,9 +884,39 @@ Gate of the phase: every sub-phase's gate, held again at the close on fresh rend
 - A lid that moves with the mantle's flow where its drag breaks it, making crust where it stretches and losing it where it converges (moved from Phase 4F, audit M42): Venus's mountain belts round Lakshmi Planum, from convergence over a downwelling between its overturns.
 - Seafloor age-depth, passive margins and shelves, trenches, arcs, orogen ages.
 - Integration with erosion so old and young belts differ.
+- The first crust from the magma ocean's crystallisation (the user, 2026-11-10; section 4.15): its mean thickness and type from the body, a flotation crust on a small dry body and none on a large or wet one, in place of section 4.1's stated mean; the low-degree pattern stays stated or a giant impact's. Every body's starting point moves, so every earlier gate is held again.
 - Preset: Earth-like with convincing continents.
 
-Gate: hypsometry is bimodal with peaks near +0.5 km and -4.5 km; mountain belts sit on convergent boundaries; shelves exist on passive margins; seamount chains align with plate motion.
+Gate: hypsometry is bimodal with peaks near +0.5 km and -4.5 km; mountain belts sit on convergent boundaries; shelves exist on passive margins; seamount chains align with plate motion; the Moon keeps its anorthositic highlands and an Earth-like has no flotation crust, from one law; the gates of Phases 2 to 4F held again on the new first crust.
+
+### Phase 6R: figures, rings and lights (M)
+
+Added 2026-11-10 (the user). Independent of the surface pipeline; its first item is small and may be taken in any gap.
+
+- The roundness check (section 4.14): whether a body rounded itself, from its thermal history and material, in place of the 400 km warning.
+- The equilibrium figure: three semi-axes from spin, tide and interior, in the sidecar, the maps drawn on it and the ellipsoid datum made real (today the export treats it as the mean radius). Then the stages reading it, by degrees: gravity over the figure, sunlight on its true normals, the cells' areas.
+- A list of moons in the inputs (mass and orbit of each), where one satellite stands today.
+- Rings (section 4.17): the radial law, the moons' gaps, edges and waves, the strip's maps and the sidecar's radii; the ring's shadow in the planet's sunlight as an option. Its fine structure joins principle 16's one noise pass.
+- The lights (section 4.18): the sunlight a sum over its sources, two suns and a giant's eclipses and light on its moon; every law run at no sunlight, the rogue planet.
+
+Gate: the flattening of Earth, Mars and Saturn and the three axes of Io and Mimas within their measured values' tolerance; Haumea's stretch with its distance from the measured axes recorded; Proteus flagged as not rounded and Mimas as rounded; Saturn's main rings' optical depth by radius against Cassini's occultations at the scale of its named features (the C ring, the B ring, the Cassini Division, the A ring, the Encke and Keeler gaps), Uranus's narrow rings and Jupiter's dust ring as points on the same law; a sweep of the star's distance to none along which the air snows out in the order of its frost points and nothing fails; a moon's eclipses by its giant in its year.
+
+Presets: Haumea with its ring; Saturn's rings, on a sphere until Phase 6G gives them their planet.
+
+### Phase 6G: deep atmospheres and giants (XL)
+
+Added 2026-11-10 (the user); after 5G's weather model, which it extends, and Phase 6R's figure.
+
+- An envelope in the body's derivation: hydrogen and helium as a layer in the mass-radius fit, their collision-induced opacity in the column, the interior's heat by mass and age.
+- The column to any depth (5C's, built for it): the cloud decks where each condensable's saturation crosses the profile, their thickness and grain; the ground's part in every map weighed by the optical depth over it, the surface stages skipped by that measure alone (principle 17).
+- The weather model under an interior's heat: bands by the rotation and the Rhines scale, long-lived vortices, a locked giant's day and night.
+- Colours by measured end-members: the chromophores and hazes in the material system, their amounts from fields where a law is known.
+- Hycean worlds and sub-Neptunes between the terrestrial bodies and the giants; the envelope's loss through the body's life, the stripped cores; the steam worlds; the decks' own light in the emissive map.
+- The deuterium check: the share a body has burned by its age, its warning by degrees.
+
+Gate: Jupiter, Saturn, Uranus and Neptune: their decks' pressures, their effective temperatures and interior heat, the count and width of their jets, and their look at the standard of the terrestrial gates; a sweep from an Earth-like through a hycean world and a sub-Neptune to a Jupiter along which the ground fades by degrees and no class switches; a hot Jupiter's hot spot east of its substellar point as measured; a sub-Neptune's envelope kept far from its star and lost near it, by degrees with the distance; an Earth-like moved inward past its runaway, its sea in its air.
+
+Presets: Jupiter, Saturn with its rings, Uranus, Neptune, a hycean world, a sub-Neptune, a hot Jupiter.
 
 ### Phase 7: detail synthesis and studio export (L)
 
@@ -814,7 +938,7 @@ Gate: Earth-like preset biome map matches Earth's zonal distribution of forest, 
 
 ### Phase 9: polish and release (M)
 
-- Preset library, documentation with references per parameter, UI pass, test coverage, builds for Windows, macOS and Linux, user guide.
+- Preset library, the in-between worlds that need no new process among it (the user, 2026-11-10): seas of the inventory's other liquids (ammonia, nitrogen, carbon dioxide), a habitable moon of a giant under its tides and eclipses, a water world with no land; documentation with references per parameter, UI pass, test coverage, builds for Windows, macOS and Linux, user guide.
 
 ### Risks and mitigations
 
@@ -827,20 +951,22 @@ Gate: Earth-like preset biome map matches Earth's zonal distribution of forest, 
 | GPU non-determinism | CPU path is the reference. The sidecar records the path. |
 | Colour realism | Measured spectra only; curated set first; user-extensible. |
 | Plate tectonics convincingness | Phase 6 is late and isolated. Earth-likes are available earlier through the primordial crust stage. |
+| The widened scope (2026-11-10) | The terrestrial phases keep their order. Each new class is designed for now only where that is cheap (the column built with no ground assumed, the list of moons) and built in its own phase with its own gate; its presets join the whole-body tests only then. |
 
 ---
 
 ## 11. Decisions
 
-All resolved on 2026-10-10. Architecture decision records are in `docs/adr/`.
+The first seven resolved on 2026-10-10, the eighth on 2026-11-10. Architecture decision records are in `docs/adr/`.
 
 1. **Stack.** Rust with wgpu and egui. Dependencies must be GPL-3.0-compatible; the planned crates are MIT or Apache-2.0 licensed, which is compatible.
 2. **Simulation grid.** Cubesphere at every resolution; a Fibonacci point set only for plates (ADR 0001).
 3. **Colour management.** Linear sRGB EXR plus sRGB PNG by default, ACEScg optional.
-4. **Minimum body radius for the spheroid assumption.** 400 km nominal, warning below.
+4. **Minimum body radius for the spheroid assumption.** 400 km nominal, warning below. From Phase 6R a derived roundness check in its place (section 4.14; the user, 2026-11-10).
 5. **Platform order.** Windows first, then macOS and Linux.
 6. **Licence.** GPL-3.0-or-later.
 7. **Name.** ExoGen. Repository: github.com/Brimfyr/ExoGen.
+8. **Scope (the user, 2026-11-10).** Widened from solid-surface bodies to every body gravity has rounded, up to where a body burns its deuterium, a derived warning and no fixed mass: molten surfaces, deep atmospheres and giants, rings, equilibrium figures, and the atmosphere's profile in the sidecar (principle 17). With them the in-between worlds the list had missed: stripped cores, steam worlds, decks that shine, rogue planets and worlds under more than one light. K2-141b is the magma worlds' test body. Irregular bodies stay out, a future vision: their shape cannot be derived; carbon planets stay out for want of measured materials.
 
 ---
 
@@ -861,5 +987,15 @@ Starting points, grouped by stage. Textbooks first because they cover most of th
 **Weather and clouds.** Vallis, Atmospheric and Oceanic Fluid Dynamics (2nd ed.). Phillips 1954 (two-layer model). Williamson et al. 1992 (shallow-water test cases on the sphere). Ronchi, Iacono and Paolucci 1996 (cubed-sphere shallow water). Showman and Polvani 2011 (superrotation under day-night forcing in shallow water). Penn and Vallis 2017 (shallow-water model of locked and unlocked terrestrial planets). Haqq-Misra et al. 2018 (circulation regimes of locked planets). Yang, Cowan and Abbot 2013 (substellar cloud shield). Rossow and Schiffer 1999 (ISCCP cloud climatology). Clancy et al. 1996 (Mars aphelion cloud belt). Fukuhara et al. 2017 (Venus stationary bow wave). Rodriguez et al. 2009 (Titan cloud distribution). de Kok et al. 2014 (Titan south polar HCN ice cloud). Vinatier et al. 2018 (Titan benzene ice clouds). Soderblom et al. 1990 (Triton plumes). Abbot, Voigt and Koll 2012 (clouds on a snowball planet). Lobo et al. 2023 (locked desert planets).
 
 **Materials.** Kokaly et al. 2017 (USGS Spectral Library v7). RELAB spectral database. Hapke 2012 (Theory of Reflectance and Emittance Spectroscopy). Pope and Fry 1997 (water absorption). Bruneton and Neyret 2008 (precomputed atmospheric scattering).
+
+**Figures (section 4.14).** Chandrasekhar 1969 (Ellipsoidal Figures of Equilibrium). Tricarico 2014 (multi-layer hydrostatic figures). Thomas 2010 (the Saturnian moons' shapes). Ortiz et al. 2017 (Haumea's size, shape and ring). Dunham, Desch and Probst 2019 (Haumea's shape and internal structure).
+
+**Molten surfaces (section 4.15).** Léger et al. 2011 (CoRoT-7b as a lava-ocean planet). Schaefer and Fegley 2009 (silicate vapour atmospheres). Kite, Fegley, Schaefer and Gaidos 2016 (atmosphere-interior exchange on hot rocky exoplanets). Nguyen et al. 2020 (K2-141b's atmosphere). Essack, Seager and Pajusalu 2020 (lava's low albedo). Hu et al. 2024 (55 Cancri e's secondary atmosphere). Zieba et al. 2022 (K2-141b's phase curves). Kreidberg et al. 2019 (LHS 3844b, a bare rock). Zhang et al. 2024 (GJ 367b, dark, hot and airless). Elkins-Tanton 2008, 2012 (magma ocean solidification). Hamano, Abe and Genda 2013 (two types of terrestrial planet on solidification).
+
+**Deep atmospheres and giants (section 4.16).** Lopez and Fortney 2014 (mass-radius with envelopes). Madhusudhan, Piette and Constantinou 2021 (hycean worlds). Ackerman and Marley 2001 (cloud decks). Sudarsky, Burrows and Pinto 2000 (giants' albedo classes). Scott and Polvani 2008 (equatorial superrotation in shallow water). Lian and Showman 2010 (jets from moist convection). Carlson et al. 2016 (a candidate chromophore for Jupiter). Irwin et al. 2022 (the ice giants' hazes and colours). Spiegel, Burrows and Milsom 2011 (the deuterium-burning mass by composition). Fulton et al. 2017 (the gap in small planets' radii). Owen and Wu 2017 (the evaporation valley). Stevenson 1999 (liquid under a rogue planet's hydrogen air).
+
+**Rings (section 4.17).** Goldreich and Tremaine 1982 (the dynamics of planetary rings). Colwell et al. 2009 (the structure of Saturn's rings). Cuzzi and Estrada 1998 (pollution and colour by infalling dust). Salmon et al. 2010 (viscous spreading). Burns et al. 1999 (Jupiter's dust rings from its small moons). Braga-Ribas et al. 2014 (Chariklo's rings). Morgado et al. 2023 (Quaoar's ring outside its Roche limit).
+
+**Atmosphere profiles (section 4.13).** US Standard Atmosphere 1976. Seiff et al. 1985 (VIRA). Fulchignoni et al. 2005 (Huygens's descent profile). Seiff et al. 1998 (the Galileo probe's profile). Bodhaine et al. 1999 (Rayleigh optical depth). Robinson and Catling 2012 (an analytic radiative-convective model).
 
 **Prior art to study.** tectonics.js, PlaTec and WorldEngine, Songs of the Eons, FastScape, SpaceEngine, Gaea and World Machine (for export conventions studios expect).

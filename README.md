@@ -1,6 +1,6 @@
 # ExoGen
 
-Process-based planetary map generator for solid-surface worlds.
+Process-based planetary map generator: solid surfaces from airless moons to Earth-likes today; magma worlds, giants and their rings planned (PLAN.md, section 0).
 
 ExoGen produces full-planet texture sets (albedo, height, roughness, specular, masks and cloud layers) by simulating the processes that shape real planetary surfaces: impact cratering, tectonics, volcanism, climate, erosion, volatile transport and weathering, scaled to the body's size, composition, thermal state and orbital environment. Outputs are equirectangular maps at up to 16k for use in physically based renderers.
 
