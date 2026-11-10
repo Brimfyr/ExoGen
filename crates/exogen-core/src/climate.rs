@@ -616,6 +616,8 @@ struct Margin {
     /// smoothing, over their sum (M59): the ice behind the edge read along it as its position
     /// is; none elsewhere.
     behind: Vec<Vec<(usize, f64)>>,
+    /// The share of each place that is the margin's ground, the sea's or the land's (M62).
+    shares: Vec<f64>,
 }
 
 impl Margin {
@@ -764,6 +766,7 @@ impl Margin {
             thinning,
             near,
             behind,
+            shares: shares.to_vec(),
         }
     }
 
@@ -804,26 +807,20 @@ impl Margin {
 
     /// The places about a point on the margin's ground, the sea's or the land's, with their
     /// weights over their sum (F266): by a coast a point reads its own ground's places, not
-    /// the other's, which hold none of its ice; all of them where none is on its ground.
+    /// the other's, which hold none of its ice; all of them where none is on its ground. Each
+    /// counts by the share of it that is that ground (M62): a place none of it the sea's was
+    /// left out and one with a sliver of it counted whole, so that a coast's sliver of sea took
+    /// the reading about it from the guided edge to the places' own, the edge hooked about it.
     fn ground(&self, corners: &[(usize, f64); 4]) -> [(usize, f64); 4] {
-        let total: f64 = corners
-            .iter()
-            .filter(|&&(p, w)| w > 0.0 && self.held[p].is_some())
-            .map(|c| c.1)
-            .sum();
+        let share = |p: usize| match self.held[p] {
+            Some(_) => self.shares[p].max(0.0),
+            None => 0.0,
+        };
+        let total: f64 = corners.iter().map(|&(p, w)| w.max(0.0) * share(p)).sum();
         if total <= 0.0 {
             return *corners;
         }
-        corners.map(|(p, w)| {
-            (
-                p,
-                if self.held[p].is_some() {
-                    w / total
-                } else {
-                    0.0
-                },
-            )
-        })
+        corners.map(|(p, w)| (p, w.max(0.0) * share(p) / total))
     }
 
     /// How far into the ice a point stands, its guide `at`, among `corners`, places with
@@ -1181,6 +1178,52 @@ impl Window {
         self.peak > 0.0 && self.freeze == 0.0 && self.melt == 1.0
     }
 
+    /// The share of the cycle the ice is away (M62): none where it lies all year, all where
+    /// it never lies.
+    pub fn opening(&self) -> f64 {
+        if self.peak <= 0.0 {
+            1.0
+        } else if self.perennial() {
+            0.0
+        } else {
+            1.0 - (self.melt - self.freeze).rem_euclid(1.0)
+        }
+    }
+
+    /// The phase of the middle of the ice's absence (M62), from its melting round to its
+    /// freezing.
+    pub fn absence(&self) -> f64 {
+        (self.melt + 0.5 * self.opening()).rem_euclid(1.0)
+    }
+
+    /// How far the ice stands toward its peak at a phase of the cycle (M62), 0 to 1: none as
+    /// it freezes and as it melts, all at its peak's phase and where it lies all year.
+    pub fn progress(&self, phase: f64) -> f64 {
+        if !self.lies(phase) {
+            return 0.0;
+        }
+        if self.perennial() {
+            return 1.0;
+        }
+        let span = (self.melt - self.freeze).rem_euclid(1.0);
+        let since = (phase - self.freeze).rem_euclid(1.0);
+        let rise = (self.at - self.freeze).rem_euclid(1.0).min(span);
+        if since <= rise {
+            if rise > 0.0 { since / rise } else { 1.0 }
+        } else {
+            ((span - since) / (span - rise).max(f64::MIN_POSITIVE)).clamp(0.0, 1.0)
+        }
+    }
+
+    /// Whether the ice lies at a phase of the cycle (M62), from its freezing round to its
+    /// melting.
+    pub fn lies(&self, phase: f64) -> bool {
+        self.peak > 0.0
+            && (self.perennial()
+                || (phase - self.freeze).rem_euclid(1.0)
+                    < (self.melt - self.freeze).rem_euclid(1.0))
+    }
+
     /// The ice's peak at a phase of the year as an engine draws it from the cryosphere's
     /// maps (F253): none outside its window, from its freezing round to its melting; within
     /// it its peak times (t / rise)^a, t the time since it froze, rise the time from its
@@ -1391,6 +1434,385 @@ fn year_curve(masses: &[f32], steps: usize, cover: f64) -> Option<(f64, f64)> {
     Some((rise, fall))
 }
 
+/// The cycle's places as an ice's edge is drawn among them through the cycle (M62): each
+/// one's direction and the guide there, a layout of latitudes and longitudes.
+#[derive(Clone, Debug)]
+struct Places {
+    layout: (usize, usize),
+    at: Vec<[f64; 3]>,
+    guide: Vec<f64>,
+}
+
+impl Places {
+    fn new((n_lat, n_lon): (usize, usize), guide: &Guide) -> Places {
+        let at: Vec<[f64; 3]> = (0..n_lat * n_lon)
+            .map(|p| {
+                let lat = -PI / 2.0 + PI * (p / n_lon) as f64 / (n_lat - 1) as f64;
+                let lon = -PI + TAU * (p % n_lon) as f64 / n_lon as f64;
+                direction_from_lon_lat(lon, lat)
+            })
+            .collect();
+        let guide = at.iter().map(|&d| guide.at(d)).collect();
+        Places {
+            layout: (n_lat, n_lon),
+            at,
+            guide,
+        }
+    }
+
+    /// Each place within `reach` rad of a direction, with the square of the chord between
+    /// the two.
+    fn about(&self, d: [f64; 3], reach: f64, mut visit: impl FnMut(usize, f64)) {
+        let (n_lat, n_lon) = self.layout;
+        let spacing = PI / (n_lat - 1) as f64;
+        let (lon, lat) = lon_lat_from_direction(d);
+        let row = |lat: f64| ((lat + PI / 2.0) / spacing).max(0.0);
+        let first = row(lat - reach).floor() as usize;
+        let last = (row(lat + reach).ceil() as usize).min(n_lat - 1);
+        let step = TAU / n_lon as f64;
+        for i in first..=last {
+            // The longitudes of the row within reach: all of them near a pole.
+            let arc = (-PI / 2.0 + spacing * i as f64).cos().max(0.0);
+            let half = if arc > 0.0 {
+                reach / arc
+            } else {
+                f64::INFINITY
+            };
+            let (from, count) = if half >= PI {
+                (0, n_lon)
+            } else {
+                let from = ((lon - half + PI) / step).floor() as i64;
+                let to = ((lon + half + PI) / step).ceil() as i64;
+                (
+                    from.rem_euclid(n_lon as i64) as usize,
+                    ((to - from + 1) as usize).min(n_lon),
+                )
+            };
+            for j in 0..count {
+                let p = i * n_lon + (from + j) % n_lon;
+                let q = self.at[p];
+                let apart = 2.0 * (1.0 - (d[0] * q[0] + d[1] * q[1] + d[2] * q[2])).max(0.0);
+                if apart <= reach * reach {
+                    visit(p, apart);
+                }
+            }
+        }
+    }
+}
+
+/// How far from a place an ice lies at toward a place beside it that it has left its edge
+/// stands at a phase of the cycle (M62), 0 to 1. Between the two the share of the cycle the
+/// ice is away runs from the one's to the other's and the middle of its absence with it,
+/// each place by how long its ice is away, as the windows are read between places: the edge
+/// is where the absence so read begins or ends at the phase. A place the ice lies at all
+/// year, away for none of the cycle, so says nothing of when, and one it all but lies at all
+/// year as little: the edge reaches the first for an instant, at the middle of its
+/// neighbour's absence, and all but so the second, no step between the two kinds.
+fn edge_between(cold: &Window, warm: &Window, phase: f64) -> f64 {
+    let (away_cold, away_warm) = (cold.opening(), warm.opening());
+    let shift = (cold.absence() - warm.absence() + 0.5).rem_euclid(1.0) - 0.5;
+    let open = |x: f64| {
+        let away = away_cold * (1.0 - x) + away_warm * x;
+        let middle = warm.absence() + away_cold * (1.0 - x) * shift / away.max(1e-300);
+        let from = (phase - middle + 0.5).rem_euclid(1.0) - 0.5;
+        0.5 * away - from.abs()
+    };
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..SWEEP_BISECTIONS {
+        let mid = 0.5 * (lo + hi);
+        if open(mid) > 0.0 { hi = mid } else { lo = mid }
+    }
+    0.5 * (lo + hi)
+}
+
+/// An ice's edge through the cycle (M62). At each of SWEEP_STEPS phases of the cycle, among
+/// the places the ice ever lies at: the edge between each place it lies at then and each
+/// place beside it that it has left and whose guide is the warmer, where `edge_between`
+/// puts it, smoothed along the edge over MARGIN_SMOOTHING spacings of the places as the
+/// yearly edge is (F251), each edge by the share of its ground the less of its two places
+/// holds (F266). So the edge at every moment of the year runs along the guide's lines, as the
+/// edge of the ice's farthest reach does, and a point freezes and melts as it passes.
+///
+/// Between a place the ice lies at and a place beside it that it never lies at, the edge
+/// stands from the first, as it freezes and as it melts, to half way between the two at its
+/// peak's phase, where the yearly edge stands (F251): the ice lies the more briefly toward its
+/// farthest reach, its window closing on its peak, as the frost at a cap's margin comes late
+/// and goes early (F252). Past the edge at its farthest the ice never lies.
+///
+/// The places sorted into those the ice lies at all year and those it comes and goes at,
+/// the window lengthening toward the first by their share among the places about a point
+/// (F255), drew the ice's edge at a summer's end along the share's level lines, round the
+/// places' cells: steps 4 degrees by 2 in the Earth-like's southern sea ice (the user,
+/// 2026-11-09). A guided edge between the two kinds took those away and put a kink where
+/// places open a week or two of the year, of the other kind than their neighbours that
+/// never open, moved it a row. The share of the cycle the ice is away, smoothed along the
+/// guide as a value, has no kinds, but carried the long openings' tails into the ice that
+/// lies all year: at a summer's end, when an opening of a day draws the edge, slits and
+/// tongues a row wide, as far along the guide as the smoothing reached.
+#[derive(Clone, Debug, Default)]
+struct Sweep {
+    /// The layout's places: none where no place's ice comes and goes, and on a layout of
+    /// latitudes alone, where the guide tells no places apart.
+    places: usize,
+    /// Phase by phase, place by place: 2 where the ice lies, 1 where it has left, 3 where it
+    /// never lies, 0 where the place has none of its ground.
+    held: Vec<u8>,
+    /// The guide the edge stands at about each place, NaN where none is near, the guide over
+    /// which the reading runs from the edge to a half step of the places past it, and the
+    /// weights of the edges about the place whose guide is warmer than its own and of those
+    /// whose guide is not, each edge whole whatever share of ground it holds.
+    edge: Vec<f64>,
+    thinning: Vec<f32>,
+    warmer: Vec<f32>,
+    colder: Vec<f32>,
+    /// The places the ice lies at through all the phases with no edge near at any.
+    settled: Vec<bool>,
+}
+
+/// What an ice's edge through the cycle tells of its window at a point: that it lies all
+/// year, the phases it freezes and melts at, that it never lies, or nothing, the places' own
+/// windows to be read.
+enum Span {
+    AllYear,
+    Between(f64, f64),
+    Never,
+    Unread,
+}
+
+impl Sweep {
+    fn new(places: &Places, windows: &[Window], margin: &Margin) -> Sweep {
+        let (n_lat, n_lon) = places.layout;
+        let n = n_lat * n_lon;
+        let ever = |p: usize| margin.held[p] == Some(true) && windows[p].peak > 0.0;
+        if n_lon <= 1 || !(0..n).any(|p| ever(p) && !windows[p].perennial()) {
+            return Sweep::default();
+        }
+        let width = MARGIN_SMOOTHING * PI / (n_lat - 1) as f64;
+        let reach = SWEEP_REACH * width;
+        let steps = SWEEP_STEPS;
+        let mut sweep = Sweep {
+            places: n,
+            held: vec![0; steps * n],
+            edge: vec![f64::NAN; steps * n],
+            thinning: vec![0.0; steps * n],
+            warmer: vec![0.0; steps * n],
+            colder: vec![0.0; steps * n],
+            settled: Vec::new(),
+        };
+        let (mut sum, mut thin, mut total) = (vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]);
+        let (mut above, mut about) = (vec![0.0f64; n], vec![0.0f64; n]);
+        for k in 0..steps {
+            let phase = k as f64 / steps as f64;
+            let held = &mut sweep.held[k * n..(k + 1) * n];
+            for (p, held) in held.iter_mut().enumerate() {
+                *held = match (margin.held[p], ever(p)) {
+                    (None, _) => 0,
+                    (_, false) => 3,
+                    _ if windows[p].lies(phase) => 2,
+                    _ => 1,
+                };
+            }
+            sum.fill(0.0);
+            thin.fill(0.0);
+            total.fill(0.0);
+            above.fill(0.0);
+            about.fill(0.0);
+            for cold in (0..n).filter(|&p| held[p] == 2) {
+                let (i, j) = (cold / n_lon, cold % n_lon);
+                let beside = [
+                    (i > 0).then(|| cold - n_lon),
+                    (i + 1 < n_lat).then(|| cold + n_lon),
+                    Some(i * n_lon + (j + n_lon - 1) % n_lon),
+                    Some(i * n_lon + (j + 1) % n_lon),
+                ];
+                for warm in beside.into_iter().flatten().filter(|&q| held[q] % 2 == 1) {
+                    let step = places.guide[warm] - places.guide[cold];
+                    let share = margin.shares[cold].min(margin.shares[warm]).max(0.0);
+                    if step <= 0.0 || share <= 0.0 {
+                        continue;
+                    }
+                    let x = match held[warm] {
+                        3 => 0.5 * windows[cold].progress(phase),
+                        _ => edge_between(&windows[cold], &windows[warm], phase),
+                    };
+                    let (a, b) = (places.at[cold], places.at[warm]);
+                    let at = crate::geom::normalize([
+                        (1.0 - x) * a[0] + x * b[0],
+                        (1.0 - x) * a[1] + x * b[1],
+                        (1.0 - x) * a[2] + x * b[2],
+                    ]);
+                    let (guide, half) = (places.guide[cold] + x * step, 0.5 * step);
+                    places.about(at, reach, |p, apart| {
+                        let near = (-apart / (width * width)).exp();
+                        let w = share * near;
+                        sum[p] += w * guide;
+                        thin[p] += w * half;
+                        total[p] += w;
+                        about[p] += near;
+                        if guide > places.guide[p] {
+                            above[p] += near;
+                        }
+                    });
+                }
+            }
+            for p in (0..n).filter(|&p| total[p] > MARGIN_REACH) {
+                sweep.edge[k * n + p] = sum[p] / total[p];
+                sweep.thinning[k * n + p] = (thin[p] / total[p]) as f32;
+                sweep.warmer[k * n + p] = above[p] as f32;
+                sweep.colder[k * n + p] = (about[p] - above[p]).max(0.0) as f32;
+            }
+        }
+        sweep.settled = (0..n)
+            .map(|p| {
+                (0..steps).all(|k| sweep.held[k * n + p] == 2 && !sweep.edge[k * n + p].is_finite())
+            })
+            .collect();
+        sweep
+    }
+
+    /// How far into the ice a point stands at the sweep's phase `k`, its guide `at`, among
+    /// `corners`, places with their weights: by the guided edge, from -1 a half step of the
+    /// places past it to 1 a half step into the ice, as far as the edge is to be trusted
+    /// there, and for the rest by the places' own, from -1 where the ice has left them all to
+    /// 1 where it lies at them all; with the guided edge's own reading, NaN where none is
+    /// near, and that trust. None where the ice never lies at any of them.
+    ///
+    /// The guided edge moves a point from its places' own state only where the places' own
+    /// edge may stand: it opens a point by the edges about it whose guide is warmer than its
+    /// coldest place's, between which and the point the places' own edge lies, and freezes it
+    /// by those whose guide is no warmer than its warmest place's; one whole edge beside it
+    /// or more counting as all. An edge all of it colder than a point's places so leaves the
+    /// ice at them be: trusted by all the edges about it, an opening nearer the pole than
+    /// other ice took a bite of that ice as wide as the smoothing. Each edge counts whole
+    /// here, where by its share of ground in where the edge stands (F266): counted by its
+    /// share, a coast's places, open by a share of sea past the open sea's edge, kept a
+    /// blank spot in the ice where it met the land.
+    fn signed(&self, k: usize, corners: &[(usize, f64)], at: f64) -> Option<(f64, f64, f64)> {
+        let base = k * self.places;
+        let (mut total, mut holds) = (0.0, 0.0);
+        let (mut edge, mut thin, mut weight) = (0.0, 0.0, 0.0);
+        let (mut warmer, mut colder) = (0.0f64, 0.0f64);
+        for &(p, w) in corners {
+            let held = self.held[base + p];
+            if w <= 0.0 || held == 0 || held == 3 {
+                continue;
+            }
+            total += w;
+            if held == 2 {
+                holds += w;
+            }
+            warmer = warmer.max(self.warmer[base + p] as f64);
+            colder = colder.max(self.colder[base + p] as f64);
+            if self.edge[base + p].is_finite() {
+                edge += w * self.edge[base + p];
+                thin += w * self.thinning[base + p] as f64;
+                weight += w;
+            }
+        }
+        if total <= 0.0 {
+            return None;
+        }
+        let own = 2.0 * holds / total - 1.0;
+        if weight <= 0.0 {
+            return Some((own, f64::NAN, 0.0));
+        }
+        let guided = ((edge - at * weight) / thin.max(1e-300)).clamp(-1.0, 1.0);
+        let trust = if guided < 0.0 { warmer } else { colder }.min(1.0);
+        Some((trust * guided + (1.0 - trust) * own, guided, trust))
+    }
+
+    /// The ice's window at a point, its guide `at`, among `corners`, places with their
+    /// weights, of `windows`: the longest run of the sweep's phases it lies there through,
+    /// freezing and melting where its reading crosses none between two phases, the guided
+    /// edge's own where it rules at both; where no edge stands near at one of the two, when
+    /// the places about it that freeze or melt between them do, by their weights.
+    fn span(&self, corners: &[(usize, f64)], at: f64, windows: &[Window]) -> Span {
+        if self.places == 0 {
+            return Span::Unread;
+        }
+        let mut live = corners
+            .iter()
+            .filter(|&&(p, w)| w > 0.0 && (self.held[p] == 1 || self.held[p] == 2))
+            .peekable();
+        if live.peek().is_none() {
+            return Span::Unread;
+        }
+        if live.all(|&(p, _)| self.settled[p]) {
+            return Span::AllYear;
+        }
+        let steps = SWEEP_STEPS;
+        let mut signed = [0.0f64; SWEEP_STEPS];
+        let (mut guided, mut trust) = ([0.0f64; SWEEP_STEPS], [0.0f64; SWEEP_STEPS]);
+        for k in 0..steps {
+            match self.signed(k, corners, at) {
+                Some((s, g, t)) => (signed[k], guided[k], trust[k]) = (s, g, t),
+                None => return Span::Unread,
+            }
+        }
+        let lies = |k: usize| signed[k % steps] > 0.0;
+        let Some(open) = (0..steps).find(|&k| !lies(k)) else {
+            return Span::AllYear;
+        };
+        // The longest run it lies through, from the first phase after an open one round.
+        let (mut best, mut run) = ((0, 0), (0, 0));
+        for k in open + 1..open + steps {
+            if lies(k) {
+                run = if run.1 == 0 {
+                    (k, 1)
+                } else {
+                    (run.0, run.1 + 1)
+                };
+                if run.1 > best.1 {
+                    best = run;
+                }
+            } else {
+                run.1 = 0;
+            }
+        }
+        if best.1 == 0 {
+            return Span::Never;
+        }
+        // Where its reading crosses none from the phase `k` to the next, the ice melting or
+        // freezing.
+        let crossing = |k: usize, melting: bool| -> f64 {
+            let (a, b) = (k % steps, (k + 1) % steps);
+            let phase = a as f64 / steps as f64;
+            let rules = |k: usize| (guided[k] > 0.0) == (signed[k] > 0.0);
+            let (from, to) = if guided[a] * guided[b] < 0.0 && rules(a) && rules(b) {
+                (guided[a], guided[b])
+            } else {
+                (signed[a], signed[b])
+            };
+            let read = from / (from - to) / steps as f64;
+            let (mut own, mut weight) = (0.0, 0.0);
+            let (from, to) = if melting { (2, 1) } else { (1, 2) };
+            for &(p, w) in corners.iter().filter(|c| c.1 > 0.0) {
+                if self.held[a * self.places + p] != from || self.held[b * self.places + p] != to {
+                    continue;
+                }
+                let at = if melting {
+                    windows[p].melt
+                } else {
+                    windows[p].freeze
+                };
+                let after = (at - phase).rem_euclid(1.0).min(1.0 / steps as f64);
+                (own, weight) = (own + w * after, weight + w);
+            }
+            let by_own = if weight > 0.0 {
+                1.0 - trust[a].min(trust[b])
+            } else {
+                0.0
+            };
+            let after = (1.0 - by_own) * read + by_own * own / weight.max(1e-300);
+            (phase + after).rem_euclid(1.0)
+        };
+        Span::Between(
+            crossing(best.0 - 1, false),
+            crossing(best.0 + best.1 - 1, true),
+        )
+    }
+}
+
 /// The ices that come and go through the year (F246): at each place of the cycle's layout
 /// its land's frost's window and its sea's ice's, and the phase of the snapshot's season.
 #[derive(Clone, Debug)]
@@ -1407,6 +1829,9 @@ pub struct Cryosphere {
     guide: Guide,
     sea_margin: Margin,
     land_margin: Margin,
+    /// The sea's ice's edge through the cycle and the land's frost's (M62).
+    sea_sweep: Sweep,
+    land_sweep: Sweep,
     /// Each ice's year curve, the land's frost's, the sea's ice's and the land's snow's (F253,
     /// F271).
     pub curves: [Option<(f64, f64)>; 3],
@@ -1509,107 +1934,136 @@ impl Cryosphere {
 
     /// The window of an ice in a direction (F246), its land's frost's or, `sea`, its sea's
     /// ice's: its peak read between the cycle's places, as its mass is, and its phases those
-    /// of the places it lies at, by their weights, on the circle of the year, its window
-    /// lengthening toward the places it lies at all year by their share (F255). Between places a sea's ice lies at and places
-    /// it never lies at, it lies only within its margin's edge (F251), its peak thinning to it,
+    /// its edge passes the point at through the cycle (M62), or, where the edge tells none,
+    /// those of the places it lies at, each by its weight and by how long its ice is away, on
+    /// the circle of the year, so that toward the places it lies at all year it freezes the
+    /// earlier and melts the later (F255). Between places a sea's ice lies at and places it
+    /// never lies at, it lies only within its margin's edge (F251), its peak thinning to it,
     /// the peak behind the edge read along it as its position is (M59).
     pub fn at(&self, d: [f64; 3], sea: bool) -> Window {
+        let among = (self.layout, &self.guide);
         if sea {
-            self.window(d, (&self.sea, &self.sea_margin, SEA_ICE_COVER_MASS))
+            let ice = (
+                &self.sea[..],
+                &self.sea_margin,
+                &self.sea_sweep,
+                SEA_ICE_COVER_MASS,
+            );
+            window_between(among, d, ice)
         } else {
-            self.window(d, (&self.land, &self.land_margin, FROST_COVER_MASS))
+            let ice = (
+                &self.land[..],
+                &self.land_margin,
+                &self.land_sweep,
+                FROST_COVER_MASS,
+            );
+            window_between(among, d, ice)
         }
     }
+}
 
-    /// The window of an ice of `windows` at the places, `margin` its edge between them and
-    /// `lies` the mass it lies at, in a direction, as `at` reads it.
-    fn window(&self, d: [f64; 3], (windows, margin, lies): (&[Window], &Margin, f64)) -> Window {
-        let (lon, lat) = lon_lat_from_direction(d);
-        let corners = margin.ground(&reader(self.layout.0, self.layout.1, lat, lon));
-        let depth = margin.depth(&corners, self.guide.at(d));
-        if depth.is_some_and(|depth| depth <= 0.0) {
-            return Window::default();
-        }
-        // Within the margin, the windows of the places the ice lies at that it reads.
-        let lying: Vec<(f64, Window)> = match depth {
-            Some(_) => margin
-                .kind(&corners, true)
-                .into_iter()
-                .map(|(p, w)| (w, windows[p]))
-                .collect(),
-            None => corners
-                .iter()
-                .filter(|&&(p, w)| w > 0.0 && windows[p].peak > 0.0)
-                .map(|&(p, w)| (w, windows[p]))
-                .collect(),
-        };
-        let peak: f64 = match depth {
-            Some(depth) => {
-                let (sum, weight) = lying.iter().fold((0.0, 0.0), |(s, t), (w, window)| {
-                    (s + w * window.peak, t + w)
-                });
-                let own = sum / weight.max(1e-300);
-                depth * margin.behind(|q| windows[q].peak, &corners, own)
-            }
-            None => corners.iter().map(|&(p, w)| w * windows[p].peak).sum(),
-        };
-        if lying.is_empty() {
-            return Window::default();
-        }
-        // Within the margin, ice thinner than the mass it lies at never lies (F252).
-        if depth.is_some() && peak <= lies * std::f64::consts::LN_2 {
-            return Window::default();
-        }
-        let circular = |among: &[(f64, Window)], pick: fn(&Window) -> f64| {
-            let (s, c) = among.iter().fold((0.0, 0.0), |(s, c), (w, window)| {
-                let angle = TAU * pick(window);
-                (s + w * angle.sin(), c + w * angle.cos())
-            });
-            (s.atan2(c) / TAU).rem_euclid(1.0)
-        };
-        let at = circular(&lying, |w| w.at);
-        let seasonal: Vec<(f64, Window)> = lying
+/// The window of an ice of `windows` at the places of a layout in a direction (F246, F255,
+/// M62): `margin` its edge between the places along `guide`, `sweep` that edge through the
+/// cycle and `lies` the mass it lies at.
+fn window_between(
+    (layout, guide): ((usize, usize), &Guide),
+    d: [f64; 3],
+    (windows, margin, sweep, lies): (&[Window], &Margin, &Sweep, f64),
+) -> Window {
+    let (lon, lat) = lon_lat_from_direction(d);
+    let corners = margin.ground(&reader(layout.0, layout.1, lat, lon));
+    let here = guide.at(d);
+    let depth = margin.depth(&corners, here);
+    if depth.is_some_and(|depth| depth <= 0.0) {
+        return Window::default();
+    }
+    // Within the margin, the places the ice lies at that it reads.
+    let lying: Vec<(usize, f64)> = match depth {
+        Some(_) => margin.kind(&corners, true),
+        None => corners
             .iter()
             .copied()
-            .filter(|(_, w)| !w.perennial())
-            .collect();
-        let weight = |among: &[(f64, Window)]| among.iter().map(|(w, _)| w).sum::<f64>();
-        // The share of the places it reads that it lies at all year.
-        let all_year = 1.0 - weight(&seasonal) / weight(&lying);
-        let (freeze, melt) = if seasonal.is_empty() {
-            (0.0, 1.0)
-        } else {
-            let (freeze, melt) = (
-                circular(&seasonal, |w| w.freeze),
-                circular(&seasonal, |w| w.melt),
-            );
-            // Toward the places it lies at all year, it freezes the earlier and melts the
-            // later, by their share, until it lies all year at them (F255).
-            let span = (melt - freeze).rem_euclid(1.0);
-            let longer = span + all_year * (1.0 - span);
-            let grow = 0.5 * (longer - span);
-            let (freeze, melt) = (
-                (freeze - grow).rem_euclid(1.0),
-                (melt + grow).rem_euclid(1.0),
-            );
-            // Toward its edge the ice lies the more briefly, its window closing on its peak
-            // with its depth (F252), as the frost at a cap's margin comes late and goes early.
-            let (before, after) = ((at - freeze).rem_euclid(1.0), (melt - at).rem_euclid(1.0));
-            match depth {
-                _ if longer >= 1.0 - 1e-9 => (0.0, 1.0),
-                Some(depth) if before + after <= (melt - freeze).rem_euclid(1.0) + 1e-9 => (
-                    (at - depth * before).rem_euclid(1.0),
-                    (at + depth * after).rem_euclid(1.0),
-                ),
-                _ => (freeze, melt),
-            }
-        };
-        Window {
-            freeze,
-            melt,
-            peak,
-            at,
+            .filter(|&(p, w)| w > 0.0 && windows[p].peak > 0.0)
+            .collect(),
+    };
+    let peak: f64 = match depth {
+        Some(depth) => {
+            let (sum, weight) = lying.iter().fold((0.0, 0.0), |(s, t), &(p, w)| {
+                (s + w * windows[p].peak, t + w)
+            });
+            let own = sum / weight.max(1e-300);
+            depth * margin.behind(|q| windows[q].peak, &corners, own)
         }
+        None => corners.iter().map(|&(p, w)| w * windows[p].peak).sum(),
+    };
+    if lying.is_empty() {
+        return Window::default();
+    }
+    // Within the margin, ice thinner than the mass it lies at never lies (F252).
+    if depth.is_some() && peak <= lies * std::f64::consts::LN_2 {
+        return Window::default();
+    }
+    let (s, c) = lying.iter().fold((0.0, 0.0), |(s, c), &(p, w)| {
+        let angle = TAU * windows[p].at;
+        (s + w * angle.sin(), c + w * angle.cos())
+    });
+    let at = (s.atan2(c) / TAU).rem_euclid(1.0);
+    // The phases it freezes and melts at: those its edge passes the point at through the
+    // cycle, none where it never reaches it (M62). Where no edge is drawn through the cycle,
+    // by the share of the cycle it is away at the places it reads and the middle of its
+    // absence, each place by how long its ice is away, none where it lies all year: toward
+    // the places it lies at all year it so freezes the earlier and melts the later until it
+    // lies all year at them (F255), with no place of one kind or the other. An opening
+    // shorter than the maps hold it closes (M62).
+    let (freeze, melt) = match sweep.span(&lying, here, windows) {
+        Span::Never => return Window::default(),
+        Span::Between(freeze, melt)
+            if 1.0 - (melt - freeze).rem_euclid(1.0) >= WINDOW_LEAST_OPENING =>
+        {
+            (freeze, melt)
+        }
+        Span::Between(..) | Span::AllYear => (0.0, 1.0),
+        Span::Unread => {
+            let (total, away, sin, cos) =
+                lying
+                    .iter()
+                    .fold((0.0, 0.0, 0.0, 0.0), |(total, away, sin, cos), &(p, w)| {
+                        let open = windows[p].opening();
+                        let (s, c) = (TAU * windows[p].absence()).sin_cos();
+                        (
+                            total + w,
+                            away + w * open,
+                            sin + w * open * s,
+                            cos + w * open * c,
+                        )
+                    });
+            let (away, middle) = (away / total.max(1e-300), sin.atan2(cos) / TAU);
+            if away < WINDOW_LEAST_OPENING {
+                (0.0, 1.0)
+            } else {
+                let (freeze, melt) = (
+                    (middle + 0.5 * away).rem_euclid(1.0),
+                    (middle - 0.5 * away).rem_euclid(1.0),
+                );
+                // Toward its edge the ice lies the more briefly, its window closing on its
+                // peak with its depth (F252), as the frost at a cap's margin comes late and
+                // goes early.
+                let (before, after) = ((at - freeze).rem_euclid(1.0), (melt - at).rem_euclid(1.0));
+                match depth {
+                    Some(depth) if before + after <= (melt - freeze).rem_euclid(1.0) + 1e-9 => (
+                        (at - depth * before).rem_euclid(1.0),
+                        (at + depth * after).rem_euclid(1.0),
+                    ),
+                    _ => (freeze, melt),
+                }
+            }
+        }
+    };
+    Window {
+        freeze,
+        melt,
+        peak,
+        at,
     }
 }
 
@@ -2529,10 +2983,12 @@ impl EnergyBalance {
                 &sea_shares,
                 &guide,
             );
+            let among = Places::new((n_lat, n_lon), &guide);
             let dry = |p: usize| layout.as_ref().is_some_and(|l| l.places[p].sea < 1.0);
             let land_held = (0..places)
                 .map(|p| dry(p).then(|| land[p].peak > 0.0))
                 .collect();
+            let land_margin = Margin::new((n_lat, n_lon), land_held, &land_shares, &guide);
             // The land's snow's year at each place, to be run again on finer ground (F273):
             // the body's melt for each kelvin of the air past the point, what melted over the
             // air's degrees past it by the share of the ground the snow covered, where it lay
@@ -2580,6 +3036,8 @@ impl EnergyBalance {
                     steps,
                 })
             });
+            let sea_sweep = Sweep::new(&among, &sea, &sea_margin);
+            let land_sweep = Sweep::new(&among, &land, &land_margin);
             Cryosphere {
                 land,
                 sea,
@@ -2587,8 +3045,10 @@ impl EnergyBalance {
                 layout: (n_lat, n_lon),
                 snapshot: snapshot_phase(self.snapshot, steps, orbits as usize, equinox),
                 guide: guide.clone(),
+                sea_sweep,
+                land_sweep,
                 sea_margin,
-                land_margin: Margin::new((n_lat, n_lon), land_held, &land_shares, &guide),
+                land_margin,
                 curves: [0, 1, 2].map(|j| year_curve(&masses[j], steps, covers[j])),
                 snow_year,
                 equinox,
@@ -9250,6 +9710,425 @@ mod tests {
         }
     }
 
+    /// A layout of 46 latitudes by 90 longitudes, all of it an ice's ground, under a guide
+    /// colder toward its poles, with a window at each place by its latitude and longitude,
+    /// degrees: the guide, the ice's edge through the cycle and its edge among the places
+    /// (M62).
+    fn windows_of(
+        window: impl Fn(f64, f64) -> Window,
+    ) -> ((usize, usize), Guide, Vec<Window>, Sweep, Margin) {
+        windows_over(window, |_, _| 1.0)
+    }
+
+    /// As `windows_of`, each place the ice's ground by a share of it, by its latitude and
+    /// longitude, none of it where the share is none.
+    fn windows_over(
+        window: impl Fn(f64, f64) -> Window,
+        share: impl Fn(f64, f64) -> f64,
+    ) -> ((usize, usize), Guide, Vec<Window>, Sweep, Margin) {
+        let layout = (46, 90);
+        let profile: Vec<f64> = (0..256)
+            .map(|i| {
+                let mu = -1.0 + 2.0 * (i as f64 + 0.5) / 256.0;
+                300.0 - 50.0 * mu * mu
+            })
+            .collect();
+        let guide = Guide {
+            profile,
+            axis: [0.0, 0.0, 1.0],
+        };
+        let at = |p: usize| {
+            let lat = -90.0 + 180.0 * (p / layout.1) as f64 / (layout.0 - 1) as f64;
+            let lon = -180.0 + 360.0 * (p % layout.1) as f64 / layout.1 as f64;
+            (lat, lon)
+        };
+        let places = 0..layout.0 * layout.1;
+        let windows: Vec<Window> = places.clone().map(|p| window(at(p).0, at(p).1)).collect();
+        let shares: Vec<f64> = places.map(|p| share(at(p).0, at(p).1)).collect();
+        let held = windows
+            .iter()
+            .zip(&shares)
+            .map(|(w, &share)| (share > 0.0).then_some(w.peak > 0.0))
+            .collect();
+        let margin = Margin::new(layout, held, &shares, &guide);
+        let sweep = Sweep::new(&Places::new(layout, &guide), &windows, &margin);
+        (layout, guide, windows, sweep, margin)
+    }
+
+    /// An ice's edge at a phase over the longitudes from -60 to 60 degrees, a fifth of a degree
+    /// apart: at each the first latitude from 40 degrees north at which `lies` holds, found to
+    /// under a ten-thousandth of a degree.
+    fn edge_along(lies: impl Fn(f64, f64) -> bool) -> Vec<f64> {
+        (-300..=300)
+            .map(|j| {
+                let lon = j as f64 * 0.2;
+                let k = (1..=500)
+                    .find(|&k| lies(40.0 + k as f64 * 0.1, lon))
+                    .expect("an edge");
+                let (mut lo, mut hi) = (40.0 + (k - 1) as f64 * 0.1, 40.0 + k as f64 * 0.1);
+                for _ in 0..12 {
+                    let mid = 0.5 * (lo + hi);
+                    if lies(mid, lon) { hi = mid } else { lo = mid }
+                }
+                hi
+            })
+            .collect()
+    }
+
+    /// Of an edge by `edge_along`: the latitudes it runs between, its steepest step between two
+    /// longitudes a fifth of a degree apart, degrees, and the longitudes, degrees, over which
+    /// it stands between a quarter and three quarters of its way.
+    fn run_of(edge: &[f64]) -> ((f64, f64), f64, f64) {
+        let (lo, hi) = edge.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &lat| {
+            (lo.min(lat), hi.max(lat))
+        });
+        let steepest = edge
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f64::max);
+        let within = |lat: f64| lat > lo + 0.25 * (hi - lo) && lat < lo + 0.75 * (hi - lo);
+        let crossing = 0.2 * edge.iter().filter(|&&lat| within(lat)).count() as f64;
+        ((lo, hi), steepest, crossing)
+    }
+
+    const ALL_YEAR: Window = Window {
+        freeze: 0.0,
+        melt: 1.0,
+        peak: 2.0,
+        at: 0.5,
+    };
+
+    /// A fifth of the year away, about its start: as the Earth-like's sea ice beside the ice
+    /// that lies all year.
+    const A_FIFTH_AWAY: Window = Window {
+        freeze: 0.11,
+        melt: 0.92,
+        peak: 2.0,
+        at: 0.5,
+    };
+
+    /// M62: along a straight edge between the places an ice lies at all year and those it
+    /// comes and goes at, its window opens from none at the first to the others' own at them,
+    /// half of it half way between by the guide, as the places' share drew it (F255): its
+    /// places keep their own windows.
+    #[test]
+    fn a_window_opens_from_the_ice_that_lies_all_year_to_its_neighbours_own() {
+        let (layout, guide, windows, sweep, margin) =
+            windows_of(|lat, _| if lat > 65.0 { ALL_YEAR } else { A_FIFTH_AWAY });
+        let away = |lat: f64| {
+            let d = direction_from_lon_lat(0.3, lat.to_radians());
+            window_between((layout, &guide), d, (&windows[..], &margin, &sweep, 0.5)).opening()
+        };
+        let whole = A_FIFTH_AWAY.opening();
+        assert_eq!(away(66.0), 0.0, "at the row that lies all year");
+        assert!((away(62.0) - whole).abs() < 0.02 * whole, "{}", away(62.0));
+        assert!((away(58.0) - whole).abs() < 1e-9, "{}", away(58.0));
+        let half = away(64.0);
+        assert!((half - 0.5 * whole).abs() < 0.06 * whole, "{half}");
+        let mut last = whole;
+        for k in 0..=40 {
+            let now = away(62.0 + 0.1 * k as f64);
+            assert!(
+                now <= last + 1e-9,
+                "at {}: {now} after {last}",
+                62.0 + 0.1 * k as f64
+            );
+            last = now;
+        }
+    }
+
+    /// M62: between the places an ice lies at all year and those it comes and goes at, its edge
+    /// at a phase runs along the guide, not round the places' cells: the ice all year past 65
+    /// degrees, and a row nearer the equator west of the meridian, its edge at the summer's
+    /// end crosses the 4 degrees from the one row to the other over tens of degrees of
+    /// longitude, the middle half of its way over more than 15 of them, nowhere a quarter of
+    /// a degree of latitude in a degree of longitude, and half way where the row steps, as
+    /// far to the one side as to the other. By the share of the places that lie all year
+    /// among those about a point it crossed within the 4 degrees between two places, more than
+    /// a degree in a fifth of one, as the Earth-like's southern sea ice ran in its places'
+    /// steps east and west of its southern continent (the user, 2026-11-09); by the openings
+    /// smoothed along the guide as values it kept to the far row to within 5 degrees of the
+    /// step and crossed in 10, a corner at its foot.
+    #[test]
+    fn an_ice_s_edge_at_a_phase_runs_along_the_guide_between_its_places() {
+        let all_year = |lat: f64, lon: f64| lat > 65.0 || (lat > 61.0 && lon < 0.0);
+        let (layout, guide, windows, sweep, margin) = windows_of(|lat, lon| {
+            if all_year(lat, lon) {
+                ALL_YEAR
+            } else {
+                A_FIFTH_AWAY
+            }
+        });
+        let lies = |lat: f64, lon: f64| {
+            let d = direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+            let window = window_between((layout, &guide), d, (&windows[..], &margin, &sweep, 0.5));
+            window.at_phase(0.01, (1.0, 1.0)) > 0.0
+        };
+        // As the share of the places about a point that lie all year drew it: the ice at
+        // the phase where the share leaves under a tenth of the opening.
+        let by_share = |lat: f64, lon: f64| {
+            let corners = reader(layout.0, layout.1, lat.to_radians(), lon.to_radians());
+            let place = |p: usize| {
+                let lat = -90.0 + 180.0 * (p / layout.1) as f64 / (layout.0 - 1) as f64;
+                let lon = -180.0 + 360.0 * (p % layout.1) as f64 / layout.1 as f64;
+                all_year(lat, lon)
+            };
+            let share: f64 = corners.iter().filter(|c| place(c.0)).map(|c| c.1).sum();
+            1.0 - share < 0.1
+        };
+        let (guided, shared) = (edge_along(lies), edge_along(by_share));
+        let (range, steepest, crossing) = run_of(&guided);
+        let (by_range, by_steepest, by_crossing) = run_of(&shared);
+        println!(
+            "the edge at the phase along the guide: {range:?}, its steepest step {steepest:.3}, its crossing over {crossing:.1} degrees; by the share: {by_range:?}, {by_steepest:.3}, {by_crossing:.1}"
+        );
+        for j in (0..guided.len()).step_by(25) {
+            println!(
+                "  at {:6.1}: {:.2} along the guide, {:.2} by the share",
+                -60.0 + 0.2 * j as f64,
+                guided[j],
+                shared[j]
+            );
+        }
+        assert!(range.0 > 61.5 && range.1 < 66.0, "{range:?}");
+        assert!(range.1 - range.0 > 3.5, "{range:?}");
+        assert!(steepest < 0.05, "{steepest}");
+        assert!(crossing > 15.0, "{crossing}");
+        // Where the row steps, between the places 4 degrees west and at the meridian.
+        let middle = guided[(guided.len() - 1) / 2 - 10];
+        assert!(
+            (middle - 0.5 * (range.0 + range.1)).abs() < 0.3,
+            "{middle} {range:?}"
+        );
+        assert!(by_steepest > 1.0, "{by_steepest}");
+        assert!(by_crossing < 4.0, "{by_crossing}");
+    }
+
+    /// M62: a place an ice all but lies at all year says as little of its edge as one it
+    /// never leaves: the ice all year past 65 degrees, but east of the meridian away a
+    /// fiftieth of the year at the row past it, as the Earth-like's sea ice at 66 degrees
+    /// south was open a week or two of its year east of 172 degrees; its neighbours a row on
+    /// away a fifth of the year. At the summer's end, when the long absence holds and the
+    /// short one does not, the edge keeps within a quarter of a degree at every longitude. The
+    /// two sorted into kinds, a guided edge between them moved a row about the short
+    /// absences, a kink at the eastern end of the Earth-like's southern cap (the user,
+    /// 2026-11-09).
+    #[test]
+    fn a_place_that_all_but_lies_all_year_does_not_move_the_edge() {
+        let nearly = Window {
+            freeze: 0.053,
+            melt: 0.035,
+            peak: 2.0,
+            at: 0.5,
+        };
+        let (layout, guide, windows, sweep, margin) = windows_of(|lat, lon| {
+            if lat > 69.0 || (lat > 65.0 && lon < 0.0) {
+                ALL_YEAR
+            } else if lat > 65.0 {
+                nearly
+            } else {
+                A_FIFTH_AWAY
+            }
+        });
+        let lies = |lat: f64, lon: f64| {
+            let d = direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+            let window = window_between((layout, &guide), d, (&windows[..], &margin, &sweep, 0.5));
+            window.at_phase(0.01, (1.0, 1.0)) > 0.0
+        };
+        let (edge, steepest, _) = run_of(&edge_along(lies));
+        println!(
+            "the edge about the places that all but lie all year: {edge:?}, its steepest step {steepest:.3}"
+        );
+        assert!(edge.0 > 62.0 && edge.1 < 66.0, "{edge:?}");
+        assert!(edge.1 - edge.0 < 0.25, "{edge:?}");
+    }
+
+    /// M62: toward its farthest reach an ice lies the more briefly, its window closing on its
+    /// peak (F252), by its edge through the cycle as by its yearly edge. The ice reaches 60
+    /// degrees; it lies at its outermost places a fifth of the year west of the meridian and
+    /// two fifths east of it, about one peak, and four fifths behind them. At its outermost
+    /// places it keeps their own window; from them to its yearly edge it lies for less by
+    /// twice the share of the way, as the window closed with its depth; past the edge never;
+    /// and on no meridian longer than nearer the pole. With no edge drawn past the outermost
+    /// places, the edge about them was the mean of the edges of the neighbours it had not yet
+    /// reached: the ground past them froze when the last of those had, and windows a few days
+    /// long lay beside the places' own, slivers of ice off the Earth-like's northern edge at
+    /// its winter's end.
+    #[test]
+    fn an_ice_lies_the_more_briefly_toward_its_farthest_reach() {
+        let about = |freeze: f64, melt: f64| Window {
+            freeze,
+            melt,
+            peak: 2.0,
+            at: 0.0,
+        };
+        let (layout, guide, windows, sweep, margin) = windows_of(|lat, lon| {
+            if lat > 64.0 {
+                about(0.6, 0.4)
+            } else if lat > 60.0 {
+                if lon < 0.0 {
+                    about(0.9, 0.1)
+                } else {
+                    about(0.8, 0.2)
+                }
+            } else {
+                Window::default()
+            }
+        });
+        let lying = |lat: f64, lon: f64| {
+            let d = direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+            let window = window_between((layout, &guide), d, (&windows[..], &margin, &sweep, 0.5));
+            if window.peak > 0.0 {
+                1.0 - window.opening()
+            } else {
+                0.0
+            }
+        };
+        // How far a latitude stands from the outermost places toward the places past them,
+        // by the guide.
+        let way = |lat: f64| {
+            let at = |lat: f64| guide.at(direction_from_lon_lat(0.0, f64::to_radians(lat)));
+            (at(lat) - at(62.0)) / (at(58.0) - at(62.0))
+        };
+        for (lon, own) in [(-40.0, 0.2), (40.0, 0.4)] {
+            let read = [62.0, 61.0, 60.5, 59.5].map(|lat| lying(lat, lon));
+            println!(
+                "at {lon}: the ice lies {:.4} of the year at its outermost places, {:.4} and {:.4} toward its edge, {:.4} past it",
+                read[0], read[1], read[2], read[3]
+            );
+            assert!((read[0] - own).abs() < 0.01, "{read:?}");
+            for (lat, lies) in [(61.0, read[1]), (60.5, read[2])] {
+                let closed = (1.0 - 2.0 * way(lat)) * own;
+                assert!(
+                    (lies - closed).abs() < 0.025,
+                    "at {lat}: {lies} for {closed}"
+                );
+            }
+            assert_eq!(read[3], 0.0);
+        }
+        for lon in [-40.0, -10.0, -2.0, 6.0, 40.0] {
+            let mut last = 1.0;
+            for k in 0..=60 {
+                let lat = 66.0 - 0.1 * k as f64;
+                let now = lying(lat, lon);
+                assert!(now <= last + 0.002, "at {lat} {lon}: {now} after {last}");
+                last = now;
+            }
+        }
+    }
+
+    /// M62: an edge all of it colder than a point's places leaves the ice at them be. The ice
+    /// lies all year everywhere but at a patch of places, from 100 to 140 degrees east and 60
+    /// to 68 degrees north, that it leaves for a fifth of the year: its edge then stands
+    /// between the patch and the ice toward the pole. Along the guide from the patch, 40
+    /// degrees of longitude west, the ice lies all year still, and on the patch's warm side,
+    /// 12 degrees nearer the equator; in the patch it comes and goes, and toward the pole its
+    /// window lengthens to the ice that lies all year. Trusted by all the edges about a
+    /// point, the patch's edge opened the ice on its warm side as wide as the smoothing
+    /// reached.
+    #[test]
+    fn an_edge_colder_than_a_point_s_places_leaves_their_ice() {
+        let (layout, guide, windows, sweep, margin) = windows_of(|lat, lon| {
+            if lat > 60.0 && lat < 68.0 && (100.0..=140.0).contains(&lon) {
+                A_FIFTH_AWAY
+            } else {
+                ALL_YEAR
+            }
+        });
+        let away = |lat: f64, lon: f64| {
+            let d = direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+            window_between((layout, &guide), d, (&windows[..], &margin, &sweep, 0.5)).opening()
+        };
+        let whole = A_FIFTH_AWAY.opening();
+        let (west, warm) = (away(64.0, 60.0), away(50.0, 120.0));
+        let (within, toward) = (away(64.0, 120.0), away(68.0, 120.0));
+        println!(
+            "the ice away {west:.4} of the year west of the patch, {warm:.4} on its warm side, {within:.4} in it, {toward:.4} toward the pole"
+        );
+        assert_eq!(west, 0.0);
+        assert_eq!(warm, 0.0);
+        assert!((within - whole).abs() < 0.01, "{within}");
+        assert!(toward > 0.25 * whole && toward < 0.75 * whole, "{toward}");
+    }
+
+    /// M62: the open sea's edge runs on to a coast. The ice lies all year past 65 degrees; a
+    /// coast stands along the meridian, land east of it, its places two fifths sea, and the
+    /// coast's sea is open through the summer two rows nearer the pole than the open sea's,
+    /// to 73 degrees. At the summer's end the ice's edge keeps within a degree and a half of
+    /// latitude from 30 degrees west to the coast, the ice lying beside the land where the
+    /// open sea's edge draws it. The edges trusted by their share of ground, the coast's
+    /// places kept the sea beside the land open past the edge: a blank spot in the ice where
+    /// it met the Earth-like's southern continent's western coast (the user, 2026-11-09).
+    #[test]
+    fn the_open_sea_s_edge_runs_on_to_a_coast() {
+        let coast = |lon: f64| lon.abs() < 0.1;
+        let (layout, guide, windows, sweep, margin) = windows_over(
+            |lat, lon| {
+                if lat > 73.0 || (lat > 65.0 && !coast(lon)) {
+                    ALL_YEAR
+                } else {
+                    A_FIFTH_AWAY
+                }
+            },
+            |_, lon| {
+                if coast(lon) {
+                    0.4
+                } else if lon > 0.0 && lon < 25.0 {
+                    0.0
+                } else {
+                    1.0
+                }
+            },
+        );
+        let lies = |lat: f64, lon: f64| {
+            let d = direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+            let window = window_between((layout, &guide), d, (&windows[..], &margin, &sweep, 0.5));
+            window.at_phase(0.01, (1.0, 1.0)) > 0.0
+        };
+        let edge: Vec<f64> = (0..=150)
+            .map(|j| {
+                let lon = -30.0 + 0.2 * j as f64;
+                (0..=140)
+                    .map(|k| 60.0 + 0.1 * k as f64)
+                    .find(|&lat| (0..=20).all(|m| lies(lat + 0.1 * m as f64, lon)))
+                    .expect("an edge")
+            })
+            .collect();
+        let (lo, hi) = edge.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &lat| {
+            (lo.min(lat), hi.max(lat))
+        });
+        println!("the ice's edge toward the coast: from {lo:.2} to {hi:.2} degrees");
+        assert!(lo > 65.0 && hi - lo < 1.5, "{lo} {hi}");
+        assert!(lies(67.5, -0.4) && lies(67.5, 0.0));
+    }
+
+    /// M62: an opening too short for the windows' map to write is none: an ice away under
+    /// WINDOW_LEAST_OPENING of the year, at a row among the ice that lies all year, lies all
+    /// year there, its window the whole year's and not two moments the map would write as one
+    /// and a reader take for an ice never there.
+    #[test]
+    fn an_opening_too_short_to_write_is_none() {
+        let brief = Window {
+            freeze: 0.5 * WINDOW_LEAST_OPENING,
+            melt: 0.0,
+            peak: 2.0,
+            at: 0.5,
+        };
+        assert!(brief.opening() > 0.0 && brief.opening() < WINDOW_LEAST_OPENING);
+        let (layout, guide, windows, sweep, margin) = windows_of(|lat, _| {
+            if lat > 65.0 && lat < 67.0 {
+                brief
+            } else {
+                ALL_YEAR
+            }
+        });
+        for lat in [64.0, 65.0, 66.0, 67.0, 68.0] {
+            let d = direction_from_lon_lat(0.3, f64::to_radians(lat));
+            let window = window_between((layout, &guide), d, (&windows[..], &margin, &sweep, 0.5));
+            assert!(window.perennial(), "at {lat}: {window:?}");
+        }
+    }
+
     /// M59: the ice behind the edge read along it: a place whose ice only just holds, at 60
     /// degrees on an edge between 50 and 60, steps the edge's 50% line by under a quarter of
     /// what it steps it read place by place, as TRAPPIST-1e's eye edge stepped 0.30 degrees
@@ -9453,9 +10332,12 @@ mod tests {
 
     /// F292: a place under ice that stands at the edge by a share of its ground alone, a
     /// coast's, its sea under ice where the guide's warmth would leave it open, holds its ice
-    /// for the rest of it about itself, ending half way to the open places beside it, as the
-    /// guided edge stands half way between its places: read as the places' share under ice,
-    /// its ice reached to the far row of places about it and ended along the row.
+    /// for the rest of it about itself, ending short of half way to the open places beside it,
+    /// as the guided edge stands half way between its places: read as the places' share under
+    /// ice, its ice reached to the far row of places about it and ended along the row. M62: it
+    /// ends where its share of sea balances the open sea's beside it, a third of it sea a
+    /// quarter of the way: counted whole, a coast's sliver of sea took the reading about it
+    /// from the guided edge, a hook at the tip of TRAPPIST-1e's northern continent.
     #[test]
     fn a_coast_s_ice_ends_half_way_to_its_open_places() {
         let (n_lat, n_lon) = (19, 36);
@@ -9501,5 +10383,18 @@ mod tests {
         );
         assert!(own > 0.5, "{own}");
         assert!(most < 1e-9, "{most}");
+        // Its ice a sixth of the way to each, and none three tenths of the way (M62).
+        let reach = |f: f64, pick: fn(f64, f64) -> f64, from: f64| {
+            [(f, 0.0), (-f, 0.0), (0.0, f), (0.0, -f)]
+                .iter()
+                .map(|&(dlat, dlon)| depth_at(lat + dlat * step, lon + dlon * TAU / n_lon as f64))
+                .fold(from, pick)
+        };
+        let (near, past) = (
+            reach(1.0 / 6.0, f64::min, f64::MAX),
+            reach(0.3, f64::max, 0.0),
+        );
+        assert!(near > 0.0, "{near}");
+        assert!(past < 1e-9, "{past}");
     }
 }

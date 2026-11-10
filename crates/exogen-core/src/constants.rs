@@ -2456,6 +2456,19 @@ pub const LIQUID_DEEP_REFLECTANCE: [f32; 3] = [0.03, 0.03, 0.03];
 pub const WATER_ATTENUATION: [f32; 3] = [0.267, 0.0565, 0.0101];
 /// ADR 0007: the other liquids' attenuation, grey at water's green until measured; stated.
 pub const LIQUID_STATED_ATTENUATION: [f32; 3] = [0.0565, 0.0565, 0.0565];
+/// M62: an ice's edge through the cycle is drawn at SWEEP_STEPS phases of it, as many as the
+/// steps of the Earth's year in the cycle, a point's freezing and melting read between two of
+/// them; each edge between two places counts over SWEEP_REACH widths of the edge's smoothing
+/// (MARGIN_SMOOTHING), past which its weight is under e^-9; where it stands between its two
+/// places found by SWEEP_BISECTIONS halvings, to under a millionth of the way.
+pub const SWEEP_STEPS: usize = 96;
+pub const SWEEP_REACH: f64 = 3.0;
+pub const SWEEP_BISECTIONS: usize = 20;
+/// M62: the shortest opening an ice's window keeps, a share of the cycle, under which it lies
+/// all year: some seven steps of the 16-bit window map's phases, 1/65535 each, which cannot tell
+/// a shorter opening from a window that never opens; some 53 minutes of Earth's year, where the
+/// cycle's steps are 1/96 of it.
+pub const WINDOW_LEAST_OPENING: f64 = 1e-4;
 /// M59: the most times the ground a frost leaves bare within a step re-linearises its implicit
 /// step about its own end, and the change in its surface's temperature, K, under which it has
 /// settled: Newton's steps on its radiation, which from the frost's point, its slope small,
