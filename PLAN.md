@@ -8,7 +8,7 @@ This document is the design baseline. It records what the software is, what it i
 
 ## 0. Purpose and scope
 
-ExoGen is a desktop application and command-line tool that generates full-planet texture sets for the planets and moons that gravity has rounded: solid surfaces from airless moons to magma worlds and, where the air over a surface deepens until it hides it, the cloud decks of hycean worlds, sub-Neptunes and giants, with their rings. Surfaces are produced by simulating the processes that shape real planets, scaled to the body's size, composition, thermal state, atmosphere and orbital environment. The outputs are equirectangular (plate carrée) maps at up to 16k: albedo, height, roughness, specular, plus masks and auxiliary layers, with a globe preview.
+ExoGen is a desktop application and command-line tool that generates full-planet texture sets for the planets and moons that gravity has rounded: solid surfaces from airless moons to magma worlds and, where the air over a surface deepens until it hides it, the cloud decks of hycean worlds, sub-Neptunes and giants, with their rings. Surfaces are produced by simulating the processes that shape real planets, scaled to the body's size, composition, thermal state, atmosphere and orbital environment. The outputs are full-planet maps, equirectangular (plate carrée) or cube maps, at up to 16k: albedo, height, roughness, specular, plus masks and auxiliary layers, with a globe preview.
 
 The defining design choice: terrain and albedo come from a sequence of physical processes acting over simulated time on a layered global field. Noise seeds initial conditions, perturbs the fields the processes read, and warps and varies the shapes and colours they leave, but it never decides on its own where a feature is or what a surface is made of. This is what separates the result from a noise field.
 
@@ -34,7 +34,7 @@ The scope was widened on 2026-11-10 (the user). The project began as a generator
 | Sequence | Any of the above at a list of epochs | Formation sequence for animation; CLI batch |
 | Sidecar | JSON | All parameters, derived values, seeds, software version, legend, epoch |
 
-Single-file export to 16384 x 8192. Tiled export to 32768 x 16384. Cube-map export as an option.
+Every map in either layout: equirectangular, single-file to 16384 x 8192 and tiled to 32768 x 16384; or a cube map, standard or equi-angular, faces to 8192 (section 4.13).
 
 ### Non-goals
 
@@ -512,6 +512,15 @@ Atmosphere profile (the user, 2026-11-10). A single exponential with one scale h
 
 The emissive map, the rings' strip and the figure's axes: sections 4.15, 4.17 and 4.14.
 
+Cube maps (the user, 2026-11-10). Every map is written in either layout, chosen at export: equirectangular, and a cube map of six square faces. A cube map spends its texels evenly where the equirectangular map crowds them toward the poles: faces of 4,096 match the equator's detail of a 16,384-wide equirectangular map, exactly for the equi-angular cube map and within some 27 percent at the faces' centres for the standard one, in 101 million texels against 134 million, with no pole to pinch. Artists' tools and engines take cube maps natively.
+
+- **Projection.** The standard cube map, gnomonic on each face, which every engine samples by direction, resampled from the fields. As an option the equi-angular cube map (EAC), whose texels fall on the simulation's own grid (ADR 0001): at the finishing resolution one texel is one cell, read without resampling, for a renderer's own shader.
+- **Conventions.** Faces in the graphics APIs' order and orientation (+X, -X, +Y, -Y, +Z, -Z), the body's north pole on a stated axis with a choice of Y-up or Z-up, the prime meridian on a stated face. Or as six patches for a quad-sphere mesh, each face oriented as the grid's own so that its edges meet its neighbours'. The sidecar records the projection, convention, axes and face size.
+- **Containers.** Six images per map (EXR or PNG); one image per map in a cross or strip layout; and the cube containers engines load directly (KTX2, DDS), with mipmaps filtered across the faces' edges.
+- **Seams.** A face's edge texels agree with its neighbour's, so that filtering and mipmaps show no seam. Normals in object space for a cube map sampled by direction, or in each patch's tangent frame for the quad-sphere.
+- **Resolution.** Faces to 8,192 in one file each, matching the 32,768-wide equirectangular map's equator; tiled per face above that.
+- **Which maps.** Every map: height, albedo, materials, masks, climate and ice layers, the cloud decks and the emissive map. The rings' radial strip and the sidecar's tables have no cube form.
+
 ### 4.14 Figure and roundness
 
 Added 2026-11-10 (the user); built in Phase 6R.
@@ -922,13 +931,14 @@ Presets: Jupiter, Saturn with its rings, Uranus, Neptune, a hycean world, a sub-
 
 - Tiled detail pass that carries no physics of its own: it refines the process fields to export resolution with sub-grid roughness, grain size and micro-relief statistics conditioned on the units and fields the processes left, and may warp outlines and vary tones there (domain warping conditioned on the units, in the manner of SpaceEngine's volcanoActivity). It adds no feature and decides no material; what places or makes up the surface is a process in Phases 4 to 6, and a look that is wrong at the simulation resolution is fixed there, not here.
 - Roughness, specular, normal, ambient occlusion, masks, cloud height, unit ID legend.
-- 16k single-file and 32k tiled export, cube maps, colour management options.
+- 16k single-file and 32k tiled export, colour management options.
+- Cube maps for every map (section 4.13; the user, 2026-11-10): standard and equi-angular, the APIs' face conventions and quad-sphere patches, six images, cross or strip layouts, KTX2 and DDS with mipmaps across the faces' edges. Export only: it may be taken before this phase, on the maps as they stand.
 - Sequence export of epochs from the CLI and the app.
 - Cloud detail recipes at export resolution, per-class export with heights, cloud type ID map, feature list, optional composite, cloud shadow bake, cloud sequences.
 - Atmosphere scattering preview on the globe, driven by the derived atmosphere parameters in the sidecar. Optional and deferrable; nothing in the export depends on it.
 - GPU kernels for the hot stages.
 
-Gate: a 16k export of each preset completes within the time budget and shows no tile seams or pole artefacts; maps load correctly in Blender and a game engine with the documented shading setup.
+Gate: a 16k export of each preset completes within the time budget and shows no tile seams or pole artefacts; maps load correctly in Blender and a game engine with the documented shading setup; each preset's cube map loads as a cube map in Blender, Unity, Unreal and Godot and as six quad-sphere patches in Blender with no seam at the faces' edges or in their mipmaps, and sampled by direction agrees with its equirectangular map.
 
 ### Phase 8: vegetation and biomes (M)
 
