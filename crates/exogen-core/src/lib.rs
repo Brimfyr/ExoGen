@@ -35,6 +35,7 @@ pub mod snapshot;
 pub mod spharm;
 pub mod spin;
 pub mod stages;
+pub mod surface_layer;
 #[cfg(test)]
 pub(crate) mod testkit;
 pub mod thermal;

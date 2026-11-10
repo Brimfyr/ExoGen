@@ -2228,6 +2228,17 @@ pub const WIND_REFERENCE_HEIGHT: f64 = 10.0;
 pub const SEA_ROUGHNESS: f64 = 2e-4;
 pub const ICE_ROUGHNESS: f64 = 1e-3;
 pub const LAND_ROUGHNESS: f64 = 1e-2;
+/// M63: the surface layer's profile functions, measured over flat ground: where the ground is
+/// the warmer, the Dyer and Hicks forms (1 - 16 zeta)^(-1/4) and (1 - 16 zeta)^(-1/2), fitted
+/// to the Kansas measurements (Paulson 1970, Dyer 1974, Högström 1988); where the air is,
+/// Beljaars and Holtslag's (1991) a, b, c and d, fitted to the Cabauw mast's up to a zeta of
+/// 10 (Holtslag and De Bruin 1988).
+pub const PROFILE_UNSTABLE: f64 = 16.0;
+pub const PROFILE_STABLE: [f64; 4] = [1.0, 0.667, 5.0, 0.35];
+/// M63: the surface layer's table over zeta: from 1e-6 to 1e4 below neutral and to 1e8 above,
+/// SURFACE_LAYER_STEPS to a decade, its bulk Richardson numbers from some -1,400 to 5,400.
+pub const SURFACE_LAYER_ZETA: (f64, f64, f64) = (1e-6, 1e4, 1e8);
+pub const SURFACE_LAYER_STEPS: usize = 100;
 /// F267: the depth the ground's drag acts over, as a share of the air's scale height: over
 /// Earth's sea its friction, the drag times the wind over the depth, turns a 7 m/s wind
 /// some 20° across the isobars at 45°, as its surface winds cross them.
@@ -2306,7 +2317,8 @@ pub const HYPER_ARID_INDEX: f64 = 0.05;
 pub const ARIDITY_MAP_MOST: f64 = 4.0;
 /// F268: the moisture's run: the cycle again and again over MOISTURE_SPIN_UP s, at least
 /// MOISTURE_LEAST_YEARS cycles and at most MOISTURE_MOST_STEPS steps, from columns at
-/// MOISTURE_START_SATURATION; the wind's carrying in steps that move no more than MOISTURE_CFL
+/// MOISTURE_START_SATURATION, and on (M63) until the body's rain and evaporation over a cycle
+/// agree within MOISTURE_SETTLED of the more; the wind's carrying in steps that move no more than MOISTURE_CFL
 /// of a place's vapour; MOISTURE_NEWTON rounds for each step's rain; the vapour's partial
 /// pressure under MOISTURE_MOST_PARTIAL of the air's, the lapse rate at least
 /// MOISTURE_LEAST_LAPSE K/m.
@@ -2314,6 +2326,7 @@ pub const MOISTURE_SPIN_UP: f64 = 2.0 * 365.25 * SECONDS_PER_DAY;
 pub const MOISTURE_LEAST_YEARS: usize = 2;
 pub const MOISTURE_MOST_STEPS: usize = 4_000;
 pub const MOISTURE_START_SATURATION: f64 = 0.7;
+pub const MOISTURE_SETTLED: f64 = 0.02;
 pub const MOISTURE_CFL: f64 = 0.9;
 pub const MOISTURE_NEWTON: usize = 50;
 pub const MOISTURE_MOST_PARTIAL: f64 = 0.9;

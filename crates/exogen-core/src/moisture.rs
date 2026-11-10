@@ -575,9 +575,12 @@ pub fn rain<'a>(
         .map(|&h| air.pressure * (-h / air.scale_height.max(1.0)).exp())
         .collect();
     let capacity = SOIL_CAPACITY * air.vapour.liquid_density;
+    // At least the years of the spin-up, then on until the year balances (M63), within the
+    // steps the run may take.
+    let most = (MOISTURE_MOST_STEPS / steps).max(MOISTURE_LEAST_YEARS);
     let years = ((MOISTURE_SPIN_UP / year).ceil() as usize)
         .max(MOISTURE_LEAST_YEARS)
-        .min((MOISTURE_MOST_STEPS / steps).max(MOISTURE_LEAST_YEARS));
+        .min(most);
     // Each place's vapour scale height through the year, R_v T² / (L Γ), the measure of the
     // lift's levels (F270).
     let lapse = air.lapse.max(MOISTURE_LEAST_LAPSE);
@@ -619,10 +622,19 @@ pub fn rain<'a>(
     let (mut gives, mut takes) = (vec![0.0; n], vec![0.0; n]);
     let (mut exchange, mut beta) = (vec![0.0; n], vec![0.0; n]);
     let mut store = vec![0.0; n];
+    // The surface layer over each place's sea and its land (M63), its exchange over its
+    // neutral.
+    let layer = crate::surface_layer::SurfaceLayer {
+        gravity: air.gravity,
+        heat_capacity: air.heat_capacity,
+    };
+    let (mut over_sea, mut over_land) = (vec![1.0; n], vec![1.0; n]);
     let (mut humid, mut sea_q, mut soil_q) = (vec![0.0; n], vec![0.0; n], vec![0.0; n]);
     let (mut east, mut north) = (vec![0.0; n], vec![0.0; n]);
-    for round in 0..years {
-        let last = round + 1 == years;
+    let mut last = years <= 1;
+    for round in 0.. {
+        // The body's rain and evaporation through the year, kg/s.
+        let (mut rained, mut gave) = (0.0, 0.0);
         for k in 0..steps {
             let now = weather(k);
             // The ground's air, its saturated column and humidity, and what the sea and the
@@ -642,10 +654,18 @@ pub fn rain<'a>(
                 beta[p] = (bucket[p] / (BUCKET_FULL_SHARE * capacity)).min(1.0);
                 humid[p] = air.saturated_humidity(ground[p], pressure[p]);
                 sea_q[p] = air.saturated_humidity(now.sea[p], air.pressure);
-                soil_q[p] =
-                    air.saturated_humidity(now.land[p] - air.lapse * heights[p], pressure[p]);
-                let open = sites[p].sea * (-now.ice[p] / SEA_ICE_COVER_MASS).exp();
-                let wet = land[p] * beta[p];
+                let soil = now.land[p] - air.lapse * heights[p];
+                soil_q[p] = air.saturated_humidity(soil, pressure[p]);
+                // The exchange the surface layer's stability lets over the sea and over the
+                // land, each surface against the air over it (M63).
+                if sites[p].sea > 0.0 {
+                    over_sea[p] = layer.exchange(now.sea[p], now.air[p], speed);
+                }
+                if land[p] > 0.0 {
+                    over_land[p] = layer.exchange(soil, ground[p], speed);
+                }
+                let open = sites[p].sea * (-now.ice[p] / SEA_ICE_COVER_MASS).exp() * over_sea[p];
+                let wet = land[p] * beta[p] * over_land[p];
                 gives[p] = exchange[p] * (open * sea_q[p] + wet * soil_q[p]);
                 takes[p] = exchange[p] * (open + wet) * humid[p] / saturated[p].max(1e-30);
             }
@@ -751,6 +771,8 @@ pub fn rain<'a>(
                 }
                 let fell = ((start - x) / dt - takes[p] * x).max(0.0);
                 let given = gives[p] - takes[p] * x;
+                rained += fell * area[p];
+                gave += given * area[p];
                 w[p] = x;
                 let r = x / saturated[p].max(1e-30);
                 // The land's bucket: the rain on it, less what it gives the air, over its
@@ -760,7 +782,7 @@ pub fn rain<'a>(
                 // deeper than SNOW_MOST_MASS: the bucket takes the rain and the melt.
                 let mut ran = 0.0;
                 if land[p] > 0.0 {
-                    let dried = exchange[p] * beta[p] * (soil_q[p] - r * humid[p]);
+                    let dried = exchange[p] * over_land[p] * beta[p] * (soil_q[p] - r * humid[p]);
                     let pack = now
                         .snow
                         .as_ref()
@@ -797,8 +819,8 @@ pub fn rain<'a>(
                     out.wetness[p] += beta[p] / steps as f64;
                     // The potential evaporation: the open sea's and the land's wet.
                     let potential = exchange[p]
-                        * (sites[p].sea * (sea_q[p] - r * humid[p]).max(0.0)
-                            + land[p] * (soil_q[p] - r * humid[p]).max(0.0));
+                        * (sites[p].sea * over_sea[p] * (sea_q[p] - r * humid[p]).max(0.0)
+                            + land[p] * over_land[p] * (soil_q[p] - r * humid[p]).max(0.0));
                     out.potential[p] += potential / steps as f64;
                     // The lift's condensation through the step at each level of the ground over
                     // the place's (F270): C_w, the saturated vapour's density at the ground
@@ -824,6 +846,13 @@ pub fn rain<'a>(
                 }
             }
         }
+        if last {
+            break;
+        }
+        // The year the moisture keeps once the spin-up's years have run and the column
+        // neither fills nor empties over the year, or the run's steps are spent.
+        let settled = (rained - gave).abs() <= MOISTURE_SETTLED * rained.abs().max(gave.abs());
+        last = (round + 2 >= years && settled) || round + 2 >= most;
     }
     Some(out)
 }

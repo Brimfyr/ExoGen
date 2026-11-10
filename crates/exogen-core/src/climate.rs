@@ -97,6 +97,9 @@ pub struct EnergyBalance {
     /// above the air's, rho C_H U (M_w / M) / p, kg/m²/s/Pa (F245).
     pub exchange: f64,
     pub evaporation: f64,
+    /// The layer of air over the ground, whose stability scales the exchange of heat and
+    /// vapour between them (M63).
+    pub surface_layer: crate::surface_layer::SurfaceLayer,
     /// The working liquid's vapour, whose latent heat the sea and the wet land give the air
     /// (F269): water's, methane's, any liquid's under an atmosphere.
     pub liquid: Option<&'static crate::constants::Volatile>,
@@ -2329,6 +2332,10 @@ impl EnergyBalance {
             ),
             exchange: ventilation * heat,
             evaporation,
+            surface_layer: crate::surface_layer::SurfaceLayer {
+                gravity: graph.f64("body.gravity"),
+                heat_capacity: heat,
+            },
             liquid: if evaporation > 0.0 { liquid } else { None },
             rows: false,
             circulation: crate::wind::Air::from_graph(graph),
@@ -2439,46 +2446,70 @@ impl EnergyBalance {
         }
     }
 
-    /// The latent heat a wet surface gives the air at `air` K by the air's deficit under
-    /// saturation at the place's contact, W/m² of wet surface (M59; Penman 1948, Monteith
-    /// 1965): what the deficit draws at the place's wind, its saturation the moisture's where
-    /// known; none under a saturated air, as the cycle ran before the moisture.
-    fn drying(&self, air: f64, contact: &Contact) -> f64 {
+    /// The exchange of heat and vapour between a ground at `t` K and its air at `air` K at the
+    /// place's contact, over its neutral (M63): as the surface layer's stability lets it under
+    /// the place's wind, more over a ground warmer than its air, less under an inversion.
+    fn stability(&self, t: f64, air: f64, contact: &Contact) -> f64 {
+        self.surface_layer
+            .exchange(t, air, contact.breeze * SURFACE_WIND_SPEED)
+    }
+
+    /// The latent heat a wet surface at `t` K gives its air at `air` K by the air's deficit
+    /// under saturation at the place's contact, W/m² of wet surface (M59; Penman 1948,
+    /// Monteith 1965): what the deficit draws at the place's wind as the surface layer's
+    /// stability lets it (M63), its saturation the moisture's where known; none under a
+    /// saturated air, as the cycle ran before the moisture.
+    fn drying(&self, air: f64, t: f64, contact: &Contact) -> f64 {
         match self.liquid {
             Some(w) if self.evaporation > 0.0 => {
                 let l = if air >= w.t_triple { w.l_vap } else { w.l_sub };
                 let deficit = (1.0 - contact.humidity).max(0.0) * vapour_pressure(w, air);
-                l * self.evaporation * contact.breeze * deficit
+                let stability = self.stability(t, air, contact);
+                l * self.evaporation * contact.breeze * stability * deficit
             }
             _ => 0.0,
         }
     }
 
     /// The heat the air over a place exchanges with its ground per kelvin at the place's
-    /// contact (F269): its turbulence at the place's own wind, the radiation as before.
-    fn coupling_at(&self, t: f64, contact: &Contact) -> f64 {
-        let turbulence = self.exchange * (contact.breeze - 1.0);
+    /// contact (F269), the surface layer's stability over its neutral `stability` (M63): its
+    /// turbulence at the place's own wind, the radiation as before.
+    fn coupling_by(&self, t: f64, stability: f64, contact: &Contact) -> f64 {
+        let turbulence = self.exchange * (contact.breeze * stability - 1.0);
         (self.coupling(t) + turbulence).max(0.0)
     }
 
-    /// The heat the air exchanges with a place's land per kelvin at its contact (F269): its
-    /// ground's, and the latent heat of what its wet ground gives the air.
-    fn land_coupling(&self, t: f64, contact: &Contact) -> f64 {
-        self.coupling_at(t, contact) + self.latent_slope(t) * contact.breeze * contact.wet
+    /// The heat the air at `air` K over a place exchanges with its ground at `t` K per kelvin
+    /// at the place's contact (F269, M63).
+    fn coupling_at(&self, t: f64, air: f64, contact: &Contact) -> f64 {
+        self.coupling_by(t, self.stability(t, air, contact), contact)
     }
 
-    /// The heat the air exchanges with a place's sea per kelvin at its contact (F269).
-    fn sea_coupling_at(&self, t: f64, contact: &Contact) -> f64 {
-        self.coupling_at(t, contact) + self.latent_slope(t) * contact.breeze
+    /// The heat the air at `air` K exchanges with a place's land at `t` K per kelvin at its
+    /// contact (F269, M63): its ground's, and the latent heat of what its wet ground gives the
+    /// air.
+    fn land_coupling(&self, t: f64, air: f64, contact: &Contact) -> f64 {
+        let stability = self.stability(t, air, contact);
+        let latent = self.latent_slope(t) * contact.breeze * stability * contact.wet;
+        self.coupling_by(t, stability, contact) + latent
+    }
+
+    /// The heat the air at `air` K exchanges with a place's sea at `t` K per kelvin at its
+    /// contact (F269, M63).
+    fn sea_coupling_at(&self, t: f64, air: f64, contact: &Contact) -> f64 {
+        let stability = self.stability(t, air, contact);
+        self.coupling_by(t, stability, contact) + self.latent_slope(t) * contact.breeze * stability
     }
 
     /// The land's radiation and the heat it gives air at `air` K, its latent heat's among
-    /// it, at the place's contact (F269), with their slope, at the ground's temperature.
+    /// it, at the place's contact (F269), with their slope, at the ground's temperature; the
+    /// surface layer's stability read at it (M63), the slope by the exchange it lets, as a
+    /// model's surface layer is read from the state the step starts from.
     fn land_shed(&self, air: f64, contact: Contact) -> impl Fn(f64) -> (f64, f64) + Copy + '_ {
-        let dried = self.drying(air, &contact) * contact.wet;
         move |t: f64| {
             let (r, slope) = self.ground_radiation(t, air);
-            let h = self.land_coupling(t, &contact);
+            let h = self.land_coupling(t, air, &contact);
+            let dried = self.drying(air, t, &contact) * contact.wet;
             (r + h * (t - air) + dried, slope + h)
         }
     }
@@ -2495,7 +2526,7 @@ impl EnergyBalance {
         move |t: f64| {
             let (r, slope) = self.ground_radiation(t, air);
             let (e, de) = f.emissivity(t);
-            let h = self.coupling_at(t, &contact);
+            let h = self.coupling_at(t, air, &contact);
             (e * r + h * (t - air), e * slope + de * r + h)
         }
     }
@@ -3718,13 +3749,17 @@ impl EnergyBalance {
                 // sea's and its caps'.
                 for (q, (r, p)) in runs.iter().zip(places).enumerate() {
                     let contact = &p.contact;
-                    let land = self.land_coupling(r.t[0], contact) * p.land();
+                    let a = air[q];
+                    let land = self.land_coupling(r.t[0], a, contact) * p.land();
                     let (wet, surface) = match &r.sea {
-                        Some(s) => (self.sea_coupling_at(s.surface, contact) * p.sea, s.surface),
+                        Some(s) => {
+                            let wet = self.sea_coupling_at(s.surface, a, contact) * p.sea;
+                            (wet, s.surface)
+                        }
                         None => (0.0, 0.0),
                     };
                     let (iced, top) = match &r.cap {
-                        Some(c) => (self.coupling_at(c.t[0], contact) * c.share, c.t[0]),
+                        Some(c) => (self.coupling_at(c.t[0], a, contact) * c.share, c.t[0]),
                         None => (0.0, 0.0),
                     };
                     // The snow that falls on its land froze in it, its latent heat of fusion
@@ -3831,10 +3866,10 @@ impl EnergyBalance {
                         r.dried = 0.0;
                         let sea_air = match (r.sea.as_mut(), ocean) {
                             (Some(sea), Some(ocean)) => {
-                                let exchange = self.sea_coupling_at(sea.surface, &p.contact);
+                                let exchange = self.sea_coupling_at(sea.surface, a, &p.contact);
                                 let water = (ocean, brought);
                                 let dried = if sea.ice <= 0.0 {
-                                    self.drying(a, &p.contact)
+                                    self.drying(a, sea.surface, &p.contact)
                                 } else {
                                     0.0
                                 };
@@ -3859,7 +3894,8 @@ impl EnergyBalance {
                         // The latent heat its air's deficit drew from its wet land, bare of
                         // frost, its air's when the vapour condenses (M59).
                         if r.mass <= 0.0 {
-                            r.dried += rest * p.contact.wet * self.drying(a, &p.contact);
+                            let drying = self.drying(a, r.start[0], &p.contact);
+                            r.dried += rest * p.contact.wet * drying;
                         }
                     });
                 if let (Some(drift), Some(ocean)) = (drift.as_mut(), ocean) {
@@ -3894,7 +3930,7 @@ impl EnergyBalance {
                         let each = runs.par_iter_mut().zip(places.par_iter());
                         each.zip(air.par_iter()).for_each(|((r, p), &a)| {
                             let (olr, slope) = self.ground_radiation(point, a);
-                            let exchange = self.coupling_at(point, &p.contact);
+                            let exchange = self.coupling_at(point, a, &p.contact);
                             let shed = (
                                 e * olr + exchange * (point - a),
                                 e * slope + de * olr + exchange,
@@ -4103,7 +4139,7 @@ impl EnergyBalance {
             let taken: f64 = taking
                 .iter()
                 .map(|&(trial, mass, w, a, contact)| {
-                    let exchange = self.coupling_at(point, &contact);
+                    let exchange = self.coupling_at(point, a, &contact);
                     let radiated = e * self.ground_radiation(point, a).0 + exchange * (point - a);
                     column
                         .deposit(trial, dt, point, radiated, frost.latent, mass)
@@ -7279,20 +7315,79 @@ mod tests {
             humidity,
             wet: 1.0,
         };
-        assert_eq!(earth.drying(288.0, &c(1.0, 1.0)), 0.0);
+        // The ground at its air's potential temperature, the surface layer neutral (M63).
+        let layer = earth.surface_layer;
+        let ground = 288.0 + layer.gravity / layer.heat_capacity * WIND_REFERENCE_HEIGHT;
+        assert_eq!(earth.drying(288.0, ground, &c(1.0, 1.0)), 0.0);
         let (fifth, half, dry) = (
-            earth.drying(288.0, &c(0.8, 1.0)),
-            earth.drying(288.0, &c(0.5, 1.0)),
-            earth.drying(288.0, &c(0.0, 1.0)),
+            earth.drying(288.0, ground, &c(0.8, 1.0)),
+            earth.drying(288.0, ground, &c(0.5, 1.0)),
+            earth.drying(288.0, ground, &c(0.0, 1.0)),
         );
         assert!(
             fifth > 0.0 && half > fifth && dry > half,
             "{fifth} {half} {dry}"
         );
         assert!((10.0..200.0).contains(&fifth), "{fifth}");
-        let windy = earth.drying(288.0, &c(0.8, 2.0));
+        let windy = earth.drying(288.0, ground, &c(0.8, 2.0));
         assert!((windy - 2.0 * fifth).abs() < 1e-9 * windy);
-        assert_eq!(mars.drying(210.0, &c(0.0, 1.0)), 0.0);
+        assert_eq!(mars.drying(210.0, 210.0, &c(0.0, 1.0)), 0.0);
+    }
+
+    /// M63: the cycle's ground exchanges heat and vapour with its air as the surface layer's
+    /// stability lets it, at every site the cycle reads it: a ground 3 K under its air's
+    /// potential temperature, an inversion, exchanges the less than at neutral over its land,
+    /// its sea and its frost, and a wet one dries the less; one 3 K over it the more; and
+    /// under a wind of 1 m/s the inversion all but cuts the ground off, its turbulence under
+    /// a seventh of its neutral's, on every body with an air.
+    #[test]
+    fn the_ground_exchanges_with_its_air_as_its_stability_lets_it() {
+        for (name, air) in [("Earth", 288.0), ("Mars", 210.0), ("Titan", 94.0)] {
+            let eb = EnergyBalance::from_graph(&crate::presets::preset(name).unwrap().to_graph().0);
+            let layer = eb.surface_layer;
+            assert!(layer.gravity > 0.0 && layer.heat_capacity > 0.0, "{name}");
+            let neutral = air + layer.gravity / layer.heat_capacity * WIND_REFERENCE_HEIGHT;
+            let c = Contact {
+                breeze: 1.0,
+                humidity: 0.5,
+                wet: 0.0,
+            };
+            // Each site's exchange per kelvin, and its neutral's.
+            let sites = |t: f64, c: &Contact| {
+                let still = eb.coupling_by(t, 1.0, c);
+                let latent = eb.latent_slope(t) * c.breeze;
+                [
+                    (eb.land_coupling(t, air, c), still),
+                    (eb.sea_coupling_at(t, air, c), still + latent),
+                    (eb.coupling_at(t, air, c), still),
+                ]
+            };
+            for (k, (got, still)) in sites(neutral - 3.0, &c).into_iter().enumerate() {
+                assert!(got < still, "{name} site {k}: {got} {still}");
+            }
+            for (k, (got, still)) in sites(neutral + 3.0, &c).into_iter().enumerate() {
+                assert!(got > still, "{name} site {k}: {got} {still}");
+            }
+            let dried = |t: f64| eb.drying(air, t, &c);
+            if eb.liquid.is_some() {
+                let (under, at, over) =
+                    (dried(neutral - 3.0), dried(neutral), dried(neutral + 3.0));
+                assert!(
+                    0.0 < under && under < at && at < over,
+                    "{name}: {under} {at} {over}"
+                );
+            }
+            let calm = Contact {
+                breeze: 1.0 / SURFACE_WIND_SPEED,
+                ..c
+            };
+            let (got, still) = sites(neutral - 3.0, &calm)[0];
+            println!(
+                "{name}: a ground 3 K under its air at 1 m/s exchanges {:.4} of its neutral",
+                got / still
+            );
+            assert!(got < still / 7.0, "{name}: {got} {still}");
+        }
     }
 
     /// The sunlight's split keeps what the place absorbs (M58): its ground's, its air's and
@@ -7889,6 +7984,10 @@ mod tests {
             ("titan_s_ground_stands_farther_from_its_air", &|| {
                 titan_s_ground_stands_farther_from_its_air(&titan, &again)
             }),
+            (
+                "titan_s_methane_evaporates_within_its_ground_s_sunlight",
+                &|| titan_s_methane_evaporates_within_its_ground_s_sunlight(&again),
+            ),
             ("a_thick_atmosphere_keeps_its_steady_mean: Venus", &|| {
                 a_thick_atmosphere_keeps_its_steady_mean("Venus", 0.5, &venus, &venus.cycle)
             }),
@@ -8736,7 +8835,12 @@ mod tests {
     }
 
     /// F244: the sea holds its seasons: at the Earth-like's 45° its surface swings by under
-    /// 10 K where its land swings by tens, and stays open the year round; by the end of the
+    /// 10 K where its land swings by tens, over 30 K and over four times the sea's, and stays
+    /// open the year round. Under the surface layer's stability (M63) its land's afternoons in
+    /// summer stand 7 K cooler, the ground warmer than its air exchanging with it some 1.75
+    /// times as much, and its nights in winter 3 K colder, an inversion cutting it off from
+    /// its air: its swing 39.5 K where 43.6, its sea's 7.5 (the user, 2026-11-10: the check
+    /// restated from over 40 K). By the end of the
     /// northern winter its sea ice near the pole stands a metre or a few thick (the Arctic's
     /// perennial ice some 3 m before its thinning, Rothrock et al. 1999).
     fn the_sea_holds_its_seasons_and_freezes_at_the_pole(year: &Year) {
@@ -8744,12 +8848,27 @@ mod tests {
         let seas = cycle.seas.as_ref().expect("a water sea");
         let swing = at(&seas.max, 45.0, 0.0) - at(&seas.min, 45.0, 0.0);
         let land = at(&cycle.max, 45.0, 0.0) - at(&cycle.min, 45.0, 0.0);
-        assert!(swing < 10.0 && land > 40.0, "sea {swing}, land {land}");
+        assert!(
+            swing < 10.0 && land > 30.0 && land > 4.0 * swing,
+            "sea {swing}, land {land}"
+        );
         assert_eq!(at(&seas.ice_share, 45.0, 0.0), 0.0);
         let pole = at(&seas.ice_now, 85.0, 0.0);
         // Its air's warmth reaching it since the ground keeps its own budget (M59), the ice
-        // stands some 3.8 m, where it stood 5.4 under the column's polar radiation alone (F298).
-        assert!((500.0..4000.0).contains(&pole), "ice {pole}");
+        // stood some 3.8 m, where it stood 5.4 under the column's polar radiation alone (F298).
+        // KNOWN (M63): under the surface layer's stability its winter's inversion lets its air
+        // give it some 25 W/m² where the neutral exchange gave 45, SHEBA's strongest month some
+        // 8 (Persson et al. 2002), and it stands 4.6 m, over the 0.5 to 4.4 measured: no snow
+        // lies on it to keep the winter's cold from its base, and its polar air sends down too
+        // little in winter. Held under 5,000 kg/m² until the sea ice's milestone: its snow, its
+        // year run until it settles, and this check read at the year the maps use, at its own
+        // wind, where the ice still thickens as the run stops (the user, 2026-11-10).
+        assert!((500.0..5000.0).contains(&pole), "ice {pole}");
+        if pole > 4000.0 {
+            eprintln!(
+                "KNOWN SHORTFALL (M63): the Earth-like's pole's sea ice {pole:.0} kg/m², over 4,000"
+            );
+        }
     }
 
     /// F245: the air carries the seasons' transport: the Earth-like's mean, its land's and
@@ -9438,12 +9557,41 @@ mod tests {
         // KNOWN (M59): its air's deficit under saturation dries its wet ground and cools it
         // most where it is warmest, at its equator, which its moisture keeps wet where Titan's
         // tropics are dry, their dunes: held within half a kelvin of none and under Titan's
-        // measured 4 K until its methane's own cycle (the user, 2026-11-09).
+        // measured 4 K until its methane's own cycle (the user, 2026-11-09). Under the surface
+        // layer's stability (M63) its methane's loop held to its ground's energy dries its
+        // tropics, 46 percent of its land arid: its contrast 1.7 K, under the 2 to 4 measured.
         assert!((-0.5..4.0).contains(&titan), "{titan} {stated}");
         if titan <= 3.0 * stated {
             eprintln!(
                 "KNOWN SHORTFALL (M59): Titan's contrast {titan:.2} K, its stated wind's {stated:.2}"
             );
+        }
+    }
+
+    /// M63: Titan's methane evaporates within the sunlight its ground absorbs, some 0.35 W/m²
+    /// over the moon (McKay et al. 1989; Tomasko et al. 2008; Robinson and Catling 2012), some
+    /// 22 kg/m² a year of methane's latent heat, where its surface layer neutral under its
+    /// inversions evaporated 380, its air's heat drawn down into its ground; and its
+    /// moisture's year balances, its rain its evaporation within MOISTURE_SETTLED of the more.
+    fn titan_s_methane_evaporates_within_its_ground_s_sunlight(again: &Again) {
+        let water = again.water.as_ref().expect("Titan's methane");
+        let brief = water.summary();
+        let latent = volatile("CH4").expect("methane").l_vap;
+        let heat = brief.evaporation * latent / (SECONDS_PER_DAY * 365.25);
+        println!("Titan: {brief:?}; its evaporation's latent heat {heat:.4} W/m²");
+        assert!(brief.evaporation > 0.0 && heat < 0.35, "{brief:?}");
+        let (p, e) = (brief.precipitation, brief.evaporation);
+        assert!(
+            (p - e).abs() <= 2.0 * MOISTURE_SETTLED * p.max(e),
+            "{p} {e}"
+        );
+        // KNOWN (M63): under its rain's 5 to 45 kg/m² a year (Mitchell 2012; Lora et al.
+        // 2015, 2019): its ground stands cut off under its air, 1 to 3 K the colder, as its
+        // column's adiabat leaves it radiating some 0.46 W/m² net where McKay et al.'s
+        // radiative troposphere 0.38: the radiative-convective column next (the user,
+        // 2026-11-10).
+        if p < 5.0 {
+            eprintln!("KNOWN SHORTFALL (M63): Titan's rain {p:.2} kg/m² a year, under 5 to 45");
         }
     }
 
