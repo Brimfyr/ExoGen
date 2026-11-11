@@ -100,6 +100,9 @@ pub struct EnergyBalance {
     /// The layer of air over the ground, whose stability scales the exchange of heat and
     /// vapour between them (M63).
     pub surface_layer: crate::surface_layer::SurfaceLayer,
+    /// Whether the cycle carries its sea ice ahead toward its balance (M64), as it does but
+    /// for the checks that run it without.
+    pub hasten: bool,
     /// The working liquid's vapour, whose latent heat the sea and the wet land give the air
     /// (F269): water's, methane's, any liquid's under an atmosphere.
     pub liquid: Option<&'static crate::constants::Volatile>,
@@ -337,8 +340,9 @@ impl Frost {
 
 /// A sea's mixed layer and the ice that forms on it (F244): the layer's heat capacity,
 /// J/m²/K; the sea's freezing point, K; its ice's latent heat of fusion, J/kg, density,
-/// kg/m³, and conductivity, W/m/K; the heat the sea brings the ice's base, W/m²; and the
-/// ice's colour, drawn over the sea.
+/// kg/m³, and conductivity, W/m/K; the heat the sea brings the ice's base, W/m²; the
+/// ice's colour, drawn over the sea; and (M64) the sea water's density, kg/m³, and the
+/// density, kg/m³, and conductivity, W/m/K, of the snow on its ice.
 #[derive(Clone, Copy, Debug)]
 pub struct Ocean {
     pub capacity: f64,
@@ -348,6 +352,8 @@ pub struct Ocean {
     pub conductivity: f64,
     pub base_flux: f64,
     pub colour: [f32; 3],
+    pub water: f64,
+    pub snow: (f64, f64),
 }
 
 impl Ocean {
@@ -367,6 +373,8 @@ impl Ocean {
             conductivity: SEA_ICE_CONDUCTIVITY,
             base_flux: SEA_ICE_BASE_FLUX,
             colour: SEA_ICE_COLOUR,
+            water: SEA_WATER_DENSITY,
+            snow: (SNOW_DENSITY, SEA_SNOW_CONDUCTIVITY),
         })
     }
 }
@@ -381,6 +389,8 @@ pub struct Seas {
     pub max: Field<f32>,
     pub ice_now: Field<f32>,
     pub ice_share: Field<f32>,
+    /// The snow on the sea's ice at the snapshot's season, kg/m² of the sea (M64).
+    pub snow_now: Field<f32>,
     pub ocean: Ocean,
     /// The surface's mean, coldest and warmest at each place of the cycle's layout, each
     /// place without a sea given the mean of the places with one beside it, spreading from the
@@ -395,6 +405,28 @@ pub struct Seas {
     /// Where the ice at the snapshot's season ends between the places (F251).
     guide: Guide,
     margin: Margin,
+}
+
+/// Whether a place's sea ice has settled (M64), its year's means through two windows of years
+/// `years`, the latest last: its mean over the later window changes from the earlier's by
+/// under CYCLE_SETTLED_ICE a year, so that ice swinging about its balance from year to year
+/// settles and ice still drifting does not; none while a year is missing.
+fn ice_settles(years: &[f64]) -> bool {
+    let (share, least) = CYCLE_SETTLED_ICE;
+    let window = years.len() / 2;
+    if window == 0 {
+        return true;
+    }
+    let (before, late) = years.split_at(window);
+    let late = late.iter().sum::<f64>() / window as f64;
+    let drift = (late - before.iter().sum::<f64>() / window as f64) / window as f64;
+    drift.is_finite() && drift.abs() <= (share * late).max(least)
+}
+
+/// The share of a sea its ice of `mass` kg/m² of the sea covers (F244): its marginal ice's
+/// SEA_ICE_COVER_MASS hiding half of it and more.
+fn sea_ice_cover(mass: f64) -> f64 {
+    1.0 - (-mass.max(0.0) / SEA_ICE_COVER_MASS).exp()
 }
 
 impl Seas {
@@ -907,13 +939,15 @@ struct Link {
     share: f64,
 }
 
-/// A sea's mixed layer at a place (F244): the layer's temperature, K, its ice, kg/m², and
-/// the surface's temperature, the ice's top where it lies.
+/// A sea's mixed layer at a place (F244): the layer's temperature, K, its ice, kg/m², the
+/// surface's temperature, the ice's top where it lies, or its snow's (M64), and the snow on
+/// its ice, kg/m² of the sea.
 #[derive(Clone, Copy, Debug)]
 struct Sea {
     t: f64,
     ice: f64,
     surface: f64,
+    snow: f64,
 }
 
 /// A volatile's ice that can lie on the ground (F240): its gas, its colour and the albedo
@@ -1128,6 +1162,9 @@ pub struct Cycle {
     /// ground stood at (F256).
     spread: Vec<[f32; CYCLE_SPREAD]>,
     spread_albedo: Vec<f32>,
+    /// The most years a tilt's cycle ran and whether every tilt's sea ice had settled by
+    /// them (M64).
+    pub settled: (usize, bool),
 }
 
 /// The cycle's year step by step (F253): each step's end's phase of the year from the
@@ -2081,7 +2118,7 @@ struct Year {
     min: f64,
     frost_share: f64,
     frost_now: f64,
-    sea: [f64; 5],
+    sea: [f64; 6],
     /// The surface's temperatures through the cycle, as quantiles, and the albedo its ground
     /// stood at (F256).
     spread: [f32; CYCLE_SPREAD],
@@ -2106,6 +2143,8 @@ struct TiltYear {
     /// What the frost's own gas's caps gained over each place's area in a year, kg/m²
     /// (F258).
     caps: Vec<f64>,
+    /// The years run and whether the sea's ice had settled by them (M64).
+    settled: (usize, bool),
 }
 
 /// The lockstep through its last cycle (F239, F245): the places' runs; where the atmosphere
@@ -2129,6 +2168,8 @@ struct Lockstep {
     /// The gas in the air and its frost at the end, kg/m² over the body, apart from what the
     /// caps gave or took (F258).
     active: f64,
+    /// The years run and whether the sea's ice had settled by them (M64).
+    settled: (usize, bool),
 }
 
 /// A lockstep's end on the latitudes' rows, to start the places from (F258): the gas in the
@@ -2175,7 +2216,7 @@ impl Year {
             min,
             frost_share: 0.0,
             frost_now: 0.0,
-            sea: [mean, min, max, 0.0, 0.0],
+            sea: [mean, min, max, 0.0, 0.0, 0.0],
             spread,
             albedo: albedo as f32,
         }
@@ -2336,6 +2377,7 @@ impl EnergyBalance {
                 gravity: graph.f64("body.gravity"),
                 heat_capacity: heat,
             },
+            hasten: true,
             liquid: if evaporation > 0.0 { liquid } else { None },
             rows: false,
             circulation: crate::wind::Air::from_graph(graph),
@@ -2877,6 +2919,7 @@ impl EnergyBalance {
                     masses: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
                     surfaces: [Vec::new(), Vec::new()],
                     caps: Vec::new(),
+                    settled: (0, true),
                 })
                 .collect()
         };
@@ -2892,7 +2935,7 @@ impl EnergyBalance {
                         min: f64::MAX,
                         frost_share: 0.0,
                         frost_now: 0.0,
-                        sea: [0.0, f64::MAX, f64::MIN, 0.0, 0.0],
+                        sea: [0.0, f64::MAX, f64::MIN, 0.0, 0.0, 0.0],
                         spread: [0.0; CYCLE_SPREAD],
                         albedo: 0.0,
                     },
@@ -2908,6 +2951,7 @@ impl EnergyBalance {
                             acc.sea[2].max(e.sea[2]),
                             acc.sea[3] + e.sea[3] / n,
                             acc.sea[4] + e.sea[4] / n,
+                            acc.sea[5] + e.sea[5] / n,
                         ],
                         spread: std::array::from_fn(|i| acc.spread[i] + e.spread[i] / n as f32),
                         albedo: acc.albedo + e.albedo / n as f32,
@@ -3195,6 +3239,7 @@ impl EnergyBalance {
             max: field(|y| y.sea[2]),
             ice_now: field(|y| y.sea[3]),
             ice_share: field(|y| y.sea[4]),
+            snow_now: field(|y| y.sea[5]),
             ocean: *ocean,
             mean_rows: spread_from(
                 &rows.iter().map(|y| y.sea[0]).collect::<Vec<_>>(),
@@ -3225,6 +3270,9 @@ impl EnergyBalance {
             guide: guide.clone(),
             layout: (n_lat, n_lon),
         });
+        let settled = each.iter().fold((0, true), |(y, s), e| {
+            (y.max(e.settled.0), s && e.settled.1)
+        });
         Cycle {
             mean: field(|y| y.mean),
             max: field(|y| y.max),
@@ -3250,6 +3298,7 @@ impl EnergyBalance {
             surfaces,
             spread: rows.iter().map(|y| y.spread).collect(),
             spread_albedo: rows.iter().map(|y| y.albedo).collect(),
+            settled,
         }
     }
 
@@ -3581,6 +3630,7 @@ impl EnergyBalance {
             masses: lockstep.masses,
             surfaces: lockstep.surfaces,
             caps: lockstep.caps,
+            settled: lockstep.settled,
         }
     }
 
@@ -3635,6 +3685,7 @@ impl EnergyBalance {
             masses: lockstep.masses,
             surfaces: lockstep.surfaces,
             caps: lockstep.caps.iter().map(|g| g / orbits).collect(),
+            settled: lockstep.settled,
         }
     }
 
@@ -3740,7 +3791,22 @@ impl EnergyBalance {
         let mut growth = 0.0;
         let mut partials = Vec::with_capacity(steps);
         let mut last = vec![f64::NAN; 2 * n];
-        for _ in 0..years {
+        // The year runs on past its temperatures' settling until its sea ice settles (M64).
+        // Each place's year's mean ice through its last two windows of years, the latest
+        // last, shifted with it when it is carried ahead (M64).
+        let window = CYCLE_ICE_WINDOW;
+        let mut windows = vec![[f64::NAN; 2 * CYCLE_ICE_WINDOW]; n];
+        let mut settled_by = (0, true);
+        // Each place's year's mean ice through its last four years since it was last carried
+        // ahead, the latest last, and the times it was (M64).
+        let mut history = vec![[f64::NAN; 4]; n];
+        let mut carries = vec![0; n];
+        let seas = runs.iter().any(|r| r.sea.is_some());
+        let most = match seas {
+            true => years.max(CYCLE_ICE_MAX_YEARS),
+            false => years,
+        };
+        for year in 0..most {
             range = (f64::MAX, f64::MIN);
             partials.clear();
             runs.iter_mut().for_each(Run::begin);
@@ -3763,9 +3829,13 @@ impl EnergyBalance {
                         None => (0.0, 0.0),
                     };
                     // The snow that falls on its land froze in it, its latent heat of fusion
-                    // the air's, as the ground's melting of it takes it back (F271).
+                    // the air's, as the ground's melting of it takes it back (F271); and the
+                    // snow that falls on its sea's ice (M64).
                     let frozen = match (self.liquid.filter(|_| self.ice), r.snowfall.get(k)) {
-                        (Some(l), Some(&fall)) => l.l_fus * fall as f64 * p.land(),
+                        (Some(l), Some(&fall)) => {
+                            let iced = r.sea.as_ref().map_or(0.0, |s| sea_ice_cover(s.ice));
+                            l.l_fus * fall as f64 * (p.land() + p.sea * iced)
+                        }
                         _ => 0.0,
                     };
                     // The air's own radiation (M55), about the air as it stands, taking what
@@ -3867,7 +3937,8 @@ impl EnergyBalance {
                         let sea_air = match (r.sea.as_mut(), ocean) {
                             (Some(sea), Some(ocean)) => {
                                 let exchange = self.sea_coupling_at(sea.surface, a, &p.contact);
-                                let water = (ocean, brought);
+                                let fall = r.snowfall.get(k).map_or(0.0, |&f| f as f64);
+                                let water = (ocean, brought, fall);
                                 let dried = if sea.ice <= 0.0 {
                                     self.drying(a, sea.surface, &p.contact)
                                 } else {
@@ -4021,7 +4092,57 @@ impl EnergyBalance {
                 .zip(&last)
                 .all(|(m, l)| (m - l).abs() < CYCLE_SETTLED_K);
             last = means;
-            if settled {
+            // Each place's year's mean ice, and its mean over its last window of years
+            // against the window before (M64).
+            let ice: Vec<f64> = runs
+                .iter()
+                .map(|r| r.masses[1].iter().map(|&m| m as f64).sum::<f64>() / steps as f64)
+                .collect();
+            let (share, least) = CYCLE_SETTLED_ICE;
+            for (w, &m) in windows.iter_mut().zip(&ice) {
+                w.rotate_left(1);
+                w[2 * window - 1] = m;
+            }
+            let mut ice_settled = windows.iter().all(|w| ice_settles(w));
+            // Ice that melts through part of its year, still changing by a steady share of
+            // its last change, carried ahead toward its balance (M64); it runs on from there.
+            // A place is carried only while its year's change is a steady share of its last,
+            // and its past years are carried with it, so that its window reads where it now
+            // stands; no year it is carried in is a settled one.
+            if self.hasten {
+                let (steady, most, agree, times) = CYCLE_ICE_HASTEN;
+                for (q, r) in runs.iter_mut().enumerate() {
+                    let h = &mut history[q];
+                    *h = [h[1], h[2], h[3], ice[q]];
+                    let Some(sea) = r.sea.as_mut() else {
+                        continue;
+                    };
+                    let [a, b, c, d] = *h;
+                    let (first, before, last) = (b - a, c - b, d - c);
+                    let melted: f64 = r.masses[1]
+                        .windows(2)
+                        .map(|w| (w[0] - w[1]).max(0.0) as f64)
+                        .sum();
+                    let (earlier, ratio) = (before / first, last / before);
+                    let moving = last.abs() > (share * d).max(least);
+                    let geometric =
+                        ratio > 0.0 && ratio < steady && (ratio - earlier).abs() < agree;
+                    if !(moving && geometric && melted > last.abs() && carries[q] < times) {
+                        continue;
+                    }
+                    let ahead =
+                        (last * ratio / (1.0 - ratio)).clamp(-most * last.abs(), most * last.abs());
+                    sea.ice = (sea.ice + ahead).max(0.0);
+                    *h = [f64::NAN; 4];
+                    carries[q] += 1;
+                    for m in windows[q].iter_mut() {
+                        *m += ahead;
+                    }
+                    ice_settled = false;
+                }
+            }
+            settled_by = (year + 1, ice_settled);
+            if (settled || year + 1 >= years) && ice_settled {
                 break;
             }
             // The gas's whole mass: the atmosphere's, and the frost's that comes and goes in
@@ -4102,6 +4223,7 @@ impl EnergyBalance {
             surfaces,
             caps,
             active,
+            settled: settled_by,
         }
     }
 
@@ -4429,28 +4551,36 @@ impl EnergyBalance {
             })
             .collect();
         let mut ice = before.clone();
-        drift.step(&mut ice, &stress, dt);
-        for ((r, &was), &now) in runs.iter_mut().zip(&before).zip(&ice) {
+        // The snow on the ice drifts with it (M64).
+        let mut snow: Vec<f64> = runs
+            .iter()
+            .map(|r| r.sea.as_ref().map_or(0.0, |s| s.snow.max(0.0)))
+            .collect();
+        drift.step_with(&mut ice, &mut snow, &stress, dt);
+        for (((r, &was), &now), &riding) in runs.iter_mut().zip(&before).zip(&ice).zip(&snow) {
             let Some(sea) = r.sea.as_mut() else {
                 continue;
             };
-            if now == was {
+            if now == was && riding == sea.snow {
                 continue;
             }
             if was > 0.0 {
                 sea.ice = now;
+                sea.snow = riding;
                 if now <= 0.0 {
-                    (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
+                    (sea.t, sea.surface, sea.snow) = (ocean.freezing, ocean.freezing, 0.0);
                 }
                 continue;
             }
-            // Ice brought to open water melts in its warmth over the freezing point.
+            // Ice brought to open water melts in its warmth over the freezing point, and the
+            // snow on it with it.
             let melts = ocean.capacity * (sea.t - ocean.freezing).max(0.0) / ocean.latent;
             if now <= melts {
                 sea.t -= now * ocean.latent / ocean.capacity;
                 sea.surface = sea.t;
             } else {
                 sea.ice = now - melts;
+                sea.snow = riding * sea.ice / now;
                 (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
             }
         }
@@ -4474,7 +4604,7 @@ impl EnergyBalance {
         dt: f64,
         (sun, open): (Light, f64),
         (air, exchange, dried): (f64, f64, f64),
-        (ocean, brought): (&Ocean, f64),
+        (ocean, brought, fall): (&Ocean, f64, f64),
     ) -> f64 {
         let melting = sea.surface >= ocean.freezing - SEA_ICE_MELT_MARGIN_K;
         let ice = self
@@ -4487,7 +4617,7 @@ impl EnergyBalance {
                 open,
             )
             .max(open);
-        let cover = 1.0 - (-sea.ice.max(0.0) / SEA_ICE_COVER_MASS).exp();
+        let cover = sea_ice_cover(sea.ice);
         // Its share of the sunlight and its air's, open and under its ice (M58).
         let (frozen, frozen_air) = sun.split(open + (ice - open) * cover);
         let (bare, bare_air) = sun.split(open);
@@ -4503,7 +4633,14 @@ impl EnergyBalance {
             (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
             return bare_air;
         }
-        let through = ocean.conductivity / (sea.ice / ocean.density).max(SEA_ICE_THINNEST_M);
+        // The snow that falls on its ice lies on it, what falls on its open water the sea's
+        // (M64); the heat its base gives its top passes through its ice and its snow in turn,
+        // the snow's some seven times the ice's resistance a metre.
+        sea.snow += fall.max(0.0) * dt * cover;
+        let (snow_density, snow_conductivity) = ocean.snow;
+        let through = 1.0
+            / ((sea.ice / ocean.density).max(SEA_ICE_THINNEST_M) / ocean.conductivity
+                + sea.snow / snow_density / snow_conductivity);
         let mut top = sea.surface.min(ocean.freezing);
         for _ in 0..SEA_ICE_NEWTON_STEPS {
             let (r, slope) = self.ground_radiation(top, air);
@@ -4516,13 +4653,27 @@ impl EnergyBalance {
             let left = frozen - self.ground_radiation(top, air).0 + exchange * (air - top);
             melted = left.max(0.0) * dt / ocean.latent;
         }
+        // Its snow melts before its ice (M64).
+        let thawed = melted.min(sea.snow);
+        sea.snow -= thawed;
+        melted -= thawed;
         let below = ocean.base_flux + brought;
         let grown = (through * (ocean.freezing - top) - below) * dt / ocean.latent;
         sea.ice += grown - melted;
         sea.surface = top;
         if sea.ice < 0.0 {
             sea.t = ocean.freezing - sea.ice * ocean.latent / ocean.capacity;
-            (sea.ice, sea.surface) = (0.0, sea.t);
+            (sea.ice, sea.surface, sea.snow) = (0.0, sea.t, 0.0);
+        } else {
+            // Snow whose weight sinks the ice's top under the sea floods and freezes into it
+            // (M64), until the ice, the flooded snow among it, floats the snow left at a
+            // freeboard of none: a share of its mass, sea water's density over the ice's less
+            // one, the ice and snow together kept.
+            let floats = ocean.water / ocean.density - 1.0;
+            if sea.snow > floats * sea.ice {
+                sea.ice = (sea.ice + sea.snow) / (1.0 + floats);
+                sea.snow = floats * sea.ice;
+            }
         }
         frozen_air
     }
@@ -5981,6 +6132,7 @@ struct Run {
     sea_hi: f64,
     iced: usize,
     ice_now: f64,
+    snow_now: f64,
     /// The steps recorded.
     records: Vec<Record>,
     /// The frost, the sea's ice and the land's snow at the end of each step of the cycle,
@@ -6044,6 +6196,7 @@ impl Run {
                 t,
                 ice: 0.0,
                 surface: t,
+                snow: 0.0,
             }
         });
         let cap = frost
@@ -6080,6 +6233,7 @@ impl Run {
             sea_hi: f64::MIN,
             iced: 0,
             ice_now: 0.0,
+            snow_now: 0.0,
             records: Vec::new(),
             masses: [
                 vec![0.0; steps],
@@ -6199,6 +6353,7 @@ impl Run {
             }
             if k == snapshot {
                 self.ice_now = sea.ice;
+                self.snow_now = sea.snow;
             }
         }
         if k == snapshot {
@@ -6225,9 +6380,10 @@ impl Run {
     }
 
     /// The place's sea's year through a cycle of `steps` (F244): its surface's mean, coldest
-    /// and warmest, its ice at the snapshot's step and the share of the cycle ice lay; the
-    /// land's mean, warmest and coldest, `land`, where the place has no sea.
-    fn sea_year(&self, steps: usize, (mean, hi, lo): (f64, f64, f64)) -> [f64; 5] {
+    /// and warmest, its ice at the snapshot's step, the share of the cycle ice lay and the
+    /// snow on its ice at the snapshot's step (M64); the land's mean, warmest and coldest,
+    /// `land`, where the place has no sea.
+    fn sea_year(&self, steps: usize, (mean, hi, lo): (f64, f64, f64)) -> [f64; 6] {
         match self.sea {
             Some(_) => [
                 self.sea_sum / steps as f64,
@@ -6235,8 +6391,9 @@ impl Run {
                 self.sea_hi,
                 self.ice_now,
                 self.iced as f64 / steps as f64,
+                self.snow_now,
             ],
-            None => [mean, lo, hi, 0.0, 0.0],
+            None => [mean, lo, hi, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -7390,6 +7547,96 @@ mod tests {
         }
     }
 
+    /// M64: sea ice settles over windows of years: swinging about its balance by some 2
+    /// percent with a period of four years, as the edge of the ice that lies all year on the
+    /// Earth-like's own ground does, or of two, it has settled; still drifting by over a
+    /// thousandth of it a year, or under a millimetre a year of thin ice, it has not, and has
+    /// once its drift falls under; never while a year is missing.
+    #[test]
+    fn sea_ice_settles_over_windows_of_years() {
+        let w = CYCLE_ICE_WINDOW;
+        let years = |f: &dyn Fn(usize) -> f64| (0..2 * w).map(f).collect::<Vec<f64>>();
+        let four = [1_510.0, 1_483.0, 1_511.0, 1_482.0];
+        assert!(ice_settles(&years(&|k| four[k % 4])));
+        assert!(ice_settles(&years(&|k| 1_500.0 + 30.0 * (k % 2) as f64)));
+        assert!(!ice_settles(&years(&|k| 1_500.0 + 5.0 * k as f64)));
+        assert!(ice_settles(&years(&|k| 1_500.0 + 1.0 * k as f64)));
+        assert!(!ice_settles(&years(&|k| 10.0 + 2.0 * k as f64)));
+        assert!(ice_settles(&years(&|k| 10.0 + 0.5 * k as f64)));
+        let mut missing = years(&|_| 1_500.0);
+        missing[0] = f64::NAN;
+        assert!(!ice_settles(&missing));
+        assert!(ice_settles(&years(&|_| 0.0)));
+    }
+
+    /// M64: snow on a sea's ice: under a winter's cold air its ice grows the slower under a
+    /// tenth of a metre of snow and its top stands the colder, the snow's some seven times the
+    /// ice's resistance a metre; under a summer's sun its snow melts before its ice, which
+    /// loses only what its base melts while snow lies; snow whose weight would sink a thin ice
+    /// floods and freezes into it, the ice floating it at a freeboard of none; and the snow
+    /// that falls on open water is the sea's.
+    #[test]
+    fn snow_on_a_sea_s_ice_insulates_it_melts_first_and_floods_it() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&graph);
+        let ocean = Ocean::from_graph(&graph).expect("a water sea");
+        let (day, f) = (86_400.0, ocean.freezing);
+        let sea = |ice: f64, snow: f64, surface: f64| Sea {
+            t: f,
+            ice,
+            surface,
+            snow,
+        };
+        let step = |s: &mut Sea, lit: f64, air: f64, fall: f64| {
+            eb.sea_step(
+                s,
+                day,
+                (Light::bare(lit), 0.06),
+                (air, 5.0, 0.0),
+                (&ocean, 0.0, fall),
+            );
+        };
+        // Winter.
+        let (mut bare, mut snowy) = (sea(2_000.0, 0.0, 250.0), sea(2_000.0, 100.0, 250.0));
+        for _ in 0..10 {
+            step(&mut bare, 0.0, 240.0, 0.0);
+            step(&mut snowy, 0.0, 240.0, 0.0);
+        }
+        let (grew_bare, grew_snowy) = (bare.ice - 2_000.0, snowy.ice - 2_000.0);
+        println!(
+            "winter: bare ice grew {grew_bare:.1} kg/m², its top {:.1} K; under snow {grew_snowy:.1}, its top {:.1} K",
+            bare.surface, snowy.surface
+        );
+        assert!(grew_bare > 1.5 * grew_snowy && grew_snowy > 0.0);
+        assert!(snowy.surface < bare.surface - 1.0);
+        // Summer.
+        let mut melting = sea(2_000.0, 150.0, f);
+        step(&mut melting, 400.0, 285.0, 0.0);
+        let base = -ocean.base_flux * day / ocean.latent;
+        println!(
+            "summer: the snow {:.2} kg/m² of 150, the ice changed {:.3} where its base melts {base:.3}",
+            melting.snow,
+            melting.ice - 2_000.0
+        );
+        assert!(melting.snow < 150.0 && melting.snow > 0.0);
+        assert!((melting.ice - 2_000.0 - base).abs() < 1e-6);
+        // Flooding.
+        let mut thin = sea(200.0, 100.0, 260.0);
+        step(&mut thin, 0.0, 255.0, 0.0);
+        let floats = thin.ice * (ocean.water / ocean.density - 1.0);
+        println!(
+            "flooded: ice {:.1} kg/m², snow {:.2} of {floats:.2} it floats",
+            thin.ice, thin.snow
+        );
+        assert!((thin.snow - floats).abs() < 1e-9 * floats.max(1.0));
+        assert!(thin.ice + thin.snow >= 300.0 - 1e-9);
+        // Open water.
+        let mut open = sea(0.0, 0.0, f + 5.0);
+        open.t = f + 5.0;
+        step(&mut open, 200.0, 280.0, 1e-4);
+        assert_eq!(open.snow, 0.0);
+    }
+
     /// The sunlight's split keeps what the place absorbs (M58): its ground's, its air's and
     /// what its haze sends back to space sum to its share, (1 - albedo), of the light over the
     /// air, at every sun's height and albedo; Earth's air takes some third of what it absorbs,
@@ -7906,7 +8153,7 @@ mod tests {
                 the_air_carries_the_seasons(&y, &again.cycle)
             }),
             ("the_sea_holds_its_seasons_and_freezes_at_the_pole", &|| {
-                the_sea_holds_its_seasons_and_freezes_at_the_pole(&y)
+                the_sea_holds_its_seasons_and_freezes_at_the_pole(&y, &again)
             }),
             ("the_earth_like_s_winds_blow_in_its_belts", &|| {
                 the_earth_like_s_winds_blow_in_its_belts(&y)
@@ -7959,6 +8206,46 @@ mod tests {
                 mars_s_air_never_cools_past_its_frost_point(&y)
             }),
         ]);
+    }
+
+    /// M64: the hastened sea ice ends where the plain ice ends: the Earth-like's year at its
+    /// stated wind run with its ice carried ahead toward its balance and without, each place's
+    /// year's mean ice alike within what their settling allows, some 5 percent and 10 kg/m²,
+    /// the hastened in fewer years.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn the_hastened_ice_ends_where_the_plain_ice_ends() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let mut eb = EnergyBalance::from_graph(&graph);
+        let climate = eb.solve(CubeSphere::new(CLIMATE_FACE_SIZE));
+        let sea = sea_of(&graph);
+        let sea = sea.as_ref().map(|(o, f)| (o, f));
+        let ground = Ground::from_graph(&graph);
+        let hastened = eb.cycle(&climate, &ground, sea, None);
+        eb.hasten = false;
+        let plain = eb.cycle(&climate, &ground, sea, None);
+        let means = |c: &Cycle| {
+            let steps = c.masses[1].len() / c.sites.len().max(1);
+            c.masses[1]
+                .chunks(steps.max(1))
+                .map(|s| s.iter().map(|&m| m as f64).sum::<f64>() / steps as f64)
+                .collect::<Vec<f64>>()
+        };
+        let (a, b) = (means(&hastened), means(&plain));
+        assert_eq!(a.len(), b.len());
+        let worst = a
+            .iter()
+            .zip(&b)
+            .map(|(x, y)| (x - y).abs() / (0.05 * x.max(*y) + 10.0))
+            .fold(0.0, f64::max);
+        let most = a.iter().cloned().fold(0.0, f64::max);
+        println!(
+            "hastened {:?}, plain {:?} years and settled; the year's mean ice, up to {most:.0} kg/m², apart by at most {worst:.2} of what settling allows",
+            hastened.settled, plain.settled
+        );
+        assert!(hastened.settled.1 && plain.settled.1);
+        assert!(hastened.settled.0 < plain.settled.0);
+        assert!(worst <= 1.0, "{worst}");
     }
 
     /// Titan's and Venus's years, read by each check of them; Titan's again at its own wind.
@@ -8792,12 +9079,17 @@ mod tests {
         assert!(seas.mean_at(substellar) > seas.ocean.freezing + 5.0);
         assert!(seas.ice_at(substellar) < SEA_ICE_COVER_MASS);
         assert!(seas.ice_at(night) > 10.0 * SEA_ICE_COVER_MASS);
-        // KNOWN (F293, F298): its albedo its air's own, 0.256 within THAI's, its sea opens over
-        // 0.77 of its dayside and its mean stands at 254 K, where THAI's models brighten its
-        // star's side with a deck of clouds the albedo beneath, alike everywhere, does not hold,
-        // and the column's stated clouds warm it the more the more vapour its air holds: held
-        // under four fifths until the weather's clouds (5G).
-        assert!((0.3..0.8).contains(&open), "open {open}");
+        // KNOWN (F293, F298): its albedo its air's own, 0.256 within THAI's, where THAI's models
+        // brighten its star's side with a deck of clouds the albedo beneath, alike everywhere,
+        // does not hold, and the column's stated clouds warm it the more the more vapour its
+        // air holds, until the weather's clouds (5G). KNOWN (M64): run until its ice settles,
+        // its night's ice, which never melts, thickens some 100 kg/m² a year toward the
+        // balance its sea's 2 W/m² under it sets, some 37 m, and blankets its sea, so that its
+        // day warms and its eye opens, 0.52 of its dayside in its first year, 0.76 where the run
+        // stopped on its temperatures, 0.82 by CYCLE_ICE_MAX_YEARS: thick night ice would flow
+        // under its weight to its day and melt there, as sea glaciers do. Held under nine
+        // tenths until the glaciers (the user, 2026-11-10).
+        assert!((0.3..0.9).contains(&open), "open {open}");
         if open > 0.7 {
             eprintln!("KNOWN SHORTFALL (F293): open {open:.2} of the dayside, THAI's almost half");
         }
@@ -8842,8 +9134,9 @@ mod tests {
     /// its air: its swing 39.5 K where 43.6, its sea's 7.5 (the user, 2026-11-10: the check
     /// restated from over 40 K). By the end of the
     /// northern winter its sea ice near the pole stands a metre or a few thick (the Arctic's
-    /// perennial ice some 3 m before its thinning, Rothrock et al. 1999).
-    fn the_sea_holds_its_seasons_and_freezes_at_the_pole(year: &Year) {
+    /// perennial ice some 3 m before its thinning, Rothrock et al. 1999), in the year the maps
+    /// use, at each place's own wind with its snow on it, its ice settled (M64).
+    fn the_sea_holds_its_seasons_and_freezes_at_the_pole(year: &Year, again: &Again) {
         let cycle = &year.cycle;
         let seas = cycle.seas.as_ref().expect("a water sea");
         let swing = at(&seas.max, 45.0, 0.0) - at(&seas.min, 45.0, 0.0);
@@ -8853,20 +9146,28 @@ mod tests {
             "sea {swing}, land {land}"
         );
         assert_eq!(at(&seas.ice_share, 45.0, 0.0), 0.0);
-        let pole = at(&seas.ice_now, 85.0, 0.0);
-        // Its air's warmth reaching it since the ground keeps its own budget (M59), the ice
-        // stood some 3.8 m, where it stood 5.4 under the column's polar radiation alone (F298).
-        // KNOWN (M63): under the surface layer's stability its winter's inversion lets its air
-        // give it some 25 W/m² where the neutral exchange gave 45, SHEBA's strongest month some
-        // 8 (Persson et al. 2002), and it stands 4.6 m, over the 0.5 to 4.4 measured: no snow
-        // lies on it to keep the winter's cold from its base, and its polar air sends down too
-        // little in winter. Held under 5,000 kg/m² until the sea ice's milestone: its snow, its
-        // year run until it settles, and this check read at the year the maps use, at its own
-        // wind, where the ice still thickens as the run stops (the user, 2026-11-10).
-        assert!((500.0..5000.0).contains(&pole), "ice {pole}");
+        // The pole's ice in the year the maps use, at each place's own wind, its snow on it,
+        // run until its ice settles (M64).
+        let (years, settled) = again.cycle.settled;
+        let maps = again.cycle.seas.as_ref().expect("a water sea");
+        let (pole, snow) = (at(&maps.ice_now, 85.0, 0.0), at(&maps.snow_now, 85.0, 0.0));
+        println!(
+            "the pole's sea ice {pole:.0} kg/m², its snow {snow:.1} kg/m², settled {settled} by {years} years; at the stated wind {:.0}",
+            at(&seas.ice_now, 85.0, 0.0)
+        );
+        assert!(settled && years < CYCLE_ICE_MAX_YEARS, "{years}");
+        assert!(snow > 0.0, "{snow}");
+        // The Arctic's ice stands 0.5 to 4.4 m by the end of its winter. KNOWN (M63, M64): under
+        // the surface layer's stability its winter's inversion lets its air give it some 12
+        // W/m² at its own wind, SHEBA's strongest month some 8 (Persson et al. 2002), where the
+        // neutral exchange gave 45; its snow some 18 cm takes some 1.2 m off it, and run until
+        // it settles, some 54 years, it stands 7.6 m: its polar air sends it some 40 to 50 W/m²
+        // less in winter than the Arctic's does, its troposphere on the adiabat. Held under
+        // 8,000 kg/m² until the radiative-convective column (the user, 2026-11-10).
+        assert!((500.0..8000.0).contains(&pole), "ice {pole}");
         if pole > 4000.0 {
             eprintln!(
-                "KNOWN SHORTFALL (M63): the Earth-like's pole's sea ice {pole:.0} kg/m², over 4,000"
+                "KNOWN SHORTFALL (M64): the Earth-like's pole's sea ice {pole:.0} kg/m², over 4,000"
             );
         }
     }

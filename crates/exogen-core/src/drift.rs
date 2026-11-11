@@ -139,6 +139,13 @@ impl Drift {
     /// ice before it does not, and the ice each boundary passes from its upwind place, in steps
     /// that move no more than OCEAN_CFL of a place's ice.
     pub fn step(&mut self, ice: &mut [f64], stress: &[[f64; 2]], dt: f64) {
+        self.step_with(ice, &mut [], stress, dt);
+    }
+
+    /// `step`, carrying with the ice what rides on it, `riders`, kg/m² of each place's sea
+    /// (M64: the snow on it), by the same shares of each place's: none where `riders` is
+    /// not one to a place.
+    pub fn step_with(&mut self, ice: &mut [f64], riders: &mut [f64], stress: &[[f64; 2]], dt: f64) {
         let n = self.area.len();
         if ice.len() != n || stress.len() != n || dt <= 0.0 {
             return;
@@ -252,21 +259,45 @@ impl Drift {
             .zip(&self.area)
             .map(|(&m, &a)| m.max(0.0) * a)
             .collect();
+        let riding = riders.len() == n;
+        let mut rode: Vec<f64> = match riding {
+            true => riders
+                .iter()
+                .zip(&self.area)
+                .map(|(&m, &a)| m.max(0.0) * a)
+                .collect(),
+            false => Vec::new(),
+        };
         let mut moved = vec![0.0; n];
+        let mut moved_riders = vec![0.0; rode.len()];
         for _ in 0..subs {
             moved.fill(0.0);
+            moved_riders.fill(0.0);
             for &(up, down, share, speed) in &moving {
                 let carried = mass[up] * share;
                 moved[up] -= carried;
                 moved[down] += carried;
                 self.carried += carried * speed;
                 self.held += carried;
+                if riding {
+                    let rides = rode[up] * share;
+                    moved_riders[up] -= rides;
+                    moved_riders[down] += rides;
+                }
             }
             for (m, d) in mass.iter_mut().zip(&moved) {
                 *m = (*m + d).max(0.0);
             }
+            for (m, d) in rode.iter_mut().zip(&moved_riders) {
+                *m = (*m + d).max(0.0);
+            }
         }
         for ((m, &held), &a) in ice.iter_mut().zip(&mass).zip(&self.area) {
+            if a > 0.0 {
+                *m = held / a;
+            }
+        }
+        for ((m, &held), &a) in riders.iter_mut().zip(&rode).zip(&self.area) {
             if a > 0.0 {
                 *m = held / a;
             }
@@ -331,6 +362,57 @@ mod tests {
             angles.push(-angle);
         }
         assert!(angles[0] > angles[1] && angles[0] > 15.0, "{angles:?}");
+    }
+
+    /// M64: what rides on the ice, its snow, drifts with it: a tenth of each place's ice
+    /// stays a tenth wherever the ice is blown, and the snow over the sea is kept.
+    #[test]
+    fn the_snow_rides_with_its_ice() {
+        let (n_lat, n_lon) = (91, 90);
+        let (dphi, dlon) = (PI / (n_lat - 1) as f64, TAU / n_lon as f64);
+        let lat = |i: usize| -PI / 2.0 + dphi * i as f64;
+        let lon = |j: usize| -PI + dlon * j as f64;
+        let inside = |p: usize| {
+            let (la, lo) = (lat(p / n_lon).to_degrees(), lon(p % n_lon).to_degrees());
+            (70.0..=86.0).contains(&la) && (0.0..60.0).contains(&lo)
+        };
+        let n = n_lat * n_lon;
+        let sea: Vec<f64> = (0..n).map(|p| if inside(p) { 1.0 } else { 0.0 }).collect();
+        let weight: Vec<f64> = (0..n)
+            .map(|p| {
+                let la = lat(p / n_lon);
+                let (lo, hi) = (
+                    (la - dphi / 2.0).max(-PI / 2.0),
+                    (la + dphi / 2.0).min(PI / 2.0),
+                );
+                (hi.sin() - lo.sin()) / n_lon as f64
+            })
+            .collect();
+        let mut drift = Drift::new(
+            (&sea, &weight),
+            (n_lat, n_lon),
+            (1.4e-4, 6.371e6),
+            (1_025.0, 917.0),
+        );
+        // Ice thinning eastward, its snow a tenth of it.
+        let mut ice: Vec<f64> = (0..n)
+            .map(|p| sea[p] * (2_000.0 - 20.0 * lon(p % n_lon).to_degrees()))
+            .collect();
+        let mut snow: Vec<f64> = ice.iter().map(|m| 0.1 * m).collect();
+        let area = drift.area.clone();
+        let total = |v: &[f64]| v.iter().zip(&area).map(|(m, a)| m * a).sum::<f64>();
+        let before = total(&snow);
+        let stress = vec![[0.05, 0.02]; n];
+        for _ in 0..60 {
+            drift.step_with(&mut ice, &mut snow, &stress, 86_400.0);
+        }
+        let ratio = (0..n)
+            .filter(|&p| ice[p] > 1.0)
+            .map(|p| (snow[p] / ice[p] - 0.1).abs())
+            .fold(0.0, f64::max);
+        println!("the snow's share of its ice strays by {ratio:.2e} at most");
+        assert!(ratio < 1e-9, "{ratio}");
+        assert!(((total(&snow) - before) / before).abs() < 1e-9);
     }
 
     /// F276: ice a metre thick over a sea from 0° to 60° east between 70° and 86° north,

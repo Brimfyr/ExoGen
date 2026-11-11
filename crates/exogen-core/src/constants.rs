@@ -2203,6 +2203,26 @@ pub const CYCLE_SEASONS: usize = 24;
 pub const CYCLE_DAYS: usize = 3;
 pub const CYCLE_MAX_YEARS: usize = 40;
 pub const CYCLE_SETTLED_K: f64 = 0.05;
+/// M64: a cycle's sea ice settles with its year: each place's mean ice over its last
+/// CYCLE_ICE_WINDOW years changes from the window before by under CYCLE_SETTLED_ICE.0 of it a
+/// year or CYCLE_SETTLED_ICE.1 kg/m² a year, a millimetre of ice. The window lets ice that
+/// swings about its balance from year to year settle, as the edge of the ice that lies all
+/// year does, by some 2 percent over four years on the Earth-like's own ground. Thick ice
+/// comes to its balance over decades, its year's change shrinking by some a tenth a year: the
+/// cycle runs on past its temperatures' settling until its ice settles, at most
+/// CYCLE_ICE_MAX_YEARS.
+pub const CYCLE_SETTLED_ICE: (f64, f64) = (1e-3, 1.0);
+pub const CYCLE_ICE_WINDOW: usize = 4;
+pub const CYCLE_ICE_MAX_YEARS: usize = 80;
+/// M64: a place's ice that melts through part of its year and whose year's change is a steady
+/// share of its last, under CYCLE_ICE_HASTEN.0 of it and its last two shares within
+/// CYCLE_ICE_HASTEN.2 of each other, approaches its balance geometrically: it is carried ahead
+/// to where that approach ends (Aitken's delta-squared), at most CYCLE_ICE_HASTEN.1 of its
+/// last change and at most CYCLE_ICE_HASTEN.3 times, and runs on from there until it settles.
+/// Its balance is the same, reached in fewer years. The ice at the edge of what lies all year
+/// wanders from year to year with its drift and is not carried; ice that never melts has no
+/// balance of its year to carry it to.
+pub const CYCLE_ICE_HASTEN: (f64, f64, f64, usize) = (0.97, 10.0, 0.1, 3);
 pub const CYCLE_LATITUDES: usize = 91;
 pub const CYCLE_RESONANT_GRID: (usize, usize) = (46, 90);
 /// F256: each place's surface temperatures through its cycle's sampled times, its days at
@@ -2456,6 +2476,15 @@ pub const SEA_ICE_CONDUCTIVITY: f64 = 2.03;
 pub const SEA_ICE_BASE_FLUX: f64 = 2.0;
 pub const SEA_ICE_COLOUR: [f32; 3] = [0.74, 0.78, 0.82];
 pub const SEA_ICE_THINNEST_M: f64 = 0.01;
+/// M64: the snow on a sea's ice: its conductivity, W/m/K, the bulk value its heat flows through,
+/// some 0.3 (Maykut and Untersteiner 1971's 0.31; Perovich et al. 1997, from the Arctic
+/// snow's temperature profiles; a needle probe's 0.14 measures its grains' alone, the heat
+/// finding faster paths through its uneven cover, Sturm et al. 2002); its density
+/// SNOW_DENSITY, the mean of the snow on the Arctic's ice through its season, 300 kg/m³
+/// (Warren et al. 1999); and the sea water its freeboard floats in, kg/m³ (Earth's 35 per
+/// mille), under which the snow whose weight sinks it floods and freezes into its ice.
+pub const SEA_SNOW_CONDUCTIVITY: f64 = 0.31;
+pub const SEA_WATER_DENSITY: f64 = 1_025.0;
 pub const SEA_ICE_NEWTON_STEPS: usize = 8;
 /// ADR 0007: a deep body of the working liquid's reflectance, linear RGB, as the albedo drew
 /// it: water's dark blue, the hydrocarbons' near black, the others grey; stated.
