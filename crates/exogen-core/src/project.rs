@@ -57,9 +57,7 @@ impl Project {
 
     /// Build a graph from this project. Returns the graph and the ids it did not recognise.
     pub fn to_graph(&self) -> (ParamGraph, Vec<String>) {
-        let mut g = ParamGraph::new();
-        let unknown = g.apply_overrides(&self.values);
-        (g, unknown)
+        ParamGraph::with_overrides(&self.values)
     }
 
     pub fn from_toml(text: &str) -> Result<Self, ProjectError> {

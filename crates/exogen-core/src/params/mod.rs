@@ -269,6 +269,22 @@ impl std::default::Default for ParamGraph {
 impl ParamGraph {
     /// A graph with every root at its default and every derived node computed.
     pub fn new() -> Self {
+        let mut g = Self::unsettled();
+        g.recompute();
+        g
+    }
+
+    /// The graph at its defaults with `overrides` set, computed once (M65): what `new` and
+    /// `apply_overrides` give, without first computing the defaults' graph; with the overrides'
+    /// unknown ids.
+    pub fn with_overrides(overrides: &BTreeMap<String, Value>) -> (Self, Vec<String>) {
+        let mut g = Self::unsettled();
+        let unknown = g.apply_overrides(overrides);
+        (g, unknown)
+    }
+
+    /// The graph at its defaults, its derived values not yet computed.
+    fn unsettled() -> Self {
         let defs = registry::nodes();
         let mut index = HashMap::with_capacity(defs.len());
         for (i, d) in defs.iter().enumerate() {
@@ -295,16 +311,14 @@ impl ParamGraph {
             values.push(d.ty.normalise(v));
             state.push(LockState::Derived);
         }
-        let mut g = Self {
+        Self {
             defs,
             index,
             order,
             reads,
             values,
             state,
-        };
-        g.recompute();
-        g
+        }
     }
 
     pub fn defs(&self) -> &'static [NodeDef] {

@@ -1975,6 +1975,9 @@ static NODES: &[NodeDef] = &[
             "atmosphere.composition",
             "volatiles.inventory",
             "body.gravity",
+            "orbit.insolation",
+            "atmosphere.bond_albedo",
+            "star.xuv_relative",
         ],
         d::atmosphere_outgoing_share,
         "The share of a black body's radiation the air lets out at each ground temperature, K: its column on the dry adiabat, its bulk gas's frost and its skin, carbon dioxide's 15 um band and water's bands by their wings, water's continuum, carbon dioxide's molecules' collisions and nitrogen's, methane's and hydrogen's by HITRAN's tables, sulfuric clouds and a water-bearing air's stated clouds grey, by two streams over wavenumber.",
@@ -1993,6 +1996,9 @@ static NODES: &[NodeDef] = &[
             "atmosphere.composition",
             "volatiles.inventory",
             "body.gravity",
+            "orbit.insolation",
+            "atmosphere.bond_albedo",
+            "star.xuv_relative",
         ],
         d::atmosphere_window_share,
         "The share of the ground's own radiation that reaches space through its air at each ground temperature, K: its column's, as the outgoing share reads it.",
@@ -2011,6 +2017,9 @@ static NODES: &[NodeDef] = &[
             "atmosphere.composition",
             "volatiles.inventory",
             "body.gravity",
+            "orbit.insolation",
+            "atmosphere.bond_albedo",
+            "star.xuv_relative",
         ],
         d::atmosphere_downward_share,
         "The share of a black body's radiation the air sends down to its ground at each ground temperature, K: each layer of its column emitting into the transmission below it, as the outgoing share reads it.",
@@ -2029,8 +2038,9 @@ static NODES: &[NodeDef] = &[
             "atmosphere.composition",
             "volatiles.inventory",
             "body.gravity",
-            "atmosphere.sunlight_returned",
             "orbit.insolation",
+            "atmosphere.bond_albedo",
+            "star.xuv_relative",
         ],
         d::atmosphere_surface_temperature_mean,
         "Where the air lets out the sunlight the ground and the air keep, never below its bulk gas's frost point: Earth 291.6 (its stated clouds set by it), Mars 216.5, Venus 737 (its sulfuric clouds set by it), Titan 93.7 (the share of its haze's light its stratosphere returns set by it).",
@@ -2048,7 +2058,6 @@ static NODES: &[NodeDef] = &[
             "atmosphere.outgoing_share",
             "atmosphere.column_mass",
             "atmosphere.bond_albedo",
-            "atmosphere.sunlight_returned",
             "climate.transport_coefficient",
             "orbit.insolation",
             "orbit.star_eccentricity",
@@ -2078,6 +2087,7 @@ static NODES: &[NodeDef] = &[
             "star.xuv_relative",
             "star.luminosity",
             "star.luminosity_history",
+            "atmosphere.surface_temperature_mean",
         ],
         d::atmosphere_surface_temperature_history,
         "The mean surface temperature over the body's life, Gyr since it formed, under its star's light then and its air then, its column's greenhouse and its air's scattering at the pressure its escape and its outgassing left it, its frost holding its ground at its bulk gas's frost point: Mars frozen through its thicker air, its greenhouse saturating as its scattering grows.",
@@ -2344,22 +2354,6 @@ static NODES: &[NodeDef] = &[
         d::atmosphere_oxidant_availability,
         "O2 plus a tenth of water vapour, times pressure in bar, clipped to 1. Drives oxidation.",
         "provisional, Phase 5",
-    ),
-    derived(
-        "atmosphere.sunlight_returned",
-        "atmosphere",
-        "Sunlight returned",
-        "",
-        1.0,
-        f(0.0, 1.0),
-        &[
-            "atmosphere.composition",
-            "star.xuv_relative",
-            "atmosphere.surface_pressure",
-        ],
-        d::atmosphere_sunlight_returned,
-        "The share of its star's light the air's methane haze absorbs high over the lit hemisphere and its stratosphere sends back to space, never warming the ground or the air under it: Titan's anti-greenhouse.",
-        "McKay et al. 1991; Robinson and Catling 2012; M55",
     ),
     derived(
         "atmosphere.haze_production",
@@ -4499,16 +4493,25 @@ mod tests {
         assert_eq!(g.str("body.composition_class"), "rock");
         assert_eq!(g.str("rotation.mode"), "free");
         assert!((g.f64("atmosphere.equilibrium_temperature") - 254.6).abs() < 1.0);
-        assert!(
-            (g.f64("atmosphere.surface_temperature_mean") - 288.0).abs() < 4.0,
-            "{}",
-            g.f64("atmosphere.surface_temperature_mean")
-        );
         assert_eq!(
             g.str("volatiles.working_liquid"),
             "none",
             "no inventory set yet"
         );
+        // No inventory set yet: the Earth without its ocean, its air holding only the vapour
+        // it lists, rising nearly on its dry adiabat, and the warmer for its steeper lapse
+        // (M65); with its ocean, the Earth's 288 K within 4.
+        let dry = g.f64("atmosphere.surface_temperature_mean");
+        let mut wet = ParamGraph::new();
+        wet.set("volatiles.inventory", {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("H2O".to_string(), 2700.0);
+            Value::Map(m)
+        })
+        .unwrap();
+        let wet = wet.f64("atmosphere.surface_temperature_mean");
+        assert!((wet - 288.0).abs() < 4.0, "{wet}");
+        assert!(dry > wet && dry < wet + 6.0, "{dry} {wet}");
     }
 
     #[test]

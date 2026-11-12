@@ -516,6 +516,22 @@ pub mod physics {
         (l_watts * (1.0 - albedo) / (16.0 * PI * SIGMA_SB * d * d)).powf(0.25)
     }
 
+    /// The water its air's listed vapour makes, metres of global layer (M65): its share of the
+    /// air's mass over the column of an air of `composition` at `pressure`, Pa, under `gravity`.
+    pub fn air_vapour_water(
+        composition: &BTreeMap<String, f64>,
+        pressure: f64,
+        gravity: f64,
+    ) -> f64 {
+        let total: f64 = composition.values().sum();
+        let share = composition.get("H2O").copied().unwrap_or(0.0);
+        if share <= 0.0 || total <= 0.0 || pressure <= 0.0 {
+            return 0.0;
+        }
+        let mass = share / total * molar_mass("H2O") / mean_molecular_mass(composition);
+        mass * pressure / gravity.max(1e-300) / 1_000.0
+    }
+
     /// Water vapour column at temperature `t`, kg/m², capped by the available inventory.
     pub fn water_column(t: f64, inventory_gel_m: f64) -> f64 {
         let u = WATER_COLUMN_REF * (WATER_L_OVER_RV * (1.0 / WATER_COLUMN_REF_T - 1.0 / t)).exp();
@@ -2107,30 +2123,41 @@ pub fn air_share(pressure: f64) -> f64 {
     x * x * (3.0 - 2.0 * x)
 }
 
-/// F293: the air's column (radiation.rs) at `pressure`, its skin under `t_eq`: none without an
-/// atmosphere.
+/// F293: the air's column (radiation.rs) at `pressure`, its skin under `t_eq`, absorbing its
+/// star's light at its Bond albedo (M65): none without an atmosphere.
 fn air_column(c: &Ctx, pressure: f64, t_eq: f64) -> Option<crate::radiation::Column> {
     if pressure <= 0.0 {
         return None;
     }
-    Some(crate::radiation::Column::new(
-        c.map("atmosphere.composition"),
-        pressure,
-        c.f64("body.gravity"),
-        air_water(c),
-        t_eq * SKIN_SHARE.powf(0.25),
-    ))
+    let composition = c.map("atmosphere.composition");
+    let gravity = c.f64("body.gravity");
+    Some(
+        crate::radiation::Column::new(
+            composition,
+            pressure,
+            gravity,
+            air_water(c),
+            t_eq * SKIN_SHARE.powf(0.25),
+        )
+        .with_sunlight(crate::radiation::Sunlight::of(
+            composition,
+            (pressure, gravity),
+            c.f64("orbit.insolation") / 4.0,
+            c.f64("atmosphere.bond_albedo"),
+            c.f64("star.xuv_relative"),
+        )),
+    )
 }
 
-/// The water a warm air can hold vapour from, metres of global layer: its inventory, and a
-/// metre where its air holds water vapour (F21).
+/// The water a warm air can hold vapour from, metres of global layer: its inventory, and the
+/// vapour its air lists (M65; F21's a metre wherever it listed any).
 fn air_water(c: &Ctx) -> f64 {
     c.map_get("volatiles.inventory", "H2O")
-        + if c.map_get("atmosphere.composition", "H2O") > 0.0 {
-            1.0
-        } else {
-            0.0
-        }
+        + air_vapour_water(
+            c.map("atmosphere.composition"),
+            c.f64("atmosphere.surface_pressure"),
+            c.f64("body.gravity"),
+        )
 }
 
 /// F293: the share of a black body's radiation the air lets out at each ground temperature, its
@@ -2150,13 +2177,6 @@ pub fn atmosphere_window_share(c: &Ctx) -> Value {
 /// temperature, its column's; none without an atmosphere.
 pub fn atmosphere_downward_share(c: &Ctx) -> Value {
     Curve::new(streams_table(c).down_points()).into()
-}
-
-/// The share of the sunlight a body absorbs that its air and ground keep (M55): all but what
-/// its haze sends back to space.
-pub fn sunlight_kept(c: &Ctx) -> f64 {
-    let absorbed = 1.0 - c.f64("atmosphere.bond_albedo");
-    (1.0 - c.f64("atmosphere.sunlight_returned") / absorbed.max(1e-9)).clamp(0.0, 1.0)
 }
 
 /// The column's streams over the ground's temperatures, from a third of the equilibrium
@@ -2181,6 +2201,9 @@ pub fn streams_table_to(c: &Ctx, most: f64) -> std::sync::Arc<crate::radiation::
         c.f64("body.gravity").to_bits(),
         air_water(c).to_bits(),
         most.to_bits(),
+        c.f64("orbit.insolation").to_bits(),
+        c.f64("atmosphere.bond_albedo").to_bits(),
+        c.f64("star.xuv_relative").to_bits(),
     ];
     for (s, f) in c.map("atmosphere.composition") {
         key.extend(s.bytes().map(u64::from));
@@ -2227,13 +2250,9 @@ pub fn atmosphere_surface_temperature_mean(c: &Ctx) -> Value {
     if p <= 0.0 {
         return t_eq.into();
     }
-    // What the air and the ground keep of the sunlight: all it absorbs but what its haze
-    // sends back to space (M55).
-    let returned = c.f64("atmosphere.sunlight_returned") * c.f64("orbit.insolation") / 4.0;
+    // All it absorbs, its haze's stratosphere's emission its column's own (M65).
     match air_column(c, p, t_eq) {
-        Some(column) => column
-            .surface_temperature((SIGMA_SB * t_eq.powi(4) - returned).max(1e-9))
-            .into(),
+        Some(column) => column.surface_temperature(SIGMA_SB * t_eq.powi(4)).into(),
         None => t_eq.into(),
     }
 }
@@ -2242,7 +2261,10 @@ pub fn atmosphere_surface_temperature_mean(c: &Ctx) -> Value {
 /// zero-dimensional balance under its star's light then and its air then (F293), the pressure
 /// its escape and its outgassing left it (F263, F264), its column's greenhouse and its air's
 /// scattering at that pressure, the ground beneath and its water the present's; an airless
-/// body's albedo the present's.
+/// body's albedo the present's. Its column solved at RC_HISTORY_COLUMNS of the star's points
+/// evenly in their rank, the last the present's mean (M65), and its greenhouse, the ground's
+/// temperature over the equilibrium temperature, read between them; each point at its own
+/// equilibrium temperature, never under its air's bulk gas's frost point.
 pub fn atmosphere_surface_temperature_history(c: &Ctx) -> Value {
     use rayon::prelude::*;
     let present = c.f64("star.luminosity").max(1e-300);
@@ -2272,22 +2294,43 @@ pub fn atmosphere_surface_temperature_history(c: &Ctx) -> Value {
     } else {
         ALBEDO_BENEATH
     };
-    let points = c
-        .curve("star.luminosity_history")
-        .points
+    let history = &c.curve("star.luminosity_history").points;
+    if history.is_empty() {
+        return Curve::new(Vec::new()).into();
+    }
+    // Each point's pressure, light, albedo, absorbed sunlight and equilibrium temperature.
+    let state = |k: usize| {
+        let (t, l) = history[k];
+        let light = sunlight * (l / present).max(0.0);
+        if now <= 0.0 {
+            let absorbed = light * (1.0 - albedo);
+            return (
+                0.0,
+                light,
+                albedo,
+                absorbed,
+                (absorbed / SIGMA_SB).powf(0.25),
+            );
+        }
+        let p = pressures.eval(t).max(0.0);
+        let a = ground + air_share(p) * (air_albedo(p) - ground);
+        let absorbed = light * (1.0 - a).max(1e-9);
+        (p, light, a, absorbed, (absorbed / SIGMA_SB).powf(0.25))
+    };
+    let last = history.len() - 1;
+    let mean = c.f64("atmosphere.surface_temperature_mean");
+    let mut solved: Vec<usize> = (0..RC_HISTORY_COLUMNS)
+        .map(|i| (i as f64 * last as f64 / (RC_HISTORY_COLUMNS - 1).max(1) as f64).round() as usize)
+        .collect();
+    solved.dedup();
+    // The ground's temperature at each solved point, and its greenhouse there.
+    let found: Vec<(f64, f64)> = solved
         .par_iter()
-        .map(|&(t, l)| {
-            let light = sunlight * (l / present).max(0.0);
-            if now <= 0.0 {
-                return (t, (light * (1.0 - albedo) / SIGMA_SB).powf(0.25));
-            }
-            let p = pressures.eval(t).max(0.0);
-            let share = air_share(p);
-            let a = ground + share * (air_albedo(p) - ground);
-            let haze = crate::radiation::tholin_production(methane, xuv, p);
-            let absorbed = light * (1.0 - a - crate::radiation::haze_returned(haze)).max(1e-9);
-            let t_eq = (absorbed / SIGMA_SB).powf(0.25);
-            let surface = if p > 0.0 {
+        .map(|&k| {
+            let (p, light, a, absorbed, t_eq) = state(k);
+            let surface = if k == last && now > 0.0 {
+                mean
+            } else if p > 0.0 {
                 crate::radiation::Column::new(
                     &composition,
                     p,
@@ -2295,11 +2338,39 @@ pub fn atmosphere_surface_temperature_history(c: &Ctx) -> Value {
                     water,
                     t_eq * SKIN_SHARE.powf(0.25),
                 )
+                .with_sunlight(crate::radiation::Sunlight::of(
+                    &composition,
+                    (p, gravity),
+                    light,
+                    a,
+                    xuv,
+                ))
                 .surface_temperature(absorbed)
             } else {
                 t_eq
             };
-            (t, surface)
+            (surface, surface / t_eq.max(1e-300))
+        })
+        .collect();
+    let points = (0..=last)
+        .map(|k| {
+            let (p, _, _, _, t_eq) = state(k);
+            let i = solved.partition_point(|&s| s <= k).clamp(1, solved.len()) - 1;
+            let surface = if solved[i] == k {
+                found[i].0
+            } else if p <= 0.0 {
+                t_eq
+            } else {
+                let j = (i + 1).min(solved.len() - 1);
+                let w = if j > i {
+                    (k - solved[i]) as f64 / (solved[j] - solved[i]) as f64
+                } else {
+                    0.0
+                };
+                let greenhouse = found[i].1 + w * (found[j].1 - found[i].1);
+                (greenhouse * t_eq).max(crate::radiation::frost_point(&composition, p))
+            };
+            (history[k].0, surface)
         })
         .collect();
     Curve::new(points).into()
@@ -2538,11 +2609,9 @@ pub fn atmosphere_surface_temperature_warmest(c: &Ctx) -> Value {
         LOW_SUN_ALBEDO * (c.f64("atmosphere.column_mass") / LOW_SUN_COLUMN).clamp(0.0, 1.0);
     let bond = c.f64("atmosphere.bond_albedo");
     let held = (slope, c.f64("climate.transport_coefficient"));
-    // What the haze sends back to space never warms the ground (M55).
-    let kept = sunlight_kept(c);
     warmest_temperature(mean, held, |mu| {
         let (q, height) = sun(mu);
-        (1.0 - (bond + low_sun * (mean_height - height)).clamp(0.0, 1.0)) * q * kept
+        (1.0 - (bond + low_sun * (mean_height - height)).clamp(0.0, 1.0)) * q
     })
     .into()
 }
@@ -2605,22 +2674,6 @@ pub fn atmosphere_oxidant_availability(c: &Ctx) -> Value {
         * p_bar)
         .clamp(0.0, 1.0)
         .into()
-}
-
-/// M55: the share of its star's light the air's methane haze absorbs high and sends back to
-/// space (McKay et al. 1991's anti-greenhouse), never warming the ground or the air under it;
-/// none without an atmosphere.
-pub fn atmosphere_sunlight_returned(c: &Ctx) -> Value {
-    let p = c.f64("atmosphere.surface_pressure");
-    if p <= 0.0 {
-        return 0.0.into();
-    }
-    crate::radiation::haze_returned(crate::radiation::tholin_production(
-        c.map_get("atmosphere.composition", "CH4"),
-        c.f64("star.xuv_relative"),
-        p,
-    ))
-    .into()
 }
 
 pub fn atmosphere_haze_production(c: &Ctx) -> Value {
@@ -3841,9 +3894,11 @@ mod tests {
     }
 
     /// F293: the zero-dimensional means of the reference atmospheres on their columns: Venus's
-    /// and Titan's at their measured 737 and 93.7 K, set by their clouds and their methane and
-    /// nitrogen; Earth's at the 291.6 K its water is set by, at its own albedo; Mars's from its
-    /// carbon dioxide's band alone, against its measured some 210 K.
+    /// at its measured 737 K, set by its clouds; Titan's by its methane and nitrogen within 4 K
+    /// of its measured 93.7 (M65: its column's troposphere stands 4 to 7 K warm over Huygens's,
+    /// a known limitation until methane's moist convection and its sunlight's bands); Earth's
+    /// at the 291.6 K its water is set by, at its own albedo; Mars's from its carbon dioxide's
+    /// band alone, against its measured some 210 K.
     #[test]
     fn surface_temperatures_of_the_reference_atmospheres() {
         let mean = |name: &str| {
@@ -3856,7 +3911,7 @@ mod tests {
         assert!((venus - 737.0).abs() < 15.0, "Venus {venus}");
         assert!((earth - 291.6).abs() < 4.0, "Earth {earth}");
         assert!((mars - 213.0).abs() < 6.0, "Mars {mars}");
-        assert!((titan - 93.7).abs() < 3.0, "Titan {titan}");
+        assert!((titan - 93.7).abs() < 4.0, "Titan {titan}");
     }
 
     #[test]

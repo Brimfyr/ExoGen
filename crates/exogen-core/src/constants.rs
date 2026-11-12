@@ -1994,18 +1994,146 @@ pub const H2O_CONTINUUM_STATE: (f64, f64, f64) = (224.92, 260.0, 0.02);
 /// air's kilogram holds some (Earth's Arctic lets out some 190 W/m² over its 258 K ground); set
 /// so that Earth's zero-dimensional greenhouse is kept (291.6 K, F21) and its outgoing radiation
 /// rises by 2.1 W/m² per kelvin of the surface, the slope Earth's zonal means show (North 1975;
-/// Warren and Schneider 1979 give 1.6 to 2.2), as F293's grey water was.
-pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.1625, 0.2346);
-/// F293: carbon dioxide's molecules' collisions in the far infrared, their absorption by the
-/// square of their density: its integral over 60 to 250 cm^-1, 3.11e-3 cm^-2 amagat^-2, as
-/// measured at room temperature (Ho et al. 1971, Turbet et al. 2019 within its errors), in a
-/// band peaking at 50 cm^-1, a stated shape, (nu / 50) e^(1 - nu / 50).
-pub const CO2_COLLISIONS: (f64, f64, f64, f64) = (3.11e-3, 60.0, 250.0, 50.0);
-/// F293: the sulfuric clouds an atmosphere's sulfur dioxide makes, their grey depth in the
-/// infrared per kg/m² of it, well mixed: set by Venus's measured 737 K, where they close the
-/// windows its gas's other bands and far wings leave: some 80 over its 229 kg/m², its gas's
-/// emission lifted to under a bar, in its cloud deck.
-pub const SULFURIC_CLOUD_DEPTH: f64 = 0.3447;
+/// Warren and Schneider 1979 give 1.6 to 2.2), as F293's grey water was; set again on M65's
+/// radiative-convective column (0.1625 u^0.2346 on F293's left it at 292.2 K), its air then
+/// sending down 342.8 W/m² (342 measured, Kato et al. 2018).
+pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.0914, 0.3856);
+/// M65: methane's 7.7 um band (its nu_4, with nu_2's about 1533 cm^-1), its absorption per
+/// kg/m² at the reference pressure CO2_BAND_PRESSURE, broadened in proportion to the pressure, as
+/// carbon dioxide's band is (Williams 2026's way): HITRAN's 47,799 lines of 12CH4 from 1000 to
+/// 1800 cm^-1 (hitran.org, 2026-11-11), air-broadened at 500 hPa and 150 K, the temperature of
+/// Titan's stratosphere where the band cools it, coarse-grained to each 25 cm^-1's median: each
+/// (upper edge, cm^-1; m²/kg). The spectrum's integral 1.97e4 cm^-1 m²/kg. Its medians stand
+/// on a plateau from 1250 to 1350 cm^-1, which one exponential's wings do not fit.
+pub const CH4_BAND: [(f64, f64); 32] = [
+    (1025.0, 0.0),
+    (1050.0, 0.0),
+    (1075.0, 1.10e-8),
+    (1100.0, 1.22e-6),
+    (1125.0, 1.67e-5),
+    (1150.0, 6.61e-5),
+    (1175.0, 1.67e-3),
+    (1200.0, 6.51e-3),
+    (1225.0, 1.01e-1),
+    (1250.0, 1.78),
+    (1275.0, 12.3),
+    (1300.0, 17.3),
+    (1325.0, 16.9),
+    (1350.0, 20.3),
+    (1375.0, 3.92),
+    (1400.0, 1.03e-1),
+    (1425.0, 4.73e-2),
+    (1450.0, 6.17e-2),
+    (1475.0, 8.39e-2),
+    (1500.0, 2.24e-2),
+    (1525.0, 3.17e-3),
+    (1550.0, 1.43e-1),
+    (1575.0, 8.79e-3),
+    (1600.0, 2.10e-2),
+    (1625.0, 3.47e-2),
+    (1650.0, 1.76e-2),
+    (1675.0, 2.06e-3),
+    (1700.0, 4.29e-4),
+    (1725.0, 6.84e-5),
+    (1750.0, 2.26e-6),
+    (1775.0, 1.90e-6),
+    (1800.0, 5.75e-7),
+];
+/// M65: the methane haze over its column. Its extinction at 550 nm, HAZE_EXTINCTION for each
+/// unit of its index, the share above the pressure p (p / p_s)^HAZE_SHAPE: Tomasko et al. 2008's
+/// measured power laws, 3.9 of Titan's 8.2 above 80 km, 2.9 between 80 and 30, 1.4 below (the
+/// Huygens DISR's fits, West et al. 2014; Titan's index 0.0391), which its thermal depth follows.
+/// The light it absorbs, above its base, where its extinction from the top reaches
+/// HAZE_ABSORBING_BASE, Titan's at 80 km, the share above p (p / p_base)^HAZE_ABSORBING_SHAPE:
+/// of the incident light some 40 percent is absorbed above 80 km at Huygens's site, half of it
+/// above 150 km (Tomasko et al. 2008, heat balance: 20 above 150 km, 20 between 150 and 80),
+/// where the haze takes some 42 percent in all.
+pub const HAZE_EXTINCTION: f64 = 210.0;
+pub const HAZE_SHAPE: f64 = 0.14;
+pub const HAZE_ABSORBING_BASE: f64 = 4.4;
+pub const HAZE_ABSORBING_SHAPE: f64 = 0.355;
+/// M65: the methane haze's thermal depth over its column for each unit of its index, at
+/// HAZE_INFRARED_REFERENCE cm^-1, in proportion to the wavenumber below the mid-infrared: set so
+/// that Huygens's measured profile through Titan's column lets out the 2.72 W/m² Titan absorbs
+/// (2.734), a depth of 0.0078 over Titan's (index 0.0391), within the order of magnitude its
+/// aerosol's extinction gives, some 0.02 (its extinction at 62.5 um a seventieth of its
+/// extinction at 1.583 um, Anderson and Samuelson 2011, whose depth is some 1.45, Tomasko et
+/// al. 2008).
+pub const HAZE_INFRARED: f64 = 0.20;
+pub const HAZE_INFRARED_REFERENCE: f64 = 160.0;
+/// M65: the radiative-convective profiles' nodes, RC_NODE_STEP apart in the logarithm of the
+/// ground's temperature; each marched until no level moves by RC_SETTLED K, at most RC_ROUNDS
+/// steps, Anderson's mixing over the last RC_HISTORY; the sunlight laid down over
+/// RC_SUN_HEIGHTS of the lit hemisphere's sun heights, evenly in their cosine.
+pub const RC_NODE_STEP: f64 = 0.1;
+pub const RC_SETTLED: f64 = 0.01;
+pub const RC_ROUNDS: usize = 400;
+pub const RC_HISTORY: usize = 6;
+/// M65: the columns whose radiative-convective nodes are kept, each some 10 kB.
+pub const RC_COLUMNS_KEPT: usize = 512;
+/// M65: the star's points the temperature history solves its column at, evenly in their rank,
+/// its greenhouse read between them.
+pub const RC_HISTORY_COLUMNS: usize = 5;
+/// M65: the Newton steps that may fail to shrink in a row before the relaxation's take over.
+pub const RC_NEWTON_STALLS: usize = 8;
+/// M65: the infrared depths, -ln of the share of its ground's light an air lets through to
+/// space, over which a column goes from its radiative-convective profile to F293's, the adiabat
+/// up to its skin: an air so thick that its deep air carries its heat by convection alone, as
+/// Venus's does to some 50 km. Venus's 153, Titan's 4.1, Earth's 1.2, Mars's 0.2. In Venus's
+/// air, thick and near its adiabat throughout, its profile solved was no smooth function of its
+/// ground's temperature: from one body to the next along a sweep of its radius its ground
+/// leapt between some 696 and 726 K (the user chose the blend, 2026-11-12).
+pub const RC_THICK: (f64, f64) = (10.0, 20.0);
+/// M65: how far over its adiabat, in its share, a level still stands on it and convects: the
+/// adiabat's own slight change with the temperature its levels were mixed at.
+pub const RC_ADIABAT_SLACK: f64 = 1e-6;
+pub const RC_SUN_HEIGHTS: usize = 8;
+/// M65: water vapour's sunlight by its amount scaled by its pressure over this, Pa (Lacis and
+/// Hansen 1974's p_0), its lines broadened in proportion to it; where the climate reads the
+/// column whole, its vapour's mean pressure WATER_SUNLIGHT_SHARE of its ground's, the vapour
+/// within a fifth of the air's scale height (its share of the column's mass above p as
+/// (p / p_s)^5).
+pub const WATER_SUNLIGHT_PRESSURE: f64 = 101_325.0;
+pub const WATER_SUNLIGHT_SHARE: f64 = 5.0 / 6.0;
+/// M65: the zero-dimensional balance's scan for its warmest crossing, so many steps of so much
+/// of the logarithm of the temperature up from its black body's, to four times it.
+pub const BALANCE_SCAN: usize = 7;
+pub const BALANCE_STEP: f64 = 0.2;
+/// M65: carbon dioxide's continuum where its lines and its collisions' tables leave none, grey,
+/// cm^-1 amagat^-2, by the square of its density: the one Venus's nightside windows measure at
+/// 1.18 um, 0.7 +- 0.2e-9 (Bezard et al. 2011, Icarus 216, 173; 0.3 to 0.8e-9 at 1.10 and 1.18
+/// um, Fedorova et al. 2015; 0.55e-9 in the laboratory, Snels et al. 2014). Without it Venus's
+/// deep air loses its heat through its near-infrared windows to its deck.
+pub const CO2_CONTINUUM: f64 = 0.7e-9;
+/// M65: the most a radiative-convective step moves a level, K, plain or mixed.
+pub const RC_CLAMP: f64 = 20.0;
+/// M65: a radiative-convective solve's steps without its least change falling, past which it
+/// steps plainly, unmixed.
+pub const RC_STALE: usize = 40;
+/// M65: the sulfuric deck. The acid vapour its sulfur dioxide makes, SULFURIC_ACID_SHARE of its
+/// molecules: Venus's some 12 ppm under its clouds (10 to 14 at its equator, Kolodner and Steffes
+/// 1998; over 12 near 47 km, Oschlisniok et al. 2021) against its 150 ppm of the gas. The deck
+/// from where that acid saturates up SULFURIC_DECK_SPAN of the pressure: Venus's from some 48 km
+/// and 1.28 bar to some 70 km and 37 hPa (Knollenberg and Hunten 1980; VeGa-2; VIRA). The acid's
+/// saturated vapour pressure over itself, ln p = a - b / T0 + b (-1 / T + 1 / T0 + c / (Tc - T0)
+/// (1 + ln(T0 / T) - T0 / T)), p in bar: (a, b, T0, Tc, c) (Kulmala and Laaksonen 1990, as Dai
+/// et al. 2022's Eq. 12 gives it).
+pub const SULFURIC_ACID_SHARE: f64 = 0.08;
+pub const SULFURIC_DECK_SPAN: f64 = 35.0;
+/// M65: the sulfuric deck takes its sunlight in its upper cloud, from its top down to
+/// SULFURIC_SUN_SPAN of the top's pressure: Venus's above some 60 km, 37 to 236 hPa, where the
+/// light is deposited, little of it in the middle and lower cloud (Tomasko et al. 1980).
+pub const SULFURIC_SUN_SPAN: f64 = 6.4;
+pub const SULFURIC_ACID_VAPOUR: (f64, f64, f64, f64, f64) = (16.259, 10_156.0, 360.0, 905.0, 0.38);
+/// M65: the sulfuric deck's grey depth in its star's light per kg/m² of the sulfur dioxide
+/// over the ground: set so that Venus's ground absorbs some 17 of the 157 W/m² the planet does
+/// (Tomasko et al. 1980), the light laid down over the lit hemisphere.
+pub const SULFURIC_CLOUD_SUNLIGHT: f64 = 6.3e-3;
+/// F293, M65: the sulfuric deck's grey depth in the infrared per kg/m² of the sulfur dioxide:
+/// in a thick air (RC_THICK) well mixed in its mass on F293's profile, in a thinner one spread
+/// evenly in the pressure's logarithm through its deck; set so that Venus's ground stands at its
+/// measured 737 K, as F293 set it, some 95 over its 229 kg/m².
+pub const SULFURIC_CLOUD_DEPTH: f64 = 0.4142;
 /// F293: the sulfuric clouds' reflection, s per kg/m² of sulfur dioxide, the clouds reflecting
 /// s / (1 + s) of the light over the air below them: set by Venus's measured Bond albedo,
 /// 0.76, over the 0.716 its air's scattering gives: they reflect 0.394.
@@ -2051,7 +2179,6 @@ pub const HAZE_SUNLIGHT: f64 = 8.128;
 /// Titan's measured 93.7 K (Fulchignoni et al. 2005), where its column's troposphere stands on
 /// the adiabat from its ground (known: Titan's is radiative above some kilometres, warmer
 /// aloft, letting out more).
-pub const HAZE_RETURNED: f64 = 0.7031;
 /// M58: methane's grey depth in its star's light per kg/m² of it over the ground, absorbing
 /// under the haze in the air the cycle carries: set so that 10 percent of Titan's light
 /// reaches its ground (Horst 2017; 11 percent, Tomasko et al. 2005) as the cycle's split
@@ -2064,8 +2191,9 @@ pub const SUNLIGHT_UP_PATH: f64 = 1.66;
 /// infrared (WATER_CLOUD_DEPTH), absorbing in the air the cycle carries with what else takes
 /// the light there but water vapour, ozone and aerosols with them: set so that Earth's ground
 /// keeps 161 of its 340 W/m² (Wild et al. 2013) as the cycle's split reads it at the planet's
-/// albedo over the lit hemisphere, its air then taking 77 (79 measured).
-pub const CLOUD_SUNLIGHT: f64 = 0.1633;
+/// albedo over the lit hemisphere, its air then taking 77 (79 measured); kept for the clouds'
+/// law set again in M65, its depth in the light at Earth's 31.5 kg/m² of vapour the same.
+pub const CLOUD_SUNLIGHT: f64 = 0.1724;
 /// Water vapour column model: 25 kg/m² at 288 K and 70% relative humidity, scaled by
 /// Clausius–Clapeyron with L / R_v = 5420 K and capped by the inventory.
 pub const WATER_COLUMN_REF: f64 = 25.0;
@@ -2097,6 +2225,12 @@ pub const HELD_HOU_DELTA_H: f64 = 0.25;
 /// Phase 0 spike to reproduce published locked-world day–night contrasts.
 pub const D_EARTH: f64 = 0.58;
 pub const D_CAP_MULTIPLE: f64 = 10.0;
+/// M65: carbon dioxide's heat capacity at constant pressure by its temperature, J/mol/K,
+/// A + B t + C t² + D t³ + E / t², t its temperature over 1000 K: NIST's Shomate fit for the
+/// gas from 298 to 1200 K (Chase 1998), held at its 200 K below: 37.2 at 300 K, 50.3 at Venus's
+/// 735 K, where its constant value would leave Venus's adiabat a third too steep.
+pub const CO2_SHOMATE: (f64, f64, f64, f64, f64) =
+    (24.99735, 55.18696, -33.69137, 7.948387, -0.136638);
 /// Specific heat capacities at constant pressure, J/kg/K, by gas, for the lapse rate.
 pub const CP_BY_GAS: [(&str, f64); 10] = [
     ("N2", 1_040.0),
