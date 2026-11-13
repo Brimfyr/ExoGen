@@ -2199,6 +2199,41 @@ pub fn hemisphere_absorbed(tau: f64) -> f64 {
     1.0 - through
 }
 
+/// The share of its star's light ozone absorbs on a path of `x` cm at STP (M67): Lacis and
+/// Hansen 1974's fits over the Sun's spectrum, the Chappuis band's 0.02118 x / (1 + 0.042 x +
+/// 0.000323 x²) and the Hartley and Huggins bands' 1.082 x / (1 + 138.6 x)^0.805 + 0.0658 x /
+/// (1 + (103.6 x)³).
+pub fn ozone_sunlight(x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let visible = 0.02118 * x / (1.0 + 0.042 * x + 0.000323 * x * x);
+    let ultraviolet =
+        1.082 * x / (1.0 + 138.6 * x).powf(0.805) + 0.0658 * x / (1.0 + (103.6 * x).powi(3));
+    visible + ultraviolet
+}
+
+/// The ozone column of an air whose oxygen stands at `oxygen` of it, cm at STP (M67): by
+/// OZONE_COLUMN, none without oxygen.
+pub fn ozone_column(oxygen: f64) -> f64 {
+    let level = oxygen.max(0.0) / OXYGEN_PRESENT;
+    let (first, last) = (OZONE_COLUMN[0], OZONE_COLUMN[OZONE_COLUMN.len() - 1]);
+    let du = if level <= first.0 {
+        first.1 * level / first.0
+    } else if level >= last.0 {
+        last.1
+    } else {
+        let k = OZONE_COLUMN
+            .windows(2)
+            .position(|w| level <= w[1].0)
+            .unwrap_or(0);
+        let (a, b) = (OZONE_COLUMN[k], OZONE_COLUMN[k + 1]);
+        let f = (level / a.0).ln() / (b.0 / a.0).ln();
+        a.1 + f * (b.1 - a.1)
+    };
+    du * 1e-3
+}
+
 /// The share of its star's light water vapour absorbs on a path of `u` cm of precipitable
 /// water (M58): Lacis and Hansen 1974's fit over the Sun's spectrum to its bands,
 /// 2.9 u / ((1 + 141.5 u)^0.635 + 5.925 u), saturating towards a half.
@@ -2493,6 +2528,50 @@ mod tests {
             ),
             ALBEDO_BENEATH,
         )
+    }
+
+    /// M67: ozone takes Lacis and Hansen (1974)'s share of the Sun's light, 0.0221 of it
+    /// through 300 DU from overhead, the more the longer its path; its column by the air's
+    /// oxygen as WACCM6 gives it (Cooke et al. 2022), 279 DU at the present level, 18 at a
+    /// thousandth of it, none without oxygen, the more the more oxygen; Earth's air taking some
+    /// 10 W/m² of its light by it over the lit hemisphere (the notes' 10 to 11.5).
+    #[test]
+    fn ozone_takes_its_share_of_the_light() {
+        assert!(
+            (ozone_sunlight(0.3) - 0.0221).abs() < 5e-4,
+            "{}",
+            ozone_sunlight(0.3)
+        );
+        assert_eq!(ozone_sunlight(0.0), 0.0);
+        let mut last = 0.0;
+        for x in [1e-4, 1e-3, 0.01, 0.1, 0.3, 1.0, 3.0] {
+            let a = ozone_sunlight(x);
+            assert!(a > last && a < 0.2, "{x}: {a}");
+            last = a;
+        }
+        assert!((ozone_column(OXYGEN_PRESENT) - 0.279).abs() < 1e-9);
+        assert!((ozone_column(0.001 * OXYGEN_PRESENT) - 0.018).abs() < 1e-9);
+        assert_eq!(ozone_column(0.0), 0.0);
+        let mut last = -1.0;
+        for level in [0.0, 1e-4, 1e-3, 3e-3, 0.01, 0.03, 0.1, 0.5, 1.0, 2.0] {
+            let c = ozone_column(level * OXYGEN_PRESENT);
+            assert!(c >= last, "{level}: {c}");
+            last = c;
+        }
+        // Over the body, its lit hemisphere's area even in the sun's height cosine: S0 / 2
+        // times the integral of mu A(mu).
+        let n = 2000;
+        let taken = (0..n)
+            .map(|k| {
+                let mu = (k as f64 + 0.5) / n as f64;
+                mu * ozone_sunlight(magnification(mu) * ozone_column(OXYGEN_PRESENT))
+            })
+            .sum::<f64>()
+            / n as f64
+            * 1361.0
+            / 2.0;
+        println!("Earth's ozone takes {taken:.1} W/m²");
+        assert!((8.5..12.0).contains(&taken), "{taken}");
     }
 
     /// F293: carbon dioxide's band widens with the logarithm of its column: over a 288 K

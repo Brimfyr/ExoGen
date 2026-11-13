@@ -1832,6 +1832,10 @@ pub fn export(
     stage_outputs.insert("mean_temperature_k".to_string(), mean_t);
     stage_outputs.insert("equator_temperature_k".to_string(), equator_t);
     stage_outputs.insert("polar_temperature_k".to_string(), poles_t);
+    // The share of its star's light the body reflected through its year (M67).
+    if out.planetary_albedo.is_finite() {
+        stage_outputs.insert("planetary_albedo".to_string(), out.planetary_albedo);
+    }
     stage_outputs.insert("coldest_temperature_k".to_string(), out.temperature_range.0);
     // The poles' shadows (F243): the share of the body in them and the coldest the map holds.
     stage_outputs.insert("shadow_fraction".to_string(), out.shadow_fraction);

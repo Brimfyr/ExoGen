@@ -120,6 +120,16 @@ pub struct EnergyBalance {
     /// Its water vapour's amount in the sunlight per kg/m² of it (M65): its mean pressure over
     /// WATER_SUNLIGHT_PRESSURE.
     pub water_path: f64,
+    /// The water's clouds the year runs under (M67), where a year's are known: what they read
+    /// of the body and its air, its clear air's streams in place of the stated law's, each
+    /// place's deck laid over them through each step. None runs the stated law.
+    pub clouds: Option<std::sync::Arc<crate::clouds::Sky>>,
+    /// Its ozone column, cm at STP, by its oxygen (M67): its light's absorber high in its
+    /// air under its clouds, where the stated law held it.
+    pub ozone: f64,
+    /// Its clear air's other absorbers of the light under its clouds, grey, a depth per kg/m²
+    /// of its vapour (AIR_SUNLIGHT, M67).
+    pub air_sunlight: f64,
 }
 
 /// The year's mean temperature of a surface at its own albedo, facing where its slope faces
@@ -221,6 +231,9 @@ pub struct Climate {
     pub transport: Field<f32>,
     /// Newton's steps to converge.
     pub iterations: usize,
+    /// The caps of ice it was solved over (F241): the share of each cell they cover and
+    /// their albedo there, which a year under its clouds lays over its land's own (M67).
+    pub caps: Option<(Field<f32>, Field<f32>)>,
 }
 
 /// The ground under the climate (F236): what its days and years read.
@@ -1165,6 +1178,10 @@ pub struct Cycle {
     /// The most years a tilt's cycle ran and whether every tilt's sea ice had settled by
     /// them (M64).
     pub settled: (usize, bool),
+    /// The share of the light on the body its places reflected through the year, its
+    /// planetary albedo (M67): its ground's, its air's and its clouds'; NaN where its places
+    /// run apart, with no air between them.
+    pub albedo: f64,
 }
 
 /// The cycle's year step by step (F253): each step's end's phase of the year from the
@@ -2145,6 +2162,9 @@ struct TiltYear {
     caps: Vec<f64>,
     /// The years run and whether the sea's ice had settled by them (M64).
     settled: (usize, bool),
+    /// The share of the light on the body its places reflected through the year (M67), NaN
+    /// where they run apart.
+    albedo: f64,
 }
 
 /// The lockstep through its last cycle (F239, F245): the places' runs; where the atmosphere
@@ -2170,6 +2190,8 @@ struct Lockstep {
     active: f64,
     /// The years run and whether the sea's ice had settled by them (M64).
     settled: (usize, bool),
+    /// The share of the light on the body its places reflected through the last cycle (M67).
+    albedo: f64,
 }
 
 /// A lockstep's end on the latitudes' rows, to start the places from (F258): the gas in the
@@ -2399,7 +2421,26 @@ impl EnergyBalance {
             liquid: if evaporation > 0.0 { liquid } else { None },
             rows: false,
             circulation: crate::wind::Air::from_graph(graph),
+            clouds: None,
+            air_sunlight: if airless { 0.0 } else { AIR_SUNLIGHT },
+            ozone: if airless {
+                0.0
+            } else {
+                let total = composition.values().sum::<f64>().max(1e-300);
+                crate::radiation::ozone_column(
+                    composition.get("O2").copied().unwrap_or(0.0) / total,
+                )
+            },
         }
+    }
+
+    /// The balance under the water's clouds of `sky` (M67): its air's streams its clear air's,
+    /// the clouds laid over them at each place through each step of a year that carries them.
+    pub fn under(&self, sky: std::sync::Arc<crate::clouds::Sky>) -> Self {
+        let mut balance = self.clone();
+        balance.outgoing = sky.clear.clone();
+        balance.clouds = Some(sky);
+        balance
     }
 
     /// The year's balance at another state of the orbit's cycles (F259): at an obliquity, rad,
@@ -2438,11 +2479,28 @@ impl EnergyBalance {
     /// its column's as it stands, so that a thin air, whose share changes fast with the
     /// warmth its table reads, never takes a falling slope from the ground's light, which
     /// would run its implicit step away.
-    fn air_radiation(&self, air: f64, (emitted, reflects): (f64, f64)) -> (f64, f64) {
+    ///
+    /// Under its clouds (M67), `deck` over the place at the step, its air loses besides what
+    /// they change of what the place lets out to space and of what its air sends down: what
+    /// the air loses is what leaves the place to space and to the ground less what its ground
+    /// sends up, however the clouds share it.
+    fn air_radiation(
+        &self,
+        air: f64,
+        (emitted, reflects): (f64, f64),
+        deck: Option<&crate::clouds::Deck>,
+    ) -> (f64, f64) {
         let taken = 1.0 - self.outgoing.window(air);
+        let clouds = |a: f64| match (&self.clouds, deck) {
+            (Some(sky), Some(d)) => {
+                let (out, down) = sky.infrared(d, a, emitted);
+                out + down
+            }
+            _ => 0.0,
+        };
         let net = |a: f64| {
             let down = self.outgoing.down(a);
-            self.outgoing.air_up(a) + down - taken * (emitted + reflects * down)
+            self.outgoing.air_up(a) + down - taken * (emitted + reflects * down) + clouds(a)
         };
         let h = 0.01;
         (
@@ -2468,10 +2526,12 @@ impl EnergyBalance {
         } else {
             0.0
         };
-        let clouds = if column > 0.0 {
-            CLOUD_SUNLIGHT * WATER_CLOUD_DEPTH.0 * column.powf(WATER_CLOUD_DEPTH.1)
-        } else {
-            0.0
+        // The stated law's clouds and the air's other absorbers with them (M58), or under its
+        // own clouds its clear air's other absorbers alone (M67).
+        let clouds = match self.clouds {
+            _ if column <= 0.0 => 0.0,
+            None => CLOUD_SUNLIGHT * WATER_CLOUD_DEPTH.0 * column.powf(WATER_CLOUD_DEPTH.1),
+            Some(_) => self.air_sunlight * column,
         };
         let grey = self.methane + self.deck + clouds;
         let u = column * self.water_path / 10.0;
@@ -2480,12 +2540,46 @@ impl EnergyBalance {
         let both = crate::radiation::water_sunlight(u * (path + SUNLIGHT_UP_PATH));
         let down = (1.0 - taken) * (-grey / mu).exp();
         let kept_up = (1.0 - both) / (1.0 - taken).max(1e-9);
+        // Under its clouds its ozone takes its share high, as its haze does (M67).
+        let ozone = match self.clouds {
+            Some(_) => {
+                crate::radiation::ozone_sunlight(crate::radiation::magnification(mu) * self.ozone)
+            }
+            None => 0.0,
+        };
         Light {
             top,
-            haze: 1.0 - (-self.haze / mu).exp(),
+            haze: 1.0 - (-self.haze / mu).exp() * (1.0 - ozone),
             down,
             up: 1.0 - kept_up * (-SUNLIGHT_UP_PATH * grey).exp(),
+            rayleigh: self.clouds.as_ref().map_or(0.0, |sky| sky.rayleigh),
+            cloud: 0.0,
+            absorbs: 0.0,
+            above: 0.0,
+            cloud_down: 0.0,
+            under: self.clouds.is_some(),
         }
+    }
+
+    /// A place's sunlight at a step as `light` gives it, under its clouds `deck` where the
+    /// year runs under them (M67): what they reflect with the sun at its height, and what they
+    /// send down to the ground over air at `air` K, by night too.
+    fn light_under(
+        &self,
+        (lit, mu): (f64, f64),
+        air: f64,
+        deck: Option<&crate::clouds::Deck>,
+    ) -> Light {
+        let mut sun = self.light(lit, mu, air);
+        if let (Some(sky), Some(deck)) = (&self.clouds, deck) {
+            sun.rayleigh = sky.rayleigh;
+            sun.cloud = deck.reflectance(mu);
+            sun.cloud_down = sky.infrared(deck, air, 0.0).1;
+            // The clouds take their share of the light (M67).
+            sun.absorbs = deck.absorbs as f64;
+            sun.above = deck.above as f64;
+        }
+        sun
     }
 
     /// What a ground at `albedo` keeps of a place's sunlight at a step, W/m² (M58).
@@ -2825,6 +2919,7 @@ impl EnergyBalance {
             snow_albedo: Field::from_fn(grid, |c, _| snow[grid.index(c)] as f32),
             transport: Field::from_fn(grid, |c, _| brought[grid.index(c)] as f32),
             iterations,
+            caps: caps.cloned(),
         }
     }
 
@@ -2858,6 +2953,13 @@ impl EnergyBalance {
         reservoir: Option<&Reservoir>,
         coupling: Option<&Coupling>,
     ) -> Cycle {
+        // A coupling that carries the year's clouds runs the year under them (M67).
+        if self.clouds.is_none()
+            && let Some(clouds) = coupling.and_then(|c| c.clouds.as_ref())
+        {
+            let under = self.under(clouds.sky.clone());
+            return under.cycle_with(climate, ground, sea, reservoir, coupling);
+        }
         let grid = climate.temperature.grid();
         let all = self.sky.obliquities();
         let tilts: Vec<f64> = if all.len() > CYCLE_SWING_SAMPLES {
@@ -2937,6 +3039,7 @@ impl EnergyBalance {
                     surfaces: [Vec::new(), Vec::new()],
                     caps: Vec::new(),
                     settled: (0, true),
+                    albedo: f64::NAN,
                 })
                 .collect()
         };
@@ -3290,6 +3393,7 @@ impl EnergyBalance {
         let settled = each.iter().fold((0, true), |(y, s), e| {
             (y.max(e.settled.0), s && e.settled.1)
         });
+        let albedo = each.iter().map(|e| e.albedo).sum::<f64>() / each.len().max(1) as f64;
         Cycle {
             mean: field(|y| y.mean),
             max: field(|y| y.max),
@@ -3316,6 +3420,7 @@ impl EnergyBalance {
             spread: rows.iter().map(|y| y.spread).collect(),
             spread_albedo: rows.iter().map(|y| y.albedo).collect(),
             settled,
+            albedo,
         }
     }
 
@@ -3472,13 +3577,27 @@ impl EnergyBalance {
                     }
                     None => (0.0, 0.0, climate.ground_albedo.get(c) as f64),
                 };
+                // Under its clouds (M67) its land at its own albedo, the caps' over it by
+                // their share of the cell, its ice and snow brightening it, its sea at
+                // SEA_ALBEDO: its air and its clouds lie over them in its light.
+                let (albedo, snow, sea_albedo) = match &self.clouds {
+                    Some(sky) => {
+                        let own = sky.ground;
+                        let laid = climate.caps.as_ref().map_or(own, |(share, a)| {
+                            own + share.get(c) as f64 * (a.get(c) as f64 - own)
+                        });
+                        (laid, self.ice_over(ICE_ALBEDO, own), SEA_ALBEDO)
+                    }
+                    None => (albedo, climate.snow_albedo.get(c) as f64, albedo),
+                };
                 Place {
                     lat,
                     lon,
                     weight: (hi.sin() - lo.sin()) / n_lon as f64,
                     steady: climate.temperature.get(c) as f64,
                     albedo,
-                    snow: climate.snow_albedo.get(c) as f64,
+                    sea_albedo,
+                    snow,
                     sea,
                     cap,
                     cap_mass,
@@ -3502,6 +3621,13 @@ impl EnergyBalance {
             .and_then(|c| c.currents.clone())
             .filter(|c| c.layout == (n_lat, n_lon));
         let wind = coupling.map_or_else(Vec::new, |c| c.wind_on((n_lat, n_lon)));
+        // Each place's clouds through the year, where it runs under them (M67).
+        let under = coupling
+            .and_then(|c| c.clouds.as_ref())
+            .filter(|_| self.clouds.is_some());
+        let decks = (0..n_lat * n_lon)
+            .map(|k| under.map_or_else(Vec::new, |c| c.decks_at((n_lat, n_lon), k)))
+            .collect();
         Layout {
             places,
             links: place_links((n_lat, n_lon)),
@@ -3510,6 +3636,7 @@ impl EnergyBalance {
             falling,
             currents,
             wind,
+            decks,
             modes: place_modes(n_lon),
         }
     }
@@ -3575,7 +3702,8 @@ impl EnergyBalance {
             .runs
             .par_iter()
             .zip(layout.places.par_iter())
-            .map(|(r, p)| {
+            .zip(layout.decks.par_iter())
+            .map(|((r, p), decks)| {
                 let mut work = Work::new(column.len());
                 let mut trial = Trial::new(column.len());
                 let (sp, cp) = p.lat.sin_cos();
@@ -3596,7 +3724,8 @@ impl EnergyBalance {
                         for h in 0..CYCLE_DAY_STEPS {
                             let hour = TAU * (h as f64 + 0.5) / CYCLE_DAY_STEPS as f64 - PI;
                             let mu = (sp * sd + cp * cd * hour.cos()).max(0.0);
-                            let sun = self.light(flux * mu, mu, record.air);
+                            let deck = decks.get(record.k).filter(|_| decks.len() == steps);
+                            let sun = self.light_under((flux * mu, mu), record.air, deck);
                             let bare = sun.split(record.albedo).0;
                             match &f {
                                 Some(f) => {
@@ -3648,6 +3777,7 @@ impl EnergyBalance {
             surfaces: lockstep.surfaces,
             caps: lockstep.caps,
             settled: lockstep.settled,
+            albedo: lockstep.albedo,
         }
     }
 
@@ -3703,6 +3833,7 @@ impl EnergyBalance {
             surfaces: lockstep.surfaces,
             caps: lockstep.caps.iter().map(|g| g / orbits).collect(),
             settled: lockstep.settled,
+            albedo: lockstep.albedo,
         }
     }
 
@@ -3857,7 +3988,9 @@ impl EnergyBalance {
                     };
                     // The air's own radiation (M55), about the air as it stands, taking what
                     // its ground sends up: its sea's, its caps' and its land's for the rest.
-                    let (own, slope) = self.air_radiation(air[q], r.sends_up(p, frost));
+                    let decks = &layout.decks[q];
+                    let deck = decks.get(k).filter(|_| decks.len() == steps);
+                    let (own, slope) = self.air_radiation(air[q], r.sends_up(p, frost), deck);
                     diag[q] = hold + land + wet + iced + slope;
                     // The sunlight it took at the last step (M58).
                     rhs[q] = hold * air[q]
@@ -3919,12 +4052,13 @@ impl EnergyBalance {
                     _ => highest,
                 };
                 runs.par_iter_mut()
-                    .zip(places.par_iter())
+                    .zip(places.par_iter().zip(layout.decks.par_iter()))
                     .zip(air.par_iter().zip(inflow.par_iter()))
-                    .for_each(|((r, p), (&a, &brought))| {
-                        let (lit, mu) = light(k, p);
-                        // Its sunlight, its air's and its ground's (M58).
-                        let sun = self.light(lit, mu, a);
+                    .for_each(|((r, (p, decks)), (&a, &brought))| {
+                        // Its sunlight, its air's and its ground's (M58), under its clouds
+                        // where the year runs under them (M67).
+                        let deck = decks.get(k).filter(|_| decks.len() == steps);
+                        let sun = self.light_under(light(k, p), a, deck);
                         // The snow that falls on the land through the step lies on it, and
                         // brightens it by its cover where the year's snow is known (F271).
                         r.albedo = match r.snowfall.get(k) {
@@ -3935,6 +4069,25 @@ impl EnergyBalance {
                             None => self.land_albedo((p.albedo, p.snow), r.t[0]),
                         };
                         r.start.copy_from_slice(&r.t);
+                        // What the place reflects of its light (M67): its sea, its caps and
+                        // its land by their shares, frost's albedo where frost lies.
+                        let cap = r.cap.as_ref().map_or(0.0, |c| c.share);
+                        let wet = if r.sea.is_some() { p.sea } else { 0.0 };
+                        let sea_albedo = match (r.sea.as_ref(), ocean) {
+                            (Some(sea), Some(ocean)) => {
+                                let open = p.sea_albedo;
+                                let ice = self.sea_ice_albedo(sea, open, ocean);
+                                open + (ice - open) * sea_ice_cover(sea.ice)
+                            }
+                            _ => p.sea_albedo,
+                        };
+                        let frost_albedo = frost.map_or(r.albedo, |f| f.albedo);
+                        let land_albedo = if r.mass > 0.0 { frost_albedo } else { r.albedo };
+                        r.lit += sun.top;
+                        r.reflected += sun.top
+                            * (wet * sun.planet(sea_albedo)
+                                + cap * sun.planet(frost_albedo)
+                                + (1.0 - wet - cap).max(0.0) * sun.planet(land_albedo));
                         let (bare, bare_air) = sun.split(r.albedo);
                         let shed = self.land_shed(a, p.contact);
                         let heat = self.heat_flux;
@@ -3962,7 +4115,13 @@ impl EnergyBalance {
                                     0.0
                                 };
                                 r.dried = p.sea * dried;
-                                self.sea_step(sea, dt, (sun, p.albedo), (a, exchange, dried), water)
+                                self.sea_step(
+                                    sea,
+                                    dt,
+                                    (sun, p.sea_albedo),
+                                    (a, exchange, dried),
+                                    water,
+                                )
                             }
                             _ => 0.0,
                         };
@@ -4230,7 +4389,11 @@ impl EnergyBalance {
             .map(|r| r.cap.as_ref().map_or(0.0, |c| c.share * c.gained))
             .collect();
         let active = held - over(&runs, Run::taken);
+        let (lit, reflected) = runs.iter().zip(places).fold((0.0, 0.0), |(l, f), (r, p)| {
+            (l + p.weight * r.lit, f + p.weight * r.reflected)
+        });
         Lockstep {
+            albedo: if lit > 0.0 { reflected / lit } else { f64::NAN },
             runs,
             range,
             growth: frost.map(|_| growth),
@@ -4615,6 +4778,18 @@ impl EnergyBalance {
     /// transport (`sea_transport`); ice melted through gives the layer the rest. The ice
     /// reflects as the year's balance's ice and snow do (F235), as melting ice once it melts,
     /// under the star's light (F250), over the share of the sea it covers: thin ice is dark.
+    /// The albedo of a sea's ice over its open water's `open` (F250, M64): melting ice's
+    /// near its freezing point, ICE_ALBEDO's under it, brightened under its star's light.
+    fn sea_ice_albedo(&self, sea: &Sea, open: f64, ocean: &Ocean) -> f64 {
+        let melting = sea.surface >= ocean.freezing - SEA_ICE_MELT_MARGIN_K;
+        let ice = if melting {
+            SEA_ICE_MELT_ALBEDO
+        } else {
+            ICE_ALBEDO
+        };
+        self.ice_over(ice, open).max(open)
+    }
+
     fn sea_step(
         &self,
         sea: &mut Sea,
@@ -4623,17 +4798,7 @@ impl EnergyBalance {
         (air, exchange, dried): (f64, f64, f64),
         (ocean, brought, fall): (&Ocean, f64, f64),
     ) -> f64 {
-        let melting = sea.surface >= ocean.freezing - SEA_ICE_MELT_MARGIN_K;
-        let ice = self
-            .ice_over(
-                if melting {
-                    SEA_ICE_MELT_ALBEDO
-                } else {
-                    ICE_ALBEDO
-                },
-                open,
-            )
-            .max(open);
+        let ice = self.sea_ice_albedo(sea, open, ocean);
         let cover = sea_ice_cover(sea.ice);
         // Its share of the sunlight and its air's, open and under its ice (M58).
         let (frozen, frozen_air) = sun.split(open + (ice - open) * cover);
@@ -5616,6 +5781,7 @@ impl Cycle {
                 .map(|(&u, &v)| [u, v])
                 .collect(),
             wind_steps: wind.steps,
+            clouds: None,
         })
     }
 
@@ -5680,8 +5846,9 @@ impl Cycle {
     /// latitude's beyond, alike by degrees, the air under it at CLOUD_SURFACE_HUMIDITY over its
     /// open sea and at its column's saturation over its land and its ice. Their effects over
     /// its ground as the year left it, its open sea at SEA_ALBEDO, its sea ice, its snow and its
-    /// caps at ICE_ALBEDO, its bare land at ALBEDO_BENEATH. None without the year's wind and
-    /// moisture.
+    /// caps at ICE_ALBEDO, its bare land at its own albedo, under its air's Rayleigh scattering
+    /// (M67); and each place's deck through each step, which a year under them reads. None
+    /// without the year's wind and moisture.
     pub fn clouds(
         &self,
         sky: &crate::clouds::Sky,
@@ -5718,6 +5885,7 @@ impl Cycle {
             down: vec![0.0; n * steps],
             kinds: Default::default(),
             weights: self.sites.iter().map(|s| s.weight).collect(),
+            decks: vec![crate::clouds::Deck::default(); n * steps],
         };
         out.kinds = [0, 1, 2, 3].map(|_| vec![0.0f32; n]);
         for k in 0..steps {
@@ -5797,13 +5965,15 @@ impl Cycle {
                 let snow = snow_cover(at(&self.masses[2]));
                 // Ice and snow brighten their ground under the star's light (F250).
                 let over = |ground: f64| ground + sky.brightening * (ICE_ALBEDO - ground);
+                let own = sky.ground;
                 let albedo = sea * (SEA_ALBEDO + ice * (over(SEA_ALBEDO) - SEA_ALBEDO))
-                    + cap * over(ALBEDO_BENEATH)
-                    + land * (ALBEDO_BENEATH + snow * (over(ALBEDO_BENEATH) - ALBEDO_BENEATH));
+                    + cap * over(own)
+                    + land * (own + snow * (over(own) - own));
                 let ground =
                     ((sea * sigma(t_sea) + (1.0 - sea) * sigma(t_land)) / SIGMA_SB).powf(0.25);
                 let e = sky.effects(&kinds, air[p], ground, albedo, sea);
                 let q = p * steps + k;
+                out.decks[q] = sky.deck(&kinds, air[p], sea);
                 out.cover[q] = kinds.cover() as f32;
                 out.albedo[q] = e.albedo as f32;
                 out.olr[q] = e.olr as f32;
@@ -5967,9 +6137,88 @@ pub struct Coupling {
     /// after step, place after place within each, that drifts the sea ice (F276).
     pub wind: Vec<[f32; 2]>,
     pub wind_steps: usize,
+    /// The year's clouds (M67), where its water's are known: a year with them runs under them.
+    pub clouds: Option<std::sync::Arc<CloudCoupling>>,
+}
+
+/// The clouds a year runs under (M67): what they read of the body and its air, and each
+/// place's deck through each of the year's `steps` on the `layout` of the year that laid them,
+/// place after place, each place's steps within.
+#[derive(Debug)]
+pub struct CloudCoupling {
+    pub sky: std::sync::Arc<crate::clouds::Sky>,
+    pub layout: (usize, usize),
+    pub steps: usize,
+    pub decks: Vec<crate::clouds::Deck>,
+}
+
+impl CloudCoupling {
+    /// Place `k`'s decks through the year on a layout of `n_lat` latitudes and `n_lon`
+    /// longitudes, as `Coupling::series_at` reads the snow: its own on the clouds' layout,
+    /// its row's on a layout by latitude alone, each kind's cover the row's mean and its depths
+    /// and emissivity the mean over its cover; none elsewhere.
+    fn decks_at(&self, (n_lat, n_lon): (usize, usize), k: usize) -> Vec<crate::clouds::Deck> {
+        let (m_lat, m_lon) = self.layout;
+        let steps = self.steps;
+        if self.decks.len() != m_lat * m_lon * steps {
+            return Vec::new();
+        }
+        let series = |p: usize| &self.decks[p * steps..(p + 1) * steps];
+        if (m_lat, m_lon) == (n_lat, n_lon) {
+            return series(k).to_vec();
+        }
+        if n_lon == 1 && m_lat == n_lat && m_lon > 0 {
+            return (0..steps)
+                .map(|t| {
+                    let mut out = crate::clouds::Deck::default();
+                    for i in 0..4 {
+                        let (mut cover, mut s, mut d, mut e) = (0.0f64, 0.0, 0.0, 0.0);
+                        for j in 0..m_lon {
+                            let deck = &series(k * m_lon + j)[t];
+                            let c = deck.cover[i] as f64;
+                            cover += c;
+                            s += c * deck.scaled[i] as f64;
+                            d += c * deck.depth[i] as f64;
+                            e += c * deck.emissivity[i] as f64;
+                        }
+                        if cover > 0.0 {
+                            out.cover[i] = (cover / m_lon as f64) as f32;
+                            out.scaled[i] = (s / cover) as f32;
+                            out.depth[i] = (d / cover) as f32;
+                            out.emissivity[i] = (e / cover) as f32;
+                        }
+                    }
+                    out.absorbs = (0..m_lon)
+                        .map(|j| series(k * m_lon + j)[t].absorbs)
+                        .sum::<f32>()
+                        / m_lon as f32;
+                    out.above = (0..m_lon)
+                        .map(|j| series(k * m_lon + j)[t].above)
+                        .sum::<f32>()
+                        / m_lon as f32;
+                    out
+                })
+                .collect();
+        }
+        Vec::new()
+    }
 }
 
 impl Coupling {
+    /// The coupling with the year's clouds `clouds` laid in the sky `sky` (M67), whose year
+    /// then runs under them.
+    pub fn with_clouds(mut self, clouds: Option<(crate::clouds::Sky, &Clouds)>) -> Self {
+        self.clouds = clouds.map(|(sky, c)| {
+            std::sync::Arc::new(CloudCoupling {
+                sky: std::sync::Arc::new(sky),
+                layout: c.layout,
+                steps: c.steps,
+                decks: c.decks.clone(),
+            })
+        });
+        self
+    }
+
     /// The year's wind on a layout of `n_lat` latitudes and `n_lon` longitudes (F276), as
     /// `series_at` reads the snow: each place's own on the coupling's layout, its row's mean on
     /// a layout by latitude alone, none elsewhere; step after step, place after place within
@@ -6079,6 +6328,8 @@ pub struct Clouds {
     pub kinds: [Vec<f32>; 4],
     /// Each place's share of the sphere.
     pub weights: Vec<f64>,
+    /// Each place's deck through each step (M67), laid out as the series are.
+    pub decks: Vec<crate::clouds::Deck>,
 }
 
 /// The year's clouds in brief (M66): over the body by area, the share they cover, each kind's,
@@ -6179,12 +6430,22 @@ impl Clouds {
 /// high and the share of what the haze sends back to space, the share of the light under the
 /// haze that reaches the ground, and the share of the light the ground reflects that its air
 /// takes on its way up.
+///
+/// Under its clouds (M67): the share of the light its air's molecules reflect, the share its
+/// clouds reflect and the share they absorb, the share of the air's absorbers above their tops,
+/// what its clouds send down to its ground, W/m², and whether it is so.
 #[derive(Clone, Copy, Debug)]
 struct Light {
     top: f64,
     haze: f64,
     down: f64,
     up: f64,
+    rayleigh: f64,
+    cloud: f64,
+    absorbs: f64,
+    above: f64,
+    cloud_down: f64,
+    under: bool,
 }
 
 impl Light {
@@ -6195,26 +6456,102 @@ impl Light {
             haze: 0.0,
             down: 1.0,
             up: 0.0,
+            rayleigh: 0.0,
+            cloud: 0.0,
+            absorbs: 0.0,
+            above: 0.0,
+            cloud_down: 0.0,
+            under: false,
         }
     }
 
     /// What a ground at `albedo` keeps of the light and what its air takes, W/m²: of the
     /// share of the light the place absorbs, (1 - albedo), the haze's share first, its
     /// stratosphere's, the air's (M65); the light left split between the air and the ground
-    /// as the light's path down and the reflected light's up divide it.
+    /// as the light's path down and the reflected light's up divide it. Under its clouds (M67)
+    /// the place reflects as its air's molecules over its clouds over its ground, conservative
+    /// layers reflecting the light between them, and its ground keeps what they send down.
     fn split(&self, albedo: f64) -> (f64, f64) {
+        if self.under {
+            // Under its clouds (M67) the light's path: the haze and the ozone take their share
+            // high, the clouds theirs; the air's absorbers above the clouds' tops theirs of the
+            // light on its way down and of what the clouds reflect on its way up; its air's
+            // molecules and its clouds reflect over the air beneath them, whose absorbers take
+            // their share of the light on its way down to the ground and of what the ground
+            // reflects on its way up, the light reflected between them; the ground keeps what
+            // reaches it and it does not reflect.
+            let high = self.haze * self.top;
+            let rest = self.top - high;
+            let clouds = self.absorbs * rest;
+            let ((down_above, up_above), (down, up)) = self.paths();
+            let reaching = (rest - clouds) * down_above;
+            let reflecting = self.layers(0.0);
+            let g = albedo.clamp(0.0, 1.0);
+            let beneath = g * down * (1.0 - up);
+            let entering = reaching * (1.0 - reflecting) / (1.0 - reflecting * beneath).max(1e-9);
+            let reflected = reaching * self.layers(beneath);
+            let ground = entering * down * (1.0 - g);
+            let air = high
+                + clouds
+                + (rest - clouds) * (1.0 - down_above)
+                + reflected * up_above
+                + entering * (1.0 - down + down * g * up);
+            return (ground + self.cloud_down, air);
+        }
+        let ground_albedo = albedo.clamp(0.0, 1.0);
+        let albedo = self.planet(albedo);
         let absorbed = (1.0 - albedo).max(0.0);
         let g = absorbed * self.top;
         let h = (self.haze * self.top).min(g);
-        let ground = absorbed * self.down;
-        let air = 1.0 - self.down + albedo * self.down * self.up;
+        // The ground and the air share what the place absorbs as the light's path down and
+        // the ground's reflected light's up divide it, by the ground's own albedo: the stated
+        // law's the planet's (M58), its own under its clouds (M67).
+        let ground = (1.0 - ground_albedo) * self.down;
+        let air = 1.0 - self.down + ground_albedo * self.down * self.up;
         let share = if ground + air > 0.0 {
             air / (ground + air)
         } else {
             0.0
         };
         let rest = g - h;
-        ((1.0 - share) * rest, share * rest + h)
+        ((1.0 - share) * rest + self.cloud_down, share * rest + h)
+    }
+
+    /// The share of the light a place reflects over a ground at `albedo` (M67): under its
+    /// clouds what its air's molecules and its clouds reflect over the air beneath them and
+    /// its ground, of the light its haze, its ozone and its clouds leave; the stated law's
+    /// albedo, the planet's, alone else.
+    fn planet(&self, albedo: f64) -> f64 {
+        if self.under {
+            let ((down_above, up_above), (down, up)) = self.paths();
+            let beneath = albedo.clamp(0.0, 1.0) * down * (1.0 - up);
+            (1.0 - self.haze)
+                * (1.0 - self.absorbs)
+                * down_above
+                * self.layers(beneath)
+                * (1.0 - up_above)
+        } else {
+            albedo
+        }
+    }
+
+    /// The air's absorbers' paths above the clouds' tops and beneath them (M67): what each
+    /// lets through of the light on its way down, and what each takes of it on its way up, by
+    /// the share of them above the tops.
+    fn paths(&self) -> ((f64, f64), (f64, f64)) {
+        let share = self.above.clamp(0.0, 1.0);
+        let (down, kept) = (self.down.max(0.0), (1.0 - self.up).max(0.0));
+        (
+            (down.powf(share), 1.0 - kept.powf(share)),
+            (down.powf(1.0 - share), 1.0 - kept.powf(1.0 - share)),
+        )
+    }
+
+    /// What its air's molecules, its clouds and what lies beneath them at `albedo` reflect
+    /// together, conservative layers reflecting the light between them (M67).
+    fn layers(&self, albedo: f64) -> f64 {
+        let over = crate::radiation::over;
+        over(self.rayleigh, over(self.cloud, albedo.clamp(0.0, 1.0)))
     }
 }
 
@@ -6225,6 +6562,9 @@ struct Place {
     weight: f64,
     steady: f64,
     albedo: f64,
+    /// Its open sea's albedo: the place's under the stated law, SEA_ALBEDO under its clouds
+    /// (M67).
+    sea_albedo: f64,
     snow: f64,
     sea: f64,
     cap: f64,
@@ -6257,6 +6597,9 @@ struct Layout {
     /// The year's wind at each place, east and north, m/s, step after step, place after place
     /// within each, where it is known on these places (F276).
     wind: Vec<[f32; 2]>,
+    /// Each place's clouds through the year's steps (M67), where the year runs under them;
+    /// every place's empty elsewhere.
+    decks: Vec<Vec<crate::clouds::Deck>>,
     /// A resonant body's longitudes' Fourier modes: the cos and sin of each mode's phase at
     /// each longitude, mode after mode, and longitude after longitude.
     modes: [Vec<f64>; 4],
@@ -6334,6 +6677,7 @@ impl Layout {
                     weight: s.weight,
                     steady: 0.0,
                     albedo: 0.0,
+                    sea_albedo: 0.0,
                     snow: 0.0,
                     sea: s.sea,
                     cap: s.ice,
@@ -6347,6 +6691,7 @@ impl Layout {
             falling: Vec::new(),
             currents: None,
             wind: Vec::new(),
+            decks: vec![Vec::new(); sites.len()],
             modes: place_modes(n_lon),
         }
     }
@@ -6435,6 +6780,10 @@ struct Run {
     sea_surface: Vec<f32>,
     /// The place's share of the frost's own gas's caps (F258).
     cap: Option<Patch>,
+    /// The light on the place through the cycle, and what it reflects of it, summed over
+    /// its steps, W/m² (M67).
+    lit: f64,
+    reflected: f64,
 }
 
 /// A place's share of the caps that hold the air through the lockstep (F258): the share of
@@ -6531,6 +6880,8 @@ impl Run {
             start: vec![place.steady; n],
             surface: vec![0.0; steps],
             sea_surface: vec![0.0; steps],
+            lit: 0.0,
+            reflected: 0.0,
         }
     }
 
@@ -6600,6 +6951,7 @@ impl Run {
         (self.sea_sum, self.sea_lo, self.sea_hi) = (0.0, f64::MAX, f64::MIN);
         self.iced = 0;
         self.records.clear();
+        (self.lit, self.reflected) = (0.0, 0.0);
         if let Some(c) = self.cap.as_mut() {
             c.sums.fill(0.0);
             c.start = c.mass;
@@ -7951,6 +8303,126 @@ mod tests {
         assert!((ground - 70.0).abs() < 1e-9 && taken == 0.0);
     }
 
+    /// M67: under its clouds a place reflects as its air's molecules over its clouds over its
+    /// ground, the more over a brighter ground, and more than without them over a ground darker
+    /// than they are (over a brighter, absorbing clouds may darken it, as over fresh snow); its
+    /// ground seen through its air's absorbers, darker than through clean air, which shows it
+    /// whole and never less than its air's molecules alone; its ground and its air keep all it
+    /// does not reflect, and its ground what the clouds send down besides.
+    #[test]
+    fn a_place_under_clouds_keeps_what_they_do_not_reflect() {
+        let sun = Light {
+            top: 400.0,
+            haze: 0.0,
+            down: 0.8,
+            up: 0.1,
+            rayleigh: 0.06,
+            cloud: 0.4,
+            absorbs: 0.03,
+            above: 0.3,
+            cloud_down: 30.0,
+            under: true,
+        };
+        let clear = Light {
+            cloud: 0.0,
+            absorbs: 0.0,
+            above: 0.0,
+            cloud_down: 0.0,
+            ..sun
+        };
+        let mut last = 0.0;
+        for g in [0.0, 0.06, 0.2, 0.62, 0.9, 1.0] {
+            let (a, c) = (sun.planet(g), clear.planet(g));
+            // Absorbing clouds may darken a ground brighter than they are, as over fresh snow.
+            assert!(a >= last && (g > 0.5 || a > c), "{g}: {a} {c}");
+            let clean = Light {
+                down: 1.0,
+                up: 0.0,
+                ..clear
+            };
+            let seen = clean.planet(g);
+            assert!(
+                seen >= g - 1e-12 && seen >= sun.rayleigh - 1e-12,
+                "{g}: {seen}"
+            );
+            if g > 0.0 {
+                assert!(c < clean.planet(g), "{g}: {c} {}", clean.planet(g));
+            }
+            last = a;
+            let (ground, air) = sun.split(g);
+            assert!(
+                ground >= sun.cloud_down && air >= 0.0,
+                "{g}: {ground} {air}"
+            );
+            let kept = (1.0 - a) * sun.top;
+            assert!(
+                (ground - sun.cloud_down + air - kept).abs() < 1e-9,
+                "{g}: {ground} + {air} against {kept}"
+            );
+        }
+    }
+
+    /// M67: Earth's air under its clouds takes the sunlight measured over the whole body: its
+    /// clear air some 73 W/m² (Kato et al. 2018: 73.0; Wild et al. 2019: 73), with its
+    /// clouds some 77 to 80 (Kato's 77.1, Wild's 80), the light's split read over the lit
+    /// hemisphere at the sun's every height, its ground at its sea's and its land's albedo
+    /// under its air's molecules, its vapour its column at 288 K; under a deck of some half its
+    /// cover within some W/m² of the measures.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn earth_s_air_takes_the_sunlight_measured() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&graph);
+        let sky = crate::clouds::Sky::from_graph(&graph, &eb).expect("a sky");
+        let under = eb.under(std::sync::Arc::new(sky.clone()));
+        let ground = 0.71 * SEA_ALBEDO + 0.29 * sky.ground;
+        let deck = sky.deck(
+            &crate::clouds::Kinds {
+                layer: 0.3,
+                low: 0.3,
+                anvil: 0.1,
+                ..Default::default()
+            },
+            288.0,
+            0.71,
+        );
+        let s0 = 1361.0;
+        let taken = |under: &EnergyBalance, deck: Option<&crate::clouds::Deck>| {
+            let n = 400;
+            (0..n)
+                .map(|k| {
+                    let mu = (k as f64 + 0.5) / n as f64;
+                    let sun = under.light_under((s0 * mu, mu), 288.0, deck);
+                    let (_, air) = sun.split(ground);
+                    air - sun.cloud_down * 0.0
+                })
+                .sum::<f64>()
+                / n as f64
+                / 2.0
+        };
+        let (clear, cloudy) = (taken(&under, None), taken(&under, Some(&deck)));
+        // AIR_SUNLIGHT's measure: the depth at which the clear air takes 73 W/m².
+        let (mut lo, mut hi) = (0.0, 0.05);
+        for _ in 0..50 {
+            let mid = 0.5 * (lo + hi);
+            let mut trial = under.clone();
+            trial.air_sunlight = mid;
+            if taken(&trial, None) < 73.0 {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        println!(
+            "Earth's air under its clouds takes {clear:.1} W/m² clear, {cloudy:.1} under a deck; 73 at {lo:.4e} a kg/m²"
+        );
+        assert!((70.0..76.0).contains(&clear), "clear {clear}");
+        // The deck shades the vapour beneath it, and its own absorption and the vapour over
+        // it more than make up for it in the measures (KNOWN: some 2 W/m² short of them here,
+        // the vapour within the clouds, whose path their scattering lengthens, not held).
+        assert!((68.0..85.0).contains(&cloudy), "{cloudy} {clear}");
+    }
+
     /// The air's own radiation rises as it warms (M58), whatever its ground sends up, over
     /// its presets' air from cold to warm where it stands, Titan's from 88 K, its column's
     /// emission held below 80 K by its warmer air above: a slope that fell with the share of
@@ -7969,7 +8441,7 @@ mod tests {
                 let air = low + (high - low) * k as f64 / 16.0;
                 for ground in [low, air, high] {
                     let emitted = SIGMA_SB * ground.powi(4);
-                    let (_, slope) = eb.air_radiation(air, (emitted, 0.1));
+                    let (_, slope) = eb.air_radiation(air, (emitted, 0.1), None);
                     assert!(
                         slope > 0.0,
                         "{name}: air {air} over ground {ground}: {slope}"
@@ -8385,15 +8857,29 @@ mod tests {
             let air = crate::moisture::Air::from_graph(&self.graph, eb.transport, water);
             let heights = vec![0.0; self.cycle.sites.len()];
             let wet = air.and_then(|a| self.cycle.moisture(&a, &heights));
-            let coupling = self.cycle.coupling(wet.as_ref()).expect("a coupling");
+            // Under the first year's clouds (M67), as the finish will run it.
+            let sky = crate::clouds::Sky::from_graph(&self.graph, &eb);
+            let first = sky.clone().zip(wet.as_ref()).and_then(|(sky, m)| {
+                (self.cycle)
+                    .clouds(&sky, m, eb.circulation.reach)
+                    .map(|c| (sky, c))
+            });
+            let stated = self.cycle.coupling(wet.as_ref()).expect("a coupling");
+            let coupling = stated
+                .clone()
+                .with_clouds(first.as_ref().map(|(sky, c)| (sky.clone(), c)));
             let ground = Ground::from_graph(&self.graph);
-            let cycle = eb.cycle_with(&self.climate, &ground, sea, None, Some(&coupling));
+            let under = eb.cycle_with(&self.climate, &ground, sea, None, Some(&coupling));
+            let cycle = eb.cycle_with(&self.climate, &ground, sea, None, Some(&stated));
             let water = air.and_then(|a| cycle.moisture(&a, &heights));
-            let clouds = crate::clouds::Sky::from_graph(&self.graph, &eb)
+            let clouds = sky
+                .as_ref()
                 .zip(water.as_ref())
-                .and_then(|(sky, m)| cycle.clouds(&sky, m, eb.circulation.reach));
+                .and_then(|(sky, m)| cycle.clouds(sky, m, eb.circulation.reach));
             Again {
                 cycle,
+                under,
+                first: self.cycle.mean.clone(),
                 water,
                 clouds,
             }
@@ -8413,6 +8899,11 @@ mod tests {
     /// (the tests' tiers).
     struct Again {
         cycle: Cycle,
+        /// The year again under its first year's clouds (M67), as the finish will run it once
+        /// the tropics' heat is set (the user, 2026-11-13).
+        under: Cycle,
+        /// The first year's mean surface temperature (M67's diagnostics).
+        first: Field<f32>,
         water: Option<crate::moisture::Moisture>,
         /// Its clouds, from its own air, wind and moisture (M66).
         clouds: Option<Clouds>,
@@ -8464,6 +8955,10 @@ mod tests {
             ("the_earth_like_s_clouds_lie_in_its_belts", &|| {
                 the_earth_like_s_clouds_lie_in_its_belts(&again)
             }),
+            (
+                "the_earth_like_under_its_clouds_reflects_as_earth_does",
+                &|| the_earth_like_under_its_clouds_reflects_as_earth_does(&y, &again),
+            ),
         ]);
     }
 
@@ -8512,6 +9007,49 @@ mod tests {
             c.mean(&c.olr),
             c.mean(&c.down)
         );
+        // Each band's clouds against CERES's and ISCCP's zonal means: their cover, their
+        // effect in the light by the year's mean sunlight at its latitude (North and Coakley
+        // 1979's 340 (1 - 0.477 P2)), and in the infrared.
+        let mut bands = String::new();
+        for lo in (-90..90).step_by(15) {
+            let (lo, hi) = (lo as f64, lo as f64 + 15.0);
+            let (mut w, mut sums) = (0.0, [0.0; 9]);
+            for (p, s) in sites.iter().enumerate() {
+                let lat = s.lat.to_degrees();
+                if lat >= lo && (lat < hi || hi >= 90.0) {
+                    let x = s.lat.sin();
+                    let q = 340.0 * (1.0 - 0.477 * 0.5 * (3.0 * x * x - 1.0));
+                    w += s.weight;
+                    sums[0] += s.weight * year(&c.cover, p);
+                    sums[1] -= s.weight * q * year(&c.albedo, p);
+                    sums[2] -= s.weight * year(&c.olr, p);
+                    sums[3] += s.weight * year(&c.down, p);
+                    for i in 0..4 {
+                        sums[4 + i] += s.weight * c.kinds[i][p] as f64;
+                    }
+                    if let Some(m) = &again.water {
+                        let n = sites.len();
+                        let rain = (0..m.steps)
+                            .map(|k| m.falling[k * n + p] as f64)
+                            .sum::<f64>()
+                            / m.steps as f64;
+                        sums[8] += s.weight * rain * SECONDS_PER_DAY;
+                    }
+                }
+            }
+            let [cover, sw, lw, down, tower, anvil, layer, low, rain] =
+                sums.map(|v| v / f64::max(w, 1e-30));
+            let mid = 0.5 * (lo + hi);
+            bands += &format!(
+                " [{lo:.0},{hi:.0}) {cover:.2} {sw:.0}/{lw:+.0} down {down:+.0} {:.1}K/{:.1}K rain {rain:.1} t{tower:.2} a{anvil:.2} l{layer:.2} o{low:.2}",
+                at(&again.first, mid, 0.0),
+                at(&again.cycle.mean, mid, 0.0)
+            );
+        }
+        println!(
+            "Earth-like clouds by band (cover, light/infrared W/m²):{bands}; the year's planetary albedo {:.3}",
+            again.cycle.albedo
+        );
         assert!((0.4..0.8).contains(&whole), "cover {whole}");
         assert!(deep > dry + 0.2, "deep {deep} over subtropics {dry}");
         assert!(
@@ -8520,6 +9058,31 @@ mod tests {
         );
         assert!(desert < dry, "desert {desert} under the subtropics' {dry}");
         assert!(c.mean(&c.albedo) > 0.0 && c.mean(&c.olr) < 0.0 && c.mean(&c.down) > 0.0);
+    }
+
+    /// M67: the Earth-like's year under its own clouds, their albedo and their greenhouse its
+    /// own: it reflects the share of its light Earth does, 0.29 (CERES), within some hundredths,
+    /// more than its ground and its air's molecules alone; its sea's ice settles at its pole.
+    /// KNOWN (the user, 2026-11-13): its mean stands some 8 K over Earth's, its tropics at
+    /// 308 K under the stated law and its clouds alike (the finish's Earth's at 301.4 K under
+    /// the stated law and 307.2 under its clouds), their deep convection keeping the more
+    /// infrared from space over the warmer ground, and its polar clouds, with no inversion
+    /// under them, the more over its cold ground; the year keeps the stated law until the
+    /// tropics' heat under their clouds is understood, and is held here within 12 K of 288.
+    fn the_earth_like_under_its_clouds_reflects_as_earth_does(y: &Year, again: &Again) {
+        let under = &again.under;
+        let mean = surface_mean(under, &y.graph);
+        let (years, settled) = under.settled;
+        println!(
+            "Earth-like under its clouds: planetary albedo {:.3}, mean {mean:.1} K, its sea's ice settled {settled} by {years} years; under the stated law {:.3}",
+            under.albedo, again.cycle.albedo
+        );
+        assert!((0.26..0.33).contains(&under.albedo), "{}", under.albedo);
+        assert!((mean - 288.0).abs() < 12.0, "{mean}");
+        if (mean - 288.0).abs() > 3.0 {
+            eprintln!("KNOWN SHORTFALL (M67): the Earth-like under its clouds at {mean:.1} K");
+        }
+        assert!(settled, "{years}");
     }
 
     /// Mars's year, read by each check of it.
@@ -9301,6 +9864,9 @@ mod tests {
         eb: EnergyBalance,
         climate: Climate,
         cycle: Cycle,
+        /// The year again at its first year's wind and moisture and under its clouds (F269,
+        /// M67), as the finish runs it.
+        again: Cycle,
     }
 
     impl LockedYear {
@@ -9311,17 +9877,28 @@ mod tests {
             let climate = eb.solve(grid);
             let ocean = Ocean::from_graph(&world).expect("a water sea");
             let share = Field::filled(grid, 1.0f32);
-            let cycle = eb.cycle(
-                &climate,
-                &Ground::from_graph(&world),
-                Some((&ocean, &share)),
-                None,
-            );
+            let ground = Ground::from_graph(&world);
+            let cycle = eb.cycle(&climate, &ground, Some((&ocean, &share)), None);
+            let air = crate::moisture::Air::from_graph(&world, eb.transport, OCEAN_TRANSPORT_SHARE);
+            let heights = vec![0.0; cycle.sites.len()];
+            let wet = air.and_then(|a| cycle.moisture(&a, &heights));
+            let first = crate::clouds::Sky::from_graph(&world, &eb)
+                .zip(wet.as_ref())
+                .and_then(|(sky, m)| {
+                    cycle
+                        .clouds(&sky, m, eb.circulation.reach)
+                        .map(|c| (sky, c))
+                });
+            let coupling = (cycle.coupling(wet.as_ref()).expect("a coupling"))
+                .with_clouds(first.as_ref().map(|(sky, c)| (sky.clone(), c)));
+            let sea = Some((&ocean, &share));
+            let again = eb.cycle_with(&climate, &ground, sea, None, Some(&coupling));
             Self {
                 world,
                 eb,
                 climate,
                 cycle,
+                again,
             }
         }
     }
@@ -9344,7 +9921,36 @@ mod tests {
             ("a_locked_world_s_clouds_gather_under_its_star", &|| {
                 a_locked_world_s_clouds_gather_under_its_star(&year)
             }),
+            (
+                "a_locked_ocean_world_under_its_clouds_stands_as_thai_s",
+                &|| a_locked_ocean_world_under_its_clouds_stands_as_thai_s(&year),
+            ),
         ]);
+    }
+
+    /// M67: the locked ocean world under its own clouds stands as THAI's first habitable case
+    /// does (Sergeev et al. 2022): its clouds over its star reflect the light its sea would
+    /// take, its planetary albedo its ground's, its air's and its clouds' within THAI's 0.22 to
+    /// 0.28 and some margin, brighter than its first year under the stated law; its dayside
+    /// within some kelvin of THAI's 261 to 268 K; its mean within some kelvin of its first
+    /// year's, which stands over THAI's 232 to 246 K while its night's ice blankets its sea
+    /// (KNOWN, M64: until the glaciers); its sea open under its star.
+    fn a_locked_ocean_world_under_its_clouds_stands_as_thai_s(year: &LockedYear) {
+        let seas = year.again.seas.as_ref().expect("a water sea");
+        let [mean, day, _, open] = thai_measures(&year.eb, seas, &year.climate);
+        let albedo = year.again.albedo;
+        println!(
+            "TRAPPIST-1e under its clouds: mean {mean:.1} K, dayside {day:.1} K, planetary albedo {albedo:.3}, open {open:.2} of the dayside; the first year's {:.3} (THAI: 232 to 246 K, 261 to 268 K, 0.22 to 0.28, almost half)",
+            year.cycle.albedo
+        );
+        let first = thai_measures(&year.eb, year.cycle.seas.as_ref().unwrap(), &year.climate)[0];
+        assert!((0.18..0.34).contains(&albedo), "albedo {albedo}");
+        assert!(albedo > year.cycle.albedo, "{albedo} {}", year.cycle.albedo);
+        assert!((mean - first).abs() < 6.0, "mean {mean} against {first}");
+        assert!((251.0..278.0).contains(&day), "dayside {day}");
+        let substellar = direction_from_lon_lat(0.0, 0.0);
+        assert!(seas.mean_at(substellar) > seas.ocean.freezing + 2.0);
+        assert!(open > 0.15, "open {open}");
     }
 
     /// M66: a locked ocean world's clouds gather under its star, where its air rises and its

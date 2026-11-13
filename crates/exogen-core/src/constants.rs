@@ -1998,15 +1998,28 @@ pub const H2O_CONTINUUM_STATE: (f64, f64, f64) = (224.92, 260.0, 0.02);
 /// radiative-convective column (0.1625 u^0.2346 on F293's left it at 292.2 K), its air then
 /// sending down 342.8 W/m² (342 measured, Kato et al. 2018).
 pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.0914, 0.3856);
-/// M66: the convection's cloud over a place, a + b ln P, P its rain in mm a day, at most the
-/// third: Slingo (1987)'s law as it is quoted, none under 0.14 mm a day and all of its most
-/// from some 85 (its slope and its most read in ECMWF's manual of 1991, eq. 2.50, the
-/// intercept not read in the paper; NCEP's retuning gives 0.200 + 0.120 ln P, Shimpo et al.
-/// 2008). Its towers a share of it (ECMWF 1991, eq. 2.50), and its anvils slope (C - from) of
-/// the place (eq. 2.51).
+/// M66: the raining systems' cloud over a place, a + b ln P, P their rain in mm a day, at most
+/// the third: Slingo (1987)'s convective law as it is quoted, none under 0.14 mm a day and all
+/// of its most from some 85 (its slope and its most read in ECMWF's manual of 1991, eq. 2.50,
+/// the intercept not read in the paper; NCEP's retuning gives 0.200 + 0.120 ln P, Shimpo et
+/// al. 2008); the layers' over the large-scale rain (M66).
 pub const CLOUD_CONVECTIVE: (f64, f64, f64) = (0.246, 0.125, 0.8);
-pub const CLOUD_TOWER: f64 = 0.4;
-pub const CLOUD_ANVIL: (f64, f64) = (0.3, 2.0);
+/// M67: the convection's high cloud by its climatological rain, as its seasons' means show it
+/// over the tropical oceans (ISCCP-H's clouds above 440 hPa against GPCP v3.2's rain, 30S to
+/// 30N, the seasons' climatologies of 2001 to 2018, 1-degree cells; this project's fit): all of
+/// it a + b ln P, P in mm a day, none under some 0.75; its optically thick part, the towers
+/// (optical depth over 23), c P, as Kubar et al. 2007 found it proportional to the rain, no
+/// more than all of it. Slingo's law, fitted to a model's rain at its steps, gave the
+/// near-aquaplanet's 18 mm a day 0.70 of high cloud keeping 100 W/m² from space, its LW CRE
+/// a unit of its cover 143 W/m² where CERES's is 101 to 121 (M66).
+pub const CLOUD_HIGH: (f64, f64) = (0.054, 0.185);
+pub const CLOUD_THICK: f64 = 0.0095;
+/// M67: the anvils thicken as the convection rains harder: the share of the high cloud short of
+/// the towers that is medium-thick (ISCCP's optical depths 3.6 to 23) a + b P, P in mm a day,
+/// some 0.26 at 1.5 mm a day, 0.38 at 7 and 0.66 at 17 (the same data as CLOUD_HIGH; this
+/// project's fit); that cloud's optical depth the geometric middle of the class, 9.1, the rest
+/// thin cirrus of CLOUD_ANVIL_DEPTH.
+pub const CLOUD_ANVIL_MEDIUM: (f64, f64, f64) = (0.23, 0.022, 9.1);
 /// M66: the layers' cloud: the column's saturation from which it forms (ECMWF 1991, eq. 2.55:
 /// its low cloud of fronts).
 pub const CLOUD_LAYER: f64 = 0.7;
@@ -2028,13 +2041,10 @@ pub const CLOUD_LCL_PER_KELVIN: f64 = 125.0;
 /// M66: the free air's weak temperature gradients end past the overturning cell's reach from
 /// the thermal equator by degrees over this share of the reach.
 pub const CLOUD_FREE_EDGE: f64 = 0.25;
-/// M66: the clouds' water: the towers' liquid 1e-4 kg/kg of their air from their base to the
-/// tropopause (ECMWF 1991, p. 2.19); the layers' and the low cloud's liquid path, kg/m², the
-/// in-cloud paths' most frequent (GEWEX Cloud Assessment, Stubenrauch et al. 2012, p. 52); the
-/// anvils thin cirrus, their optical depth in the visible the middle of ISCCP's cirrus class,
-/// under 3.6 (Rossow and Schiffer 1999), their ice's path from it.
-pub const CLOUD_TOWER_WATER: f64 = 1e-4;
-pub const CLOUD_LIQUID_PATH: f64 = 0.070;
+/// M66: the anvils thin cirrus, their optical depth in the visible the middle of ISCCP's cirrus
+/// class, under 3.6 (Rossow and Schiffer 1999), their ice's path from it: the tropical high
+/// clouds' optical depths gather at 1 to 2 (Sokol and Hartmann 2020). The towers' and the
+/// decks' water is their air's (CLOUD_DEPTH, M67).
 pub const CLOUD_ANVIL_DEPTH: f64 = 1.8;
 /// M66: the drops' effective radii, m: liquid over the sea and over land, MODIS's modes of 12
 /// to 13 and 10 to 11 um (King et al. 2013); ice, 25 um (GEWEX, Stubenrauch et al. 2012).
@@ -2051,11 +2061,59 @@ pub const CLOUD_LIQUID_EMISSION: f64 = 0.130;
 pub const CLOUD_ICE_EMISSION: (f64, f64) = (0.005, 1.0);
 /// M66: the clouds' levels as shares of the surface pressure, Earth's: the layers' tops in the
 /// middle of ISCCP's middle class, 440 to 680 hPa, the low cloud's at 850 hPa (Rossow and
-/// Schiffer 1999); the layers' bases at 800 hPa and the anvils' at 350.
+/// Schiffer 1999); the layers' bases at 800 hPa. M67: the anvils' base at 440 hPa, the foot of
+/// ISCCP's high class, whose cloud CLOUD_HIGH counts, from which they reach to the
+/// tropopause, letting out from the middle of the span in the pressure's logarithm (where
+/// they began at 350 hPa, the near-aquaplanet's high cloud kept 152 W/m² from space a unit of
+/// its cover over its tropics, ISCCP's high cloud 101 to 121).
 pub const CLOUD_TOPS: (f64, f64) = (560.0 / 1013.25, 850.0 / 1013.25);
-pub const CLOUD_BASES: (f64, f64) = (800.0 / 1013.25, 350.0 / 1013.25);
+pub const CLOUD_BASES: (f64, f64) = (800.0 / 1013.25, 440.0 / 1013.25);
 /// M66: an open sea's albedo under the sun's mean heights, 0.06 (Payne 1972).
 pub const SEA_ALBEDO: f64 = 0.06;
+/// M67: the clouds' water held to what their air gives them. The layers' and the low cloud's
+/// the adiabatic water of a deck of its depth at its adiabaticity, F Gamma_ad h² / 2 (Albrecht
+/// et al. 1990), Gamma_ad the water its air condenses a metre it rises at the deck's base:
+/// the low cloud's depth the field cases' median stratocumulus, 320 m, the layers' the
+/// midlatitudes', 420 m (Wood 2012, Fig. 5b); F the 0.63 of two years' ground-based retrievals
+/// (Merk et al. 2016). At Earth's typical 285 K a low deck holds the 70 g/m² the in-cloud
+/// paths most often take (Stubenrauch et al. 2012); a 230 K deck some 3 g/m². The towers'
+/// water a share of what their ascent condenses: ECMWF's 1e-4 kg/kg of their air (ECMWF
+/// 1991) over the tropical oceans, whose air at the towers' base holds some 19.5 g/kg.
+pub const CLOUD_DEPTH: (f64, f64) = (320.0, 420.0);
+pub const CLOUD_ADIABATIC: f64 = 0.63;
+pub const CLOUD_TOWER_SHARE: f64 = 1e-4 / 0.0195;
+/// M67: the share of a cloud's water that is liquid, none at the first temperature and all at
+/// the second, K, by degrees between: half at 256 K, as CALIPSO's cloud tops imply for the
+/// water's mass (McCoy et al. 2016, 254 to 258 K), a tenth at 244 K (their 243 K).
+pub const CLOUD_PHASE: (f64, f64) = (241.0, 271.0);
+/// M67: the share of the star's light a cloud of water path W absorbs, a W / (W + b), W in
+/// kg/m²: Slingo (1989)'s four bands under the Sun's light by the delta-Eddington layer, the
+/// sun at 60 degrees, under the vapour above it, which has taken its band beyond 2.38 um: some
+/// 4 percent at 70 g/m² and 7.5 at 200, where with none above it 6 and 9 (Wood 2012's few
+/// percent to 15); the clouds adding 4 to 7 W/m² to what Earth's air absorbs (Kato et al.
+/// 2018; Wild et al. 2019).
+pub const CLOUD_ABSORPTION: (f64, f64) = (0.142, 0.178);
+/// M67: the ozone column, Dobson units, by the air's oxygen in its present atmospheric level
+/// (OXYGEN_PRESENT of the air): WACCM6's (Cooke et al. 2022), between its points in the
+/// logarithm, its present 279 DU above them, falling with the oxygen under the least; one
+/// model of several that differ some threefold at a hundredth of the present level.
+pub const OZONE_COLUMN: [(f64, f64); 6] = [
+    (0.001, 18.0),
+    (0.005, 45.0),
+    (0.01, 66.0),
+    (0.05, 136.0),
+    (0.1, 169.0),
+    (1.0, 279.0),
+];
+pub const OXYGEN_PRESENT: f64 = 0.2095;
+/// M67: under its own clouds, the clear air's other absorbers of the star's light, grey, a
+/// depth in the vertical per kg/m² of its vapour: what Lacis and Hansen (1974)'s fit to the
+/// vapour's bands and the ozone leave of the light Earth's clear air is measured to take, its
+/// other gases' near-infrared bands, its aerosols and the vapour's lines the fit misses;
+/// set so that Earth's clear air takes the 73 W/m² measured (Kato et al. 2018; Wild et al.
+/// 2019), the light's split read over its lit hemisphere. In place of CLOUD_SUNLIGHT, which
+/// held the clouds with them.
+pub const AIR_SUNLIGHT: f64 = 1.5405e-3;
 /// M65: methane's 7.7 um band (its nu_4, with nu_2's about 1533 cm^-1), its absorption per
 /// kg/m² at the reference pressure CO2_BAND_PRESSURE, broadened in proportion to the pressure, as
 /// carbon dioxide's band is (Williams 2026's way): HITRAN's 47,799 lines of 12CH4 from 1000 to
@@ -2153,6 +2211,10 @@ pub const RC_SUN_HEIGHTS: usize = 8;
 /// (p / p_s)^5).
 pub const WATER_SUNLIGHT_PRESSURE: f64 = 101_325.0;
 pub const WATER_SUNLIGHT_SHARE: f64 = 5.0 / 6.0;
+/// M67: the air's scale height over its vapour's, the vapour's share of the column above p
+/// (p / p_s)^VAPOUR_SCALE, as WATER_SUNLIGHT_SHARE reads it: the share of the air's absorbers
+/// of the light above a cloud's top.
+pub const VAPOUR_SCALE: f64 = 5.0;
 /// M65: the zero-dimensional balance's scan for its warmest crossing, so many steps of so much
 /// of the logarithm of the temperature up from its black body's, to four times it.
 pub const BALANCE_SCAN: usize = 7;
