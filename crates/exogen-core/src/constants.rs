@@ -1998,6 +1998,64 @@ pub const H2O_CONTINUUM_STATE: (f64, f64, f64) = (224.92, 260.0, 0.02);
 /// radiative-convective column (0.1625 u^0.2346 on F293's left it at 292.2 K), its air then
 /// sending down 342.8 W/m² (342 measured, Kato et al. 2018).
 pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.0914, 0.3856);
+/// M66: the convection's cloud over a place, a + b ln P, P its rain in mm a day, at most the
+/// third: Slingo (1987)'s law as it is quoted, none under 0.14 mm a day and all of its most
+/// from some 85 (its slope and its most read in ECMWF's manual of 1991, eq. 2.50, the
+/// intercept not read in the paper; NCEP's retuning gives 0.200 + 0.120 ln P, Shimpo et al.
+/// 2008). Its towers a share of it (ECMWF 1991, eq. 2.50), and its anvils slope (C - from) of
+/// the place (eq. 2.51).
+pub const CLOUD_CONVECTIVE: (f64, f64, f64) = (0.246, 0.125, 0.8);
+pub const CLOUD_TOWER: f64 = 0.4;
+pub const CLOUD_ANVIL: (f64, f64) = (0.3, 2.0);
+/// M66: the layers' cloud: the column's saturation from which it forms (ECMWF 1991, eq. 2.55:
+/// its low cloud of fronts).
+pub const CLOUD_LAYER: f64 = 0.7;
+/// M66: the low cloud under an inversion, a + b EIS, EIS in K (Wood and Bretherton 2006, p.
+/// 6431: 0.14 +- 0.06 and 0.060 +- 0.010 a kelvin, the seasonal means of the low stratiform
+/// cloud over Klein and Hartmann's eight regions); none under a column under half saturated,
+/// all of it from seven tenths (ECMWF 1991, eq. 2.56's humidity at the inversion's base, which
+/// keeps it from the dry inversions over deserts and the winter pole).
+pub const CLOUD_LOW: (f64, f64) = (0.14, 0.060);
+pub const CLOUD_LOW_HUMIDITY: (f64, f64) = (0.5, 0.7);
+/// M66: the free air's level for the inversion's strength, and the level its moist adiabat
+/// is read at, as shares of the surface pressure: Earth's 700 and 850 hPa (Wood and Bretherton
+/// 2006); the surface air's relative humidity, 0.8, as they take it (COADS's mean from 60S to
+/// 60N); the lifting condensation level 125 m a kelvin of the dew point's depression (Lawrence
+/// 2005).
+pub const CLOUD_LEVELS: (f64, f64) = (700.0 / 1013.25, 850.0 / 1013.25);
+pub const CLOUD_SURFACE_HUMIDITY: f64 = 0.8;
+pub const CLOUD_LCL_PER_KELVIN: f64 = 125.0;
+/// M66: the free air's weak temperature gradients end past the overturning cell's reach from
+/// the thermal equator by degrees over this share of the reach.
+pub const CLOUD_FREE_EDGE: f64 = 0.25;
+/// M66: the clouds' water: the towers' liquid 1e-4 kg/kg of their air from their base to the
+/// tropopause (ECMWF 1991, p. 2.19); the layers' and the low cloud's liquid path, kg/m², the
+/// in-cloud paths' most frequent (GEWEX Cloud Assessment, Stubenrauch et al. 2012, p. 52); the
+/// anvils thin cirrus, their optical depth in the visible the middle of ISCCP's cirrus class,
+/// under 3.6 (Rossow and Schiffer 1999), their ice's path from it.
+pub const CLOUD_TOWER_WATER: f64 = 1e-4;
+pub const CLOUD_LIQUID_PATH: f64 = 0.070;
+pub const CLOUD_ANVIL_DEPTH: f64 = 1.8;
+/// M66: the drops' effective radii, m: liquid over the sea and over land, MODIS's modes of 12
+/// to 13 and 10 to 11 um (King et al. 2013); ice, 25 um (GEWEX, Stubenrauch et al. 2012).
+pub const CLOUD_RADIUS: ((f64, f64), f64) = ((12.5e-6, 10.5e-6), 25e-6);
+/// M66: the drops' asymmetry in the visible, a + b r_e, r_e in um: liquid's (Slingo 1989) and
+/// ice's (Ebert and Curry 1992), as GFDL's code fits them; ice's optical depth per g/m² of its
+/// path, a + b / r_e (Ebert and Curry 1992).
+pub const CLOUD_ASYMMETRY: (f64, f64, f64, f64) = (0.829, 2.482e-3, 0.7661, 5.851e-4);
+pub const CLOUD_ICE_DEPTH: (f64, f64) = (3.448e-3, 2.431);
+/// M66: the clouds' emissivity: liquid's 1 - exp(-a W), W in g/m², a Stephens (1978)'s upward
+/// 0.130 m²/g; ice's 1 - exp(-D (a + b / r_e) W), r_e in um, D the diffusivity (CAM3's fit to
+/// Ebert and Curry 1992, Collins et al. 2004, eq. 4.364).
+pub const CLOUD_LIQUID_EMISSION: f64 = 0.130;
+pub const CLOUD_ICE_EMISSION: (f64, f64) = (0.005, 1.0);
+/// M66: the clouds' levels as shares of the surface pressure, Earth's: the layers' tops in the
+/// middle of ISCCP's middle class, 440 to 680 hPa, the low cloud's at 850 hPa (Rossow and
+/// Schiffer 1999); the layers' bases at 800 hPa and the anvils' at 350.
+pub const CLOUD_TOPS: (f64, f64) = (560.0 / 1013.25, 850.0 / 1013.25);
+pub const CLOUD_BASES: (f64, f64) = (800.0 / 1013.25, 350.0 / 1013.25);
+/// M66: an open sea's albedo under the sun's mean heights, 0.06 (Payne 1972).
+pub const SEA_ALBEDO: f64 = 0.06;
 /// M65: methane's 7.7 um band (its nu_4, with nu_2's about 1533 cm^-1), its absorption per
 /// kg/m² at the reference pressure CO2_BAND_PRESSURE, broadened in proportion to the pressure, as
 /// carbon dioxide's band is (Williams 2026's way): HITRAN's 47,799 lines of 12CH4 from 1000 to

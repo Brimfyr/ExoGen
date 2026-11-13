@@ -249,6 +249,11 @@ pub struct FinishOutput {
     pub water: Option<[Field<f32>; 2]>,
     pub water_vapour: Option<&'static str>,
     pub water_summary: Option<crate::moisture::Summary>,
+    /// The year's water clouds (M66), where its working liquid is water under an atmosphere:
+    /// the share they cover through the year and the low cloud's, the layers', the anvils' and
+    /// the towers'; and the year in brief.
+    pub clouds: Option<[Field<f32>; 5]>,
+    pub cloud_summary: Option<crate::climate::CloudSummary>,
     /// The rivers and the lakes of the year's runoff over the terrain (F277), where it has
     /// water, and what the rivers' erosion moved (F278).
     pub rivers: Option<crate::rivers::Rivers>,
@@ -447,7 +452,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 229;
+pub const FINISH_VERSION: u64 = 230;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3277,6 +3282,14 @@ pub fn finish(
     let water_vapour = water_air
         .filter(|_| moisture.is_some())
         .map(|a| a.vapour.name);
+    // The year's water clouds over its places from its air, wind and moisture (M66): a
+    // diagnostic the climate does not read until their means come from the clouds themselves
+    // (M67; the user, 2026-11-13).
+    let clouds = crate::clouds::Sky::from_graph(graph, &balance)
+        .zip(moisture.as_ref())
+        .and_then(|(sky, m)| cycle.clouds(&sky, m, balance.circulation.reach));
+    let cloud_summary = clouds.as_ref().map(crate::climate::Clouds::summary);
+    let clouds = clouds.map(|c| c.fields(grid));
     // The land's water over the relief (F277), none shed under the caps' ice; the rivers'
     // erosion of the ground through today's climate's span (F278), its relief held over the
     // lithosphere's flexural wavelength; and the rivers and the lakes on the ground they leave.
@@ -3614,6 +3627,8 @@ pub fn finish(
         water,
         water_vapour,
         water_summary,
+        clouds,
+        cloud_summary,
         rivers,
         erosion,
         rays,

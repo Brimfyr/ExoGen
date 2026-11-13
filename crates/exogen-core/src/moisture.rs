@@ -174,9 +174,11 @@ pub struct Moisture {
     pub layout: (usize, usize),
     pub steps: usize,
     /// The precipitation at each place through each step, kg/m²/s, step after step, place
-    /// after place within each, and the share of it that falls as snow.
+    /// after place within each, and the share of it that falls as snow; and its column's
+    /// saturation at each (M66), laid out alike.
     pub falling: Vec<f32>,
     pub snow: Vec<f32>,
+    pub saturations: Vec<f32>,
     /// The year's mean at each place: its precipitation and evaporation over the place, its
     /// potential evaporation, of the open sea over its sea and of wet ground over its land,
     /// and its land's runoff over its land, kg/m²/s; and its column's mean saturation.
@@ -605,6 +607,7 @@ pub fn rain<'a>(
         steps,
         falling: vec![0.0; steps * n],
         snow: vec![0.0; steps * n],
+        saturations: vec![0.0; steps * n],
         precipitation: vec![0.0; n],
         evaporation: vec![0.0; n],
         potential: vec![0.0; n],
@@ -811,6 +814,7 @@ pub fn rain<'a>(
                 if last {
                     out.falling[k * n + p] = fell as f32;
                     out.snow[k * n + p] = air.snow_share(ground[p]) as f32;
+                    out.saturations[k * n + p] = r as f32;
                     out.precipitation[p] += fell / steps as f64;
                     out.evaporation[p] += given / steps as f64;
                     out.runoff[p] += ran / steps as f64;
@@ -893,6 +897,7 @@ mod tests {
             steps: 1,
             falling: vec![0.0; n],
             snow: vec![0.0; n],
+            saturations: vec![0.75; n],
             precipitation: (0..n).map(|p| day * (1.0 + lat(p).cos())).collect(),
             evaporation: vec![day; n],
             potential: vec![2.0 * day; n],

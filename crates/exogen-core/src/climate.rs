@@ -5671,6 +5671,155 @@ impl Cycle {
         )
     }
 
+    /// The year's clouds at the cycle's places (M66), from its moisture `moisture` and its
+    /// sky `sky`, its overturning cell reaching `reach` rad from the thermal equator: at each
+    /// place and step its rain, the convection's within the cell's reach and the large-scale
+    /// rain's beyond, by degrees over CLOUD_FREE_EDGE of the reach; its column's saturation;
+    /// and its inversion's strength over its sea and its land under the free air, which stands
+    /// at the warmest of the cell's latitudes' mean air within its reach and at its own
+    /// latitude's beyond, alike by degrees, the air under it at CLOUD_SURFACE_HUMIDITY over its
+    /// open sea and at its column's saturation over its land and its ice. Their effects over
+    /// its ground as the year left it, its open sea at SEA_ALBEDO, its sea ice, its snow and its
+    /// caps at ICE_ALBEDO, its bare land at ALBEDO_BENEATH. None without the year's wind and
+    /// moisture.
+    pub fn clouds(
+        &self,
+        sky: &crate::clouds::Sky,
+        moisture: &crate::moisture::Moisture,
+        reach: f64,
+    ) -> Option<Clouds> {
+        let wind = self.wind.as_ref()?;
+        let (n_lat, n_lon) = self.layout;
+        let n = n_lat * n_lon;
+        let steps = wind.steps;
+        if n_lat < 2
+            || self.sites.len() != n
+            || self.air.is_empty()
+            || self.surfaces[0].len() != n * steps
+            || self.surfaces[1].len() != n * steps
+            || self.masses[1].len() != n * steps
+            || self.masses[2].len() != n * steps
+            || moisture.saturations.len() != n * steps
+            || moisture.falling.len() != n * steps
+            || wind.east.len() != n * steps
+        {
+            return None;
+        }
+        let tilts = self.air.len() as f64;
+        let dphi = PI / (n_lat - 1) as f64;
+        let lat = |i: usize| -PI / 2.0 + dphi * i as f64;
+        let sigma = |t: f64| SIGMA_SB * t.powi(4);
+        let mut out = Clouds {
+            layout: (n_lat, n_lon),
+            steps,
+            cover: vec![0.0; n * steps],
+            albedo: vec![0.0; n * steps],
+            olr: vec![0.0; n * steps],
+            down: vec![0.0; n * steps],
+            kinds: Default::default(),
+            weights: self.sites.iter().map(|s| s.weight).collect(),
+        };
+        out.kinds = [0, 1, 2, 3].map(|_| vec![0.0f32; n]);
+        for k in 0..steps {
+            let air: Vec<f64> = (0..n)
+                .map(|p| self.air.iter().map(|a| a[k * n + p]).sum::<f64>() / tilts)
+                .collect();
+            let zonal: Vec<f64> = (0..n_lat)
+                .map(|i| (0..n_lon).map(|j| air[i * n_lon + j]).sum::<f64>() / n_lon as f64)
+                .collect();
+            // The free air: the warmest of the cell's latitudes within its reach, its own
+            // latitude's beyond, by degrees.
+            let equator = wind.equator.get(k).copied().unwrap_or(0.0);
+            let inside = |i: usize| -> f64 {
+                if reach <= 0.0 {
+                    return 0.0;
+                }
+                let past = (lat(i) - equator).abs() - reach;
+                (1.0 - past / (CLOUD_FREE_EDGE * reach)).clamp(0.0, 1.0)
+            };
+            let cell = (0..n_lat)
+                .filter(|&i| inside(i) >= 1.0)
+                .map(|i| zonal[i])
+                .fold(f64::NAN, f64::max);
+            let free = |i: usize| -> f64 {
+                if cell.is_nan() {
+                    zonal[i]
+                } else {
+                    zonal[i] + inside(i) * (cell - zonal[i])
+                }
+            };
+            for p in 0..n {
+                let i = p / n_lon;
+                let at = |field: &[f32]| field[p * steps + k] as f64;
+                let rain = moisture.falling[k * n + p] as f64 * SECONDS_PER_DAY;
+                let (convective, large) = (inside(i) * rain, (1.0 - inside(i)) * rain);
+                let saturation = moisture.saturations[k * n + p] as f64;
+                let site = &self.sites[p];
+                let sea = site.sea.clamp(0.0, 1.0);
+                let cap = site.ice.clamp(0.0, 1.0 - sea);
+                let land = (1.0 - sea - cap).max(0.0);
+                let t_land = at(&self.surfaces[0]);
+                let t_sea = at(&self.surfaces[1]);
+                let t_sea = if sea > 0.0 && t_sea.is_finite() && t_sea > 1.0 {
+                    t_sea
+                } else {
+                    t_land
+                };
+                let free_air = free(i);
+                let ice = sea_ice_cover(at(&self.masses[1]));
+                let open = sea * (1.0 - ice);
+                let rains = (convective, large, saturation);
+                let on_sea = crate::clouds::kinds(
+                    rains.0,
+                    rains.1,
+                    rains.2,
+                    sky.eis(t_sea, free_air),
+                    CLOUD_SURFACE_HUMIDITY,
+                );
+                let on_ice = crate::clouds::kinds(
+                    rains.0,
+                    rains.1,
+                    rains.2,
+                    sky.eis(t_sea, free_air),
+                    saturation,
+                );
+                let on_land = crate::clouds::kinds(
+                    rains.0,
+                    rains.1,
+                    rains.2,
+                    sky.eis(t_land, free_air),
+                    saturation,
+                );
+                let kinds = crate::clouds::Kinds {
+                    low: open * on_sea.low + (sea - open) * on_ice.low + (1.0 - sea) * on_land.low,
+                    ..on_sea
+                };
+                let snow = snow_cover(at(&self.masses[2]));
+                // Ice and snow brighten their ground under the star's light (F250).
+                let over = |ground: f64| ground + sky.brightening * (ICE_ALBEDO - ground);
+                let albedo = sea * (SEA_ALBEDO + ice * (over(SEA_ALBEDO) - SEA_ALBEDO))
+                    + cap * over(ALBEDO_BENEATH)
+                    + land * (ALBEDO_BENEATH + snow * (over(ALBEDO_BENEATH) - ALBEDO_BENEATH));
+                let ground =
+                    ((sea * sigma(t_sea) + (1.0 - sea) * sigma(t_land)) / SIGMA_SB).powf(0.25);
+                let e = sky.effects(&kinds, air[p], ground, albedo, sea);
+                let q = p * steps + k;
+                out.cover[q] = kinds.cover() as f32;
+                out.albedo[q] = e.albedo as f32;
+                out.olr[q] = e.olr as f32;
+                out.down[q] = e.down as f32;
+                for (sum, v) in
+                    out.kinds
+                        .iter_mut()
+                        .zip([kinds.tower, kinds.anvil, kinds.layer, kinds.low])
+                {
+                    sum[p] += (v / steps as f64) as f32;
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// The surface's temperatures through its cycle in a direction (F256): the quantiles of
     /// the places about it, read between them, and the albedo their ground stood at.
     pub fn spread_at(&self, d: [f64; 3]) -> ([f64; CYCLE_SPREAD], f64) {
@@ -5910,6 +6059,115 @@ impl Coupling {
             return mean;
         }
         Vec::new()
+    }
+}
+
+/// The clouds through the cycle's year at its places (M66), a diagnostic the climate does not
+/// read until their means come from the clouds themselves (M67): at each place through each
+/// step, place after place, each place's steps within, the share they cover, the albedo they
+/// add over its ground, and what they change of what it lets out to space and of what its air
+/// sends down to its ground, W/m², each with them less without; and each place's year-mean
+/// cover of each kind, towers, anvils, layers and low cloud.
+#[derive(Clone, Debug)]
+pub struct Clouds {
+    pub layout: (usize, usize),
+    pub steps: usize,
+    pub cover: Vec<f32>,
+    pub albedo: Vec<f32>,
+    pub olr: Vec<f32>,
+    pub down: Vec<f32>,
+    pub kinds: [Vec<f32>; 4],
+    /// Each place's share of the sphere.
+    pub weights: Vec<f64>,
+}
+
+/// The year's clouds in brief (M66): over the body by area, the share they cover, each kind's,
+/// low cloud, layers, anvils and towers, the albedo they add over the ground, and what they
+/// change of what it lets out to space and of what its air sends down to its ground, W/m².
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CloudSummary {
+    pub cover: f64,
+    pub kinds: [f64; 4],
+    pub albedo: f64,
+    pub olr: f64,
+    pub down: f64,
+}
+
+impl Clouds {
+    /// The year's mean over the body, by area, of a series laid out as the clouds are.
+    pub fn mean(&self, values: &[f32]) -> f64 {
+        let steps = self.steps.max(1);
+        let total: f64 = self.weights.iter().sum::<f64>().max(1e-30);
+        self.weights
+            .iter()
+            .enumerate()
+            .map(|(p, w)| {
+                w * values[p * steps..(p + 1) * steps]
+                    .iter()
+                    .map(|&v| v as f64)
+                    .sum::<f64>()
+                    / steps as f64
+            })
+            .sum::<f64>()
+            / total
+    }
+
+    /// The year in brief.
+    pub fn summary(&self) -> CloudSummary {
+        let total: f64 = self.weights.iter().sum::<f64>().max(1e-30);
+        let kind = |values: &[f32]| {
+            values
+                .iter()
+                .zip(&self.weights)
+                .map(|(&v, w)| v as f64 * w)
+                .sum::<f64>()
+                / total
+        };
+        // The low cloud, the layers, the anvils, the towers, as the maps hold them.
+        let [tower, anvil, layer, low] = &self.kinds;
+        CloudSummary {
+            cover: self.mean(&self.cover),
+            kinds: [kind(low), kind(layer), kind(anvil), kind(tower)],
+            albedo: self.mean(&self.albedo),
+            olr: self.mean(&self.olr),
+            down: self.mean(&self.down),
+        }
+    }
+
+    /// The year's mean cover on a grid, read between the places: the share they cover, and
+    /// the low cloud's, the layers', the anvils' and the towers' (M66).
+    pub fn fields(&self, grid: CubeSphere) -> [Field<f32>; 5] {
+        let (n_lat, n_lon) = self.layout;
+        let n = n_lat * n_lon;
+        let steps = self.steps.max(1);
+        let cover: Vec<f64> = (0..n)
+            .map(|p| {
+                self.cover[p * steps..(p + 1) * steps]
+                    .iter()
+                    .map(|&v| v as f64)
+                    .sum::<f64>()
+                    / steps as f64
+            })
+            .collect();
+        let as_f64 = |v: &[f32]| v.iter().map(|&x| x as f64).collect::<Vec<f64>>();
+        let [tower, anvil, layer, low] = &self.kinds;
+        let read = |values: &[f64]| {
+            Field::from_fn(grid, |_, d| {
+                let (lon, lat) = lon_lat_from_direction(d);
+                let v = match n_lon {
+                    1 => crate::insolation::read_row(values, lat),
+                    _ => crate::insolation::read_grid(values, n_lon, lat, lon),
+                };
+                v.clamp(0.0, 1.0) as f32
+            })
+        };
+        [
+            read(&cover),
+            read(&as_f64(low)),
+            read(&as_f64(layer)),
+            read(&as_f64(anvil)),
+            read(&as_f64(tower)),
+        ]
     }
 }
 
@@ -8131,7 +8389,14 @@ mod tests {
             let ground = Ground::from_graph(&self.graph);
             let cycle = eb.cycle_with(&self.climate, &ground, sea, None, Some(&coupling));
             let water = air.and_then(|a| cycle.moisture(&a, &heights));
-            Again { cycle, water }
+            let clouds = crate::clouds::Sky::from_graph(&self.graph, &eb)
+                .zip(water.as_ref())
+                .and_then(|(sky, m)| cycle.clouds(&sky, m, eb.circulation.reach));
+            Again {
+                cycle,
+                water,
+                clouds,
+            }
         }
 
         /// The inventory's caps laid on the year's traps over a 64-cell face, as the caps'
@@ -8149,6 +8414,8 @@ mod tests {
     struct Again {
         cycle: Cycle,
         water: Option<crate::moisture::Moisture>,
+        /// Its clouds, from its own air, wind and moisture (M66).
+        clouds: Option<Clouds>,
     }
 
     /// The Earth-like's year, read by each check of it.
@@ -8194,7 +8461,65 @@ mod tests {
             ("the_earth_like_s_snow_comes_and_goes", &|| {
                 the_earth_like_s_snow_comes_and_goes(&again)
             }),
+            ("the_earth_like_s_clouds_lie_in_its_belts", &|| {
+                the_earth_like_s_clouds_lie_in_its_belts(&again)
+            }),
         ]);
+    }
+
+    /// M66: the Earth-like's clouds lie in its belts, as Earth's do (ISCCP, CERES): most over
+    /// its deep convection near the equator and in its storm tracks, least over its subtropics
+    /// where its air sinks, least of all over their land; over the body some half of it or more
+    /// (Earth's 0.67), reflecting its light, keeping its heat from space and sending it down.
+    fn the_earth_like_s_clouds_lie_in_its_belts(again: &Again) {
+        let c = again.clouds.as_ref().expect("the Earth-like's clouds");
+        let (n_lat, n_lon) = c.layout;
+        let steps = c.steps;
+        let sites = &again.cycle.sites;
+        assert_eq!(sites.len(), n_lat * n_lon);
+        let year = |values: &[f32], p: usize| {
+            values[p * steps..(p + 1) * steps]
+                .iter()
+                .map(|&v| v as f64)
+                .sum::<f64>()
+                / steps as f64
+        };
+        let band = |values: &dyn Fn(usize) -> f64,
+                    (lo, hi): (f64, f64),
+                    keep: &dyn Fn(&crate::wind::Site) -> bool| {
+            let (mut sum, mut area) = (0.0, 0.0);
+            for (p, s) in sites.iter().enumerate() {
+                let lat = s.lat.to_degrees().abs();
+                if (lo..=hi).contains(&lat) && keep(s) {
+                    sum += s.weight * values(p);
+                    area += s.weight;
+                }
+            }
+            sum / f64::max(area, 1e-30)
+        };
+        let all = |_: &crate::wind::Site| true;
+        let cover = |p: usize| year(&c.cover, p);
+        let (deep, dry, storms) = (
+            band(&cover, (0.0, 10.0), &all),
+            band(&cover, (15.0, 30.0), &all),
+            band(&cover, (45.0, 65.0), &all),
+        );
+        let desert = band(&cover, (15.0, 30.0), &|s| s.sea < 0.2);
+        let whole = c.mean(&c.cover);
+        println!(
+            "Earth-like clouds: cover {whole:.3}; deep convection {deep:.2}, subtropics {dry:.2} (land {desert:.2}), storm tracks {storms:.2}; albedo {:+.3}, to space {:+.1} W/m², down {:+.1} W/m²",
+            c.mean(&c.albedo),
+            c.mean(&c.olr),
+            c.mean(&c.down)
+        );
+        assert!((0.4..0.8).contains(&whole), "cover {whole}");
+        assert!(deep > dry + 0.2, "deep {deep} over subtropics {dry}");
+        assert!(
+            storms > dry + 0.1,
+            "storm tracks {storms} over subtropics {dry}"
+        );
+        assert!(desert < dry, "desert {desert} under the subtropics' {dry}");
+        assert!(c.mean(&c.albedo) > 0.0 && c.mean(&c.olr) < 0.0 && c.mean(&c.down) > 0.0);
     }
 
     /// Mars's year, read by each check of it.
@@ -9016,7 +9341,51 @@ mod tests {
             ("a_locked_world_s_air_blows_toward_its_star", &|| {
                 a_locked_world_s_air_blows_toward_its_star(&year)
             }),
+            ("a_locked_world_s_clouds_gather_under_its_star", &|| {
+                a_locked_world_s_clouds_gather_under_its_star(&year)
+            }),
         ]);
+    }
+
+    /// M66: a locked ocean world's clouds gather under its star, where its air rises and its
+    /// rain falls, its night's sinking air clear (Yang et al. 2013).
+    fn a_locked_world_s_clouds_gather_under_its_star(year: &LockedYear) {
+        let air =
+            crate::moisture::Air::from_graph(&year.world, year.eb.transport, OCEAN_TRANSPORT_SHARE);
+        let heights = vec![0.0; year.cycle.sites.len()];
+        let wet = air
+            .and_then(|a| year.cycle.moisture(&a, &heights))
+            .expect("the locked world's moisture");
+        let sky = crate::clouds::Sky::from_graph(&year.world, &year.eb).expect("a sky");
+        let c = year
+            .cycle
+            .clouds(&sky, &wet, year.eb.circulation.reach)
+            .expect("the locked world's clouds");
+        let steps = c.steps;
+        let (mut day, mut night) = ((0.0, 0.0), (0.0, 0.0));
+        let mut under = 0.0f64;
+        for (p, s) in year.cycle.sites.iter().enumerate() {
+            let cover = c.cover[p * steps..(p + 1) * steps]
+                .iter()
+                .map(|&v| v as f64)
+                .sum::<f64>()
+                / steps as f64;
+            let facing = s.lat.cos() * s.lon.cos();
+            if facing > 0.0 {
+                day = (day.0 + s.weight * cover, day.1 + s.weight);
+            } else {
+                night = (night.0 + s.weight * cover, night.1 + s.weight);
+            }
+            if facing > 0.95 {
+                under = under.max(cover);
+            }
+        }
+        let (day, night) = (day.0 / day.1, night.0 / night.1);
+        println!(
+            "locked world's clouds: under its star {under:.2}, day {day:.2}, night {night:.2}"
+        );
+        assert!(under > 0.5, "under its star {under}");
+        assert!(day > 3.0 * night, "day {day} night {night}");
     }
 
     /// A locked world's measures as THAI gives them (Sergeev et al. 2022): the body's and its

@@ -8,6 +8,7 @@
 //! repository for the design.
 
 pub mod climate;
+pub mod clouds;
 pub mod constants;
 pub mod convection;
 pub mod crater;

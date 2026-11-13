@@ -88,6 +88,23 @@ pub struct WaterInfo {
     pub hyper_arid_land_fraction: f64,
 }
 
+/// The year's water clouds (M66), a diagnostic the climate does not read until their means come
+/// from the clouds themselves (M67): over the body by area, the share of it they cover and the
+/// low cloud's, the layers', the anvils' and the towers', which overlap at random; the albedo
+/// they add over the ground; and what they change of what it lets out to space and of what its
+/// air sends down to its ground, W/m², each with them less without.
+#[derive(Serialize)]
+pub struct CloudsInfo {
+    pub cover: f64,
+    pub low: f64,
+    pub layers: f64,
+    pub anvils: f64,
+    pub towers: f64,
+    pub albedo_added: f64,
+    pub outgoing_change_w_m2: f64,
+    pub downward_change_w_m2: f64,
+}
+
 /// The rivers and the lakes of the year's runoff (F277): the runoff of the land about the lakes,
 /// what the lakes' surfaces gain over what they lose to the air, and what reaches the sea,
 /// m³/s; the share of the land whose water ends in a lake that does not spill to the sea
@@ -406,6 +423,8 @@ pub struct Sidecar {
     pub wind: Option<WindInfo>,
     /// The year's water (F268), none without a working liquid under an atmosphere.
     pub water: Option<WaterInfo>,
+    /// The year's water clouds (M66), none where its working liquid is not water.
+    pub clouds: Option<CloudsInfo>,
     /// The rivers and the lakes (F277), where the body has water.
     pub rivers: Option<RiversInfo>,
     /// The working liquid's depth and optics (ADR 0007), none where no liquid lies.
@@ -524,6 +543,8 @@ pub fn export(
         "cryosphere_ice.png",
         "wind.exr",
         "wind.png",
+        "clouds.exr",
+        "clouds.png",
         "precipitation.exr",
         "precipitation.png",
         "aridity.exr",
@@ -1406,6 +1427,71 @@ pub fn export(
             ..Default::default()
         },
     );
+    // The year's water clouds (M66): R the low cloud's year-mean cover, G the layers', B the
+    // anvils', A the towers', shares of the place, bilinear; they overlap at random, so that
+    // the share any covers is 1 - (1 - R)(1 - G)(1 - B)(1 - A). All zero where the working
+    // liquid is not water.
+    let cloud_maps: Vec<Vec<f32>> = match &out.clouds {
+        Some(fields) => fields[1..]
+            .iter()
+            .map(|f| to_equirectangular(&grid, f.as_slice(), width, height_px))
+            .collect(),
+        None => vec![calm(), calm(), calm(), calm()],
+    };
+    let cloud_channels = || {
+        [
+            ("R", "the low cloud's year-mean cover"),
+            ("G", "the layers' year-mean cover"),
+            ("B", "the anvils' year-mean cover"),
+            ("A", "the towers' year-mean cover"),
+        ]
+        .map(|(name, holds)| ChannelInfo {
+            name: name.into(),
+            holds: holds.into(),
+            unit: "share of the place".into(),
+            min: 0.0,
+            max: 1.0,
+        })
+        .into_iter()
+        .collect::<Vec<_>>()
+    };
+    let cloud_units = "shares of the place each kind of the water's clouds covers through the year, overlapping at random: the share any covers is 1 - (1 - R)(1 - G)(1 - B)(1 - A); a diagnostic the climate does not yet read; all zero where the working liquid is not water";
+    write_exr_channels(
+        &settings.dir.join("clouds.exr"),
+        (width, height_px),
+        "clouds",
+        &["R", "G", "B", "A"],
+        &cloud_maps,
+    )?;
+    maps.insert(
+        "clouds".to_string(),
+        MapInfo {
+            file: "clouds.exr".into(),
+            encoding: "float32 EXR, channels R, G, B, A".into(),
+            units: cloud_units.into(),
+            min: 0.0,
+            max: 1.0,
+            channels: cloud_channels(),
+            ..Default::default()
+        },
+    );
+    write_png_rgba16(
+        &settings.dir.join("clouds.png"),
+        (width, height_px),
+        &cloud_maps,
+    )?;
+    maps.insert(
+        "clouds_png".to_string(),
+        MapInfo {
+            file: "clouds.png".into(),
+            encoding: "16-bit RGBA PNG, each channel linear from 0 to 1".into(),
+            units: cloud_units.into(),
+            min: 0.0,
+            max: 1.0,
+            channels: cloud_channels(),
+            ..Default::default()
+        },
+    );
     // The year's water (F268): its precipitation, kg/m² a year, and its aridity index, its
     // precipitation over its potential evaporation, held under ARIDITY_MAP_MOST, bilinear; all
     // zero without a working liquid under an atmosphere.
@@ -1590,6 +1676,16 @@ pub fn export(
         land_runoff_kg_m2_yr: w.runoff,
         arid_land_fraction: w.arid,
         hyper_arid_land_fraction: w.hyper_arid,
+    });
+    let clouds = out.cloud_summary.map(|c| CloudsInfo {
+        cover: c.cover,
+        low: c.kinds[0],
+        layers: c.kinds[1],
+        anvils: c.kinds[2],
+        towers: c.kinds[3],
+        albedo_added: c.albedo,
+        outgoing_change_w_m2: c.olr,
+        downward_change_w_m2: c.down,
     });
     let wind = out.wind_summary.map(|w| WindInfo {
         mean_speed_m_s: w.speed,
@@ -1836,6 +1932,7 @@ pub fn export(
         cryosphere,
         wind,
         water,
+        clouds,
         rivers,
         liquid,
         stage_outputs,
@@ -2209,6 +2306,28 @@ fn write_png_rgb16(
         }
     }
     let img = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(
+        width as u32,
+        height as u32,
+        pixels,
+    )
+    .expect("buffer size");
+    retry(|| img.save(path))?;
+    Ok(())
+}
+
+/// Four channels from 0 to 1 to a 16-bit RGBA PNG (M66).
+fn write_png_rgba16(
+    path: &Path,
+    (width, height): (usize, usize),
+    channels: &[Vec<f32>],
+) -> Result<(), ExportError> {
+    let mut pixels = Vec::with_capacity(width * height * 4);
+    for k in 0..width * height {
+        for channel in channels {
+            pixels.push((channel[k].clamp(0.0, 1.0) * 65535.0).round() as u16);
+        }
+    }
+    let img = image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_raw(
         width as u32,
         height as u32,
         pixels,

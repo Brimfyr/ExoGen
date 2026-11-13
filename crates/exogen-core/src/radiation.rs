@@ -539,6 +539,13 @@ impl Column {
         self
     }
 
+    /// The column without the clouds' stated law (M66): its clear air, whose clouds the
+    /// climate lays by place and season.
+    pub fn without_clouds(mut self) -> Self {
+        self.cloud = (0.0, 0.0);
+        self
+    }
+
     /// The sunlight the column absorbs (M65).
     pub fn sunlight(&self) -> Sunlight {
         self.sunlight
