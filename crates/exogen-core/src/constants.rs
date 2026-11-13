@@ -2017,9 +2017,10 @@ pub const CLOUD_THICK: f64 = 0.0095;
 /// M67: the anvils thicken as the convection rains harder: the share of the high cloud short of
 /// the towers that is medium-thick (ISCCP's optical depths 3.6 to 23) a + b P, P in mm a day,
 /// some 0.26 at 1.5 mm a day, 0.38 at 7 and 0.66 at 17 (the same data as CLOUD_HIGH; this
-/// project's fit); that cloud's optical depth the geometric middle of the class, 9.1, the rest
-/// thin cirrus of CLOUD_ANVIL_DEPTH.
-pub const CLOUD_ANVIL_MEDIUM: (f64, f64, f64) = (0.23, 0.022, 9.1);
+/// project's fit); that cloud's optical depth the class's albedo-equivalent mean over the
+/// convection's rain, 8.5 (ISCCP-H, 8.3 to 9.1 from 1 to 20 mm a day; M68, in place of the
+/// class's geometric middle, 9.1), the rest thin cirrus of CLOUD_ANVIL_DEPTH.
+pub const CLOUD_ANVIL_MEDIUM: (f64, f64, f64) = (0.23, 0.022, 8.5);
 /// M66: the layers' cloud: the column's saturation from which it forms (ECMWF 1991, eq. 2.55:
 /// its low cloud of fronts).
 pub const CLOUD_LAYER: f64 = 0.7;
@@ -2041,11 +2042,30 @@ pub const CLOUD_LCL_PER_KELVIN: f64 = 125.0;
 /// M66: the free air's weak temperature gradients end past the overturning cell's reach from
 /// the thermal equator by degrees over this share of the reach.
 pub const CLOUD_FREE_EDGE: f64 = 0.25;
-/// M66: the anvils thin cirrus, their optical depth in the visible the middle of ISCCP's cirrus
-/// class, under 3.6 (Rossow and Schiffer 1999), their ice's path from it: the tropical high
-/// clouds' optical depths gather at 1 to 2 (Sokol and Hartmann 2020). The towers' and the
-/// decks' water is their air's (CLOUD_DEPTH, M67).
-pub const CLOUD_ANVIL_DEPTH: f64 = 1.8;
+/// M66: the anvils thin cirrus, their optical depth in the visible ISCCP's thin high cloud's
+/// (under 3.6) over the tropical oceans where it rains, their ice's path from it. M68: the
+/// class's albedo-equivalent mean, the depth whose plane-parallel albedo is the mean of its
+/// cells' (the COSP ISCCP simulator's convention), 0.87 at 1.5 mm a day to 1.21 at 13, 1.03 at
+/// 5.5 (ISCCP-H against GPCP v3.2, 30S to 30N, this project's computation), in place of the
+/// class's middle, 1.8. The towers' and the decks' water is their air's (CLOUD_DEPTH, M67).
+pub const CLOUD_ANVIL_DEPTH: f64 = 1.0;
+/// M68: the convection's own mid-level cloud, its congestus and the layers it spreads at the
+/// melting level (Johnson et al. 1999): the share of the sky ISCCP sees topped between 440 and
+/// 680 hPa over the tropical oceans, a + b ln P, P the climatological rain in mm a day (ISCCP-H
+/// against GPCP v3.2, 30S to 30N, 1.5 to 9 mm a day; this project's fit), under the high cloud
+/// that hides the rest of it as the clouds overlap at random; its optical depth the level's
+/// albedo-equivalent mean where it rains, 3.4 (3.2 to 3.6 from 2 to 10 mm a day), its tops at
+/// ISCCP's 553 hPa, CLOUD_TOPS's.
+pub const CLOUD_CONGESTUS: (f64, f64, f64) = (0.121, 0.020, 3.4);
+/// M68: the convection's own cumulus: the share of the sky its low cloud covers over the tropical
+/// oceans, as ISCCP sees it under the high and mid-level clouds that hide the rest of it, at
+/// random, 0.32 to 0.35 from 1 to 10 mm a day, its thin cumulus alone some 0.21 at every rain
+/// (ISCCP-H against GPCP v3.2, 30S to 30N); thinning toward no rain over the rain's e-folding,
+/// mm a day, which leaves the driest seasons' thin cumulus, 0.19 at 0.4 mm a day; its optical
+/// depth the level's albedo-equivalent mean where it rains, 3.1 (3.0 to 3.3 from 2 to 10 mm a
+/// day). It and the inversion's low cloud are one boundary layer's clouds: the more of the two
+/// covers the place.
+pub const CLOUD_CUMULUS: (f64, f64, f64) = (0.33, 0.4, 3.1);
 /// M66: the drops' effective radii, m: liquid over the sea and over land, MODIS's modes of 12
 /// to 13 and 10 to 11 um (King et al. 2013); ice, 25 um (GEWEX, Stubenrauch et al. 2012).
 pub const CLOUD_RADIUS: ((f64, f64), f64) = ((12.5e-6, 10.5e-6), 25e-6);
@@ -2093,6 +2113,12 @@ pub const CLOUD_PHASE: (f64, f64) = (241.0, 271.0);
 /// percent to 15); the clouds adding 4 to 7 W/m² to what Earth's air absorbs (Kato et al.
 /// 2018; Wild et al. 2019).
 pub const CLOUD_ABSORPTION: (f64, f64) = (0.142, 0.178);
+/// M68: the year under its own clouds, each year under the clouds of the year before it: the
+/// change in the body's mean surface temperature from one year to the next under which they
+/// stop, K, and the most years. Each year closes on its own clouds' by some half of what is
+/// left (the Earth-like's 296.2, 293.8, 293.1, 292.8 K from its first year's clouds), so that
+/// the last year stands within some 0.3 K of where they would end.
+pub const CLOUD_PASSES: (f64, usize) = (0.3, 6);
 /// M67: the ozone column, Dobson units, by the air's oxygen in its present atmospheric level
 /// (OXYGEN_PRESENT of the air): WACCM6's (Cooke et al. 2022), between its points in the
 /// logarithm, its present 279 DU above them, falling with the oxygen under the least; one

@@ -1182,6 +1182,8 @@ pub struct Cycle {
     /// planetary albedo (M67): its ground's, its air's and its clouds'; NaN where its places
     /// run apart, with no air between them.
     pub albedo: f64,
+    /// Each tilt's places' state at the year's end, to start the year after it from (M68).
+    ends: Vec<Option<std::sync::Arc<Warm>>>,
 }
 
 /// The cycle's year step by step (F253): each step's end's phase of the year from the
@@ -2165,6 +2167,8 @@ struct TiltYear {
     /// The share of the light on the body its places reflected through the year (M67), NaN
     /// where they run apart.
     albedo: f64,
+    /// Its places' state at its end, to start the year after it from (M68).
+    end: Option<std::sync::Arc<Warm>>,
 }
 
 /// The lockstep through its last cycle (F239, F245): the places' runs; where the atmosphere
@@ -2194,20 +2198,25 @@ struct Lockstep {
     albedo: f64,
 }
 
-/// A lockstep's end on the latitudes' rows, to start the places from (F258): the gas in the
-/// air and its frost, kg/m² over the body, and each row's ground.
+/// A lockstep's end on the latitudes' rows, to start the places from (F258), or at each of its
+/// places, to start the year after it from (M68): the gas in the air and its frost, kg/m² over
+/// the body, and each row's or place's ground.
+#[derive(Clone, Debug)]
 struct Warm {
     active: f64,
     rows: Vec<WarmRow>,
+    places: bool,
 }
 
-/// A row's ground at a lockstep's end (F258): its land's column and frost, its caps' column
-/// and its sea.
+/// A row's or a place's ground at a lockstep's end (F258): its land's column and frost, its
+/// caps' column and its sea; and its land's snow, which a place's start takes (M68).
+#[derive(Clone, Debug)]
 struct WarmRow {
     t: Vec<f64>,
     mass: f64,
     cap: Option<Vec<f64>>,
     sea: Option<Sea>,
+    snow: f64,
 }
 
 impl Lockstep {
@@ -2223,8 +2232,29 @@ impl Lockstep {
                     mass: r.mass,
                     cap: r.cap.map(|c| c.t),
                     sea: r.sea,
+                    snow: r.snow,
                 })
                 .collect(),
+            places: false,
+        }
+    }
+
+    /// Its state at its end at each place, to start the year after it from (M68).
+    fn ends(&self) -> Warm {
+        Warm {
+            active: self.active,
+            rows: self
+                .runs
+                .iter()
+                .map(|r| WarmRow {
+                    t: r.t.clone(),
+                    mass: r.mass,
+                    cap: r.cap.as_ref().map(|c| c.t.clone()),
+                    sea: r.sea,
+                    snow: r.snow,
+                })
+                .collect(),
+            places: true,
         }
     }
 }
@@ -2943,6 +2973,54 @@ impl EnergyBalance {
         self.cycle_with(climate, ground, sea, reservoir, None)
     }
 
+    /// The year under its own clouds (M68): from the year `start`, each year again at the
+    /// wind, the moisture and the clouds of the year before it (F269, M67), until the body's
+    /// mean surface temperature changes by less than CLOUD_PASSES's kelvin from one year to the
+    /// next, within its most years, each started from the end of the year before it; `sky` the
+    /// clouds' sky, `air` the moisture's air and
+    /// `heights` each place's ground over the sea, m. A year under the clouds of a year warmer
+    /// and wetter than itself runs warm: the Earth-like under its first year's clouds, whose
+    /// tropics rained 15 mm a day, stood at 296.2 K, three years on under its own at 292.8. The
+    /// start alone where its year keeps no wind or moisture.
+    pub fn cycle_under_own_clouds(
+        &self,
+        (climate, ground): (&Climate, &Ground),
+        (sea, reservoir): (Option<(&Ocean, &Field<f32>)>, Option<&Reservoir>),
+        start: Cycle,
+        (sky, air, heights): (&crate::clouds::Sky, &crate::moisture::Air, &[f64]),
+    ) -> OwnClouds {
+        let (settled, most) = CLOUD_PASSES;
+        let mut means = vec![start.surface_mean()];
+        let (mut cycle, mut clouds) = (start, None);
+        for _ in 0..most {
+            let Some(water) = cycle.moisture(air, heights) else {
+                break;
+            };
+            let Some(laid) = cycle.clouds(sky, &water, self.circulation.reach) else {
+                break;
+            };
+            let Some(coupling) = cycle.coupling(Some(&water)) else {
+                break;
+            };
+            let coupling = coupling
+                .with_clouds(Some((sky.clone(), &laid)))
+                .from_end_of(&cycle);
+            cycle = self.cycle_with(climate, ground, sea, reservoir, Some(&coupling));
+            clouds = Some(laid);
+            let mean = cycle.surface_mean();
+            let change = (mean - means[means.len() - 1]).abs();
+            means.push(mean);
+            if change.is_nan() || change < settled {
+                break;
+            }
+        }
+        OwnClouds {
+            cycle,
+            clouds,
+            means,
+        }
+    }
+
     /// The year as `cycle` runs it, its air's exchange with the ground at each place's
     /// contact from a year's wind and moisture, `coupling` (F269).
     pub fn cycle_with(
@@ -2992,10 +3070,21 @@ impl EnergyBalance {
             tilts
                 .iter()
                 .enumerate()
-                .map(|(j, &eps)| match self.sky.resonance {
-                    None => self.seasonal_years(ground, layout, eps, ocean, rows.as_ref()),
-                    Some((_, orbits)) => {
-                        self.seasonal_orbits(ground, layout, (orbits, &paths[j]), ocean)
+                .map(|(j, &eps)| {
+                    // The year started from the end of the year before it, where its coupling
+                    // carries it (M68).
+                    let start = coupling
+                        .and_then(|c| c.warm.get(j))
+                        .and_then(|w| w.as_deref());
+                    match self.sky.resonance {
+                        None => {
+                            let rows = rows.as_ref();
+                            self.seasonal_years(ground, layout, eps, ocean, (rows, start))
+                        }
+                        Some((_, orbits)) => {
+                            let at = (orbits, paths[j].as_slice());
+                            self.seasonal_orbits(ground, layout, at, (ocean, start))
+                        }
                     }
                 })
                 .collect()
@@ -3040,6 +3129,7 @@ impl EnergyBalance {
                     caps: Vec::new(),
                     settled: (0, true),
                     albedo: f64::NAN,
+                    end: None,
                 })
                 .collect()
         };
@@ -3394,6 +3484,7 @@ impl EnergyBalance {
             (y.max(e.settled.0), s && e.settled.1)
         });
         let albedo = each.iter().map(|e| e.albedo).sum::<f64>() / each.len().max(1) as f64;
+        let ends = each.iter().map(|e| e.end.clone()).collect();
         Cycle {
             mean: field(|y| y.mean),
             max: field(|y| y.max),
@@ -3421,6 +3512,7 @@ impl EnergyBalance {
             spread_albedo: rows.iter().map(|y| y.albedo).collect(),
             settled,
             albedo,
+            ends,
         }
     }
 
@@ -3651,7 +3743,7 @@ impl EnergyBalance {
         layout: &Layout,
         eps: f64,
         ocean: Option<&Ocean>,
-        rows: Option<&Layout>,
+        (rows, start): (Option<&Layout>, Option<&Warm>),
     ) -> TiltYear {
         let solar_days = (self.sky.spins - eps.cos()).abs().max(1e-3);
         let day = self.year / solar_days;
@@ -3676,12 +3768,14 @@ impl EnergyBalance {
         );
         let every = steps / CYCLE_SEASONS;
         // The seasons spun up on the latitudes' rows where caps hold the air (F258): the frost
-        // their air lays takes years to come to its own, cheaply on the rows.
-        let warm = rows.map(|rows| {
+        // their air lays takes years to come to its own, cheaply on the rows; or each place
+        // started from the end of the year before it (M68).
+        let spun = rows.filter(|_| start.is_none()).map(|rows| {
             let spin = (0, None, CYCLE_SPIN_UP_YEARS);
             self.lockstep(ground, &column, rows, timing, light, ocean, spin)
                 .warm()
         });
+        let warm = start.or(spun.as_ref());
         // On the rows alone, caps that hold the air take the spin-up's years (F258).
         let years = match layout.n_lon == 1 && layout.places.iter().any(|p| p.cap > 0.0) {
             true => CYCLE_SPIN_UP_YEARS,
@@ -3694,8 +3788,9 @@ impl EnergyBalance {
             timing,
             light,
             ocean,
-            (every, warm.as_ref(), years),
+            (every, warm, years),
         );
+        let end = Some(std::sync::Arc::new(lockstep.ends()));
         let dt = day / CYCLE_DAY_STEPS as f64;
         let frost = self.frost.as_ref();
         let years = lockstep
@@ -3778,17 +3873,19 @@ impl EnergyBalance {
             caps: lockstep.caps,
             settled: lockstep.settled,
             albedo: lockstep.albedo,
+            end,
         }
     }
 
     /// The cycles of a resonant body under its atmosphere (F239, F245): its places run in
-    /// step through the orbits it repeats in, along the star's `path`.
+    /// step through the orbits it repeats in, along the star's `path`; started from `start`,
+    /// the end of the year before it, where known (M68).
     fn seasonal_orbits(
         &self,
         ground: &Ground,
         layout: &Layout,
         (orbits, path): (u32, &[PathStep]),
-        ocean: Option<&Ocean>,
+        (ocean, start): (Option<&Ocean>, Option<&Warm>),
     ) -> TiltYear {
         let cycle = self.year * orbits as f64;
         let column = Column::new(ground, cycle, cycle);
@@ -3802,8 +3899,9 @@ impl EnergyBalance {
         let steps = path.len();
         let snapshot = snapshot_step(self.snapshot, steps / orbits.max(1) as usize);
         let timing = (steps, cycle / steps as f64, snapshot);
-        let year = (0, None, CYCLE_MAX_YEARS);
+        let year = (0, start, CYCLE_MAX_YEARS);
         let lockstep = self.lockstep(ground, &column, layout, timing, light, ocean, year);
+        let end = Some(std::sync::Arc::new(lockstep.ends()));
         let years = lockstep
             .runs
             .iter()
@@ -3834,6 +3932,7 @@ impl EnergyBalance {
             caps: lockstep.caps.iter().map(|g| g / orbits).collect(),
             settled: lockstep.settled,
             albedo: lockstep.albedo,
+            end,
         }
     }
 
@@ -3919,12 +4018,19 @@ impl EnergyBalance {
                 crate::drift::Drift::new((&sea, &weight), grid, spin, (water, o.density))
             });
         let (mut held, mut load) = (frost.map_or(0.0, |f| f.column), 0.0);
-        if let Some(w) = warm {
-            for (r, p) in runs.iter_mut().zip(places) {
-                let at = (p.lat + PI / 2.0) / PI * (w.rows.len() - 1) as f64;
-                let row = &w.rows[(at.round() as usize).min(w.rows.len() - 1)];
+        if let Some(w) = warm.filter(|w| !w.places || w.rows.len() == n) {
+            for (q, (r, p)) in runs.iter_mut().zip(places).enumerate() {
+                let row = if w.places {
+                    &w.rows[q]
+                } else {
+                    let at = (p.lat + PI / 2.0) / PI * (w.rows.len() - 1) as f64;
+                    &w.rows[(at.round() as usize).min(w.rows.len() - 1)]
+                };
                 r.t.clone_from(&row.t);
                 r.mass = row.mass;
+                if w.places {
+                    r.snow = row.snow;
+                }
                 if let (Some(c), Some(t)) = (r.cap.as_mut(), &row.cap) {
                     c.t.clone_from(t);
                 }
@@ -5715,7 +5821,48 @@ fn surface_normal(height: &Field<f32>, c: crate::grid::Cell, d: [f64; 3], radius
     ])
 }
 
+/// The year under its own clouds (M68): the year it came to, the clouds it last ran under, and
+/// the body's mean surface temperature after each year, K, its start's first.
+#[derive(Clone, Debug)]
+pub struct OwnClouds {
+    pub cycle: Cycle,
+    pub clouds: Option<Clouds>,
+    pub means: Vec<f64>,
+}
+
 impl Cycle {
+    /// The body's mean surface temperature through the year, K (M68): each place's land and
+    /// its sea by their shares through each step, by area; NaN where the year kept no places.
+    pub fn surface_mean(&self) -> f64 {
+        let n = self.sites.len();
+        let steps = self.surfaces[0].len().checked_div(n).unwrap_or(0);
+        if steps == 0 || self.surfaces[1].len() != n * steps {
+            return f64::NAN;
+        }
+        let (mut sum, mut area) = (0.0, 0.0);
+        for (p, s) in self.sites.iter().enumerate() {
+            let sea = s.sea.clamp(0.0, 1.0);
+            let mut t = 0.0;
+            for k in 0..steps {
+                let land = self.surfaces[0][p * steps + k] as f64;
+                let water = self.surfaces[1][p * steps + k] as f64;
+                let water = if water.is_finite() && water > 1.0 {
+                    water
+                } else {
+                    land
+                };
+                t += if sea < 1.0 {
+                    (1.0 - sea) * land + sea * water
+                } else {
+                    water
+                };
+            }
+            sum += s.weight * t / steps as f64;
+            area += s.weight;
+        }
+        sum / area.max(1e-30)
+    }
+
     /// What its air exchanges with its ground reads of the year (F269): at each place its
     /// wind's speed through the weather about it, sqrt(|V|² + U²), U the body's mean wind, as
     /// the moisture reads it, over the stated SURFACE_WIND_SPEED, and, with `moisture`, the
@@ -5782,6 +5929,7 @@ impl Cycle {
                 .collect(),
             wind_steps: wind.steps,
             clouds: None,
+            warm: Vec::new(),
         })
     }
 
@@ -5978,11 +6126,7 @@ impl Cycle {
                 out.albedo[q] = e.albedo as f32;
                 out.olr[q] = e.olr as f32;
                 out.down[q] = e.down as f32;
-                for (sum, v) in
-                    out.kinds
-                        .iter_mut()
-                        .zip([kinds.tower, kinds.anvil, kinds.layer, kinds.low])
-                {
+                for (sum, v) in out.kinds.iter_mut().zip(kinds.levels()) {
                     sum[p] += (v / steps as f64) as f32;
                 }
             }
@@ -6139,6 +6283,9 @@ pub struct Coupling {
     pub wind_steps: usize,
     /// The year's clouds (M67), where its water's are known: a year with them runs under them.
     pub clouds: Option<std::sync::Arc<CloudCoupling>>,
+    /// Each tilt's places' state at the end of the year it came from, which the year after it
+    /// starts from (M68); none where the year spins up on its own.
+    warm: Vec<Option<std::sync::Arc<Warm>>>,
 }
 
 /// The clouds a year runs under (M67): what they read of the body and its air, and each
@@ -6205,6 +6352,13 @@ impl CloudCoupling {
 }
 
 impl Coupling {
+    /// The coupling that starts the year after `cycle` from its end (M68), its places' ground,
+    /// sea and snow as it left them, so that it comes to its own in the fewer years.
+    pub fn from_end_of(mut self, cycle: &Cycle) -> Self {
+        self.warm.clone_from(&cycle.ends);
+        self
+    }
+
     /// The coupling with the year's clouds `clouds` laid in the sky `sky` (M67), whose year
     /// then runs under them.
     pub fn with_clouds(mut self, clouds: Option<(crate::clouds::Sky, &Clouds)>) -> Self {
@@ -8857,20 +9011,19 @@ mod tests {
             let air = crate::moisture::Air::from_graph(&self.graph, eb.transport, water);
             let heights = vec![0.0; self.cycle.sites.len()];
             let wet = air.and_then(|a| self.cycle.moisture(&a, &heights));
-            // Under the first year's clouds (M67), as the finish will run it.
             let sky = crate::clouds::Sky::from_graph(&self.graph, &eb);
-            let first = sky.clone().zip(wet.as_ref()).and_then(|(sky, m)| {
-                (self.cycle)
-                    .clouds(&sky, m, eb.circulation.reach)
-                    .map(|c| (sky, c))
-            });
             let stated = self.cycle.coupling(wet.as_ref()).expect("a coupling");
-            let coupling = stated
-                .clone()
-                .with_clouds(first.as_ref().map(|(sky, c)| (sky.clone(), c)));
             let ground = Ground::from_graph(&self.graph);
-            let under = eb.cycle_with(&self.climate, &ground, sea, None, Some(&coupling));
             let cycle = eb.cycle_with(&self.climate, &ground, sea, None, Some(&stated));
+            // Under its own clouds from it (M68), as the finish will run it.
+            let under = sky.as_ref().zip(air.as_ref()).map(|(sky, air)| {
+                eb.cycle_under_own_clouds(
+                    (&self.climate, &ground),
+                    (sea, None),
+                    cycle.clone(),
+                    (sky, air, &heights),
+                )
+            });
             let water = air.and_then(|a| cycle.moisture(&a, &heights));
             let clouds = sky
                 .as_ref()
@@ -8899,9 +9052,9 @@ mod tests {
     /// (the tests' tiers).
     struct Again {
         cycle: Cycle,
-        /// The year again under its first year's clouds (M67), as the finish will run it once
-        /// the tropics' heat is set (the user, 2026-11-13).
-        under: Cycle,
+        /// The year under its own clouds from it (M68), as the finish will run it once the
+        /// tropics' heat is set (the user, 2026-11-13); none without its water's clouds.
+        under: Option<OwnClouds>,
         /// The first year's mean surface temperature (M67's diagnostics).
         first: Field<f32>,
         water: Option<crate::moisture::Moisture>,
@@ -9063,26 +9216,85 @@ mod tests {
     /// M67: the Earth-like's year under its own clouds, their albedo and their greenhouse its
     /// own: it reflects the share of its light Earth does, 0.29 (CERES), within some hundredths,
     /// more than its ground and its air's molecules alone; its sea's ice settles at its pole.
-    /// KNOWN (the user, 2026-11-13): its mean stands some 8 K over Earth's, its tropics at
-    /// 308 K under the stated law and its clouds alike (the finish's Earth's at 301.4 K under
-    /// the stated law and 307.2 under its clouds), their deep convection keeping the more
-    /// infrared from space over the warmer ground, and its polar clouds, with no inversion
-    /// under them, the more over its cold ground; the year keeps the stated law until the
-    /// tropics' heat under their clouds is understood, and is held here within 12 K of 288.
+    /// M68: each year under the clouds of the year before it, the year it comes to under its
+    /// own. KNOWN (the user, 2026-11-13): its mean stands some 6 K over Earth's, its clouds
+    /// keeping some 37 W/m² from space where CERES's 26 to 28 as its clear sky over its warm
+    /// tropics lets out too much (303 W/m² at 303 K where 283; the clear sky's own moisture is
+    /// M69's) and its polar clouds, with no inversion under them, the more over its cold ground
+    /// (M70's); the year keeps the stated law until then, and is held here within 12 K of 288.
     fn the_earth_like_under_its_clouds_reflects_as_earth_does(y: &Year, again: &Again) {
-        let under = &again.under;
+        let own = again
+            .under
+            .as_ref()
+            .expect("the Earth-like under its clouds");
+        let under = &own.cycle;
         let mean = surface_mean(under, &y.graph);
         let (years, settled) = under.settled;
         println!(
-            "Earth-like under its clouds: planetary albedo {:.3}, mean {mean:.1} K, its sea's ice settled {settled} by {years} years; under the stated law {:.3}",
-            under.albedo, again.cycle.albedo
+            "Earth-like under its clouds: planetary albedo {:.3}, mean {mean:.1} K, its sea's ice settled {settled} by {years} years; under the stated law {:.3}; its years' means {:.2?}",
+            under.albedo, again.cycle.albedo, own.means
         );
+        a_year_under_its_own_clouds_is_under_its_own(&y.graph, own);
         assert!((0.26..0.33).contains(&under.albedo), "{}", under.albedo);
         assert!((mean - 288.0).abs() < 12.0, "{mean}");
         if (mean - 288.0).abs() > 3.0 {
-            eprintln!("KNOWN SHORTFALL (M67): the Earth-like under its clouds at {mean:.1} K");
+            eprintln!("KNOWN SHORTFALL (M68): the Earth-like under its clouds at {mean:.1} K");
         }
         assert!(settled, "{years}");
+    }
+
+    /// M68: a year under its own clouds is under its own: each year runs under the clouds of
+    /// the year before it until the body's mean changes by less than CLOUD_PASSES's kelvin, and
+    /// the clouds of the year it comes to, from its own moisture, are the ones it ran under,
+    /// within some hundredths of their albedo and a W/m² or two of their infrared, over the body
+    /// and over its tropics.
+    fn a_year_under_its_own_clouds_is_under_its_own(graph: &ParamGraph, own: &OwnClouds) {
+        let (settled, most) = CLOUD_PASSES;
+        let n = own.means.len();
+        assert!(n >= 2 && n <= most + 1, "{:?}", own.means);
+        let last = (own.means[n - 1] - own.means[n - 2]).abs();
+        assert!(last < settled, "{:?}", own.means);
+        let eb = EnergyBalance::from_graph(graph);
+        let sky = crate::clouds::Sky::from_graph(graph, &eb).expect("a sky");
+        let water = if sea_of(graph).is_some() {
+            OCEAN_TRANSPORT_SHARE
+        } else {
+            0.0
+        };
+        let air = crate::moisture::Air::from_graph(graph, eb.transport, water).expect("an air");
+        let heights = vec![0.0; own.cycle.sites.len()];
+        let wet = own.cycle.moisture(&air, &heights).expect("its moisture");
+        let mine = (own.cycle)
+            .clouds(&sky, &wet, eb.circulation.reach)
+            .expect("its clouds");
+        let ran = own.clouds.as_ref().expect("the clouds it ran under");
+        let tropics = |c: &Clouds, values: &[f32]| {
+            let steps = c.steps;
+            let (mut sum, mut w) = (0.0, 0.0);
+            for (p, s) in own.cycle.sites.iter().enumerate() {
+                if s.lat.to_degrees().abs() <= 20.0 {
+                    let year = values[p * steps..(p + 1) * steps]
+                        .iter()
+                        .map(|&v| v as f64)
+                        .sum::<f64>();
+                    sum += s.weight * year / steps as f64;
+                    w += s.weight;
+                }
+            }
+            sum / w.max(1e-30)
+        };
+        let gaps = [
+            (mine.mean(&mine.albedo) - ran.mean(&ran.albedo)).abs(),
+            (mine.mean(&mine.olr) - ran.mean(&ran.olr)).abs(),
+            (tropics(&mine, &mine.albedo) - tropics(ran, &ran.albedo)).abs(),
+            (tropics(&mine, &mine.olr) - tropics(ran, &ran.olr)).abs(),
+        ];
+        println!(
+            "its own clouds against those it ran under: albedo {:.4}, infrared {:.2} W/m²; over its tropics {:.4}, {:.2} W/m²",
+            gaps[0], gaps[1], gaps[2], gaps[3]
+        );
+        assert!(gaps[0] < 0.01 && gaps[2] < 0.02, "{gaps:?}");
+        assert!(gaps[1] < 1.5 && gaps[3] < 3.0, "{gaps:?}");
     }
 
     /// Mars's year, read by each check of it.
@@ -9864,9 +10076,9 @@ mod tests {
         eb: EnergyBalance,
         climate: Climate,
         cycle: Cycle,
-        /// The year again at its first year's wind and moisture and under its clouds (F269,
-        /// M67), as the finish runs it.
+        /// The year under its own clouds from its first year (M68), as the finish will run it.
         again: Cycle,
+        means: Vec<f64>,
     }
 
     impl LockedYear {
@@ -9881,24 +10093,22 @@ mod tests {
             let cycle = eb.cycle(&climate, &ground, Some((&ocean, &share)), None);
             let air = crate::moisture::Air::from_graph(&world, eb.transport, OCEAN_TRANSPORT_SHARE);
             let heights = vec![0.0; cycle.sites.len()];
-            let wet = air.and_then(|a| cycle.moisture(&a, &heights));
-            let first = crate::clouds::Sky::from_graph(&world, &eb)
-                .zip(wet.as_ref())
-                .and_then(|(sky, m)| {
-                    cycle
-                        .clouds(&sky, m, eb.circulation.reach)
-                        .map(|c| (sky, c))
-                });
-            let coupling = (cycle.coupling(wet.as_ref()).expect("a coupling"))
-                .with_clouds(first.as_ref().map(|(sky, c)| (sky.clone(), c)));
+            let sky = crate::clouds::Sky::from_graph(&world, &eb).expect("a sky");
+            let air = air.expect("an air");
             let sea = Some((&ocean, &share));
-            let again = eb.cycle_with(&climate, &ground, sea, None, Some(&coupling));
+            let own = eb.cycle_under_own_clouds(
+                (&climate, &ground),
+                (sea, None),
+                cycle.clone(),
+                (&sky, &air, &heights),
+            );
             Self {
                 world,
                 eb,
                 climate,
                 cycle,
-                again,
+                again: own.cycle,
+                means: own.means,
             }
         }
     }
@@ -9931,21 +10141,22 @@ mod tests {
     /// M67: the locked ocean world under its own clouds stands as THAI's first habitable case
     /// does (Sergeev et al. 2022): its clouds over its star reflect the light its sea would
     /// take, its planetary albedo its ground's, its air's and its clouds' within THAI's 0.22 to
-    /// 0.28 and some margin, brighter than its first year under the stated law; its dayside
-    /// within some kelvin of THAI's 261 to 268 K; its mean within some kelvin of its first
-    /// year's, which stands over THAI's 232 to 246 K while its night's ice blankets its sea
-    /// (KNOWN, M64: until the glaciers); its sea open under its star.
+    /// 0.28 by some hundredths; its dayside within some kelvin of THAI's 261 to 268 K; its mean
+    /// within some kelvin of its first year's, which stands over THAI's 232 to 246 K while its
+    /// night's ice blankets its sea (KNOWN, M64: until the glaciers); its sea open under its
+    /// star. M68: under its own clouds, each year under the clouds of the year before it, it
+    /// reflects 0.247 where its first year under the stated law 0.255: that law, set on Earth's
+    /// means, is no measure of its clouds, and M67's check that it stood the brighter is gone.
     fn a_locked_ocean_world_under_its_clouds_stands_as_thai_s(year: &LockedYear) {
         let seas = year.again.seas.as_ref().expect("a water sea");
         let [mean, day, _, open] = thai_measures(&year.eb, seas, &year.climate);
         let albedo = year.again.albedo;
         println!(
-            "TRAPPIST-1e under its clouds: mean {mean:.1} K, dayside {day:.1} K, planetary albedo {albedo:.3}, open {open:.2} of the dayside; the first year's {:.3} (THAI: 232 to 246 K, 261 to 268 K, 0.22 to 0.28, almost half)",
-            year.cycle.albedo
+            "TRAPPIST-1e under its clouds: mean {mean:.1} K, dayside {day:.1} K, planetary albedo {albedo:.3}, open {open:.2} of the dayside; the first year's {:.3} (THAI: 232 to 246 K, 261 to 268 K, 0.22 to 0.28, almost half); its years' means {:.2?}",
+            year.cycle.albedo, year.means
         );
         let first = thai_measures(&year.eb, year.cycle.seas.as_ref().unwrap(), &year.climate)[0];
-        assert!((0.18..0.34).contains(&albedo), "albedo {albedo}");
-        assert!(albedo > year.cycle.albedo, "{albedo} {}", year.cycle.albedo);
+        assert!((0.20..0.30).contains(&albedo), "albedo {albedo}");
         assert!((mean - first).abs() < 6.0, "mean {mean} against {first}");
         assert!((251.0..278.0).contains(&day), "dayside {day}");
         let substellar = direction_from_lon_lat(0.0, 0.0);
@@ -10449,7 +10660,13 @@ mod tests {
         let (ocean, share) = sea_of(&earth).unwrap();
         let layout = eb.layout(&climate, Some(&share), None, None);
         let ground = Ground::from_graph(&earth);
-        let year = eb.seasonal_years(&ground, &layout, eb.sky.obliquity, Some(&ocean), None);
+        let year = eb.seasonal_years(
+            &ground,
+            &layout,
+            eb.sky.obliquity,
+            Some(&ocean),
+            (None, None),
+        );
         let steps = year.masses[1].len() / layout.places.len();
         for lat in [89.0f64, 85.0, 80.0, 75.0, 70.0] {
             let i = ((lat + 90.0) / 2.0).round() as usize;

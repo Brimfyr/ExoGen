@@ -3,15 +3,18 @@
 # cargo nextest 0.9.151). Higher runs sooner; the rest stand at 0.
 
 [[profile.default.overrides]]
-filter = 'test(=stages::tests::mars_s_body) | test(=stages::tests::the_moon_the_earth_like_and_mercury)'
+filter = '''
+    test(=stages::tests::mars_s_body)
+    | test(=stages::tests::the_moon_the_earth_like_and_mercury)
+    | test(=climate::tests::the_earth_like_s_year)
+    | test(=climate::tests::the_locked_ocean_world_s_year)
+'''
 priority = 100
 
 [[profile.default.overrides]]
 filter = '''
-    test(=climate::tests::the_earth_like_s_year)
-    | test(=climate::tests::mars_s_year)
+    test(=climate::tests::mars_s_year)
     | test(=climate::tests::pluto_s_and_triton_s_years)
-    | test(=climate::tests::the_locked_ocean_world_s_year)
     | test(=stages::tests::the_icy_moons_bodies)
     | test(=stages::tests::the_same_seed_gives_identical_output_on_different_thread_counts)
 '''

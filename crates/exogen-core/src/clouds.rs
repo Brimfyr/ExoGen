@@ -38,12 +38,27 @@ pub struct Kinds {
     pub layer: f64,
     /// The low cloud under an inversion.
     pub low: f64,
+    /// The convection's own mid-level cloud and its cumulus (M68).
+    pub congestus: f64,
+    pub cumulus: f64,
 }
 
 impl Kinds {
+    /// Each level's share of the place, in the deck's order, towers, anvils, layers, low cloud
+    /// (M68): the convection's mid-level cloud and the layers overlapping at random, its
+    /// cumulus and the inversion's low cloud one boundary layer's clouds, the more of the two.
+    pub fn levels(&self) -> [f64; 4] {
+        [
+            self.tower,
+            self.anvil,
+            1.0 - (1.0 - self.layer) * (1.0 - self.congestus),
+            self.low.max(self.cumulus),
+        ]
+    }
+
     /// The share of the place any of them covers, overlapping at random.
     pub fn cover(&self) -> f64 {
-        1.0 - (1.0 - self.tower) * (1.0 - self.anvil) * (1.0 - self.layer) * (1.0 - self.low)
+        1.0 - self.levels().iter().map(|c| 1.0 - c).product::<f64>()
     }
 }
 
@@ -63,7 +78,8 @@ impl Kinds {
 /// eq. 2.55, without its rise, which a year's mean wind does not hold: the storms lift the air,
 /// not the mean flow). The low cloud 0.14 + 0.060 EIS (Wood and Bretherton 2006), none where the
 /// air under the inversion stands under half saturated, all of it from seven tenths (ECMWF
-/// 1991's dry inversions over deserts and the winter pole).
+/// 1991's dry inversions over deserts and the winter pole). The convection's own mid-level cloud
+/// and cumulus by its rain as ISCCP sees them (CLOUD_CONGESTUS, CLOUD_CUMULUS; M68).
 pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f64) -> Kinds {
     let (a, b, most) = CLOUD_CONVECTIVE;
     let law = |rain: f64| {
@@ -99,12 +115,24 @@ pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f
     } else {
         0.0
     };
+    // The convection's mid-level cloud, as much as ISCCP sees topped there under its high
+    // cloud, overlapping at random; and its cumulus.
+    let (c0, c1, _) = CLOUD_CONGESTUS;
+    let congestus = if convective > 0.0 {
+        ((c0 + c1 * convective.ln()).max(0.0) / (1.0 - high).max(1e-9)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let (most, fold, _) = CLOUD_CUMULUS;
+    let cumulus = most * (1.0 - (-convective.max(0.0) / fold).exp());
     Kinds {
         tower,
         anvil,
         medium,
         layer,
         low,
+        congestus,
+        cumulus,
     }
 }
 
@@ -348,31 +376,45 @@ impl Sky {
             let (a, b) = CLOUD_ABSORPTION;
             (tau, g, e, a * path / (path + b))
         };
-        // The anvils' thin cirrus and their medium-thick cloud as one kind: its reflection
-        // the two's by their shares, its depth the one that reflects it in the diffuse light,
-        // its emissivity and its absorption the two's (M67).
-        let anvil = {
-            let medium = kinds.medium.clamp(0.0, 1.0);
-            let (thin, thick) = (
-                optics(anvil_path, 0.0),
-                optics(CLOUD_ANVIL_MEDIUM.2 / tau_ice, 0.0),
-            );
+        // Two clouds of a level as one kind: its reflection the two's by their shares, its
+        // depth the one that reflects it in the diffuse light, its drops' asymmetry, its
+        // emissivity and its absorption the two's (M67, M68).
+        let blend = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64), share: f64| {
+            let share = share.clamp(0.0, 1.0);
             let diffuse = |(tau, g, _, _): (f64, f64, f64, f64)| {
                 let s = (1.0 - g) * tau;
                 s / (4.0 / 3.0 + s)
             };
-            let r = (1.0 - medium) * diffuse(thin) + medium * diffuse(thick);
-            let tau = 4.0 / 3.0 * r / (1.0 - r).max(1e-9) / (1.0 - g_ice);
-            let mix = |a: f64, b: f64| (1.0 - medium) * a + medium * b;
-            (tau, g_ice, mix(thin.2, thick.2), mix(thin.3, thick.3))
+            let r = (1.0 - share) * diffuse(a) + share * diffuse(b);
+            let mix = |x: f64, y: f64| (1.0 - share) * x + share * y;
+            let g = mix(a.1, b.1);
+            let tau = 4.0 / 3.0 * r / (1.0 - r).max(1e-9) / (1.0 - g).max(1e-9);
+            (tau, g, mix(a.2, b.2), mix(a.3, b.3))
         };
-        let parts = [
-            optics(tower_path, 1.0),
-            anvil,
+        // A stated optical depth's water at a level whose liquid share is `liquid`.
+        let stated = |tau: f64, liquid: f64| tau / (liquid * tau_liquid + (1.0 - liquid) * tau_ice);
+        // The anvils' thin cirrus and their medium-thick cloud (M67).
+        let anvil = blend(
+            optics(anvil_path, 0.0),
+            optics(CLOUD_ANVIL_MEDIUM.2 / tau_ice, 0.0),
+            kinds.medium,
+        );
+        // The layers and the convection's mid-level cloud, the inversion's low cloud and its
+        // cumulus, each by its share of what covers its level (M68).
+        let share = |a: f64, b: f64| if a + b > 0.0 { b / (a + b) } else { 0.0 };
+        let (mid_liquid, low_liquid) = (liquid_at(mid_top), liquid_at(low_top));
+        let layers = blend(
             optics(deck_path(mid_base, layer_depth), liquid_at(layer_level)),
-            optics(deck_path(low_base, low_depth), liquid_at(low_top)),
-        ];
-        let cover = [kinds.tower, kinds.anvil, kinds.layer, kinds.low].map(|c| c.clamp(0.0, 1.0));
+            optics(stated(CLOUD_CONGESTUS.2, mid_liquid), mid_liquid),
+            share(kinds.layer, kinds.congestus),
+        );
+        let low = blend(
+            optics(deck_path(low_base, low_depth), low_liquid),
+            optics(stated(CLOUD_CUMULUS.2, low_liquid), low_liquid),
+            share(kinds.low, kinds.cumulus),
+        );
+        let parts = [optics(tower_path, 1.0), anvil, layers, low];
+        let cover = kinds.levels().map(|c| c.clamp(0.0, 1.0));
         let through: f64 = (0..4).map(|i| 1.0 - cover[i] * parts[i].3).product();
         // The share of the air's absorbers above the clouds that reflect the light, each kind's
         // top by what it reflects in the diffuse light: the towers' at the tropopause, the
@@ -661,6 +703,80 @@ mod tests {
         }
         let half = deck(0.5, 10.0).reflectance(0.5);
         assert!((half - 0.5 * deck(1.0, 10.0).reflectance(0.5)).abs() < 1e-6);
+    }
+
+    /// M68: the convection's own clouds show as ISCCP sees them over the tropical oceans: the
+    /// share of the sky its mid-level cloud tops under its high cloud, overlapping at random, is
+    /// ISCCP-H's fit against the rain within some thousandths, and its cumulus under both its
+    /// low cloud's within some hundredths, from 1.5 to 9 mm a day; and each level's cloud keeps
+    /// its measured optical depth in the deck, where it alone covers its level: the thin and the
+    /// medium anvils, the mid-level cloud and the cumulus.
+    #[test]
+    fn the_convection_s_own_clouds_show_as_isccp_sees_them() {
+        for rain in [1.5, 3.0, 5.0, 9.0] {
+            let k = kinds(rain, 0.0, 0.5, -10.0, 0.9);
+            let high = 1.0 - (1.0 - k.tower) * (1.0 - k.anvil);
+            let mid = k.congestus * (1.0 - high);
+            let low = k.cumulus * (1.0 - high) * (1.0 - k.congestus);
+            let (fit_mid, fit_low) = (0.121 + 0.020 * rain.ln(), 0.290 - 0.080 * rain.ln());
+            println!(
+                "{rain} mm a day: high {high:.3}, mid-level {mid:.3} (ISCCP {fit_mid:.3}), low {low:.3} (ISCCP {fit_low:.3})"
+            );
+            assert!((mid - fit_mid).abs() < 0.005, "{rain}: {mid} {fit_mid}");
+            assert!((low - fit_low).abs() < 0.03, "{rain}: {low} {fit_low}");
+            assert_eq!(k.low, 0.0);
+        }
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let balance = crate::climate::EnergyBalance::from_graph(&graph);
+        let sky = Sky::from_graph(&graph, &balance).expect("a sky");
+        let depth = |kinds: Kinds, i: usize| {
+            let deck = sky.deck(&kinds, 300.0, 1.0);
+            let (s, d) = (deck.scaled[i] as f64, deck.depth[i] as f64);
+            let g = d / s - 1.0;
+            s / (1.0 - g)
+        };
+        let cases = [
+            (
+                Kinds {
+                    anvil: 0.5,
+                    ..Kinds::default()
+                },
+                1,
+                CLOUD_ANVIL_DEPTH,
+            ),
+            (
+                Kinds {
+                    anvil: 0.5,
+                    medium: 1.0,
+                    ..Kinds::default()
+                },
+                1,
+                CLOUD_ANVIL_MEDIUM.2,
+            ),
+            (
+                Kinds {
+                    congestus: 0.3,
+                    ..Kinds::default()
+                },
+                2,
+                CLOUD_CONGESTUS.2,
+            ),
+            (
+                Kinds {
+                    cumulus: 0.3,
+                    ..Kinds::default()
+                },
+                3,
+                CLOUD_CUMULUS.2,
+            ),
+        ];
+        for (kinds, i, measured) in cases {
+            let tau = depth(kinds, i);
+            assert!(
+                (tau - measured).abs() < 1e-3 * measured,
+                "{i}: {tau} {measured}"
+            );
+        }
     }
 
     /// M66: the Earth-like's clouds reflect its light, keep its heat from space and send it

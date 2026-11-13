@@ -456,7 +456,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 231;
+pub const FINISH_VERSION: u64 = 232;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2901,9 +2901,9 @@ pub fn finish(
     let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()), None);
     // The year again with its air exchanging with its ground at each place's own wind and
     // humidity, and its sea and its wet land giving the air their latent heat (F269), from the
-    // first year's wind and moisture. Its coupling can carry the first year's water clouds,
-    // the years after it running under them (M67, `Coupling::with_clouds`); it waits on the
-    // tropics' heat, which the stated law of the clouds hid (the user, 2026-11-13).
+    // first year's wind and moisture. It can run under its own water clouds, each year under
+    // the clouds of the year before it (M67, M68, `EnergyBalance::cycle_under_own_clouds`); it
+    // waits on the clear sky's own moisture and the polar inversion (the user, 2026-11-13).
     let water_share = if ocean.is_some() {
         OCEAN_TRANSPORT_SHARE
     } else {
