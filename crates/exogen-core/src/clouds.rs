@@ -151,6 +151,9 @@ pub struct Deck {
     pub emissivity: [f32; 4],
     pub absorbs: f32,
     pub above: f32,
+    /// The thin cirrus' share of what the anvils let out (M69), which lets out from the
+    /// tropopause.
+    pub thin: f32,
 }
 
 impl Deck {
@@ -184,6 +187,10 @@ impl Deck {
     }
 }
 
+/// The air's own profile (M69): its first ground's temperature and the step between grounds, K,
+/// its levels' shares of the surface pressure, and their temperatures over each ground.
+pub type Profile = (f64, f64, Vec<f64>, Vec<Vec<f64>>);
+
 /// What the clouds read of the body and its air (M66): its clear air's streams over its
 /// ground's temperature and over grounds at each height (F293, M55), without the clouds'
 /// stated law, its vapour held as its year's is (M59); how far its ice brightens toward
@@ -195,6 +202,9 @@ impl Deck {
 #[derive(Clone, Debug)]
 pub struct Sky {
     pub clear: std::sync::Arc<Outgoing>,
+    /// Its clear air's streams with VAPOUR_DRY of its law's vapour (M69), between which a
+    /// place's own column reads.
+    pub clear_dry: std::sync::Arc<Outgoing>,
     pub brightening: f64,
     pub heights: Heights,
     pub lapse: f64,
@@ -207,6 +217,13 @@ pub struct Sky {
     pub water: &'static Volatile,
     pub ground: f64,
     pub rayleigh: f64,
+    /// The air's own profile (M69): its column's adiabat over grounds from the first
+    /// temperature every so many kelvin, its levels' shares of the surface pressure and their
+    /// temperatures over each.
+    pub profile: std::sync::Arc<Profile>,
+    /// The share of the surface pressure the tropopause stands at over each of the profile's
+    /// grounds, where its adiabat comes down to its skin (M69).
+    pub tropopauses: std::sync::Arc<Vec<f64>>,
 }
 
 impl Sky {
@@ -241,6 +258,15 @@ impl Sky {
                 graph.f64("star.xuv_relative"),
             ));
         let (low, high) = ((t_eq / 3.0).max(5.0), 4.0 * t_eq + 100.0);
+        // The air's own profile over grounds of every temperature its clouds may stand over
+        // (M69).
+        let (first, step) = (low.max(CLOUD_PROFILE.0), CLOUD_PROFILE.2);
+        let count = ((high.min(CLOUD_PROFILE.1) - first) / step).ceil().max(1.0) as usize + 1;
+        let shares = column.adiabat_shares(first).0;
+        let temps = (0..count)
+            .map(|i| column.adiabat_shares(first + step * i as f64).1)
+            .collect();
+        let dry = column.clone().with_vapour_share(VAPOUR_DRY);
         let library = crate::stages::materials::Library::from_graph(graph);
         let luminance = |c: [f32; 3]| (c[0] + c[1] + c[2]) as f64 / 3.0;
         let ground = library
@@ -253,6 +279,7 @@ impl Sky {
         );
         Some(Self {
             clear: std::sync::Arc::new(Outgoing::of(&column, low, high)),
+            clear_dry: std::sync::Arc::new(Outgoing::of(&dry, low, high)),
             brightening: balance.brightening,
             heights: Heights::of(&column, low, high),
             lapse: graph.f64("climate.lapse_rate"),
@@ -265,20 +292,94 @@ impl Sky {
             water: volatile("H2O")?,
             ground,
             rayleigh,
+            profile: std::sync::Arc::new((first, step, shares, temps)),
+            tropopauses: std::sync::Arc::new(Vec::new()),
         })
+        .map(|mut sky| {
+            let (first, step, _, temps) = &*sky.profile;
+            let grounds: Vec<f64> = (0..temps.len()).map(|i| first + step * i as f64).collect();
+            let tops = grounds.iter().map(|&t| sky.tropopause_search(t)).collect();
+            sky.tropopauses = std::sync::Arc::new(tops);
+            sky
+        })
+    }
+
+    /// The clear air's reading `pick` at `t` K over a column holding `vapour` of its law's
+    /// water (M69), read between its law's table and its drier one in the share's logarithm.
+    fn clear_at(&self, pick: fn(&Outgoing, f64) -> f64, t: f64, vapour: f64) -> f64 {
+        let law = pick(&self.clear, t);
+        if (vapour - 1.0).abs() <= 1e-12 {
+            return law;
+        }
+        let x = vapour.max(1e-6).ln() / VAPOUR_DRY.ln();
+        law + x * (pick(&self.clear_dry, t) - law)
     }
 
     /// The air's temperature at `ratio` of the surface pressure over air at `air` K at the
     /// ground: down its lapse rate to its tropopause, and no colder.
     fn at(&self, air: f64, ratio: f64) -> f64 {
-        let z = -self.scale_height * ratio.max(1e-9).ln();
-        (air - self.lapse * z).max(self.tropopause.min(air))
+        self.adiabat(air, ratio).max(self.tropopause.min(air))
+    }
+
+    /// The air's adiabat at `ratio` of the surface pressure over air at `air` K at the ground
+    /// (M69): its column's, read between the grounds' temperatures and its levels in the
+    /// pressure's logarithm, held at the ends; down the lapse rate where the profile holds none.
+    fn adiabat(&self, air: f64, ratio: f64) -> f64 {
+        let (first, step, shares, temps) = &*self.profile;
+        if temps.is_empty() || shares.len() < 2 {
+            let z = -self.scale_height * ratio.max(1e-9).ln();
+            return air - self.lapse * z;
+        }
+        let x = ((air - first) / step).clamp(0.0, (temps.len() - 1) as f64);
+        let i = (x.floor() as usize).min(temps.len().saturating_sub(2));
+        let w = (x - i as f64).clamp(0.0, 1.0);
+        let r = ratio.clamp(shares[shares.len() - 1], 1.0);
+        let k = shares
+            .partition_point(|&s| s >= r)
+            .clamp(1, shares.len() - 1);
+        let u = ((r / shares[k - 1]).ln() / (shares[k] / shares[k - 1]).ln()).clamp(0.0, 1.0);
+        let read = |row: &Vec<f64>| row[k - 1] + u * (row[k] - row[k - 1]);
+        let lower = read(&temps[i]);
+        let upper = temps.get(i + 1).map_or(lower, read);
+        // Shifted by the ground's own temperature where it stands past the table.
+        lower + w * (upper - lower) + (air - (first + step * x))
     }
 
     /// The share of the surface pressure the tropopause stands at over air at `air` K.
     fn tropopause_ratio(&self, air: f64) -> f64 {
-        let z = ((air - self.tropopause) / self.lapse.max(1e-9)).max(0.0);
-        (-z / self.scale_height.max(1.0)).exp()
+        // Where the air's own profile comes down to its tropopause (M69), read between the
+        // profile's grounds in the pressure's logarithm, found anew past them.
+        let (first, step, _, _) = &*self.profile;
+        let tops = &self.tropopauses;
+        let x = (air - first) / step;
+        if tops.len() >= 2 && x >= 0.0 && x <= (tops.len() - 1) as f64 {
+            let i = (x.floor() as usize).min(tops.len() - 2);
+            let w = x - i as f64;
+            let (a, b) = (tops[i].max(1e-300).ln(), tops[i + 1].max(1e-300).ln());
+            return (a + w * (b - a)).exp();
+        }
+        self.tropopause_search(air)
+    }
+
+    /// Where the air's own profile over air at `air` K comes down to its tropopause (M69),
+    /// halved in the pressure's logarithm.
+    fn tropopause_search(&self, air: f64) -> f64 {
+        if air <= self.tropopause {
+            return 1.0;
+        }
+        let (mut lo, mut hi) = (1e-6f64.ln(), 0.0f64);
+        if self.adiabat(air, lo.exp()) > self.tropopause {
+            return lo.exp();
+        }
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            if self.adiabat(air, mid.exp()) > self.tropopause {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        (0.5 * (lo + hi)).exp()
     }
 
     /// The saturation mixing ratio of the water over `t` K at `p` Pa.
@@ -394,11 +495,19 @@ impl Sky {
         // A stated optical depth's water at a level whose liquid share is `liquid`.
         let stated = |tau: f64, liquid: f64| tau / (liquid * tau_liquid + (1.0 - liquid) * tau_ice);
         // The anvils' thin cirrus and their medium-thick cloud (M67).
-        let anvil = blend(
+        let (thin, medium) = (
             optics(anvil_path, 0.0),
             optics(CLOUD_ANVIL_MEDIUM.2 / tau_ice, 0.0),
-            kinds.medium,
         );
+        let anvil = blend(thin, medium, kinds.medium);
+        // The thin cirrus' share of the anvils' emission (M69).
+        let m = kinds.medium.clamp(0.0, 1.0);
+        let emitted = (1.0 - m) * thin.2 + m * medium.2;
+        let thin_share = if emitted > 0.0 {
+            (1.0 - m) * thin.2 / emitted
+        } else {
+            0.0
+        };
         // The layers and the convection's mid-level cloud, the inversion's low cloud and its
         // cumulus, each by its share of what covers its level (M68).
         let share = |a: f64, b: f64| if a + b > 0.0 { b / (a + b) } else { 0.0 };
@@ -438,6 +547,7 @@ impl Sky {
             } else {
                 0.0
             },
+            thin: thin_share as f32,
         }
     }
 
@@ -453,7 +563,7 @@ impl Sky {
     /// clouds' tops, the higher hiding the lower, and what its air sends down to its ground,
     /// from their bases through the air's window, the lower hiding the higher, each with the
     /// clouds less without, W/m².
-    pub fn infrared(&self, deck: &Deck, air: f64, emitted: f64) -> (f64, f64) {
+    pub fn infrared(&self, deck: &Deck, air: f64, emitted: f64, vapour: f64) -> (f64, f64) {
         let sigma = |t: f64| SIGMA_SB * t.powi(4);
         let [c_tower, c_anvil, c_layer, c_low] = deck.cover.map(|c| c as f64);
         let [e_tower, e_anvil, e_layer, e_low] = deck.emissivity.map(|e| e as f64);
@@ -466,23 +576,27 @@ impl Sky {
             let t = self.at(air, ratio);
             sigma(t) * self.heights.share(t, ratio)
         };
-        let clear = self.clear.air_up(air) + self.clear.window(air) * emitted;
+        let window = self.clear_at(Outgoing::window, air, vapour);
+        let clear = self.clear_at(Outgoing::air_up, air, vapour) + window * emitted;
         let (mid_top, low_top) = CLOUD_TOPS;
         let (mid_base, anvil_base) = CLOUD_BASES;
         // The towers let out from the tropopause, the anvils from the middle of their layer in
         // the pressure's logarithm (M67): their tops stand under the cold tropopause, near
         // 220 K over Earth's tropics (Hartmann and Larson 2002), and a thin cloud lets out from
-        // within it.
+        // within it; their thin cirrus from the tropopause (M69), as ISCCP-H's thin high cloud's
+        // tops stand at some 167 hPa and 211 K over the tropical oceans and its medium high
+        // cloud's at 255 hPa and 231 K (the research notes).
         let anvil_level = (top * anvil_base.max(top)).sqrt();
+        let thin = deck.thin.clamp(0.0, 1.0) as f64;
+        let anvil_out = thin * out_from(top) + (1.0 - thin) * out_from(anvil_level);
         let (tower, anvil) = (c_tower * e_tower, c_anvil * e_anvil);
         let (mid, low) = (c_layer * e_layer, c_low * e_low);
         let olr = tower * out_from(top)
             + (1.0 - tower)
-                * (anvil * out_from(anvil_level)
+                * (anvil * anvil_out
                     + (1.0 - anvil)
                         * (mid * out_from(mid_top)
                             + (1.0 - mid) * (low * out_from(low_top) + (1.0 - low) * clear)));
-        let window = self.clear.window(air);
         let near = 1.0 - (1.0 - low) * (1.0 - c_tower * e_tower);
         let down = window
             * (near * sigma(self.at(air, base))
@@ -497,13 +611,19 @@ impl Sky {
     /// diffuse light's mean height: the planet's albedo there, its air's molecules scattering
     /// over its clouds and ground (M67), what it lets out to space, W/m², and what its air
     /// sends down to its ground, W/m², each with the clouds less without.
-    pub fn effects(&self, kinds: &Kinds, air: f64, ground: f64, albedo: f64, sea: f64) -> Effects {
+    pub fn effects(
+        &self,
+        kinds: &Kinds,
+        (air, vapour): (f64, f64),
+        ground: f64,
+        (albedo, sea): (f64, f64),
+    ) -> Effects {
         let deck = self.deck(kinds, air, sea);
         let reflected = deck.reflectance(2.0 / 3.0);
         let a = albedo.clamp(0.0, 1.0);
         let over = crate::radiation::over;
         let planet = over(self.rayleigh, over(reflected, a));
-        let (olr, down) = self.infrared(&deck, air, SIGMA_SB * ground.powi(4));
+        let (olr, down) = self.infrared(&deck, air, SIGMA_SB * ground.powi(4), vapour);
         Effects {
             albedo: planet - over(self.rayleigh, a),
             olr,
@@ -681,6 +801,7 @@ mod tests {
             emissivity: [0.0; 4],
             absorbs: 0.0,
             above: 0.0,
+            thin: 0.0,
         };
         assert_eq!(deck(0.0, 10.0).reflectance(0.5), 0.0);
         for mu in [0.02, 0.1, 0.3, 0.5, 2.0 / 3.0, 1.0] {
@@ -703,6 +824,19 @@ mod tests {
         }
         let half = deck(0.5, 10.0).reflectance(0.5);
         assert!((half - 0.5 * deck(1.0, 10.0).reflectance(0.5)).abs() < 1e-6);
+    }
+
+    /// M69: the clouds read their air's own profile, its column's adiabat from its surface air:
+    /// over Earth's 299 K wet tropical oceans their air at 553 hPa, ISCCP's mid-level tops, stands
+    /// within 2 K of ERA-Interim's 272.2 K, where down the stated lapse rate 266.9.
+    #[test]
+    fn the_clouds_read_their_air_s_own_profile() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let balance = crate::climate::EnergyBalance::from_graph(&graph);
+        let sky = Sky::from_graph(&graph, &balance).expect("a sky");
+        let t = sky.at(299.0, 553.0 / 1013.25);
+        println!("553 hPa over 299 K: {t:.1} K");
+        assert!((t - 272.2).abs() < 2.0, "{t}");
     }
 
     /// M68: the convection's own clouds show as ISCCP sees them over the tropical oceans: the
@@ -789,7 +923,7 @@ mod tests {
         let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
         let balance = crate::climate::EnergyBalance::from_graph(&graph);
         let sky = Sky::from_graph(&graph, &balance).expect("a sky");
-        let none = sky.effects(&Kinds::default(), 288.0, 288.0, 0.1, 1.0);
+        let none = sky.effects(&Kinds::default(), (288.0, 1.0), 288.0, (0.1, 1.0));
         assert!(none.albedo.abs() < 1e-12 && none.olr.abs() < 1e-9 && none.down.abs() < 1e-9);
         let low = Kinds {
             low: 1.0,
@@ -800,8 +934,8 @@ mod tests {
             ..Kinds::default()
         };
         let (deck, high) = (
-            sky.effects(&low, 290.0, 292.0, SEA_ALBEDO, 1.0),
-            sky.effects(&anvil, 300.0, 301.0, SEA_ALBEDO, 1.0),
+            sky.effects(&low, (290.0, 1.0), 292.0, (SEA_ALBEDO, 1.0)),
+            sky.effects(&anvil, (300.0, 1.0), 301.0, (SEA_ALBEDO, 1.0)),
         );
         println!("Earth-like: a low deck {deck:?}, an anvil {high:?}");
         assert!(
@@ -810,7 +944,7 @@ mod tests {
         );
         assert!(high.olr < deck.olr - 50.0, "{high:?} {deck:?}");
         assert!(deck.down > high.down, "{high:?} {deck:?}");
-        let over_ice = sky.effects(&low, 260.0, 255.0, ICE_ALBEDO, 0.0);
+        let over_ice = sky.effects(&low, (260.0, 1.0), 255.0, (ICE_ALBEDO, 0.0));
         assert!(over_ice.albedo < deck.albedo - 0.1, "{over_ice:?}");
         let moon = crate::presets::preset("Moon").unwrap().to_graph().0;
         let airless = crate::climate::EnergyBalance::from_graph(&moon);

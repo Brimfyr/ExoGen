@@ -187,6 +187,8 @@ pub struct Moisture {
     pub potential: Vec<f64>,
     pub runoff: Vec<f64>,
     pub saturation: Vec<f64>,
+    /// Each place's vapour column through the year, kg/m² (M69).
+    pub column: Vec<f64>,
     /// The share of each place's land its bucket keeps wet through the year (F269).
     pub wetness: Vec<f64>,
     /// The year's lifting wind at each place (F270) over ground at each of LIFT_LEVELS
@@ -613,6 +615,7 @@ pub fn rain<'a>(
         potential: vec![0.0; n],
         runoff: vec![0.0; n],
         saturation: vec![0.0; n],
+        column: vec![0.0; n],
         wetness: vec![0.0; n],
         lift: vec![0.0; n * LIFT_LEVELS * 3],
         heights: heights.to_vec(),
@@ -819,6 +822,7 @@ pub fn rain<'a>(
                     out.evaporation[p] += given / steps as f64;
                     out.runoff[p] += ran / steps as f64;
                     out.saturation[p] += r / steps as f64;
+                    out.column[p] += x / steps as f64;
                     out.saturated[p] += saturated[p] / steps as f64;
                     out.wetness[p] += beta[p] / steps as f64;
                     // The potential evaporation: the open sea's and the land's wet.
@@ -903,6 +907,7 @@ mod tests {
             potential: vec![2.0 * day; n],
             runoff: vec![0.0; n],
             saturation: vec![0.75; n],
+            column: vec![0.0; n],
             wetness: vec![0.5; n],
             lift: (0..n * LIFT_LEVELS * 3)
                 .map(|i| {

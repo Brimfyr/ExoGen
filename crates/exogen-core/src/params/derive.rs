@@ -2190,6 +2190,15 @@ fn streams_table(c: &Ctx) -> std::sync::Arc<crate::radiation::Outgoing> {
 /// at `most` K (M59): the climate's where the body's water has no liquid to evaporate, which
 /// its working liquid, read after the mean temperature these streams set, tells.
 pub fn streams_table_to(c: &Ctx, most: f64) -> std::sync::Arc<crate::radiation::Outgoing> {
+    streams_table_with(c, most, 1.0)
+}
+
+/// The column's table as `streams_table_to` gives it, its vapour `share` of its law's (M69).
+pub fn streams_table_with(
+    c: &Ctx,
+    most: f64,
+    share: f64,
+) -> std::sync::Arc<crate::radiation::Outgoing> {
     use std::sync::{Arc, Mutex};
     type Tables = Mutex<Vec<(Vec<u64>, Arc<crate::radiation::Outgoing>)>>;
     static TABLES: Tables = Mutex::new(Vec::new());
@@ -2201,6 +2210,7 @@ pub fn streams_table_to(c: &Ctx, most: f64) -> std::sync::Arc<crate::radiation::
         c.f64("body.gravity").to_bits(),
         air_water(c).to_bits(),
         most.to_bits(),
+        share.to_bits(),
         c.f64("orbit.insolation").to_bits(),
         c.f64("atmosphere.bond_albedo").to_bits(),
         c.f64("star.xuv_relative").to_bits(),
@@ -2217,7 +2227,9 @@ pub fn streams_table_to(c: &Ctx, most: f64) -> std::sync::Arc<crate::radiation::
         return table;
     }
     let table = Arc::new(
-        match air_column(c, pressure, t_eq).map(|k| k.with_vapour_most(most)) {
+        match air_column(c, pressure, t_eq)
+            .map(|k| k.with_vapour_most(most).with_vapour_share(share))
+        {
             Some(column) => {
                 crate::radiation::Outgoing::of(&column, (t_eq / 3.0).max(5.0), 4.0 * t_eq + 100.0)
             }

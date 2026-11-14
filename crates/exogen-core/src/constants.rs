@@ -1996,8 +1996,10 @@ pub const H2O_CONTINUUM_STATE: (f64, f64, f64) = (224.92, 260.0, 0.02);
 /// rises by 2.1 W/m² per kelvin of the surface, the slope Earth's zonal means show (North 1975;
 /// Warren and Schneider 1979 give 1.6 to 2.2), as F293's grey water was; set again on M65's
 /// radiative-convective column (0.1625 u^0.2346 on F293's left it at 292.2 K), its air then
-/// sending down 342.8 W/m² (342 measured, Kato et al. 2018).
-pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.0914, 0.3856);
+/// sending down 342.8 W/m² (342 measured, Kato et al. 2018); and again on M69's column lifting
+/// its surface air with its ozone (0.0914 u^0.3856 on M65's): its clear sky at 291.6 K 266.3
+/// W/m² (CERES 267), its clouds keeping 26.8 (28), its air sending down 339.6.
+pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.16035, 0.1673);
 /// M66: the raining systems' cloud over a place, a + b ln P, P their rain in mm a day, at most
 /// the third: Slingo (1987)'s convective law as it is quoted, none under 0.14 mm a day and all
 /// of its most from some 85 (its slope and its most read in ECMWF's manual of 1991, eq. 2.50,
@@ -2034,8 +2036,8 @@ pub const CLOUD_LOW_HUMIDITY: (f64, f64) = (0.5, 0.7);
 /// M66: the free air's level for the inversion's strength, and the level its moist adiabat
 /// is read at, as shares of the surface pressure: Earth's 700 and 850 hPa (Wood and Bretherton
 /// 2006); the surface air's relative humidity, 0.8, as they take it (COADS's mean from 60S to
-/// 60N); the lifting condensation level 125 m a kelvin of the dew point's depression (Lawrence
-/// 2005).
+/// 60N), the air the radiation column's convection lifts besides (M69); the lifting condensation
+/// level 125 m a kelvin of the dew point's depression (Lawrence 2005).
 pub const CLOUD_LEVELS: (f64, f64) = (700.0 / 1013.25, 850.0 / 1013.25);
 pub const CLOUD_SURFACE_HUMIDITY: f64 = 0.8;
 pub const CLOUD_LCL_PER_KELVIN: f64 = 125.0;
@@ -2119,6 +2121,65 @@ pub const CLOUD_ABSORPTION: (f64, f64) = (0.142, 0.178);
 /// left (the Earth-like's 296.2, 293.8, 293.1, 292.8 K from its first year's clouds), so that
 /// the last year stands within some 0.3 K of where they would end.
 pub const CLOUD_PASSES: (f64, usize) = (0.3, 6);
+/// M69: the share of its law's vapour the clear sky's second table holds; a place reads between
+/// the two in the logarithm of its own column's share of the law's, as the column's outgoing
+/// radiation falls with the logarithm of its vapour (Koll and Cronin 2018's fit, the CERES and
+/// ERA-Interim one of the research notes, -35.6 W/m² a unit of it).
+pub const VAPOUR_DRY: f64 = 0.6;
+/// M69: the least and the most of its law's vapour a place's column is read at.
+pub const VAPOUR_SHARES: (f64, f64) = (0.25, 1.6);
+/// M69: the clouds' own profile, their column's adiabat, from the first to the last ground
+/// temperature every so many kelvin.
+pub const CLOUD_PROFILE: (f64, f64, f64) = (100.0, 420.0, 2.0);
+/// M69: an oxygen air's ozone layer in its column: its column OZONE_COLUMN's, spread over the
+/// pressure's logarithm as a Gaussian of the third width about a centre at the first pressure,
+/// Pa, times the oxygen's level to the second power, no deeper than the fourth: WACCM6's layers
+/// (Cooke et al. 2022, fig. 3b, digitised; this project's fit from 1.5 to 0.005 times the
+/// present level, their half-column at 31 hPa now, 57 at a tenth, 107 at a hundredth, its sinking
+/// stopping some 130 hPa down). AFGL's US Standard holds half its 344 DU above 39 hPa, its
+/// tropical half its 282 above 22 (Anderson et al. 1986).
+pub const OZONE_LAYER: (f64, f64, f64, f64) = (3_100.0, -0.27, 1.0, 13_000.0);
+/// M69: ozone's 9.6 um band by a Malkmus band in each of the spectrum's ten 25 cm^-1 bins from
+/// 950 cm^-1, its transmission over a bin exp(-(pi B / 2)(sqrt(1 + 4 k u / (pi B)) - 1)), u the
+/// ozone path, cm STP, times the diffusivity, k the bin's mean absorption, (cm STP)^-1, at
+/// OZONE_BAND_TEMPERATURES, B at OZONE_BAND_PRESSURES, Pa, both at the path's Curtis-Godson
+/// pressure and temperature: fitted to line-by-line curves of growth of HITRAN's ozone lines
+/// (this project's computation, the research notes), the US Standard ozone's transmission within
+/// 0.2 percent of the line-by-line above 30 km and 1 to 3 below; the band takes 8.2 W/m² of
+/// its clear sky's outgoing radiation, 8.4 of the tropical's (Kiehl and Trenberth 1997 give
+/// ozone 10 W/m² of Earth's clear-sky greenhouse).
+pub const OZONE_BAND_FROM: f64 = 950.0;
+pub const OZONE_BAND_WIDTH: f64 = 25.0;
+pub const OZONE_BAND_TEMPERATURES: [f64; 4] = [200.0, 230.0, 260.0, 290.0];
+pub const OZONE_BAND_PRESSURES: [f64; 7] = [
+    100.0, 300.0, 1_000.0, 3_000.0, 10_000.0, 30_000.0, 100_000.0,
+];
+// 6.28 below is a measured absorption, not two pi.
+#[allow(clippy::approx_constant)]
+pub const OZONE_BAND_K: [[f64; 4]; 10] = [
+    [0.00131, 0.00388, 0.0102, 0.0229],
+    [0.103, 0.191, 0.314, 0.468],
+    [3.07, 3.45, 3.74, 3.96],
+    [7.40, 6.78, 6.28, 5.86],
+    [5.65, 5.77, 5.82, 5.81],
+    [0.0829, 0.0877, 0.0921, 0.0961],
+    [0.0968, 0.0949, 0.0930, 0.0914],
+    [0.0806, 0.0883, 0.0956, 0.103],
+    [0.0313, 0.0358, 0.0398, 0.0436],
+    [0.00818, 0.0116, 0.0154, 0.0194],
+];
+pub const OZONE_BAND_B: [[f64; 7]; 10] = [
+    [0.0246, 0.0308, 0.0573, 0.121, 0.256, 0.362, 0.665],
+    [0.0109, 0.0149, 0.0285, 0.0636, 0.152, 0.282, 0.460],
+    [0.0054, 0.0090, 0.0216, 0.0592, 0.194, 0.545, 1.07],
+    [0.0068, 0.0119, 0.0298, 0.0830, 0.271, 0.811, 2.35],
+    [0.0044, 0.0075, 0.0184, 0.0472, 0.120, 0.213, 0.286],
+    [0.0150, 0.0208, 0.0443, 0.122, 0.406, 1.27, 4.73],
+    [0.0059, 0.0083, 0.0170, 0.0439, 0.144, 0.444, 1.46],
+    [0.0063, 0.0088, 0.0187, 0.0511, 0.177, 0.574, 2.02],
+    [0.0074, 0.0101, 0.0211, 0.0593, 0.215, 0.760, 3.39],
+    [0.0112, 0.0145, 0.0272, 0.0698, 0.226, 0.682, 2.34],
+];
 /// M67: the ozone column, Dobson units, by the air's oxygen in its present atmospheric level
 /// (OXYGEN_PRESENT of the air): WACCM6's (Cooke et al. 2022), between its points in the
 /// logarithm, its present 279 DU above them, falling with the oxygen under the least; one

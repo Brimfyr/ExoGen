@@ -368,6 +368,41 @@ fn water_lines(nu: f64) -> f64 {
     }
 }
 
+/// The error function (Abramowitz and Stegun 1964, 7.1.26, within 1.5e-7).
+fn erf(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let poly = t
+        * (0.254_829_592
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let y = 1.0 - poly * (-x * x).exp();
+    if x < 0.0 { -y } else { y }
+}
+
+/// A table's value at `x` between its entries `xs`, read in the logarithms where `logs`, held at
+/// its ends.
+fn interpolate(xs: &[f64], ys: &[f64], x: f64, logs: bool) -> f64 {
+    let n = xs.len().min(ys.len());
+    if n == 0 {
+        return 0.0;
+    }
+    if x <= xs[0] {
+        return ys[0];
+    }
+    if x >= xs[n - 1] {
+        return ys[n - 1];
+    }
+    let j = xs.partition_point(|&v| v <= x).clamp(1, n - 1);
+    let (a, b) = (j - 1, j);
+    if logs && ys[a] > 0.0 && ys[b] > 0.0 && xs[a] > 0.0 {
+        let w = (x / xs[a]).ln() / (xs[b] / xs[a]).ln();
+        (ys[a].ln() + w * (ys[b].ln() - ys[a].ln())).exp()
+    } else {
+        let w = (x - xs[a]) / (xs[b] - xs[a]);
+        ys[a] + w * (ys[b] - ys[a])
+    }
+}
+
 /// The sunlight a column absorbs and the depths its air takes it by (M65): the light that
 /// reaches its top and what the planet absorbs of it at its Bond albedo, W/m² over its whole
 /// surface, and the haze's and methane's grey depths over the column in the light; the clouds'
@@ -458,6 +493,10 @@ pub struct Column {
     /// water has no liquid to evaporate draws its vapour off its ice, however warm the ground
     /// under the column; unbounded where its water is liquid.
     vapour_most: f64,
+    /// The share of its law's vapour the column holds (M69): a place's own column's.
+    vapour_share: f64,
+    /// Its ozone (M69): its column, cm STP, and its layer's centre, Pa; none without oxygen.
+    ozone: (f64, f64),
     /// The clouds' grey depth's law, a u^b of the column's vapour u, kg/m² (M55).
     cloud: (f64, f64),
     /// The haze's thermal depth over the column at HAZE_INFRARED's reference wavenumber (M65).
@@ -517,6 +556,15 @@ impl Column {
             pairs,
             water,
             vapour_most: f64::INFINITY,
+            vapour_share: 1.0,
+            ozone: {
+                let oxygen = share("O2");
+                let (centre, power, _, deepest) = OZONE_LAYER;
+                (
+                    ozone_column(oxygen),
+                    (centre * (oxygen / OXYGEN_PRESENT).max(1e-9).powf(power)).min(deepest),
+                )
+            },
             cloud: WATER_CLOUD_DEPTH,
             haze_ir: 0.0,
             deck,
@@ -528,6 +576,13 @@ impl Column {
     /// profile's and its adiabat's no more than saturated at it (M59).
     pub fn with_vapour_most(mut self, most: f64) -> Self {
         self.vapour_most = most;
+        self
+    }
+
+    /// The column with `share` of the vapour its law gives it (M69): a place's own column's
+    /// over the law's, its profile the law's saturated profile held at that share.
+    pub fn with_vapour_share(mut self, share: f64) -> Self {
+        self.vapour_share = share.max(0.0);
         self
     }
 
@@ -564,7 +619,7 @@ impl Column {
     /// the column holds water by its saturated vapour's latent heat,
     /// (1 + L r / (R T)) / (1 + L² r eps / (c_p R T²)), r its mixing ratio; its heat capacity
     /// its temperature's (M65).
-    fn lapse(&self, t: f64, p: f64) -> f64 {
+    fn lapse(&self, t: f64, p: f64, parcel: f64) -> f64 {
         let heat = self.heat_at(t);
         let dry = self.gas_constant / heat;
         let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) else {
@@ -575,6 +630,19 @@ impl Column {
         // (M65): Venus's air, far from saturated, rises on its dry adiabat.
         let held = self.water * 1_000.0 * self.gravity / self.pressure.max(1e-300);
         let r = (self.epsilon * e / (p - e)).min(held);
+        // Under its condensation level the air its convection lifts is not yet saturated, and
+        // rises on the dry adiabat (M69): its saturated mixing ratio there more than the air
+        // holds, read without the half of the pressure the vapour is held to (a steam air's
+        // surface air is saturated).
+        let full = vapour_pressure(water, t.min(self.vapour_most));
+        let saturated = if full < p {
+            (self.epsilon * full / (p - full)).min(held)
+        } else {
+            held
+        };
+        if saturated > parcel * (1.0 + 1e-9) {
+            return dry;
+        }
         let l = if t >= water.t_triple {
             water.l_vap
         } else {
@@ -582,6 +650,87 @@ impl Column {
         };
         let rt = self.gas_constant * t;
         dry * (1.0 + l * r / rt) / (1.0 + l * l * r * self.epsilon / (heat * rt * t))
+    }
+
+    /// The water vapour's mixing ratio of the air a column's convection lifts from its ground at
+    /// `t` K and `p` Pa (M69): its surface air's, CLOUD_SURFACE_HUMIDITY of saturation, no more
+    /// than the water the air can hold all of makes; none without water.
+    fn parcel(&self, t: f64, p: f64) -> f64 {
+        let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) else {
+            return 0.0;
+        };
+        let e = CLOUD_SURFACE_HUMIDITY * vapour_pressure(water, t.min(self.vapour_most));
+        let held = self.water * 1_000.0 * self.gravity / self.pressure.max(1e-300);
+        if e >= p {
+            return held;
+        }
+        (self.epsilon * e / (p - e)).min(held)
+    }
+
+    /// The air's adiabat over ground at `t` K (M69): its levels' shares of the surface
+    /// pressure, from the ground up, and their temperatures along the adiabat its convection
+    /// lifts its surface air on.
+    pub fn adiabat_shares(&self, t: f64) -> (Vec<f64>, Vec<f64>) {
+        let levels = self.levels(1.0);
+        let temps = self.adiabat_over(t, &levels);
+        let ground = levels[0].max(1e-300);
+        (levels.iter().map(|&p| p / ground).collect(), temps)
+    }
+
+    /// The ozone above `p` Pa, cm STP (M69): OZONE_LAYER's Gaussian in the pressure's
+    /// logarithm about its centre.
+    fn ozone_above(&self, p: f64) -> f64 {
+        let (column, centre) = self.ozone;
+        if column <= 0.0 || p <= 0.0 {
+            return 0.0;
+        }
+        let z = (p / centre).ln() / OZONE_LAYER.2;
+        column * 0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2))
+    }
+
+    /// Each layer's depth in each of ozone's band's bins (M69): the difference of the Malkmus
+    /// bands' depths from the top of the column to its levels, along the ozone's path with its
+    /// Curtis-Godson pressure and temperature, through the diffusivity; none without ozone.
+    fn ozone_depths(&self, levels: &[f64], temps: &[f64]) -> Vec<[f64; 10]> {
+        let n = levels.len();
+        let mut out = vec![[0.0; 10]; n.saturating_sub(1)];
+        if self.ozone.0 <= 0.0 || n < 2 {
+            return out;
+        }
+        // From the top down: the ozone above each level and its pressure's and temperature's
+        // weights.
+        let mut above = vec![[0.0f64; 10]; n];
+        let (mut x, mut px, mut tx) = (self.ozone_above(levels[n - 1]), 0.0, 0.0);
+        px += x * levels[n - 1];
+        tx += x * temps[n - 1];
+        let depth = |x: f64, px: f64, tx: f64| -> [f64; 10] {
+            let mut d = [0.0; 10];
+            if x <= 0.0 {
+                return d;
+            }
+            let (p, t) = (px / x, tx / x);
+            for (b, out) in d.iter_mut().enumerate() {
+                let k = interpolate(&OZONE_BAND_TEMPERATURES, &OZONE_BAND_K[b], t, false);
+                let width = interpolate(&OZONE_BAND_PRESSURES, &OZONE_BAND_B[b], p, true);
+                let u = DIFFUSIVITY * x;
+                let half = 0.5 * std::f64::consts::PI * width;
+                let through = (-half * ((1.0 + 2.0 * k * u / half).sqrt() - 1.0)).exp();
+                *out = -through.max(1e-300).ln() / DIFFUSIVITY;
+            }
+            d
+        };
+        above[n - 1] = depth(x, px, tx);
+        for k in (0..n - 1).rev() {
+            let dx = (self.ozone_above(levels[k]) - self.ozone_above(levels[k + 1])).max(0.0);
+            x += dx;
+            px += dx * 0.5 * (levels[k] + levels[k + 1]);
+            tx += dx * 0.5 * (temps[k] + temps[k + 1]);
+            above[k] = depth(x, px, tx);
+            for b in 0..10 {
+                out[k][b] = (above[k][b] - above[k + 1][b]).max(0.0);
+            }
+        }
+        out
     }
 
     /// The bulk gas's frost point at `p` Pa, K; none without one.
@@ -595,11 +744,13 @@ impl Column {
     fn adiabat_over(&self, t: f64, levels: &[f64]) -> Vec<f64> {
         let n = levels.len();
         let mut adiabat = vec![t; n];
+        let parcel = self.parcel(t, levels[0]);
         for k in 0..n - 1 {
             let step = (levels[k + 1] / levels[k]).ln();
-            let mid = adiabat[k] * (0.5 * step * self.lapse(adiabat[k], levels[k])).exp();
+            let lapse = self.lapse(adiabat[k], levels[k], parcel);
+            let mid = adiabat[k] * (0.5 * step * lapse).exp();
             let p_mid = (levels[k] * levels[k + 1]).sqrt();
-            adiabat[k + 1] = adiabat[k] * (step * self.lapse(mid, p_mid)).exp();
+            adiabat[k + 1] = adiabat[k] * (step * self.lapse(mid, p_mid, parcel)).exp();
         }
         adiabat
     }
@@ -832,6 +983,9 @@ impl Column {
             self.skin,
             self.water,
             self.vapour_most,
+            self.vapour_share,
+            self.ozone.0,
+            self.ozone.1,
             self.cloud.0,
             self.cloud.1,
             self.haze_ir,
@@ -926,7 +1080,7 @@ impl Column {
     /// profile's saturated levels hold, `datum` of it: the scale its vapour is read by.
     fn vapour_scale(&self, t: f64, datum: f64) -> f64 {
         if datum > 0.0 {
-            water_column(t.min(self.vapour_most), self.water) / datum
+            self.vapour_share * water_column(t.min(self.vapour_most), self.water) / datum
         } else {
             0.0
         }
@@ -988,6 +1142,7 @@ impl Column {
             .collect();
         let (reference, warmth, sigma) = H2O_CONTINUUM_STATE;
         let tables = line_tables();
+        let ozone = self.ozone_depths(levels, temps);
         let layers = (0..n - 1)
             .map(|k| {
                 let (p0, p1) = (levels[k], levels[k + 1]);
@@ -1005,6 +1160,7 @@ impl Column {
                     (self.so2_mass * air.0, self.so2_mass * air.1),
                 ];
                 Layer {
+                    ozone: ozone[k],
                     lines: tables
                         .iter()
                         .zip(paths)
@@ -1217,12 +1373,20 @@ impl Column {
             } else {
                 0.0
             };
-            grey / mu + wet
+            // Its ozone's, above the level (M69).
+            let ozone = -(1.0 - ozone_sunlight(path * self.ozone_above(levels[k])))
+                .max(1e-12)
+                .ln();
+            grey / mu + wet + ozone
         };
         // Over the lit hemisphere's sun heights, RC_SUN_HEIGHTS of them evenly in their
-        // cosine, each by the light it brings, its cosine; the haze's own share apart.
+        // cosine, each by the light it brings, its cosine; the haze's own share apart, and its
+        // ozone's with it, high, as the climate's light takes them (M69).
         let haze_only = |k: usize, mu: f64| -> f64 {
-            light.haze * (levels[k] / base).min(1.0).powf(HAZE_ABSORBING_SHAPE) / mu
+            let ozone = -(1.0 - ozone_sunlight(magnification(mu) * self.ozone_above(levels[k])))
+                .max(1e-12)
+                .ln();
+            light.haze * (levels[k] / base).min(1.0).powf(HAZE_ABSORBING_SHAPE) / mu + ozone
         };
         let (mut layers, mut hazed, mut ground, mut weights) =
             (vec![0.0; n - 1], vec![0.0; n - 1], 0.0, 0.0);
@@ -1328,8 +1492,9 @@ impl Column {
             })
             .collect();
         // The adiabat's ratio from level `j` to the next up, at `x`'s temperature there.
+        let parcel = self.parcel(t, levels[0]);
         let ratio = |x: &[f64], j: usize| -> f64 {
-            ((levels[j + 1] / levels[j]).ln() * self.lapse(x[j], levels[j])).exp()
+            ((levels[j + 1] / levels[j]).ln() * self.lapse(x[j], levels[j], parcel)).exp()
         };
         // Convection (Manabe and Strickler 1964): the layer convecting from the ground raised
         // to its adiabat, the ground warming it; above it, each layer standing steeper than
@@ -1755,6 +1920,8 @@ fn linear_source(x: f64) -> (f64, f64, f64) {
 /// A layer of the column between two levels, as its absorbers' paths through it read it: carbon
 /// dioxide's band's, kg/m² at the reference pressure, and the grey depth.
 struct Layer {
+    /// Its depth in each of ozone's band's bins (M69).
+    ozone: [f64; 10],
     band: f64,
     /// Methane's band's path, kg/m² at the reference pressure, and the haze's thermal depth at
     /// HAZE_INFRARED's reference wavenumber (M65).
@@ -1793,7 +1960,16 @@ impl Layer {
             .iter()
             .map(|&(g, j, w, broadened, mass)| tables[g].depth(i, (j, w), broadened, mass))
             .sum();
+        let ozone = {
+            let x = (spectrum.nu[i] - OZONE_BAND_FROM) / OZONE_BAND_WIDTH;
+            if (0.0..10.0).contains(&x) {
+                self.ozone[x as usize]
+            } else {
+                0.0
+            }
+        };
         lines
+            + ozone
             + self.band * spectrum.band[i]
             + self.methane * spectrum.methane[i]
             + self.haze * spectrum.haze[i]
@@ -2808,8 +2984,12 @@ mod tests {
         );
     }
 
-    /// M55: the column's streams meet what is measured. Earth's clear air at 288 K lets out
-    /// CERES's 267 W/m² within 8 (Wild et al. 2019); with its stated clouds its air over its
+    /// M55: the column's streams meet what is measured. Earth's clear air over its
+    /// zero-dimensional 291.6 K ground lets out CERES's 267 W/m² within 8 (Wild et al. 2019;
+    /// M69: at 288 K, its column holding the law's 25 kg/m² of vapour where Earth's 288 K columns
+    /// hold some 18 to 20, its column lifting its surface air at 0.8 of saturation, it lets out
+    /// 256: the body's own clear sky, each place at its own vapour, is the climate's check, and
+    /// the column's anchors stand at 291.6 K); with its stated clouds its air over its
     /// 291.6 K ground sends down the measured 342 W/m² within 10 (Kato et al. 2018 give 6 of
     /// uncertainty), its window between the cloudy 0.055 and the clear 0.17 of its ground's
     /// light (Costa and Shine 2012). Titan's air over its 93.7 K ground lets 2 to 6 percent of
@@ -2820,6 +3000,142 @@ mod tests {
     /// with it), a known limitation until methane's moist convection and its sunlight's bands. Its haze sends back to space between
     /// half and all of the 1.5 of 3.6 W/m² its stratosphere takes (McKay et al. 1991); Earth's
     /// air none. A clear air lets all its ground's light through and sends none down.
+    /// M69: the column's convection lifts its surface air, CLOUD_SURFACE_HUMIDITY of saturation,
+    /// up its dry adiabat to its condensation level and its moist adiabat above: over a 299 K
+    /// ground Earth's column stands within a few kelvin of ERA-Interim's wet tropical oceans'
+    /// 290.6, 283.1, 268.3 and 242.5 K at 850, 700, 500 and 300 hPa (1979 to 2016, rain of 6 mm
+    /// a day and more; the research notes), where lifting saturated air from the ground stood
+    /// its 500 hPa some 5 K and its 300 hPa some 10 K warm. And a steam air's surface air is
+    /// saturated: the column's table over Earth's grounds keeps the outgoing radiation its
+    /// streams give at 300 K, rising to 303 K, no runaway's plateau held under it.
+    #[test]
+    fn the_column_lifts_its_surface_air() {
+        let g = graph("Earth");
+        let (column, _) = column_of(&g, 0.3);
+        let column = column.without_clouds();
+        let (shares, temps) = column.adiabat_shares(299.0);
+        let at = |hpa: f64| {
+            let r = hpa / 1013.25;
+            let k = shares
+                .iter()
+                .position(|&s| s < r)
+                .unwrap_or(shares.len() - 1)
+                .max(1);
+            let w = (r / shares[k - 1]).ln() / (shares[k] / shares[k - 1]).ln();
+            temps[k - 1] + w * (temps[k] - temps[k - 1])
+        };
+        let era = [
+            (850.0, 290.6, 2.5),
+            (700.0, 283.1, 2.5),
+            (500.0, 268.3, 2.5),
+            (300.0, 242.5, 5.0),
+        ];
+        for (hpa, measured, within) in era {
+            let t = at(hpa);
+            println!("{hpa} hPa: {t:.1} K (ERA-Interim {measured})");
+            assert!(
+                (t - measured).abs() < within,
+                "{hpa} hPa: {t} against {measured}"
+            );
+        }
+        let table = Outgoing::of(&column, 100.0, 1100.0);
+        let direct = column.streams(300.0).olr;
+        assert!(
+            (table.olr(300.0) - direct).abs() < 0.5,
+            "{} {direct}",
+            table.olr(300.0)
+        );
+        assert!(
+            table.olr(303.0) > table.olr(300.0) + 3.0,
+            "{}",
+            table.olr(303.0)
+        );
+    }
+
+    /// M69: an oxygen air's ozone sits where WACCM6 puts it (Cooke et al. 2022): half of its
+    /// column above 31 hPa at the present level, above 57 hPa at a tenth of it and 107 at a
+    /// hundredth, within some percent; none without oxygen.
+    #[test]
+    fn ozone_sits_where_waccm_puts_it() {
+        let air = |o2: f64| -> Column {
+            let composition: BTreeMap<String, f64> =
+                [("N2".to_string(), 1.0 - o2), ("O2".to_string(), o2)]
+                    .into_iter()
+                    .collect();
+            Column::new(&composition, 101_325.0, 9.81, 0.0, 214.0)
+        };
+        for (level, half) in [(1.0, 3_100.0), (0.1, 5_700.0), (0.01, 10_700.0)] {
+            let c = air(OXYGEN_PRESENT * level);
+            let share = c.ozone_above(half) / c.ozone.0;
+            assert!((share - 0.5).abs() < 0.04, "{level}: {share}");
+        }
+        assert_eq!(air(0.0).ozone_above(10_000.0), 0.0);
+    }
+
+    /// M69: ozone's band lets through what its lines do: the US Standard's 344 DU, half of it
+    /// above 39 hPa, over the column's levels at 220 K, lets through to the ground what HITRAN's
+    /// lines line by line let through in the diffuse light (the research notes): 0.512, 0.316
+    /// and 0.484 of the 1000 to 1075 cm^-1 bins' light, 0.808 over 950 to 1200, within some
+    /// hundredths; the column's median table at 500 hPa let through 0.90.
+    #[test]
+    fn ozone_s_band_lets_through_what_its_lines_do() {
+        let composition: BTreeMap<String, f64> =
+            [("N2".to_string(), 0.79), ("O2".to_string(), 0.21)]
+                .into_iter()
+                .collect();
+        let mut column = Column::new(&composition, 101_325.0, 9.81, 0.0, 214.0);
+        column.ozone = (0.344, 3_900.0);
+        let levels = column.levels(1.0);
+        let temps = vec![220.0; levels.len()];
+        let depths = column.ozone_depths(&levels, &temps);
+        let through: Vec<f64> = (0..10)
+            .map(|b| (-DIFFUSIVITY * depths.iter().map(|d| d[b]).sum::<f64>()).exp())
+            .collect();
+        println!("ozone's bins let through {through:.3?}");
+        for (b, lbl) in [(2, 0.512), (3, 0.316), (4, 0.484)] {
+            assert!(
+                (through[b] - lbl).abs() < 0.07,
+                "{b}: {} against {lbl}",
+                through[b]
+            );
+        }
+        let mean = through.iter().sum::<f64>() / 10.0;
+        assert!((mean - 0.808).abs() < 0.04, "{mean}");
+    }
+
+    /// M69: ozone warms the stratosphere it sits in: Earth's column over its 288 K ground
+    /// stands some 50 K warmer at 15 hPa than the same air without its oxygen (Manabe and
+    /// Strickler 1964: 162 K without ozone, 223 with it, at 12 hPa), its ozone taking some 10
+    /// W/m² of the sunlight above 100 hPa.
+    #[test]
+    fn ozone_warms_the_stratosphere() {
+        let g = graph("Earth");
+        let (column, _) = column_of(&g, 0.3);
+        let column = column.without_clouds();
+        let mut bare = column.clone();
+        bare.ozone = (0.0, 1.0);
+        let levels = column.levels(1.0);
+        let k = levels.iter().position(|&p| p < 1_500.0).unwrap();
+        let (warm, cold) = (
+            column.profile(288.0, &levels).0[k],
+            bare.profile(288.0, &levels).0[k],
+        );
+        // The sunlight its ozone takes above 100 hPa (M69): Lacis and Hansen's fits give the US
+        // Standard ozone 11.5 to 12.2 W/m² of the global mean light (the research notes).
+        let temps = column.profile(288.0, &levels).0;
+        let (layers, _) = column.sun_layers(288.0, &temps);
+        let high: f64 = (0..levels.len() - 1)
+            .filter(|&j| levels[j + 1] < 10_000.0)
+            .map(|j| layers[j])
+            .sum();
+        println!(
+            "at {:.1} hPa: {warm:.1} K with ozone, {cold:.1} without; the light taken above 100 hPa {high:.2} W/m²",
+            levels[k] / 100.0
+        );
+        assert!(warm > cold + 30.0, "{warm} {cold}");
+        assert!((7.0..14.0).contains(&high), "{high}");
+    }
+
     #[test]
     fn the_air_s_streams_meet_the_measured() {
         let earth = || {
@@ -2827,7 +3143,7 @@ mod tests {
             let (column, _) = column_of(&g, g.f64("atmosphere.bond_albedo"));
             let mut clear = column.clone();
             clear.cloud = (0.0, 0.0);
-            let (s, c) = (column.streams(291.6), clear.streams(288.0));
+            let (s, c) = (column.streams(291.6), clear.streams(291.6));
             assert!((c.olr - 267.0).abs() < 8.0, "clear {:.1}", c.olr);
             assert!((s.down - 342.0).abs() < 10.0, "down {:.1}", s.down);
             assert!((0.055..0.17).contains(&s.window), "window {:.3}", s.window);
