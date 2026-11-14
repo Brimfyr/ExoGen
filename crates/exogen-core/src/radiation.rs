@@ -1798,6 +1798,20 @@ impl Column {
     /// the transmission below it to the ground, as the outgoing stream sums it into the
     /// transmission above it to space.
     fn streams_at(&self, t: f64, ratio: f64) -> Streams {
+        self.streams_under(t, ratio, 0.0)
+    }
+
+    /// The column's streams over its datum's ground standing `cold` K under its air at `t` K
+    /// (M71), as `streams` reads the column over ground at its air's.
+    pub fn streams_cold(&self, t: f64, cold: f64) -> Streams {
+        self.streams_under(t, 1.0, cold)
+    }
+
+    /// The column's streams over ground at `ratio` of the surface pressure, its air at `t` K,
+    /// the ground `cold` K under it (M71): its lowest air cooled toward the ground by
+    /// exp(-z / d) of the gap (INVERSION), each level's vapour no more than its own saturation
+    /// holds, the column's whole vapour read as over ground at its air's.
+    fn streams_under(&self, t: f64, ratio: f64, cold: f64) -> Streams {
         let ground = self.pressure * ratio;
         if ground <= 0.0 || t <= 0.0 {
             return Streams {
@@ -1808,7 +1822,7 @@ impl Column {
         }
         let levels = self.levels(ratio);
         let n = levels.len();
-        let (temps, vapour, humid) = self.profile(t, &levels);
+        let (mut temps, mut vapour, mut humid) = self.profile(t, &levels);
         // The water vapour above each level, kg/m²: the datum's column (F235) by the share of
         // its vapour above the level.
         let datum = if ratio == 1.0 || vapour[0] <= 0.0 {
@@ -1818,6 +1832,28 @@ impl Column {
             self.profile(t, &datum_levels).1[0]
         };
         let column = self.vapour_scale(t, datum);
+        // The ground under its air (M71): no trap of the cold below the levels, as the
+        // inversions' humidity rises through them.
+        let cold = cold.max(0.0);
+        if cold > 0.0 {
+            let (depth, _) = INVERSION;
+            let scale = self.gas_constant * t / self.gravity.max(1e-9);
+            for (x, &p) in temps.iter_mut().zip(&levels) {
+                let z = scale * (levels[0] / p).ln();
+                *x = (*x - cold * (-z / depth).exp()).max(1.0);
+            }
+            if let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) {
+                for (k, h) in humid.iter_mut().enumerate() {
+                    let most = temps[k].min(self.vapour_most);
+                    *h = h.min(vapour_pressure(water, most).min(0.5 * levels[k]) / levels[k]);
+                }
+                vapour[n - 1] = 0.0;
+                for k in (0..n - 1).rev() {
+                    let mean = 0.5 * (humid[k] + humid[k + 1]);
+                    vapour[k] = vapour[k + 1] + mean * (levels[k] - levels[k + 1]);
+                }
+            }
+        }
         let (layers, top) =
             self.optics(&levels, &temps, (&vapour, &humid), column, self.thickness());
         let spectrum = spectrum();
@@ -1853,7 +1889,7 @@ impl Column {
                 to_ground *= through;
             }
             let above = to_space;
-            let own = planck(nu, t);
+            let own = planck(nu, temps[0]);
             out += own * above;
             total += out * spectrum.width[i];
             through += own * above * spectrum.width[i];
@@ -2084,6 +2120,10 @@ pub struct Outgoing {
     share: Vec<f64>,
     window: Vec<f64>,
     down: Vec<f64>,
+    /// How what its air lets out of its own and sends down, each over a black body's radiation
+    /// at the air's temperature, and its window change a kelvin its ground stands under its air
+    /// (M71), read at INVERSION's gap.
+    cold: Vec<[f64; 3]>,
 }
 
 impl Outgoing {
@@ -2095,6 +2135,7 @@ impl Outgoing {
             share: vec![1.0],
             window: vec![1.0],
             down: vec![0.0],
+            cold: vec![[0.0; 3]],
         }
     }
 
@@ -2104,15 +2145,28 @@ impl Outgoing {
         let (from, to) = (low.max(1.0).ln(), high.max(low + 1.0).ln());
         let n = ((to - from) / OUTGOING_STEP).ceil() as usize + 1;
         let step = (to - from) / (n - 1) as f64;
-        let streams: Vec<(f64, f64, f64)> = (0..n)
+        let (_, probe) = INVERSION;
+        let streams: Vec<((f64, f64, f64), [f64; 3])> = (0..n)
             .into_par_iter()
             .map(|k| {
                 let t = (from + step * k as f64).exp();
                 let black = SIGMA_SB * t.powi(4);
                 let s = column.streams(t);
-                (s.olr / black, s.window, s.down / black)
+                // The ground under its air (M71).
+                let gap = probe.min(0.5 * t);
+                let c = column.streams_cold(t, gap);
+                let ground = SIGMA_SB * (t - gap).powi(4);
+                let own = |olr: f64, window: f64, emits: f64| (olr - window * emits) / black;
+                let cold = [
+                    (own(c.olr, c.window, ground) - own(s.olr, s.window, black)) / gap,
+                    (c.window - s.window) / gap,
+                    (c.down - s.down) / black / gap,
+                ];
+                ((s.olr / black, s.window, s.down / black), cold)
             })
             .collect();
+        let cold: Vec<[f64; 3]> = streams.iter().map(|s| s.1).collect();
+        let streams: Vec<(f64, f64, f64)> = streams.iter().map(|s| s.0).collect();
         // Held to no more than at any warmer temperature (M65): past water's runaway plateau,
         // where its vapour's growth stalls the outgoing radiation (Simpson 1927; Nakajima et
         // al. 1992), at the plateau's; where an air lets out about what it absorbs high over a
@@ -2136,6 +2190,7 @@ impl Outgoing {
             share,
             window: streams.iter().map(|s| s.1).collect(),
             down: streams.iter().map(|s| s.2).collect(),
+            cold,
         }
     }
 
@@ -2158,6 +2213,7 @@ impl Outgoing {
             step,
             window: vec![1.0; share.len()],
             down: vec![0.0; share.len()],
+            cold: vec![[0.0; 3]; share.len()],
             share,
         }
     }
@@ -2170,6 +2226,43 @@ impl Outgoing {
             self.down = down.iter().map(|p| p.1).collect();
         }
         self
+    }
+
+    /// The table with the changes a kelvin of its ground under its air of `column`'s table on
+    /// the same temperatures (M71), where its own entries come from the graph's curves.
+    pub fn with_cold(mut self, column: &Outgoing) -> Self {
+        if column.cold.len() == self.share.len() {
+            self.cold = column.cold.clone();
+        }
+        self
+    }
+
+    /// What the column's air lets out to space of its own over its ground standing `cold` K
+    /// under its air at `t` K, W/m² (M71).
+    pub fn air_up_over(&self, t: f64, cold: f64) -> f64 {
+        let change = self.read_cold(0, t) * cold.max(0.0);
+        (self.share(t) - self.window(t) + change).max(0.0) * SIGMA_SB * t.powi(4)
+    }
+
+    /// The share of its ground's own radiation reaching space through the column, its ground
+    /// standing `cold` K under its air at `t` K (M71).
+    pub fn window_over(&self, t: f64, cold: f64) -> f64 {
+        (self.window(t) + self.read_cold(1, t) * cold.max(0.0)).clamp(0.0, 1.0)
+    }
+
+    /// What the column's air sends down to its ground standing `cold` K under its air at `t` K,
+    /// W/m² (M71): the less, its lowest air the colder.
+    pub fn down_over(&self, t: f64, cold: f64) -> f64 {
+        let share = self.read(&self.down, t) + self.read_cold(2, t) * cold.max(0.0);
+        share.max(0.0) * SIGMA_SB * t.powi(4)
+    }
+
+    fn read_cold(&self, i: usize, t: f64) -> f64 {
+        if self.cold.len() != self.share.len() {
+            return 0.0;
+        }
+        let values: Vec<f64> = self.cold.iter().map(|c| c[i]).collect();
+        self.read(&values, t)
     }
 
     /// The entries, (temperature, share).
@@ -3342,6 +3435,36 @@ mod tests {
             assert!(r > last && r < 1.0, "{teff} K: {r} after {last}");
             last = r;
         }
+    }
+
+    /// M71: a ground under its air takes less from it, its lowest air the colder: Earth's
+    /// column over a ground at its air's sends down as ever, and the less the colder the ground
+    /// stands under it; over a 236 K ground under 256 K air, as SHEBA's clear winter's 237 K
+    /// under an inversion peaking at 250 K near 1 km (the model's air its free air read down to
+    /// the ground), within 12 percent of the 132 W/m² measured (Stramler et al. 2011).
+    #[test]
+    fn a_ground_under_its_air_takes_less_from_it() {
+        let g = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let (column, _) = column_of(&g, 0.3);
+        let air = 256.0;
+        let plain = column.streams(air);
+        let same = column.streams_cold(air, 0.0);
+        assert!((same.down - plain.down).abs() < 1e-9 && (same.olr - plain.olr).abs() < 1e-9);
+        let mut last = plain.down;
+        for cold in [2.0, 5.0, 10.0, 15.0, 20.0, 25.0] {
+            let s = column.streams_cold(air, cold);
+            println!(
+                "{} K under {air} K: down {:.1}, window {:.3}, out {:.1}",
+                air - cold,
+                s.down,
+                s.window,
+                s.olr
+            );
+            assert!(s.down < last, "{cold}: {} after {last}", s.down);
+            last = s.down;
+        }
+        let shebas = column.streams_cold(air, 20.0).down;
+        assert!((shebas / 132.0 - 1.0).abs() < 0.12, "{shebas}");
     }
 
     /// M70: an air's molecules reflect the more as the sun sinks, as Lacis and Hansen (1974)'s

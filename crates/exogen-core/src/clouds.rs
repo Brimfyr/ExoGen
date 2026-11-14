@@ -356,15 +356,29 @@ impl Sky {
         table[i] + w * (table[i + 1] - table[i])
     }
 
-    /// The clear air's reading `pick` at `t` K over a column holding `vapour` of its law's
-    /// water (M69), read between its law's table and its drier one in the share's logarithm.
-    fn clear_at(&self, pick: fn(&Outgoing, f64) -> f64, t: f64, vapour: f64) -> f64 {
-        let law = pick(&self.clear, t);
+    /// The clear air's reading `pick` at `t` K over a ground `cold` K under it (M71), over a
+    /// column holding `vapour` of its law's water, between its law's table and its drier one in the share's logarithm (M69).
+    fn clear_over(
+        &self,
+        pick: fn(&Outgoing, f64, f64) -> f64,
+        (t, cold): (f64, f64),
+        vapour: f64,
+    ) -> f64 {
+        let law = pick(&self.clear, t, cold);
         if (vapour - 1.0).abs() <= 1e-12 {
             return law;
         }
         let x = vapour.max(1e-6).ln() / VAPOUR_DRY.ln();
-        law + x * (pick(&self.clear_dry, t) - law)
+        law + x * (pick(&self.clear_dry, t, cold) - law)
+    }
+
+    /// The air's temperature at `ratio` of the surface pressure over air at `air` K, its
+    /// ground `cold` K under it (M71): its lowest air cooled toward the ground by exp(-z / d)
+    /// of the gap (INVERSION), as the column's.
+    fn at_over(&self, air: f64, cold: f64, ratio: f64) -> f64 {
+        let (depth, _) = INVERSION;
+        let z = -self.scale_height * ratio.clamp(1e-300, 1.0).ln();
+        self.at(air, ratio) - cold.max(0.0) * (-z / depth).exp()
     }
 
     /// The air's temperature at `ratio` of the surface pressure over air at `air` K at the
@@ -650,7 +664,8 @@ impl Sky {
     /// its ground sending up `emitted` W/m²: what the place lets out to space, from the
     /// clouds' tops, the higher hiding the lower, and what its air sends down to its ground,
     /// from their bases through the air's window, the lower hiding the higher, each with the
-    /// clouds less without, W/m².
+    /// clouds less without, W/m². Over a ground under its air, the black body of `emitted`
+    /// the colder (M71), the clear air and the clouds' tops and bases along its inversion.
     pub fn infrared(&self, deck: &Deck, air: f64, emitted: f64, vapour: f64) -> (f64, f64) {
         let sigma = |t: f64| SIGMA_SB * t.powi(4);
         let [c_tower, c_anvil, c_layer, c_low] = deck.cover.map(|c| c as f64);
@@ -660,12 +675,19 @@ impl Sky {
         }
         let top = self.tropopause_ratio(air);
         let base = self.base_ratio(air);
+        let ground = if emitted > 0.0 {
+            (emitted / SIGMA_SB).powf(0.25)
+        } else {
+            air
+        };
+        let cold = (air - ground).max(0.0);
+        let at = |ratio: f64| self.at_over(air, cold, ratio);
         let out_from = |ratio: f64| {
-            let t = self.at(air, ratio);
+            let t = at(ratio);
             sigma(t) * self.heights.share(t, ratio)
         };
-        let window = self.clear_at(Outgoing::window, air, vapour);
-        let clear = self.clear_at(Outgoing::air_up, air, vapour) + window * emitted;
+        let window = self.clear_over(Outgoing::window_over, (air, cold), vapour);
+        let clear = self.clear_over(Outgoing::air_up_over, (air, cold), vapour) + window * emitted;
         let (mid_top, low_top) = CLOUD_TOPS;
         let (mid_base, anvil_base) = CLOUD_BASES;
         // The towers let out from the tropopause, the anvils from the middle of their layer in
@@ -687,10 +709,10 @@ impl Sky {
                             + (1.0 - mid) * (low * out_from(low_top) + (1.0 - low) * clear)));
         let near = 1.0 - (1.0 - low) * (1.0 - c_tower * e_tower);
         let down = window
-            * (near * sigma(self.at(air, base))
+            * (near * sigma(at(base))
                 + (1.0 - near)
-                    * (mid * sigma(self.at(air, mid_base))
-                        + (1.0 - mid) * c_anvil * e_anvil * sigma(self.at(air, anvil_base))));
+                    * (mid * sigma(at(mid_base))
+                        + (1.0 - mid) * c_anvil * e_anvil * sigma(at(anvil_base))));
         (olr - clear, down)
     }
 

@@ -955,6 +955,25 @@ How it went:
 - **The bodies.** At 2048 under the stated law the finish's Earth and TRAPPIST-1e stand where M69 left them, 286.1 and 251.7 K, their clouds a diagnostic. The finish's Earth's clouds cover 0.645 of it where 0.598 (Earth's some 0.67): low cloud 0.388, layers 0.255, the anvils' level with the storms' high cloud 0.193 where 0.125, towers 0.023; they keep 34.8 W/m² from space where 34.4 (CERES 26 to 28) and send 36.1 down where 38.2. TRAPPIST-1e's cover 0.274 where 0.218.
 - **The suite.** 422 tests in the whole-body tier, 421 passed in 29.8 minutes under the user's other work, the one (above) passing alone once set; the fast tier, 383, in 3.5. Four checks that build Earth's sky, some 10 s each alone, moved to the whole-body tier, three of them merged into one. FINISH_VERSION 234.
 
+## The seventy-first milestone: the polar night
+
+- **F364.** A ground under its air: the column's lowest air cooled toward it, its tables read by each place's own gap.
+- **F365.** The clouds' tops and bases along the inversion.
+- **F366.** Under its own clouds a sea's ice stands in two states, under its clear sky and under its clouds.
+- **F367.** The stated law keeps the column it was set on.
+- **F368.** The polar night under the inversion; its clouds' top's effect KNOWN.
+
+How it went:
+
+- **The trial.** The user chose (2026-11-14) to record the star's own spectrum and the clouds' bands for Phase 6R's lights, and to take the deep tropics and the poles before the coupling. A trial of the finish's Earth under its own clouds (not kept) warmed its year 2.8 K: its seas over 60 degrees 4 to 13 K, its equator 2.3 (301 to 303 K, its air over its sea where 0.4 K under it). Its map stood still: the finish's temperature is its year-mean solve's, the year reaching it only through its ice and snow. The user chose the poles first.
+- **The polar night, measured.** Under the stated law the Earth-like's polar night stood as the winter Arctic's does: its air 14 to 17 K over its ice's top, the exchange 0.8 to 1.2 W/m²/K, its ice 2 to 4 m. Under its own clouds none of it: its ice 0.5 to 0.7 m, conducting the sea's heat to its top, its top as warm as its air, the exchange 7 to 10 W/m²/K, its clouds keeping 17 to 21 W/m² from space.
+- **The inversion's air.** The column's lowest air stood as warm as its free air over any ground. With the inversion in it, SHEBA's clear winter's ground takes 136 W/m² from its air where 132 is measured. Under the stated law it cooled the Earth-like 3.3 K and its pole's ice to 8.2 m, failing three checks; under its own clouds it did nothing: its ground never fell under its air.
+- **Two states.** Its clouds' mean over every step, 0.75 of the sky sending 46 W/m² down, held its ground in the winter Arctic's cloudy state all its night, where the Arctic stands clear two thirds of it (Stramler et al. 2011). The user chose (2026-11-14) its two states, a sea's ice's top under its clear sky and under its clouds apart; and the stated law keeps the column it was set on. Its polar night now stands under a 19 K inversion with an exchange of 1.2 W/m²/K, its ice 1.1 m, the stated law's year as before (287.49 K, the pole's ice 4,022 kg/m²).
+- **The polar clouds.** Under the inversion its low clouds' tops stand warmer than its ground, and its clouds keep 0.9 W/m² from space in polar night where the Arctic Ocean's 14 and the plateau's 3.8: its inversion the plateau's strength. Its check holds them to CERES's least, no polar night's monthly cell under -0.6 W/m² (KNOWN). Through the year its polar seas' clouds keep 19 to 21 W/m² where 27 to 28 (CERES's open sea 12 to 16).
+- **The invariants.** A ground under its air takes less from it, which the column without its inversion fails; a sea's ice under its clouds stands in two states, which its clouds' cover read as none fails; the stated law reads no inversion, which the inversion read under it fails: three planted bugs, each caught.
+- **The coupling's state.** Under its own clouds the Earth-like stands at 289.9 K where 291.6, its planetary albedo 0.313; TRAPPIST-1e at 253.1 K where 252.9.
+- **The suite.** 424 tests passed with the whole-body tests in 54.8 minutes under the user's other work, the Earth-like's year the longest; the fast tier, 384, in 3.3. FINISH_VERSION 235 (the stated law's climate as before, the clouds' exported diagnostic along the inversion).
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

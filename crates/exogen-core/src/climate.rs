@@ -965,6 +965,9 @@ struct Sea {
     ice: f64,
     surface: f64,
     snow: f64,
+    /// Its ice's top under its clear sky and under its clouds, K (M71), `surface` their
+    /// radiation's mean by their shares.
+    tops: [f64; 2],
 }
 
 /// A volatile's ice that can lie on the ground (F240): its gas, its colour and the albedo
@@ -2423,13 +2426,18 @@ impl EnergyBalance {
                     let t = crate::params::derive::streams_table_to(&ctx, vapour_most);
                     crate::radiation::Outgoing::from_points(&t.points())
                         .with_streams(&t.window_points(), &t.down_points())
+                        .with_cold(&t)
                 }
                 Some(curve) if !airless => {
                     let streams = |id: &str| graph.curve(id).map(|c| c.points.clone());
                     let window = streams("atmosphere.window_share").unwrap_or_default();
                     let down = streams("atmosphere.downward_share").unwrap_or_default();
+                    // A ground under its air (M71): its column's changes a kelvin of it.
+                    let ctx = crate::params::Ctx::new(graph);
+                    let column = crate::params::derive::streams_table_to(&ctx, vapour_most);
                     crate::radiation::Outgoing::from_points(&curve.points)
                         .with_streams(&window, &down)
+                        .with_cold(&column)
                 }
                 _ => crate::radiation::Outgoing::none(),
             }),
@@ -2504,29 +2512,47 @@ impl EnergyBalance {
         self.exchange.max(0.0)
     }
 
-    /// The air's streams' reading `pick` at `t` K over a place whose column holds `vapour` of
-    /// its law's water (M69): between the law's table and the drier one in the logarithm of the
-    /// share, beyond them along the same line; the law's where the air keeps no drier table.
-    fn read(&self, pick: fn(&crate::radiation::Outgoing, f64) -> f64, t: f64, vapour: f64) -> f64 {
-        let law = pick(&self.outgoing, t);
-        match &self.outgoing_dry {
-            Some(dry) if (vapour - 1.0).abs() > 1e-12 => {
-                let x = vapour.max(1e-6).ln() / VAPOUR_DRY.ln();
-                law + x * (pick(dry, t) - law)
-            }
-            _ => law,
-        }
-    }
-
     /// What the ground at `t` K radiates net of what its air at `air` K sends it, W/m², and
     /// its slope in the ground's temperature (M55): its own sigma T^4, the air's downward
     /// stream, its column's at the air's temperature, holding `vapour` of its law's water
     /// (M69); an airless ground's sigma T^4.
     fn ground_radiation(&self, t: f64, air: f64, vapour: f64) -> (f64, f64) {
-        (
-            SIGMA_SB * t.powi(4) - self.read(crate::radiation::Outgoing::down, air, vapour),
-            4.0 * SIGMA_SB * t.powi(3),
-        )
+        // Under its air, what its air sends down from its colder lowest air, under its own
+        // clouds (M71); the stated law keeps the column it was set on (F351).
+        let cold = self.inverted(air - t);
+        let down = self.read_over(crate::radiation::Outgoing::down_over, (air, cold), vapour);
+        (SIGMA_SB * t.powi(4) - down, 4.0 * SIGMA_SB * t.powi(3))
+    }
+
+    /// How far a ground stands under its air, `gap` K, as its streams read it (M71): none where
+    /// it stands over it; none under the stated law, which keeps the column it was set on
+    /// (F351) until its clouds take its place.
+    fn inverted(&self, gap: f64) -> f64 {
+        if self.clouds.is_some() {
+            gap.max(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// The air's streams' reading `pick` at `t` K over a ground `cold` K under it (M71), over a
+    /// place whose column holds `vapour` of its law's water (M69): between the law's table and
+    /// the drier one in the logarithm of the share, beyond them along the same line; the law's
+    /// where the air keeps no drier table.
+    fn read_over(
+        &self,
+        pick: fn(&crate::radiation::Outgoing, f64, f64) -> f64,
+        (t, cold): (f64, f64),
+        vapour: f64,
+    ) -> f64 {
+        let law = pick(&self.outgoing, t, cold);
+        match &self.outgoing_dry {
+            Some(dry) if (vapour - 1.0).abs() > 1e-12 => {
+                let x = vapour.max(1e-6).ln() / VAPOUR_DRY.ln();
+                law + x * (pick(dry, t, cold) - law)
+            }
+            _ => law,
+        }
     }
 
     /// The air's own radiation over a place, W/m², and its slope in the air's temperature
@@ -2549,7 +2575,11 @@ impl EnergyBalance {
         (deck, vapour): (Option<&crate::clouds::Deck>, f64),
     ) -> (f64, f64) {
         use crate::radiation::Outgoing;
-        let taken = 1.0 - self.read(Outgoing::window, air, vapour);
+        // Its ground's temperature by what it sends up, under its air along its inversion
+        // (M71).
+        let ground = (emitted / SIGMA_SB).max(0.0).powf(0.25);
+        let cold = |a: f64| self.inverted(a - ground);
+        let taken = 1.0 - self.read_over(Outgoing::window_over, (air, cold(air)), vapour);
         let clouds = |a: f64| match (&self.clouds, deck) {
             (Some(sky), Some(d)) => {
                 let (out, down) = sky.infrared(d, a, emitted, vapour);
@@ -2558,8 +2588,9 @@ impl EnergyBalance {
             _ => 0.0,
         };
         let net = |a: f64| {
-            let down = self.read(Outgoing::down, a, vapour);
-            self.read(Outgoing::air_up, a, vapour) + down - taken * (emitted + reflects * down)
+            let down = self.read_over(Outgoing::down_over, (a, cold(a)), vapour);
+            self.read_over(Outgoing::air_up_over, (a, cold(a)), vapour) + down
+                - taken * (emitted + reflects * down)
                 + clouds(a)
         };
         let h = 0.01;
@@ -2618,6 +2649,7 @@ impl EnergyBalance {
             above: 0.0,
             cloud_down: 0.0,
             sea: sea_albedo_at(mu, 1.0),
+            cloudy: 0.0,
             under: self.clouds.is_some(),
         }
     }
@@ -2628,7 +2660,7 @@ impl EnergyBalance {
     fn light_under(
         &self,
         (lit, mu): (f64, f64),
-        (air, vapour): (f64, f64),
+        (air, vapour, ground): (f64, f64, f64),
         deck: Option<&crate::clouds::Deck>,
     ) -> Light {
         let mut sun = self.light(lit, mu, (air, vapour));
@@ -2636,7 +2668,10 @@ impl EnergyBalance {
             sun.rayleigh = sky.rayleigh_at(mu);
             sun.cloud = deck.reflectance(mu);
             sun.sea = sea_albedo_at(mu, 1.0 - deck.cover());
-            sun.cloud_down = sky.infrared(deck, air, 0.0, vapour).1;
+            sun.cloudy = deck.cover();
+            // From their bases along the inversion over a ground under its air (M71).
+            let emitted = SIGMA_SB * ground.max(0.0).powi(4);
+            sun.cloud_down = sky.infrared(deck, air, emitted, vapour).1;
             // The clouds take their share of the light (M67).
             sun.absorbs = deck.absorbs as f64;
             sun.above = deck.above as f64;
@@ -2651,10 +2686,10 @@ impl EnergyBalance {
     fn light_over(
         &self,
         sun: &Sun,
-        (air, vapour, wind): (f64, f64, f64),
+        (air, vapour, wind, ground): (f64, f64, f64, f64),
         deck: Option<&crate::clouds::Deck>,
     ) -> Light {
-        let mut light = self.light_under((sun.lit, sun.mu), (air, vapour), deck);
+        let mut light = self.light_under((sun.lit, sun.mu), (air, vapour, ground), deck);
         if let Some(sky) = self.clouds.as_ref().filter(|_| sun.lit > 0.0) {
             let clear = 1.0 - deck.map_or(0.0, |d| d.cover());
             let (mut rayleigh, mut cloud, mut sea, mut weight) = (0.0, 0.0, 0.0, 0.0);
@@ -3878,7 +3913,7 @@ impl EnergyBalance {
                             let hour = TAU * (h as f64 + 0.5) / CYCLE_DAY_STEPS as f64 - PI;
                             let mu = (sp * sd + cp * cd * hour.cos()).max(0.0);
                             let deck = decks.get(record.k).filter(|_| decks.len() == steps);
-                            let air = (record.air, p.contact.vapour);
+                            let air = (record.air, p.contact.vapour, t[0]);
                             let sun = self.light_under((flux * mu, mu), air, deck);
                             let bare = sun.split(record.albedo).0;
                             match &f {
@@ -4130,10 +4165,23 @@ impl EnergyBalance {
                     let contact = &p.contact;
                     let a = air[q];
                     let land = self.land_coupling(r.t[0], a, contact) * p.land();
+                    // Its sea's ice's tops under its clear sky and under its clouds (M71), by the
+                    // share its clouds cover.
+                    let covered = match (&self.clouds, layout.decks[q].get(k)) {
+                        (Some(_), Some(d)) if layout.decks[q].len() == steps => d.cover(),
+                        _ => 0.0,
+                    };
                     let (wet, surface) = match &r.sea {
                         Some(s) => {
-                            let wet = self.sea_coupling_at(s.surface, a, contact) * p.sea;
-                            (wet, s.surface)
+                            let shares = [1.0 - covered, covered];
+                            let (mut wet, mut held) = (0.0, 0.0);
+                            for (&share, &top) in shares.iter().zip(&s.tops) {
+                                let k = share * self.sea_coupling_at(top, a, contact) * p.sea;
+                                wet += k;
+                                held += k * top;
+                            }
+                            let surface = if wet > 0.0 { held / wet } else { s.surface };
+                            (wet, surface)
                         }
                         None => (0.0, 0.0),
                     };
@@ -4225,7 +4273,9 @@ impl EnergyBalance {
                         // where the year runs under them (M67).
                         let deck = decks.get(k).filter(|_| decks.len() == steps);
                         let wind = p.contact.breeze * SURFACE_WIND_SPEED;
-                        let sun = self.light_over(&light(k, p), (a, p.contact.vapour, wind), deck);
+                        let ground = (r.sends_up(p, frost).0 / SIGMA_SB).max(0.0).powf(0.25);
+                        let air = (a, p.contact.vapour, wind, ground);
+                        let sun = self.light_over(&light(k, p), air, deck);
                         // The snow that falls on the land through the step lies on it, and
                         // brightens it by its cover where the year's snow is known (F271).
                         r.albedo = match r.snowfall.get(k) {
@@ -4275,7 +4325,8 @@ impl EnergyBalance {
                         r.dried = 0.0;
                         let sea_air = match (r.sea.as_mut(), ocean) {
                             (Some(sea), Some(ocean)) => {
-                                let exchange = self.sea_coupling_at(sea.surface, a, &p.contact);
+                                let exchange =
+                                    sea.tops.map(|top| self.sea_coupling_at(top, a, &p.contact));
                                 let fall = r.snowfall.get(k).map_or(0.0, |&f| f as f64);
                                 let water = (ocean, brought, fall);
                                 let dried = if sea.ice <= 0.0 {
@@ -4978,9 +5029,10 @@ impl EnergyBalance {
         sea: &mut Sea,
         dt: f64,
         (sun, open): (Light, f64),
-        (air, exchange, dried, vapour): (f64, f64, f64, f64),
+        (air, exchanges, dried, vapour): (f64, [f64; 2], f64, f64),
         (ocean, brought, fall): (&Ocean, f64, f64),
     ) -> f64 {
+        let exchange = exchanges[0];
         let ice = self.sea_ice_albedo(sea, open, ocean);
         let cover = sea_ice_cover(sea.ice);
         // Its share of the sunlight and its air's, open and under its ice (M58).
@@ -4991,11 +5043,12 @@ impl EnergyBalance {
             let gain = bare - r + exchange * (air - sea.t) - dried;
             let t = sea.t + dt * gain / (ocean.capacity + dt * (slope + exchange));
             if t >= ocean.freezing {
-                (sea.t, sea.surface) = (t, t);
+                (sea.t, sea.surface, sea.tops) = (t, t, [t, t]);
                 return bare_air;
             }
             sea.ice = ocean.capacity * (ocean.freezing - t) / ocean.latent;
-            (sea.t, sea.surface) = (ocean.freezing, ocean.freezing);
+            let f = ocean.freezing;
+            (sea.t, sea.surface, sea.tops) = (f, f, [f, f]);
             return bare_air;
         }
         // The snow that falls on its ice lies on it, what falls on its open water the sea's
@@ -5006,29 +5059,69 @@ impl EnergyBalance {
         let through = 1.0
             / ((sea.ice / ocean.density).max(SEA_ICE_THINNEST_M) / ocean.conductivity
                 + sea.snow / snow_density / snow_conductivity);
-        let mut top = sea.surface.min(ocean.freezing);
-        for _ in 0..SEA_ICE_NEWTON_STEPS {
-            let (r, slope) = self.ground_radiation(top, air, vapour);
-            let gap = frozen - r + exchange * (air - top) + through * (ocean.freezing - top);
-            top = (top + gap / (slope + exchange + through)).max(COSMIC_BACKGROUND_K);
+        // Under its own clouds its ice's top stands apart under its clear sky and under its
+        // clouds (M71), as the winter Arctic's two states do (Stramler et al. 2011): the clouds'
+        // downward heat all on the share they cover, each share's top by its own exchange with
+        // its air, its ice one, growing and melting by the two's shares. Under the stated law,
+        // one.
+        let covered = if sun.under {
+            sun.cloudy.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let clear = frozen - sun.cloud_down;
+        let cloudy = clear
+            + if covered > 0.0 {
+                sun.cloud_down / covered
+            } else {
+                0.0
+            };
+        let states = [
+            (1.0 - covered, clear, exchanges[0], sea.tops[0]),
+            (covered, cloudy, exchanges[1], sea.tops[1]),
+        ];
+        let (mut melted, mut conducted, mut emitted) = (0.0, 0.0, 0.0);
+        let mut tops = sea.tops;
+        for (i, &(share, gain, exchange, start)) in states.iter().enumerate() {
+            if share <= 0.0 {
+                continue;
+            }
+            let mut top = start.min(ocean.freezing);
+            for _ in 0..SEA_ICE_NEWTON_STEPS {
+                let (r, slope) = self.ground_radiation(top, air, vapour);
+                let gap = gain - r + exchange * (air - top) + through * (ocean.freezing - top);
+                top = (top + gap / (slope + exchange + through)).max(COSMIC_BACKGROUND_K);
+            }
+            if top > ocean.freezing {
+                top = ocean.freezing;
+                let left =
+                    gain - self.ground_radiation(top, air, vapour).0 + exchange * (air - top);
+                melted += share * left.max(0.0) * dt / ocean.latent;
+            }
+            conducted += share * through * (ocean.freezing - top);
+            emitted += share * top.powi(4);
+            tops[i] = top;
         }
-        let mut melted = 0.0;
-        if top > ocean.freezing {
-            top = ocean.freezing;
-            let left = frozen - self.ground_radiation(top, air, vapour).0 + exchange * (air - top);
-            melted = left.max(0.0) * dt / ocean.latent;
+        // A share none of the place holds stands at the other's top.
+        if covered <= 0.0 {
+            tops[1] = tops[0];
+        } else if covered >= 1.0 {
+            tops[0] = tops[1];
         }
+        let top = emitted.max(0.0).powf(0.25);
         // Its snow melts before its ice (M64).
         let thawed = melted.min(sea.snow);
         sea.snow -= thawed;
         melted -= thawed;
         let below = ocean.base_flux + brought;
-        let grown = (through * (ocean.freezing - top) - below) * dt / ocean.latent;
+        let grown = (conducted - below) * dt / ocean.latent;
         sea.ice += grown - melted;
         sea.surface = top;
+        sea.tops = tops;
         if sea.ice < 0.0 {
             sea.t = ocean.freezing - sea.ice * ocean.latent / ocean.capacity;
             (sea.ice, sea.surface, sea.snow) = (0.0, sea.t, 0.0);
+            sea.tops = [sea.t, sea.t];
         } else {
             // Snow whose weight sinks the ice's top under the sea floods and freezes into it
             // (M64), until the ice, the flooded snow among it, floats the snow left at a
@@ -6739,6 +6832,8 @@ struct Light {
     /// The open sea's albedo in its light under its clouds (M70): its direct light's by the
     /// sun's height (SEA_GLINT), its diffuse light's SEA_ALBEDO.
     sea: f64,
+    /// The share of the place its clouds cover (M71).
+    cloudy: f64,
     under: bool,
 }
 
@@ -6840,6 +6935,7 @@ impl Light {
             above: 0.0,
             cloud_down: 0.0,
             sea: SEA_ALBEDO,
+            cloudy: 0.0,
             under: false,
         }
     }
@@ -7203,6 +7299,7 @@ impl Run {
                 ice: 0.0,
                 surface: t,
                 snow: 0.0,
+                tops: [t, t],
             }
         });
         let cap = frost
@@ -8597,13 +8694,14 @@ mod tests {
             ice,
             surface,
             snow,
+            tops: [surface, surface],
         };
         let step = |s: &mut Sea, lit: f64, air: f64, fall: f64| {
             eb.sea_step(
                 s,
                 day,
                 (Light::bare(lit), 0.06),
-                (air, 5.0, 0.0, 1.0),
+                (air, [5.0, 5.0], 0.0, 1.0),
                 (&ocean, 0.0, fall),
             );
         };
@@ -8770,6 +8868,76 @@ mod tests {
         assert!((0.13..0.2).contains(&(added / tau)), "{added} {tau}");
     }
 
+    /// M71: under its own clouds a sea's ice stands in two states through the polar night, as
+    /// the winter Arctic's does (Stramler et al. 2011): under 255 K air, its clouds covering 0.6
+    /// of it and sending 45 W/m² down, its top under its clear sky at least 8 K under its air
+    /// and 5 K under its top under its clouds, and its ice growing more than under the same
+    /// clouds spread over all of it; and the stated law reads no inversion, its column the
+    /// one it was set on, where its clouds' year reads the less its air sends down.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn a_sea_s_ice_stands_in_two_states_under_its_clouds() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let stated = EnergyBalance::from_graph(&graph);
+        let sky = crate::clouds::Sky::from_graph(&graph, &stated).expect("a sky");
+        let eb = stated.under(std::sync::Arc::new(sky));
+        let ocean = Ocean::from_graph(&graph).expect("a water sea");
+        let night = |cloudy: f64, cloud_down: f64| Light {
+            top: 0.0,
+            haze: 0.0,
+            down: 1.0,
+            up: 0.0,
+            rayleigh: 0.0,
+            cloud: 0.0,
+            absorbs: 0.0,
+            above: 0.0,
+            cloud_down,
+            sea: SEA_ALBEDO,
+            cloudy,
+            under: true,
+        };
+        let air = 255.0;
+        let winter = |light: Light| {
+            let mut sea = Sea {
+                t: ocean.freezing,
+                ice: 1_500.0,
+                surface: 250.0,
+                snow: 60.0,
+                tops: [250.0, 250.0],
+            };
+            let contact = Contact::default();
+            for _ in 0..60 {
+                let exchanges = sea.tops.map(|t| eb.sea_coupling_at(t, air, &contact));
+                eb.sea_step(
+                    &mut sea,
+                    86_400.0,
+                    (light, SEA_ALBEDO),
+                    (air, exchanges, 0.0, 1.0),
+                    (&ocean, 0.0, 0.0),
+                );
+            }
+            sea
+        };
+        let (apart, spread) = (winter(night(0.6, 45.0)), winter(night(1.0, 45.0)));
+        println!(
+            "polar night under 255 K air: clear top {:.1} K, cloudy top {:.1} K, ice {:.0} kg/m²; the clouds spread over all, its top {:.1} K, ice {:.0}",
+            apart.tops[0], apart.tops[1], apart.ice, spread.surface, spread.ice
+        );
+        assert!(apart.tops[0] < air - 8.0, "{:?}", apart.tops);
+        assert!(apart.tops[0] < apart.tops[1] - 5.0, "{:?}", apart.tops);
+        assert!(apart.ice > spread.ice, "{} {}", apart.ice, spread.ice);
+        let (stated_r, under_r) = (
+            stated.ground_radiation(240.0, air, 1.0).0,
+            eb.ground_radiation(240.0, air, 1.0).0,
+        );
+        let plain = SIGMA_SB * 240f64.powi(4) - stated.outgoing.down(air);
+        assert!((stated_r - plain).abs() < 1e-9, "{stated_r} {plain}");
+        assert!(
+            under_r > SIGMA_SB * 240f64.powi(4) - eb.outgoing.down(air) + 5.0,
+            "{under_r}"
+        );
+    }
+
     /// M67: under its clouds a place reflects as its air's molecules over its clouds over its
     /// ground, the more over a brighter ground, and more than without them over a ground darker
     /// than they are (over a brighter, absorbing clouds may darken it, as over fresh snow); its
@@ -8789,6 +8957,7 @@ mod tests {
             above: 0.3,
             cloud_down: 30.0,
             sea: SEA_ALBEDO,
+            cloudy: 0.5,
             under: true,
         };
         let clear = Light {
@@ -8860,7 +9029,7 @@ mod tests {
             (0..n)
                 .map(|k| {
                     let mu = (k as f64 + 0.5) / n as f64;
-                    let sun = under.light_under((s0 * mu, mu), (288.0, 1.0), deck);
+                    let sun = under.light_under((s0 * mu, mu), (288.0, 1.0, 288.0), deck);
                     let (_, air) = sun.split(ground);
                     air - sun.cloud_down * 0.0
                 })
@@ -9439,6 +9608,10 @@ mod tests {
                 "the_earth_like_s_clear_sea_brightens_as_the_sun_sinks",
                 &|| the_earth_like_s_clear_sea_brightens_as_the_sun_sinks(against()),
             ),
+            (
+                "the_earth_like_s_polar_night_stands_under_its_inversion",
+                &|| the_earth_like_s_polar_night_stands_under_its_inversion(&y, &again),
+            ),
         ]);
     }
 
@@ -9661,12 +9834,12 @@ mod tests {
                 let a = cycle.air.iter().map(|x| x[k * n + p]).sum::<f64>() / tilts;
                 let v = vapours[p];
                 let deck = &clouds.decks[q];
-                let all = eb.light_over(&day, (a, v, wind), Some(deck));
-                let clear = eb.light_over(&day, (a, v, wind), None);
                 let t_sea = cycle.surfaces[1][q] as f64;
                 if !(t_sea.is_finite() && t_sea > 1.0) {
                     continue;
                 }
+                let all = eb.light_over(&day, (a, v, wind, t_sea), Some(deck));
+                let clear = eb.light_over(&day, (a, v, wind, t_sea), None);
                 let open = s.weight
                     * s.sea.clamp(0.0, 1.0)
                     * (1.0 - sea_ice_cover(cycle.masses[1][q] as f64));
@@ -9836,6 +10009,93 @@ mod tests {
             south > equator + 0.015 && north > equator + 0.015,
             "{south} {north} over {equator}"
         );
+    }
+
+    /// M71: the Earth-like's polar night under its own clouds stands under its inversion, as
+    /// the winter Arctic's sea ice does: over its seas from 75 degrees to the pole, through the
+    /// steps the sun stays down, its air over its ice's top as the radiosondes measure it over
+    /// sea ice, 8 to 13 K from the ground to the inversion's top (Serreze et al. 1992; Stramler
+    /// et al. 2011), the model's air its free air read down to the ground, some 4 K more; the
+    /// exchange across it weak, SHEBA's 0.8 W/m²/K, no more than 3.5 (ERA5's katabatic
+    /// slopes'); its clouds sending down what CERES's polar night's do, 31 to 45 W/m² (the
+    /// Antarctic plateau's and the Arctic Ocean's; the research notes), keeping from space
+    /// under half of it and no less than CERES's least, no polar night's monthly cell poleward
+    /// of 65 degrees under -0.6 W/m² (its low clouds' tops within the inversion, warmer than
+    /// the ground, as some 40 percent of the Arctic's winter low clouds cool the top, Li et al.
+    /// 2023; KNOWN: the Arctic Ocean's 14 under its 8 to 13 K, the plateau's 3.8 under its
+    /// 20); its clear sky keeping 0.18 of its ground's radiation, as over the Arctic Ocean in
+    /// its winter; its ice the thickness the winter Arctic's floes hold.
+    fn the_earth_like_s_polar_night_stands_under_its_inversion(y: &Year, again: &Again) {
+        let own = again
+            .under
+            .as_ref()
+            .expect("the Earth-like under its clouds");
+        let (cycle, clouds) = (&own.cycle, own.clouds.as_ref().expect("its clouds"));
+        let plain = EnergyBalance::from_graph(&y.graph);
+        let sky = crate::clouds::Sky::from_graph(&y.graph, &plain).expect("a sky");
+        let eb = plain.under(std::sync::Arc::new(sky.clone()));
+        let air =
+            crate::moisture::Air::from_graph(&y.graph, plain.transport, OCEAN_TRANSPORT_SHARE)
+                .expect("an air");
+        let heights = vec![0.0; cycle.sites.len()];
+        let wet = cycle.moisture(&air, &heights).expect("its moisture");
+        let vapours = cycle.vapours(&wet);
+        let coupling = cycle.coupling(Some(&wet)).expect("a coupling");
+        let (n, steps) = (cycle.sites.len(), wet.steps);
+        let tilts = cycle.air.len() as f64;
+        let eps = cycle.tilts.first().copied().unwrap_or(0.0);
+        // Over its polar seas in their night: weight, the gap, the exchange, what the clouds keep
+        // from space and send down, its ground's radiation, its clear sky's, its ice.
+        let mut sums = [0.0f64; 8];
+        for (p, s) in cycle.sites.iter().enumerate() {
+            if s.lat.to_degrees().abs() < 75.0 {
+                continue;
+            }
+            let contact = coupling.contacts[p];
+            for k in 0..steps {
+                let (flux, decl) = eb
+                    .sky
+                    .at_mean_anomaly(TAU * (k as f64 + 0.5) / steps as f64, eps);
+                if Sun::through_day(flux, s.lat, decl).lit > 1.0 {
+                    continue;
+                }
+                let q = p * steps + k;
+                let top = cycle.surfaces[1][q] as f64;
+                if !(top.is_finite() && top > 1.0) {
+                    continue;
+                }
+                let a = cycle.air.iter().map(|x| x[k * n + p]).sum::<f64>() / tilts;
+                let v = vapours[p];
+                let emits = SIGMA_SB * top.powi(4);
+                let (olr, down) = sky.infrared(&clouds.decks[q], a, emits, v);
+                let cold = (a - top).max(0.0);
+                let clear = eb.read_over(crate::radiation::Outgoing::air_up_over, (a, cold), v)
+                    + eb.read_over(crate::radiation::Outgoing::window_over, (a, cold), v) * emits;
+                let w = s.weight;
+                sums[0] += w;
+                sums[1] += w * (a - top);
+                sums[2] += w * eb.sea_coupling_at(top, a, &contact);
+                sums[3] += w * -olr;
+                sums[4] += w * down;
+                sums[5] += w * emits;
+                sums[6] += w * clear;
+                sums[7] += w * cycle.masses[1][q] as f64;
+            }
+        }
+        let w = sums[0].max(1e-30);
+        let m = |i: usize| sums[i] / w;
+        let (gap, exchange, keeps, sends) = (m(1), m(2), m(3), m(4));
+        let (g, ice) = ((m(5) - m(6)) / m(5).max(1e-9), m(7));
+        println!(
+            "Earth-like's polar night under its clouds (seas 75 to 90 degrees): its air {gap:.1} K over its ice's top, the exchange {exchange:.2} W/m²/K; its clouds keep {keeps:.1} W/m² from space and send {sends:.1} down; its clear sky keeps {g:.3} of its ground's radiation; its ice {ice:.0} kg/m²"
+        );
+        assert!((8.0..25.0).contains(&gap), "{gap}");
+        assert!(exchange < 3.5, "{exchange}");
+        assert!((-0.6..20.0).contains(&keeps), "{keeps}");
+        assert!((25.0..60.0).contains(&sends), "{sends}");
+        assert!(keeps < 0.5 * sends, "{keeps} {sends}");
+        assert!((0.08..0.26).contains(&g), "{g}");
+        assert!(ice > 1_000.0, "{ice}");
     }
 
     /// M67: the Earth-like's year under its own clouds, their albedo and their greenhouse its
@@ -12802,7 +13062,8 @@ mod tests {
             for h in 0..hours {
                 let angle = -PI / 2.0 + PI * (h as f64 + 0.5) / hours as f64;
                 let mu = angle.cos();
-                let sun = under.light_over(&Sun::at(q * PI * mu, mu), (air, vapour, wind), deck);
+                let air = (air, vapour, wind, air + 1.0);
+                let sun = under.light_over(&Sun::at(q * PI * mu, mu), air, deck);
                 kept += mu * sun.planet(sun.sea);
                 weight += mu;
             }

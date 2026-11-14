@@ -2151,6 +2151,14 @@ pub const SUN_HEIGHTS: usize = 4;
 /// M70: the heights of the sun a sky's table of what its air's molecules reflect is read at,
 /// this many steps of the height's cosine from the horizon to overhead.
 pub const RAYLEIGH_HEIGHTS: usize = 50;
+/// M71: a ground standing under its air, as a polar night's or a cold desert's does: its lowest
+/// air cooled toward it by exp(-z / d) of the gap over the adiabat from its air, d this depth,
+/// m: the surface-based inversions over the winter Arctic's sea ice reach 0.5 to 1.2 km, the
+/// Antarctic plateau's 0.6 to 0.7 (Serreze et al. 1992; Hudson and Brandt 2005; Zhang et al.
+/// 2011), nine tenths of the gap within 2.3 depths; no law gives the depth (the research
+/// notes). And the gap, K, at which the column's tables read how much what its air sends down
+/// and lets out changes a kelvin of it.
+pub const INVERSION: (f64, f64) = (350.0, 10.0);
 /// M67: the clouds' water held to what their air gives them. The layers' and the low cloud's
 /// the adiabatic water of a deck of its depth at its adiabaticity, F Gamma_ad h² / 2 (Albrecht
 /// et al. 1990), Gamma_ad the water its air condenses a metre it rises at the deck's base:
