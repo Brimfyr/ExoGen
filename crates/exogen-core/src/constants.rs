@@ -2068,6 +2068,41 @@ pub const CLOUD_CONGESTUS: (f64, f64, f64) = (0.121, 0.020, 3.4);
 /// day). It and the inversion's low cloud are one boundary layer's clouds: the more of the two
 /// covers the place.
 pub const CLOUD_CUMULUS: (f64, f64, f64) = (0.33, 0.4, 3.1);
+/// M70: the clouds' unevenness over a place, the fractional standard deviation of their optical
+/// depth and water path, sigma over the mean: 0.66 +- 0.20, Shonk et al. (2010, Table I)'s mean
+/// over every study it gathers, with no apparent dependence on the cloud's type (MODIS's liquid
+/// and ice clouds 0.64 to 0.70 over the globe). A gamma distribution of that spread under each
+/// cloud whose depth is its water's: its reflection the mean of its parts', its emissivity
+/// 1 - (1 + x / nu)^-nu, nu = 1 / FSD² (Oreopoulos and Cahalan 2005; the research notes). The
+/// clouds whose depth ISCCP gives as the depth whose albedo is their cells' mean already hold
+/// theirs.
+pub const CLOUD_UNEVEN: f64 = 0.66;
+/// M70: the storms' own high cloud, where the rain falls from the large-scale systems beyond the
+/// overturning cell: the share of the sky ISCCP-H sees topped above 440 hPa over the oceans from
+/// 30 to 60 degrees by their seasonal rain P, mm a day (GPCP v3.2, 0.5 to 9 mm a day; this
+/// project's fits, within 0.03 of each bin): its thin class's most, 0.089, filling in over the
+/// rain's e-folding, mm a day; its medium class a + b ln P; its thick class a share of the place
+/// a mm a day, as the convection's (CLOUD_THICK; Kubar et al. 2007); and the classes'
+/// albedo-equivalent depths, thin, medium and thick (0.8 to 1.1, 8.5 to 9.7 and 53 to 61 there).
+/// Their tops stand where the anvils' do, ISCCP's thin cloud's at 205 to 220 hPa, its medium and
+/// thick cloud's at 290 to 345 (this project's computation). The model's storms had none: their
+/// tracks stood covered some 0.62 where ISCCP-H's 0.78 to 0.89. In order: the thin class's most
+/// and its e-folding, the medium class's a and b, the thick class's share a mm a day.
+pub const CLOUD_STORM: [f64; 5] = [0.089, 0.3, 0.037, 0.033, 0.0149];
+/// M70: the storms' high cloud's classes' albedo-equivalent depths, thin, medium and thick
+/// (CLOUD_STORM).
+pub const CLOUD_STORM_DEPTHS: [f64; 3] = [0.96, 9.3, 55.0];
+/// M70: the effective thickness of the clouds whose depth is ISCCP's, the anvils, the
+/// convection's mid-level cloud and its cumulus: their water's path, in the light and the
+/// infrared, this share of the path of ISCCP-H's albedo-equivalent depth (Cahalan et al. 1994's
+/// effective thickness; ECMWF ran 0.7, MODIS's 0.7 to 0.8 over the globe, Oreopoulos and Cahalan
+/// 2005). Set so that ISCCP-H's own clouds over the tropical oceans, each class a column under
+/// the year's light, reflect what CERES measures by the climatological rain (GPCP v3.2, 1.5 to
+/// 9 mm a day; `isccp_s_clouds_reflect_what_ceres_measures`): through the model's optics, which
+/// meet the published radiative kernels within some 3 percent, at their own depths they reflect
+/// 1.34 to 1.41 times CERES's, as the kernels over ISCCP-H's clouds 1.13 to 1.37 (the research
+/// notes). The clouds whose depth is their own water's keep CLOUD_UNEVEN's spread instead.
+pub const CLOUD_THICKNESS: f64 = 0.68;
 /// M66: the drops' effective radii, m: liquid over the sea and over land, MODIS's modes of 12
 /// to 13 and 10 to 11 um (King et al. 2013); ice, 25 um (GEWEX, Stubenrauch et al. 2012).
 pub const CLOUD_RADIUS: ((f64, f64), f64) = ((12.5e-6, 10.5e-6), 25e-6);
@@ -2090,8 +2125,32 @@ pub const CLOUD_ICE_EMISSION: (f64, f64) = (0.005, 1.0);
 /// its cover over its tropics, ISCCP's high cloud 101 to 121).
 pub const CLOUD_TOPS: (f64, f64) = (560.0 / 1013.25, 850.0 / 1013.25);
 pub const CLOUD_BASES: (f64, f64) = (800.0 / 1013.25, 440.0 / 1013.25);
-/// M66: an open sea's albedo under the sun's mean heights, 0.06 (Payne 1972).
+/// M66: an open sea's albedo under the sun's mean heights, 0.06 (Payne 1972); its albedo in the
+/// diffuse light (M70; Taylor et al. 1996, Briegleb et al. 1986, as ECMWF's and CESM's models
+/// take it).
 pub const SEA_ALBEDO: f64 = 0.06;
+/// M70: a water sea's albedo in the sun's direct light at height cosine mu, a / (b mu^c + d)
+/// (Taylor et al. 1996, from ship measurements; ECMWF's IFS and CESM): 0.030 overhead, 0.065 at
+/// 60 degrees, 0.20 at 85; the light the clouds leave diffuse at SEA_ALBEDO.
+pub const SEA_GLINT: (f64, f64, f64, f64) = (0.037, 1.1, 1.4, 0.15);
+/// M70: the spray a water sea's wind raises: its optical depth at 550 nm a + b (U - U0) over
+/// winds U above U0, m/s, a below, no more than the most (Lehahn et al. 2010, MODIS against
+/// AMSR-E over the tropical and subtropical oceans: slope 0.009 +- 0.002 s/m over a calm floor of
+/// 0.03 +- 0.01; Kiliyanpilakkil and Meskhidze 2011's levelling near 0.15 over some 18 m/s; ships'
+/// photometers 0.034 to 0.052 + 0.0023 to 0.0047 U, Smirnov et al. 2012), its drops' asymmetry
+/// 0.72 (MERRA-2's sea salt, as the research notes' model takes it), scattering all it meets. A
+/// layer over the sea, reflecting by the sun's height as the clouds' delta-Eddington layers do:
+/// CERES's clear sky over the open sea measures some 5.5 W/m² of all its aerosol (Yu et al.
+/// 2006), the sea's own spray near half of it (MERRA-2).
+pub const SEA_SPRAY: (f64, f64, f64, f64, f64) = (0.03, 0.009, 4.0, 0.15, 0.72);
+/// M70: the sun's heights through a day over which what a place reflects is averaged, by the
+/// light at each: four points of Gauss and Legendre from noon to sunset, the morning its mirror.
+/// At the light's mean height alone the air's molecules and the sea reflected some 0.006 to
+/// 0.016 less than through the day, a thin cloud 0.013 (the research notes).
+pub const SUN_HEIGHTS: usize = 4;
+/// M70: the heights of the sun a sky's table of what its air's molecules reflect is read at,
+/// this many steps of the height's cosine from the horizon to overhead.
+pub const RAYLEIGH_HEIGHTS: usize = 50;
 /// M67: the clouds' water held to what their air gives them. The layers' and the low cloud's
 /// the adiabatic water of a deck of its depth at its adiabaticity, F Gamma_ad h² / 2 (Albrecht
 /// et al. 1990), Gamma_ad the water its air condenses a metre it rises at the deck's base:

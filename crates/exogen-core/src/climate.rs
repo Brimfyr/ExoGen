@@ -2612,11 +2612,12 @@ impl EnergyBalance {
             haze: 1.0 - (-self.haze / mu).exp() * (1.0 - ozone),
             down,
             up: 1.0 - kept_up * (-SUNLIGHT_UP_PATH * grey).exp(),
-            rayleigh: self.clouds.as_ref().map_or(0.0, |sky| sky.rayleigh),
+            rayleigh: self.clouds.as_ref().map_or(0.0, |sky| sky.rayleigh_at(mu)),
             cloud: 0.0,
             absorbs: 0.0,
             above: 0.0,
             cloud_down: 0.0,
+            sea: sea_albedo_at(mu, 1.0),
             under: self.clouds.is_some(),
         }
     }
@@ -2632,14 +2633,44 @@ impl EnergyBalance {
     ) -> Light {
         let mut sun = self.light(lit, mu, (air, vapour));
         if let (Some(sky), Some(deck)) = (&self.clouds, deck) {
-            sun.rayleigh = sky.rayleigh;
+            sun.rayleigh = sky.rayleigh_at(mu);
             sun.cloud = deck.reflectance(mu);
+            sun.sea = sea_albedo_at(mu, 1.0 - deck.cover());
             sun.cloud_down = sky.infrared(deck, air, 0.0, vapour).1;
             // The clouds take their share of the light (M67).
             sun.absorbs = deck.absorbs as f64;
             sun.above = deck.above as f64;
         }
         sun
+    }
+
+    /// A place's sunlight through a step as `light_under` gives it at the light's mean height,
+    /// what its air's molecules, its clouds and its sea reflect averaged over the sun's heights
+    /// through the day by the light at each (M70), its sea under the spray its wind of `wind`
+    /// m/s raises.
+    fn light_over(
+        &self,
+        sun: &Sun,
+        (air, vapour, wind): (f64, f64, f64),
+        deck: Option<&crate::clouds::Deck>,
+    ) -> Light {
+        let mut light = self.light_under((sun.lit, sun.mu), (air, vapour), deck);
+        if let Some(sky) = self.clouds.as_ref().filter(|_| sun.lit > 0.0) {
+            let clear = 1.0 - deck.map_or(0.0, |d| d.cover());
+            let (mut rayleigh, mut cloud, mut sea, mut weight) = (0.0, 0.0, 0.0, 0.0);
+            for &(mu, w) in sun.heights.iter().filter(|h| h.1 > 0.0) {
+                rayleigh += w * sky.rayleigh_at(mu);
+                cloud += w * deck.map_or(0.0, |d| d.reflectance(mu));
+                sea += w * spray_albedo_at(mu, clear, wind);
+                weight += w;
+            }
+            if weight > 0.0 {
+                light.rayleigh = rayleigh / weight;
+                light.cloud = cloud / weight;
+                light.sea = sea / weight;
+            }
+        }
+        light
     }
 
     /// What a ground at `albedo` keeps of a place's sunlight at a step, W/m² (M58).
@@ -3785,12 +3816,9 @@ impl EnergyBalance {
                 self.sky.at_mean_anomaly(anomaly, eps)
             })
             .collect();
-        // The sun's height its light comes at through the day, by the light's weight (M58).
-        let light = |m: usize, p: &Place| {
-            let (share, square) = diurnal_shares(p.lat, sun[m].1);
-            let mu = if share > 0.0 { square / share } else { 0.0 };
-            (sun[m].0 * share, mu)
-        };
+        // The sun's height its light comes at through the day, by the light's weight (M58),
+        // and its heights through the day (M70).
+        let light = |m: usize, p: &Place| Sun::through_day(sun[m].0, p.lat, sun[m].1);
         let timing = (
             steps,
             self.year / steps as f64,
@@ -3925,7 +3953,7 @@ impl EnergyBalance {
         let light = |k: usize, p: &Place| {
             let (s, (sp, cp)) = (&path[k], p.lat.sin_cos());
             let mu = (sp * s.sin_decl + cp * s.cos_decl * (s.hour + p.lon).cos()).max(0.0);
-            (scale * s.flux * mu, mu)
+            Sun::at(scale * s.flux * mu, mu)
         };
         let steps = path.len();
         let snapshot = snapshot_step(self.snapshot, steps / orbits.max(1) as usize);
@@ -4007,7 +4035,7 @@ impl EnergyBalance {
         column: &Column,
         layout: &Layout,
         (steps, dt, snapshot): (usize, f64, usize),
-        light: impl Fn(usize, &Place) -> (f64, f64) + Sync,
+        light: impl Fn(usize, &Place) -> Sun + Sync,
         ocean: Option<&Ocean>,
         (every, warm, years): (usize, Option<&Warm>, usize),
     ) -> Lockstep {
@@ -4196,7 +4224,8 @@ impl EnergyBalance {
                         // Its sunlight, its air's and its ground's (M58), under its clouds
                         // where the year runs under them (M67).
                         let deck = decks.get(k).filter(|_| decks.len() == steps);
-                        let sun = self.light_under(light(k, p), (a, p.contact.vapour), deck);
+                        let wind = p.contact.breeze * SURFACE_WIND_SPEED;
+                        let sun = self.light_over(&light(k, p), (a, p.contact.vapour, wind), deck);
                         // The snow that falls on the land through the step lies on it, and
                         // brightens it by its cover where the year's snow is known (F271).
                         r.albedo = match r.snowfall.get(k) {
@@ -4211,13 +4240,15 @@ impl EnergyBalance {
                         // its land by their shares, frost's albedo where frost lies.
                         let cap = r.cap.as_ref().map_or(0.0, |c| c.share);
                         let wet = if r.sea.is_some() { p.sea } else { 0.0 };
+                        // Its open sea's albedo, under its clouds in its light (M70).
+                        let open_sea = if sun.under { sun.sea } else { p.sea_albedo };
                         let sea_albedo = match (r.sea.as_ref(), ocean) {
                             (Some(sea), Some(ocean)) => {
-                                let open = p.sea_albedo;
+                                let open = open_sea;
                                 let ice = self.sea_ice_albedo(sea, open, ocean);
                                 open + (ice - open) * sea_ice_cover(sea.ice)
                             }
-                            _ => p.sea_albedo,
+                            _ => open_sea,
                         };
                         let frost_albedo = frost.map_or(r.albedo, |f| f.albedo);
                         let land_albedo = if r.mass > 0.0 { frost_albedo } else { r.albedo };
@@ -4256,7 +4287,7 @@ impl EnergyBalance {
                                 self.sea_step(
                                     sea,
                                     dt,
-                                    (sun, p.sea_albedo),
+                                    (sun, open_sea),
                                     (a, exchange, dried, p.contact.vapour),
                                     water,
                                 )
@@ -4298,8 +4329,9 @@ impl EnergyBalance {
                                 .zip(air.par_iter())
                                 .for_each(|((r, p), &a)| {
                                     if r.mass <= 0.0 && r.trial.clear && r.trial.free[0] < point {
-                                        let (lit, mu) = light(k, p);
-                                        let sun = self.light(lit, mu, (a, p.contact.vapour));
+                                        let day = light(k, p);
+                                        let sun =
+                                            self.light(day.lit, day.mu, (a, p.contact.vapour));
                                         let gains = (sun.split(r.albedo).0, sun.split(f.albedo).0);
                                         let shed = self.land_shed(a, p.contact);
                                         let heat = self.heat_flux;
@@ -4333,7 +4365,11 @@ impl EnergyBalance {
                             // rest of it bare, to frost again (F275).
                             if let Some(lasts) = lasted {
                                 let gains = (
-                                    self.ground_sun(light(k, p), (a, p.contact.vapour), r.albedo),
+                                    self.ground_sun(
+                                        light(k, p).pair(),
+                                        (a, p.contact.vapour),
+                                        r.albedo,
+                                    ),
                                     self.heat_flux,
                                 );
                                 let bare = self.land_shed(a, p.contact);
@@ -4377,7 +4413,11 @@ impl EnergyBalance {
                             r.melted = 0.0;
                             if r.snow > 0.0 && r.t[0] > melt.0 {
                                 let gains = (
-                                    self.ground_sun(light(k, p), (a, p.contact.vapour), r.albedo),
+                                    self.ground_sun(
+                                        light(k, p).pair(),
+                                        (a, p.contact.vapour),
+                                        r.albedo,
+                                    ),
                                     self.heat_flux,
                                 );
                                 let shed = self.land_shed(a, p.contact)(melt.0);
@@ -6059,7 +6099,7 @@ impl Cycle {
     /// place and step its rain, the convection's within the cell's reach and the large-scale
     /// rain's beyond, by degrees over CLOUD_FREE_EDGE of the reach; its column's saturation;
     /// and its inversion's strength over its sea and its land under the free air, which stands
-    /// at the warmest of the cell's latitudes' mean air within its reach and at its own
+    /// at the cell's rising air's, its latitudes' air by their rain, within its reach (M70) and at its own
     /// latitude's beyond, alike by degrees, the air under it at CLOUD_SURFACE_HUMIDITY over its
     /// open sea and at its column's saturation over its land and its ice. Their effects over
     /// its ground as the year left it, its open sea at SEA_ALBEDO, its sea ice, its snow and its
@@ -6114,8 +6154,8 @@ impl Cycle {
             let zonal: Vec<f64> = (0..n_lat)
                 .map(|i| (0..n_lon).map(|j| air[i * n_lon + j]).sum::<f64>() / n_lon as f64)
                 .collect();
-            // The free air: the warmest of the cell's latitudes within its reach, its own
-            // latitude's beyond, by degrees.
+            // The free air: the cell's rising air's within its reach, its own latitude's
+            // beyond, by degrees.
             let equator = wind.equator.get(k).copied().unwrap_or(0.0);
             let inside = |i: usize| -> f64 {
                 if reach <= 0.0 {
@@ -6124,10 +6164,27 @@ impl Cycle {
                 let past = (lat(i) - equator).abs() - reach;
                 (1.0 - past / (CLOUD_FREE_EDGE * reach)).clamp(0.0, 1.0)
             };
-            let cell = (0..n_lat)
-                .filter(|&i| inside(i) >= 1.0)
-                .map(|i| zonal[i])
-                .fold(f64::NAN, f64::max);
+            // The free air over the cell its rising air's (M70): its latitudes' mean air by the
+            // rain on each, as the convection's moist adiabat sets the free troposphere's
+            // warmth (Sobel et al. 2001), where the warmest of them stood for it, and the summer's
+            // hot dry land held its subtropics' free air some 5 K over ERA-Interim's.
+            let (mut held, mut fell) = (0.0, 0.0);
+            for i in (0..n_lat).filter(|&i| inside(i) >= 1.0) {
+                let width = lat(i).cos().max(0.0);
+                for j in 0..n_lon {
+                    let rain = moisture.falling[k * n + i * n_lon + j].max(0.0) as f64;
+                    held += width * rain * air[i * n_lon + j];
+                    fell += width * rain;
+                }
+            }
+            let cell = if fell > 0.0 {
+                held / fell
+            } else {
+                (0..n_lat)
+                    .filter(|&i| inside(i) >= 1.0)
+                    .map(|i| zonal[i])
+                    .fold(f64::NAN, f64::max)
+            };
             let free = |i: usize| -> f64 {
                 if cell.is_nan() {
                     zonal[i]
@@ -6160,21 +6217,21 @@ impl Cycle {
                     rains.0,
                     rains.1,
                     rains.2,
-                    sky.eis(t_sea, free_air),
+                    sky.eis(t_sea, free_air, inside(i)),
                     CLOUD_SURFACE_HUMIDITY,
                 );
                 let on_ice = crate::clouds::kinds(
                     rains.0,
                     rains.1,
                     rains.2,
-                    sky.eis(t_sea, free_air),
+                    sky.eis(t_sea, free_air, inside(i)),
                     saturation,
                 );
                 let on_land = crate::clouds::kinds(
                     rains.0,
                     rains.1,
                     rains.2,
-                    sky.eis(t_land, free_air),
+                    sky.eis(t_land, free_air, inside(i)),
                     saturation,
                 );
                 let kinds = crate::clouds::Kinds {
@@ -6679,7 +6736,94 @@ struct Light {
     absorbs: f64,
     above: f64,
     cloud_down: f64,
+    /// The open sea's albedo in its light under its clouds (M70): its direct light's by the
+    /// sun's height (SEA_GLINT), its diffuse light's SEA_ALBEDO.
+    sea: f64,
     under: bool,
+}
+
+/// A water sea's albedo with the sun at height cosine `mu` (M70), `direct` of its light
+/// direct: Taylor et al. (1996)'s by the sun's height, the rest diffuse at SEA_ALBEDO.
+fn sea_albedo_at(mu: f64, direct: f64) -> f64 {
+    let (a, b, c, d) = SEA_GLINT;
+    let glint = a / (b * mu.clamp(1e-3, 1.0).powf(c) + d);
+    let direct = direct.clamp(0.0, 1.0);
+    direct * glint + (1.0 - direct) * SEA_ALBEDO
+}
+
+/// A water sea's albedo as `sea_albedo_at` gives it under the spray its wind of `wind` m/s
+/// raises (M70): the spray a conservative layer of SEA_SPRAY's depth over it, reflecting the
+/// direct light by the sun's height and the diffuse at 2/3, as the clouds' layers do.
+fn spray_albedo_at(mu: f64, direct: f64, wind: f64) -> f64 {
+    let (floor, slope, calm, most, g) = SEA_SPRAY;
+    let tau = (floor + slope * (wind - calm).max(0.0)).min(most);
+    let reflects = |mu: f64| {
+        let mu = mu.clamp(1e-3, 1.0);
+        let (s, t) = ((1.0 - g) * tau, (1.0 - g * g) * tau);
+        ((s + (2.0 / 3.0 - mu) * (1.0 - (-t / mu).exp())) / (4.0 / 3.0 + s)).clamp(0.0, 1.0)
+    };
+    let direct = direct.clamp(0.0, 1.0);
+    let spray = direct * reflects(mu) + (1.0 - direct) * reflects(2.0 / 3.0);
+    crate::radiation::over(spray, sea_albedo_at(mu, direct))
+}
+
+/// The star's light at a place through a step (M70): its mean flux on the ground, W/m², the
+/// sun's height its light comes at by the light's weight, and the sun's heights through the
+/// day with the share of the light at each.
+#[derive(Clone, Copy, Debug)]
+struct Sun {
+    lit: f64,
+    mu: f64,
+    heights: [(f64, f64); SUN_HEIGHTS],
+}
+
+impl Sun {
+    /// Its mean flux and the light's mean height.
+    fn pair(&self) -> (f64, f64) {
+        (self.lit, self.mu)
+    }
+
+    /// The light of a sun standing at height cosine `mu`.
+    fn at(lit: f64, mu: f64) -> Self {
+        let mut heights = [(0.0, 0.0); SUN_HEIGHTS];
+        heights[0] = (mu, 1.0);
+        Self { lit, mu, heights }
+    }
+
+    /// A day's light at latitude `lat` under a star of flux `flux` at declination `decl`
+    /// (F235, M70): its mean, the mean height by the light, and SUN_HEIGHTS heights from noon
+    /// to sunset by Gauss and Legendre, each weighted by its light.
+    fn through_day(flux: f64, lat: f64, decl: f64) -> Self {
+        let (share, square) = diurnal_shares(lat, decl);
+        let mu = if share > 0.0 { square / share } else { 0.0 };
+        let mut heights = [(0.0, 0.0); SUN_HEIGHTS];
+        let (sp, cp) = lat.sin_cos();
+        let (sd, cd) = decl.sin_cos();
+        let (a, b) = (sp * sd, cp * cd);
+        let set = if a >= b {
+            PI
+        } else if a <= -b {
+            0.0
+        } else {
+            (-a / b).acos()
+        };
+        let nodes: [(f64, f64); SUN_HEIGHTS] = [
+            (-0.861_136_311_594_052_6, 0.347_854_845_137_453_9),
+            (-0.339_981_043_584_856_3, 0.652_145_154_862_546_1),
+            (0.339_981_043_584_856_3, 0.652_145_154_862_546_1),
+            (0.861_136_311_594_052_6, 0.347_854_845_137_453_9),
+        ];
+        for (h, &(x, w)) in heights.iter_mut().zip(nodes.iter()) {
+            let hour = 0.5 * set * (1.0 + x);
+            let height = (a + b * hour.cos()).max(0.0);
+            *h = (height, w * height);
+        }
+        Self {
+            lit: flux * share,
+            mu,
+            heights,
+        }
+    }
 }
 
 impl Light {
@@ -6695,6 +6839,7 @@ impl Light {
             absorbs: 0.0,
             above: 0.0,
             cloud_down: 0.0,
+            sea: SEA_ALBEDO,
             under: false,
         }
     }
@@ -8539,6 +8684,92 @@ mod tests {
         assert!((ground - 70.0).abs() < 1e-9 && taken == 0.0);
     }
 
+    /// M70: what a place reflects through a day, read at the sun's SUN_HEIGHTS heights by the
+    /// light at each, meets what it reflects hour by hour through the day: the air's molecules,
+    /// the sea and a thin and a thick cloud within 0.003 of their day's mean at every latitude
+    /// and season where the sun stands, where at the light's mean height alone they read to
+    /// 0.016 less; the heights' mean by the light the light's mean height within 0.02. A water
+    /// sea reflects Taylor et al. (1996)'s 0.030 of the sun overhead, 0.065 at 60 degrees and
+    /// 0.20 at 85, SEA_ALBEDO in the diffuse light; its spray adds to it what MODIS measures a
+    /// unit of the aerosol's depth adds over the oceans, to a third more as its salt absorbs
+    /// none.
+    #[test]
+    fn a_place_reflects_its_day_s_light() {
+        let ray = |mu: f64| {
+            let t = 0.075;
+            (t + (2.0 / 3.0 - mu) * (1.0 - (-t / mu.max(1e-3)).exp())) / (4.0 / 3.0 + t)
+        };
+        let cloud = |tau: f64| {
+            move |mu: f64| {
+                let (g, mu) = (0.86, mu.max(1e-3));
+                let (s, t) = ((1.0 - g) * tau, (1.0 - g * g) * tau);
+                (s + (2.0 / 3.0 - mu) * (1.0 - (-t / mu).exp())) / (4.0 / 3.0 + s)
+            }
+        };
+        let sea = |mu: f64| sea_albedo_at(mu, 1.0);
+        let reads: [(&str, &dyn Fn(f64) -> f64); 4] = [
+            ("air", &ray),
+            ("sea", &sea),
+            ("thin cloud", &cloud(3.0)),
+            ("thick cloud", &cloud(30.0)),
+        ];
+        for lat in [0.0f64, 20.0, 40.0, 55.0, 70.0, 80.0] {
+            for decl in [-23.44f64, -10.0, 0.0, 12.0, 23.44] {
+                let (p, d) = (lat.to_radians(), decl.to_radians());
+                let day = Sun::through_day(1.0, p, d);
+                if day.lit <= 1e-3 {
+                    continue;
+                }
+                let n = 4000;
+                let heights: Vec<f64> = (0..n)
+                    .map(|i| {
+                        let h = -PI + TAU * (i as f64 + 0.5) / n as f64;
+                        (p.sin() * d.sin() + p.cos() * d.cos() * h.cos()).max(0.0)
+                    })
+                    .collect();
+                let weight: f64 = heights.iter().sum();
+                let weighted: f64 = day.heights.iter().map(|h| h.1).sum();
+                let mean = day.heights.iter().map(|h| h.0 * h.1).sum::<f64>() / weighted;
+                assert!(
+                    (mean - day.mu).abs() < 0.02,
+                    "{lat} {decl}: {mean} {}",
+                    day.mu
+                );
+                for (name, f) in reads {
+                    let exact = heights.iter().map(|&m| m * f(m)).sum::<f64>() / weight;
+                    let read = day.heights.iter().map(|h| h.1 * f(h.0)).sum::<f64>() / weighted;
+                    assert!(
+                        (read - exact).abs() < 0.003,
+                        "{name} at {lat} {decl}: {read} against {exact}, at the mean {}",
+                        f(day.mu)
+                    );
+                }
+            }
+        }
+        for (mu, measured) in [(1.0, 0.030), (0.5, 0.065), (85f64.to_radians().cos(), 0.20)] {
+            let a = sea_albedo_at(mu, 1.0);
+            assert!((a - measured).abs() < 0.003, "{mu}: {a} {measured}");
+        }
+        assert!((sea_albedo_at(0.3, 0.0) - SEA_ALBEDO).abs() < 1e-12);
+        // The spray a 7 m/s wind raises, an optical depth of 0.057, adds what MODIS's clear sky
+        // over the oceans gives a unit of the aerosol's depth, some 0.13 to 0.146 of the albedo
+        // through the day (Remer and Kaufman 2006), to a third more: theirs all the oceans'
+        // aerosol, some of it absorbing, the spray's salt scattering all it meets.
+        let day = Sun::through_day(1.0, 0.1, 0.0);
+        let through = |f: &dyn Fn(f64) -> f64| {
+            let w: f64 = day.heights.iter().map(|h| h.1).sum();
+            day.heights.iter().map(|h| h.1 * f(h.0)).sum::<f64>() / w
+        };
+        let added =
+            through(&|mu| spray_albedo_at(mu, 1.0, 7.0)) - through(&|mu| sea_albedo_at(mu, 1.0));
+        let tau = SEA_SPRAY.0 + SEA_SPRAY.1 * (7.0 - SEA_SPRAY.2);
+        println!(
+            "the spray at 7 m/s adds {added:.4} ({:.3} a unit of its depth)",
+            added / tau
+        );
+        assert!((0.13..0.2).contains(&(added / tau)), "{added} {tau}");
+    }
+
     /// M67: under its clouds a place reflects as its air's molecules over its clouds over its
     /// ground, the more over a brighter ground, and more than without them over a ground darker
     /// than they are (over a brighter, absorbing clouds may darken it, as over fresh snow); its
@@ -8557,6 +8788,7 @@ mod tests {
             absorbs: 0.03,
             above: 0.3,
             cloud_down: 30.0,
+            sea: SEA_ALBEDO,
             under: true,
         };
         let clear = Light {
@@ -9150,6 +9382,8 @@ mod tests {
     fn the_earth_like_s_year() {
         let y = Year::of("Earth");
         let again = y.again();
+        let measured = std::sync::OnceLock::new();
+        let against = || measured.get_or_init(|| against_ceres(&y, &again));
         crate::testkit::checks(&[
             (
                 "an_earth_like_world_is_within_five_kelvin_of_earth",
@@ -9197,6 +9431,13 @@ mod tests {
             (
                 "the_earth_like_under_its_clouds_reflects_as_earth_does",
                 &|| the_earth_like_under_its_clouds_reflects_as_earth_does(&y, &again),
+            ),
+            ("the_earth_like_s_clouds_meet_ceres_by_the_rain", &|| {
+                the_earth_like_s_clouds_meet_ceres_by_the_rain(against())
+            }),
+            (
+                "the_earth_like_s_clear_sea_brightens_as_the_sun_sinks",
+                &|| the_earth_like_s_clear_sea_brightens_as_the_sun_sinks(against()),
             ),
         ]);
     }
@@ -9365,6 +9606,236 @@ mod tests {
                 "{t}: {olr}"
             );
         }
+    }
+
+    /// What the Earth-like under its own clouds keeps and sends over its open sea through its
+    /// year (M70), as CERES measures it: by each ten degrees of latitude from the south pole,
+    /// the light it reflects without its clouds and with them over the light it gets, what its
+    /// clouds take of its light and keep of its infrared, W/m², and its sea's warmth, K; and over
+    /// its tropical open sea by its step's rain, mm a day, in CERES's bins, each bin's share of
+    /// the sea, its mean rain, its clouds' infrared and light, W/m², and their high cover.
+    struct Against {
+        bands: Vec<[f64; 5]>,
+        rains: Vec<[f64; 5]>,
+    }
+
+    /// CERES's bins of the climatological rain over the tropical oceans, mm a day (the research
+    /// notes' monthly table).
+    const RAIN_BINS: [f64; 13] = [
+        0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0,
+    ];
+
+    fn against_ceres(y: &Year, again: &Again) -> Against {
+        let own = again
+            .under
+            .as_ref()
+            .expect("the Earth-like under its clouds");
+        let (cycle, clouds) = (&own.cycle, own.clouds.as_ref().expect("its clouds"));
+        let plain = EnergyBalance::from_graph(&y.graph);
+        let sky = crate::clouds::Sky::from_graph(&y.graph, &plain).expect("a sky");
+        let eb = plain.under(std::sync::Arc::new(sky.clone()));
+        let air =
+            crate::moisture::Air::from_graph(&y.graph, plain.transport, OCEAN_TRANSPORT_SHARE)
+                .expect("an air");
+        let heights = vec![0.0; cycle.sites.len()];
+        let wet = cycle.moisture(&air, &heights).expect("its moisture");
+        let vapours = cycle.vapours(&wet);
+        let (n, steps) = (cycle.sites.len(), wet.steps);
+        let tilts = cycle.air.len() as f64;
+        let eps = cycle.tilts.first().copied().unwrap_or(0.0);
+        let contacts = cycle.coupling(Some(&wet)).expect("a coupling");
+        // Each band's open sea: its share, its light, the light it reflects clear and under its
+        // clouds, its clouds' infrared, its sea's warmth.
+        let mut bands = vec![[0.0f64; 6]; 18];
+        let mut rains = vec![[0.0f64; 6]; RAIN_BINS.len() - 1];
+        for (p, s) in cycle.sites.iter().enumerate() {
+            let lat = s.lat.to_degrees();
+            let band = (((lat + 90.0) / 10.0).floor() as usize).min(17);
+            let wind = contacts.contacts.get(p).map_or(1.0, |c| c.breeze) * SURFACE_WIND_SPEED;
+            for k in 0..steps {
+                let q = p * steps + k;
+                let (flux, decl) = eb
+                    .sky
+                    .at_mean_anomaly(TAU * (k as f64 + 0.5) / steps as f64, eps);
+                let day = Sun::through_day(flux, s.lat, decl);
+                let a = cycle.air.iter().map(|x| x[k * n + p]).sum::<f64>() / tilts;
+                let v = vapours[p];
+                let deck = &clouds.decks[q];
+                let all = eb.light_over(&day, (a, v, wind), Some(deck));
+                let clear = eb.light_over(&day, (a, v, wind), None);
+                let t_sea = cycle.surfaces[1][q] as f64;
+                if !(t_sea.is_finite() && t_sea > 1.0) {
+                    continue;
+                }
+                let open = s.weight
+                    * s.sea.clamp(0.0, 1.0)
+                    * (1.0 - sea_ice_cover(cycle.masses[1][q] as f64));
+                if open <= 0.0 {
+                    continue;
+                }
+                let (lit, (seen, kept)) = (day.lit, (clear.planet(clear.sea), all.planet(all.sea)));
+                let lw = -sky.infrared(deck, a, SIGMA_SB * t_sea.powi(4), v).0;
+                let row = &mut bands[band];
+                row[0] += open;
+                row[1] += open * lit;
+                row[2] += open * lit * seen;
+                row[3] += open * lit * kept;
+                row[4] += open * lw;
+                row[5] += open * t_sea;
+                let rain = wet.falling[k * n + p] as f64 * SECONDS_PER_DAY;
+                let bin = RAIN_BINS
+                    .windows(2)
+                    .position(|e| rain >= e[0] && rain < e[1]);
+                if let Some(j) = bin.filter(|_| lat.abs() <= 30.0) {
+                    let high = 1.0 - (1.0 - deck.cover[0] as f64) * (1.0 - deck.cover[1] as f64);
+                    let r = &mut rains[j];
+                    r[0] += open;
+                    r[1] += open * rain;
+                    r[2] += open * lw;
+                    r[3] += open * lit * (seen - kept);
+                    r[4] += open * high;
+                }
+            }
+        }
+        let total: f64 = rains.iter().map(|r| r[0]).sum::<f64>().max(1e-30);
+        Against {
+            bands: bands
+                .iter()
+                .map(|r| {
+                    let (w, lit) = (r[0].max(1e-30), r[1].max(1e-30));
+                    [
+                        r[2] / lit,
+                        r[3] / lit,
+                        -(r[3] - r[2]) / w,
+                        r[4] / w,
+                        r[5] / w,
+                    ]
+                })
+                .collect(),
+            rains: rains
+                .iter()
+                .map(|r| {
+                    let w = r[0].max(1e-30);
+                    [r[0] / total, r[1] / w, r[2] / w, r[3] / w, r[4] / w]
+                })
+                .collect(),
+        }
+    }
+
+    /// M70: the Earth-like's clouds over its tropical open sea under their own year keep and
+    /// take what CERES's keep and take by the rain where it rains 6 mm a day and more (CERES
+    /// EBAF 4.1 against GPCP v3.2's monthly climatologies, 30S to 30N; the research notes):
+    /// their light within 15 percent, their infrared within 20. KNOWN (M70): where it rains less
+    /// its subtropics' low cloud, under a free air some 3 K too warm as its equator stands at
+    /// 32 C where Earth's 28, reflects up to half again CERES's.
+    fn the_earth_like_s_clouds_meet_ceres_by_the_rain(against: &Against) {
+        // CERES's infrared and light over the tropical oceans by the bins, W/m².
+        let ceres = [
+            (12.1, -39.4),
+            (14.5, -29.9),
+            (17.3, -30.4),
+            (22.3, -36.0),
+            (27.4, -41.5),
+            (32.3, -46.7),
+            (37.8, -52.4),
+            (45.2, -61.1),
+            (51.8, -71.0),
+            (56.0, -80.6),
+            (58.9, -90.9),
+            (66.5, -107.7),
+        ];
+        for (j, (r, &(lw, sw))) in against.rains.iter().zip(ceres.iter()).enumerate() {
+            if r[0] <= 0.0 {
+                continue;
+            }
+            println!(
+                "  {:4.1} to {:4.1} mm a day ({:.1}% of the tropical sea, mean {:.2}): infrared {:5.1} W/m² (CERES {lw}), light {:6.1} (CERES {sw}), high cloud {:.2}",
+                RAIN_BINS[j],
+                RAIN_BINS[j + 1],
+                100.0 * r[0],
+                r[1],
+                r[2],
+                r[3],
+                r[4]
+            );
+            if RAIN_BINS[j] >= 6.0 && r[0] > 0.005 {
+                assert!(
+                    (r[3] / sw - 1.0).abs() < 0.15,
+                    "{}: {} {sw}",
+                    RAIN_BINS[j],
+                    r[3]
+                );
+                assert!(
+                    (r[2] / lw - 1.0).abs() < 0.20,
+                    "{}: {} {lw}",
+                    RAIN_BINS[j],
+                    r[2]
+                );
+            }
+        }
+        let dry = &against.rains[0];
+        if dry[3] < 1.2 * ceres[0].1 {
+            eprintln!(
+                "KNOWN (M70): the Earth-like's driest tropical sea's clouds take {:.1} W/m² where CERES's {}",
+                dry[3], ceres[0].1
+            );
+        }
+    }
+
+    /// M70: the Earth-like's open sea under its clear sky reflects as CERES measures Earth's
+    /// open sea's clear sky by latitude, its air's molecules and its sea's glint the more as
+    /// the sun sinks and its wind's spray over it (CERES EBAF 4.1, 2001 to 2018, over seas that
+    /// never freeze; the research notes): within 0.02 from 50S to 50N, and its band from 40 to 50
+    /// degrees over its equator's by 0.015 and more where CERES's by 0.02 to 0.03.
+    fn the_earth_like_s_clear_sea_brightens_as_the_sun_sinks(against: &Against) {
+        let ceres = [
+            f64::NAN,
+            f64::NAN,
+            f64::NAN,
+            0.1452,
+            0.1262,
+            0.1137,
+            0.1060,
+            0.1034,
+            0.1020,
+            0.1057,
+            0.1090,
+            0.1107,
+            0.1203,
+            0.1333,
+            0.1602,
+            f64::NAN,
+            f64::NAN,
+            f64::NAN,
+        ];
+        for (b, (row, &measured)) in against.bands.iter().zip(ceres.iter()).enumerate() {
+            let lo = -90 + 10 * b as i32;
+            println!(
+                "  {lo:+3} to {:+3}: clear sky {:.4} (CERES {measured:.4}), with its clouds {:.4}; its clouds take {:5.1} W/m² and keep {:4.1}; its sea at {:.1} K",
+                lo + 10,
+                row[0],
+                row[1],
+                row[2],
+                row[3],
+                row[4]
+            );
+            if (-50..50).contains(&lo) {
+                assert!(
+                    (row[0] - measured).abs() < 0.02,
+                    "{lo}: {} {measured}",
+                    row[0]
+                );
+            }
+        }
+        let (equator, south, north) = (
+            0.5 * (against.bands[8][0] + against.bands[9][0]),
+            against.bands[4][0],
+            against.bands[13][0],
+        );
+        assert!(
+            south > equator + 0.015 && north > equator + 0.015,
+            "{south} {north} over {equator}"
+        );
     }
 
     /// M67: the Earth-like's year under its own clouds, their albedo and their greenhouse its
@@ -12222,5 +12693,186 @@ mod tests {
         );
         assert!(near > 0.0, "{near}");
         assert!(past < 1e-9, "{past}");
+    }
+
+    /// M70: ISCCP-H's own clouds over the tropical oceans, each of its nine classes a column
+    /// alone under the year's light over the open sea through the equator's day at the equinox,
+    /// its share of the sky the class's as ISCCP sees it, reflect what CERES measures by the
+    /// climatological rain (CERES EBAF 4.1 against GPCP v3.2, 30S to 30N; ISCCP-H's classes'
+    /// amounts and albedo-equivalent depths on the same bins; the research notes) within 6
+    /// percent from 1.5 to 9 mm a day, the clouds whose depth is ISCCP's thinned by
+    /// CLOUD_THICKNESS, its thick classes at their own depth as the towers' and the decks' water
+    /// gives theirs; CLOUD_THICKNESS within 0.02 of the share at which their light meets
+    /// CERES's, found anew. At their own depths they reflect some 1.3 times CERES's. Their
+    /// infrared is shown beside CERES's.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn isccp_s_clouds_reflect_what_ceres_measures() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let eb = EnergyBalance::from_graph(&graph);
+        let sky = crate::clouds::Sky::from_graph(&graph, &eb).expect("a sky");
+        let under = eb.under(std::sync::Arc::new(sky.clone()));
+        // The tropical oceans' air, its vapour and its wind, some 7 m/s (Lehahn et al. 2010).
+        let (air, vapour, wind) = (299.5, 1.0, 7.0);
+        // Each bin: its rain, mm a day, CERES's SW and LW CRE, W/m², its SW CRE's share of the
+        // insolation, and ISCCP-H's classes, high thin, medium, thick, mid-level, low: their
+        // share of the sky, percent, and their albedo-equivalent depths.
+        type Bin = (f64, f64, f64, f64, [(f64, f64); 9]);
+        let bins: [Bin; 4] = [
+            (
+                1.48,
+                -29.9,
+                17.2,
+                -7.9,
+                [
+                    (9.9, 0.87),
+                    (3.4, 8.29),
+                    (1.2, 53.85),
+                    (7.7, 1.15),
+                    (4.1, 8.24),
+                    (0.7, 43.88),
+                    (15.2, 1.51),
+                    (9.6, 7.67),
+                    (0.6, 40.28),
+                ],
+            ),
+            (
+                3.47,
+                -41.9,
+                27.0,
+                -10.8,
+                [
+                    (15.2, 0.95),
+                    (7.6, 8.55),
+                    (3.4, 55.40),
+                    (8.7, 1.20),
+                    (5.2, 8.25),
+                    (1.1, 45.66),
+                    (12.4, 1.49),
+                    (6.9, 7.62),
+                    (0.5, 42.01),
+                ],
+            ),
+            (
+                5.48,
+                -52.3,
+                37.8,
+                -12.8,
+                [
+                    (21.0, 1.03),
+                    (11.4, 8.45),
+                    (5.2, 56.58),
+                    (9.4, 1.24),
+                    (5.2, 7.97),
+                    (0.9, 46.91),
+                    (9.7, 1.51),
+                    (4.8, 7.53),
+                    (0.4, 43.63),
+                ],
+            ),
+            (
+                8.84,
+                -70.6,
+                51.2,
+                -16.8,
+                [
+                    (22.5, 1.14),
+                    (16.6, 8.55),
+                    (8.2, 57.13),
+                    (9.5, 1.36),
+                    (6.0, 7.84),
+                    (0.7, 45.09),
+                    (7.7, 1.59),
+                    (3.9, 7.43),
+                    (0.3, 44.73),
+                ],
+            ),
+        ];
+        // Each class's level in the deck: the thin and the medium high cloud anvils, the thick
+        // the towers; the mid-level the layers'; the low the low cloud's.
+        let level = |c: usize| match c {
+            0 | 1 => 1,
+            2 => 0,
+            3..=5 => 2,
+            _ => 3,
+        };
+        let hours = 96;
+        let day = |q: f64, deck: Option<&crate::clouds::Deck>| {
+            let (mut kept, mut weight) = (0.0, 0.0);
+            for h in 0..hours {
+                let angle = -PI / 2.0 + PI * (h as f64 + 0.5) / hours as f64;
+                let mu = angle.cos();
+                let sun = under.light_over(&Sun::at(q * PI * mu, mu), (air, vapour, wind), deck);
+                kept += mu * sun.planet(sun.sea);
+                weight += mu;
+            }
+            kept / weight
+        };
+        // The light the classes take from a bin, W/m², the clouds whose depth is ISCCP's at
+        // `share` of it where `share` is some, thinned as the deck thins them else.
+        let light = |bin: &Bin, share: Option<f64>| {
+            let q = bin.1 / (bin.3 / 100.0);
+            let clear = day(q, None);
+            bin.4
+                .iter()
+                .enumerate()
+                .map(|(c, &(amount, tau))| {
+                    let thick = tau > 23.0;
+                    let deck = match (thick, share) {
+                        (true, _) => sky.column(level(c), tau, false, air),
+                        (false, Some(s)) => sky.column(level(c), s * tau, false, air),
+                        (false, None) => sky.column(level(c), tau, true, air),
+                    };
+                    -q * amount / 100.0 * (day(q, Some(&deck)) - clear)
+                })
+                .sum::<f64>()
+        };
+        let infrared = |bin: &Bin| {
+            let ground = SIGMA_SB * (air + 1.0).powi(4);
+            bin.4
+                .iter()
+                .enumerate()
+                .map(|(c, &(amount, tau))| {
+                    let deck = sky.column(level(c), tau, tau <= 23.0, air);
+                    -amount / 100.0 * sky.infrared(&deck, air, ground, vapour).0
+                })
+                .sum::<f64>()
+        };
+        let mismatch = |share: Option<f64>| {
+            bins.iter()
+                .map(|b| (light(b, share) / b.1).ln())
+                .sum::<f64>()
+                / bins.len() as f64
+        };
+        let (mut lo, mut hi) = (0.2, 1.0);
+        for _ in 0..30 {
+            let mid = 0.5 * (lo + hi);
+            if mismatch(Some(mid)) > 0.0 {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        let found = 0.5 * (lo + hi);
+        println!(
+            "ISCCP-H's clouds reflect CERES's at {found:.3} of their depth (CLOUD_THICKNESS {CLOUD_THICKNESS})"
+        );
+        for b in &bins {
+            let (own, thinned) = (light(b, Some(1.0)), light(b, None));
+            println!(
+                "  {} mm a day: SW CRE {thinned:.1} W/m² (at their own depth {own:.1}; CERES {}), LW CRE {:.1} (CERES {})",
+                b.0,
+                b.1,
+                infrared(b),
+                b.2
+            );
+            assert!(
+                (thinned / b.1 - 1.0).abs() < 0.06,
+                "{}: {thinned} {}",
+                b.0,
+                b.1
+            );
+        }
+        assert!((found - CLOUD_THICKNESS).abs() < 0.02, "{found}");
     }
 }

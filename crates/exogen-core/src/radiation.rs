@@ -2315,6 +2315,40 @@ pub fn rayleigh_reflectance(tau: f64, teff: f64) -> f64 {
     reflected / light.max(1e-300)
 }
 
+/// The share of the star's light, a black body at `teff` K, a layer of molecules scattering
+/// with an optical depth `tau` at 550 nm reflects with the sun at height cosine `mu` (M70): each
+/// wavelength by the conservative two-stream layer's ((3/4) tau + (1/2 - (3/4) mu)(1 -
+/// exp(-tau / mu))) / (1 + (3/4) tau) (Joseph et al. 1976; `rayleigh_reflectance`'s at mu = 2/3),
+/// weighted by the star's light the air's ozone leaves it, its ultraviolet bands taking
+/// `taken` of all of it from the shortest wavelengths up, as their edge lies.
+pub fn rayleigh_reflectance_at(tau: f64, teff: f64, mu: f64, taken: f64) -> f64 {
+    if tau <= 0.0 || teff <= 0.0 {
+        return 0.0;
+    }
+    let mu = mu.clamp(1e-3, 1.0);
+    let n = RAYLEIGH_WAVELENGTHS;
+    let lights: Vec<(f64, f64)> = (0..n)
+        .map(|k| {
+            let um =
+                RAYLEIGH_SPAN.0 + (RAYLEIGH_SPAN.1 - RAYLEIGH_SPAN.0) * (k as f64 + 0.5) / n as f64;
+            (um, um.powi(-5) / (RADIATION_C2_UM_K / (um * teff)).exp_m1())
+        })
+        .collect();
+    let total: f64 = lights.iter().map(|l| l.1).sum::<f64>().max(1e-300);
+    let mut gone = taken.clamp(0.0, 1.0) * total;
+    let (mut light, mut reflected) = (0.0, 0.0);
+    for &(um, b) in &lights {
+        // The ozone takes the shortest light first.
+        let kept = (b - gone).max(0.0);
+        gone = (gone - b).max(0.0);
+        let t = tau * (0.55 / um).powi(4);
+        let r = (t + (2.0 / 3.0 - mu) * (1.0 - (-t / mu).exp())) / (4.0 / 3.0 + t);
+        light += kept;
+        reflected += kept * r.clamp(0.0, 1.0);
+    }
+    reflected / light.max(1e-300)
+}
+
 /// The optical depth at 550 nm of the molecules of an air of `composition` by volume, `column`
 /// kg/m² of it: each gas's cross-section from its refractive index and its King factor,
 /// 24 pi³ / (N_L² lambda⁴) ((n² - 1) / (n² + 2))² F_K (Bates 1984; Sneep and Ubachs 2005).
@@ -2384,9 +2418,17 @@ pub fn ozone_sunlight(x: f64) -> f64 {
         return 0.0;
     }
     let visible = 0.02118 * x / (1.0 + 0.042 * x + 0.000323 * x * x);
-    let ultraviolet =
-        1.082 * x / (1.0 + 138.6 * x).powf(0.805) + 0.0658 * x / (1.0 + (103.6 * x).powi(3));
-    visible + ultraviolet
+    visible + ozone_ultraviolet(x)
+}
+
+/// The share of the star's light an ozone path of `x` cm at STP takes in its Hartley and
+/// Huggins bands, the ultraviolet (M70): Lacis and Hansen (1974)'s fit, `ozone_sunlight`'s
+/// ultraviolet part.
+pub fn ozone_ultraviolet(x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    1.082 * x / (1.0 + 138.6 * x).powf(0.805) + 0.0658 * x / (1.0 + (103.6 * x).powi(3))
 }
 
 /// The ozone column of an air whose oxygen stands at `oxygen` of it, cm at STP (M67): by
@@ -3300,6 +3342,42 @@ mod tests {
             assert!(r > last && r < 1.0, "{teff} K: {r} after {last}");
             last = r;
         }
+    }
+
+    /// M70: an air's molecules reflect the more as the sun sinks, as Lacis and Hansen (1974)'s
+    /// fit to Earth's air, 0.28 / (1 + 6.43 mu), has them: against their value with the sun at
+    /// 2/3, within 6 percent from overhead to 72 degrees; at 2/3 without ozone the diffuse
+    /// reflectance F293 gave; less where ozone takes the shortest light. KNOWN: under a black
+    /// body at the Sun's 5,772 K, bluer than the Sun, they reflect some 1.3 times Lacis and
+    /// Hansen's.
+    #[test]
+    fn an_air_s_molecules_reflect_more_as_the_sun_sinks() {
+        let tau = 0.0973;
+        let ozone = |mu: f64| ozone_ultraviolet(magnification(mu) * 0.3);
+        let r = |mu: f64| rayleigh_reflectance_at(tau, 5_772.0, mu, ozone(mu));
+        let (r0, l0) = (r(2.0 / 3.0), 0.28 / (1.0 + 6.43 * 2.0 / 3.0));
+        let mut last = 0.0;
+        for mu in [1.0, 0.8, 0.6, 0.5, 0.4, 0.3, 0.26, 0.2, 0.1, 0.05] {
+            let here = r(mu);
+            assert!(here > last, "{mu}: {here} after {last}");
+            last = here;
+            let fit = 0.28 / (1.0 + 6.43 * mu);
+            println!("mu {mu}: {here:.4} (Lacis and Hansen {fit:.4})");
+            if mu >= 0.3 {
+                let (shape, measured) = (here / r0, fit / l0);
+                assert!(
+                    (shape / measured - 1.0).abs() < 0.06,
+                    "{mu}: {shape} {measured}"
+                );
+            }
+        }
+        let bare = rayleigh_reflectance_at(tau, 5_772.0, 2.0 / 3.0, 0.0);
+        assert!(
+            (bare - rayleigh_reflectance(tau, 5_772.0)).abs() < 1e-9,
+            "{bare}"
+        );
+        assert!(r0 < bare, "{r0} {bare}");
+        assert!((1.15..1.45).contains(&(r0 / l0)), "{r0} {l0}");
     }
 
     /// The outgoing radiation rises with the ground's warmth and falls as more air stands

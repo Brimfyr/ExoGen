@@ -90,7 +90,8 @@ pub struct WaterInfo {
 
 /// The year's water clouds (M66), a diagnostic the climate does not read until their means come
 /// from the clouds themselves (M67): over the body by area, the share of it they cover and the
-/// low cloud's, the layers', the anvils' and the towers', which overlap at random; the albedo
+/// low cloud's, the layers', the anvils' (with the storms' high cloud at their level, M70) and
+/// the towers', which overlap at random; the albedo
 /// they add over the ground; and what they change of what it lets out to space and of what its
 /// air sends down to its ground, W/m², each with them less without.
 #[derive(Serialize)]
@@ -1442,7 +1443,10 @@ pub fn export(
         [
             ("R", "the low cloud's year-mean cover"),
             ("G", "the layers' year-mean cover"),
-            ("B", "the anvils' year-mean cover"),
+            (
+                "B",
+                "the anvils' and the storms' high cloud's year-mean cover",
+            ),
             ("A", "the towers' year-mean cover"),
         ]
         .map(|(name, holds)| ChannelInfo {

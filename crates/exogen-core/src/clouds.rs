@@ -6,9 +6,9 @@
 //! and an anvil spread from it once the convection is strong; cloud in the layers of air that
 //! rise, by how near its column stands to saturation; and low cloud under the inversion a
 //! cold surface makes beneath a warmer free air, by its strength (Wood and Bretherton 2006),
-//! where the air beneath it is moist. The free air over a place stands at the warmest of the
-//! latitudes its overturning cell spans, as weak temperature gradients hold it (Sobel et al.
-//! 2001), and over its own latitude beyond the cell.
+//! where the air beneath it is moist. The free air over a place stands at its overturning
+//! cell's rising air's, the cell's latitudes' air by the rain on each (M70), as weak temperature
+//! gradients hold it (Sobel et al. 2001), and over its own latitude beyond the cell.
 //!
 //! Each kind reflects the star's light by its optical depth, its water's path over its drops'
 //! size (Stephens 1978), as a conservative layer of its drops' asymmetry, and sends its
@@ -41,16 +41,20 @@ pub struct Kinds {
     /// The convection's own mid-level cloud and its cumulus (M68).
     pub congestus: f64,
     pub cumulus: f64,
+    /// The storms' own high cloud (M70): its thin, its medium and its thick class's share of
+    /// the place, as ISCCP sees them, nothing above them.
+    pub storm: [f64; 3],
 }
 
 impl Kinds {
     /// Each level's share of the place, in the deck's order, towers, anvils, layers, low cloud
     /// (M68): the convection's mid-level cloud and the layers overlapping at random, its
-    /// cumulus and the inversion's low cloud one boundary layer's clouds, the more of the two.
+    /// cumulus and the inversion's low cloud one boundary layer's clouds, the more of the two;
+    /// the storms' high cloud and the anvils at random at the anvils' level (M70).
     pub fn levels(&self) -> [f64; 4] {
         [
             self.tower,
-            self.anvil,
+            1.0 - (1.0 - self.anvil) * (1.0 - self.storm.iter().sum::<f64>().min(1.0)),
             1.0 - (1.0 - self.layer) * (1.0 - self.congestus),
             self.low.max(self.cumulus),
         ]
@@ -79,7 +83,9 @@ impl Kinds {
 /// not the mean flow). The low cloud 0.14 + 0.060 EIS (Wood and Bretherton 2006), none where the
 /// air under the inversion stands under half saturated, all of it from seven tenths (ECMWF
 /// 1991's dry inversions over deserts and the winter pole). The convection's own mid-level cloud
-/// and cumulus by its rain as ISCCP sees them (CLOUD_CONGESTUS, CLOUD_CUMULUS; M68).
+/// and cumulus by its rain as ISCCP sees them (CLOUD_CONGESTUS, CLOUD_CUMULUS; M68). The storms'
+/// own high cloud by the large-scale rain as ISCCP sees it over the midlatitude oceans
+/// (CLOUD_STORM; M70).
 pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f64) -> Kinds {
     let (a, b, most) = CLOUD_CONVECTIVE;
     let law = |rain: f64| {
@@ -125,6 +131,19 @@ pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f
     };
     let (most, fold, _) = CLOUD_CUMULUS;
     let cumulus = most * (1.0 - (-convective.max(0.0) / fold).exp());
+    // The storms' own high cloud by their rain, its classes as ISCCP sees them (M70).
+    let storm = if large > 0.0 {
+        let [thin_most, fold, m0, m1, per_mm] = CLOUD_STORM;
+        let classes = [
+            thin_most * (1.0 - (-large / fold).exp()),
+            (m0 + m1 * large.ln()).max(0.0),
+            per_mm * large,
+        ];
+        let total: f64 = classes.iter().sum();
+        classes.map(|c| if total > 1.0 { c / total } else { c })
+    } else {
+        [0.0; 3]
+    };
     Kinds {
         tower,
         anvil,
@@ -133,6 +152,7 @@ pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f
         low,
         congestus,
         cumulus,
+        storm,
     }
 }
 
@@ -216,7 +236,12 @@ pub struct Sky {
     pub heat_capacity: f64,
     pub water: &'static Volatile,
     pub ground: f64,
+    /// The share of the light its air's molecules reflect in the diffuse light (F293), the
+    /// sun at 2/3 (M70: of the light its ozone leaves).
     pub rayleigh: f64,
+    /// What its air's molecules reflect with the sun at heights from the horizon to overhead,
+    /// RAYLEIGH_HEIGHTS steps of the height's cosine (M70).
+    pub rayleigh_by: std::sync::Arc<Vec<f64>>,
     /// The air's own profile (M69): its column's adiabat over grounds from the first
     /// temperature every so many kelvin, its levels' shares of the surface pressure and their
     /// temperatures over each.
@@ -273,10 +298,23 @@ impl Sky {
             .member(graph.str("materials.bedrock"))
             .or_else(|| library.member("basalt"))
             .map_or(ALBEDO_BENEATH, |m| luminance(m.mature));
-        let rayleigh = crate::radiation::rayleigh_reflectance(
-            crate::radiation::rayleigh_depth(composition, graph.f64("atmosphere.column_mass")),
-            graph.f64("star.teff"),
-        );
+        // Its air's molecules reflect the light its ozone leaves by the sun's height, the
+        // ozone's ultraviolet bands taking theirs along the slant path down (M70).
+        let tau =
+            crate::radiation::rayleigh_depth(composition, graph.f64("atmosphere.column_mass"));
+        let teff = graph.f64("star.teff");
+        let total = composition.values().sum::<f64>().max(1e-300);
+        let ozone =
+            crate::radiation::ozone_column(composition.get("O2").copied().unwrap_or(0.0) / total);
+        let reflects = |mu: f64| {
+            let path = crate::radiation::magnification(mu.max(1e-3)) * ozone;
+            let taken = crate::radiation::ozone_ultraviolet(path);
+            crate::radiation::rayleigh_reflectance_at(tau, teff, mu, taken)
+        };
+        let rayleigh_by: Vec<f64> = (0..=RAYLEIGH_HEIGHTS)
+            .map(|i| reflects(i as f64 / RAYLEIGH_HEIGHTS as f64))
+            .collect();
+        let rayleigh = reflects(2.0 / 3.0);
         Some(Self {
             clear: std::sync::Arc::new(Outgoing::of(&column, low, high)),
             clear_dry: std::sync::Arc::new(Outgoing::of(&dry, low, high)),
@@ -292,6 +330,7 @@ impl Sky {
             water: volatile("H2O")?,
             ground,
             rayleigh,
+            rayleigh_by: std::sync::Arc::new(rayleigh_by),
             profile: std::sync::Arc::new((first, step, shares, temps)),
             tropopauses: std::sync::Arc::new(Vec::new()),
         })
@@ -302,6 +341,19 @@ impl Sky {
             sky.tropopauses = std::sync::Arc::new(tops);
             sky
         })
+    }
+
+    /// The share of the light its air's molecules reflect with the sun at height cosine `mu`
+    /// (M70), read between the heights of its table.
+    pub fn rayleigh_at(&self, mu: f64) -> f64 {
+        let table = &self.rayleigh_by;
+        if table.len() < 2 {
+            return self.rayleigh;
+        }
+        let x = mu.clamp(0.0, 1.0) * (table.len() - 1) as f64;
+        let i = (x.floor() as usize).min(table.len() - 2);
+        let w = x - i as f64;
+        table[i] + w * (table[i + 1] - table[i])
     }
 
     /// The clear air's reading `pick` at `t` K over a column holding `vapour` of its law's
@@ -392,15 +444,22 @@ impl Sky {
     /// stands at `free` K at its own ground (M66): Wood and Bretherton (2006)'s EIS, LTS -
     /// Gamma_m(850) (z700 - LCL), its LTS the potential temperature of the free air at
     /// CLOUD_LEVELS's 700 hPa share of the surface pressure over the surface's, the free air
-    /// down its lapse rate; its moist adiabat's potential temperature gradient Gamma_m at the
+    /// on its rising air's moist adiabat within the overturning cell, `rising` of the way into
+    /// it, and down its lapse rate beyond (M70); its moist adiabat's potential temperature gradient Gamma_m at the
     /// mean of the two temperatures at the 850 hPa share; its lifting condensation level 125 m
     /// a kelvin of the surface air's dew point depression at CLOUD_SURFACE_HUMIDITY (Lawrence
     /// 2005).
-    pub fn eis(&self, surface: f64, free: f64) -> f64 {
+    pub fn eis(&self, surface: f64, free: f64, rising: f64) -> f64 {
         let (x700, x850) = CLOUD_LEVELS;
         let (g, r, cp) = (self.gravity, self.gas_constant, self.heat_capacity);
         let z700 = r * surface / g * (1.0 / x700).ln();
-        let t700 = free - self.lapse * r * free / g * (1.0 / x700).ln();
+        // The free air at 700 hPa on its rising air's moist adiabat within the overturning cell
+        // (M70), where down the stated lapse rate it stood some 3 K cold over the warm tropics;
+        // beyond it down the air's lapse rate, which its eddies hold stabler than the moist
+        // adiabat from its surface (Stone and Carlson 1979), by degrees `rising` of the way.
+        let rising = rising.clamp(0.0, 1.0);
+        let down = free - self.lapse * r * free / g * (1.0 / x700).ln();
+        let t700 = rising * self.at(free, x700) + (1.0 - rising) * down;
         let theta700 = t700 * (1.0 / x700).powf(r / cp);
         let lts = theta700 - surface;
         let t850 = 0.5 * (surface + t700);
@@ -429,8 +488,6 @@ impl Sky {
     /// optical depth by its water's path over its drops' size (Stephens 1978), its drops'
     /// asymmetry, its emissivity, and the light it absorbs (CLOUD_ABSORPTION).
     pub fn deck(&self, kinds: &Kinds, air: f64, sea: f64) -> Deck {
-        let (liquid, ice) = CLOUD_RADIUS;
-        let drop = liquid.1 + sea.clamp(0.0, 1.0) * (liquid.0 - liquid.1);
         let top = self.tropopause_ratio(air);
         let base = self.base_ratio(air);
         // Each kind's water, kg/m²: the towers' a share of what their ascent condenses from
@@ -450,80 +507,111 @@ impl Sky {
             0.5 * CLOUD_ADIABATIC * self.condensing(t, ratio * self.pressure) * depth * depth
         };
         let (low_depth, layer_depth) = CLOUD_DEPTH;
-        // The optics per kg/m² of liquid and of ice.
-        let tau_liquid = 3.0 / (2.0 * self.water.liquid_density * drop);
-        let tau_ice = (CLOUD_ICE_DEPTH.0 + CLOUD_ICE_DEPTH.1 / (ice * 1e6)) * 1e3;
-        let (g_liquid, g_ice) = (
-            CLOUD_ASYMMETRY.0 + CLOUD_ASYMMETRY.1 * drop * 1e6,
-            CLOUD_ASYMMETRY.2 + CLOUD_ASYMMETRY.3 * ice * 1e6,
-        );
-        let (k_liquid, k_ice) = (
-            CLOUD_LIQUID_EMISSION * 1e3,
-            DIFFUSIVITY * (CLOUD_ICE_EMISSION.0 + CLOUD_ICE_EMISSION.1 / (ice * 1e6)) * 1e3,
-        );
-        let anvil_path = CLOUD_ANVIL_DEPTH / tau_ice;
+        let optics = Optics::over(self, sea);
         let (cold, warm) = CLOUD_PHASE;
         let liquid_at = |ratio: f64| ((self.at(air, ratio) - cold) / (warm - cold)).clamp(0.0, 1.0);
-        // Each kind's optical depth, asymmetry, emissivity and absorption from its water.
-        let optics = |path: f64, liquid: f64| {
-            let (tl, ti) = (liquid * path * tau_liquid, (1.0 - liquid) * path * tau_ice);
-            let tau = tl + ti;
-            let g = if tau > 0.0 {
-                (tl * g_liquid + ti * g_ice) / tau
-            } else {
-                g_liquid
-            };
-            let e = 1.0 - (-(liquid * k_liquid + (1.0 - liquid) * k_ice) * path).exp();
-            let (a, b) = CLOUD_ABSORPTION;
-            (tau, g, e, a * path / (path + b))
-        };
-        // Two clouds of a level as one kind: its reflection the two's by their shares, its
-        // depth the one that reflects it in the diffuse light, its drops' asymmetry, its
-        // emissivity and its absorption the two's (M67, M68).
-        let blend = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64), share: f64| {
-            let share = share.clamp(0.0, 1.0);
-            let diffuse = |(tau, g, _, _): (f64, f64, f64, f64)| {
-                let s = (1.0 - g) * tau;
-                s / (4.0 / 3.0 + s)
-            };
-            let r = (1.0 - share) * diffuse(a) + share * diffuse(b);
-            let mix = |x: f64, y: f64| (1.0 - share) * x + share * y;
-            let g = mix(a.1, b.1);
-            let tau = 4.0 / 3.0 * r / (1.0 - r).max(1e-9) / (1.0 - g).max(1e-9);
-            (tau, g, mix(a.2, b.2), mix(a.3, b.3))
-        };
-        // A stated optical depth's water at a level whose liquid share is `liquid`.
-        let stated = |tau: f64, liquid: f64| tau / (liquid * tau_liquid + (1.0 - liquid) * tau_ice);
         // The anvils' thin cirrus and their medium-thick cloud (M67).
         let (thin, medium) = (
-            optics(anvil_path, 0.0),
-            optics(CLOUD_ANVIL_MEDIUM.2 / tau_ice, 0.0),
+            optics.isccp(CLOUD_ANVIL_DEPTH, 0.0),
+            optics.isccp(CLOUD_ANVIL_MEDIUM.2, 0.0),
         );
+        let share = |a: f64, b: f64| if a + b > 0.0 { b / (a + b) } else { 0.0 };
         let anvil = blend(thin, medium, kinds.medium);
-        // The thin cirrus' share of the anvils' emission (M69).
+        // The storms' high cloud (M70): its thin and medium classes at ISCCP's depths, thinned
+        // as the anvils are, its thick at its own; with the anvils one level, by their shares.
+        let [d_thin, d_medium, d_thick] = CLOUD_STORM_DEPTHS;
+        let [st, sm, sk] = kinds.storm.map(|c| c.max(0.0));
+        let storm_parts = [
+            optics.isccp(d_thin, 0.0),
+            optics.isccp(d_medium, 0.0),
+            optics.of(optics.stated(d_thick, 0.0), 0.0),
+        ];
+        let storm = blend(
+            blend(storm_parts[0], storm_parts[1], share(st, sm)),
+            storm_parts[2],
+            share(st + sm, sk),
+        );
+        let s = share(kinds.anvil.max(0.0), st + sm + sk);
+        let high = blend(anvil, storm, s);
+        // The thin cirrus' share of the level's emission (M69), the anvils' and the storms'.
         let m = kinds.medium.clamp(0.0, 1.0);
-        let emitted = (1.0 - m) * thin.2 + m * medium.2;
+        let (anvil_out, anvil_thin) = ((1.0 - m) * thin.2 + m * medium.2, (1.0 - m) * thin.2);
+        let total = st + sm + sk;
+        let (storm_out, storm_thin) = if total > 0.0 {
+            (
+                (st * storm_parts[0].2 + sm * storm_parts[1].2 + sk * storm_parts[2].2) / total,
+                st * storm_parts[0].2 / total,
+            )
+        } else {
+            (0.0, 0.0)
+        };
+        let emitted = (1.0 - s) * anvil_out + s * storm_out;
         let thin_share = if emitted > 0.0 {
-            (1.0 - m) * thin.2 / emitted
+            ((1.0 - s) * anvil_thin + s * storm_thin) / emitted
         } else {
             0.0
         };
         // The layers and the convection's mid-level cloud, the inversion's low cloud and its
-        // cumulus, each by its share of what covers its level (M68).
-        let share = |a: f64, b: f64| if a + b > 0.0 { b / (a + b) } else { 0.0 };
+        // cumulus, each by its share of what covers its level (M68). The convection's own
+        // mid-level cloud and cumulus lie in the deck as ISCCP sees them, where nothing higher
+        // hides them (M70): ISCCP's high classes' depths are their columns', the clouds under
+        // them within them.
+        let levels = kinds.levels();
+        let above = 1.0 - (1.0 - levels[0]) * (1.0 - levels[1]);
+        let congestus = kinds.congestus * (1.0 - above);
+        let cumulus = kinds.cumulus * (1.0 - above) * (1.0 - kinds.congestus);
         let (mid_liquid, low_liquid) = (liquid_at(mid_top), liquid_at(low_top));
         let layers = blend(
-            optics(deck_path(mid_base, layer_depth), liquid_at(layer_level)),
-            optics(stated(CLOUD_CONGESTUS.2, mid_liquid), mid_liquid),
-            share(kinds.layer, kinds.congestus),
+            uneven(optics.of(deck_path(mid_base, layer_depth), liquid_at(layer_level))),
+            optics.isccp(CLOUD_CONGESTUS.2, mid_liquid),
+            share(kinds.layer, congestus),
         );
         let low = blend(
-            optics(deck_path(low_base, low_depth), low_liquid),
-            optics(stated(CLOUD_CUMULUS.2, low_liquid), low_liquid),
-            share(kinds.low, kinds.cumulus),
+            uneven(optics.of(deck_path(low_base, low_depth), low_liquid)),
+            optics.isccp(CLOUD_CUMULUS.2, low_liquid),
+            share(kinds.low, cumulus),
         );
-        let parts = [optics(tower_path, 1.0), anvil, layers, low];
-        let cover = kinds.levels().map(|c| c.clamp(0.0, 1.0));
+        let parts = [uneven(optics.of(tower_path, 1.0)), high, layers, low];
+        let seen = Kinds {
+            congestus,
+            cumulus,
+            ..*kinds
+        };
+        let cover = seen.levels().map(|c| c.clamp(0.0, 1.0));
+        self.assemble(air, parts, cover, thin_share)
+    }
+
+    /// One cloud over all of a place at level `level` of the deck, towers, anvils, layers or
+    /// low cloud (M70), over air at `air` K and the open sea: its optical depth `tau` in the
+    /// star's light ISCCP's, the depth whose albedo is its cells' mean, thinned as the deck
+    /// thins the clouds whose depth is ISCCP's (CLOUD_THICKNESS) where `isccp`, its own else;
+    /// an anvil thinner than ISCCP's thin class's most (3.6) letting out from the tropopause.
+    /// The column ISCCP-H sees, for the clouds' closure against CERES.
+    pub fn column(&self, level: usize, tau: f64, isccp: bool, air: f64) -> Deck {
+        let optics = Optics::over(self, 1.0);
+        let (cold, warm) = CLOUD_PHASE;
+        let (mid_top, low_top) = CLOUD_TOPS;
+        let liquid_at = |ratio: f64| ((self.at(air, ratio) - cold) / (warm - cold)).clamp(0.0, 1.0);
+        let level = level.min(3);
+        let liquid = [1.0, 0.0, liquid_at(mid_top), liquid_at(low_top)][level];
+        let part = match isccp {
+            true => optics.isccp(tau, liquid),
+            false => optics.of(optics.stated(tau, liquid), liquid),
+        };
+        let mut parts = [(0.0, 0.85, 0.0, 0.0); 4];
+        let mut cover = [0.0; 4];
+        parts[level] = part;
+        cover[level] = 1.0;
+        let thin = if level == 1 && tau < 3.6 { 1.0 } else { 0.0 };
+        self.assemble(air, parts, cover, thin)
+    }
+
+    /// A deck from its levels' parts, each its optical depth, asymmetry, emissivity and the
+    /// share of the light it absorbs, their covers and the anvils' thin cirrus' share of their
+    /// emission, over air at `air` K (M67, M70).
+    fn assemble(&self, air: f64, parts: [Part; 4], cover: [f64; 4], thin_share: f64) -> Deck {
+        let top = self.tropopause_ratio(air);
+        let (mid_top, low_top) = CLOUD_TOPS;
         let through: f64 = (0..4).map(|i| 1.0 - cover[i] * parts[i].3).product();
         // The share of the air's absorbers above the clouds that reflect the light, each kind's
         // top by what it reflects in the diffuse light: the towers' at the tropopause, the
@@ -632,6 +720,142 @@ impl Sky {
     }
 }
 
+/// The gamma distribution of CLOUD_UNEVEN's spread about a mean of one (M70): its parts' shares
+/// of the mean, in the logarithm from a thousandth to twenty times it, and their weights, the
+/// shares rescaled so that their mean is one.
+fn uneven_parts() -> &'static [(f64, f64)] {
+    static PARTS: std::sync::OnceLock<Vec<(f64, f64)>> = std::sync::OnceLock::new();
+    PARTS.get_or_init(|| {
+        let nu = 1.0 / (CLOUD_UNEVEN * CLOUD_UNEVEN);
+        let n = 160;
+        let (lo, hi) = (1e-3f64.ln(), 20f64.ln());
+        let mut parts: Vec<(f64, f64)> = (0..n)
+            .map(|i| {
+                let u = (lo + (hi - lo) * (i as f64 + 0.5) / n as f64).exp();
+                // The density in the logarithm, u p(u), p(u) ~ u^(nu - 1) exp(-nu u).
+                (u, (nu * u.ln() - nu * u).exp())
+            })
+            .collect();
+        let total: f64 = parts.iter().map(|p| p.1).sum();
+        let mean: f64 = parts.iter().map(|p| p.0 * p.1).sum::<f64>() / total;
+        for p in parts.iter_mut() {
+            *p = (p.0 / mean, p.1 / total);
+        }
+        parts
+    })
+}
+
+/// The scaled optical depth, (1 - g) tau, whose diffuse reflection a conservative layer
+/// reflects as an uneven cloud of mean scaled depth `s` does (M70): the mean of its parts'
+/// s / (4/3 + s) over CLOUD_UNEVEN's gamma distribution, as one layer.
+pub fn uneven_scaled(s: f64) -> f64 {
+    if s <= 0.0 {
+        return 0.0;
+    }
+    let r: f64 = uneven_parts()
+        .iter()
+        .map(|&(u, w)| w * s * u / (4.0 / 3.0 + s * u))
+        .sum();
+    4.0 / 3.0 * r / (1.0 - r).max(1e-12)
+}
+
+/// The emissivity of an uneven cloud whose even emissivity is `e` (M70): 1 - (1 + x / nu)^-nu,
+/// x = -ln(1 - e) its absorption depth, over CLOUD_UNEVEN's gamma distribution.
+pub fn uneven_emissivity(e: f64) -> f64 {
+    let nu = 1.0 / (CLOUD_UNEVEN * CLOUD_UNEVEN);
+    let x = -(1.0 - e.clamp(0.0, 1.0)).max(1e-300).ln();
+    1.0 - (1.0 + x / nu).powf(-nu)
+}
+
+/// A cloud's part of a deck (M67): its optical depth in the star's light, its drops'
+/// asymmetry, its emissivity, and the share of the light it absorbs.
+type Part = (f64, f64, f64, f64);
+
+/// The optics of a place's clouds per kg/m² of their water (M67, M70): their liquid's optical
+/// depth by its drops' size over the sea's share of the place, their ice's by its crystals', each
+/// one's drops' asymmetry and its absorption in the infrared, its diffusivity's.
+struct Optics {
+    tau_liquid: f64,
+    tau_ice: f64,
+    g_liquid: f64,
+    g_ice: f64,
+    k_liquid: f64,
+    k_ice: f64,
+}
+
+impl Optics {
+    /// A sky's clouds' optics over a place `sea` of whose ground is the sea's.
+    fn over(sky: &Sky, sea: f64) -> Self {
+        let (liquid, ice) = CLOUD_RADIUS;
+        let drop = liquid.1 + sea.clamp(0.0, 1.0) * (liquid.0 - liquid.1);
+        Self {
+            tau_liquid: 3.0 / (2.0 * sky.water.liquid_density * drop),
+            tau_ice: (CLOUD_ICE_DEPTH.0 + CLOUD_ICE_DEPTH.1 / (ice * 1e6)) * 1e3,
+            g_liquid: CLOUD_ASYMMETRY.0 + CLOUD_ASYMMETRY.1 * drop * 1e6,
+            g_ice: CLOUD_ASYMMETRY.2 + CLOUD_ASYMMETRY.3 * ice * 1e6,
+            k_liquid: CLOUD_LIQUID_EMISSION * 1e3,
+            k_ice: DIFFUSIVITY * (CLOUD_ICE_EMISSION.0 + CLOUD_ICE_EMISSION.1 / (ice * 1e6)) * 1e3,
+        }
+    }
+
+    /// A cloud's optical depth, asymmetry, emissivity and absorption from its water's path,
+    /// kg/m², `liquid` of it liquid.
+    fn of(&self, path: f64, liquid: f64) -> Part {
+        let (tl, ti) = (
+            liquid * path * self.tau_liquid,
+            (1.0 - liquid) * path * self.tau_ice,
+        );
+        let tau = tl + ti;
+        let g = if tau > 0.0 {
+            (tl * self.g_liquid + ti * self.g_ice) / tau
+        } else {
+            self.g_liquid
+        };
+        let e = 1.0 - (-(liquid * self.k_liquid + (1.0 - liquid) * self.k_ice) * path).exp();
+        let (a, b) = CLOUD_ABSORPTION;
+        (tau, g, e, a * path / (path + b))
+    }
+
+    /// The water of a stated optical depth `tau` at a level whose liquid share is `liquid`.
+    fn stated(&self, tau: f64, liquid: f64) -> f64 {
+        tau / (liquid * self.tau_liquid + (1.0 - liquid) * self.tau_ice)
+    }
+
+    /// A cloud whose depth is ISCCP's albedo-equivalent `tau` (M70): its water's path thinned
+    /// by CLOUD_THICKNESS, in the light and in the infrared alike.
+    fn isccp(&self, tau: f64, liquid: f64) -> Part {
+        self.of(CLOUD_THICKNESS * self.stated(tau, liquid), liquid)
+    }
+}
+
+/// Two clouds of a level as one kind (M67, M68): its reflection the two's by their shares, its
+/// depth the one that reflects it in the diffuse light, its drops' asymmetry, its emissivity and
+/// its absorption the two's.
+fn blend(a: Part, b: Part, share: f64) -> Part {
+    let share = share.clamp(0.0, 1.0);
+    let diffuse = |(tau, g, _, _): Part| {
+        let s = (1.0 - g) * tau;
+        s / (4.0 / 3.0 + s)
+    };
+    let r = (1.0 - share) * diffuse(a) + share * diffuse(b);
+    let mix = |x: f64, y: f64| (1.0 - share) * x + share * y;
+    let g = mix(a.1, b.1);
+    let tau = 4.0 / 3.0 * r / (1.0 - r).max(1e-9) / (1.0 - g).max(1e-9);
+    (tau, g, mix(a.2, b.2), mix(a.3, b.3))
+}
+
+/// A cloud whose depth is its water's, uneven over the place (M70): its reflection and its
+/// emissivity its parts' means over CLOUD_UNEVEN's spread.
+fn uneven((tau, g, e, a): Part) -> Part {
+    let s = (1.0 - g) * tau;
+    (
+        uneven_scaled(s) / (1.0 - g).max(1e-9),
+        g,
+        uneven_emissivity(e),
+        a,
+    )
+}
+
 /// The water a cloud's air condenses as it rises at `t` K and `p` Pa, kg/m³ a metre (M67), in
 /// an air of `gravity` m/s², gas constant and heat capacity J/kg/K: its adiabatic water's rise
 /// (Albrecht et al. 1990), the saturation vapour's density times (p / (p - e)) (L Gamma_m / (R_v
@@ -680,7 +904,8 @@ mod tests {
                     for eis in [-15.0, 0.0, 8.0, 30.0] {
                         for humidity in [0.0, 0.6, 1.0, 1.4] {
                             let k = kinds(convective, large, saturation, eis, humidity);
-                            for v in [k.tower, k.anvil, k.layer, k.low, k.cover()] {
+                            let storm = k.storm.iter().sum::<f64>();
+                            for v in [k.tower, k.anvil, k.layer, k.low, storm, k.cover()] {
                                 assert!(
                                     (0.0..=1.0).contains(&v),
                                     "{v} at {convective} {large} {saturation} {eis} {humidity}"
@@ -826,27 +1051,121 @@ mod tests {
         assert!((half - 0.5 * deck(1.0, 10.0).reflectance(0.5)).abs() < 1e-6);
     }
 
-    /// M69: the clouds read their air's own profile, its column's adiabat from its surface air:
-    /// over Earth's 299 K wet tropical oceans their air at 553 hPa, ISCCP's mid-level tops, stands
-    /// within 2 K of ERA-Interim's 272.2 K, where down the stated lapse rate 266.9.
+    /// M70: an uneven cloud reflects no more than an even one of its mean depth, as much where
+    /// thin, its reflection linear in its depth, some 0.82 of its depth at 10 and the towers'
+    /// water's 90 or so the 54 to 59 ISCCP gives its thick high cloud over the tropical oceans as
+    /// the depth whose albedo is its cells' mean; its emissivity no more than an even cloud's,
+    /// as much where it lets almost all through or almost none, 0.763 at an absorption depth of 2
+    /// where even 0.865 (the gamma distribution's closed form).
     #[test]
-    fn the_clouds_read_their_air_s_own_profile() {
+    fn an_uneven_cloud_reflects_and_keeps_less() {
+        let g = 0.86;
+        let depth = |tau: f64| uneven_scaled((1.0 - g) * tau) / (1.0 - g);
+        for tau in [0.01, 0.1, 1.0, 3.0, 10.0, 30.0, 90.0, 300.0] {
+            let d = depth(tau);
+            assert!(d <= tau * (1.0 + 1e-9) && d > 0.0, "{tau}: {d}");
+        }
+        assert!((depth(0.01) / 0.01 - 1.0).abs() < 1e-3);
+        assert!((depth(10.0) / 10.0 - 0.82).abs() < 0.02, "{}", depth(10.0));
+        assert!((54.0..60.0).contains(&depth(90.0)), "{}", depth(90.0));
+        for e in [0.0, 0.01, 0.2, 0.5, 0.9, 0.999] {
+            let u = uneven_emissivity(e);
+            assert!(u <= e + 1e-12 && u >= 0.0, "{e}: {u}");
+        }
+        assert!((uneven_emissivity(0.001) / 0.001 - 1.0).abs() < 1e-2);
+        assert!(uneven_emissivity(1.0 - 1e-12) > 0.99);
+        // At an absorption depth of 2 the gamma law's 0.763 where even 0.865.
+        let e = uneven_emissivity(1.0 - (-2.0f64).exp());
+        assert!((e - 0.763).abs() < 0.005, "{e}");
+    }
+
+    /// Earth's sky, built once for the checks that read it (M70; the tests' tiers: each built
+    /// its own in some 10 s).
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn earth_s_sky() {
         let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
         let balance = crate::climate::EnergyBalance::from_graph(&graph);
         let sky = Sky::from_graph(&graph, &balance).expect("a sky");
+        crate::testkit::checks(&[
+            ("the_clouds_read_their_air_s_own_profile", &|| {
+                the_clouds_read_their_air_s_own_profile(&sky)
+            }),
+            ("a_free_air_on_its_own_profile_holds_no_inversion", &|| {
+                a_free_air_on_its_own_profile_holds_no_inversion(&sky)
+            }),
+            (
+                "the_convection_s_own_clouds_show_as_isccp_sees_them",
+                &|| the_convection_s_own_clouds_show_as_isccp_sees_them(&sky),
+            ),
+        ]);
+    }
+
+    /// M69: the clouds read their air's own profile, its column's adiabat from its surface air:
+    /// over Earth's 299 K wet tropical oceans their air at 553 hPa, ISCCP's mid-level tops, stands
+    /// within 2 K of ERA-Interim's 272.2 K, where down the stated lapse rate 266.9.
+    fn the_clouds_read_their_air_s_own_profile(sky: &Sky) {
         let t = sky.at(299.0, 553.0 / 1013.25);
         println!("553 hPa over 299 K: {t:.1} K");
         assert!((t - 272.2).abs() < 2.0, "{t}");
     }
 
+    /// M70: a free air standing on its own moist adiabat over its own ground, as it does within
+    /// the overturning cell, holds no inversion: the inversion's strength Wood and Bretherton
+    /// (2006) estimate, which measures how far the air at 700 hPa stands over the moist adiabat
+    /// from the surface, within 1.5 K of none over grounds from 285 to 303 K, where read down
+    /// the stated lapse rate it stood some 3 K under; and a free air warmer than its ground's
+    /// holds the more.
+    fn a_free_air_on_its_own_profile_holds_no_inversion(sky: &Sky) {
+        for t in [285.0, 290.0, 295.0, 299.0, 303.0] {
+            let eis = sky.eis(t, t, 1.0);
+            println!(
+                "{t} K: {eis:.2} K; beyond the cell {:.2} K",
+                sky.eis(t, t, 0.0)
+            );
+            assert!(eis.abs() < 1.5, "{t}: {eis}");
+            assert!(sky.eis(t - 4.0, t, 1.0) > eis + 3.0, "{t}");
+        }
+    }
+
+    /// M70: the storms' own high cloud shows as ISCCP-H sees it over the oceans from 30 to 60
+    /// degrees by their seasonal rain (GPCP v3.2; the research notes), its thin, medium and thick
+    /// classes each within 0.025 and all of it within 0.03, from 1.5 to 7 mm a day; more as it
+    /// rains harder; none without the storms' rain, nor from the convection's.
+    #[test]
+    fn the_storms_high_cloud_shows_as_isccp_sees_it() {
+        let isccp = [
+            (1.59, [0.110, 0.051, 0.028]),
+            (2.55, [0.089, 0.065, 0.042]),
+            (3.45, [0.090, 0.078, 0.052]),
+            (4.45, [0.098, 0.088, 0.064]),
+            (5.43, [0.100, 0.096, 0.080]),
+            (6.63, [0.103, 0.104, 0.096]),
+        ];
+        let mut last = 0.0;
+        for (rain, measured) in isccp {
+            let k = kinds(0.0, rain, 0.5, 0.0, 0.9);
+            for (c, (&found, &m)) in k.storm.iter().zip(measured.iter()).enumerate() {
+                assert!((found - m).abs() < 0.025, "{rain} {c}: {found} {m}");
+            }
+            let (found, m) = (k.storm.iter().sum::<f64>(), measured.iter().sum::<f64>());
+            println!("{rain} mm a day: storms' high cloud {found:.3} (ISCCP-H {m:.3})");
+            assert!((found - m).abs() < 0.03, "{rain}: {found} {m}");
+            assert!(found > last, "{rain}: {found} after {last}");
+            last = found;
+        }
+        assert_eq!(kinds(0.0, 0.0, 0.9, 0.0, 0.9).storm, [0.0; 3]);
+        assert_eq!(kinds(9.0, 0.0, 0.9, 0.0, 0.9).storm, [0.0; 3]);
+    }
+
     /// M68: the convection's own clouds show as ISCCP sees them over the tropical oceans: the
     /// share of the sky its mid-level cloud tops under its high cloud, overlapping at random, is
     /// ISCCP-H's fit against the rain within some thousandths, and its cumulus under both its
-    /// low cloud's within some hundredths, from 1.5 to 9 mm a day; and each level's cloud keeps
+    /// low cloud's within some hundredths, from 1.5 to 9 mm a day, and the deck lays them so,
+    /// where nothing higher hides them (M70); and each level's cloud keeps
     /// its measured optical depth in the deck, where it alone covers its level: the thin and the
-    /// medium anvils, the mid-level cloud and the cumulus.
-    #[test]
-    fn the_convection_s_own_clouds_show_as_isccp_sees_them() {
+    /// medium anvils, the mid-level cloud and the cumulus, thinned by CLOUD_THICKNESS (M70).
+    fn the_convection_s_own_clouds_show_as_isccp_sees_them(sky: &Sky) {
         for rain in [1.5, 3.0, 5.0, 9.0] {
             let k = kinds(rain, 0.0, 0.5, -10.0, 0.9);
             let high = 1.0 - (1.0 - k.tower) * (1.0 - k.anvil);
@@ -859,10 +1178,15 @@ mod tests {
             assert!((mid - fit_mid).abs() < 0.005, "{rain}: {mid} {fit_mid}");
             assert!((low - fit_low).abs() < 0.03, "{rain}: {low} {fit_low}");
             assert_eq!(k.low, 0.0);
+            // In the deck they lie as ISCCP sees them, where nothing higher hides them (M70).
+            let deck = sky.deck(&k, 300.0, 1.0);
+            let (seen_mid, seen_low) = (deck.cover[2] as f64, deck.cover[3] as f64);
+            assert!(
+                (seen_mid - mid).abs() < 1e-3 + 1e-3 * k.layer,
+                "{rain}: {seen_mid} {mid}"
+            );
+            assert!((seen_low - low).abs() < 1e-3, "{rain}: {seen_low} {low}");
         }
-        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
-        let balance = crate::climate::EnergyBalance::from_graph(&graph);
-        let sky = Sky::from_graph(&graph, &balance).expect("a sky");
         let depth = |kinds: Kinds, i: usize| {
             let deck = sky.deck(&kinds, 300.0, 1.0);
             let (s, d) = (deck.scaled[i] as f64, deck.depth[i] as f64);
@@ -906,6 +1230,7 @@ mod tests {
         ];
         for (kinds, i, measured) in cases {
             let tau = depth(kinds, i);
+            let measured = CLOUD_THICKNESS * measured;
             assert!(
                 (tau - measured).abs() < 1e-3 * measured,
                 "{i}: {tau} {measured}"
@@ -916,7 +1241,12 @@ mod tests {
     /// M66: the Earth-like's clouds reflect its light, keep its heat from space and send it
     /// down: none of them change nothing; a low deck reflects much and keeps little, a high
     /// anvil keeps far more from space and sends less down; a deck over ice adds less to its
-    /// albedo than over the sea; an airless body has no sky for clouds.
+    /// albedo than over the sea; an airless body has no sky for clouds. M70 (the user,
+    /// 2026-11-14): what each keeps from space as the radiative kernels give ISCCP's clouds,
+    /// scaled to CERES's measure over the tropical oceans (the kernels over ISCCP-H's clouds keep
+    /// 1.2 to 1.27 times CERES's infrared; the research notes): a thin anvil over all of a
+    /// warm sea the thin cirrus' 88 W/m² over 1.24, within 15 percent; a low deck the
+    /// stratocumulus' 19, within 30; the anvil at least three times the deck.
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_earth_like_s_clouds_reflect_its_light_and_keep_its_heat() {
@@ -942,7 +1272,13 @@ mod tests {
             deck.albedo > 0.2 && deck.olr < 0.0 && deck.down > 0.0,
             "{deck:?}"
         );
-        assert!(high.olr < deck.olr - 50.0, "{high:?} {deck:?}");
+        let (anvil_keeps, deck_keeps) = (-high.olr, -deck.olr);
+        assert!(
+            (anvil_keeps / (88.0 / 1.24) - 1.0).abs() < 0.15,
+            "{anvil_keeps}"
+        );
+        assert!((deck_keeps / 19.0 - 1.0).abs() < 0.3, "{deck_keeps}");
+        assert!(anvil_keeps > 3.0 * deck_keeps, "{high:?} {deck:?}");
         assert!(deck.down > high.down, "{high:?} {deck:?}");
         let over_ice = sky.effects(&low, (260.0, 1.0), 255.0, (ICE_ALBEDO, 0.0));
         assert!(over_ice.albedo < deck.albedo - 0.1, "{over_ice:?}");
