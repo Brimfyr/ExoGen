@@ -18,7 +18,8 @@ use std::f64::consts::{PI, TAU};
 
 /// The seas' depth-integrated circulation through the year (F272), on the cycle's layout: its
 /// streamfunction at each place, m³/s, and the water each place's east and north boundaries
-/// pass, m³/s, eastward and northward.
+/// pass, m³/s, eastward and northward; and the wind's stress on the sea that drives it, N/m²
+/// east and north at each place (M76).
 #[derive(Clone, Debug)]
 pub struct Currents {
     pub layout: (usize, usize),
@@ -26,6 +27,7 @@ pub struct Currents {
     pub psi: Vec<f64>,
     pub east: Vec<f64>,
     pub north: Vec<f64>,
+    pub stress: Vec<[f64; 2]>,
 }
 
 impl Currents {
@@ -138,6 +140,7 @@ pub fn circulate(
         psi,
         east,
         north,
+        stress: stress.to_vec(),
     })
 }
 

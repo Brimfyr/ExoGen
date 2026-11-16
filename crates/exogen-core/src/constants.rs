@@ -2678,10 +2678,14 @@ pub const PROFILE_STABLE: [f64; 4] = [1.0, 0.667, 5.0, 0.35];
 /// SURFACE_LAYER_STEPS to a decade, its bulk Richardson numbers from some -1,400 to 5,400.
 pub const SURFACE_LAYER_ZETA: (f64, f64, f64) = (1e-6, 1e4, 1e8);
 pub const SURFACE_LAYER_STEPS: usize = 100;
-/// F267: the depth the ground's drag acts over, as a share of the air's scale height: over
-/// Earth's sea its friction, the drag times the wind over the depth, turns a 7 m/s wind
-/// some 20° across the isobars at 45°, as its surface winds cross them.
-pub const SURFACE_LAYER_SHARE: f64 = 0.03;
+/// F267: the depth the ground's drag acts over, as a share of the air's scale height. M76: its
+/// friction the drag times the place's own speed through the weather over the depth, some 420 m
+/// of Earth's air, the friction rates Earth's sea winds measure, 1.5 to 2.6e-5 /s in the
+/// trades and 2.2 to 4.2e-5 in the westerlies (fitted to ICOADS and NCEP's 1991 to 2020
+/// means), and the time-mean wind's 11 to 16 degrees across the isobars at 40 to 50 degrees;
+/// within the 400 to 700 m its subcloud layer mixes (Stevens et al. 2002). 0.03 before, with
+/// the body's mean wind for every place's.
+pub const SURFACE_LAYER_SHARE: f64 = 0.05;
 /// F267: the share of the atmosphere's work its winds spend against the ground, half
 /// (Peixoto and Oort 1992), the rest in the free air; and the mean of the cube of a wind's
 /// speed against the cube of its mean, a Rayleigh distribution's 6/pi.

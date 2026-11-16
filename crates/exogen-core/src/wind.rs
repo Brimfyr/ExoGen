@@ -23,6 +23,14 @@
 //! the ground: a force on the air, not a ridge in its pressure. The two share the torque by
 //! the room past the cell's edge for the first of the eddies' belts, the belts coming in by
 //! degrees as the room holds them.
+//!
+//! The wind at a place is its mean through the year's weather; the weather's gusts blow about
+//! it at the body's mean wind, U, so that the place's speed through the weather is
+//! sqrt(|V|² + U²), the speed its exchange with the ground reads (F269). The ground's drag
+//! reads it too (M76): its friction, the drag times that speed over the layer it acts over,
+//! the work the surface spends against the ground, and the stress on the sea, rho C_d W V,
+//! where the mean wind's own speed left out its gusts, some 40 percent of the trades'
+//! stress.
 
 use crate::constants::*;
 use crate::fields::Field;
@@ -129,7 +137,7 @@ impl Site {
     /// The ground's drag coefficient at the wind's reference height, its sea's, its ice's and
     /// its land's by their shares: (kappa / ln(z / z0))², the law of the wall over each
     /// one's roughness.
-    fn drag(&self) -> f64 {
+    pub(crate) fn drag(&self) -> f64 {
         let law = |z0: f64| (VON_KARMAN / (WIND_REFERENCE_HEIGHT / z0).ln()).powi(2);
         let (sea, ice) = (self.sea.clamp(0.0, 1.0), self.ice.clamp(0.0, 1.0));
         let land = (1.0 - sea - ice).max(0.0);
@@ -205,6 +213,16 @@ impl Wind {
             *x /= steps;
         }
         (east, north, speed)
+    }
+
+    /// The speed through the weather at place `p` in step `k`, m/s (M76): the mean wind's
+    /// and the gusts' about it, the body's mean wind, sqrt(|V|² + U²).
+    pub fn through_the_weather(&self, k: usize, p: usize) -> f64 {
+        let n = self.layout.0 * self.layout.1;
+        let i = k * n + p;
+        (self.east[i] as f64)
+            .hypot(self.north[i] as f64)
+            .hypot(self.speed[k])
     }
 
     /// The year's mean speed over the body, m/s.
@@ -413,7 +431,13 @@ fn step(
         work,
     };
     for _ in 0..WIND_ITERATIONS {
-        let friction = |drag: f64| drag * speed.max(WIND_LEAST_SPEED) / depth;
+        // Each place's speed through the weather, the last round's wind's and its gusts' at the
+        // body's mean wind (M76): its friction, the drag times it over the layer.
+        let gusty: Vec<f64> = (0..n)
+            .map(|p| out.east[p].hypot(out.north[p]).hypot(speed))
+            .collect();
+        let row_gusty = rows(&|p| gusty[p]);
+        let friction = |drag: f64, w: f64| drag * w.max(WIND_LEAST_SPEED) / depth;
         // Each side of the thermal equator: the cell's edge, the trades' end, and the
         // latitudes' pressure gradient, K per metre northward, through the trades by the fall
         // of their temperature, past them the belts that bring the surface's torque to
@@ -469,7 +493,7 @@ fn step(
                     .map(|i| {
                         let lat = lat_of(i);
                         let f = 2.0 * air.omega * lat.sin();
-                        let eps = friction(row_drag[i]);
+                        let eps = friction(row_drag[i], row_gusty[i]);
                         let u = (eps * x[i] - f * g[i] / row_density[i])
                             / (eps * eps + f * f).max(1e-300);
                         row_density[i] * eps * u * lat.cos() * row_weight[i]
@@ -515,7 +539,7 @@ fn step(
                     0.0
                 };
                 let gy = along - (departure[p + n_lon] - departure[p - n_lon]) / (2.0 * a * dphi);
-                let eps = friction(drag[p]);
+                let eps = friction(drag[p], gusty[p]);
                 let den = (eps * eps + f * f).max(1e-300);
                 let x = force[i];
                 east[p] = (eps * x - (eps * gx + f * gy) / density[p]) / den;
@@ -526,12 +550,17 @@ fn step(
                 drift.1[p] = (-eps * gy / density[p] - f * x) / den;
             }
         }
-        // Its strength: the surface spends its share of the heat engine's work, the mean
-        // wind the mean of a Rayleigh distribution of speeds, whose cube's mean is 6/pi its
-        // mean's cube.
+        // Its strength: the surface spends its share of the heat engine's work, each place's
+        // speed through the weather the mean of a Rayleigh distribution of speeds, whose
+        // cube's mean is 6/pi its mean's cube (M76: the gusts' at the body's mean wind, which
+        // the strength scales with the rest).
+        let plain = (0..n)
+            .map(|p| sites[p].weight * east[p].hypot(north[p]))
+            .sum::<f64>()
+            / whole;
         let spent: f64 = (0..n)
             .map(|p| {
-                let v = east[p].hypot(north[p]);
+                let v = east[p].hypot(north[p]).hypot(plain);
                 sites[p].weight * density[p] * drag[p] * RAYLEIGH_CUBE * v * v * v
             })
             .sum::<f64>()
@@ -551,11 +580,14 @@ fn step(
             .map(|p| sites[p].weight * east[p].hypot(north[p]))
             .sum::<f64>()
             / whole;
+        // The belts' spacing speed (F285): the rms speed past the cells' edges of the flow the
+        // spin's beta arrests, its latitudes' eastward wind's and its gusts' at the body's
+        // mean wind (M76), as Rhines (1975) reads the turbulent flow's whole rms speed.
         let (mut sum, mut area) = (0.0, 0.0);
         for i in 1..n_lat - 1 {
             if (lat_of(i) - equator).abs() > reach {
                 let u = (0..n_lon).map(|j| east[i * n_lon + j]).sum::<f64>() / n_lon as f64;
-                sum += row_weight[i] * u * u;
+                sum += row_weight[i] * (u * u + mean * mean);
                 area += row_weight[i];
             }
         }
@@ -661,9 +693,10 @@ mod tests {
 
     /// F267: an Earth-like aquaplanet's air, warm at its equator and cold at its poles, blows
     /// in Earth's three belts: easterly trades toward the equator within some 30°, the
-    /// westerlies poleward of them to some 60°, easterlies at the poles; some 5 to 9 m/s,
-    /// near the 7 m/s of Earth's ocean winds (Wentz et al. 2007), under a heat engine
-    /// working at about the 2 to 3 W/m² of Earth's (Peixoto and Oort 1992).
+    /// westerlies poleward of them to some 60°, easterlies at the poles; its speed through the
+    /// weather, as anemometers read it, some 5 to 9 m/s, near the 7 m/s of Earth's ocean winds
+    /// (Wentz et al. 2007; ICOADS 7.1 to 7.6), under a heat engine working at about the 2 to 3
+    /// W/m² of Earth's (Peixoto and Oort 1992).
     #[test]
     fn an_earth_like_s_winds_blow_in_three_belts() {
         let layout = (91, 90);
@@ -681,7 +714,12 @@ mod tests {
         assert!(westerlies > 1.0 && away > 0.0, "45°N: {westerlies}, {away}");
         assert!(south > 1.0, "45°S: {south}");
         assert!(polar < 0.0, "75°N: {polar}");
-        let (mean, work) = (wind.mean_speed(), wind.work[0]);
+        let whole: f64 = sites.iter().map(|s| s.weight).sum();
+        let mean = (0..sites.len())
+            .map(|p| sites[p].weight * wind.through_the_weather(0, p))
+            .sum::<f64>()
+            / whole;
+        let work = wind.work[0];
         assert!((5.0..9.0).contains(&mean), "{mean} m/s");
         assert!((1.5..4.0).contains(&work), "{work} W/m²");
     }
@@ -690,7 +728,8 @@ mod tests {
     /// ground's drag acts over. An aquaplanet's isobars lie along its latitudes: all of its
     /// northward wind is that drift and none of its eastward, and the mass the drift carries,
     /// the layer's depth times its speed, is the Ekman transport of the wind's stress on the
-    /// ground, C_d U u / f, as the trades' drift toward the equator is the Hadley cell's lower
+    /// ground, C_d W u / f, W the place's speed through the weather (M76), as the trades'
+    /// drift toward the equator is the Hadley cell's lower
     /// branch (Held 2001). About a warm patch the drift blows down the pressure's gradient
     /// into its low and the rest of the wind along the isobars about it, the two at right
     /// angles. Under a locked body's star the drift blows toward the star from either side.
@@ -707,13 +746,13 @@ mod tests {
             assert_eq!(wind.drift_north[p], wind.north[p], "{p}");
             assert_eq!(wind.drift_east[p], 0.0, "{p}");
         }
-        let (depth, drag, speed) = (earth.surface_layer(), seas[0].drag(), wind.speed[0]);
+        let (depth, drag) = (earth.surface_layer(), seas[0].drag());
         for lat in [-46.0f64, -14.0, 14.0, 46.0] {
             let i = ((lat + 90.0) / 180.0 * (layout.0 - 1) as f64).round() as usize;
             let p = i * layout.1;
             let f = 2.0 * earth.omega * seas[p].lat.sin();
             let drifts = depth * wind.drift_north[p] as f64;
-            let ekman = drag * speed * wind.east[p] as f64 / f;
+            let ekman = drag * wind.through_the_weather(0, p) * wind.east[p] as f64 / f;
             assert!(
                 (drifts / ekman - 1.0).abs() < 0.02,
                 "{lat}: {drifts} {ekman}"
@@ -776,6 +815,75 @@ mod tests {
         let ((west, drifts), (east, back)) = (at(-40.0), at(40.0));
         assert!(drifts > 0.5 * west && west > 0.0, "{west} {drifts}");
         assert!(back < 0.5 * east && east < 0.0, "{east} {back}");
+    }
+
+    /// M76: the ground's drag reads each place's speed through the weather, its mean wind's and
+    /// its gusts' at the body's mean wind, sqrt(|V|² + U²). The surface spends its share of
+    /// the heat engine's work on it, rho C_d 6/pi W³ over the body; the stress it lays on the
+    /// ground, rho C_d W u, brings the surface's torque on the air to nothing on each side of
+    /// the equator, its trades' against its westerlies', where with the body's mean wind for
+    /// every place's friction the westerlies' stress stood two thirds over the trades'; and the
+    /// friction turns the trades less across the isobars where they blow the softer, toward
+    /// the equator, where f falls.
+    #[test]
+    fn a_wind_s_drag_reads_its_speed_through_the_weather() {
+        let layout = (91, 90);
+        let sites = sites(layout, 1.0);
+        let air: Vec<f64> = sites
+            .iter()
+            .map(|s| 300.0 - 50.0 * s.lat.sin().powi(2))
+            .collect();
+        let earth = earth();
+        let wind = blow(&earth, &sites, layout, &links(layout, 0.6), &[&air]).unwrap();
+        let n = sites.len();
+        let whole: f64 = sites.iter().map(|s| s.weight).sum();
+        let rho = |t: f64| earth.pressure * earth.molar_mass / (GAS_CONSTANT * t);
+        // Its speed through the weather.
+        for p in [0, n / 3, n / 2 + 7] {
+            let v = (wind.east[p] as f64).hypot(wind.north[p] as f64);
+            let by_hand = v.hypot(wind.speed[0]);
+            assert!((wind.through_the_weather(0, p) - by_hand).abs() < 1e-9);
+        }
+        // The work the surface spends on it.
+        let spent = (0..n)
+            .map(|p| {
+                let w = wind.through_the_weather(0, p);
+                sites[p].weight * rho(air[p]) * sites[p].drag() * RAYLEIGH_CUBE * w * w * w
+            })
+            .sum::<f64>()
+            / whole;
+        let owed = SURFACE_DISSIPATION_SHARE * wind.work[0];
+        println!("the surface spends {spent:.4} W/m², its share of the work {owed:.4}");
+        assert!((spent / owed - 1.0).abs() < 2e-3, "{spent} {owed}");
+        // Its stress's torque on each side, its trades' against its westerlies'.
+        for side in [1.0f64, -1.0] {
+            let (mut net, mut gross) = (0.0, 0.0);
+            for p in 0..n {
+                let lat = sites[p].lat;
+                if side * lat <= 0.0 {
+                    continue;
+                }
+                let w = wind.through_the_weather(0, p);
+                let torque = sites[p].weight
+                    * rho(air[p])
+                    * sites[p].drag()
+                    * w
+                    * wind.east[p] as f64
+                    * lat.cos();
+                net += torque;
+                gross += torque.abs();
+            }
+            println!("side {side}: its stress's torque {net:.3e} of {gross:.3e}");
+            assert!(net.abs() < 0.03 * gross, "{side}: {net} {gross}");
+        }
+        // Across the isobars by its friction over f: the less where it blows the softer.
+        let angle = |lat: f64| {
+            let (u, v) = zonal(&wind, lat);
+            (v / u).abs()
+        };
+        let (eight, sixteen) = (angle(8.0), angle(16.0));
+        println!("the trades' north over their east at 8° {eight:.2}, at 16° {sixteen:.2}");
+        assert!(sixteen < 0.8 && eight > sixteen, "{eight} {sixteen}");
     }
 
     /// F267: a faster spinner's belts are the narrower, so that it has more of them: at four
