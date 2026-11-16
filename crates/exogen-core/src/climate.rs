@@ -9805,6 +9805,263 @@ mod tests {
         sky: Option<crate::clouds::Sky>,
     }
 
+    /// The year's water at its own wind over a sea of `share` of each place (M75), as the
+    /// finish runs it: the year, its moisture, the year again at its own wind and its wet
+    /// ground's latent heat, and its moisture again.
+    fn water_over(graph: &ParamGraph, share: &Field<f32>) -> (Cycle, crate::moisture::Moisture) {
+        let eb = EnergyBalance::from_graph(graph);
+        let climate = eb.solve(share.grid());
+        let ocean = Ocean::from_graph(graph).expect("a water sea");
+        let ground = Ground::from_graph(graph);
+        let sea = Some((&ocean, share));
+        let first = eb.cycle(&climate, &ground, sea, None);
+        let air = crate::moisture::Air::from_graph(graph, eb.transport, OCEAN_TRANSPORT_SHARE)
+            .expect("an air");
+        let heights = vec![0.0; first.sites.len()];
+        let wet = first.moisture(&air, &heights).expect("a moisture");
+        let stated = first.coupling(Some(&wet)).expect("a coupling");
+        let cycle = eb.cycle_with(&climate, &ground, sea, None, Some(&stated));
+        let water = cycle.moisture(&air, &heights).expect("a moisture");
+        (cycle, water)
+    }
+
+    /// A band of the year's water over a sea of lands (M75): over the places `within`, by
+    /// their areas, the land's share, the rain and what the sea and the land give, kg/m² a
+    /// year, and the potential evaporation, the same.
+    fn water_band(
+        cycle: &Cycle,
+        m: &crate::moisture::Moisture,
+        within: impl Fn(&crate::wind::Site) -> bool,
+    ) -> [f64; 4] {
+        let year = SECONDS_PER_DAY * 365.25;
+        let mut b = [0.0f64; 5];
+        for (q, s) in cycle.sites.iter().enumerate().filter(|(_, s)| within(s)) {
+            let w = s.weight;
+            b[0] += w;
+            b[1] += w * m.land[q];
+            b[2] += w * m.precipitation[q] * year;
+            b[3] += w * m.evaporation[q] * year;
+            b[4] += w * m.potential[q] * year;
+        }
+        let w = b[0].max(1e-30);
+        [b[1] / w, b[2] / w, b[3] / w, b[4] / w]
+    }
+
+    /// M75: an Earth with two tropical continents from 30 south to 30 north, one 30 degrees
+    /// of longitude wide, some 3,300 km, as Earth's own at its equator, and one 70 degrees
+    /// wide, 7,800 km; the rest sea. The Earth-like's own year lies the same at every
+    /// longitude, a share of sea and of land in every place, and cannot tell where on a land
+    /// its rain falls (M74's finish, its widest tropical land's western half arid across the
+    /// equator while every check of its year passed).
+    ///
+    /// The narrow continent's equator stands humid across it, as the Amazon's and the
+    /// Congo's do (rain over 2,000 mm a year 2,500 to 3,000 km inland; Eltahir and Bras 1994:
+    /// the recycled share of its rain rising from a sixth in its east to a half in its
+    /// west): its rain over its potential evaporation over 0.65 (UNEP 1992) from its second
+    /// place on from its west coast, and no less than semi-arid at that coast. The wide
+    /// continent's equator stands humid over its eastern half, the side its trades blow
+    /// from, and dries by degrees toward its west coast (KNOWN: sub-humid to semi-arid over
+    /// its western half and arid at its west coast's place; 14 models with a soil that
+    /// cannot dry keep a 45 degree continent's equator wet, Biasutti et al. 2021, and a
+    /// bucket's soil dries a 112 degree one, Charnay et al. 2013). From 20 to 30 degrees the
+    /// lands stand as Earth's subtropics: sub-humid at their east coasts, arid from their
+    /// middles west, their west a tenth as wet as their east. And what a wet ground would
+    /// give, Penman's, stands near what the sea beside it gives under the same sky, where
+    /// the exchange's draw from a surface as hot as the dry ground stood three to four times
+    /// over it.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn the_tropical_lands_year() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        // The wide continent about longitude 0, the narrow about 145 east.
+        let land = |lon: f64, lat: f64| {
+            lat.abs() < 30.0 && (lon.abs() < 35.0 || (lon - 145.0).abs() < 15.0)
+        };
+        let share = Field::from_fn(grid, |_, d| {
+            let (lon, lat) = lon_lat_from_direction(d);
+            if land(lon.to_degrees(), lat.to_degrees()) {
+                0.0
+            } else {
+                1.0
+            }
+        });
+        let (cycle, m) = water_over(&graph, &share);
+        let n_lon = m.layout.1;
+        // Each longitude's band between two latitudes of either hemisphere: its land's
+        // share, its rain, its potential evaporation and its rain over it.
+        let column = |j: usize, lo: f64, hi: f64| {
+            let lon = cycle.sites[j].lon;
+            let [land, rain, _, potential] = water_band(&cycle, &m, |s| {
+                (s.lon - lon).abs() < 1e-9 && (lo..hi).contains(&s.lat.to_degrees().abs())
+            });
+            (
+                lon.to_degrees(),
+                land,
+                rain,
+                potential,
+                rain / potential.max(1e-30),
+            )
+        };
+        let across = |lo: f64, hi: f64, west: f64, east: f64| -> Vec<(f64, f64, f64, f64)> {
+            (0..n_lon)
+                .map(|j| column(j, lo, hi))
+                .filter(|c| c.1 > 0.9 && c.0 > west && c.0 < east)
+                .map(|c| (c.0, c.2, c.3, c.4))
+                .collect()
+        };
+        let show = |name: &str, cells: &[(f64, f64, f64, f64)]| {
+            let row: Vec<String> = cells
+                .iter()
+                .map(|c| format!("{:.0}: {:.0}/{:.0} = {:.2}", c.0, c.1, c.2, c.3))
+                .collect();
+            println!(
+                "{name} (longitude: rain / potential, mm a year): {}",
+                row.join("; ")
+            );
+        };
+        let narrow = across(0.0, 8.0, 125.0, 165.0);
+        let wide = across(0.0, 8.0, -40.0, 40.0);
+        let (dry_narrow, dry_wide) = (
+            across(20.0, 30.0, 125.0, 165.0),
+            across(20.0, 30.0, -40.0, 40.0),
+        );
+        show("the narrow continent's equator", &narrow);
+        show("the wide continent's equator", &wide);
+        show("the wide continent from 20 to 30 degrees", &dry_wide);
+        crate::testkit::checks(&[
+            (
+                "an_equatorial_land_as_wide_as_earth_s_stands_humid",
+                &|| {
+                    assert!(narrow.len() >= 6, "{}", narrow.len());
+                    assert!(narrow[0].3 > 0.2, "{:?}", narrow[0]);
+                    for c in &narrow[1..] {
+                        assert!(c.3 > 0.65 && c.1 > 1_200.0, "{c:?}");
+                    }
+                },
+            ),
+            (
+                "a_wide_equatorial_land_dries_toward_its_west_by_degrees",
+                &|| {
+                    assert!(wide.len() >= 14, "{}", wide.len());
+                    for c in wide.iter().filter(|c| c.0 >= 0.0) {
+                        assert!(c.3 > 0.65, "{c:?}");
+                    }
+                    for pair in wide.windows(2) {
+                        assert!(pair[1].1 > pair[0].1, "{pair:?}");
+                    }
+                    // KNOWN (M75): its west coast's place arid, its western half semi-arid to
+                    // sub-humid. Held over 0.1 at its coast and semi-arid beyond; to restore: the
+                    // narrow continent's measures.
+                    assert!(wide[0].3 > 0.1, "{:?}", wide[0]);
+                    for c in &wide[1..] {
+                        assert!(c.3 > 0.2, "{c:?}");
+                    }
+                    if wide.iter().any(|c| c.3 < 0.65) {
+                        eprintln!(
+                            "KNOWN (M75): the wide continent's equator dries to {:.2} at its west coast and {:.2} a third of its width in",
+                            wide[0].3,
+                            wide[wide.len() / 3].3
+                        );
+                    }
+                },
+            ),
+            (
+                "a_subtropical_land_lies_wet_in_its_east_and_dry_in_its_west",
+                &|| {
+                    for cells in [&dry_wide, &dry_narrow] {
+                        let (west, east) = (cells[0], cells[cells.len() - 1]);
+                        assert!(east.3 > 0.5 && east.1 > 800.0, "{east:?}");
+                        assert!(west.3 < 0.2, "{west:?}");
+                        assert!(east.1 > 10.0 * west.1, "{east:?} {west:?}");
+                    }
+                    // The wide continent's western half arid.
+                    for c in dry_wide.iter().filter(|c| c.0 <= 0.0) {
+                        assert!(c.3 < 0.2, "{c:?}");
+                    }
+                },
+            ),
+            (
+                "a_wet_ground_s_potential_stands_by_its_sea_s_evaporation",
+                &|| {
+                    for (lo, hi) in [(0.0, 8.0), (8.0, 20.0), (20.0, 30.0)] {
+                        let [_, _, gives, _] = water_band(&cycle, &m, |s| {
+                            s.sea > 0.99 && (lo..hi).contains(&s.lat.to_degrees().abs())
+                        });
+                        let [_, _, _, potential] = water_band(&cycle, &m, |s| {
+                            s.sea < 0.01 && (lo..hi).contains(&s.lat.to_degrees().abs())
+                        });
+                        println!(
+                            "{lo} to {hi} degrees: the land's potential {potential:.0} mm a year, its seas give {gives:.0}"
+                        );
+                        assert!(
+                            (0.7..1.6).contains(&(potential / gives)),
+                            "{potential} {gives}"
+                        );
+                    }
+                },
+            ),
+        ]);
+    }
+
+    /// M75: the locked ocean world with a land under its star, 25 degrees about the point
+    /// under it, some 5 percent of its surface. As two models with a land's own water find
+    /// (Lewis et al. 2018; Macdonald et al. 2022): its rain falls nearest its star, on its
+    /// land's middle, brought in from the ring of sea about it, more than its land gives
+    /// back, so that its land sheds; its rain falls off outward, and its sea beyond the land
+    /// gives more than rains on it. Where the drift's layer alone carried the vapour (M74),
+    /// its land's rain was its land's own evaporation, a third of it shed.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn the_locked_land_s_year() {
+        let graph = locked_ocean_world();
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let away =
+            |lon: f64, lat: f64| (lat.cos() * lon.cos()).clamp(-1.0, 1.0).acos().to_degrees();
+        let share = Field::from_fn(grid, |_, d| {
+            let (lon, lat) = lon_lat_from_direction(d);
+            if away(lon, lat) < 25.0 { 0.0 } else { 1.0 }
+        });
+        let (cycle, m) = water_over(&graph, &share);
+        let ring =
+            |lo: f64, hi: f64| water_band(&cycle, &m, |s| (lo..hi).contains(&away(s.lon, s.lat)));
+        let (middle, inner, edge, sea) = (
+            ring(0.0, 10.0),
+            ring(10.0, 20.0),
+            ring(20.0, 25.0),
+            ring(25.0, 35.0),
+        );
+        let brief = m.summary();
+        println!(
+            "the locked land: rain {:.0}, {:.0} and {:.0} kg/m² a year from under its star to its coast, its land giving {:.0}, {:.0} and {:.0}; the sea beyond rains {:.0} and gives {:.0}; over the body {:.0}",
+            middle[1],
+            inner[1],
+            edge[1],
+            middle[2],
+            inner[2],
+            edge[2],
+            sea[1],
+            sea[2],
+            brief.precipitation
+        );
+        assert!(middle[0] > 0.99 && inner[0] > 0.99 && sea[0] < 0.01);
+        // Its rain nearest its star, falling off outward.
+        assert!(middle[1] > inner[1] && inner[1] > edge[1] && edge[1] > sea[1]);
+        assert!(middle[1] > 3.0 * sea[1], "{middle:?} {sea:?}");
+        // Brought in: more than its land gives back; and from its sea, which gives more than
+        // rains on it.
+        assert!(
+            middle[1] > 1.5 * middle[2] && inner[1] > 1.5 * inner[2],
+            "{middle:?} {inner:?}"
+        );
+        assert!(sea[2] > 1.3 * sea[1], "{sea:?}");
+        assert!(brief.runoff > 0.3 * brief.land_precipitation, "{brief:?}");
+        // The rain under its star within the published models' (16 to 64 mm a day under
+        // Proxima b's star; 40 under a grey air's at Earth's sunlight).
+        let per_day = middle[1] / 365.25;
+        assert!((10.0..70.0).contains(&per_day), "{per_day}");
+    }
+
     /// The Earth-like's year, read by each check of it.
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
@@ -11544,12 +11801,14 @@ mod tests {
     /// lies under low cloud of little effect, as THAI's four models' does (Sergeev et al. 2022:
     /// low cloud at 1 to 3 km over 15 to 70 percent of it, its clouds' effect there -5.0 to 0.3
     /// W/m²), where its whole column carried off on its surface wind left its night's air at a
-    /// tenth of saturation and clear. KNOWN: its night's cloud lies by latitude, none at its
-    /// equator and all of it from 40 degrees, the eddies' share of its transport falling
-    /// toward its equator as within a spinning world's cell, where its overturning runs from
-    /// its night to its day (THAI's models' lie at high latitudes, at the equator, or both);
-    /// and keeps 4 W/m² from space where THAI's models' let out up to 5 the more, their tops
-    /// in the inversion's warmer air.
+    /// tenth of saturation and clear. M75: with its overturning's vapour drawn to its day, its
+    /// night's cloud covers 0.37 of it where 0.60 and keeps 2.6 W/m² where 4.1. KNOWN: its
+    /// night's vapour is its eddies', whose share of its transport falls toward its equator
+    /// as within a spinning world's cell, where its overturning runs from its night to its
+    /// day (under M74 its night's cloud lay by latitude, none at its equator and all of it
+    /// from 40 degrees; THAI's models' lie at high latitudes, at the equator, or both); and
+    /// it keeps heat from space where THAI's models' let out up to 5 W/m² the more, their
+    /// tops in the inversion's warmer air.
     fn a_locked_world_s_clouds_gather_under_its_star(year: &LockedYear) {
         let air =
             crate::moisture::Air::from_graph(&year.world, year.eb.transport, OCEAN_TRANSPORT_SHARE);
@@ -12646,17 +12905,15 @@ mod tests {
         println!("Titan: {brief:?}; its evaporation's latent heat {heat:.4} W/m²");
         // KNOWN (M65): 0.46 W/m², its troposphere 4 to 7 K warm over Huygens's sending its
         // ground the more (F325); held under half a watt until its methane's own cycle.
-        // KNOWN (M74): 0.56 W/m², 35 kg/m² a year where 30. Its vapour goes by the wind's
-        // drift and the eddies now: on a body turning as slowly its cell reaches past its
-        // poles, the eddies' share of its transport under a half everywhere, and the layer its
-        // drift blows in holds 0.06 of its methane's column, where its overturning's low
-        // branch stands deeper than its ground's friction (to come with Titan's transport):
-        // its methane rains nearer where it rose. And its ground has no sea for its runoff, 18
-        // of the 35: its buckets' floor at none gives it back, its evaporation over its rain
-        // less its runoff by the runoff year on year, the step longer than its evaporation
-        // takes to empty a bucket (the bucket's step and a sea-less body's lakes: its
-        // methane's own cycle). Held under 0.6 W/m² until then; to restore: 0.5, then its
-        // ground's sunlight's 0.35.
+        // KNOWN (M74, M75): 0.52 W/m², 33 kg/m² a year where 30 before M74 (0.56 and 35 by
+        // the drift's layer's vapour, M74). On a body turning as slowly its cell reaches past
+        // its poles, the eddies' share of its transport under a half everywhere, and its
+        // overturning's vapour goes by the little heat its all but level air carries: its
+        // methane rains nearer where it rose. And its ground has no sea for its runoff, 17 of
+        // the 33: its buckets' floor at none gives it back, its evaporation over its rain
+        // less its runoff by the runoff year on year (the bucket's step and a sea-less
+        // body's lakes: its methane's own cycle). Held under 0.6 W/m² until then; to restore:
+        // 0.5, then its ground's sunlight's 0.35.
         assert!(brief.evaporation > 0.0 && heat < 0.6, "{brief:?}");
         if heat > 0.35 {
             eprintln!("KNOWN SHORTFALL (M65): Titan's evaporation takes {heat:.3} W/m², over 0.35");

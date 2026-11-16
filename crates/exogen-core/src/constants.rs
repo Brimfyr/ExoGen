@@ -2721,6 +2721,14 @@ pub const BUCKET_FULL_SHARE: f64 = 0.75;
 /// over it, E / P = (x tanh(1 / x) (1 - exp(-x)))^(1/2): 0.48, 0.71, 0.89 and 0.97 at x of a
 /// half, 1, 2 and 4 where the curve's 0.44, 0.69, 0.89 and 0.98.
 pub const BUCKET_SHED: f64 = 2.0;
+/// M75: the overturning's gross stability where its air rises, as a share of its rising air's
+/// energy: its air aloft leaves with 1 + CELL_STABILITY of the energy, c_p T + L q, its
+/// rising air took from the ground, so that the heat it carries, the mass it turns over
+/// times what its air aloft holds over its air below, moves the vapour ERA's Hadley cells
+/// move toward the equator (Siler, Roe and Armour 2018, who fit 0.06; Bonan et al. 2023,
+/// 0.08; no value is published for another air, and the measured gross moist stabilities
+/// stand at a fifth to two thirds of it, Inoue and Back 2017).
+pub const CELL_STABILITY: f64 = 0.06;
 /// F270: the time the water a lift condenses takes to turn to rain and the time the rain
 /// takes to fall, each, s (Smith and Barstad 2004: some 1000 s, from 200 to 2000), through
 /// which the wind carries it on before it falls; the share of the delays' rain traced upwind,
