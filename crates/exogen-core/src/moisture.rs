@@ -5,6 +5,24 @@
 //! the wind and mixed by the eddies that carry the heat, and rained out as the column nears
 //! saturation.
 //!
+//! The wind carries it in two parts (M74). The air that flows along the isobars carries its
+//! whole column. The drift across them is the layer's the ground's drag acts over, a few
+//! hundred metres of Earth's air, whose mass the air above returns: it carries the vapour
+//! that layer holds, the column's by 1 - exp(-h / H_v), H_v the vapour's scale height, some
+//! a tenth of it, as the trades' drift toward the equator carries Earth's. The eddies carry
+//! the vapour as the latent share of the heat they carry (Frierson et al. 2007): the air they
+//! exchange between two places carries its own heat, c_p a kelvin, and its vapour's, L dq/dT,
+//! so that the transport D moves D / (c_p + L dq/dT) kg of air a kelvin, and with it the
+//! difference of the two places' surface air's vapour; and they carry the share of the
+//! transport that is theirs: all of it from the overturning cell's edge on, and less within
+//! the cell by degrees to none at the thermal equator, where the cell's own overturning
+//! carries the heat aloft and its vapour in its drift (Siler et al. 2018).
+//!
+//! The open sea evaporates into its surface air, which stands at CLOUD_SURFACE_HUMIDITY of
+//! saturation whatever its column holds (M74), as Earth's seas' does within a few hundredths
+//! from 60 south to 60 north, the air the sea's clouds and the column's convection already
+//! read; the wet land into air at its column's saturation, as before.
+//!
 //! The column at saturation is the saturated vapour's density at the ground over the vapour's
 //! scale height, R_v T² / (L Γ), from Clausius and Clapeyron along the lapse rate: e T / (L Γ),
 //! some 30 kg/m² over Earth's 288 K, less over high ground, whose air is the colder. The rain
@@ -15,7 +33,9 @@
 //! they mix the heat, at the air's transport over its column's heat capacity. The land holds
 //! what rains on it in a bucket of 15 cm of the liquid (Manabe 1969), evaporating at its full
 //! rate while three quarters full and in proportion below, and sheds what overflows as
-//! runoff. The sea under its ice and the caps' ice give none.
+//! runoff, and of what falls on it the share that falls on ground already full, the square of
+//! its fill (M74), which holds a year's balance on Budyko's (1974) curve. The sea under its
+//! ice and the caps' ice give none.
 //!
 //! Over the relief at a finer grid's scale (F270), air carried over rising ground condenses
 //! its vapour at C_w w, w the lift, the wind against the slope, C_w the saturated vapour's
@@ -60,6 +80,11 @@ pub struct Air {
     /// sea's share of a boundary (F245).
     pub transport: f64,
     pub water: f64,
+    /// The depth the ground's drag acts over, m (F267), whose drift carries the vapour it
+    /// holds, and how far the overturning cell reaches from the equator, rad (F32), within
+    /// which the eddies carry the less of the transport (M74).
+    pub layer: f64,
+    pub reach: f64,
 }
 
 impl Air {
@@ -78,6 +103,7 @@ impl Air {
             .get("atmosphere.composition")
             .as_map()
             .unwrap_or(&empty);
+        let circulation = crate::wind::Air::from_graph(graph);
         Some(Self {
             vapour,
             pressure,
@@ -89,6 +115,8 @@ impl Air {
             lapse: graph.f64("climate.lapse_rate"),
             transport,
             water,
+            layer: circulation.surface_layer(),
+            reach: circulation.reach,
         })
     }
 
@@ -143,6 +171,57 @@ impl Air {
         let x = (t - self.vapour.t_triple - RAIN_SNOW_OFFSET) / RAIN_SNOW_WIDTH;
         1.0 / (1.0 + x.clamp(-50.0, 50.0).exp())
     }
+
+    /// The vapour's scale height over ground whose air stands at `t`, m: R_v T² / (L Γ).
+    pub fn vapour_height(&self, t: f64) -> f64 {
+        let t = t.max(1.0);
+        self.vapour.r_specific * t * t / (self.latent(t) * self.lapse.max(MOISTURE_LEAST_LAPSE))
+    }
+
+    /// The share of a column's vapour the layer the ground's drag acts over holds, over
+    /// ground whose air stands at `t` (M74): 1 - exp(-h / H_v), which the wind's drift
+    /// across the isobars carries.
+    pub fn drift_share(&self, t: f64) -> f64 {
+        1.0 - (-self.layer.max(0.0) / self.vapour_height(t).max(1e-30)).exp()
+    }
+
+    /// The latent heat a kilogram of air at `t` under `p` Pa and saturation `r` carries a
+    /// kelvin beside its own (M74), J/kg/K: L dq/dT along the places' air, q its vapour, r
+    /// q_s, and dq_s/dT by Clausius and Clapeyron, q_s L / (R_v T²).
+    pub fn latent_capacity(&self, t: f64, p: f64, r: f64) -> f64 {
+        let t = t.max(1.0);
+        let l = self.latent(t);
+        r.clamp(0.0, 1.0) * self.saturated_humidity(t, p) * l * l / (self.vapour.r_specific * t * t)
+    }
+
+    /// The share of the air's transport its eddies carry at latitude `lat`, rad, the thermal
+    /// equator at `equator` (M74): all of it from the overturning cell's edge on, which
+    /// stands at the cell's reach from the equator, and within the cell less by degrees to
+    /// none at the thermal equator, sin²(pi/2 x) of the way x from the one to the other,
+    /// level at both: 0.22, 0.67 and 0.98 at 10, 20 and 30 degrees of Earth's, where Siler et
+    /// al. (2018) fit ERA's with 1 - exp(-(sin lat / 0.3)²), 0.29, 0.73 and 0.94. All of it
+    /// without a cell.
+    pub fn eddies_share(&self, lat: f64, equator: f64) -> f64 {
+        if self.reach <= 0.0 {
+            return 1.0;
+        }
+        let side = if lat >= equator { 1.0 } else { -1.0 };
+        let span = (side * self.reach - equator).abs().max(1e-6);
+        let x = ((lat - equator).abs() / span).clamp(0.0, 1.0);
+        (0.5 * PI * x).sin().powi(2)
+    }
+}
+
+/// The share of its full rate a land's bucket evaporates at, `fill` of its capacity full
+/// (F268): all of it from BUCKET_FULL_SHARE, in proportion below (Manabe 1969).
+pub fn bucket_gives(fill: f64) -> f64 {
+    (fill / BUCKET_FULL_SHARE).clamp(0.0, 1.0)
+}
+
+/// The share of the rain and the melt on a land that runs off it, its bucket `fill` of its
+/// capacity full (M74): the share of its ground already full, its fill to BUCKET_SHED.
+pub fn bucket_sheds(fill: f64) -> f64 {
+    fill.clamp(0.0, 1.0).powf(BUCKET_SHED)
 }
 
 /// The implicit mixing's solver (F268): (diag + links) x = rhs, the links each place's
@@ -165,6 +244,10 @@ pub struct Weather<'a> {
     /// The body's mean wind at the step, m/s, the weather's gusts about each place's mean
     /// wind.
     pub gust: f64,
+    /// The part of the wind that crosses the isobars, the drift of the layer the ground's
+    /// drag acts over, eastward and northward, m/s (M74), and the thermal equator, rad.
+    pub drift: (&'a [f32], &'a [f32]),
+    pub equator: f64,
 }
 
 /// The moisture through the cycle's year (F268).
@@ -552,9 +635,9 @@ pub fn rain<'a>(
             a * a * (hi.sin() - lo.sin()) * around
         })
         .collect();
-    // The eddies' mixing through each link, per second, the air's transport over its
-    // column's heat capacity, the step's share of it for the implicit system.
-    let mix: Vec<Vec<(usize, f64)>> = crate::climate::place_links((n_lat, n_lon))
+    // The air's transport through each link over the step, J/m²/K of the place: the heat
+    // the eddies carry between the two a kelvin where all of the transport is theirs.
+    let carried: Vec<Vec<(usize, f64)>> = crate::climate::place_links((n_lat, n_lon))
         .iter()
         .enumerate()
         .map(|(p, links)| {
@@ -562,13 +645,13 @@ pub fn rain<'a>(
                 .iter()
                 .map(|&(q, g)| {
                     let wet = sites[p].sea.min(sites[q].sea);
-                    let rate = air.transport * g * (1.0 - air.water * wet) * air.gravity
-                        / (air.heat_capacity * air.pressure);
-                    (q, dt * rate)
+                    (q, dt * air.transport * g * (1.0 - air.water * wet))
                 })
                 .collect()
         })
         .collect();
+    let mut mix = carried.clone();
+    let lat_of = |p: usize| -PI / 2.0 + dphi * (p / n_lon) as f64;
     // Each place's ground: its land's share, its height and its air's pressure there.
     let land: Vec<f64> = sites
         .iter()
@@ -588,7 +671,8 @@ pub fn rain<'a>(
     // Each place's vapour scale height through the year, R_v T² / (L Γ), the measure of the
     // lift's levels (F270).
     let lapse = air.lapse.max(MOISTURE_LEAST_LAPSE);
-    let scale = |t: f64| air.vapour.r_specific * t * t / (air.latent(t) * lapse);
+    let marine = CLOUD_SURFACE_HUMIDITY;
+    let scale = |t: f64| air.vapour_height(t);
     let mut vapour_height = vec![0.0; n];
     for k in 0..steps {
         let now = weather(k);
@@ -637,6 +721,9 @@ pub fn rain<'a>(
     let (mut over_sea, mut over_land) = (vec![1.0; n], vec![1.0; n]);
     let (mut humid, mut sea_q, mut soil_q) = (vec![0.0; n], vec![0.0; n], vec![0.0; n]);
     let (mut east, mut north) = (vec![0.0; n], vec![0.0; n]);
+    let (mut drift_east, mut drift_north) = (vec![0.0; n], vec![0.0; n]);
+    let (mut slab, mut heats, mut eddies) = (vec![0.0; n], vec![0.0; n], vec![0.0; n]);
+    let mut carries = vec![0.0; n];
     let mut last = years <= 1;
     for round in 0.. {
         // The body's rain and evaporation through the year, kg/s.
@@ -657,7 +744,7 @@ pub fn rain<'a>(
                     .hypot(now.gust);
                 let rho = pressure[p] * air.molar_mass / (GAS_CONSTANT * ground[p].max(1.0));
                 exchange[p] = rho * AIR_EXCHANGE_COEFFICIENT * speed;
-                beta[p] = (bucket[p] / (BUCKET_FULL_SHARE * capacity)).min(1.0);
+                beta[p] = bucket_gives(bucket[p] / capacity);
                 humid[p] = air.saturated_humidity(ground[p], pressure[p]);
                 sea_q[p] = air.saturated_humidity(now.sea[p], air.pressure);
                 let soil = now.land[p] - air.lapse * heights[p];
@@ -670,44 +757,63 @@ pub fn rain<'a>(
                 if land[p] > 0.0 {
                     over_land[p] = layer.exchange(soil, ground[p], speed);
                 }
+                // The open sea into its surface air, at CLOUD_SURFACE_HUMIDITY of saturation
+                // whatever its column holds, none into air that holds more than the sea's
+                // own; the wet land into air at its column's saturation (M74).
                 let open = sites[p].sea * (-now.ice[p] / SEA_ICE_COVER_MASS).exp() * over_sea[p];
                 let wet = land[p] * beta[p] * over_land[p];
-                gives[p] = exchange[p] * (open * sea_q[p] + wet * soil_q[p]);
-                takes[p] = exchange[p] * (open + wet) * humid[p] / saturated[p].max(1e-30);
+                let sea = (sea_q[p] - marine * humid[p]).max(0.0);
+                gives[p] = exchange[p] * (open * sea + wet * soil_q[p]);
+                takes[p] = exchange[p] * wet * humid[p] / saturated[p].max(1e-30);
+                // The share of its column the drift carries, and its surface air's vapour a
+                // kilogram of its column's (M74).
+                slab[p] = air.drift_share(ground[p]);
+                carries[p] = humid[p] / saturated[p].max(1e-30);
             }
             // The wind carries the vapour across the places' faces, upwind, in steps short
-            // enough that no place gives more than it holds.
+            // enough that no place gives more than it holds: the air along the isobars its
+            // column, the drift across them the layer's it blows in (M74).
             for p in 0..n {
                 let (i, j) = (p / n_lon, p % n_lon);
                 let (lo, hi) = edges(i);
-                east[p] = if n_lon > 1 {
+                (east[p], drift_east[p]) = if n_lon > 1 {
                     let e = i * n_lon + (j + 1) % n_lon;
-                    0.5 * (now.east[p] + now.east[e]) as f64 * a * (hi - lo)
+                    let across = 0.5 * (now.drift.0[p] + now.drift.0[e]) as f64;
+                    let all = 0.5 * (now.east[p] + now.east[e]) as f64;
+                    ((all - across) * a * (hi - lo), across * a * (hi - lo))
                 } else {
-                    0.0
+                    (0.0, 0.0)
                 };
-                north[p] = if i + 1 < n_lat {
-                    0.5 * (now.north[p] + now.north[p + n_lon]) as f64 * a * hi.cos() * around
+                (north[p], drift_north[p]) = if i + 1 < n_lat {
+                    let across = 0.5 * (now.drift.1[p] + now.drift.1[p + n_lon]) as f64;
+                    let all = 0.5 * (now.north[p] + now.north[p + n_lon]) as f64;
+                    let face = a * hi.cos() * around;
+                    ((all - across) * face, across * face)
                 } else {
-                    0.0
+                    (0.0, 0.0)
                 };
             }
             let mut leaving = vec![0.0; n];
             for p in 0..n {
                 let (i, j) = (p / n_lon, p % n_lon);
-                let mut add = |q: usize, f: f64| {
+                let mut add = |q: usize, f: f64, share: f64| {
                     if f > 0.0 {
-                        leaving[q] += f;
+                        leaving[q] += f * share;
                     }
                 };
                 if n_lon > 1 {
                     let e = i * n_lon + (j + 1) % n_lon;
-                    add(p, east[p]);
-                    add(e, -east[p]);
+                    add(p, east[p], 1.0);
+                    add(e, -east[p], 1.0);
+                    add(p, drift_east[p], slab[p]);
+                    add(e, -drift_east[p], slab[e]);
                 }
                 if i + 1 < n_lat {
-                    add(p, north[p]);
-                    add(p + n_lon, -north[p]);
+                    let q = p + n_lon;
+                    add(p, north[p], 1.0);
+                    add(q, -north[p], 1.0);
+                    add(p, drift_north[p], slab[p]);
+                    add(q, -drift_north[p], slab[q]);
                 }
             }
             let fastest = (0..n).map(|p| leaving[p] / area[p]).fold(0.0, f64::max);
@@ -718,26 +824,51 @@ pub fn rain<'a>(
                 change.fill(0.0);
                 for p in 0..n {
                     let (i, j) = (p / n_lon, p % n_lon);
-                    let mut carry = |from: usize, to: usize, f: f64| {
-                        let m = if f > 0.0 { f * w[from] } else { f * w[to] };
+                    let mut carry = |from: usize, to: usize, f: f64, drifts: bool| {
+                        let up = if f > 0.0 { from } else { to };
+                        let m = f * w[up] * if drifts { slab[up] } else { 1.0 };
                         change[from] -= m;
                         change[to] += m;
                     };
                     if n_lon > 1 {
-                        carry(p, i * n_lon + (j + 1) % n_lon, east[p]);
+                        let e = i * n_lon + (j + 1) % n_lon;
+                        carry(p, e, east[p], false);
+                        carry(p, e, drift_east[p], true);
                     }
                     if i + 1 < n_lat {
-                        carry(p, p + n_lon, north[p]);
+                        carry(p, p + n_lon, north[p], false);
+                        carry(p, p + n_lon, drift_north[p], true);
                     }
                 }
                 for p in 0..n {
                     w[p] = (w[p] + h * change[p] / area[p]).max(0.0);
                 }
             }
-            // The eddies mix it, implicitly.
-            diag.fill(1.0);
-            rhs.copy_from_slice(&w);
+            // The eddies mix it, implicitly (M74): the air they exchange between two places,
+            // the heat they carry over what a kilogram of it carries a kelvin, its own and
+            // its vapour's, carries the difference of the two places' surface air's vapour,
+            // x, each column's w its surface air's over `carries`: w / carries + sum k (x -
+            // x_q) = w; and theirs is the share of the transport beyond the thermal equator.
+            for p in 0..n {
+                let r = w[p] / saturated[p].max(1e-30);
+                heats[p] = air.heat_capacity + air.latent_capacity(ground[p], pressure[p], r);
+                eddies[p] = air.eddies_share(lat_of(p), now.equator);
+            }
+            for (p, (links, steady)) in mix.iter_mut().zip(&carried).enumerate() {
+                for (link, &(q, heat)) in links.iter_mut().zip(steady) {
+                    let share = 0.5 * (eddies[p] + eddies[q]);
+                    link.1 = heat * share / (0.5 * (heats[p] + heats[q]));
+                }
+            }
+            for p in 0..n {
+                diag[p] = 1.0 / carries[p].max(1e-30);
+                rhs[p] = w[p];
+                w[p] *= carries[p];
+            }
             solve(&mix, &diag, &rhs, &mut w);
+            for p in 0..n {
+                w[p] = (w[p] / carries[p].max(1e-30)).max(0.0);
+            }
             // The ground gives it and it rains, together and implicitly, on the step's end:
             // w' + dt (takes w' + P(w')) = w + dt gives.
             for p in 0..n {
@@ -808,9 +939,12 @@ pub fn rain<'a>(
                         }
                         None => fell,
                     };
-                    bucket[p] = (bucket[p] + dt * (wet - dried)).max(0.0);
+                    // What falls on its ground already full runs off (M74); the bucket takes
+                    // the rest, and sheds what overflows it.
+                    ran = wet * bucket_sheds(bucket[p] / capacity);
+                    bucket[p] = (bucket[p] + dt * (wet - ran - dried)).max(0.0);
                     if bucket[p] > capacity {
-                        ran = (bucket[p] - capacity) / dt;
+                        ran += (bucket[p] - capacity) / dt;
                         bucket[p] = capacity;
                     }
                 }
@@ -827,7 +961,7 @@ pub fn rain<'a>(
                     out.wetness[p] += beta[p] / steps as f64;
                     // The potential evaporation: the open sea's and the land's wet.
                     let potential = exchange[p]
-                        * (sites[p].sea * over_sea[p] * (sea_q[p] - r * humid[p]).max(0.0)
+                        * (sites[p].sea * over_sea[p] * (sea_q[p] - marine * humid[p]).max(0.0)
                             + land[p] * over_land[p] * (soil_q[p] - r * humid[p]).max(0.0));
                     out.potential[p] += potential / steps as f64;
                     // The lift's condensation through the step at each level of the ground over
@@ -881,6 +1015,8 @@ mod tests {
             lapse: 9.81 / 1_004.0 * MOIST_LAPSE_FACTOR,
             transport: 0.58,
             water: OCEAN_TRANSPORT_SHARE,
+            layer: SURFACE_LAYER_SHARE * 8_400.0,
+            reach: 32f64.to_radians(),
         }
     }
 
@@ -973,6 +1109,410 @@ mod tests {
             let got = still.as_slice()[k] as f64;
             assert!((got / read - 1.0).abs() < 1e-5, "{got} {read}");
         }
+    }
+
+    /// M74: a land's bucket through a year of steady rain holds its balance on Budyko's (1974)
+    /// curve: what it evaporates of its rain, by its wet ground's evaporation over its rain,
+    /// within 0.06 of (x tanh(1 / x) (1 - exp(-x)))^(1/2) from a half to 8, the rest shed;
+    /// where the bucket shed only what overflowed it, it evaporated all of its rain from x of
+    /// 1 on, 0.31 over the curve.
+    #[test]
+    fn a_bucket_sheds_as_budyko_s_catchments() {
+        let budyko = |x: f64| (x * (1.0 / x).tanh() * (1.0 - (-x).exp())).sqrt();
+        assert!((budyko(1.0) - 0.694).abs() < 1e-3 && (budyko(2.0) - 0.894).abs() < 1e-3);
+        for x in [0.5f64, 0.75, 1.0, 1.5, 2.0, 4.0, 8.0] {
+            // Days of rain, 1 a day, its wet ground's evaporation x a day, the bucket 50
+            // days' rain deep.
+            let (mut fill, capacity, mut gave) = (0.5f64, 50.0f64, 0.0);
+            for day in 0..20_000 {
+                let ran = bucket_sheds(fill);
+                let dried = x * bucket_gives(fill);
+                fill = (fill + (1.0 - ran - dried) / capacity).clamp(0.0, 1.0);
+                if day >= 19_000 {
+                    gave += dried / 1_000.0;
+                }
+            }
+            let curve = budyko(x);
+            println!("x {x}: evaporates {gave:.3} of its rain, Budyko's {curve:.3}");
+            assert!((gave - curve).abs() < 0.06, "{x}: {gave} {curve}");
+        }
+        assert_eq!(bucket_sheds(0.0), 0.0);
+        assert_eq!(bucket_sheds(1.0), 1.0);
+        assert!((bucket_sheds(0.5) - 0.25).abs() < 1e-12);
+        assert!(bucket_gives(0.75) == 1.0 && (bucket_gives(0.375) - 0.5).abs() < 1e-12);
+    }
+
+    /// M74: the layer the ground's drag acts over, some 250 m of Earth's air, holds some a
+    /// tenth of its column's vapour, whose scale height stands at some 2.4 km: the share the
+    /// wind's drift across the isobars carries; less of a warmer column's, whose vapour
+    /// stands the higher; none without the layer and all of it from a layer far deeper than
+    /// the vapour.
+    #[test]
+    fn the_drift_carries_its_layer_s_vapour() {
+        let air = earth_air();
+        let height = air.vapour_height(288.0);
+        assert!((2_000.0..2_800.0).contains(&height), "{height}");
+        let (mild, warm) = (air.drift_share(288.0), air.drift_share(300.0));
+        assert!((0.08..0.12).contains(&mild), "{mild}");
+        assert!(warm < mild && warm > 0.07, "{warm} {mild}");
+        assert!((mild - (1.0 - (-air.layer / height).exp())).abs() < 1e-12);
+        let none = Air { layer: 0.0, ..air };
+        assert_eq!(none.drift_share(288.0), 0.0);
+        let deep = Air {
+            layer: 20.0 * height,
+            ..air
+        };
+        assert!(deep.drift_share(288.0) > 0.999_999);
+    }
+
+    /// M74: the air the eddies exchange carries its vapour's latent heat beside its own:
+    /// about as much again at 285 K, a latent share of some half of the heat they carry, as
+    /// Earth's atmosphere carries some 0.4 of its heat as vapour near 40 degrees (Trenberth
+    /// and Stepaniak 2003); under a sixth at 250 K and some three quarters at 300 K; none in
+    /// dry air and in proportion to its saturation. Their share of the transport rises from
+    /// none at the thermal equator to all of it at the cell's edge, within 0.08 of Siler et
+    /// al.'s (2018) fit to ERA's at 10, 20 and 30 degrees; the cell's edges stand at its reach
+    /// from the equator wherever the thermal equator; all of it without a cell.
+    #[test]
+    fn the_eddies_carry_vapour_as_their_heat_s_latent_share() {
+        let air = earth_air();
+        let p = air.pressure;
+        let share = |t: f64, r: f64| {
+            let l = air.latent_capacity(t, p, r);
+            l / (air.heat_capacity + l)
+        };
+        let (cold, mild, warm) = (share(250.0, 0.8), share(285.0, 0.8), share(300.0, 0.8));
+        assert!((0.45..0.60).contains(&mild), "{mild}");
+        assert!(cold < 1.0 / 6.0 && cold > 0.03, "{cold}");
+        assert!((0.65..0.80).contains(&warm), "{warm}");
+        assert_eq!(air.latent_capacity(285.0, p, 0.0), 0.0);
+        let (half, whole) = (
+            air.latent_capacity(285.0, p, 0.4),
+            air.latent_capacity(285.0, p, 0.8),
+        );
+        assert!((whole / half - 2.0).abs() < 1e-12, "{whole} {half}");
+        // By hand: r q_s L² / (R_v T²).
+        let (t, v) = (285.0f64, air.vapour);
+        let by_hand =
+            0.8 * air.saturated_humidity(t, p) * v.l_vap * v.l_vap / (v.r_specific * t * t);
+        assert!((whole / by_hand - 1.0).abs() < 1e-12, "{whole} {by_hand}");
+        // The eddies' share of the transport.
+        let reach = air.reach;
+        assert_eq!(air.eddies_share(0.0, 0.0), 0.0);
+        for (lat, siler) in [(10.0f64, 0.285), (20.0, 0.727), (30.0, 0.938)] {
+            let got = air.eddies_share(lat.to_radians(), 0.0);
+            let fit = 1.0 - (-(lat.to_radians().sin() / 0.3).powi(2)).exp();
+            assert!((fit - siler).abs() < 1e-3, "{fit}");
+            assert!((got - siler).abs() < 0.08, "{lat}: {got} {siler}");
+            assert!((air.eddies_share(-lat.to_radians(), 0.0) - got).abs() < 1e-12);
+        }
+        assert!((air.eddies_share(reach, 0.0) - 1.0).abs() < 1e-12);
+        assert!((air.eddies_share(1.3, 0.0) - 1.0).abs() < 1e-12);
+        let equator = 10f64.to_radians();
+        assert_eq!(air.eddies_share(equator, equator), 0.0);
+        assert!((air.eddies_share(reach, equator) - 1.0).abs() < 1e-12);
+        assert!((air.eddies_share(-reach, equator) - 1.0).abs() < 1e-12);
+        // Ten degrees toward the farther edge, less of the way to it.
+        let (far, near) = (
+            air.eddies_share(0.0, equator),
+            air.eddies_share(2.0 * equator, equator),
+        );
+        assert!(far > 0.0 && far < near && near < 1.0, "{far} {near}");
+        let none = Air { reach: 0.0, ..air };
+        assert_eq!(none.eddies_share(0.3, 0.0), 1.0);
+    }
+
+    /// The year's water over an aquaplanet of 46 latitudes, warm at its equator, its trades
+    /// drifting toward it at up to `trades` m/s within the cell's reach.
+    fn aquaplanet(air: &Air, trades: f64) -> Moisture {
+        let reach = 32f64.to_radians();
+        strip(
+            air,
+            |_| (1.0, 0.0),
+            |lat| {
+                if lat.abs() < reach {
+                    -trades * (PI * lat / reach).sin()
+                } else {
+                    0.0
+                }
+            },
+        )
+    }
+
+    /// A year's moisture over a strip of latitudes under a steady weather (M74): each
+    /// latitude's sea's and ice's shares from `ground`, its northward wind, m/s, all of it
+    /// drift, from `wind`.
+    fn strip(air: &Air, ground: impl Fn(f64) -> (f64, f64), wind: impl Fn(f64) -> f64) -> Moisture {
+        let (n_lat, steps) = (46usize, 360usize);
+        let dphi = PI / (n_lat - 1) as f64;
+        let sites: Vec<Site> = (0..n_lat)
+            .map(|i| {
+                let lat = -PI / 2.0 + dphi * i as f64;
+                let (lo, hi) = (
+                    (lat - dphi / 2.0).max(-PI / 2.0),
+                    (lat + dphi / 2.0).min(PI / 2.0),
+                );
+                let (sea, ice) = ground(lat);
+                Site {
+                    lat,
+                    lon: 0.0,
+                    weight: 0.5 * (hi.sin() - lo.sin()),
+                    sea,
+                    ice,
+                }
+            })
+            .collect();
+        let temps: Vec<f64> = sites
+            .iter()
+            .map(|s| 300.0 - 45.0 * s.lat.sin().powi(2))
+            .collect();
+        let seas: Vec<f64> = temps.iter().map(|t| t + 1.0).collect();
+        let north: Vec<f32> = sites.iter().map(|s| wind(s.lat) as f32).collect();
+        let east = vec![0.0f32; n_lat];
+        let weather = |_: usize| Weather {
+            air: &temps,
+            east: &east,
+            north: &north,
+            land: seas.clone(),
+            sea: seas.clone(),
+            ice: vec![0.0; n_lat],
+            snow: None,
+            gust: 6.0,
+            drift: (&east, &north),
+            equator: 0.0,
+        };
+        // (diag + links) x = rhs along the latitudes, by Thomas's algorithm.
+        let solve = |links: &[Vec<(usize, f64)>], diag: &[f64], rhs: &[f64], x: &mut [f64]| {
+            let n = diag.len();
+            let link = |p: usize, q: usize| links[p].iter().find(|l| l.0 == q).map_or(0.0, |l| l.1);
+            let mut b: Vec<f64> = (0..n)
+                .map(|p| diag[p] + links[p].iter().map(|l| l.1).sum::<f64>())
+                .collect();
+            let (mut c, mut r) = (vec![0.0; n], rhs.to_vec());
+            for p in 0..n {
+                if p + 1 < n {
+                    c[p] = -link(p, p + 1);
+                }
+                if p > 0 {
+                    let m = -link(p, p - 1) / b[p - 1];
+                    b[p] -= m * c[p - 1];
+                    r[p] -= m * r[p - 1];
+                }
+            }
+            x[n - 1] = r[n - 1] / b[n - 1];
+            for p in (0..n - 1).rev() {
+                x[p] = (r[p] - c[p] * x[p + 1]) / b[p];
+            }
+        };
+        let year = 365.25 * SECONDS_PER_DAY;
+        let heights = vec![0.0; n_lat];
+        rain(
+            air,
+            &sites,
+            (n_lat, 1),
+            &heights,
+            (year, steps),
+            &weather,
+            &solve,
+        )
+        .expect("a year")
+    }
+
+    /// M74: the wind carries a place's vapour to the place downwind of it, and a land sheds
+    /// the share of its rain that falls on ground already full, in the year's own loop. A
+    /// strip of latitudes, its sea open from 10 to 20 degrees north alone, ice south of it and
+    /// land north, under a wind blowing north from 10 to 50 degrees and no eddies: the land
+    /// downwind of the sea takes its rain, tens of times what falls upwind of it, where the
+    /// air's first vapour alone rains out; and that land's buckets, never full, shed the
+    /// square of their fill of what falls on them, where a bucket that shed only what
+    /// overflowed it would shed nothing.
+    #[test]
+    fn a_wind_carries_its_vapour_downwind_to_a_land_that_sheds() {
+        let air = Air {
+            transport: 0.0,
+            ..earth_air()
+        };
+        let band = |lat: f64, lo: f64, hi: f64| (lo..hi).contains(&lat.to_degrees());
+        let year = strip(
+            &air,
+            |lat| {
+                if band(lat, 10.0, 20.0) {
+                    (1.0, 0.0)
+                } else if lat.to_degrees() < 10.0 {
+                    (0.0, 1.0)
+                } else {
+                    (0.0, 0.0)
+                }
+            },
+            |lat| if band(lat, 10.0, 50.0) { 3.0 } else { 0.0 },
+        );
+        let n = year.precipitation.len();
+        let dphi = PI / (n - 1) as f64;
+        let lat = |i: usize| (-PI / 2.0 + dphi * i as f64).to_degrees();
+        let day = SECONDS_PER_DAY;
+        // The rain over a band of latitudes, kg/m²/s.
+        let rain = |lo: f64, hi: f64| {
+            let (mut sum, mut area) = (0.0, 0.0);
+            for i in (0..n).filter(|&i| lat(i) >= lo && lat(i) < hi) {
+                sum += year.weights[i] * year.precipitation[i];
+                area += year.weights[i];
+            }
+            sum / area
+        };
+        let (upwind, downwind) = (rain(-20.0, 6.0), rain(22.0, 42.0));
+        println!(
+            "upwind of the sea {:.3} mm a day, downwind of it {:.3}",
+            upwind * day,
+            downwind * day
+        );
+        assert!(downwind * day > 0.2, "{downwind}");
+        assert!(downwind > 20.0 * upwind, "{downwind} {upwind}");
+        // What the wind carries north across the sea's edge is its upwind place's: all that
+        // lies beyond rains what its ground gives it and what the drift brings, the layer's
+        // share of the sea's own column at the edge's wind, and not the land's beyond it.
+        let i = (0..n).rfind(|&i| lat(i) < 20.0).unwrap();
+        let gained: f64 = (i + 1..n)
+            .map(|j| year.weights[j] * (year.precipitation[j] - year.evaporation[j]))
+            .sum();
+        let edge = (-PI / 2.0 + dphi * (i as f64 + 0.5)).cos();
+        let t = |i: usize| 300.0 - 45.0 * lat(i).to_radians().sin().powi(2);
+        let carried = |from: usize| {
+            3.0 * edge * air.drift_share(t(from)) * year.column[from] / (2.0 * air.radius)
+        };
+        println!(
+            "across the sea's edge the land beyond gains {:.4e}, by hand from upwind {:.4e}, from downwind {:.4e}",
+            gained,
+            carried(i),
+            carried(i + 1)
+        );
+        assert!((gained / carried(i) - 1.0).abs() < 0.01, "{gained}");
+        assert!((gained / carried(i + 1) - 1.0).abs() > 0.1, "{gained}");
+        // The land downwind: its buckets under three quarters full, shedding the square of
+        // their fill, the fill three quarters of the wetness the year records.
+        let mut shed = 0;
+        for i in (0..n).filter(|&i| lat(i) >= 22.0 && lat(i) < 42.0) {
+            assert_eq!(year.land[i], 1.0);
+            let (wet, fell, ran) = (year.wetness[i], year.precipitation[i], year.runoff[i]);
+            assert!(wet > 0.0 && wet < 1.0, "{i}: wetness {wet}");
+            assert!(ran > 0.0 && ran < fell, "{i}: {ran} of {fell}");
+            let by_hand = bucket_sheds(BUCKET_FULL_SHARE * wet);
+            println!(
+                "{:.0} degrees: wetness {wet:.3}, sheds {:.4} of its rain, by hand {by_hand:.4}",
+                lat(i),
+                ran / fell
+            );
+            assert!(
+                (ran / fell / by_hand - 1.0).abs() < 0.05,
+                "{i}: {ran} {fell} {by_hand}"
+            );
+            shed += 1;
+        }
+        assert!(shed >= 4, "{shed}");
+    }
+
+    /// M74: the year's vapour over an aquaplanet. Its vapour is kept: what rains is what its
+    /// sea gave. The trades' drift gathers it at the equator, which rains more than its sea
+    /// gives, and its subtropics less; carried as a whole column on the same drift, whose
+    /// layer holds a tenth of it, the equator would gain over eight times as much.
+    /// Its eddies carry it out of the cell's reach as the latent share of their heat, some
+    /// half of it at 40 degrees; were all of the transport theirs within the cell too, they
+    /// would carry off most of what the drift gathers. Its sea gives into its surface air,
+    /// CLOUD_SURFACE_HUMIDITY of saturation, whatever its column holds.
+    #[test]
+    fn a_year_s_vapour_goes_by_its_drift_and_its_eddies() {
+        let air = earth_air();
+        let day = SECONDS_PER_DAY;
+        let year = aquaplanet(&air, 3.0);
+        let n = year.precipitation.len();
+        let dphi = PI / (n - 1) as f64;
+        let lat = |i: usize| (-PI / 2.0 + dphi * i as f64).to_degrees();
+        let brief = year.summary();
+        assert!(
+            (brief.precipitation / brief.evaporation - 1.0).abs() < MOISTURE_SETTLED,
+            "{brief:?}"
+        );
+        // What a band gains from beyond it, kg/m²/s over the band.
+        let gain = |m: &Moisture, lo: f64, hi: f64| {
+            let (mut sum, mut area) = (0.0, 0.0);
+            for i in (0..n).filter(|&i| lat(i) >= lo && lat(i) <= hi) {
+                sum += m.weights[i] * (m.precipitation[i] - m.evaporation[i]);
+                area += m.weights[i];
+            }
+            sum / area
+        };
+        let (equator, subtropics) = (gain(&year, -9.0, 9.0), gain(&year, 14.0, 30.0));
+        println!(
+            "the equator gains {:.2} mm a day, the subtropics {:.2}; rain {:.2} and {:.2}",
+            equator * day,
+            subtropics * day,
+            year.precipitation[n / 2] * day,
+            year.precipitation[n / 2 + 5] * day
+        );
+        assert!(
+            equator * day > 0.3 && subtropics * day < -0.3,
+            "{equator} {subtropics}"
+        );
+        // The whole column on the drift.
+        let whole = aquaplanet(&Air { layer: 1e9, ..air }, 3.0);
+        let ratio = gain(&whole, -9.0, 9.0) / equator;
+        println!("carried whole the equator gains {ratio:.1} times as much");
+        assert!((8.0..25.0).contains(&ratio), "{ratio}");
+        // The eddies' vapour across 40 degrees against the heat they carry: its latent share.
+        let south_of = |m: &Moisture, edge: f64| -> f64 {
+            (0..n)
+                .filter(|&i| lat(i) < edge)
+                .map(|i| m.weights[i] * (m.evaporation[i] - m.precipitation[i]))
+                .sum()
+        };
+        let links = crate::climate::place_links((n, 1));
+        let i = (0..n).rfind(|&i| lat(i) < 40.0).unwrap();
+        let t = |i: usize| 300.0 - 45.0 * lat(i).to_radians().sin().powi(2);
+        let g = links[i].iter().find(|l| l.0 == i + 1).unwrap().1;
+        let heat = air.transport * (1.0 - air.water) * g * (t(i) - t(i + 1)) * year.weights[i];
+        let latent = air.vapour.l_vap * south_of(&year, 40.0);
+        // By hand: the air the heat moves, over what a kilogram of it carries a kelvin,
+        // carrying the difference of the two latitudes' surface air's vapour.
+        let vapour = |i: usize| year.saturation[i] * air.saturated_humidity(t(i), air.pressure);
+        let carries = |i: usize| {
+            air.heat_capacity + air.latent_capacity(t(i), air.pressure, year.saturation[i])
+        };
+        let by_hand = air.vapour.l_vap * heat / (t(i) - t(i + 1)) * (vapour(i) - vapour(i + 1))
+            / (0.5 * (carries(i) + carries(i + 1)));
+        println!(
+            "across 40 degrees the vapour carries {:.2} of the eddies' heat, by hand {:.2}",
+            latent / heat,
+            by_hand / heat
+        );
+        assert!((0.15..0.6).contains(&(latent / heat)), "{latent} {heat}");
+        assert!((latent / by_hand - 1.0).abs() < 0.1, "{latent} {by_hand}");
+        // All of the transport the eddies' within the cell too.
+        let mixed = aquaplanet(&Air { reach: 0.0, ..air }, 3.0);
+        let kept = gain(&mixed, -9.0, 9.0) / equator;
+        println!("with the eddies' whole share within the cell the equator gains {kept:.2} of it");
+        assert!(kept < 0.6, "{kept}");
+        // The sea gives into its surface air whatever its column holds.
+        let p = n / 2 + 9;
+        let (ta, ts) = (t(p), t(p) + 1.0);
+        let rho = air.pressure * air.molar_mass / (GAS_CONSTANT * ta);
+        let layer = crate::surface_layer::SurfaceLayer {
+            gravity: air.gravity,
+            heat_capacity: air.heat_capacity,
+        };
+        let by_hand = rho
+            * AIR_EXCHANGE_COEFFICIENT
+            * 6.0
+            * layer.exchange(ts, ta, 6.0)
+            * (air.saturated_humidity(ts, air.pressure)
+                - CLOUD_SURFACE_HUMIDITY * air.saturated_humidity(ta, air.pressure));
+        for m in [&year, &whole, &mixed] {
+            assert!(
+                (m.evaporation[p] / by_hand - 1.0).abs() < 1e-9,
+                "{} {by_hand}",
+                m.evaporation[p]
+            );
+        }
+        let e = n / 2;
+        assert!((year.saturation[e] - whole.saturation[e]).abs() > 0.01);
     }
 
     /// F268: the saturated column over Earth's 288 K holds some 30 kg/m², near the 25 kg/m²

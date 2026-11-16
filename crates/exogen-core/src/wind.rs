@@ -77,7 +77,7 @@ impl Air {
     }
 
     /// The depth the ground's drag acts over, m.
-    fn surface_layer(&self) -> f64 {
+    pub(crate) fn surface_layer(&self) -> f64 {
         (SURFACE_LAYER_SHARE * self.scale_height).max(1.0)
     }
 
@@ -147,6 +147,12 @@ pub struct Wind {
     /// after step, place after place within each: the tilts' mean.
     pub east: Vec<f32>,
     pub north: Vec<f32>,
+    /// The part of each place's wind that crosses the isobars (M74), eastward and northward,
+    /// m/s, laid out as the wind: the drift of the layer the ground's drag acts over, down the
+    /// pressure's gradient and aside from the cell's force, which the air above that layer,
+    /// flowing along the isobars, does not share.
+    pub drift_east: Vec<f32>,
+    pub drift_north: Vec<f32>,
     /// At each step: the thermal equator, rad; the trades' ends, where the eddies' or the
     /// cell's own westerlies begin, north and south, rad; the wind's mean speed over the body,
     /// m/s; and the work the atmosphere's heat engine does, W/m² over the body.
@@ -173,6 +179,7 @@ pub struct Summary {
 struct Blown {
     east: Vec<f64>,
     north: Vec<f64>,
+    drift: (Vec<f64>, Vec<f64>),
     equator: f64,
     ridges: (f64, f64),
     speed: f64,
@@ -287,6 +294,8 @@ pub fn blow(
         steps,
         east: vec![0.0; steps * n],
         north: vec![0.0; steps * n],
+        drift_east: vec![0.0; steps * n],
+        drift_north: vec![0.0; steps * n],
         equator: vec![0.0; steps],
         ridges: vec![(0.0, 0.0); steps],
         speed: vec![0.0; steps],
@@ -297,6 +306,8 @@ pub fn blow(
             for p in 0..n {
                 wind.east[k * n + p] += (b.east[p] / tilts) as f32;
                 wind.north[k * n + p] += (b.north[p] / tilts) as f32;
+                wind.drift_east[k * n + p] += (b.drift.0[p] / tilts) as f32;
+                wind.drift_north[k * n + p] += (b.drift.1[p] / tilts) as f32;
             }
             wind.equator[k] += b.equator / tilts;
             wind.ridges[k].0 += b.ridges.0 / tilts;
@@ -395,6 +406,7 @@ fn step(
     let mut out = Blown {
         east: vec![0.0; n],
         north: vec![0.0; n],
+        drift: (vec![0.0; n], vec![0.0; n]),
         equator,
         ridges: (equator, equator),
         speed: 0.0,
@@ -486,6 +498,7 @@ fn step(
         // The wind at each place from the gradient, the latitudes' and its departure's.
         let mut east = vec![0.0; n];
         let mut north = vec![0.0; n];
+        let mut drift = (vec![0.0; n], vec![0.0; n]);
         for (i, &along) in gradient.iter().enumerate().take(n_lat - 1).skip(1) {
             let lat = lat_of(i);
             let f = 2.0 * air.omega * lat.sin();
@@ -507,6 +520,10 @@ fn step(
                 let x = force[i];
                 east[p] = (eps * x - (eps * gx + f * gy) / density[p]) / den;
                 north[p] = ((f * gx - eps * gy) / density[p] - f * x) / den;
+                // Its drift across the isobars (M74): down the gradient by the ground's
+                // friction, and aside from the cell's force by the spin.
+                drift.0[p] = -eps * gx / density[p] / den;
+                drift.1[p] = (-eps * gy / density[p] - f * x) / den;
             }
         }
         // Its strength: the surface spends its share of the heat engine's work, the mean
@@ -525,6 +542,9 @@ fn step(
             0.0
         };
         for x in east.iter_mut().chain(&mut north) {
+            *x *= scale;
+        }
+        for x in drift.0.iter_mut().chain(&mut drift.1) {
             *x *= scale;
         }
         let mean = (0..n)
@@ -548,6 +568,7 @@ fn step(
             && (belts - belting).abs() <= WIND_SETTLED * belting.max(WIND_LEAST_SPEED);
         out.east = east;
         out.north = north;
+        out.drift = drift;
         out.ridges = ridges;
         out.speed = mean;
         speed = mean;
@@ -663,6 +684,98 @@ mod tests {
         let (mean, work) = (wind.mean_speed(), wind.work[0]);
         assert!((5.0..9.0).contains(&mean), "{mean} m/s");
         assert!((1.5..4.0).contains(&work), "{work} W/m²");
+    }
+
+    /// M74: the part of the wind that crosses the isobars is the drift of the layer the
+    /// ground's drag acts over. An aquaplanet's isobars lie along its latitudes: all of its
+    /// northward wind is that drift and none of its eastward, and the mass the drift carries,
+    /// the layer's depth times its speed, is the Ekman transport of the wind's stress on the
+    /// ground, C_d U u / f, as the trades' drift toward the equator is the Hadley cell's lower
+    /// branch (Held 2001). About a warm patch the drift blows down the pressure's gradient
+    /// into its low and the rest of the wind along the isobars about it, the two at right
+    /// angles. Under a locked body's star the drift blows toward the star from either side.
+    #[test]
+    fn a_wind_s_drift_crosses_its_isobars() {
+        let layout = (91, 90);
+        let n = layout.0 * layout.1;
+        let seas = sites(layout, 1.0);
+        let belts = |s: &Site| 300.0 - 50.0 * s.lat.sin().powi(2);
+        let air: Vec<f64> = seas.iter().map(belts).collect();
+        let earth = earth();
+        let wind = blow(&earth, &seas, layout, &links(layout, 0.6), &[&air]).unwrap();
+        for p in 0..n {
+            assert_eq!(wind.drift_north[p], wind.north[p], "{p}");
+            assert_eq!(wind.drift_east[p], 0.0, "{p}");
+        }
+        let (depth, drag, speed) = (earth.surface_layer(), seas[0].drag(), wind.speed[0]);
+        for lat in [-46.0f64, -14.0, 14.0, 46.0] {
+            let i = ((lat + 90.0) / 180.0 * (layout.0 - 1) as f64).round() as usize;
+            let p = i * layout.1;
+            let f = 2.0 * earth.omega * seas[p].lat.sin();
+            let drifts = depth * wind.drift_north[p] as f64;
+            let ekman = drag * speed * wind.east[p] as f64 / f;
+            assert!(
+                (drifts / ekman - 1.0).abs() < 0.02,
+                "{lat}: {drifts} {ekman}"
+            );
+            // The trades' drift toward the equator, the westerlies' away from it.
+            let toward = -lat.signum() * drifts;
+            assert!(
+                if lat.abs() < 30.0 {
+                    toward > 100.0
+                } else {
+                    toward < -100.0
+                },
+                "{lat}: {drifts}"
+            );
+        }
+        // A patch 8 K warm at 46 degrees north.
+        let centre = 46f64.to_radians();
+        let patchy: Vec<f64> = seas
+            .iter()
+            .map(|s| {
+                let d = (s.lat - centre).hypot(s.lon * s.lat.cos());
+                belts(s) + 8.0 * (-(d / 0.2).powi(2)).exp()
+            })
+            .collect();
+        let wind = blow(&earth, &seas, layout, &links(layout, 0.6), &[&patchy]).unwrap();
+        let mut turned = 0;
+        for p in 0..n {
+            let (de, dn) = (wind.drift_east[p] as f64, wind.drift_north[p] as f64);
+            let (ae, an) = (wind.east[p] as f64 - de, wind.north[p] as f64 - dn);
+            let (drift, along) = (de.hypot(dn), ae.hypot(an));
+            assert!(
+                (de * ae + dn * an).abs() <= 1e-4 * drift * along + 1e-9,
+                "{p}: {de} {dn} {ae} {an}"
+            );
+            turned += (de.abs() > 0.05 && an.abs() > 0.05) as usize;
+        }
+        assert!(turned > 20, "{turned}");
+        let row = 68 * layout.1;
+        let (west, east) = (wind.drift_east[row + 43], wind.drift_east[row + 47]);
+        assert!(west > 0.05 && east < -0.05, "{west} {east}");
+        // A locked body.
+        let layout = (46, 90);
+        let seas = sites(layout, 1.0);
+        let air: Vec<f64> = seas
+            .iter()
+            .map(|s| 230.0 + 50.0 * (s.lat.cos() * s.lon.cos()).max(0.0))
+            .collect();
+        let locked = Air {
+            omega: TAU_6_DAYS,
+            radius: 5.85e6,
+            reach: PI,
+            ..earth
+        };
+        let wind = blow(&locked, &seas, layout, &links(layout, 0.6), &[&air]).unwrap();
+        let row = (layout.0 / 2) * layout.1;
+        let at = |lon: f64| {
+            let j = ((lon + 180.0) / 360.0 * layout.1 as f64).round() as usize % layout.1;
+            (wind.east[row + j] as f64, wind.drift_east[row + j] as f64)
+        };
+        let ((west, drifts), (east, back)) = (at(-40.0), at(40.0));
+        assert!(drifts > 0.5 * west && west > 0.0, "{west} {drifts}");
+        assert!(back < 0.5 * east && east < 0.0, "{east} {back}");
     }
 
     /// F267: a faster spinner's belts are the narrower, so that it has more of them: at four

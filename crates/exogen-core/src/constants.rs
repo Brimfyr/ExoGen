@@ -2713,6 +2713,14 @@ pub const RAIN_SNOW_WIDTH: f64 = 1.0;
 /// full rate of wet ground while BUCKET_FULL_SHARE full and in proportion below.
 pub const SOIL_CAPACITY: f64 = 0.15;
 pub const BUCKET_FULL_SHARE: f64 = 0.75;
+/// M74: the share of the rain and the melt on a land that runs off it: its bucket's fill to
+/// this power, the share of its ground already full, where the bucket alone shed only what
+/// overflowed it, nothing under a year's smooth rain short of what its wet ground can give.
+/// With the bucket's evaporation the square holds a year's balance on Budyko's (1974) curve,
+/// the evaporation of hundreds of catchments over their rain by their potential evaporation
+/// over it, E / P = (x tanh(1 / x) (1 - exp(-x)))^(1/2): 0.48, 0.71, 0.89 and 0.97 at x of a
+/// half, 1, 2 and 4 where the curve's 0.44, 0.69, 0.89 and 0.98.
+pub const BUCKET_SHED: f64 = 2.0;
 /// F270: the time the water a lift condenses takes to turn to rain and the time the rain
 /// takes to fall, each, s (Smith and Barstad 2004: some 1000 s, from 200 to 2000), through
 /// which the wind carries it on before it falls; the share of the delays' rain traced upwind,
