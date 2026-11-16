@@ -177,6 +177,30 @@ pub struct Deck {
 }
 
 impl Deck {
+    /// The deck `share` of the way from this one toward `own` (M73): each kind's cover between
+    /// theirs, its depths and its emissivity the mean over its cover, as a row's decks are
+    /// read together; the light they absorb, the absorbers above them and the thin cirrus'
+    /// share between theirs.
+    pub fn toward(&self, own: &Deck, share: f64) -> Deck {
+        let w = share.clamp(0.0, 1.0);
+        let mut out = Deck::default();
+        for i in 0..4 {
+            let (a, b) = ((1.0 - w) * self.cover[i] as f64, w * own.cover[i] as f64);
+            if a + b > 0.0 {
+                let mean = |x: f32, y: f32| ((a * x as f64 + b * y as f64) / (a + b)) as f32;
+                out.cover[i] = (a + b) as f32;
+                out.scaled[i] = mean(self.scaled[i], own.scaled[i]);
+                out.depth[i] = mean(self.depth[i], own.depth[i]);
+                out.emissivity[i] = mean(self.emissivity[i], own.emissivity[i]);
+            }
+        }
+        let between = |x: f32, y: f32| ((1.0 - w) * x as f64 + w * y as f64) as f32;
+        out.absorbs = between(self.absorbs, own.absorbs);
+        out.above = between(self.above, own.above);
+        out.thin = between(self.thin, own.thin);
+        out
+    }
+
     /// The share of the star's light the clouds reflect with the sun at height cosine `mu`
     /// (M67): each kind a conservative layer by the delta-Eddington approximation, (s + (2/3 -
     /// mu)(1 - exp(-tau' / mu))) / (4/3 + s), s its scaled depth and tau' its delta-scaled
@@ -246,9 +270,17 @@ pub struct Sky {
     /// temperature every so many kelvin, its levels' shares of the surface pressure and their
     /// temperatures over each.
     pub profile: std::sync::Arc<Profile>,
+    /// The air's own profile without a cell's stability aloft (M73), the same where the sky
+    /// keeps none: the inversion's free air stands on its own step's rising air's adiabat
+    /// (F356), not on the year's cell's.
+    pub free: std::sync::Arc<Profile>,
     /// The share of the surface pressure the tropopause stands at over each of the profile's
     /// grounds, where its adiabat comes down to its skin (M69).
     pub tropopauses: std::sync::Arc<Vec<f64>>,
+    /// Its clear air's column and the grounds' temperatures its tables span, K, from which
+    /// its tables are made again over a year's own cell's air (M73).
+    pub column: std::sync::Arc<Column>,
+    pub span: (f64, f64),
 }
 
 impl Sky {
@@ -315,7 +347,8 @@ impl Sky {
             .map(|i| reflects(i as f64 / RAYLEIGH_HEIGHTS as f64))
             .collect();
         let rayleigh = reflects(2.0 / 3.0);
-        Some(Self {
+        let profile = std::sync::Arc::new((first, step, shares, temps));
+        let sky = Self {
             clear: std::sync::Arc::new(Outgoing::of(&column, low, high)),
             clear_dry: std::sync::Arc::new(Outgoing::of(&dry, low, high)),
             brightening: balance.brightening,
@@ -331,16 +364,51 @@ impl Sky {
             ground,
             rayleigh,
             rayleigh_by: std::sync::Arc::new(rayleigh_by),
-            profile: std::sync::Arc::new((first, step, shares, temps)),
+            profile: profile.clone(),
+            free: profile,
             tropopauses: std::sync::Arc::new(Vec::new()),
-        })
-        .map(|mut sky| {
-            let (first, step, _, temps) = &*sky.profile;
-            let grounds: Vec<f64> = (0..temps.len()).map(|i| first + step * i as f64).collect();
-            let tops = grounds.iter().map(|&t| sky.tropopause_search(t)).collect();
-            sky.tropopauses = std::sync::Arc::new(tops);
-            sky
-        })
+            column: std::sync::Arc::new(column),
+            span: (low, high),
+        };
+        Some(sky.with_tropopauses())
+    }
+
+    /// The sky with the tropopause found over each of its profile's grounds.
+    fn with_tropopauses(mut self) -> Self {
+        let (first, step, _, temps) = &*self.profile;
+        let grounds: Vec<f64> = (0..temps.len()).map(|i| first + step * i as f64).collect();
+        let tops = grounds.iter().map(|&t| self.tropopause_search(t)).collect();
+        self.tropopauses = std::sync::Arc::new(tops);
+        self
+    }
+
+    /// The sky with its air aloft at the stability of the overturning cell's rising air at
+    /// `cell` K (M73): its clear air's streams, its grounds' heights' and its air's own profile
+    /// made again on the column that keeps it (`Column::with_aloft`), so that its clear sky,
+    /// its clouds' levels and what its air sends down all read the one air. The inversion's
+    /// strength keeps its own free air (F356).
+    pub fn aloft(&self, cell: f64) -> Self {
+        let column = (*self.column).clone().with_aloft(cell);
+        let dry = column.clone().with_vapour_share(VAPOUR_DRY);
+        let (low, high) = self.span;
+        let (first, step, _, old) = &*self.profile;
+        let shares = column.adiabat_shares(*first).0;
+        let temps = (0..old.len())
+            .map(|i| column.adiabat_shares(first + step * i as f64).1)
+            .collect();
+        let mut sky = self.clone();
+        sky.clear = std::sync::Arc::new(Outgoing::of(&column, low, high));
+        sky.clear_dry = std::sync::Arc::new(Outgoing::of(&dry, low, high));
+        sky.heights = Heights::of(&column, low, high);
+        sky.profile = std::sync::Arc::new((*first, *step, shares, temps));
+        sky.column = std::sync::Arc::new(column);
+        sky.with_tropopauses()
+    }
+
+    /// The cell's rising air's temperature whose stability its air aloft keeps, K (M73); none
+    /// where it keeps its own.
+    pub fn cell(&self) -> Option<f64> {
+        self.column.cell()
     }
 
     /// The share of the light its air's molecules reflect with the sun at height cosine `mu`
@@ -391,7 +459,13 @@ impl Sky {
     /// (M69): its column's, read between the grounds' temperatures and its levels in the
     /// pressure's logarithm, held at the ends; down the lapse rate where the profile holds none.
     fn adiabat(&self, air: f64, ratio: f64) -> f64 {
-        let (first, step, shares, temps) = &*self.profile;
+        self.adiabat_on(&self.profile, air, ratio)
+    }
+
+    /// `profile`'s air at `ratio` of the surface pressure over air at `air` K at the ground,
+    /// as `adiabat` reads the sky's.
+    fn adiabat_on(&self, profile: &Profile, air: f64, ratio: f64) -> f64 {
+        let (first, step, shares, temps) = profile;
         if temps.is_empty() || shares.len() < 2 {
             let z = -self.scale_height * ratio.max(1e-9).ln();
             return air - self.lapse * z;
@@ -473,7 +547,9 @@ impl Sky {
         // adiabat from its surface (Stone and Carlson 1979), by degrees `rising` of the way.
         let rising = rising.clamp(0.0, 1.0);
         let down = free - self.lapse * r * free / g * (1.0 / x700).ln();
-        let t700 = rising * self.at(free, x700) + (1.0 - rising) * down;
+        // On its own adiabat, whatever cell's stability the sky's air aloft keeps (M73).
+        let own = self.adiabat_on(&self.free, free, x700);
+        let t700 = rising * own.max(self.tropopause.min(free)) + (1.0 - rising) * down;
         let theta700 = t700 * (1.0 / x700).powf(r / cp);
         let lts = theta700 - surface;
         let t850 = 0.5 * (surface + t700);
@@ -1120,7 +1196,83 @@ mod tests {
                 "the_convection_s_own_clouds_show_as_isccp_sees_them",
                 &|| the_convection_s_own_clouds_show_as_isccp_sees_them(&sky),
             ),
+            ("a_sky_s_air_aloft_keeps_its_cell_s_stability", &|| {
+                a_sky_s_air_aloft_keeps_its_cell_s_stability(&sky)
+            }),
         ]);
+    }
+
+    /// M73: a sky whose air aloft keeps the stability of its cell's rising air, here at 299 K.
+    /// Over air as warm as the cell's it reads as the plain sky. Over colder air its levels
+    /// stand the warmer, at 500 hPa over the subarctic winter's 257.4 K within 6 K of AFGL's
+    /// 239.4 where the plain sky's stands some 25 K under it; its tropopause stands the higher;
+    /// its clear sky sends the more, the more the colder the air; a cloud's top lets out
+    /// another share under the warmer air over it. The inversion's strength is the plain
+    /// sky's over every ground: its free air stands on its own adiabat (F356).
+    fn a_sky_s_air_aloft_keeps_its_cell_s_stability(sky: &Sky) {
+        let cell = 299.0;
+        let aloft = sky.aloft(cell);
+        assert_eq!(aloft.cell(), Some(cell));
+        assert_eq!(sky.cell(), None);
+        let x500 = 500.0 / 1013.25;
+        let sends = |s: &Sky, t: f64| {
+            s.clear.air_up_over(t, 0.0) + s.clear.window_over(t, 0.0) * SIGMA_SB * t.powi(4)
+        };
+        // Read between its tables' grounds, the nearest under the cell's the last it lifts.
+        for (t, near) in [(299.0, 1.0), (306.0, 1e-6), (312.0, 1e-6)] {
+            let (level, top, sent) = (
+                aloft.at(t, x500) - sky.at(t, x500),
+                aloft.tropopause_ratio(t) - sky.tropopause_ratio(t),
+                sends(&aloft, t) - sends(sky, t),
+            );
+            println!("{t} K: {level:.2e} K at 500 hPa, its tropopause {top:.2e}, {sent:.2e} W/m²");
+            assert!(
+                level.abs() < near && top.abs() < 0.02 * near,
+                "{t}: {level} {top}"
+            );
+            assert!(sent.abs() < 1.5 * near, "{t}: {sent}");
+        }
+        let mut last = 0.0;
+        for t in [293.7, 287.5, 272.0, 257.4] {
+            let (own, held) = (sky.at(t, x500), aloft.at(t, x500));
+            let (top, plain) = (aloft.tropopause_ratio(t), sky.tropopause_ratio(t));
+            let more = sends(&aloft, t) - sends(sky, t);
+            println!(
+                "{t} K: {held:.1} K at 500 hPa where {own:.1}; its tropopause at {top:.3} of the surface pressure where {plain:.3}; its clear sky sends {more:.1} W/m² more"
+            );
+            assert!(held > own + 0.5, "{t}: {held} {own}");
+            assert!(top < plain, "{t}: {top} {plain}");
+            assert!(more > last, "{t}: {more} {last}");
+            last = more;
+        }
+        let (own, held) = (sky.at(257.4, x500), aloft.at(257.4, x500));
+        assert!(
+            (held - 239.4).abs() < 6.0 && own < 239.4 - 20.0,
+            "{held} {own}"
+        );
+        assert!(aloft.tropopause_ratio(257.4) < sky.tropopause_ratio(257.4) - 0.05);
+        // A cloud's top at 240 K halfway up the air: the air over it the warmer.
+        let (a, b) = (
+            aloft.heights.share(240.0, 0.5),
+            sky.heights.share(240.0, 0.5),
+        );
+        println!(
+            "a 240 K top at half the surface pressure lets out {a:.4} of its light where {b:.4}"
+        );
+        assert!((a - b).abs() > 1e-4, "{a} {b}");
+        for (surface, free, rising) in [
+            (290.0, 295.0, 1.0),
+            (285.0, 292.0, 0.5),
+            (270.0, 270.0, 0.0),
+            (296.0, 299.0, 1.0),
+            (280.0, 286.0, 1.0),
+        ] {
+            let (a, b) = (
+                aloft.eis(surface, free, rising),
+                sky.eis(surface, free, rising),
+            );
+            assert!((a - b).abs() < 1e-12, "{surface} {free} {rising}: {a} {b}");
+        }
     }
 
     /// M69: the clouds read their air's own profile, its column's adiabat from its surface air:

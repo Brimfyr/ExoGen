@@ -495,6 +495,9 @@ pub struct Column {
     vapour_most: f64,
     /// The share of its law's vapour the column holds (M69): a place's own column's.
     vapour_share: f64,
+    /// The temperature of the overturning cell's rising air, K, whose stability the column's
+    /// air aloft keeps (M73); none where it stands on its own profile.
+    aloft: Option<f64>,
     /// Its ozone (M69): its column, cm STP, and its layer's centre, Pa; none without oxygen.
     ozone: (f64, f64),
     /// The clouds' grey depth's law, a u^b of the column's vapour u, kg/m² (M55).
@@ -557,6 +560,7 @@ impl Column {
             water,
             vapour_most: f64::INFINITY,
             vapour_share: 1.0,
+            aloft: None,
             ozone: {
                 let oxygen = share("O2");
                 let (centre, power, _, deepest) = OZONE_LAYER;
@@ -584,6 +588,19 @@ impl Column {
     pub fn with_vapour_share(mut self, share: f64) -> Self {
         self.vapour_share = share.max(0.0);
         self
+    }
+
+    /// The column with its air aloft at the stability of the overturning cell's rising air at
+    /// `cell` K (M73).
+    pub fn with_aloft(mut self, cell: f64) -> Self {
+        self.aloft = Some(cell);
+        self
+    }
+
+    /// The cell's rising air's temperature whose stability its air aloft keeps, K (M73); none
+    /// where it keeps its own.
+    pub fn cell(&self) -> Option<f64> {
+        self.aloft
     }
 
     /// The column absorbing `sunlight` (M65): its air taking it by its absorbers' depths, its
@@ -672,8 +689,17 @@ impl Column {
     /// lifts its surface air on.
     pub fn adiabat_shares(&self, t: f64) -> (Vec<f64>, Vec<f64>) {
         let levels = self.levels(1.0);
-        let temps = self.adiabat_over(t, &levels);
+        let mut temps = self.adiabat_over(t, &levels);
         let ground = levels[0].max(1e-300);
+        // Its air aloft at the stability of its cell's rising air's adiabat (M73).
+        if let Some(cell) = self.aloft.filter(|&cell| t < cell) {
+            let warm = self.adiabat_over(cell, &levels);
+            let kappa = self.gas_constant / self.heat;
+            for k in 1..temps.len() {
+                let lifted = warm[k] - (cell - t) * (levels[k] / ground).powf(kappa);
+                temps[k] = temps[k].max(lifted);
+            }
+        }
         (levels.iter().map(|&p| p / ground).collect(), temps)
     }
 
@@ -846,14 +872,23 @@ impl Column {
     /// (M65): the warmer of the adiabat from the ground and the radiative-convective profile
     /// over the datum read between the nodes of its ground's temperature, never colder than
     /// the bulk gas's frost; with the water vapour above each level and each level's saturated
-    /// vapour's share of the pressure (none without water).
+    /// vapour's share of the pressure (none without water). Its air aloft at the stability of
+    /// its cell's rising air where the column keeps one (M73).
     fn profile(&self, t: f64, levels: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+        let mut temps = self.own_temps(t, levels);
+        self.lift_aloft(t, levels, &mut temps);
+        let (vapour, humid) = self.vapour_of(&temps, levels);
+        (temps, vapour, humid)
+    }
+
+    /// The air's own temperatures at `levels` over ground at `t` K, as `profile` describes
+    /// them: what its own ground's convection and its own radiation hold.
+    fn own_temps(&self, t: f64, levels: &[f64]) -> Vec<f64> {
         let thick = self.thickness();
         if thick >= 1.0 {
             let mut temps = self.cold_profile(t, levels);
             temps[0] = t;
-            let (vapour, humid) = self.vapour_of(&temps, levels);
-            return (temps, vapour, humid);
+            return temps;
         }
         let datum = self.levels(1.0);
         let rc = self.rc_at(t);
@@ -883,8 +918,57 @@ impl Column {
             }
         }
         temps[0] = t;
-        let (vapour, humid) = self.vapour_of(&temps, levels);
-        (temps, vapour, humid)
+        temps
+    }
+
+    /// M73: the air aloft keeps the stability of the overturning cell's rising air. Over ground
+    /// colder than the cell's air at its level, the air's potential temperature rises aloft by
+    /// what the cell's does from that level: T(p) = T_cell(p) - (T_cell(p_ground) - t)
+    /// (p / p_ground)^(R / c_p), the cell's own profile over the datum read in the pressure's
+    /// logarithm; no colder than the cell's coldest air, its tropopause's, where the cell's own
+    /// air stands as warm, nor than its own profile. A column's own moist adiabat from a cold
+    /// ground is nearly the dry one, its air at 500 hPa some 25 K under the subarctic winter's
+    /// (AFGL; 214 K where 239 over 257 K ground), where the air aloft is the warm air the
+    /// eddies bring up the isentropes from the latitudes equatorward (Juckes 2000; Frierson
+    /// 2008): with the law 235 K. Nothing over ground as warm as the cell's air, or without a
+    /// cell.
+    fn lift_aloft(&self, t: f64, levels: &[f64], temps: &mut [f64]) {
+        let Some(cell) = self.aloft else {
+            return;
+        };
+        let datum = self.levels(1.0);
+        let warm = self.own_temps(cell, &datum);
+        let m = datum.len();
+        // The cell's air at `p` Pa, held at its ends.
+        let at = |p: f64| -> f64 {
+            if p >= datum[0] {
+                return warm[0];
+            }
+            if p <= datum[m - 1] {
+                return warm[m - 1];
+            }
+            let k = datum.iter().position(|&q| q < p).unwrap_or(m - 1).max(1);
+            let w = (p / datum[k - 1]).ln() / (datum[k] / datum[k - 1]).ln();
+            warm[k - 1] + w * (warm[k] - warm[k - 1])
+        };
+        let gap = at(levels[0]) - t;
+        if gap <= 0.0 {
+            return;
+        }
+        // The cell's coldest air, its tropopause's: the first its profile comes down to.
+        let mut coldest = warm[0];
+        for &w in &warm {
+            if w > coldest {
+                break;
+            }
+            coldest = w;
+        }
+        let kappa = self.gas_constant / self.heat;
+        for k in 1..temps.len() {
+            let cells = at(levels[k]);
+            let lifted = cells - gap * (levels[k] / levels[0]).powf(kappa);
+            temps[k] = temps[k].max(lifted.max(coldest.min(t).min(cells)));
+        }
     }
 
     /// How far the column stands from its radiative-convective profile toward F293's, the
@@ -3236,6 +3320,93 @@ mod tests {
         }
         let mean = through.iter().sum::<f64>() / 10.0;
         assert!((mean - 0.808).abs() < 0.04, "{mean}");
+    }
+
+    /// M73: a column's air aloft keeps the stability of its overturning cell's rising air. At
+    /// the cell's own air's temperature and over warmer ground it stands on its own profile.
+    /// Over colder ground it is never colder than its own profile nor than the cell's coldest
+    /// air, never warmer than the cell's air at the level, and where the law holds it its
+    /// potential temperature over its ground's is the cell's over the cell's. Measured (AFGL,
+    /// the research notes): over the subarctic winter's 257.4 K ground its air at 500 hPa
+    /// stands within 6 K of 239.4 K and at 300 hPa within 5 of 218.5, where its own profile
+    /// stands over 20 K under the first; over the midlatitude summer's 293.7 K within 6 of
+    /// 262.4 and 5 of 238.2. And it sends more to space, the more the colder its ground.
+    #[test]
+    fn an_air_aloft_keeps_its_cell_s_stability() {
+        let g = graph("Earth");
+        let (column, _) = column_of(&g, 0.3);
+        let plain = column.without_clouds();
+        let cell = 299.0;
+        let aloft = plain.clone().with_aloft(cell);
+        let levels = plain.levels(1.0);
+        let kappa = plain.gas_constant / plain.heat;
+        let read = |temps: &[f64], hpa: f64| -> f64 {
+            let p = hpa * 100.0;
+            let k = levels.iter().position(|&q| q < p).unwrap().max(1);
+            let x = (p / levels[k - 1]).ln() / (levels[k] / levels[k - 1]).ln();
+            temps[k - 1] + x * (temps[k] - temps[k - 1])
+        };
+        for t in [cell, cell + 6.0] {
+            assert_eq!(
+                aloft.profile(t, &levels).0,
+                plain.profile(t, &levels).0,
+                "{t}"
+            );
+        }
+        let warm = plain.profile(cell, &levels).0;
+        let coldest = warm
+            .iter()
+            .zip(&warm[1..])
+            .find(|(a, b)| b > a)
+            .map_or(warm[warm.len() - 1], |(&a, _)| a);
+        for t in [245.0, 257.4, 272.0, 287.5, 293.7] {
+            let (own, held) = (plain.profile(t, &levels).0, aloft.profile(t, &levels).0);
+            assert_eq!(held[0], t);
+            let mut lifted = 0;
+            for k in 1..levels.len() {
+                assert!(held[k] >= own[k] - 1e-9, "{t} {k}: {} {}", held[k], own[k]);
+                assert!(
+                    held[k] >= coldest.min(t).min(warm[k]) - 1e-9,
+                    "{t} {k}: {}",
+                    held[k]
+                );
+                assert!(
+                    held[k] <= warm[k].max(own[k]) + 1e-9,
+                    "{t} {k}: {}",
+                    held[k]
+                );
+                let x = (levels[k] / levels[0]).powf(kappa);
+                let law = warm[k] - (cell - t) * x;
+                if law > own[k] + 1e-6 && law > coldest + 1e-6 {
+                    let (over, cells) = (held[k] / x - t, warm[k] / x - cell);
+                    assert!((over - cells).abs() < 1e-6, "{t} {k}: {over} {cells}");
+                    lifted += 1;
+                }
+            }
+            assert!(lifted > 5, "{t}: {lifted}");
+        }
+        for (t, at500, at300) in [(257.4, 239.4, 218.5), (293.7, 262.4, 238.2)] {
+            let held = aloft.profile(t, &levels).0;
+            let (mid, high) = (read(&held, 500.0), read(&held, 300.0));
+            println!(
+                "over {t} K ground: {mid:.1} K at 500 hPa ({at500}), {high:.1} at 300 ({at300})"
+            );
+            assert!(
+                (mid - at500).abs() < 6.0 && (high - at300).abs() < 5.0,
+                "{t}"
+            );
+        }
+        let own = read(&plain.profile(257.4, &levels).0, 500.0);
+        assert!(own < 239.4 - 20.0, "{own}");
+        let more = |t: f64| aloft.streams(t).olr - plain.streams(t).olr;
+        let (cold, mild, same) = (more(257.4), more(287.5), more(cell));
+        println!(
+            "the air aloft sends {cold:.1} W/m² more over 257.4 K ground, {mild:.1} over 287.5 K"
+        );
+        assert!(
+            same.abs() < 1e-9 && mild > 2.0 && cold > mild,
+            "{cold} {mild} {same}"
+        );
     }
 
     /// M69: ozone warms the stratosphere it sits in: Earth's column over its 288 K ground

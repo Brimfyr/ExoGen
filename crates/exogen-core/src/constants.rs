@@ -2188,6 +2188,17 @@ pub const CLOUD_ABSORPTION: (f64, f64) = (0.142, 0.178);
 /// left (the Earth-like's 296.2, 293.8, 293.1, 292.8 K from its first year's clouds), so that
 /// the last year stands within some 0.3 K of where they would end.
 pub const CLOUD_PASSES: (f64, usize) = (0.3, 6);
+/// M73: how far the clouds a year runs under, and the cell's air its sky keeps the stability
+/// of, move from those the year before it ran under toward that year's own, each year under
+/// its own clouds (numerical). A year's own clouds and its own cell would answer it within the
+/// year: a warmer year's rain lays more cloud and its cell's warmer air aloft lets out more,
+/// and it cools. Handed on whole a year late, a warm year's cooled the next and a cold year's
+/// warmed it: where the year answers by under a kelvin a kelvin the swing dies (the Earth-like
+/// near 290 K, by some minus 0.3), and past one it widens, as it did near 282 K, its sea's ice
+/// answering too (283.4, 280.7, 283.4, 280.7, 283.9 and 280.7 K). Half of the way closes an
+/// answer of minus one at once and any between minus three and one in the end, on the same
+/// year: the one whose own clouds and cell are the ones it ran under.
+pub const CLOUD_PASS_SHARE: f64 = 0.5;
 /// M69: the share of its law's vapour the clear sky's second table holds; a place reads between
 /// the two in the logarithm of its own column's share of the law's, as the column's outgoing
 /// radiation falls with the logarithm of its vapour (Koll and Cronin 2018's fit, the CERES and
