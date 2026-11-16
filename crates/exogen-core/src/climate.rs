@@ -9732,6 +9732,17 @@ mod tests {
         /// The year run again at each place's own wind and its wet ground's latent heat (F269),
         /// from its year at its stated wind.
         fn again(&self) -> Again {
+            self.again_with(false)
+        }
+
+        /// The year again, and its years under its own clouds from it (M68).
+        fn again_under_own_clouds(&self) -> Again {
+            self.again_with(true)
+        }
+
+        /// The year again at its own wind (F269); and, where `own`, its years under its own
+        /// clouds from it (M68), the own-clouds tier's (the user, 2026-11-16).
+        fn again_with(&self, own: bool) -> Again {
             let eb = EnergyBalance::from_graph(&self.graph);
             let ocean = sea_of(&self.graph);
             let sea = ocean.as_ref().map(|(o, f)| (o, f));
@@ -9748,14 +9759,18 @@ mod tests {
             let ground = Ground::from_graph(&self.graph);
             let cycle = eb.cycle_with(&self.climate, &ground, sea, None, Some(&stated));
             // Under its own clouds from it (M68), as the finish will run it.
-            let under = sky.as_ref().zip(air.as_ref()).map(|(sky, air)| {
-                eb.cycle_under_own_clouds(
-                    (&self.climate, &ground),
-                    (sea, None),
-                    cycle.clone(),
-                    (sky, air, &heights),
-                )
-            });
+            let under = sky
+                .as_ref()
+                .zip(air.as_ref())
+                .filter(|_| own)
+                .map(|(sky, air)| {
+                    eb.cycle_under_own_clouds(
+                        (&self.climate, &ground),
+                        (sea, None),
+                        cycle.clone(),
+                        (sky, air, &heights),
+                    )
+                });
             let water = air.and_then(|a| cycle.moisture(&a, &heights));
             // Its sky over the year's own cell's air (M73).
             let reach = eb.circulation.reach;
@@ -9794,7 +9809,8 @@ mod tests {
     struct Again {
         cycle: Cycle,
         /// The year under its own clouds from it (M68), as the finish will run it once the
-        /// tropics' heat is set (the user, 2026-11-13); none without its water's clouds.
+        /// tropics' heat is set (the user, 2026-11-13); none without its water's clouds, or
+        /// unless asked (the own-clouds tier).
         under: Option<OwnClouds>,
         /// The first year's mean surface temperature (M67's diagnostics).
         first: Field<f32>,
@@ -10068,8 +10084,6 @@ mod tests {
     fn the_earth_like_s_year() {
         let y = Year::of("Earth");
         let again = y.again();
-        let measured = std::sync::OnceLock::new();
-        let against = || measured.get_or_init(|| against_ceres(&y, &again));
         crate::testkit::checks(&[
             (
                 "an_earth_like_world_is_within_five_kelvin_of_earth",
@@ -10122,6 +10136,20 @@ mod tests {
                 "the_earth_like_s_sky_sends_what_ceres_measures_by_latitude",
                 &|| the_earth_like_s_sky_sends_what_ceres_measures_by_latitude(&again),
             ),
+        ]);
+    }
+
+    /// The Earth-like's years under its own clouds (M68), read by each check of them: the
+    /// own-clouds tier (the user, 2026-11-16), run when a milestone touches the clouds, the
+    /// radiation or the coupling, and at gates.
+    #[test]
+    #[cfg_attr(not(feature = "own-clouds"), ignore = "own clouds")]
+    fn the_earth_like_s_year_under_its_own_clouds() {
+        let y = Year::of("Earth");
+        let again = y.again_under_own_clouds();
+        let measured = std::sync::OnceLock::new();
+        let against = || measured.get_or_init(|| against_ceres(&y, &again));
+        crate::testkit::checks(&[
             (
                 "the_earth_like_under_its_clouds_reflects_as_earth_does",
                 &|| the_earth_like_under_its_clouds_reflects_as_earth_does(&y, &again),
@@ -11693,7 +11721,9 @@ mod tests {
     }
 
     impl LockedYear {
-        fn new() -> Self {
+        /// Its first year, and where `own` its years under its own clouds from it (M68), the
+        /// own-clouds tier's (the user, 2026-11-16); its first year again where not.
+        fn new(own: bool) -> Self {
             let world = locked_ocean_world();
             let eb = EnergyBalance::from_graph(&world);
             let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
@@ -11707,6 +11737,18 @@ mod tests {
             let sky = crate::clouds::Sky::from_graph(&world, &eb).expect("a sky");
             let air = air.expect("an air");
             let sea = Some((&ocean, &share));
+            if !own {
+                return Self {
+                    world,
+                    eb,
+                    climate,
+                    again: cycle.clone(),
+                    cycle,
+                    means: Vec::new(),
+                    cells: Vec::new(),
+                    sky: None,
+                };
+            }
             let own = eb.cycle_under_own_clouds(
                 (&climate, &ground),
                 (sea, None),
@@ -11730,7 +11772,7 @@ mod tests {
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn the_locked_ocean_world_s_year() {
-        let year = LockedYear::new();
+        let year = LockedYear::new(false);
         crate::testkit::checks(&[
             ("a_locked_ocean_world_keeps_its_sea_under_its_star", &|| {
                 a_locked_ocean_world_keeps_its_sea_under_its_star(&year)
@@ -11744,11 +11786,19 @@ mod tests {
             ("a_locked_world_s_clouds_gather_under_its_star", &|| {
                 a_locked_world_s_clouds_gather_under_its_star(&year)
             }),
-            (
-                "a_locked_ocean_world_under_its_clouds_stands_as_thai_s",
-                &|| a_locked_ocean_world_under_its_clouds_stands_as_thai_s(&year),
-            ),
         ]);
+    }
+
+    /// The locked ocean world's years under its own clouds (M68): the own-clouds tier (the
+    /// user, 2026-11-16).
+    #[test]
+    #[cfg_attr(not(feature = "own-clouds"), ignore = "own clouds")]
+    fn the_locked_ocean_world_s_year_under_its_own_clouds() {
+        let year = LockedYear::new(true);
+        crate::testkit::checks(&[(
+            "a_locked_ocean_world_under_its_clouds_stands_as_thai_s",
+            &|| a_locked_ocean_world_under_its_clouds_stands_as_thai_s(&year),
+        )]);
     }
 
     /// M67: the locked ocean world under its own clouds stands as THAI's first habitable case

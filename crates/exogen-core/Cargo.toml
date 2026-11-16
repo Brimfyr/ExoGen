@@ -12,6 +12,12 @@ authors.workspace = true
 # minutes each; left out of the fast tier run while iterating and run before each milestone
 # (`cargo nextest run --features whole-body`).
 whole-body = []
+# The years under their own clouds (M68), the Earth-like's and the locked ocean world's: their
+# cloud passes, each run until its sea's ice settles, take the tier from half an hour to two
+# hours. The finish does not run under its own clouds until the coupling; run them when a
+# milestone touches the clouds, the radiation or the coupling, and at gates (the user,
+# 2026-11-16): `cargo nextest run --features own-clouds`, the whole-body tests with them.
+own-clouds = ["whole-body"]
 
 [dependencies]
 exr = "1.74.2"

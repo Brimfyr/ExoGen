@@ -8,6 +8,10 @@ filter = '''
     | test(=stages::tests::the_moon_the_earth_like_and_mercury)
     | test(=climate::tests::the_earth_like_s_year)
     | test(=climate::tests::the_locked_ocean_world_s_year)
+    | test(=climate::tests::the_earth_like_s_year_under_its_own_clouds)
+    | test(=climate::tests::the_locked_ocean_world_s_year_under_its_own_clouds)
+    | test(=climate::tests::the_tropical_lands_year)
+    | test(=climate::tests::the_locked_land_s_year)
 '''
 priority = 100
 
