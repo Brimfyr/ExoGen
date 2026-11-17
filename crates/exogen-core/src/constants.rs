@@ -3023,6 +3023,16 @@ pub const OCEAN_SOLVE_TOLERANCE: f64 = 1e-8;
 /// OCEAN_MOST_SUBSTEPS of them at most; the sea ice's drift (F276) in steps that move no more
 /// than OCEAN_CFL of a place's ice.
 pub const OCEAN_UNDRIVEN_SHARE: f64 = 0.5;
+/// M77: the sea's mixed layer's friction on its Ekman flow, 1/s (Codron 2012; Kang et al.
+/// 2018; Bhatnagar et al. 2026, each 1e-5): its flow turns from the wind's stress by the spin,
+/// tau / f at right angles to it where f outruns the friction, and runs down the wind where it
+/// does not, within some 4 degrees of Earth's equator, as its drifters run down the wind within
+/// 2 to 3 (Lagerloef et al. 1999). No measured value is published for another body's sea.
+pub const OCEAN_EKMAN_FRICTION: f64 = 1e-5;
+/// M77: the water beneath the mixed layer, its steady balance swept at most OCEAN_RETURN_SWEEPS
+/// times, until no place's temperature moves by more than OCEAN_RETURN_TOLERANCE K.
+pub const OCEAN_RETURN_SWEEPS: usize = 400;
+pub const OCEAN_RETURN_TOLERANCE: f64 = 1e-6;
 pub const OCEAN_CFL: f64 = 0.5;
 pub const OCEAN_MOST_SUBSTEPS: usize = 400;
 /// F276: the sea ice's drift. The still water's drag on the ice, its coefficient McPhee

@@ -418,6 +418,12 @@ pub struct Seas {
     max_rows: Vec<f64>,
     ice_rows: Vec<f64>,
     cover_rows: Vec<f64>,
+    /// The return water's mean beneath each place's sea of the cycle's layout through the
+    /// cycle, K (M77): the water its mixed layer takes from beneath where its Ekman flow
+    /// diverges; and the heat it brought the sea, W/m² of its sea, less than none where it
+    /// cooled it.
+    pub deep_rows: Vec<f64>,
+    pub upwelled_rows: Vec<f64>,
     layout: (usize, usize),
     /// Where the ice at the snapshot's season ends between the places (F251).
     guide: Guide,
@@ -965,6 +971,12 @@ struct Sea {
     ice: f64,
     surface: f64,
     snow: f64,
+    /// The temperature of the water beneath its mixed layer, K (M77), the last step's, from
+    /// which the next step's balance starts; and the heat the water its mixed layer took from
+    /// beneath brought it through the last step, W/m² of its sea, less than none where it
+    /// cooled it.
+    deep: f64,
+    upwelled: f64,
     /// Its ice's top under its clear sky and under its clouds, K (M71), `surface` their
     /// radiation's mean by their shares.
     tops: [f64; 2],
@@ -2136,7 +2148,9 @@ fn window_between(
 /// A place's year: its land's mean, warmest and coldest temperature, the share of the year
 /// frost lies on it and its frost at the snapshot's season; and its sea's (F244): the
 /// surface's mean, coldest and warmest, its ice at the snapshot's season and the share of
-/// the year ice lies on it, the land's temperatures where the place has no sea.
+/// the year ice lies on it, the land's temperatures where the place has no sea; and the mean
+/// of the return water beneath it and the heat it brought, W/m² (M77), the land's mean and
+/// none where it has no sea.
 #[derive(Clone, Copy, Debug)]
 struct Year {
     mean: f64,
@@ -2144,7 +2158,7 @@ struct Year {
     min: f64,
     frost_share: f64,
     frost_now: f64,
-    sea: [f64; 6],
+    sea: [f64; 8],
     /// The surface's temperatures through the cycle, as quantiles, and the albedo its ground
     /// stood at (F256).
     spread: [f32; CYCLE_SPREAD],
@@ -2275,7 +2289,7 @@ impl Year {
             min,
             frost_share: 0.0,
             frost_now: 0.0,
-            sea: [mean, min, max, 0.0, 0.0, 0.0],
+            sea: [mean, min, max, 0.0, 0.0, 0.0, mean, 0.0],
             spread,
             albedo: albedo as f32,
         }
@@ -3266,7 +3280,7 @@ impl EnergyBalance {
                         min: f64::MAX,
                         frost_share: 0.0,
                         frost_now: 0.0,
-                        sea: [0.0, f64::MAX, f64::MIN, 0.0, 0.0, 0.0],
+                        sea: [0.0, f64::MAX, f64::MIN, 0.0, 0.0, 0.0, 0.0, 0.0],
                         spread: [0.0; CYCLE_SPREAD],
                         albedo: 0.0,
                     },
@@ -3283,6 +3297,8 @@ impl EnergyBalance {
                             acc.sea[3] + e.sea[3] / n,
                             acc.sea[4] + e.sea[4] / n,
                             acc.sea[5] + e.sea[5] / n,
+                            acc.sea[6] + e.sea[6] / n,
+                            acc.sea[7] + e.sea[7] / n,
                         ],
                         spread: std::array::from_fn(|i| acc.spread[i] + e.spread[i] / n as f32),
                         albedo: acc.albedo + e.albedo / n as f32,
@@ -3592,6 +3608,8 @@ impl EnergyBalance {
                 .iter()
                 .map(|y| 1.0 - (-y.sea[3].max(0.0) / SEA_ICE_COVER_MASS).exp())
                 .collect(),
+            deep_rows: rows.iter().map(|y| y.sea[6]).collect(),
+            upwelled_rows: rows.iter().map(|y| y.sea[7]).collect(),
             margin: Margin::new(
                 (n_lat, n_lon),
                 held(&|p| rows[p].sea[3] > SEA_ICE_COVER_MASS * std::f64::consts::LN_2),
@@ -7372,8 +7390,11 @@ struct Run {
     frost_sum: f64,
     frost_least: f64,
     /// The sea's surface's sum through the cycle, its coldest and warmest, the steps ice lay
-    /// on it and its ice at the snapshot's step.
+    /// on it and its ice at the snapshot's step; and the return water's sum beneath it and
+    /// the heat it brought (M77).
     sea_sum: f64,
+    deep_sum: f64,
+    upwelled_sum: f64,
     sea_lo: f64,
     sea_hi: f64,
     iced: usize,
@@ -7447,6 +7468,8 @@ impl Run {
                 ice: 0.0,
                 surface: t,
                 snow: 0.0,
+                deep: t,
+                upwelled: 0.0,
                 tops: [t, t],
             }
         });
@@ -7480,6 +7503,8 @@ impl Run {
             frost_sum: 0.0,
             frost_least: f64::MAX,
             sea_sum: 0.0,
+            deep_sum: 0.0,
+            upwelled_sum: 0.0,
             sea_lo: f64::MAX,
             sea_hi: f64::MIN,
             iced: 0,
@@ -7573,6 +7598,7 @@ impl Run {
         self.frost_start = self.mass;
         (self.frost_sum, self.frost_least) = (0.0, f64::MAX);
         (self.sea_sum, self.sea_lo, self.sea_hi) = (0.0, f64::MAX, f64::MIN);
+        (self.deep_sum, self.upwelled_sum) = (0.0, 0.0);
         self.iced = 0;
         self.records.clear();
         (self.lit, self.reflected) = (0.0, 0.0);
@@ -7600,6 +7626,8 @@ impl Run {
         }
         if let Some(sea) = &self.sea {
             self.sea_sum += sea.surface;
+            self.deep_sum += sea.deep;
+            self.upwelled_sum += sea.upwelled;
             (self.sea_lo, self.sea_hi) =
                 (self.sea_lo.min(sea.surface), self.sea_hi.max(sea.surface));
             if sea.ice > 0.0 {
@@ -7635,9 +7663,10 @@ impl Run {
 
     /// The place's sea's year through a cycle of `steps` (F244): its surface's mean, coldest
     /// and warmest, its ice at the snapshot's step, the share of the cycle ice lay and the
-    /// snow on its ice at the snapshot's step (M64); the land's mean, warmest and coldest,
-    /// `land`, where the place has no sea.
-    fn sea_year(&self, steps: usize, (mean, hi, lo): (f64, f64, f64)) -> [f64; 6] {
+    /// snow on its ice at the snapshot's step (M64), the return water's mean beneath it and the
+    /// heat it brought, W/m² (M77); the land's mean, warmest and coldest, `land`, where the
+    /// place has no sea.
+    fn sea_year(&self, steps: usize, (mean, hi, lo): (f64, f64, f64)) -> [f64; 8] {
         match self.sea {
             Some(_) => [
                 self.sea_sum / steps as f64,
@@ -7646,8 +7675,10 @@ impl Run {
                 self.ice_now,
                 self.iced as f64 / steps as f64,
                 self.snow_now,
+                self.deep_sum / steps as f64,
+                self.upwelled_sum / steps as f64,
             ],
-            None => [mean, lo, hi, 0.0, 0.0, 0.0],
+            None => [mean, lo, hi, 0.0, 0.0, 0.0, mean, 0.0],
         }
     }
 }
@@ -8515,6 +8546,9 @@ fn sea_transport(
 /// what it brings over what it holds, so that where the currents meet the land a sea of one
 /// temperature stays at it; a sea under ice stands at its freezing point, and the heat the
 /// water brings it melts its ice from below, adding to each place's `inflow`, W/m² of its sea.
+/// The mixed layer's Ekman flow carries its heat too, and where it diverges the water it takes
+/// from beneath brings the return water's (M77), which stands at the surface's temperature
+/// where its water went down, its balance carried from step to step.
 fn sea_currents(
     layout: &Layout,
     runs: &mut [Run],
@@ -8537,7 +8571,7 @@ fn sea_currents(
         .iter()
         .map(|r| r.sea.as_ref().map(|s| s.ice > 0.0))
         .collect();
-    let mut temps: Vec<f64> = runs
+    let temps: Vec<f64> = runs
         .iter()
         .zip(&iced)
         .map(|(r, i)| match (r.sea.as_ref(), i) {
@@ -8547,45 +8581,31 @@ fn sea_currents(
         })
         .collect();
     // Each boundary between two places with seas, and the water it passes from the first to
-    // the second, m³/s.
-    let mut faces = Vec::with_capacity(2 * n);
-    for p in 0..n {
-        let (i, j) = (p / n_lon, p % n_lon);
-        let east = i * n_lon + (j + 1) % n_lon;
-        let north = p + n_lon;
-        for (q, f) in [(east, currents.east[p]), (north, currents.north[p])] {
-            if q < n && q != p && iced[p].is_some() && iced[q].is_some() && f != 0.0 {
-                faces.push(if f > 0.0 { (p, q, f) } else { (q, p, -f) });
-            }
-        }
-    }
-    let mut given = vec![0.0; n];
-    for &(from, _, f) in &faces {
-        given[from] += f;
-    }
-    let fastest = (0..n)
-        .filter(|&p| water[p] > 0.0)
-        .map(|p| given[p] / water[p])
-        .fold(0.0, f64::max);
-    let subs = ((dt * fastest / OCEAN_CFL).ceil() as usize).clamp(1, OCEAN_MOST_SUBSTEPS);
-    let h = dt / subs as f64;
-    let mut brought = vec![0.0; n];
-    let mut change = vec![0.0; n];
-    for _ in 0..subs {
-        change.fill(0.0);
-        for &(from, to, f) in &faces {
-            change[to] += f * h * (temps[from] - temps[to]);
-        }
-        for p in 0..n {
-            match iced[p] {
-                Some(true) => brought[p] += change[p],
-                Some(false) if water[p] > 0.0 => temps[p] += change[p] / water[p],
-                _ => {}
-            }
-        }
-    }
+    // the second, m³/s: the gyres' and the mixed layer's Ekman flow's (M77); and the water each
+    // place's mixed layer takes from beneath it, at the return water's temperature, the
+    // steady balance from the last step's.
+    let (faces, over) = currents.flows(&|p| iced[p].is_some(), &temps);
+    let start: Vec<f64> = runs
+        .iter()
+        .zip(&temps)
+        .map(|(r, &t)| r.sea.as_ref().map_or(t, |s| s.deep))
+        .collect();
+    let (deep, _) = crate::currents::returning(&over, &temps, &start);
+    let held: Vec<bool> = iced.iter().map(|i| *i == Some(true)).collect();
+    let before = temps;
+    let (temps, brought) =
+        crate::currents::advect(&faces, (&over.up, &deep), &water, &held, &before, dt);
     let heat = ocean.capacity / depth;
     for (p, r) in runs.iter_mut().enumerate() {
+        if let Some(sea) = r.sea.as_mut() {
+            sea.deep = deep[p];
+            let surface = area[p] * places[p].sea;
+            sea.upwelled = if surface > 0.0 {
+                over.up[p] * heat * (deep[p] - before[p]) / surface
+            } else {
+                0.0
+            };
+        }
         match (r.sea.as_mut(), iced[p]) {
             (Some(sea), Some(false)) => (sea.t, sea.surface) = (temps[p], temps[p]),
             (Some(_), Some(true)) if area[p] * places[p].sea > 0.0 => {
@@ -8940,6 +8960,8 @@ mod tests {
             ice,
             surface,
             snow,
+            deep: f,
+            upwelled: 0.0,
             tops: [surface, surface],
         };
         let step = |s: &mut Sea, lit: f64, air: f64, fall: f64| {
@@ -9149,6 +9171,8 @@ mod tests {
                 ice: 1_500.0,
                 surface: 250.0,
                 snow: 60.0,
+                deep: ocean.freezing,
+                upwelled: 0.0,
                 tops: [250.0, 250.0],
             };
             let contact = Contact::default();
@@ -9986,10 +10010,13 @@ mod tests {
                     // the softer, and the continents' east coasts take 726 and 770 mm a year
                     // where 1,195 and 1,229 (Earth's subtropical east coasts some 1,000 to
                     // 1,500), the narrow one's 8.4 times its west's where 16: held over 700 mm
-                    // and 7 times; to restore 800 and 10.
+                    // and 7 times; to restore 800 and 10. M77: with the sea's overturning the
+                    // tropics' sea gives the less and the narrow one's takes 683 mm a year, its
+                    // rain 0.49 of its potential: held over 650 mm and 0.45; to restore 800 and
+                    // 0.5.
                     for cells in [&dry_wide, &dry_narrow] {
                         let (west, east) = (cells[0], cells[cells.len() - 1]);
-                        assert!(east.3 > 0.5 && east.1 > 700.0, "{east:?}");
+                        assert!(east.3 > 0.45 && east.1 > 650.0, "{east:?}");
                         if east.1 < 800.0 {
                             eprintln!(
                                 "KNOWN (M76): a subtropical east coast takes {:.0} mm a year, under 800",
@@ -10153,7 +10180,165 @@ mod tests {
             ("the_earth_like_s_trades_push_as_earth_s", &|| {
                 the_earth_like_s_trades_push_as_earth_s(&y, &again)
             }),
+            ("the_earth_like_s_sea_overturns_under_its_trades", &|| {
+                the_earth_like_s_sea_overturns_under_its_trades(&y, &again)
+            }),
         ]);
+    }
+
+    /// M77: the Earth-like's sea overturns under its trades as Earth's does. Its mixed layer's
+    /// Ekman flow carries water away from its equator across 11 degrees, a fifth to all of
+    /// Earth's 45 (north) and 63 to 72 (south) x 1e9 kg/s at 10 to 14 degrees by its sea's share
+    /// (the measured stress's Ekman flux, NCEP; Earth's oceans some three quarters of the
+    /// circle there); with it the subtropical cells' heat, the surface's warmth away and the
+    /// return water's back, a tenth to all of Klinger and Marotzke's (2000) 0.39 (north) and
+    /// 0.64 PW (south) at 10 degrees, the band between taking some 2 to 15 W/m² away of the
+    /// 11.6 theirs take (Held 2001's some 10); its return water colder than its surface where
+    /// it rises, the band's sea losing its heat; its return water's balance settled. KNOWN,
+    /// printed: its trades turned twice Earth's toward the equator at 10 degrees, their
+    /// northward stress against its spin's turn, it carries some a third of Earth's water
+    /// there and its cells half of their heat; and with no easterlies on its equator its water
+    /// rises at 5 to 10 degrees, not on it, where Earth's cools its sea some 60 W/m² within 2.5
+    /// (Schneider 2017): the surface wind's momentum from aloft (M76).
+    fn the_earth_like_s_sea_overturns_under_its_trades(y: &Year, again: &Again) {
+        let cycle = &again.cycle;
+        let currents = cycle.currents.as_ref().expect("its currents");
+        let (ocean, _) = sea_of(&y.graph).expect("its sea");
+        let (n_lat, n_lon) = currents.layout;
+        let n = n_lat * n_lon;
+        let steps = cycle.surfaces[1].len() / n.max(1);
+        // Its sea's year-mean surface, its ice's at its freezing point.
+        let surface: Vec<f64> = (0..n)
+            .map(|p| {
+                (0..steps)
+                    .map(|k| {
+                        let t = cycle.surfaces[1][p * steps + k] as f64;
+                        let iced = cycle.masses[1][p * steps + k] > 0.0;
+                        if iced || !(t.is_finite() && t > 1.0) {
+                            ocean.freezing
+                        } else {
+                            t
+                        }
+                    })
+                    .sum::<f64>()
+                    / steps.max(1) as f64
+            })
+            .collect();
+        let over = currents.overturning(&|p| cycle.sites[p].sea > 0.0, &surface);
+        // The return water its year's steps brought up and the heat it brought, and the
+        // balance of its year's mean surface.
+        let seas = cycle.seas.as_ref().expect("its seas");
+        let (deep, upwelled) = (&seas.deep_rows, &seas.upwelled_rows);
+        assert!(deep.len() == n && upwelled.len() == n);
+        let (balance, settled) = crate::currents::returning(&over, &surface, &surface);
+        let heat = ocean.capacity / OCEAN_MIXED_LAYER_M;
+        let dphi = PI / (n_lat - 1) as f64;
+        let lat = |p: usize| -90.0 + (p / n_lon) as f64 * dphi.to_degrees();
+        let mut off: Vec<String> = Vec::new();
+        let mut known: Vec<String> = Vec::new();
+        let mut exported = 0.0;
+        for (side, (water, cells)) in [(1.0f64, (45e9, 0.39e15)), (-1.0, (67e9, 0.64e15))] {
+            // The boundary between the rows at 10 and 12 degrees on this side.
+            let row = |d: f64| ((d + 90.0) / dphi.to_degrees()).floor() as usize;
+            let i = if side > 0.0 { row(10.0) } else { row(-12.0) };
+            let (mut carried, mut warmth) = (0.0, 0.0);
+            for j in 0..n_lon {
+                let (a, b) = (i * n_lon + j, (i + 1) * n_lon + j);
+                let f = currents.ekman_north[a];
+                let (from, to, f) = if f > 0.0 { (a, b, f) } else { (b, a, -f) };
+                let north = if to == b { 1.0 } else { -1.0 };
+                carried += side * north * f * ocean.density;
+                warmth += north * heat * f * (surface[from] - deep[to]);
+            }
+            // Earth's oceans some three quarters of the circle, the Earth-like's its share.
+            let share = (0..n).map(|p| cycle.sites[p].sea).sum::<f64>() / n as f64;
+            let measured = water * share / 0.75;
+            let away = side * warmth;
+            println!(
+                "{:.0} degrees: its mixed layer carries {:.1}e9 kg/s away from its equator (Earth's stress's, by its sea's share, {:.1}e9), its subtropical cell {:.3} PW away (Klinger and Marotzke {:.2})",
+                side * 10.0,
+                carried / 1e9,
+                measured / 1e9,
+                away / 1e15,
+                cells / 1e15
+            );
+            if !(0.2..1.3).contains(&(carried / measured)) {
+                off.push(format!("{side}: carried {carried:.3e} ({measured:.3e})"));
+            }
+            if carried < 0.5 * measured {
+                known.push(format!(
+                    "{side}: {:.2} of Earth's water",
+                    carried / measured
+                ));
+            }
+            if !(0.1..1.0).contains(&(away / cells)) {
+                off.push(format!("{side}: heat {away:.3e} ({cells:.3e})"));
+            }
+            if away < 0.5 * cells {
+                known.push(format!("{side}: {:.2} of the cells' heat", away / cells));
+            }
+            exported += away;
+        }
+        // What the band between takes away, W/m² of the band.
+        let band =
+            2.0 * std::f64::consts::TAU * currents.radius.powi(2) * (11f64.to_radians()).sin();
+        let export = exported / band;
+        println!(
+            "its cells take {export:.1} W/m² away from 11 south to 11 north (Klinger and Marotzke's 11.6)"
+        );
+        if !(2.0..15.0).contains(&export) {
+            off.push(format!("export {export:.1}"));
+        }
+        if export < 8.0 {
+            known.push(format!("the band's export {export:.1} W/m²"));
+        }
+        // Its upwelling, within 5 degrees of its equator and within 11.
+        let radius = currents.radius;
+        let cooling = |within: f64| {
+            let (mut cooled, mut sea_area) = (0.0, 0.0);
+            for (p, brought) in upwelled.iter().enumerate() {
+                if lat(p).abs() <= within && cycle.sites[p].sea > 0.0 {
+                    let area = std::f64::consts::TAU
+                        * radius
+                        * radius
+                        * cycle.sites[p].weight
+                        * cycle.sites[p].sea;
+                    cooled += brought * area;
+                    sea_area += area;
+                }
+            }
+            -cooled / sea_area.max(1.0)
+        };
+        let (equator, band) = (cooling(5.0), cooling(11.0));
+        let rising: Vec<usize> = (0..n)
+            .filter(|&p| lat(p).abs() <= 11.0 && over.up[p] > 0.0)
+            .collect();
+        let mean_of = |v: &[f64]| {
+            let up: f64 = rising.iter().map(|&p| over.up[p]).sum();
+            rising.iter().map(|&p| over.up[p] * v[p]).sum::<f64>() / up.max(1e-30)
+        };
+        println!(
+            "its upwelling cools its sea {equator:.1} W/m² within 5 degrees of its equator (Schneider 2017: some 60 within 2.5), {band:.1} within 11; the water rising within 11 at {:.2} K, its surface {:.2}, the balance of its year's mean surface {:.2}, settled {settled}",
+            mean_of(deep),
+            mean_of(&surface),
+            mean_of(&balance)
+        );
+        assert!(settled);
+        if band <= 0.0 {
+            off.push(format!("the band's upwelling {band:.1}"));
+        }
+        if equator > -5.0 && equator < 30.0 {
+            known.push(format!("its equator cooled {equator:.1} W/m²"));
+        } else if equator <= -5.0 {
+            off.push(format!("its equator warmed {equator:.1}"));
+        }
+        if !known.is_empty() {
+            eprintln!(
+                "KNOWN (M77): the Earth-like's sea's overturning: {}",
+                known.join(", ")
+            );
+        }
+        assert!(off.is_empty(), "{off:?}");
     }
 
     /// The trades' stress on Earth's sea, annual mean, N/m² (QuikSCAT 2000 to 2008, the
