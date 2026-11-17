@@ -20,12 +20,15 @@
 //! the equator, their upwelling on it and their sinking in the subtropics, the subtropical
 //! cells. The water beneath stands at the temperature of the surface where it went down,
 //! carried back along the return flow, each place's the mean of what flows into it by its
-//! weight (Klinger and Marotzke 2000): no constant. The overturning runs only where its
-//! surface water flows from a warmer sea to a colder: a sea of one salt stands by its warmth
-//! alone, and its water goes down only where it is the colder, to rise colder than the sea it
-//! rises under. Where the wind drives its surface water toward the warmer sea, the trades'
-//! last degrees into the equator or a locked world's sea toward its star, the warm water
-//! gathers and stands, its surface's slope against the wind, and turns over none.
+//! weight (Klinger and Marotzke 2000): no constant. Every boundary's Ekman flow runs, by
+//! degrees with its wind, under ice and toward a warmer sea alike (M79). A sea of one salt
+//! stands by its warmth alone: the water beneath a place stands no warmer than the sea over it,
+//! and where the return water comes under a colder sea it overturns into it, its heat into that
+//! sea. The water the wind drives toward a warmer sea heaps there and returns beneath, within
+//! the warm water, until it meets a sea colder than itself; there it comes up. Against the
+//! sea's warmth the overturning carries its heat down the warmth's slope, place by place, and
+//! with it from the warmer sea to the colder by its surface water's flow, as Earth's subtropical
+//! cells carry theirs.
 
 use crate::constants::*;
 use crate::wind::Site;
@@ -67,12 +70,8 @@ impl Currents {
 
     /// The water each boundary between two places `keep` holds passes, m³/s, from its first
     /// place to its second (F272, M77): the gyres' and the mixed layer's Ekman flow's, each
-    /// carried upwind on its own; and the overturning, over seas at `surface`, K.
-    pub fn flows(
-        &self,
-        keep: &dyn Fn(usize) -> bool,
-        surface: &[f64],
-    ) -> (Vec<(usize, usize, f64)>, Overturning) {
+    /// carried upwind on its own; and the overturning.
+    pub fn flows(&self, keep: &dyn Fn(usize) -> bool) -> (Vec<(usize, usize, f64)>, Overturning) {
         let (n_lat, n_lon) = self.layout;
         let n = n_lat * n_lon;
         let mut faces = Vec::with_capacity(4 * n);
@@ -87,25 +86,20 @@ impl Currents {
                 }
             }
         }
-        let over = self.overturning(keep, surface);
+        let over = self.overturning(keep);
         faces.extend_from_slice(&over.faces);
         (faces, over)
     }
 
-    /// The overturning of the seas' mixed layer between the places `keep` holds (M77), over
-    /// seas at `surface`, K: the Ekman flow's boundaries between two of them where its water
-    /// flows from the warmer sea to the colder, and what each place's mixed layer takes from
-    /// beneath it and gives down.
-    pub fn overturning(&self, keep: &dyn Fn(usize) -> bool, surface: &[f64]) -> Overturning {
+    /// The overturning of the seas' mixed layer between the places `keep` holds (M77): the
+    /// Ekman flow's boundaries between two of them, and what each place's mixed layer takes
+    /// from beneath it and gives down.
+    pub fn overturning(&self, keep: &dyn Fn(usize) -> bool) -> Overturning {
         let (n_lat, n_lon) = self.layout;
         let n = n_lat * n_lon;
         let mut faces = Vec::with_capacity(2 * n);
         let mut net = vec![0.0; n];
-        if self.ekman_east.len() != n
-            || self.ekman_north.len() != n
-            || surface.len() != n
-            || n_lon == 0
-        {
+        if self.ekman_east.len() != n || self.ekman_north.len() != n || n_lon == 0 {
             return Overturning {
                 faces,
                 up: net.clone(),
@@ -118,9 +112,6 @@ impl Currents {
             for (q, f) in [(east, self.ekman_east[p]), (p + n_lon, self.ekman_north[p])] {
                 if q < n && q != p && f != 0.0 && keep(p) && keep(q) {
                     let (a, b, f) = if f > 0.0 { (p, q, f) } else { (q, p, -f) };
-                    if surface[a] <= surface[b] {
-                        continue;
-                    }
                     faces.push((a, b, f));
                     net[a] += f;
                     net[b] -= f;
@@ -140,9 +131,10 @@ impl Currents {
 /// its own mixed layer gives down at `surface`, its temperature, and the return flow's from
 /// the places downstream of its mixed layer's flow, so that it stands at the surface's
 /// temperature where its water went down, carried back along the return flow (Held 2001;
-/// Klinger and Marotzke 2000). Swept from `start`, the last step's, until no place moves by
-/// more than OCEAN_RETURN_TOLERANCE; a place nothing flows into keeps its start. Returns the
-/// temperatures and whether they settled.
+/// Klinger and Marotzke 2000); and no warmer than the sea over it, a sea of one salt standing
+/// by its warmth alone (M79), what comes warmer overturning into that sea (`convected`). Swept
+/// from `start`, the last step's, until no place moves by more than OCEAN_RETURN_TOLERANCE; a
+/// place nothing flows into keeps its start. Returns the temperatures and whether they settled.
 pub fn returning(over: &Overturning, surface: &[f64], start: &[f64]) -> (Vec<f64>, bool) {
     let n = surface.len();
     let mut t = start.to_vec();
@@ -164,7 +156,7 @@ pub fn returning(over: &Overturning, surface: &[f64], start: &[f64]) -> (Vec<f64
             if weight[p] > 0.0 {
                 let held =
                     over.down[p] * surface[p] + from[p].iter().map(|&(q, f)| f * t[q]).sum::<f64>();
-                let v = held / weight[p];
+                let v = (held / weight[p]).min(surface[p]);
                 most = most.max((v - t[p]).abs());
                 t[p] = v;
             }
@@ -182,17 +174,43 @@ pub fn returning(over: &Overturning, surface: &[f64], start: &[f64]) -> (Vec<f64
     (t, settled)
 }
 
+/// The heat the return water gives the seas where it comes under a sea colder than itself and
+/// overturns into it (M79), m³ K/s at each place: what flows into the water beneath the place,
+/// its own surface's that goes down at `surface` and the return flow's at `deep` from each place
+/// downstream, less what the place passes on at its sea's temperature. What the surface gives
+/// the water beneath, it takes back from it: the water it takes from beneath and this.
+pub fn convected(over: &Overturning, surface: &[f64], deep: &[f64]) -> Vec<f64> {
+    let n = surface.len();
+    let mut warmth = vec![0.0; n];
+    if over.down.len() != n || deep.len() != n {
+        return warmth;
+    }
+    let mut weight = over.down.clone();
+    let mut held: Vec<f64> = (0..n).map(|p| over.down[p] * surface[p]).collect();
+    for &(a, b, f) in &over.faces {
+        weight[a] += f;
+        held[a] += f * deep[b];
+    }
+    for p in 0..n {
+        if weight[p] > 0.0 && held[p] > weight[p] * surface[p] {
+            warmth[p] = held[p] - weight[p] * surface[p];
+        }
+    }
+    warmth
+}
+
 /// The seas' heat carried through a step of `dt` s (F272, M77): the water each boundary in
 /// `faces` passes from its first place to its second, m³/s, the gyres' and the Ekman flow's,
 /// brings its upwind place's mixed layer's heat to the place downwind; the water each place
-/// takes from beneath it, `up`, m³/s, its return water's at `deep`, K; in steps that move no
-/// more than OCEAN_CFL of a place's `water`, m³, each place's changing by what flows into it
-/// over what it holds. A place `held` keeps its temperature, a sea under its ice at its
+/// takes from beneath it, `up`, m³/s, its return water's at `deep`, K; the heat the return
+/// water gives the sea where it comes under a colder sea, `warmth`, m³ K/s (M79); in steps that
+/// move no more than OCEAN_CFL of a place's `water`, m³, each place's changing by what flows
+/// into it over what it holds. A place `held` keeps its temperature, a sea under its ice at its
 /// freezing point, and gathers the heat brought it instead, m³ K. Returns the places' new
 /// temperatures and the heat the held places gathered.
 pub fn advect(
     faces: &[(usize, usize, f64)],
-    (up, deep): (&[f64], &[f64]),
+    (up, deep, warmth): (&[f64], &[f64], &[f64]),
     water: &[f64],
     held: &[bool],
     temps: &[f64],
@@ -220,7 +238,7 @@ pub fn advect(
             change[to] += f * h * (temps[from] - temps[to]);
         }
         for p in 0..n {
-            change[p] += up[p] * h * (deep[p] - temps[p]);
+            change[p] += up[p] * h * (deep[p] - temps[p]) + warmth.get(p).map_or(0.0, |w| w * h);
         }
         for p in 0..n {
             if held[p] {
@@ -525,7 +543,7 @@ mod tests {
         let warm: Vec<f64> = (0..n_lat * n_lon)
             .map(|k| 300.0 - 40.0 * lat(k / n_lon).sin().powi(2))
             .collect();
-        let over = currents.overturning(&|_| true, &warm);
+        let over = currents.overturning(&|_| true);
         let row = |i: usize, v: &[f64]| (0..n_lon).map(|j| v[i * n_lon + j]).sum::<f64>();
         let (up, down): (f64, f64) = (over.up.iter().sum(), over.down.iter().sum());
         println!(
@@ -545,13 +563,24 @@ mod tests {
                 warm[p]
             );
         }
-        // Over a sea warm at its poles the same wind's water flows toward the warmer sea, and
-        // turns over none.
+        assert!(convected(&over, &warm, &deep).iter().all(|&w| w == 0.0));
+        // Over a sea warm at its poles the same wind's water flows toward the warmer sea: its
+        // return water comes under ever colder seas on its way to the equator and overturns
+        // into each, rising at the equator at its sea's temperature; the heat the surface gives
+        // the water beneath, it takes back.
         let cold: Vec<f64> = warm.iter().map(|t| 600.0 - t).collect();
-        let none = currents.overturning(&|_| true, &cold);
-        assert!(none.faces.iter().all(|&(a, b, _)| cold[a] > cold[b]));
+        let (deep, settled) = returning(&over, &cold, &cold);
+        assert!(settled);
         let equator = (n_lat / 2) * n_lon;
-        assert_eq!(none.up[equator], 0.0);
+        assert!((deep[equator] - cold[equator]).abs() < 1e-9);
+        assert!((0..n_lat * n_lon).all(|p| deep[p] <= cold[p]));
+        let warmth = convected(&over, &cold, &deep);
+        assert!(warmth.iter().all(|&w| w >= 0.0) && warmth.iter().sum::<f64>() > 0.0);
+        let given: f64 = (0..n_lat * n_lon)
+            .map(|p| over.up[p] * deep[p] + warmth[p])
+            .sum();
+        let gone: f64 = (0..n_lat * n_lon).map(|p| over.down[p] * cold[p]).sum();
+        assert!((given - gone).abs() < 1e-9 * gone, "{given} {gone}");
     }
 
     /// M77: the seas' flows carry the gyres' water and the mixed layer's Ekman flow's, each
@@ -579,8 +608,7 @@ mod tests {
         };
         // Every place a sea but one.
         let keep = |p: usize| p != 7;
-        let surface: Vec<f64> = (0..n).map(|p| 300.0 - p as f64).collect();
-        let (faces, over) = currents.flows(&keep, &surface);
+        let (faces, over) = currents.flows(&keep);
         let gyres = (0..n)
             .flat_map(|p| {
                 let (i, j) = (p / n_lon, p % n_lon);
@@ -604,8 +632,96 @@ mod tests {
         let water = vec![1e3; n];
         let held = vec![false; n];
         let temps = vec![290.0; n];
-        let (after, _) = advect(&faces, (&over.up, &temps), &water, &held, &temps, 50.0);
+        let none = vec![0.0; n];
+        let (after, _) = advect(
+            &faces,
+            (&over.up, &temps, &none),
+            &water,
+            &held,
+            &temps,
+            50.0,
+        );
         assert!(after.iter().all(|&t| (t - 290.0).abs() < 1e-9), "{after:?}");
+    }
+
+    /// M79: the water beneath stands no warmer than the sea over it. Along the strip whose warm
+    /// surface goes down and whose cooler surface takes water from beneath, Earth's subtropical
+    /// cells', nothing overturns. Turned about, the warmest sea giving down and the coldest
+    /// taking from beneath, a locked world's toward its star: the return water comes under a
+    /// colder sea at each place on its way and overturns into each, by hand: the place before
+    /// the last 2 x (294 - 292), the next 10 x (291.2 - 290), then 10 x (290 - 280) and 10 x
+    /// (280 - 272), rising at the coldest at its own temperature. What the surface gives the
+    /// water beneath it takes back, through a step too, and the heat goes from the warmer sea to
+    /// the colder; a place under ice gathers what it is brought. Two such strips side by side
+    /// keep to their own.
+    #[test]
+    fn the_return_water_rises_no_warmer_than_its_sea() {
+        let over = Overturning {
+            faces: vec![(0, 1, 10.0), (1, 2, 10.0), (2, 3, 6.0), (3, 4, 2.0)],
+            up: vec![10.0, 0.0, 0.0, 0.0, 0.0],
+            down: vec![0.0, 0.0, 4.0, 4.0, 2.0],
+        };
+        let cells = [300.0, 298.0, 296.0, 294.0, 292.0];
+        let (deep, _) = returning(&over, &cells, &cells);
+        assert!(convected(&over, &cells, &deep).iter().all(|&w| w == 0.0));
+        // Turned about: the warmest sea gives down, the coldest takes from beneath.
+        let locked = [272.0, 280.0, 290.0, 292.0, 294.0];
+        let (deep, settled) = returning(&over, &locked, &locked);
+        assert!(settled);
+        let by_hand = [272.0, 280.0, 290.0, 292.0, 294.0];
+        for p in 0..5 {
+            assert!((deep[p] - by_hand[p]).abs() < 1e-9, "{p}: {}", deep[p]);
+        }
+        let warmth = convected(&over, &locked, &deep);
+        let by_hand = [80.0, 100.0, 12.0, 4.0, 0.0];
+        for p in 0..5 {
+            assert!(
+                (warmth[p] - by_hand[p]).abs() < 1e-6,
+                "{p}: {} {}",
+                warmth[p],
+                by_hand[p]
+            );
+        }
+        let given: f64 = (0..5).map(|p| over.up[p] * deep[p] + warmth[p]).sum();
+        let gone: f64 = (0..5).map(|p| over.down[p] * locked[p]).sum();
+        assert!((given - gone).abs() < 1e-9 * gone, "{given} {gone}");
+        // Through a step its mixed layers keep their heat, the warmer sea giving it to the
+        // colder; the place under ice at its freezing point gathering what it is brought.
+        let water = [1e6; 5];
+        let kept: f64 = warmth.iter().sum();
+        for held in [[false; 5], [false, false, true, false, false]] {
+            let (after, brought) = advect(
+                &over.faces,
+                (&over.up, &deep, &warmth),
+                &water,
+                &held,
+                &locked,
+                100.0,
+            );
+            let change: f64 = (0..5)
+                .map(|p| water[p] * (after[p] - locked[p]) + brought[p])
+                .sum();
+            assert!(change.abs() < 1e-6 * kept * 100.0, "{change}");
+            assert!(held[2] == (brought[2] != 0.0), "{brought:?}");
+            assert!(after[0] > locked[0] && after[1] > locked[1], "{after:?}");
+            assert!(after[3] < locked[3] && after[4] < locked[4], "{after:?}");
+            assert!(held[2] || after[2] < locked[2], "{after:?}");
+        }
+        // Side by side.
+        let shift = |faces: &[(usize, usize, f64)]| -> Vec<(usize, usize, f64)> {
+            faces.iter().map(|&(a, b, f)| (a + 5, b + 5, f)).collect()
+        };
+        let mut both = over.clone();
+        both.faces.extend(shift(&over.faces));
+        both.up.extend_from_slice(&over.up);
+        both.down.extend_from_slice(&over.down);
+        let surface: Vec<f64> = cells.iter().chain(locked.iter()).copied().collect();
+        let (deep, _) = returning(&both, &surface, &surface);
+        let warmth = convected(&both, &surface, &deep);
+        assert!(warmth[..5].iter().all(|&w| w == 0.0), "{warmth:?}");
+        for (p, w) in by_hand.iter().enumerate() {
+            assert!((warmth[p + 5] - w).abs() < 1e-6, "{p}: {}", warmth[p + 5]);
+        }
     }
 
     /// M77: the water beneath stands at the surface's temperature where it went down, carried
@@ -641,7 +757,15 @@ mod tests {
         let water = [1e6; 5];
         let held = [false; 5];
         let dt = 100.0;
-        let (after, brought) = advect(&over.faces, (&over.up, &deep), &water, &held, &surface, dt);
+        let none = [0.0; 5];
+        let (after, brought) = advect(
+            &over.faces,
+            (&over.up, &deep, &none),
+            &water,
+            &held,
+            &surface,
+            dt,
+        );
         let gained: f64 = (0..5).map(|p| water[p] * (after[p] - surface[p])).sum();
         let beneath: f64 = (0..5)
             .map(|p| over.up[p] * deep[p] - over.down[p] * surface[p])
@@ -654,7 +778,15 @@ mod tests {
         assert!(after[0] < surface[0] && after[1] > surface[1], "{after:?}");
         // A place held at its freezing point gathers the heat brought it instead.
         let held = [true, false, false, false, false];
-        let (after, brought) = advect(&over.faces, (&over.up, &deep), &water, &held, &surface, dt);
+        let none = [0.0; 5];
+        let (after, brought) = advect(
+            &over.faces,
+            (&over.up, &deep, &none),
+            &water,
+            &held,
+            &surface,
+            dt,
+        );
         assert_eq!(after[0], surface[0]);
         let by_hand = over.up[0] * dt * (deep[0] - surface[0]);
         assert!(

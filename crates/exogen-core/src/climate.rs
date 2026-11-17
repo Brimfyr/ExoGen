@@ -8587,7 +8587,9 @@ fn sea_transport(
 /// water brings it melts its ice from below, adding to each place's `inflow`, W/m² of its sea.
 /// The mixed layer's Ekman flow carries its heat too, and where it diverges the water it takes
 /// from beneath brings the return water's (M77), which stands at the surface's temperature
-/// where its water went down, its balance carried from step to step.
+/// where its water went down, its balance carried from step to step, and no warmer than the sea
+/// over it: where it comes under a colder sea it overturns into it, its heat into that sea
+/// (M79).
 fn sea_currents(
     layout: &Layout,
     runs: &mut [Run],
@@ -8623,24 +8625,32 @@ fn sea_currents(
     // the second, m³/s: the gyres' and the mixed layer's Ekman flow's (M77); and the water each
     // place's mixed layer takes from beneath it, at the return water's temperature, the
     // steady balance from the last step's.
-    let (faces, over) = currents.flows(&|p| iced[p].is_some(), &temps);
+    let (faces, over) = currents.flows(&|p| iced[p].is_some());
     let start: Vec<f64> = runs
         .iter()
         .zip(&temps)
         .map(|(r, &t)| r.sea.as_ref().map_or(t, |s| s.deep))
         .collect();
     let (deep, _) = crate::currents::returning(&over, &temps, &start);
+    // Where it comes under a colder sea it overturns into it (M79).
+    let warmth = crate::currents::convected(&over, &temps, &deep);
     let held: Vec<bool> = iced.iter().map(|i| *i == Some(true)).collect();
     let before = temps;
-    let (temps, brought) =
-        crate::currents::advect(&faces, (&over.up, &deep), &water, &held, &before, dt);
+    let (temps, brought) = crate::currents::advect(
+        &faces,
+        (&over.up, &deep, &warmth),
+        &water,
+        &held,
+        &before,
+        dt,
+    );
     let heat = ocean.capacity / depth;
     for (p, r) in runs.iter_mut().enumerate() {
         if let Some(sea) = r.sea.as_mut() {
             sea.deep = deep[p];
             let surface = area[p] * places[p].sea;
             sea.upwelled = if surface > 0.0 {
-                over.up[p] * heat * (deep[p] - before[p]) / surface
+                (over.up[p] * (deep[p] - before[p]) + warmth[p]) * heat / surface
             } else {
                 0.0
             };
@@ -8708,6 +8718,99 @@ fn conjugate_gradients(slope: &[f64], links: &[[(usize, f64); 4]], d: f64, r: &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M79: the seas' currents through a step keep their heat: what the open seas gain and what
+    /// the places under ice gather comes to nothing over the body, where the wind drives the
+    /// surface water from a cold equator toward warmer seas, its return water overturning into
+    /// each colder sea it comes under, and from them into ice toward the poles.
+    #[test]
+    fn the_seas_currents_keep_their_heat_through_a_step() {
+        let (n_lat, n_lon) = (19, 8);
+        let n = n_lat * n_lon;
+        let (dphi, dlon) = (PI / (n_lat - 1) as f64, TAU / n_lon as f64);
+        let lat = |p: usize| -PI / 2.0 + dphi * (p / n_lon) as f64;
+        let sites: Vec<crate::wind::Site> = (0..n)
+            .map(|p| crate::wind::Site {
+                lat: lat(p),
+                lon: dlon * (p % n_lon) as f64,
+                weight: lat(p).cos().max(0.05) * dphi * dlon / TAU,
+                sea: 1.0,
+                ice: 0.0,
+            })
+            .collect();
+        let layout = Layout::of_sites(&sites, (n_lat, n_lon));
+        let ocean = Ocean {
+            capacity: SEA_WATER_DENSITY * SEA_WATER_HEAT_CAPACITY * OCEAN_MIXED_LAYER_M,
+            freezing: 271.35,
+            latent: WATER_FUSION_HEAT,
+            density: 917.0,
+            conductivity: SEA_ICE_CONDUCTIVITY,
+            base_flux: SEA_ICE_BASE_FLUX,
+            colour: SEA_ICE_COLOUR,
+            water: SEA_WATER_DENSITY,
+            snow: (SNOW_DENSITY, SEA_SNOW_CONDUCTIVITY),
+        };
+        let mut runs: Vec<Run> = layout
+            .places
+            .iter()
+            .map(|place| Run::new((1, 1), place, Some(&ocean), None, &[]))
+            .collect();
+        // Warmest at 60 degrees, under ice beyond 70.
+        for (p, r) in runs.iter_mut().enumerate() {
+            let sea = r.sea.as_mut().expect("a sea");
+            let at = lat(p).abs().to_degrees();
+            sea.t = 272.0 + 23.0 * (at / 60.0).min(1.0);
+            (sea.surface, sea.deep) = (sea.t, sea.t);
+            if at > 70.0 {
+                sea.ice = 500.0;
+            }
+        }
+        let radius = 6.371e6;
+        let stress: Vec<[f64; 2]> = (0..n).map(|_| [-0.05, 0.0]).collect();
+        let (ekman_east, ekman_north) = crate::currents::ekman(
+            &sites,
+            (n_lat, n_lon),
+            &stress,
+            (7.292e-5, radius, SEA_WATER_DENSITY),
+        );
+        let currents = crate::currents::Currents {
+            layout: (n_lat, n_lon),
+            radius,
+            psi: vec![0.0; n],
+            east: vec![0.0; n],
+            north: vec![0.0; n],
+            stress,
+            ekman_east,
+            ekman_north,
+        };
+        let before: Vec<f64> = runs.iter().map(|r| r.sea.as_ref().unwrap().t).collect();
+        let held: Vec<bool> = runs
+            .iter()
+            .map(|r| r.sea.as_ref().unwrap().ice > 0.0)
+            .collect();
+        let mut inflow = vec![0.0; n];
+        let dt = 3600.0;
+        sea_currents(&layout, &mut runs, (&currents, dt), &ocean, &mut inflow);
+        let area = |p: usize| TAU * radius * radius * layout.places[p].weight;
+        let (mut kept, mut moved, mut convected) = (0.0, 0.0, 0.0);
+        for p in 0..n {
+            let sea = runs[p].sea.as_ref().unwrap();
+            let heat = if held[p] {
+                inflow[p] * dt * area(p)
+            } else {
+                ocean.capacity * area(p) * (sea.t - before[p])
+            };
+            kept += heat;
+            moved += heat.abs();
+            convected += sea.upwelled.max(0.0) * dt * area(p);
+        }
+        println!(
+            "its seas take {moved:.4e} J, keep {kept:.3e}; the overturning brings {convected:.4e}"
+        );
+        assert!(convected > 0.1 * moved, "{convected} {moved}");
+        assert!(inflow.iter().any(|&f| f > 0.0));
+        assert!(kept.abs() < 1e-6 * moved, "{kept} {moved}");
+    }
 
     /// M59: the ground a frost leaves bare within a step takes the rest of it settled under
     /// its sunlight: Mars's polar ground, its frost at the point gone half way through a step
@@ -10263,7 +10366,7 @@ mod tests {
                     / steps.max(1) as f64
             })
             .collect();
-        let over = currents.overturning(&|p| cycle.sites[p].sea > 0.0, &surface);
+        let over = currents.overturning(&|p| cycle.sites[p].sea > 0.0);
         // The return water its year's steps brought up and the heat it brought, and the
         // balance of its year's mean surface.
         let seas = cycle.seas.as_ref().expect("its seas");
