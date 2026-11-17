@@ -656,13 +656,16 @@ impl Guide {
 /// other kind beside it, and a point reads the guided edge by how much of the places about it
 /// stand at it, the places' own ice for the rest; so that a coastal place's sliver of sea,
 /// frozen by the land about it, neither pins the edge to the places' steps nor ends the
-/// guide's reach along a line between them.
+/// guide's reach along a line between them. F389: the guided edge's band carried on through
+/// the places the guide puts past the edge, and the two readings blended on either side of
+/// their edges, so that the band ends only where they agree and they meet without a seam.
 #[derive(Clone, Debug)]
 struct Margin {
     /// Whether the ice holds at each place, none where the place has none of its ground.
     held: Vec<Option<bool>>,
     /// How far each place stands at the ice's edge, 0 to 1: the most share of its ground it
-    /// and a place of the other kind it shares a cell of the reading with both hold (F292).
+    /// and a place of the other kind it shares a cell of the reading with both hold (F292),
+    /// carried on through the places past the guide's edge (F389).
     beside: Vec<f64>,
     /// At each place near the edge: the guide the edge stands at and the guide over which the
     /// ice thins to it, smoothed along it, and the nearest place under ice and open place;
@@ -720,25 +723,29 @@ impl Margin {
             }
             out
         };
-        // Each place at the edge by the places it shares a cell of the reading with, its
-        // neighbours and those at the cells' far corners (F292): by its neighbours alone, a
-        // place at a step in the edge stood at none, though the cell it shares with the place
-        // under ice at its far corner holds both kinds.
-        let mut beside = vec![0.0f64; n];
-        for p in 0..n {
-            let Some(here) = held[p] else { continue };
+        // The places a place shares a cell of the reading with: its neighbours and those at
+        // the cells' far corners.
+        let mates = |p: usize| {
             let (i, j) = (p / n_lon, p % n_lon);
-            let mut mates = neighbours(p);
+            let mut out = neighbours(p);
             if n_lon > 1 {
                 for r in [i.checked_sub(1), (i + 1 < n_lat).then_some(i + 1)]
                     .into_iter()
                     .flatten()
                 {
-                    mates.push(r * n_lon + (j + n_lon - 1) % n_lon);
-                    mates.push(r * n_lon + (j + 1) % n_lon);
+                    out.push(r * n_lon + (j + n_lon - 1) % n_lon);
+                    out.push(r * n_lon + (j + 1) % n_lon);
                 }
             }
-            for q in mates.into_iter().filter(|&q| held[q] == Some(!here)) {
+            out
+        };
+        // Each place at the edge by the places it shares a cell of the reading with (F292): by
+        // its neighbours alone, a place at a step in the edge stood at none, though the cell it
+        // shares with the place under ice at its far corner holds both kinds.
+        let mut beside = vec![0.0f64; n];
+        for p in 0..n {
+            let Some(here) = held[p] else { continue };
+            for q in mates(p).into_iter().filter(|&q| held[q] == Some(!here)) {
                 beside[p] = beside[p].max(shares[p].min(shares[q]).max(0.0));
             }
         }
@@ -817,6 +824,34 @@ impl Margin {
                 behind[p] = merged.into_iter().map(|(q, w)| (q, w / kept)).collect();
             }
         }
+        // F389: the band the guided edge draws carried on through the places the guide puts
+        // past the edge, under ice on its open side or open on its side under ice, as far as
+        // they run, each standing at the edge as far as the place beside it it is carried from:
+        // so that the band ends only on places that read as the guide does, where the guided
+        // edge and the places' own ice agree. Ending on a place past the edge, the guide left
+        // its ice at the band's places and the places' own kept it beyond, a step along the
+        // line between them where TRAPPIST-1e's eye met its continents (the user, 2026-11-17).
+        let past = |p: usize| match held[p] {
+            Some(here) if edge[p].is_finite() && thinning[p] > 0.0 => {
+                let reads = (edge[p] - values[p]) / thinning[p];
+                if here { reads < 0.0 } else { reads > 0.0 }
+            }
+            _ => false,
+        };
+        let past_edge: Vec<bool> = (0..n).map(past).collect();
+        loop {
+            let mut spread = false;
+            for p in (0..n).filter(|&p| past_edge[p]) {
+                for q in mates(p).into_iter().filter(|&q| held[q].is_some()) {
+                    if beside[q] > beside[p] {
+                        (beside[p], spread) = (beside[q], true);
+                    }
+                }
+            }
+            if !spread {
+                break;
+            }
+        }
         Margin {
             held,
             beside,
@@ -885,8 +920,8 @@ impl Margin {
     /// their weights: by the guided edge, 0 where its guide stands past the edge's, rising to
     /// 1 half the guide's step into the ice, as far as the places stand at the edge (F266),
     /// and for the rest by the share of them the ice holds at, 0 where half of them hold it,
-    /// rising to 1 where all do (F292); none where they are all of a kind and none stands at
-    /// the edge.
+    /// rising to 1 where all do (F292), each read on either side of its edge to a whole step
+    /// and blended so (F389); none where they are all of a kind and none stands at the edge.
     fn depth(&self, corners: &[(usize, f64); 4], at: f64) -> Option<f64> {
         let live = || {
             corners
@@ -918,13 +953,17 @@ impl Margin {
         // as the guided edge stands, thickening in to the places under ice (F292): read as
         // the share under ice itself, a coast's place under ice, at the edge by its share of
         // sea alone, stood its ice out to the far row of places about it, its edge the row.
-        let own = (2.0 * holds - 1.0).clamp(0.0, 1.0);
-        let guided = if weight > 0.0 {
-            ((edge - at * weight) / thin.max(1e-300)).clamp(0.0, 1.0)
-        } else {
-            own
-        };
-        Some(standing * guided + (1.0 - standing) * own)
+        // F389: the two read on either side of their edges, the ice's depth inside and how far
+        // out from it outside, each to a whole step: their blend's edge stands between their
+        // edges by how far the places stand at the edge. Each read as a depth alone, none
+        // outside, the ice lay wherever either drew it, the places' own out to half way to the
+        // open places past the guided edge, in the lines between them.
+        let own = (2.0 * holds - 1.0).clamp(-1.0, 1.0);
+        if weight <= 0.0 {
+            return Some(own.max(0.0));
+        }
+        let guided = ((edge - at * weight) / thin.max(1e-300)).clamp(-1.0, 1.0);
+        Some((standing * guided + (1.0 - standing) * own).clamp(0.0, 1.0))
     }
 
     /// The places of a kind a point between places reads, `held` or open, with their
@@ -14238,11 +14277,16 @@ mod tests {
     /// for the rest of it about itself, ending short of half way to the open places beside it,
     /// as the guided edge stands half way between its places: read as the places' share under
     /// ice, its ice reached to the far row of places about it and ended along the row. M62: it
-    /// ends where its share of sea balances the open sea's beside it, a third of it sea a
-    /// quarter of the way: counted whole, a coast's sliver of sea took the reading about it
-    /// from the guided edge, a hook at the tip of TRAPPIST-1e's northern continent.
+    /// ends where its share of sea balances the open sea's beside it: counted whole, a coast's
+    /// sliver of sea took the reading about it from the guided edge, a hook at the tip of
+    /// TRAPPIST-1e's northern continent. F389: beyond the guided edge's band, a coast's place a
+    /// third sea holds a third of its ice about itself, ending short of a sixth of the way to
+    /// its open places; one half sea holds none, as the open sea's places do, the guided
+    /// reading and the places' own blended on either side of their edges: read as depths
+    /// alone, the most of them, it held half of its ice to a quarter of the way, its sides
+    /// along the rows.
     #[test]
-    fn a_coast_s_ice_ends_half_way_to_its_open_places() {
+    fn a_coast_s_place_past_the_guide_s_edge_holds_its_ice_by_its_land() {
         let (n_lat, n_lon) = (19, 36);
         let lat_of = |i: usize| -PI / 2.0 + PI * i as f64 / (n_lat - 1) as f64;
         let lon_of = |j: usize| -PI + TAU * j as f64 / n_lon as f64;
@@ -14256,49 +14300,117 @@ mod tests {
             profile,
             axis: [0.0, 0.0, 1.0],
         };
-        // The sea's ice poleward of 60 degrees, and a coast's place at 30 degrees, a third of
-        // it sea, under ice.
-        let coast = 12 * n_lon + 18;
+        // The sea's ice poleward of 60 degrees, and a coast's place at 20 degrees under ice.
+        let coast = 11 * n_lon + 18;
         let held: Vec<Option<bool>> = (0..n_lat * n_lon)
             .map(|p| Some(lat_of(p / n_lon) > 55f64.to_radians() || p == coast))
             .collect();
-        let mut shares = vec![1.0; n_lat * n_lon];
-        shares[coast] = 1.0 / 3.0;
+        let step = PI / (n_lat - 1) as f64;
+        let (lat, lon) = (lat_of(11), lon_of(18));
+        for (sea, centre, reach) in [(1.0 / 3.0, (0.25, 0.4), 1.0 / 6.0), (0.5, (0.0, 1e-9), 0.0)] {
+            let mut shares = vec![1.0; n_lat * n_lon];
+            shares[coast] = sea;
+            let margin = Margin::new((n_lat, n_lon), held.clone(), &shares, &guide);
+            let depth_at = |lat: f64, lon: f64| {
+                let d = direction_from_lon_lat(lon, lat);
+                let corners = margin.ground(&reader(n_lat, n_lon, lat, lon));
+                margin.depth(&corners, guide.at(d)).unwrap_or(0.0)
+            };
+            let own = depth_at(lat, lon);
+            // The most of its ice at each share of the way to its open places, north, south,
+            // east and west, and the share it ends at.
+            let at = |f: f64| {
+                [(f, 0.0), (-f, 0.0), (0.0, f), (0.0, -f)]
+                    .iter()
+                    .map(|&(dlat, dlon)| {
+                        depth_at(lat + dlat * step, lon + dlon * TAU / n_lon as f64)
+                    })
+                    .fold(0.0, f64::max)
+            };
+            let ends = (0..=100)
+                .map(|k| k as f64 / 200.0)
+                .find(|&f| at(f) <= 0.0)
+                .unwrap_or(0.5);
+            println!(
+                "a coast's place {sea:.2} sea: {own:.3} into its ice, which ends {ends:.3} of the way to its open places"
+            );
+            assert!(own >= centre.0 && own <= centre.1, "{sea}: {own}");
+            assert!(ends <= reach + 1e-9, "{sea}: {ends}");
+        }
+    }
+
+    /// F389: a run of places under ice past the guide's edge, land on its warm side, draws no
+    /// step where the guided edge's band ends: the sea's ice poleward of 55 degrees, the row at
+    /// 50 degrees under ice from 60 west to 30 east, the row at 40 degrees beneath it land, the
+    /// rest open sea. From 90 west to 60 east the ice's edge moves under a degree between
+    /// longitudes a quarter of a degree apart. Its band ending on a place past the edge, the
+    /// guide left the ice at the band's places and the places' own kept it beyond, a step
+    /// along the line between them, as where TRAPPIST-1e's eye met its continents (the user,
+    /// 2026-11-17).
+    #[test]
+    fn a_run_past_the_guide_s_edge_draws_no_step_where_its_band_ends() {
+        let (n_lat, n_lon) = (19, 36);
+        let lat_of = |i: usize| -90.0 + 180.0 * i as f64 / (n_lat - 1) as f64;
+        let lon_of = |j: usize| -180.0 + 360.0 * j as f64 / n_lon as f64;
+        let profile: Vec<f64> = (0..64)
+            .map(|i| {
+                let mu = -1.0 + 2.0 * (i as f64 + 0.5) / 64.0;
+                300.0 - 50.0 * mu * mu
+            })
+            .collect();
+        let guide = Guide {
+            profile,
+            axis: [0.0, 0.0, 1.0],
+        };
+        let run = |p: usize| (-60.0..=30.0).contains(&lon_of(p % n_lon));
+        let held: Vec<Option<bool>> = (0..n_lat * n_lon)
+            .map(|p| {
+                let lat = lat_of(p / n_lon);
+                if (lat - 40.0).abs() < 1e-9 && run(p) {
+                    None
+                } else {
+                    Some(lat > 55.0 || ((lat - 50.0).abs() < 1e-9 && run(p)))
+                }
+            })
+            .collect();
+        let shares: Vec<f64> = held
+            .iter()
+            .map(|h| if h.is_some() { 1.0 } else { 0.0 })
+            .collect();
         let margin = Margin::new((n_lat, n_lon), held, &shares, &guide);
         let depth_at = |lat: f64, lon: f64| {
+            let (lat, lon) = (lat.to_radians(), lon.to_radians());
             let d = direction_from_lon_lat(lon, lat);
             let corners = margin.ground(&reader(n_lat, n_lon, lat, lon));
-            margin.depth(&corners, guide.at(d)).unwrap_or(0.0)
+            // Where no place stands at the edge, the places' own: ice where any holds it.
+            margin.depth(&corners, guide.at(d)).unwrap_or_else(|| {
+                let any = corners
+                    .iter()
+                    .any(|&(p, w)| w > 0.0 && margin.held[p] == Some(true));
+                if any { 1.0 } else { 0.0 }
+            })
         };
-        let (lat, lon) = (lat_of(12), lon_of(18));
-        let step = PI / (n_lat - 1) as f64;
-        let own = depth_at(lat, lon);
-        // Past half way to the open places beside it, north, south, east and west.
-        let mut most = 0.0f64;
-        for k in 0..=40 {
-            let f = 0.5 + 0.5 * k as f64 / 40.0;
-            for (dlat, dlon) in [(f, 0.0), (-f, 0.0), (0.0, f), (0.0, -f)] {
-                most = most.max(depth_at(lat + dlat * step, lon + dlon * TAU / n_lon as f64));
-            }
-        }
-        println!(
-            "the coast's place {own:.3} into its ice; past half way to its open places at most {most:.4}"
-        );
-        assert!(own > 0.5, "{own}");
-        assert!(most < 1e-9, "{most}");
-        // Its ice a sixth of the way to each, and none three tenths of the way (M62).
-        let reach = |f: f64, pick: fn(f64, f64) -> f64, from: f64| {
-            [(f, 0.0), (-f, 0.0), (0.0, f), (0.0, -f)]
-                .iter()
-                .map(|&(dlat, dlon)| depth_at(lat + dlat * step, lon + dlon * TAU / n_lon as f64))
-                .fold(from, pick)
-        };
-        let (near, past) = (
-            reach(1.0 / 6.0, f64::min, f64::MAX),
-            reach(0.3, f64::max, 0.0),
-        );
-        assert!(near > 0.0, "{near}");
-        assert!(past < 1e-9, "{past}");
+        // At each longitude the least latitude from 46 degrees on from which the ice lies on
+        // to 75.
+        let lats: Vec<f64> = (0..=290).map(|m| 46.0 + 0.1 * m as f64).collect();
+        let edge: Vec<f64> = (0..=600)
+            .map(|k| {
+                let lon = -90.0 + 0.25 * k as f64;
+                let lies: Vec<bool> = lats.iter().map(|&lat| depth_at(lat, lon) > 0.0).collect();
+                (0..lats.len())
+                    .find(|&m| lies[m..].iter().all(|&l| l))
+                    .map_or(75.0, |m| lats[m])
+            })
+            .collect();
+        let jump = edge
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f64::max);
+        let (lo, hi) = edge
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(lo, hi), &e| (lo.min(e), hi.max(e)));
+        println!("the ice's edge from {lo:.1} to {hi:.1} degrees, its widest step {jump:.2}");
+        assert!(jump < 1.0, "{jump}");
     }
 
     /// M70: ISCCP-H's own clouds over the tropical oceans, each of its nine classes a column

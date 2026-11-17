@@ -1103,6 +1103,22 @@ How it went:
 - **Next.** The surface wind's momentum from the air above its friction layer (Stevens et al. 2002): its trades' full stress, their turn near the equator and the equator's easterlies, which the sea's overturning waits on; then the coupling.
 - **The suite.** The fast tier: 397 tests pass (2.9 minutes). The whole-body tier: 439 pass (36.7 minutes), run before the year kept its return water's record, which changes no result; the Earth-like's year again with it, passing. Clippy clean with each tier's features. The own-clouds tier not run: no cloud, radiation or coupling changed (the user's rule, 2026-11-16). FINISH_VERSION 239.
 
+## The seventy-eighth milestone: the ice's edge where it meets a coast
+
+- **F389.** The guided edge's band carried on through the places past the guide's edge; the two readings blended on either side of their edges.
+
+How it went:
+
+- **What the user found.** M77's snapshot of TRAPPIST-1e held steps where its eye's ice edge met each of its continents' four edges, where M76's had none; the third time such steps came back (F266, F292).
+- **The cause, in two parts.** The physics: the overturning's rule runs each face of the Ekman flow or none by which of its two places is the warmer (M77); the places under ice all stand at the freezing point, so the faces between them run none, and the water the Ekman flow carries into the ice stops at its first place, its heat with it: places along the eye's edge and its coasts 1.5 to 4.5 K warmer or colder than M76's, one by one. At the northern continent's eastern tip the row at 58 north from 12 to 24 east came to lie under ice all year where the guide reads it open, 1.3 to 2.5 of its thinning past the edge. The drawing: those places stood at the edge, the guide leaving their ice; the place north of them, all of its places under ice, stood at none and kept its own, read as a depth alone and added, so that the ice lay to half way between them, a block from 20 to 24 east between 58 and 60 north. Every version of M77's overturning tried set such a place somewhere; M76's set none.
+- **A replay.** One render's cryosphere dumped, the margin rebuilt from it and the sea's ice at the snapshot drawn over the whole map at 4096 in three seconds: the four junctions as the render drew them, and each change to the drawing seen without a render.
+- **Tried.** A place standing by the other kind's share and not its own: no change at the tip, a new step at the south-western junction. The band a ring of places wider: three junctions clean, the tip's step moved to 16 east, where the run past the edge went on beyond the band.
+- **Kept.** The band carried on through the places past the edge as far as they run, and the two readings blended signed: the four junctions run into their coasts, the tip's edge along 60 north to the land as M76's.
+- **The invariants.** Four bugs planted, each caught: the band not carried, carried through every place, the readings added as depths, past the edge read the wrong way round.
+- **Open.** The overturning's rule is a switch at the scale of the places, and it sets the blocks the drawing now smooths: the user's to time.
+- **The renders.** The finish at 2048 (FINISH_VERSION 240): TRAPPIST-1e's eye's edge runs into each of its continents' four coasts as M76's did, the northern tip's along 60 north to the land, and nothing else on its snapshot moved; Earth's snapshot as M77's but for 0.003% of its pixels.
+- **The suite.** The fast tier: 398 tests pass (2.9 minutes). The whole-body tier: 440 pass (36.3 minutes). Clippy clean with each tier's features. The own-clouds tier not run: no cloud, radiation or coupling changed (the user's rule, 2026-11-16). FINISH_VERSION 240.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.
