@@ -5150,8 +5150,8 @@ impl EnergyBalance {
         // clouds (M71), as the winter Arctic's two states do (Stramler et al. 2011): the clouds'
         // downward heat all on the share they cover, each share's top by its own exchange with
         // its air, its ice one, growing and melting by the two's shares. Under the stated law,
-        // one.
-        let covered = if sun.under {
+        // one. By night too (M81): the clouds' cover stands whether or not the sun lights them.
+        let covered = if self.clouds.is_some() {
             sun.cloudy.clamp(0.0, 1.0)
         } else {
             0.0
@@ -6481,19 +6481,22 @@ impl Cycle {
                     sky.eis(t_sea, free_air, inside(i)),
                     CLOUD_SURFACE_HUMIDITY,
                 );
+                // The low cloud over the ice and the land by the column's saturation over its
+                // liquid at its air's temperature, not over its ice (M81).
+                let liquid = saturation * sky.over_liquid(air[p]);
                 let on_ice = crate::clouds::kinds(
                     rains.0,
                     rains.1,
                     rains.2,
                     sky.eis(t_sea, free_air, inside(i)),
-                    saturation,
+                    liquid,
                 );
                 let on_land = crate::clouds::kinds(
                     rains.0,
                     rains.1,
                     rains.2,
                     sky.eis(t_land, free_air, inside(i)),
-                    saturation,
+                    liquid,
                 );
                 let kinds = crate::clouds::Kinds {
                     low: open * on_sea.low + (sea - open) * on_ice.low + (1.0 - sea) * on_land.low,
@@ -9350,6 +9353,92 @@ mod tests {
         );
     }
 
+    /// M81: a low cloud's drops need their air saturated over the liquid. Air saturated over
+    /// the ice holds e_ice / e_liquid of the liquid's saturation, by Clausius and Clapeyron's two
+    /// latent heats: within 2 percent of Murphy and Koop's (2005) 0.822 at 253.15 K and within 8
+    /// of their 0.679 at 233.15 K (the latent heats held constant), one at and over the triple
+    /// point.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn a_low_cloud_needs_its_air_saturated_over_the_liquid() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let stated = EnergyBalance::from_graph(&graph);
+        let sky = crate::clouds::Sky::from_graph(&graph, &stated).expect("a sky");
+        for (t, measured, within) in [(253.15, 0.8218, 0.02), (233.15, 0.6794, 0.08)] {
+            let share = sky.over_liquid(t);
+            println!("{t} K: {share:.4} (Murphy and Koop {measured})");
+            assert!((share / measured - 1.0).abs() < within, "{t}: {share}");
+        }
+        assert_eq!(sky.over_liquid(273.16), 1.0);
+        assert_eq!(sky.over_liquid(290.0), 1.0);
+    }
+
+    /// M81: under its own clouds a sea's ice takes their heat by night too. The night's light as
+    /// the year gives it, `light_under` with no sun over a deck of layer and low cloud, carries
+    /// the deck's cover and what it sends down; under it the ice's top under its clouds stands
+    /// apart from its top under its clear sky, and the clouds' heat warms it over the same night
+    /// without them. M71's two states had been built on a night made by hand: the year's dark
+    /// steps left the clouds' share none and took their heat from the clear share all the same,
+    /// so that every sea's ice under its own clouds lost their infrared by night, its polar night
+    /// 30 to 40 K under its air and its ice never settling.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn a_sea_s_ice_under_its_clouds_takes_their_heat_by_night() {
+        let graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let stated = EnergyBalance::from_graph(&graph);
+        let sky = crate::clouds::Sky::from_graph(&graph, &stated).expect("a sky");
+        let eb = stated.under(std::sync::Arc::new(sky.clone()));
+        let ocean = Ocean::from_graph(&graph).expect("a water sea");
+        let air = 255.0;
+        let deck = sky.deck(&crate::clouds::kinds(0.0, 0.0, 0.95, 4.0, 0.95), air, 1.0);
+        let dark = |deck: Option<&crate::clouds::Deck>| {
+            eb.light_under((0.0, 0.0), (air, 1.0, 245.0), deck)
+        };
+        let night = dark(Some(&deck));
+        println!(
+            "a night under the deck: cover {:.2}, its clouds send {:.1} W/m² down",
+            night.cloudy, night.cloud_down
+        );
+        assert!(night.cloudy > 0.3 && night.cloudy < 1.0, "{}", night.cloudy);
+        assert!(night.cloud_down > 10.0, "{}", night.cloud_down);
+        let winter = |light: Light| {
+            let mut sea = Sea {
+                t: ocean.freezing,
+                ice: 1_500.0,
+                surface: 250.0,
+                snow: 60.0,
+                deep: ocean.freezing,
+                upwelled: 0.0,
+                tops: [250.0, 250.0],
+            };
+            let contact = Contact::default();
+            for _ in 0..60 {
+                let exchanges = sea.tops.map(|t| eb.sea_coupling_at(t, air, &contact));
+                eb.sea_step(
+                    &mut sea,
+                    86_400.0,
+                    (light, SEA_ALBEDO),
+                    (air, exchanges, 0.0, 1.0),
+                    (&ocean, 0.0, 0.0),
+                );
+            }
+            sea
+        };
+        let (under, bare) = (winter(night), winter(dark(None)));
+        println!(
+            "60 nights: under the deck its clear top {:.1} K, cloudy {:.1}, its top {:.1} K and ice {:.0} kg/m²; with no deck {:.1} K and {:.0}",
+            under.tops[0], under.tops[1], under.surface, under.ice, bare.surface, bare.ice
+        );
+        assert!(under.tops[1] > under.tops[0] + 5.0, "{:?}", under.tops);
+        assert!(
+            under.surface > bare.surface + 3.0,
+            "{} {}",
+            under.surface,
+            bare.surface
+        );
+        assert!(under.ice < bare.ice, "{} {}", under.ice, bare.ice);
+    }
+
     /// M67: under its clouds a place reflects as its air's molecules over its clouds over its
     /// ground, the more over a brighter ground, and more than without them over a ground darker
     /// than they are (over a brighter, absorbing clouds may darken it, as over fresh snow); its
@@ -10775,6 +10864,13 @@ mod tests {
         }
         assert!(desert < dry, "desert {desert} under the subtropics' {dry}");
         assert!(c.mean(&c.albedo) > 0.0 && c.mean(&c.olr) < 0.0 && c.mean(&c.down) > 0.0);
+        // Over its polar seas its low cloud reads its air's saturation over the liquid (M81):
+        // under 0.7 of them, as the winter Arctic stands opaquely cloudy a fifth of its time and
+        // radiatively clear two thirds (Stramler et al. 2011), where read over the ice it stood
+        // at 0.79.
+        let polar_low = band(&|p| c.kinds[3][p] as f64, (75.0, 90.0), &all);
+        println!("its polar seas' low cloud {polar_low:.2}");
+        assert!(polar_low < 0.7, "{polar_low}");
     }
 
     /// M69: the Earth-like's clear sky, each place at its own column's vapour, lets out what
@@ -11302,24 +11398,21 @@ mod tests {
         assert!(ice > 1_000.0, "{ice}");
         // Earth's measures (M71): its gap under 25 K, its clouds keeping -0.6 to 20 W/m² and
         // sending 25 to 60 down, its clear sky keeping 0.08 to 0.26 of its ground's radiation.
-        // KNOWN (M73): with its air aloft right and its clouds still taking some 10 W/m² too
-        // much of its light, the Earth-like under its own clouds stood near 282 K, its polar
-        // ice unsettled and tens of metres thick, its top far under its air. M74: with its
-        // vapour's transport it stands at 284.7 K, and its clouds send down Earth's measure
-        // again, held; its polar ice still unsettled, its gap 28.3 K, its clouds keeping -8.6
-        // W/m² and its clear sky -0.069 of its ground's radiation, held nearer (35 K, -12
-        // W/m², -0.15) until its polar ice settles: Earth's measures to restore then.
-        let earths = (8.0..25.0).contains(&gap)
-            && (-0.6..20.0).contains(&keeps)
-            && (25.0..60.0).contains(&sends)
-            && (0.08..0.26).contains(&g);
-        if !earths {
+        // M81, the coupling: its ice takes its clouds' heat by night, and its low cloud reads
+        // its air's saturation over the liquid: its gap 18.5 K, its exchange 0.94 W/m²/K, its
+        // clouds keeping -0.3 W/m² and sending 26.0 down, Earth's held again (M74 had loosened
+        // them to 35 K, -12 W/m²). KNOWN: its clear sky keeps 0.038 of its ground's radiation
+        // where 0.08 to 0.26, held over none (M74's -0.15).
+        if !(0.08..0.26).contains(&g) {
             eprintln!(
-                "KNOWN (M73, M74): the Earth-like's polar night stands past Earth's measures: gap {gap:.1} K, clouds keep {keeps:.1} and send {sends:.1} W/m², clear sky keeps {g:.3}"
+                "KNOWN (M81): the Earth-like's polar night's clear sky keeps {g:.3} of its ground's radiation"
             );
         }
         assert!(
-            gap < 35.0 && keeps > -12.0 && (25.0..60.0).contains(&sends) && g > -0.15,
+            (8.0..25.0).contains(&gap)
+                && (-0.6..20.0).contains(&keeps)
+                && (25.0..60.0).contains(&sends)
+                && g > 0.0,
             "{gap} {keeps} {sends} {g}"
         );
     }
@@ -11346,18 +11439,16 @@ mod tests {
             under.albedo, again.cycle.albedo, own.means, own.cells
         );
         a_year_under_its_own_clouds_is_under_its_own(&y.graph, own);
-        // KNOWN (M73): its air aloft right, its clear sky and its clouds' infrared stand by
-        // CERES's, and its clouds still took some 10 W/m² too much of its light: it stood some
-        // 6 K under Earth, reflecting 0.339 where 0.29, its polar ice still growing after 80
-        // years. M74: with its vapour's transport its tropics' clouds take the less: it stands
-        // 3.3 K under Earth at 284.7 K, reflecting 0.330, its years' means within 0.15 K of
-        // one another, its polar ice still growing. Held within 5 K of 288 and under 0.345; to
-        // restore: Earth's 0.26 to 0.33, within 3 K, and a settled ice.
-        assert!((0.26..0.345).contains(&under.albedo), "{}", under.albedo);
-        assert!((mean - 288.0).abs() < 5.0, "{mean}");
-        if (mean - 288.0).abs() > 3.0 || under.albedo >= 0.33 || !settled {
+        // M81, the coupling: with its clouds' heat its ice takes by night and its low cloud
+        // over its ice and its land by its air's saturation over the liquid, it stands at
+        // 286.7 K reflecting 0.314: Earth's measures, 0.26 to 0.33 and within 3 K of 288,
+        // held again (M73 and M74 had loosened them to 0.345 and 5 K). KNOWN: its polar sea's
+        // ice not settled by 80 years, 6.7 m of it over its polar night.
+        assert!((0.26..0.33).contains(&under.albedo), "{}", under.albedo);
+        assert!((mean - 288.0).abs() < 3.0, "{mean}");
+        if !settled {
             eprintln!(
-                "KNOWN (M73, M74): the Earth-like under its clouds at {mean:.1} K, reflecting {:.3}, its sea's ice settled {settled}",
+                "KNOWN (M81): the Earth-like under its clouds at {mean:.1} K, reflecting {:.3}, its sea's ice settled {settled}",
                 under.albedo
             );
         }
@@ -12411,7 +12502,11 @@ mod tests {
             deep > 0.2 && deep > 20.0 * deep_night,
             "{deep} {deep_night}"
         );
-        // Its night as THAI's models': low cloud over a part of it, of little effect.
+        // Its night as THAI's models': low cloud over a part of it, of little effect. M81: its
+        // low cloud reads its air's saturation over the liquid, and its night's air, near
+        // 220 K, holds some two thirds of it: 0.12 of its night under cloud where 0.60, near
+        // THAI's least; THAI's models keep thin ice cloud there, formed at the ice's saturation
+        // (the ice clouds, a later milestone).
         assert!((0.1..0.75).contains(&night), "night {night}");
         assert!(keeps.abs() < 6.0, "{keeps}");
         if keeps > 0.3 {

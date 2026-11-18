@@ -522,6 +522,20 @@ impl Sky {
         (0.5 * (lo + hi)).exp()
     }
 
+    /// The share of its saturation over its liquid that air saturated over its ice holds at
+    /// `t` K (M81), e_ice / e_liquid by Clausius and Clapeyron, the latent heat between the two
+    /// curves its fusion's; one at its triple point and over it. A low cloud's drops need their air
+    /// saturated over the liquid: in air saturated over the ice under it they give way to the
+    /// ice's crystals, which fall out (Wegener, Bergeron and Findeisen), as the winter Arctic's
+    /// clear state does.
+    pub fn over_liquid(&self, t: f64) -> f64 {
+        let w = self.water;
+        if t >= w.t_triple || t <= 0.0 {
+            return 1.0;
+        }
+        ((w.l_fus.max(0.0) / w.r_specific) * (1.0 / w.t_triple - 1.0 / t)).exp()
+    }
+
     /// The saturation mixing ratio of the water over `t` K at `p` Pa.
     fn mixing(&self, t: f64, p: f64) -> f64 {
         let e = vapour_pressure(self.water, t).min(0.5 * p);

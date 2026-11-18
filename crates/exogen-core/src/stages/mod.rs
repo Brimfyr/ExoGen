@@ -456,7 +456,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 241;
+pub const FINISH_VERSION: u64 = 242;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2903,7 +2903,8 @@ pub fn finish(
     // humidity, and its sea and its wet land giving the air their latent heat (F269), from the
     // first year's wind and moisture. It can run under its own water clouds, each year under
     // the clouds of the year before it (M67, M68, `EnergyBalance::cycle_under_own_clouds`); it
-    // waits on the clear sky's own moisture and the polar inversion (the user, 2026-11-13).
+    // waits on the clouds at 30 to 50 degrees, which take some 30 W/m² more of the light than
+    // CERES's, and on the ice clouds of a cold night (the user, 2026-11-18, M81).
     let water_share = if ocean.is_some() {
         OCEAN_TRANSPORT_SHARE
     } else {
@@ -3292,12 +3293,16 @@ pub fn finish(
         .filter(|_| moisture.is_some())
         .map(|a| a.vapour.name);
     // The year's water clouds over its places from its air, wind and moisture (M66, M67), as
-    // its maps show them: a diagnostic the climate does not read until the tropics' heat (the
-    // user, 2026-11-13).
-    let clouds = sky
-        .as_ref()
-        .zip(moisture.as_ref())
-        .and_then(|(sky, m)| cycle.clouds(sky, m, balance.circulation.reach));
+    // its maps show them: a diagnostic the climate does not read until the coupling (the user,
+    // 2026-11-18), in its sky over its own cell's air (M73), as its checks read them (M81).
+    let clouds = sky.as_ref().zip(moisture.as_ref()).and_then(|(sky, m)| {
+        let reach = balance.circulation.reach;
+        let over = match cycle.cell_air(m, reach) {
+            Some(cell) => sky.aloft(cell),
+            None => sky.clone(),
+        };
+        cycle.clouds(&over, m, reach)
+    });
     let cloud_summary = clouds.as_ref().map(crate::climate::Clouds::summary);
     let clouds = clouds.map(|c| c.fields(grid));
     // The land's water over the relief (F277), none shed under the caps' ice; the rivers'
