@@ -2041,8 +2041,10 @@ pub const CLOUD_LOW_HUMIDITY: (f64, f64) = (0.5, 0.7);
 pub const CLOUD_LEVELS: (f64, f64) = (700.0 / 1013.25, 850.0 / 1013.25);
 pub const CLOUD_SURFACE_HUMIDITY: f64 = 0.8;
 pub const CLOUD_LCL_PER_KELVIN: f64 = 125.0;
-/// M66: the free air's weak temperature gradients end past the overturning cell's reach from
-/// the thermal equator by degrees over this share of the reach.
+/// M66: the overturning cell's convection gives way to the storms past its reach from the
+/// thermal equator by degrees over this share of the reach, the rain there the convection's
+/// within it and the storms' beyond (the free air's weak temperature gradients ended with it
+/// until M82, when the free air came to stand on the sky's own profile everywhere).
 pub const CLOUD_FREE_EDGE: f64 = 0.25;
 /// M66: the anvils thin cirrus, their optical depth in the visible ISCCP's thin high cloud's
 /// (under 3.6) over the tropical oceans where it rains, their ice's path from it. M68: the

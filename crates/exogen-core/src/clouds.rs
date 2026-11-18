@@ -6,9 +6,10 @@
 //! and an anvil spread from it once the convection is strong; cloud in the layers of air that
 //! rise, by how near its column stands to saturation; and low cloud under the inversion a
 //! cold surface makes beneath a warmer free air, by its strength (Wood and Bretherton 2006),
-//! where the air beneath it is moist. The free air over a place stands at its overturning
-//! cell's rising air's, the cell's latitudes' air by the rain on each (M70), as weak temperature
-//! gradients hold it (Sobel et al. 2001), and over its own latitude beyond the cell.
+//! where the air beneath it is moist. The free air over a place stands on its sky's own profile
+//! from its latitude's air, the profile that keeps its overturning cell's rising air's stability
+//! aloft (M73, M82), as Earth's air at 700 hPa stands some 16 to 18 K under its ice-free seas at
+//! every latitude (ERA-Interim).
 //!
 //! Each kind reflects the star's light by its optical depth, its water's path over its drops'
 //! size (Stephens 1978), as a conservative layer of its drops' asymmetry, and sends its
@@ -270,10 +271,6 @@ pub struct Sky {
     /// temperature every so many kelvin, its levels' shares of the surface pressure and their
     /// temperatures over each.
     pub profile: std::sync::Arc<Profile>,
-    /// The air's own profile without a cell's stability aloft (M73), the same where the sky
-    /// keeps none: the inversion's free air stands on its own step's rising air's adiabat
-    /// (F356), not on the year's cell's.
-    pub free: std::sync::Arc<Profile>,
     /// The share of the surface pressure the tropopause stands at over each of the profile's
     /// grounds, where its adiabat comes down to its skin (M69).
     pub tropopauses: std::sync::Arc<Vec<f64>>,
@@ -364,8 +361,7 @@ impl Sky {
             ground,
             rayleigh,
             rayleigh_by: std::sync::Arc::new(rayleigh_by),
-            profile: profile.clone(),
-            free: profile,
+            profile,
             tropopauses: std::sync::Arc::new(Vec::new()),
             column: std::sync::Arc::new(column),
             span: (low, high),
@@ -385,8 +381,8 @@ impl Sky {
     /// The sky with its air aloft at the stability of the overturning cell's rising air at
     /// `cell` K (M73): its clear air's streams, its grounds' heights' and its air's own profile
     /// made again on the column that keeps it (`Column::with_aloft`), so that its clear sky,
-    /// its clouds' levels and what its air sends down all read the one air. The inversion's
-    /// strength keeps its own free air (F356).
+    /// its clouds' levels, what its air sends down and the inversion's strength all read the
+    /// one air (M82).
     pub fn aloft(&self, cell: f64) -> Self {
         let column = (*self.column).clone().with_aloft(cell);
         let dry = column.clone().with_vapour_share(VAPOUR_DRY);
@@ -451,7 +447,7 @@ impl Sky {
 
     /// The air's temperature at `ratio` of the surface pressure over air at `air` K at the
     /// ground: down its lapse rate to its tropopause, and no colder.
-    fn at(&self, air: f64, ratio: f64) -> f64 {
+    pub(crate) fn at(&self, air: f64, ratio: f64) -> f64 {
         self.adiabat(air, ratio).max(self.tropopause.min(air))
     }
 
@@ -545,25 +541,24 @@ impl Sky {
     /// The estimated inversion strength over a surface at `surface` K under free air that
     /// stands at `free` K at its own ground (M66): Wood and Bretherton (2006)'s EIS, LTS -
     /// Gamma_m(850) (z700 - LCL), its LTS the potential temperature of the free air at
-    /// CLOUD_LEVELS's 700 hPa share of the surface pressure over the surface's, the free air
-    /// on its rising air's moist adiabat within the overturning cell, `rising` of the way into
-    /// it, and down its lapse rate beyond (M70); its moist adiabat's potential temperature gradient Gamma_m at the
-    /// mean of the two temperatures at the 850 hPa share; its lifting condensation level 125 m
-    /// a kelvin of the surface air's dew point depression at CLOUD_SURFACE_HUMIDITY (Lawrence
-    /// 2005).
-    pub fn eis(&self, surface: f64, free: f64, rising: f64) -> f64 {
+    /// CLOUD_LEVELS's 700 hPa share of the surface pressure over the surface's; the free air on
+    /// the sky's own profile (M82), which keeps its overturning cell's rising air's stability
+    /// aloft where the sky keeps one (M73); its moist adiabat's potential temperature gradient
+    /// Gamma_m at the mean of the two temperatures at the 850 hPa share; its lifting
+    /// condensation level 125 m a kelvin of the surface air's dew point depression at
+    /// CLOUD_SURFACE_HUMIDITY (Lawrence 2005).
+    ///
+    /// Before M82 the free air stood on its own adiabat at the cell's rising air's within the
+    /// cell and down the stated lapse rate beyond (F356): over the Earth-like's stated year 2.6
+    /// K warm at 700 hPa from 20 to 40 degrees, where the cell's air held to its edge, and 4 to
+    /// 6 K cold from 40 to 60, where ERA-Interim's stands 16 to 18 K under the sea at every
+    /// latitude; its inversion 4 to 5 K strong in its subtropics and 2 to 2.5 K weak in its
+    /// storm tracks, their low cloud the more and the less by 0.06 a kelvin.
+    pub fn eis(&self, surface: f64, free: f64) -> f64 {
         let (x700, x850) = CLOUD_LEVELS;
         let (g, r, cp) = (self.gravity, self.gas_constant, self.heat_capacity);
         let z700 = r * surface / g * (1.0 / x700).ln();
-        // The free air at 700 hPa on its rising air's moist adiabat within the overturning cell
-        // (M70), where down the stated lapse rate it stood some 3 K cold over the warm tropics;
-        // beyond it down the air's lapse rate, which its eddies hold stabler than the moist
-        // adiabat from its surface (Stone and Carlson 1979), by degrees `rising` of the way.
-        let rising = rising.clamp(0.0, 1.0);
-        let down = free - self.lapse * r * free / g * (1.0 / x700).ln();
-        // On its own adiabat, whatever cell's stability the sky's air aloft keeps (M73).
-        let own = self.adiabat_on(&self.free, free, x700);
-        let t700 = rising * own.max(self.tropopause.min(free)) + (1.0 - rising) * down;
+        let t700 = self.at(free, x700);
         let theta700 = t700 * (1.0 / x700).powf(r / cp);
         let lts = theta700 - surface;
         let t850 = 0.5 * (surface + t700);
@@ -1221,8 +1216,8 @@ mod tests {
     /// stand the warmer, at 500 hPa over the subarctic winter's 257.4 K within 6 K of AFGL's
     /// 239.4 where the plain sky's stands some 25 K under it; its tropopause stands the higher;
     /// its clear sky sends the more, the more the colder the air; a cloud's top lets out
-    /// another share under the warmer air over it. The inversion's strength is the plain
-    /// sky's over every ground: its free air stands on its own adiabat (F356).
+    /// another share under the warmer air over it; and the inversion over it, which reads the
+    /// same air (M82), is the stronger.
     fn a_sky_s_air_aloft_keeps_its_cell_s_stability(sky: &Sky) {
         let cell = 299.0;
         let aloft = sky.aloft(cell);
@@ -1274,18 +1269,17 @@ mod tests {
             "a 240 K top at half the surface pressure lets out {a:.4} of its light where {b:.4}"
         );
         assert!((a - b).abs() > 1e-4, "{a} {b}");
-        for (surface, free, rising) in [
-            (290.0, 295.0, 1.0),
-            (285.0, 292.0, 0.5),
-            (270.0, 270.0, 0.0),
-            (296.0, 299.0, 1.0),
-            (280.0, 286.0, 1.0),
-        ] {
-            let (a, b) = (
-                aloft.eis(surface, free, rising),
-                sky.eis(surface, free, rising),
-            );
-            assert!((a - b).abs() < 1e-12, "{surface} {free} {rising}: {a} {b}");
+        // The inversion reads the same air (M82): over free air as warm as the cell's or
+        // warmer the plain sky's, over colder free air the stronger, its air at 700 hPa the
+        // warmer.
+        for (surface, free) in [(306.0, 306.0), (303.0, 306.0), (312.0, 312.0)] {
+            let (a, b) = (aloft.eis(surface, free), sky.eis(surface, free));
+            assert!((a - b).abs() < 1e-6, "{surface} {free}: {a} {b}");
+        }
+        for t in [287.5, 272.0, 257.4] {
+            let (a, b) = (aloft.eis(t, t), sky.eis(t, t));
+            println!("{t} K: its inversion {a:.1} K where {b:.1}");
+            assert!(a > b + 1.0, "{t}: {a} {b}");
         }
     }
 
@@ -1298,21 +1292,17 @@ mod tests {
         assert!((t - 272.2).abs() < 2.0, "{t}");
     }
 
-    /// M70: a free air standing on its own moist adiabat over its own ground, as it does within
-    /// the overturning cell, holds no inversion: the inversion's strength Wood and Bretherton
-    /// (2006) estimate, which measures how far the air at 700 hPa stands over the moist adiabat
-    /// from the surface, within 1.5 K of none over grounds from 285 to 303 K, where read down
-    /// the stated lapse rate it stood some 3 K under; and a free air warmer than its ground's
-    /// holds the more.
+    /// M70: a free air standing on its own moist adiabat over its own ground holds no
+    /// inversion: the inversion's strength Wood and Bretherton (2006) estimate, which measures
+    /// how far the air at 700 hPa stands over the moist adiabat from the surface, within 1.5 K
+    /// of none over grounds from 285 to 303 K, where read down the stated lapse rate it stood
+    /// some 3 K under; and a free air warmer than its ground's holds the more.
     fn a_free_air_on_its_own_profile_holds_no_inversion(sky: &Sky) {
         for t in [285.0, 290.0, 295.0, 299.0, 303.0] {
-            let eis = sky.eis(t, t, 1.0);
-            println!(
-                "{t} K: {eis:.2} K; beyond the cell {:.2} K",
-                sky.eis(t, t, 0.0)
-            );
+            let eis = sky.eis(t, t);
+            println!("{t} K: {eis:.2} K");
             assert!(eis.abs() < 1.5, "{t}: {eis}");
-            assert!(sky.eis(t - 4.0, t, 1.0) > eis + 3.0, "{t}");
+            assert!(sky.eis(t - 4.0, t) > eis + 3.0, "{t}");
         }
     }
 
