@@ -39,6 +39,10 @@ pub struct Kinds {
     pub layer: f64,
     /// The low cloud under an inversion.
     pub low: f64,
+    /// The inversion's ice cloud (M83): where its air stands saturated over the ice and not
+    /// over the liquid, its cloud forms of the ice's crystals alone, as thin as the time they
+    /// take to fall out of it lets it be.
+    pub frost: f64,
     /// The convection's own mid-level cloud and its cumulus (M68).
     pub congestus: f64,
     pub cumulus: f64,
@@ -57,7 +61,7 @@ impl Kinds {
             self.tower,
             1.0 - (1.0 - self.anvil) * (1.0 - self.storm.iter().sum::<f64>().min(1.0)),
             1.0 - (1.0 - self.layer) * (1.0 - self.congestus),
-            self.low.max(self.cumulus),
+            (self.low + self.frost).min(1.0).max(self.cumulus),
         ]
     }
 
@@ -88,6 +92,21 @@ impl Kinds {
 /// own high cloud by the large-scale rain as ISCCP sees it over the midlatitude oceans
 /// (CLOUD_STORM; M70).
 pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f64) -> Kinds {
+    kinds_over(convective, large, saturation, eis, (humidity, humidity))
+}
+
+/// The clouds' covers as `kinds` gives them, the air under the inversion `humidity` of its
+/// saturation over the liquid and over the ice (M83): the inversion's cloud by its strength
+/// where its air stands saturated over the ice, its drops' share of it where over the liquid
+/// too (M81), the rest its ice cloud, whose crystals grow at the drops' cost and fall out
+/// (Wegener, Bergeron and Findeisen).
+pub fn kinds_over(
+    convective: f64,
+    large: f64,
+    saturation: f64,
+    eis: f64,
+    (humidity, over_ice): (f64, f64),
+) -> Kinds {
     let (a, b, most) = CLOUD_CONVECTIVE;
     let law = |rain: f64| {
         if rain > 0.0 {
@@ -114,8 +133,10 @@ pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f
     let layer = 1.0 - (1.0 - law(large)) * (1.0 - (humid * humid).min(1.0));
     let (base, per_kelvin) = CLOUD_LOW;
     let (dry, moist) = CLOUD_LOW_HUMIDITY;
-    let wet = ((humidity - dry) / (moist - dry)).clamp(0.0, 1.0);
-    let low = (base + per_kelvin * eis).clamp(0.0, 1.0) * wet;
+    let wet = |h: f64| ((h - dry) / (moist - dry)).clamp(0.0, 1.0);
+    let inversion = (base + per_kelvin * eis).clamp(0.0, 1.0);
+    let low = inversion * wet(humidity);
+    let frost = inversion * (wet(over_ice) - wet(humidity)).max(0.0);
     let (m0, m1, _) = CLOUD_ANVIL_MEDIUM;
     let medium = if anvil > 0.0 {
         (m0 + m1 * convective).clamp(0.0, 1.0)
@@ -151,6 +172,7 @@ pub fn kinds(convective: f64, large: f64, saturation: f64, eis: f64, humidity: f
         medium,
         layer,
         low,
+        frost,
         congestus,
         cumulus,
         storm,
@@ -665,10 +687,16 @@ impl Sky {
             optics.isccp(CLOUD_CONGESTUS.2, mid_liquid),
             share(kinds.layer, congestus),
         );
-        let low = blend(
+        // The inversion's drops and its ice cloud one level's cloud by their shares (M83).
+        let inversion = blend(
             uneven(optics.of(deck_path(low_base, low_depth), low_liquid)),
+            uneven(optics.of(self.frost_path(air, low_base), 0.0)),
+            share(kinds.low, kinds.frost),
+        );
+        let low = blend(
+            inversion,
             optics.isccp(CLOUD_CUMULUS.2, low_liquid),
-            share(kinds.low, cumulus),
+            share(kinds.low + kinds.frost, cumulus),
         );
         let parts = [uneven(optics.of(tower_path, 1.0)), high, layers, low];
         let seen = Kinds {
@@ -736,6 +764,37 @@ impl Sky {
             },
             thin: thin_share as f32,
         }
+    }
+
+    /// The ice water path of the inversion's ice cloud over air at `air` K, its base at `ratio`
+    /// of the surface pressure, kg/m² (M83). Its air, held at the ice's saturation as it cools
+    /// by its own radiation at Q, deposits rho H (dq_i/dT) Q of ice a second over its depth H,
+    /// which its crystals carry out of it falling at v_t: rho H² (dq_i/dT) Q / v_t (the
+    /// research notes), its depth the low cloud's (CLOUD_DEPTH; diamond dust's some 250 m,
+    /// Intrieri and Shupe 2004), its crystals' fall CLOUD_ICE_FALL's by its gravity. Over the
+    /// Earth-like's air at 240 K, cooling some half a kelvin a day, 0.3 g/m², 0.9 mg/m³, as the
+    /// South Pole's thin winter clouds hold 0.3 to 6 (Stone 1993, as Mahesh et al. 2001 quote
+    /// it): diamond dust, sending its ground 1.6 W/m² where SHEBA's sent it 0 to 6 (Intrieri
+    /// and Shupe 2004); over 220 K a fourteenth of it.
+    pub fn frost_path(&self, air: f64, ratio: f64) -> f64 {
+        let t = self.at(air, ratio);
+        let p = ratio * self.pressure;
+        let w = self.water;
+        let l = if t < w.t_triple { w.l_sub } else { w.l_vap };
+        let slope = self.mixing(t, p) * l / (w.r_specific * t * t);
+        let density = p / (self.gas_constant * t);
+        let depth = CLOUD_DEPTH.0;
+        let (fall, g0) = CLOUD_ICE_FALL;
+        density * depth * depth * slope * self.cooling(air) / (fall * self.gravity / g0)
+    }
+
+    /// The rate at which a clear column of air at `air` K over a ground as warm as it cools by
+    /// its own radiation, K/s (M83): what it lets out to space and sends down to its ground less
+    /// what it takes of its ground's, over its heat capacity.
+    pub fn cooling(&self, air: f64) -> f64 {
+        let o = &self.clear;
+        let lost = o.air_up(air) + o.down(air) - (1.0 - o.window(air)) * SIGMA_SB * air.powi(4);
+        lost.max(0.0) * self.gravity / (self.heat_capacity * self.pressure)
     }
 
     /// The water a cloud's air condenses as it rises at `t` K and `p` Pa, kg/m³ a metre (M67),
@@ -1073,6 +1132,29 @@ mod tests {
             assert!(b.low >= a.low, "{w:?}");
         }
         assert_eq!(kinds(0.0, 0.0, 0.5, 20.0, 0.4).low, 0.0);
+        // The inversion's air saturated over the ice and not the liquid: its ice cloud (M83).
+        let (law, w) = (0.14 + 0.060 * 6.0, |h: f64| {
+            ((h - 0.5) / 0.2).clamp(0.0, 1.0)
+        });
+        for (liquid, ice) in [
+            (0.4, 0.9),
+            (0.55, 0.75),
+            (0.6, 0.65),
+            (0.75, 0.9),
+            (0.3, 0.45),
+        ] {
+            let k = kinds_over(0.0, 0.0, 0.5, 6.0, (liquid, ice));
+            assert!((k.low - law * w(liquid)).abs() < 1e-12, "{liquid} {ice}");
+            assert!(
+                (k.low + k.frost - law * w(ice)).abs() < 1e-12,
+                "{liquid} {ice}"
+            );
+            assert!(
+                (k.levels()[3] - law * w(ice)).abs() < 1e-12,
+                "{liquid} {ice}"
+            );
+        }
+        assert_eq!(kinds(0.0, 0.0, 0.5, 6.0, 0.6).frost, 0.0);
     }
 
     /// M67: the water a cloud's air condenses as it rises, as Albrecht et al. (1990)'s
@@ -1208,7 +1290,54 @@ mod tests {
             ("a_sky_s_air_aloft_keeps_its_cell_s_stability", &|| {
                 a_sky_s_air_aloft_keeps_its_cell_s_stability(&sky)
             }),
+            ("the_inversion_s_ice_cloud_is_diamond_dust", &|| {
+                the_inversion_s_ice_cloud_is_diamond_dust(&sky)
+            }),
         ]);
+    }
+
+    /// M83: the inversion's ice cloud, its crystals falling out of it as its air deposits them,
+    /// is diamond dust. Its clear air cools by its own radiation, the faster as it warms and
+    /// holds the more vapour; over 240 K the cloud holds 0.3 to 6 mg/m³ of ice, as the South
+    /// Pole's thin winter clouds (Stone 1993, as Mahesh et al. 2001 quote it), over 220 K the
+    /// less; and its optical depth and emissivity are small, sending its ground no more than the
+    /// 0 to 6 W/m² diamond dust sent SHEBA's (Intrieri and Shupe 2004), where the clouds holding
+    /// liquid sent it some 52 through its year (Shupe and Intrieri 2004).
+    fn the_inversion_s_ice_cloud_is_diamond_dust(sky: &Sky) {
+        let day = 86_400.0;
+        let rates = [230.0, 250.0, 270.0].map(|t| sky.cooling(t) * day);
+        println!(
+            "its clear air cools {:.2}, {:.2} and {:.2} K a day over 230, 250 and 270 K",
+            rates[0], rates[1], rates[2]
+        );
+        assert!(
+            0.0 < rates[0] && rates[0] < rates[1] && rates[1] < rates[2],
+            "{rates:?}"
+        );
+        let base = sky.base_ratio(240.0);
+        let (lo, hi) = (sky.frost_path(220.0, base), sky.frost_path(240.0, base));
+        let per_m3 = |path: f64| path / CLOUD_DEPTH.0 * 1e6;
+        println!(
+            "its ice: {:.2} g/m² over 240 K ({:.1} mg/m³), {:.3} over 220 K ({:.2})",
+            hi * 1e3,
+            per_m3(hi),
+            lo * 1e3,
+            per_m3(lo)
+        );
+        assert!((0.3..6.0).contains(&per_m3(hi)), "{hi}");
+        assert!(lo < 0.3 * hi && lo > 0.0, "{lo} {hi}");
+        let only = |frost: f64| Kinds {
+            frost,
+            ..Kinds::default()
+        };
+        let deck = sky.deck(&only(1.0), 240.0, 0.0);
+        let (_, down) = sky.infrared(&deck, 240.0, SIGMA_SB * 240f64.powi(4), 1.0);
+        let tau = deck.scaled[3] as f64 / (1.0 - (deck.depth[3] / deck.scaled[3] - 1.0) as f64);
+        println!(
+            "over 240 K: its optical depth {tau:.3}, emissivity {:.3}, sending {down:.1} W/m² down",
+            deck.emissivity[3]
+        );
+        assert!(tau < 0.3 && deck.emissivity[3] < 0.2 && (0.0..6.0).contains(&down));
     }
 
     /// M73: a sky whose air aloft keeps the stability of its cell's rising air, here at 299 K.

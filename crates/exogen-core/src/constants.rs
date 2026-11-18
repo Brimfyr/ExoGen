@@ -2108,6 +2108,12 @@ pub const CLOUD_THICKNESS: f64 = 0.68;
 /// M66: the drops' effective radii, m: liquid over the sea and over land, MODIS's modes of 12
 /// to 13 and 10 to 11 um (King et al. 2013); ice, 25 um (GEWEX, Stubenrauch et al. 2012).
 pub const CLOUD_RADIUS: ((f64, f64), f64) = ((12.5e-6, 10.5e-6), 25e-6);
+/// M83: the fall speed of the inversion's ice cloud's crystals, m/s, under a gravity, m/s²:
+/// columns some 50 um long, as CLOUD_RADIUS's ice gives, 4.7 cm/s at 240 K and 1000 hPa by
+/// Heymsfield and Westbrook (2010)'s drag law with Mitchell (1996)'s columns, little changed at
+/// 220 K and 500 hPa (the research notes); diamond dust's 20 to 50 um crystals fall 1 to 5
+/// cm/s. In the Stokes flow that holds at these sizes they fall as their gravity.
+pub const CLOUD_ICE_FALL: (f64, f64) = (0.047, 9.81);
 /// M66: the drops' asymmetry in the visible, a + b r_e, r_e in um: liquid's (Slingo 1989) and
 /// ice's (Ebert and Curry 1992), as GFDL's code fits them; ice's optical depth per g/m² of its
 /// path, a + b / r_e (Ebert and Curry 1992).

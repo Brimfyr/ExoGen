@@ -6429,6 +6429,7 @@ impl Cycle {
             olr: vec![0.0; n * steps],
             down: vec![0.0; n * steps],
             kinds: Default::default(),
+            frost: vec![0.0; n * steps],
             weights: self.sites.iter().map(|s| s.weight).collect(),
             decks: vec![crate::clouds::Deck::default(); n * steps],
         };
@@ -6481,22 +6482,24 @@ impl Cycle {
                 // The low cloud over the ice and the land by the column's saturation over its
                 // liquid at its air's temperature, not over its ice (M81).
                 let liquid = saturation * sky.over_liquid(air[p]);
-                let on_ice = crate::clouds::kinds(
+                // Where it stands saturated over the ice and not the liquid, its ice cloud (M83).
+                let on_ice = crate::clouds::kinds_over(
                     rains.0,
                     rains.1,
                     rains.2,
                     sky.eis(base(t_sea), free_air),
-                    liquid,
+                    (liquid, saturation),
                 );
-                let on_land = crate::clouds::kinds(
+                let on_land = crate::clouds::kinds_over(
                     rains.0,
                     rains.1,
                     rains.2,
                     sky.eis(base(t_land), free_air),
-                    liquid,
+                    (liquid, saturation),
                 );
                 let kinds = crate::clouds::Kinds {
                     low: open * on_sea.low + (sea - open) * on_ice.low + (1.0 - sea) * on_land.low,
+                    frost: (sea - open) * on_ice.frost + (1.0 - sea) * on_land.frost,
                     ..on_sea
                 };
                 let snow = snow_cover(at(&self.masses[2]));
@@ -6512,6 +6515,7 @@ impl Cycle {
                 let q = p * steps + k;
                 out.decks[q] = sky.deck(&kinds, air[p], sea);
                 out.cover[q] = kinds.cover() as f32;
+                out.frost[q] = kinds.frost as f32;
                 out.albedo[q] = e.albedo as f32;
                 out.olr[q] = e.olr as f32;
                 out.down[q] = e.down as f32;
@@ -6884,6 +6888,9 @@ pub struct Clouds {
     pub olr: Vec<f32>,
     pub down: Vec<f32>,
     pub kinds: [Vec<f32>; 4],
+    /// Each place's cover of the inversion's ice cloud through each step (M83), within its
+    /// low cloud's (`kinds[3]`), as `cover`.
+    pub frost: Vec<f32>,
     /// Each place's share of the sphere.
     pub weights: Vec<f64>,
     /// Each place's deck through each step (M67), laid out as the series are.
@@ -6926,6 +6933,7 @@ impl Clouds {
             olr: between(&self.olr, &own.olr),
             down: between(&self.down, &own.down),
             kinds: [0, 1, 2, 3].map(|i| between(&self.kinds[i], &own.kinds[i])),
+            frost: between(&self.frost, &own.frost),
             weights: own.weights.clone(),
             decks: (self.decks.iter())
                 .zip(&own.decks)
@@ -8922,6 +8930,7 @@ mod tests {
             olr: vec![-20.0 * v, -40.0 * v],
             down: vec![30.0 * v, 60.0 * v],
             kinds: [0, 1, 2, 3].map(|i| vec![d.cover[i], d.cover[i]]),
+            frost: vec![0.0, 0.1 * v],
             weights: vec![0.5, 0.5],
             decks: vec![d, d],
         };
@@ -8960,6 +8969,7 @@ mod tests {
         assert!(near(half.cover[1], 0.6) && near(half.albedo[0], 0.03));
         assert!(near(half.olr[1], -12.0) && near(half.down[0], 9.0));
         assert!(near(half.kinds[2][0], 0.3) && half.weights == b.weights);
+        assert!(near(half.frost[1], 0.03) && near(half.frost[0], 0.0));
         // Laid on other places or steps: the year's own.
         let other = Clouds {
             layout: (2, 1),
@@ -10872,7 +10882,9 @@ mod tests {
         // the column's mean saturation over the liquid at the gate's top (CLOUD_LOW_HUMIDITY),
         // where the Arctic's winter stands opaquely cloudy a fifth of its time (restore: under
         // 0.7). Their year's 0.77 under the inversion over their ground's skin, the ice's
-        // winter top some 10 K under its air.
+        // winter top some 10 K under its air. Their low cloud its drops' alone, the inversion's
+        // ice cloud apart (M83).
+        let liquid = |q: usize| (c.decks[q].cover[3] - c.frost[q]).max(0.0) as f64;
         let n = sites.len();
         let tilts = again.cycle.air.len() as f64;
         let winter = |p: usize| {
@@ -10880,18 +10892,24 @@ mod tests {
             let mut order: Vec<usize> = (0..steps).collect();
             order.sort_by(|&a, &b| air(a).total_cmp(&air(b)));
             let cold = &order[..steps / 2];
-            cold.iter()
-                .map(|&k| c.decks[p * steps + k].cover[3] as f64)
-                .sum::<f64>()
-                / cold.len().max(1) as f64
+            cold.iter().map(|&k| liquid(p * steps + k)).sum::<f64>() / cold.len().max(1) as f64
         };
         let polar_low = band(&winter, (75.0, 90.0), &all);
-        let year = band(&|p| c.kinds[3][p] as f64, (75.0, 90.0), &all);
+        let year_of = |f: &dyn Fn(usize) -> f64, p: usize| {
+            (0..steps).map(|k| f(p * steps + k)).sum::<f64>() / steps as f64
+        };
+        let year = band(&|p| year_of(&liquid, p), (75.0, 90.0), &all);
+        let frost = band(&|p| year_of(&|q| c.frost[q] as f64, p), (75.0, 90.0), &all);
         println!(
-            "its polar seas' low cloud through their winter {polar_low:.2}, their year {year:.2}"
+            "its polar seas' low cloud through their winter {polar_low:.2}, their year {year:.2}; their ice cloud through their year {frost:.2}"
         );
         assert!(year < 0.7, "the year's {year}");
         assert!(polar_low < 0.72, "the winter's {polar_low}");
+        // M83: their ice cloud, their air saturated over the ice and not the liquid, 0.12 of
+        // their year, as diamond dust fell 13 percent of SHEBA's time from November to mid-May
+        // (Intrieri and Shupe 2004) and 20 to 50 percent of the Canadian Arctic's stations'
+        // winters (Maxwell 1982, as they quote it).
+        assert!((0.05..0.5).contains(&frost), "their ice cloud {frost}");
     }
 
     /// M69: the Earth-like's clear sky, each place at its own column's vapour, lets out what
@@ -11505,9 +11523,11 @@ mod tests {
         // where 0.08 to 0.26, held over none (M74's -0.15). KNOWN (M82): its air 19.1 K over its
         // ice's top where 14.0, its clouds keeping -1.7 W/m² from space where 1.1 and sending
         // 29.7 down where 32.9, its ice 22.7 m where 6.6, under its inversion over its air above
-        // its colder ice (F395) and its free air on the sky's own profile (F394); Earth's polar
-        // night's monthly means never keep less than -0.6, the Arctic Ocean's +14 (CERES EBAF,
-        // the research notes). Held from -2.0; restore: from -0.6.
+        // its colder ice (F395) and its free air on the sky's own profile (F394); M83, its ice
+        // cloud (F396): its air 17.9 K over its ice's top, its clouds keeping -1.2 W/m² and
+        // sending 30.4 down, its ice 21.3 m. Earth's polar night's monthly means never keep less
+        // than -0.6, the Arctic Ocean's +14 (CERES EBAF, the research notes). Held from -2.0;
+        // restore: from -0.6.
         if !(0.08..0.26).contains(&g) {
             eprintln!(
                 "KNOWN (M81): the Earth-like's polar night's clear sky keeps {g:.3} of its ground's radiation"
@@ -12578,6 +12598,7 @@ mod tests {
             .expect("the locked world's clouds");
         let steps = c.steps;
         let [tower, anvil, ..] = &c.kinds;
+        let mut frost_night = [0.0f64; 2];
         // Its day and its night: weight, cover, its towers' and anvils', and what its clouds
         // keep from space.
         let (mut day, mut night) = ([0.0f64; 4], [0.0f64; 4]);
@@ -12592,6 +12613,10 @@ mod tests {
             };
             let cover = mean(&c.cover);
             let facing = s.lat.cos() * s.lon.cos();
+            if facing <= 0.0 {
+                frost_night[0] += s.weight;
+                frost_night[1] += s.weight * mean(&c.frost);
+            }
             let side = if facing > 0.0 { &mut day } else { &mut night };
             side[0] += s.weight;
             side[1] += s.weight * cover;
@@ -12616,15 +12641,20 @@ mod tests {
         // low cloud reads its air's saturation over the liquid, and its night's air, near
         // 220 K, holds some two thirds of it: 0.12 of its night under cloud where 0.60, near
         // THAI's least. M82: under its inversion over the warmer of its ice and its air, its
-        // free air on the sky's own profile, 0.09. KNOWN: THAI's models keep thin ice cloud
-        // there, formed at the ice's saturation (the ice clouds, the next milestone); restore:
-        // from 0.1.
-        assert!((0.08..0.75).contains(&night), "night {night}");
-        if night < 0.1 {
-            eprintln!(
-                "KNOWN (M82): the locked world's night under cloud {night:.2}, THAI's 0.15 to 0.70: its ice clouds wait"
-            );
-        }
+        // free air on the sky's own profile, 0.09. M83: three of THAI's four models keep ice
+        // cloud there, and so does it, its air saturated over the ice and not the liquid: 0.30
+        // of its night under cloud, 0.23 its ice cloud (THAI's 0.15 to 0.70, the cloud-
+        // permitting SAM's 0.20; Yang et al. 2023). KNOWN: its ice by its own radiation's
+        // cooling alone, over 220 K air (on Earth's sky) some 0.02 g/m² where it covers, where
+        // SAM's night holds 8.6 over all of it, the day's vapour its night's boundary layer
+        // mixes in not yet in its supply.
+        let frost = frost_night[1] / frost_night[0].max(1e-30);
+        println!("its night's ice cloud {frost:.2}");
+        assert!((0.15..0.75).contains(&night), "night {night}");
+        assert!(
+            frost > 0.1 && frost < night,
+            "its ice cloud {frost}, night {night}"
+        );
         assert!(keeps.abs() < 6.0, "{keeps}");
         if keeps > 0.3 {
             eprintln!(
