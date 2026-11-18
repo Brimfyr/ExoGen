@@ -1210,6 +1210,23 @@ How it went:
 - **KNOWN.** The locked night's ice by its own cooling alone. The decks' optical depths from 40 to 50 degrees. The polar winter's low cloud. The Earth-like under its own clouds: its polar night's clouds keeping -1.2 W/m² from space (held from -2.0), its polar sea's ice 21.3 m and unsettled. TRAPPIST-1e under its own clouds reflecting 0.202, under THAI's 0.22, its day under cloud 0.59 where 0.74 under the free air its latitude's around all of it. The snowpack's melt by its air alone.
 - **The suite.** The fast tier: 400 tests pass (3.5 minutes). The whole-body tier: 444 of 444 pass (40.7 minutes). The own-clouds tier: both pass (96 minutes). Clippy clean with each tier's features. FINISH_VERSION 244.
 
+## The eighty-fourth milestone: the year side by side
+
+No law changed: the same year, sooner.
+
+How it went:
+
+- **The question.** The user asked (2026-11-18) whether the climate's solving and rendering could be shortened, a rougher result accepted if need be, TRAPPIST-1e's irregular eye kept: its shape is its wind-driven currents' (F272), its ice's drift (F276), its sea's overturning (M77 to M79) and its continents'.
+- **The finish, timed part by part.** Timers through a scratch copy's finish and its lockstep, each body rendered at 2048 alone on the machine. Earth's finish 1,326 s: its three years 161, 320 and 745 s (43, 34 and 80 years of 96 steps over 8,190 places), its moisture 10 s each, its rivers and erosion 38. TRAPPIST-1e's 826 s: its years 131, 259 and 259 s (80 years each over 4,140 places, its night's ice never settling), its moisture 41 and 45 s, its rivers 45.
+- **Where it went.** Within the years: the air's own radiation at each place, set up before each step's transport, 518 s of Earth's and 422 of TRAPPIST-1e's, on one thread; the sea's transport and currents 399 and 59 s, on one thread, the currents carried in 400 sub-steps a step; the air's transport 104 and 46 s, on one thread; the ground's and the sea's step, already side by side, 59 and 71 s.
+- **The air's radiation side by side.** Each place's sum reads its own ground and air alone: the places run on all the threads, each sum in its own order. TRAPPIST-1e's finish 393 s where 826, to the byte.
+- **The transport's Fourier passes side by side.** The preconditioner's sums along each latitude run with the latitudes side by side, each latitude's in its own order.
+- **The year within the threads' pool.** A step's work side by side started from outside the pool is handed over and waited for each time; the year and its moisture now run on one of the pool's threads.
+- **The result.** Rendered alone at 2048: TRAPPIST-1e's finish 826 s, then 393 with the air's radiation side by side, 412 with the transport's passes besides, their hand-overs costing what they saved, and 375 from within the pool; Earth's 1,326 s, then 842 and 830. All 46 of each body's files, its maps and its sidecar, the same to the byte as M83's at each stage. What is left of Earth's is half its sea's currents.
+- **The two-hour tier.** The own-clouds tier (M68) is not the render: the finish draws its clouds once, in seconds, and its climate keeps the stated law's. The tier runs the year under its own clouds, pass after pass, five and six passes of up to 80 years each, the sea's ice of both worlds never settling: some 500 to 600 years a test, which the coupling, once on, brings into the finish.
+- **Not yet, for the user to choose.** Each year of the finish started from the end of the one before it (its coupling carries it since M68) and held to fewer years where its ice does not settle; the sea's currents in one implicit step for their 400 sub-steps. Neither is to the byte.
+- **The suite.** The whole-body tier: 444 of 444 pass (39.7 minutes, beside another run), the fast tier's 400 among them. Clippy clean with each tier's features. The own-clouds tier not run: no law changed, and the renders stand to the byte. FINISH_VERSION 244, unchanged.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

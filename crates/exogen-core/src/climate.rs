@@ -3205,6 +3205,11 @@ impl EnergyBalance {
         reservoir: Option<&Reservoir>,
         coupling: Option<&Coupling>,
     ) -> Cycle {
+        // Run from within the threads' pool, so that each step's work side by side starts on
+        // one of its threads and waits on no hand-over: the same year, sooner.
+        if rayon::current_thread_index().is_none() {
+            return rayon::scope(|_| self.cycle_with(climate, ground, sea, reservoir, coupling));
+        }
         // A coupling that carries the year's clouds runs the year under them (M67).
         if self.clouds.is_none()
             && let Some(clouds) = coupling.and_then(|c| c.clouds.as_ref())
@@ -4243,62 +4248,65 @@ impl EnergyBalance {
             for k in 0..steps {
                 // The air, from the ground under it as the last step left it: its land's, its
                 // sea's and its caps'.
-                for (q, (r, p)) in runs.iter().zip(places).enumerate() {
-                    let contact = &p.contact;
-                    let a = air[q];
-                    let land = self.land_coupling(r.t[0], a, contact) * p.land();
-                    // Its sea's ice's tops under its clear sky and under its clouds (M71), by the
-                    // share its clouds cover.
-                    let covered = match (&self.clouds, layout.decks[q].get(k)) {
-                        (Some(_), Some(d)) if layout.decks[q].len() == steps => d.cover(),
-                        _ => 0.0,
-                    };
-                    let (wet, surface) = match &r.sea {
-                        Some(s) => {
-                            let shares = [1.0 - covered, covered];
-                            let (mut wet, mut held) = (0.0, 0.0);
-                            for (&share, &top) in shares.iter().zip(&s.tops) {
-                                let k = share * self.sea_coupling_at(top, a, contact) * p.sea;
-                                wet += k;
-                                held += k * top;
+                // Each place's own, the places side by side.
+                diag.par_iter_mut()
+                    .zip(rhs.par_iter_mut())
+                    .zip(runs.par_iter().zip(places.par_iter()))
+                    .zip(air.par_iter().zip(layout.decks.par_iter()))
+                    .for_each(|(((diag, rhs), (r, p)), (&a, decks))| {
+                        let contact = &p.contact;
+                        let land = self.land_coupling(r.t[0], a, contact) * p.land();
+                        // Its sea's ice's tops under its clear sky and under its clouds (M71), by the
+                        // share its clouds cover.
+                        let covered = match (&self.clouds, decks.get(k)) {
+                            (Some(_), Some(d)) if decks.len() == steps => d.cover(),
+                            _ => 0.0,
+                        };
+                        let (wet, surface) = match &r.sea {
+                            Some(s) => {
+                                let shares = [1.0 - covered, covered];
+                                let (mut wet, mut held) = (0.0, 0.0);
+                                for (&share, &top) in shares.iter().zip(&s.tops) {
+                                    let k = share * self.sea_coupling_at(top, a, contact) * p.sea;
+                                    wet += k;
+                                    held += k * top;
+                                }
+                                let surface = if wet > 0.0 { held / wet } else { s.surface };
+                                (wet, surface)
                             }
-                            let surface = if wet > 0.0 { held / wet } else { s.surface };
-                            (wet, surface)
-                        }
-                        None => (0.0, 0.0),
-                    };
-                    let (iced, top) = match &r.cap {
-                        Some(c) => (self.coupling_at(c.t[0], a, contact) * c.share, c.t[0]),
-                        None => (0.0, 0.0),
-                    };
-                    // The snow that falls on its land froze in it, its latent heat of fusion
-                    // the air's, as the ground's melting of it takes it back (F271); and the
-                    // snow that falls on its sea's ice (M64).
-                    let frozen = match (self.liquid.filter(|_| self.ice), r.snowfall.get(k)) {
-                        (Some(l), Some(&fall)) => {
-                            let iced = r.sea.as_ref().map_or(0.0, |s| sea_ice_cover(s.ice));
-                            l.l_fus * fall as f64 * (p.land() + p.sea * iced)
-                        }
-                        _ => 0.0,
-                    };
-                    // The air's own radiation (M55), about the air as it stands, taking what
-                    // its ground sends up: its sea's, its caps' and its land's for the rest.
-                    let decks = &layout.decks[q];
-                    let deck = decks.get(k).filter(|_| decks.len() == steps);
-                    let at = (deck, p.contact.vapour);
-                    let (own, slope) = self.air_radiation(air[q], r.sends_up(p, frost), at);
-                    diag[q] = hold + land + wet + iced + slope;
-                    // The sunlight it took at the last step (M58).
-                    rhs[q] = hold * air[q]
-                        + land * r.t[0]
-                        + wet * surface
-                        + iced * top
-                        + frozen
-                        + slope * air[q]
-                        + r.sun_air
-                        + r.dried
-                        - own;
-                }
+                            None => (0.0, 0.0),
+                        };
+                        let (iced, top) = match &r.cap {
+                            Some(c) => (self.coupling_at(c.t[0], a, contact) * c.share, c.t[0]),
+                            None => (0.0, 0.0),
+                        };
+                        // The snow that falls on its land froze in it, its latent heat of fusion
+                        // the air's, as the ground's melting of it takes it back (F271); and the
+                        // snow that falls on its sea's ice (M64).
+                        let frozen = match (self.liquid.filter(|_| self.ice), r.snowfall.get(k)) {
+                            (Some(l), Some(&fall)) => {
+                                let iced = r.sea.as_ref().map_or(0.0, |s| sea_ice_cover(s.ice));
+                                l.l_fus * fall as f64 * (p.land() + p.sea * iced)
+                            }
+                            _ => 0.0,
+                        };
+                        // The air's own radiation (M55), about the air as it stands, taking what
+                        // its ground sends up: its sea's, its caps' and its land's for the rest.
+                        let deck = decks.get(k).filter(|_| decks.len() == steps);
+                        let at = (deck, p.contact.vapour);
+                        let (own, slope) = self.air_radiation(a, r.sends_up(p, frost), at);
+                        *diag = hold + land + wet + iced + slope;
+                        // The sunlight it took at the last step (M58).
+                        *rhs = hold * a
+                            + land * r.t[0]
+                            + wet * surface
+                            + iced * top
+                            + frozen
+                            + slope * a
+                            + r.sun_air
+                            + r.dried
+                            - own;
+                    });
                 transport_solve(layout, &air_links, (&diag, &rhs), &mut air, true);
                 // The frost's own gas condenses out of air cooled past its point (M59), as
                 // Mars's polar night's carbon dioxide snows (Forget et al. 1998; Hayne et al.
@@ -6333,6 +6341,10 @@ impl Cycle {
         air: &crate::moisture::Air,
         heights: &[f64],
     ) -> Option<crate::moisture::Moisture> {
+        // From within the threads' pool, as the year runs (`cycle_with`).
+        if rayon::current_thread_index().is_none() {
+            return rayon::scope(|_| self.moisture(air, heights));
+        }
         let wind = self.wind.as_ref()?;
         let (n_lat, n_lon) = self.layout;
         let n = n_lat * n_lon;
@@ -8405,25 +8417,24 @@ impl Zonal {
         let (n_lat, n_lon, modes) = (self.n_lat, layout.n_lon, self.modes);
         let [cos, sin, cos_t, sin_t] = &layout.modes;
         let (a, b) = spectrum.split_at_mut(modes * n_lat);
-        // Each latitude's modes, latitude after latitude.
-        a.fill(0.0);
-        b.fill(0.0);
-        for i in 0..n_lat {
-            let (am, bm) = (
-                &mut a[i * modes..(i + 1) * modes],
-                &mut b[i * modes..(i + 1) * modes],
-            );
-            for (j, &x) in z[i * n_lon..(i + 1) * n_lon].iter().enumerate() {
-                let (c, s) = (
-                    &cos_t[j * modes..(j + 1) * modes],
-                    &sin_t[j * modes..(j + 1) * modes],
-                );
-                for ((u, v), (c, s)) in am.iter_mut().zip(bm.iter_mut()).zip(c.iter().zip(s)) {
-                    *u += x * c;
-                    *v += x * s;
+        // Each latitude's modes, the latitudes side by side.
+        a.par_chunks_mut(modes)
+            .zip(b.par_chunks_mut(modes))
+            .zip(z.par_chunks(n_lon))
+            .for_each(|((am, bm), row)| {
+                am.fill(0.0);
+                bm.fill(0.0);
+                for (j, &x) in row.iter().enumerate() {
+                    let (c, s) = (
+                        &cos_t[j * modes..(j + 1) * modes],
+                        &sin_t[j * modes..(j + 1) * modes],
+                    );
+                    for ((u, v), (c, s)) in am.iter_mut().zip(bm.iter_mut()).zip(c.iter().zip(s)) {
+                        *u += x * c;
+                        *v += x * s;
+                    }
                 }
-            }
-        }
+            });
         // Each mode's tridiagonal over the latitudes.
         for m in 0..modes {
             let k = |i: usize| m * n_lat + i;
@@ -8439,21 +8450,23 @@ impl Zonal {
                 }
             }
         }
-        z.fill(0.0);
-        for i in 0..n_lat {
-            let row = &mut z[i * n_lon..(i + 1) * n_lon];
-            for m in 0..modes {
-                let weight = if m == 0 || 2 * m == n_lon { 1.0 } else { 2.0 } / n_lon as f64;
-                let (am, bm) = (weight * a[i * modes + m], weight * b[i * modes + m]);
-                let (c, s) = (
-                    &cos[m * n_lon..(m + 1) * n_lon],
-                    &sin[m * n_lon..(m + 1) * n_lon],
-                );
-                for ((v, c), s) in row.iter_mut().zip(c).zip(s) {
-                    *v += am * c + bm * s;
+        let (a, b) = (&*a, &*b);
+        z.par_chunks_mut(n_lon)
+            .zip(a.par_chunks(modes).zip(b.par_chunks(modes)))
+            .for_each(|(row, (ar, br))| {
+                row.fill(0.0);
+                for m in 0..modes {
+                    let weight = if m == 0 || 2 * m == n_lon { 1.0 } else { 2.0 } / n_lon as f64;
+                    let (am, bm) = (weight * ar[m], weight * br[m]);
+                    let (c, s) = (
+                        &cos[m * n_lon..(m + 1) * n_lon],
+                        &sin[m * n_lon..(m + 1) * n_lon],
+                    );
+                    for ((v, c), s) in row.iter_mut().zip(c).zip(s) {
+                        *v += am * c + bm * s;
+                    }
                 }
-            }
-        }
+            });
     }
 }
 
