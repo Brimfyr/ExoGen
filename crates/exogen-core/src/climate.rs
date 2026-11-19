@@ -6196,6 +6196,46 @@ impl Cycle {
         }
     }
 
+    /// The free air over each latitude at step `k`, K at its own ground (M85): the overturning
+    /// cell's rising air's (`cell_air_at`) as far from the equator as the equatorial waves hold
+    /// the free air to it, by the Kelvin wave's own width (`clouds::held_by_waves`,
+    /// `Sky::wave_reach`), and beyond it the latitude's own, its `zonal` air (M82); the
+    /// latitude's own where no cell rises. On the Earth-like the waves reach 13 degrees, its
+    /// free air at 700 hPa as ERA-Interim's, level to 20 degrees and falling beyond; on
+    /// TRAPPIST-1e, locked to its star, 24, and the free air over its equator's night stands at
+    /// its day's rising air's, as its models' does within a few kelvin over a surface 30 to 50
+    /// K colder (Joshi et al. 1997; Merlis and Schneider 2010), where its latitude's air, its
+    /// night's with its day's, stood colder than the air over its day.
+    /// And no colder under the rising air's than the fall of the cell that keeps its angular
+    /// momentum (`Sky::cell_fall`; Held and Hou 1980): nothing on the Earth-like, whose air
+    /// falls by less; on a slow spinner the free air of its middle latitudes, within a few
+    /// kelvin of its rising air's where its latitude's own, most of it its night's, stood
+    /// tens of kelvin under it.
+    fn free_air(
+        &self,
+        k: usize,
+        sky: &crate::clouds::Sky,
+        (air, zonal): (&[f64], &[f64]),
+        within: &[f64],
+        moisture: &crate::moisture::Moisture,
+    ) -> Vec<f64> {
+        let cell = self.cell_air_at(k, (air, zonal), within, moisture);
+        if !cell.is_finite() {
+            return zonal.to_vec();
+        }
+        let dphi = PI / (zonal.len().max(2) - 1) as f64;
+        let reach = sky.wave_reach(cell);
+        zonal
+            .iter()
+            .enumerate()
+            .map(|(i, &own)| {
+                let lat = -PI / 2.0 + dphi * i as f64;
+                let held = own + crate::clouds::held_by_waves(lat, reach) * (cell - own);
+                held.max(cell - sky.cell_fall(lat, cell))
+            })
+            .collect()
+    }
+
     /// The overturning cell's rising air's temperature through the year, K (M73): the mean of
     /// its steps' (`cell_air_at`), whose stability the air aloft keeps over every place
     /// (`Sky::aloft`); none without the year's wind, its moisture or a cell.
@@ -6400,7 +6440,8 @@ impl Cycle {
     /// place and step its rain, the convection's within the cell's reach and the large-scale
     /// rain's beyond, by degrees over CLOUD_FREE_EDGE of the reach; its column's saturation;
     /// and its inversion's strength over its sea and its land under the free air, its
-    /// latitude's air on its sky's own profile (M82), over its mixed layer's base, the warmer
+    /// latitude's air on its sky's own profile (M82) and its cell's rising air's within the
+    /// equatorial waves' reach (M85, `free_air`), over its mixed layer's base, the warmer
     /// of its ground and its air (M82), the air under it at CLOUD_SURFACE_HUMIDITY over its
     /// open sea and at its column's saturation over its liquid over its land and its ice
     /// (M81). Their effects over
@@ -6458,6 +6499,7 @@ impl Cycle {
             // The convection's rain within the cell's reach, the storms' beyond, by degrees.
             let within = self.within_cell(k, reach);
             let inside = |i: usize| within[i];
+            let free = self.free_air(k, sky, (&air, &zonal), &within, moisture);
             for p in 0..n {
                 let i = p / n_lon;
                 let at = |field: &[f32]| field[p * steps + k] as f64;
@@ -6475,8 +6517,9 @@ impl Cycle {
                 } else {
                     t_land
                 };
-                // The free air: its latitude's, on the sky's own profile (M82).
-                let free_air = zonal[i];
+                // The free air: its cell's rising air's within the equatorial waves' reach, its
+                // latitude's beyond (M85), on the sky's own profile (M82).
+                let free_air = free[i];
                 let ice = sea_ice_cover(at(&self.masses[1]));
                 let open = sea * (1.0 - ice);
                 let rains = (convective, large, saturation);
@@ -10429,7 +10472,7 @@ mod tests {
                 &|| the_earth_like_s_sky_sends_what_ceres_measures_by_latitude(&again),
             ),
             ("the_earth_like_s_free_air_stands_as_era_interim_s", &|| {
-                the_earth_like_s_free_air_stands_as_era_interim_s(&again)
+                the_earth_like_s_free_air_stands_as_era_interim_s(&y, &again)
             }),
             ("the_earth_like_s_trades_push_as_earth_s", &|| {
                 the_earth_like_s_trades_push_as_earth_s(&y, &again)
@@ -11161,14 +11204,18 @@ mod tests {
 
     /// M82: the Earth-like's free air, its latitude's air on its sky's own profile, stands at
     /// 700 hPa as ERA-Interim's over Earth's ice-free oceans, within 2.5 K by each ten degrees
-    /// from the equator to 60, and the inversion over its open sea within 2.5 K of theirs,
+    /// from the equator to 60 (M85: within 1.5, its cell's rising air's within the equatorial
+    /// waves' reach: 0.7 K off at most where 2.1, its equator's band 283.1 K where 285.1,
+    /// ERA's 283.0), and the inversion over its open sea within 2.5 K of theirs,
     /// strengthening from 20 to 40 degrees to 40 to 60 by over 2 K as theirs does by 4.2. Its
     /// free air stood at its cell's rising air's out to the cell's edge and down the stated
     /// lapse rate beyond (F356): 2.6 K warm from 20 to 40 degrees and 4 to 6 K cold from 40 to
     /// 60, its inversion there 4 to 5 K strong and 2 to 2.5 K weak.
-    fn the_earth_like_s_free_air_stands_as_era_interim_s(again: &Again) {
+    fn the_earth_like_s_free_air_stands_as_era_interim_s(y: &Year, again: &Again) {
         let sky = again.sky.as_ref().expect("a sky");
         let cycle = &again.cycle;
+        let wet = again.water.as_ref().expect("its moisture");
+        let reach = crate::wind::Air::from_graph(&y.graph).reach;
         let (n_lat, n_lon) = cycle.layout;
         let n = n_lat * n_lon;
         let steps = cycle.wind.as_ref().expect("its wind").steps;
@@ -11179,6 +11226,11 @@ mod tests {
             let air: Vec<f64> = (0..n)
                 .map(|p| cycle.air.iter().map(|a| a[k * n + p]).sum::<f64>() / tilts)
                 .collect();
+            let zonal: Vec<f64> = (0..n_lat)
+                .map(|i| (0..n_lon).map(|j| air[i * n_lon + j]).sum::<f64>() / n_lon as f64)
+                .collect();
+            let within = cycle.within_cell(k, reach);
+            let frees = cycle.free_air(k, sky, (&air, &zonal), &within, wet);
             for (p, s) in cycle.sites.iter().enumerate() {
                 let b = (s.lat.to_degrees().abs() / 10.0).floor() as usize;
                 let sea = cycle.surfaces[1][p * steps + k] as f64;
@@ -11186,8 +11238,7 @@ mod tests {
                 if b >= bands.len() || s.sea <= 0.0 || !sea.is_finite() || sea < 272.15 {
                     continue;
                 }
-                let i = p / n_lon;
-                let free = (0..n_lon).map(|j| air[i * n_lon + j]).sum::<f64>() / n_lon as f64;
+                let free = frees[p / n_lon];
                 let w = s.weight * s.sea;
                 bands[b][0] += w;
                 bands[b][1] += w * sky.at(free, x700);
@@ -11205,7 +11256,7 @@ mod tests {
                 10 * b,
                 10 * b + 10
             );
-            if z[0] <= 0.0 || (t700 - era_t).abs() >= 2.5 || (e - era_e).abs() >= 2.5 {
+            if z[0] <= 0.0 || (t700 - era_t).abs() >= 1.5 || (e - era_e).abs() >= 2.5 {
                 off.push(format!("{b}: {t700:.1} K, {e:.1} K"));
             }
         }
@@ -12553,7 +12604,11 @@ mod tests {
     /// Sobel et al. 2001; Pierrehumbert 1995's radiator fins): its mean 250.9 K where 253.1,
     /// its dayside 268.0 K where 269.9, its sea open over 0.46 of its dayside where 0.51.
     /// KNOWN: its years' means still move by up to a kelvin after CLOUD_PASSES's six, its
-    /// night's ice never settling (M64).
+    /// night's ice never settling (M64). M85: under the free air its cell's rising air's within
+    /// the equatorial waves' reach and no colder than its cell's angular momentum lets it fall,
+    /// it reflects 0.235, its mean 253.3 K and its dayside 271.3, its sea open over 0.59 of its
+    /// dayside; under its latitude's own free air (M82), its night's with its day's, 0.201,
+    /// 256.4 K, 274.6 and 0.68. Its albedo held within THAI's from 0.22 again.
     fn a_locked_ocean_world_under_its_clouds_stands_as_thai_s(year: &LockedYear) {
         let seas = year.again.seas.as_ref().expect("a water sea");
         let [mean, day, _, open] = thai_measures(&year.eb, seas, &year.climate);
@@ -12573,7 +12628,7 @@ mod tests {
             "{:?}",
             year.cells
         );
-        assert!((0.20..0.30).contains(&albedo), "albedo {albedo}");
+        assert!((0.22..0.30).contains(&albedo), "albedo {albedo}");
         assert!(
             mean > 232.0 && mean < first + 1.0,
             "mean {mean} against {first}"
@@ -12646,6 +12701,60 @@ mod tests {
         );
         assert!(under > 0.5, "under its star {under}");
         assert!(day > night + 0.1, "day {day} night {night}");
+        // Its day as THAI's models' (M85): 0.41 to 0.81 of it under cloud (Sergeev et al. 2022,
+        // their figure 6d as the research notes read it). Under its latitude's own free air
+        // (M82), its night's with its day's, 0.59; under its cell's rising air's within the
+        // equatorial waves' reach 0.63, and no colder than its cell's angular momentum lets it
+        // fall, 0.69.
+        assert!((0.41..0.81).contains(&day), "day {day}");
+        // Its free air (M85): its rising air's over its equator and, within a few kelvin, to
+        // its middle latitudes, as its models' stands within some 4 to 10 K from its day to its
+        // night at every latitude (Sergeev et al. 2022), where its latitude's own air stands
+        // tens of kelvin under it; near its latitude's own toward its poles.
+        let cycle = &year.cycle;
+        let (n_lat, n_lon) = cycle.layout;
+        let places = n_lat * n_lon;
+        let tilts = cycle.air.len() as f64;
+        let reach = year.eb.circulation.reach;
+        let row = |deg: f64| ((deg + 90.0) / 180.0 * (n_lat - 1) as f64).round() as usize;
+        let rows = [row(0.0), row(45.0), row(80.0)];
+        // Each row's free air, its latitude's own and its cell's rising air's, the year's mean.
+        let mut means = [[0.0f64; 3]; 3];
+        for k in 0..steps {
+            let air: Vec<f64> = (0..places)
+                .map(|p| cycle.air.iter().map(|a| a[k * places + p]).sum::<f64>() / tilts)
+                .collect();
+            let zonal: Vec<f64> = (0..n_lat)
+                .map(|i| (0..n_lon).map(|j| air[i * n_lon + j]).sum::<f64>() / n_lon as f64)
+                .collect();
+            let within = cycle.within_cell(k, reach);
+            let cell = cycle.cell_air_at(k, (&air, &zonal), &within, &wet);
+            let free = cycle.free_air(k, &sky, (&air, &zonal), &within, &wet);
+            for (m, &i) in means.iter_mut().zip(&rows) {
+                m[0] += free[i] / steps as f64;
+                m[1] += zonal[i] / steps as f64;
+                m[2] += cell / steps as f64;
+            }
+        }
+        let [equator, middle, pole] = means;
+        println!(
+            "its free air {:.1} K at its equator, {:.1} at 45 degrees and {:.1} at 80, its rising air's {:.1}; its latitudes' own {:.1}, {:.1} and {:.1}; its waves reach {:.1} degrees",
+            equator[0],
+            middle[0],
+            pole[0],
+            equator[2],
+            equator[1],
+            middle[1],
+            pole[1],
+            sky.wave_reach(equator[2]).to_degrees()
+        );
+        assert!((equator[0] - equator[2]).abs() < 0.5, "{equator:?}");
+        assert!(equator[1] < equator[2] - 10.0, "{equator:?}");
+        assert!(
+            middle[0] > middle[2] - 5.0 && middle[1] < middle[2] - 10.0,
+            "{middle:?}"
+        );
+        assert!((pole[0] - pole[1]).abs() < 8.0, "{pole:?}");
         assert!(
             deep > 0.2 && deep > 20.0 * deep_night,
             "{deep} {deep_night}"

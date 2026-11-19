@@ -9,7 +9,11 @@
 //! where the air beneath it is moist. The free air over a place stands on its sky's own profile
 //! from its latitude's air, the profile that keeps its overturning cell's rising air's stability
 //! aloft (M73, M82), as Earth's air at 700 hPa stands some 16 to 18 K under its ice-free seas at
-//! every latitude (ERA-Interim).
+//! every latitude (ERA-Interim); and from its cell's rising air as far from the equator as the
+//! equatorial waves hold the free air to it, the Kelvin wave's own width (Matsuno 1966; Gill
+//! 1980), 13 degrees on Earth and 24 on TRAPPIST-1e, and nowhere colder under it than its
+//! cell's angular momentum lets it fall (Held and Hou 1980), which holds a slow spinner's free
+//! air to its middle latitudes and nothing on Earth (M85).
 //!
 //! Each kind reflects the star's light by its optical depth, its water's path over its drops'
 //! size (Stephens 1978), as a conservative layer of its drops' asymmetry, and sends its
@@ -300,6 +304,20 @@ pub struct Sky {
     /// its tables are made again over a year's own cell's air (M73).
     pub column: std::sync::Arc<Column>,
     pub span: (f64, f64),
+    /// The body's spin, rad/s, and its radius, m, which hold its equatorial waves (M85).
+    pub spin: (f64, f64),
+}
+
+/// The share of the way from its own latitude's air to the overturning cell's rising air's that
+/// the free air over the latitude `lat`, rad, stands (M85), the equatorial waves reaching
+/// `reach` rad: exp(-lat² / (2 reach²)), the equatorial Kelvin wave's own amplitude across the
+/// equator (Matsuno 1966, eq. 15; Gill 1980, eq. 4.3), the narrowest of the waves that spread
+/// the rising air's warmth along it; all of it under waves no spin holds.
+pub fn held_by_waves(lat: f64, reach: f64) -> f64 {
+    if !reach.is_finite() {
+        return 1.0;
+    }
+    (-0.5 * (lat / reach.max(1e-9)).powi(2)).exp()
 }
 
 impl Sky {
@@ -387,6 +405,10 @@ impl Sky {
             tropopauses: std::sync::Arc::new(Vec::new()),
             column: std::sync::Arc::new(column),
             span: (low, high),
+            spin: (
+                graph.f64("rotation.angular_velocity").abs(),
+                graph.f64("body.radius"),
+            ),
         };
         Some(sky.with_tropopauses())
     }
@@ -558,6 +580,55 @@ impl Sky {
     fn mixing(&self, t: f64, p: f64) -> f64 {
         let e = vapour_pressure(self.water, t).min(0.5 * p);
         self.gas_constant / self.water.r_specific * e / (p - e)
+    }
+
+    /// The speed of the gravest wave of the air's whole depth over air at `air` K at its
+    /// ground, m/s (M85): N D / pi under a lid at its tropopause (Gill 1980, eq. 2.1), D the
+    /// tropopause's height on the sky's own profile and N its buoyancy frequency through that
+    /// depth, N² D = g ln(theta_top / theta_ground). Earth's first baroclinic mode runs at 44
+    /// to 53 m/s (Kiladis et al. 2009), 49 in ERA5 (Pahlavan et al. 2023), some 60 by Gill.
+    pub fn wave_speed(&self, air: f64) -> f64 {
+        let ratio = self.tropopause_ratio(air).clamp(1e-6, 1.0);
+        let top = self.at(air, ratio);
+        let depth = -self.scale_height * ratio.ln();
+        let kappa = self.gas_constant / self.heat_capacity;
+        let rise = ((top / air.max(1.0)) * ratio.powf(-kappa)).ln().max(0.0);
+        (self.gravity * depth * rise).sqrt() / std::f64::consts::PI
+    }
+
+    /// How far from the equator the equatorial waves hold the free air to the rising air's
+    /// warmth, rad of latitude (M85): the equatorial radius of deformation, sqrt(c / beta), c
+    /// the gravest wave's speed over the rising air at `air` K and beta = 2 Omega / a (Matsuno
+    /// 1966, eq. 2; Showman et al. 2013: the waves' adjustment of the temperature "confined to
+    /// within an equatorial deformation radius of the equator"). Earth's 12.7 degrees at an
+    /// equivalent depth of 200 m and 15.9 at 500 (Kiladis et al. 2009); the farther on a slow
+    /// spinner, as the root of its spin's slowness, TRAPPIST-1e's 24 degrees; without end on a
+    /// body that does not spin.
+    pub fn wave_reach(&self, air: f64) -> f64 {
+        let (omega, radius) = self.spin;
+        let beta = 2.0 * omega / radius.max(1.0);
+        if beta <= 0.0 {
+            return f64::INFINITY;
+        }
+        (self.wave_speed(air) / beta).sqrt() / radius.max(1.0)
+    }
+
+    /// How far under the rising air's the free air at the latitude `lat`, rad, can stand, K
+    /// (M85): the fall of Held and Hou's (1980) cell, whose air keeps the angular momentum it
+    /// rose with at the equator, its wind Omega a sin² / cos (Showman et al. 2013, eq. 17), and
+    /// whose temperature stands in gradient-wind balance with that wind, (theta(0) -
+    /// theta(lat)) / theta_0 = u² / (2 g H) (as Lewis et al. 2020 write it), H its tropopause's
+    /// height over the rising air at `air` K. No air from the equator blows faster aloft, and
+    /// none holds a steeper fall. Earth's is some 3 K by 20 degrees and 17 by 30, more than its
+    /// air falls by, and holds nothing there; a slow spinner's is a few kelvin to its middle
+    /// latitudes, its free air near its rising air's over most of it (Showman et al. 2013).
+    pub fn cell_fall(&self, lat: f64, air: f64) -> f64 {
+        let (omega, radius) = self.spin;
+        let ratio = self.tropopause_ratio(air).clamp(1e-6, 1.0);
+        let depth = (-self.scale_height * ratio.ln()).max(1.0);
+        let (sin, cos) = lat.sin_cos();
+        let wind = omega * radius * sin * sin / cos.abs().max(1e-12);
+        air * wind * wind / (2.0 * self.gravity * depth)
     }
 
     /// The estimated inversion strength over a surface at `surface` K under free air that
@@ -1293,7 +1364,60 @@ mod tests {
             ("the_inversion_s_ice_cloud_is_diamond_dust", &|| {
                 the_inversion_s_ice_cloud_is_diamond_dust(&sky)
             }),
+            ("the_equatorial_waves_reach_as_earth_s", &|| {
+                the_equatorial_waves_reach_as_earth_s(&sky)
+            }),
         ]);
+    }
+
+    /// M85: Earth's gravest wave over its tropics' rising air, 300 K, runs as its first
+    /// baroclinic mode does, 44 to 53 m/s at an equivalent depth of 200 m (Kiladis et al. 2009)
+    /// and some 60 at 400 (Gill 1980), and reaches as far from its equator, 12.7 degrees at 200
+    /// m and 15.9 at 500 (Kiladis et al. 2009, their table 1): the free air half way to its
+    /// own latitude's by some 15 to 19 degrees and nine tenths of the way by 30. A body spinning
+    /// at a sixth of Earth's rate, as TRAPPIST-1e, holds it some two and a half times as far; one
+    /// that does not spin, everywhere.
+    fn the_equatorial_waves_reach_as_earth_s(sky: &Sky) {
+        let (speed, reach) = (sky.wave_speed(300.0), sky.wave_reach(300.0).to_degrees());
+        println!("Earth's gravest wave over 300 K: {speed:.1} m/s, reaching {reach:.1} degrees");
+        assert!((44.0..62.0).contains(&speed), "{speed}");
+        assert!((12.0..16.5).contains(&reach), "{reach}");
+        let held = |deg: f64, reach: f64| held_by_waves(deg.to_radians(), reach.to_radians());
+        assert!((held(0.0, reach) - 1.0).abs() < 1e-12);
+        assert!(
+            held(10.0, reach) > 0.65 && held(30.0, reach) < 0.2,
+            "{reach}"
+        );
+        // The Kelvin wave's own amplitude: e^(-1/2) at the reach.
+        assert!((held(reach, reach) - (-0.5f64).exp()).abs() < 1e-12);
+        let slow = Sky {
+            spin: (sky.spin.0 / 6.1, sky.spin.1),
+            ..sky.clone()
+        };
+        let far = slow.wave_reach(300.0).to_degrees();
+        assert!((far / reach - 6.1f64.sqrt()).abs() < 1e-9, "{far} {reach}");
+        let still = Sky {
+            spin: (0.0, sky.spin.1),
+            ..sky.clone()
+        };
+        assert!(held_by_waves(1.5, still.wave_reach(300.0)) == 1.0);
+        // A colder rising air's waves run the slower under its lower tropopause.
+        assert!(sky.wave_speed(260.0) < speed, "{}", sky.wave_speed(260.0));
+        // Held and Hou's fall: Earth's 5 K by 20 degrees and 26 by 30 under a lid at 10 km (the
+        // research notes), the less under its own higher tropopause; as the spin's square.
+        let fall = |deg: f64| sky.cell_fall(deg.to_radians(), 300.0);
+        println!(
+            "Held and Hou's fall over 300 K: {:.2} K by 10 degrees, {:.1} by 20, {:.1} by 30",
+            fall(10.0),
+            fall(20.0),
+            fall(30.0)
+        );
+        assert!(fall(0.0) == 0.0 && fall(10.0) < 0.5, "{}", fall(10.0));
+        assert!((2.0..6.0).contains(&fall(20.0)), "{}", fall(20.0));
+        assert!((10.0..30.0).contains(&fall(30.0)), "{}", fall(30.0));
+        let by = slow.cell_fall(1.0, 300.0) / sky.cell_fall(1.0, 300.0);
+        assert!((by * 6.1 * 6.1 - 1.0).abs() < 1e-9, "{by}");
+        assert!(still.cell_fall(1.0, 300.0) == 0.0);
     }
 
     /// M83: the inversion's ice cloud, its crystals falling out of it as its air deposits them,
