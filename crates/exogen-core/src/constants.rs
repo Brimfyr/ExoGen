@@ -3027,9 +3027,10 @@ pub const OCEAN_SOLVE_TOLERANCE: f64 = 1e-8;
 /// the diffusion, what the wind does not drive, the overturning by density and the eddies:
 /// some half, the Atlantic's overturning's 1.2 PW at 26.5° north (Johns et al. 2011) of the
 /// oceans' some 2 at 25° (Trenberth and Caron 2001), the two parts not cleanly parted; the
-/// currents' heat carried in steps that move no more than OCEAN_CFL of a place's mixed layer,
-/// OCEAN_MOST_SUBSTEPS of them at most; the sea ice's drift (F276) in steps that move no more
-/// than OCEAN_CFL of a place's ice.
+/// currents' heat carried on each step's end (M86; until then in steps that moved no more than
+/// OCEAN_CFL of a place's mixed layer, OCEAN_MOST_SUBSTEPS of them at most); the sea ice's
+/// drift (F276) in steps that move no more than OCEAN_CFL of a place's ice, OCEAN_MOST_SUBSTEPS
+/// of them at most.
 pub const OCEAN_UNDRIVEN_SHARE: f64 = 0.5;
 /// M77: the sea's mixed layer's friction on its Ekman flow, 1/s (Codron 2012; Kang et al.
 /// 2018; Bhatnagar et al. 2026, each 1e-5): its flow turns from the wind's stress by the spin,
@@ -3043,6 +3044,11 @@ pub const OCEAN_RETURN_SWEEPS: usize = 400;
 pub const OCEAN_RETURN_TOLERANCE: f64 = 1e-6;
 pub const OCEAN_CFL: f64 = 0.5;
 pub const OCEAN_MOST_SUBSTEPS: usize = 400;
+/// M86: the currents' heat through a step, solved on the step's end (`currents::advect`):
+/// swept at most OCEAN_ADVECT_SWEEPS times, until no place's temperature moves by more than
+/// OCEAN_ADVECT_TOLERANCE K.
+pub const OCEAN_ADVECT_SWEEPS: usize = 400;
+pub const OCEAN_ADVECT_TOLERANCE: f64 = 1e-9;
 /// F276: the sea ice's drift. The still water's drag on the ice, its coefficient McPhee
 /// 1980's 5.5e-3 from the AIDJEX experiment of 1975 and 1976 (Hibler 1979's), without the
 /// boundary layer's turn of some 23°, which changes sign at the equator: the ice's own mass

@@ -8645,7 +8645,7 @@ fn sea_transport(
 
 /// The seas' currents through a step (F272): the water each boundary between two places with
 /// seas passes brings its upwind place's mixed layer's heat to the place downwind of it, in
-/// steps that move no more than OCEAN_CFL of a place's water, each place's water changing by
+/// one step solved on its end (M86, `currents::advect`), each place's water changing by
 /// what it brings over what it holds, so that where the currents meet the land a sea of one
 /// temperature stays at it; a sea under ice stands at its freezing point, and the heat the
 /// water brings it melts its ice from below, adding to each place's `inflow`, W/m² of its sea.
@@ -8853,7 +8853,8 @@ mod tests {
             .map(|r| r.sea.as_ref().unwrap().ice > 0.0)
             .collect();
         let mut inflow = vec![0.0; n];
-        let dt = 3600.0;
+        // A short step: solved on its end, it keeps its heat to its second order (M86).
+        let dt = 10.0;
         sea_currents(&layout, &mut runs, (&currents, dt), &ocean, &mut inflow);
         let area = |p: usize| TAU * radius * radius * layout.places[p].weight;
         let (mut kept, mut moved, mut convected) = (0.0, 0.0, 0.0);

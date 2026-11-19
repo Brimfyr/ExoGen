@@ -203,11 +203,17 @@ pub fn convected(over: &Overturning, surface: &[f64], deep: &[f64]) -> Vec<f64> 
 /// `faces` passes from its first place to its second, m³/s, the gyres' and the Ekman flow's,
 /// brings its upwind place's mixed layer's heat to the place downwind; the water each place
 /// takes from beneath it, `up`, m³/s, its return water's at `deep`, K; the heat the return
-/// water gives the sea where it comes under a colder sea, `warmth`, m³ K/s (M79); in steps that
-/// move no more than OCEAN_CFL of a place's `water`, m³, each place's changing by what flows
-/// into it over what it holds. A place `held` keeps its temperature, a sea under its ice at its
-/// freezing point, and gathers the heat brought it instead, m³ K. Returns the places' new
-/// temperatures and the heat the held places gathered.
+/// water gives the sea where it comes under a colder sea, `warmth`, m³ K/s (M79). Each place's
+/// `water`, m³, changes by what flows into it over what it holds, at the temperatures the step
+/// ends at (M86): its own the mean of what it held and what it took in through the step, by
+/// their volumes, so that no place passes its upwind places' or its return water's however
+/// little water it holds, where steps that moved no more than OCEAN_CFL of a place's water
+/// took up to OCEAN_MOST_SUBSTEPS of them a step, 30 ms a step on Earth's 8,190 places, and
+/// past that count would overrun the least places. Swept from
+/// the step's start, down and up the places in turn, until no place moves by more than
+/// OCEAN_ADVECT_TOLERANCE K, OCEAN_ADVECT_SWEEPS times at most. A place `held` keeps its
+/// temperature, a sea under its ice at its freezing point, and gathers the heat brought it
+/// instead, m³ K. Returns the places' new temperatures and the heat the held places gathered.
 pub fn advect(
     faces: &[(usize, usize, f64)],
     (up, deep, warmth): (&[f64], &[f64], &[f64]),
@@ -217,38 +223,59 @@ pub fn advect(
     dt: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     let n = temps.len();
-    let mut temps = temps.to_vec();
-    let mut brought = vec![0.0; n];
-    let mut taken = up.to_vec();
-    let mut given = vec![0.0; n];
+    // What flows into each place: the faces gathered by the place they flow to.
+    let mut starts = vec![0usize; n + 1];
+    for &(_, to, _) in faces {
+        starts[to + 1] += 1;
+    }
+    for p in 0..n {
+        starts[p + 1] += starts[p];
+    }
+    let mut next = starts.clone();
+    let mut gathered = vec![(0usize, 0.0f64); faces.len()];
     for &(from, to, f) in faces {
-        given[from] += f;
-        taken[to] += f;
+        gathered[next[to]] = (from, f);
+        next[to] += 1;
     }
-    let fastest = (0..n)
-        .filter(|&p| water[p] > 0.0)
-        .map(|p| given[p].max(taken[p]) / water[p])
-        .fold(0.0, f64::max);
-    let subs = ((dt * fastest / OCEAN_CFL).ceil() as usize).clamp(1, OCEAN_MOST_SUBSTEPS);
-    let h = dt / subs as f64;
-    let mut change = vec![0.0; n];
-    for _ in 0..subs {
-        change.fill(0.0);
-        for &(from, to, f) in faces {
-            change[to] += f * h * (temps[from] - temps[to]);
-        }
-        for p in 0..n {
-            change[p] += up[p] * h * (deep[p] - temps[p]) + warmth.get(p).map_or(0.0, |w| w * h);
-        }
-        for p in 0..n {
-            if held[p] {
-                brought[p] += change[p];
-            } else if water[p] > 0.0 {
-                temps[p] += change[p] / water[p];
+    let into = |p: usize| &gathered[starts[p]..starts[p + 1]];
+    let taken: Vec<f64> = (0..n)
+        .map(|p| up[p] + into(p).iter().map(|&(_, f)| f).sum::<f64>())
+        .collect();
+    let given = |p: usize| up[p] * deep[p] + warmth.get(p).copied().unwrap_or(0.0);
+    let mut after = temps.to_vec();
+    for sweep in 0..OCEAN_ADVECT_SWEEPS {
+        let mut most = 0.0f64;
+        let mut visit = |p: usize| {
+            if held[p] || water[p] <= 0.0 {
+                return;
             }
+            let brought: f64 = into(p).iter().map(|&(q, f)| f * after[q]).sum();
+            let v = (water[p] * temps[p] + dt * (brought + given(p))) / (water[p] + dt * taken[p]);
+            most = most.max((v - after[p]).abs());
+            after[p] = v;
+        };
+        if sweep % 2 == 0 {
+            (0..n).for_each(&mut visit);
+        } else {
+            (0..n).rev().for_each(&mut visit);
+        }
+        if most <= OCEAN_ADVECT_TOLERANCE {
+            break;
         }
     }
-    (temps, brought)
+    let brought = (0..n)
+        .map(|p| {
+            if !held[p] {
+                return 0.0;
+            }
+            let carried: f64 = into(p)
+                .iter()
+                .map(|&(q, f)| f * (after[q] - temps[p]))
+                .sum();
+            dt * (carried + up[p] * (deep[p] - temps[p]) + warmth.get(p).copied().unwrap_or(0.0))
+        })
+        .collect();
+    (after, brought)
 }
 
 /// The circulation that the wind's stress `stress`, N/m² east and north at each place, drives
@@ -685,10 +712,13 @@ mod tests {
         let given: f64 = (0..5).map(|p| over.up[p] * deep[p] + warmth[p]).sum();
         let gone: f64 = (0..5).map(|p| over.down[p] * locked[p]).sum();
         assert!((given - gone).abs() < 1e-9 * gone, "{given} {gone}");
-        // Through a step its mixed layers keep their heat, the warmer sea giving it to the
-        // colder; the place under ice at its freezing point gathering what it is brought.
+        // Through a short step its mixed layers keep their heat, the warmer sea giving it to
+        // the colder; the place under ice at its freezing point gathering what it is brought.
+        // The step solved on its end (M86) keeps it to the step's second order, the water that
+        // goes down leaving at the temperature the step ends at: a step of a tenth of a second.
         let water = [1e6; 5];
         let kept: f64 = warmth.iter().sum();
+        let dt = 0.1;
         for held in [[false; 5], [false, false, true, false, false]] {
             let (after, brought) = advect(
                 &over.faces,
@@ -696,12 +726,12 @@ mod tests {
                 &water,
                 &held,
                 &locked,
-                100.0,
+                dt,
             );
             let change: f64 = (0..5)
                 .map(|p| water[p] * (after[p] - locked[p]) + brought[p])
                 .sum();
-            assert!(change.abs() < 1e-6 * kept * 100.0, "{change}");
+            assert!(change.abs() < 1e-6 * kept * dt, "{change}");
             assert!(held[2] == (brought[2] != 0.0), "{brought:?}");
             assert!(after[0] > locked[0] && after[1] > locked[1], "{after:?}");
             assert!(after[3] < locked[3] && after[4] < locked[4], "{after:?}");
@@ -756,7 +786,7 @@ mod tests {
         // Its heat through a short step: what the mixed layers gain, the water beneath gives.
         let water = [1e6; 5];
         let held = [false; 5];
-        let dt = 100.0;
+        let dt = 10.0;
         let none = [0.0; 5];
         let (after, brought) = advect(
             &over.faces,
@@ -794,6 +824,41 @@ mod tests {
             "{} {by_hand}",
             brought[0]
         );
+    }
+
+    /// M86: a place that holds little water takes its upwind sea's warmth and no more, however
+    /// long the step. Down a strip of places of a cubic metre each, fed from a sea at 300 K at a
+    /// thousand cubic metres a second through a day's step, every place comes to the sea's 300 K
+    /// and none past it, the sea itself unmoved; steps that moved no more than half of a
+    /// place's water would have taken 172,800,000 of them, and the 400 they were held to
+    /// overran it. The place under ice at the strip's end gathers what its upwind place brings
+    /// it, by hand. The strip lies against the sweeps' first way down the places, each place
+    /// upwind of the one before it.
+    #[test]
+    fn a_place_of_little_water_takes_its_upwind_sea_s_warmth() {
+        let n = 6;
+        let faces: Vec<(usize, usize, f64)> = (1..n).rev().map(|p| (p, p - 1, 1e3)).collect();
+        let mut water = vec![1.0; n];
+        water[n - 1] = 1e12;
+        let mut temps = vec![280.0; n];
+        (temps[0], temps[n - 1]) = (272.0, 300.0);
+        let mut held = vec![false; n];
+        held[0] = true;
+        let none = vec![0.0; n];
+        let dt = 86_400.0;
+        let (after, brought) = advect(&faces, (&none, &none, &none), &water, &held, &temps, dt);
+        assert_eq!(after[n - 1], 300.0);
+        for (p, &t) in after.iter().enumerate().take(n - 1).skip(1) {
+            assert!(t <= 300.0 && t > 300.0 - 1e-3, "{p}: {t}");
+        }
+        assert_eq!(after[0], 272.0);
+        let by_hand = 1e3 * dt * (after[1] - 272.0);
+        assert!(
+            (brought[0] - by_hand).abs() < 1e-9 * by_hand,
+            "{} {by_hand}",
+            brought[0]
+        );
+        assert!(brought[1..].iter().all(|&b| b == 0.0));
     }
 
     /// F272: trades and westerlies over a basin between two meridional coasts turn a gyre
