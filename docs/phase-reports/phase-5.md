@@ -1334,7 +1334,7 @@ How it went:
 | AMSR2's water, MODIS's spread of thickness | 1.88 / 1.56 |
 | AMSR2's water, the model's spread (0.66) | 2.13 / 1.66 |
 | AMSR2's water, MODIS's spread (about 1.0 to 1.2) | 1.78 / 1.53 |
-| ISCCP-H's thicknesses thinned by 0.68 (the earlier closure) | 1.07 / 1.24 to 1.30 |
+| ISCCP-H's thicknesses thinned by 0.68 (the earlier closure) | 1.07 to 1.13 / 1.20 to 1.33 |
 
 - **What it means.** The model's optics meet the published radiative kernels within some 3 percent, and through them the satellites' cloud thicknesses and the microwave's water reflect 1.4 to 1.9 times what CERES measures; the model's clouds, half the measured water under CLOUD_THICKNESS's thinning, stand nearer CERES than either. The mid-latitude rise is ISCCP's: MODIS's thicknesses rise little from the tropics to 40 to 60 degrees. What remains would be a factor by latitude or the sun's height, which the emergent pillar rules out.
 - **Kept as known (the user).** Earth's sea ice and its poles under their own clouds, recorded in 5C's Open list, to revisit with 5G's cloud types or a measurement that closes the gap. Research notes, untracked: "Cloud reflectance under a low sun", "Cloud water and drops by latitude".
