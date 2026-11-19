@@ -1318,6 +1318,28 @@ How it went:
 - **Earth's sea ice, diagnosed (M88's open item).** On the test world under its own clouds, the Earth-like's 50 to 70 degrees stand 5.5 to 6.5 K under the stated law's and its seas at 50 to 60 degrees ice over 0.41 of the year where 0.05. Its poleward heat transport is Earth's (6.0 PW at 30 degrees, 3.4 at 60, CERES's 5.8 and 3.4); the stated law's was a quarter short, its albedo fit darker than Earth's oceans at 50 to 60 degrees. Under its own clouds the open sea at 40 to 50 degrees reflects 0.40 where CERES measures 0.35, and the ice's brightness adds to the cold. ISCCP-H's own clouds through the model's optics over-reflect there too (1.30 at 40 to 50 north against 1.07 in the tropics); a cloud's patchiness by the sun's height moves its light by 1 to 2 percent; the model's clouds hold half the water AMSR2 measures (45 g/m² at 40 to 50 degrees where 90) with drops near the measured 11 to 14 um and a liquid share by temperature as measured. The fix is the next milestone's (research notes: "Cloud reflectance under a low sun", "Cloud water and drops by latitude").
 - **The suite.** The fast tier: 405 of 405 pass. Clippy clean. No code changed but the check.
 
+## The ninety-first milestone: Earth's sea ice, parked as known
+
+- No finding: the diagnosis of M88's open item finished, the user's choice to keep it as known (2026-11-19).
+
+How it went:
+
+- **The state found (M90).** Under its own clouds Earth's sea ice covers 0.093 of the body where 0.069, its poles 4 K colder. Its heat transport is Earth's; its clouds at 40 to 60 degrees reflect more than CERES's over the oceans, the ice's brightness adding to the cold. The model's clouds there hold half the water AMSR2 measures, with drops near the measured size and a liquid share by temperature as measured.
+- **Tried, offline.** The patchiness of a cloud by the sun's height in place of one equivalent depth moves its light by 1 to 2 percent. Measured water and measured thickness through the model's optics, against CERES's clouds' effect in the light (tropics, 0 to 20 degrees / 40 to 60 degrees):
+
+| clouds | ratio to CERES |
+|---|---|
+| MODIS's own thicknesses | 1.37 / 1.39 |
+| MODIS's thicknesses thinned by CLOUD_THICKNESS (0.68) | 1.14 / 1.21 |
+| AMSR2's water, MODIS's spread of thickness | 1.88 / 1.56 |
+| AMSR2's water, the model's spread (0.66) | 2.13 / 1.66 |
+| AMSR2's water, MODIS's spread (about 1.0 to 1.2) | 1.78 / 1.53 |
+| ISCCP-H's thicknesses thinned by 0.68 (the earlier closure) | 1.07 / 1.24 to 1.30 |
+
+- **What it means.** The model's optics meet the published radiative kernels within some 3 percent, and through them the satellites' cloud thicknesses and the microwave's water reflect 1.4 to 1.9 times what CERES measures; the model's clouds, half the measured water under CLOUD_THICKNESS's thinning, stand nearer CERES than either. The mid-latitude rise is ISCCP's: MODIS's thicknesses rise little from the tropics to 40 to 60 degrees. What remains would be a factor by latitude or the sun's height, which the emergent pillar rules out.
+- **Kept as known (the user).** Earth's sea ice and its poles under their own clouds, recorded in 5C's Open list, to revisit with 5G's cloud types or a measurement that closes the gap. Research notes, untracked: "Cloud reflectance under a low sun", "Cloud water and drops by latitude".
+- **The suite.** No code changed; the roadmap's check passes.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

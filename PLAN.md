@@ -932,7 +932,7 @@ Its items run in the order they stand, each reading those before it.
 - Every other condensable's clouds, in their own milestone after the thick air's own profile: each deck where it saturates along the air's own profile, Venus's sulfuric deck (mixed in its thick air's mass since M65), Mars's water-ice and carbon dioxide clouds, Titan's methane clouds.
 
 **Open:**
-- Earth's sea ice under its own clouds wider than under the stated law (0.093 of the body where 0.069) and its poles 4 K colder: its clouds at 40 to 60 degrees reflect more than CERES's over the oceans, the ice's brightness adding to it; its heat transport Earth's (diagnosed 2026-11-19).
+- Earth's sea ice under its own clouds wider than under the stated law (0.093 of the body where 0.069) and its poles 4 K colder, parked as known (the user, 2026-11-19, M91): its clouds at 40 to 60 degrees reflect more than CERES's over the oceans (0.40 where 0.35 at 40 to 50), the ice's brightness adding to it; its heat transport Earth's. No physical fix found: the measured cloud water (AMSR2) and the satellites' cloud thicknesses (MODIS, ISCCP-H) reflect 1.4 to 1.9 times CERES's through the model's optics, which meet the published radiative kernels, a gap the literature does not close; the model's clouds, half the measured water under CLOUD_THICKNESS's thinning, stand nearer CERES than either. Revisit with 5G's cloud types, or when a measurement closes the gap (research notes: "Cloud reflectance under a low sun", "Cloud water and drops by latitude").
 - The equator's peak under the uniform transport; the vapour's latent heat carried with its warmth (Frierson et al. 2007; Roe et al. 2015), its own later milestone, every wet body's finish with it.
 - The tropics' rain a third over Earth's and the storm tracks' four tenths under; a wide tropical continent's west coast arid.
 - The trades at two thirds of Earth's stress, no equatorial easterlies, the westerlies at 42°: the air above the friction layer that feeds it its momentum (Stevens et al. 2002) and the heat engine's work (1.3 W/m² where 1.9 to 2.5); the sea's overturning waits on them, a third of Earth's water across 10°.
@@ -949,6 +949,7 @@ Its items run in the order they stand, each reading those before it.
 - The surface wind's momentum from the air above its friction layer (M80): the model has no free troposphere to give that air its wind (patch in research/patches).
 - The finish's years started from the end of the one before and held to 16 years (M86): TRAPPIST-1e's eye 7° wider on its west, its edge in steps; a settling that leaves aside ice that only thickens changed nothing.
 - The patchiness of a cloud by the sun's height in place of one equivalent depth (2026-11-19, offline): 1 to 2 percent of its light, where the clouds' excess at 40 to 60° is 20 to 25.
+- The clouds' water anchored on the microwave measurements with the measured patchiness (2026-11-19, offline): 1.5 to 1.9 times CERES's light, the more in the tropics; the measured spread of thickness moves it by 10 to 25 percent.
 
 **Gate:** an Earth-like's deserts and rain shadows in the right places; the locked ocean world's lobate ice margins over land and calving fronts at open coasts; valley networks on the early-wet Mars's old terrain; Titan's polar seas.
 
