@@ -110,6 +110,9 @@ pub struct EnergyBalance {
     /// The most years a year with a sea runs for its ice to settle (M64): CYCLE_ICE_MAX_YEARS,
     /// or CYCLE_MAX_YEARS for a draft (M87, `detail.draft_climate`).
     pub ice_years: usize,
+    /// The most years under its own clouds (M68): CLOUD_PASSES's, or CLOUD_DRAFT_PASSES for a
+    /// draft (M89, `detail.draft_climate`).
+    pub cloud_years: usize,
     /// The working liquid's vapour, whose latent heat the sea and the wet land give the air
     /// (F269): water's, methane's, any liquid's under an atmosphere.
     pub liquid: Option<&'static crate::constants::Volatile>,
@@ -2531,6 +2534,11 @@ impl EnergyBalance {
             } else {
                 CYCLE_ICE_MAX_YEARS
             },
+            cloud_years: if graph.bool("detail.draft_climate") {
+                CLOUD_DRAFT_PASSES
+            } else {
+                CLOUD_PASSES.1
+            },
             liquid: if evaporation > 0.0 { liquid } else { None },
             rows: false,
             circulation: crate::wind::Air::from_graph(graph),
@@ -3135,7 +3143,8 @@ impl EnergyBalance {
     /// The year under its own clouds (M68): from the year `start`, each year again at the
     /// wind, the moisture and the clouds of the year before it (F269, M67), until the body's
     /// mean surface temperature changes by less than CLOUD_PASSES's kelvin from one year to the
-    /// next, within its most years, each started from the end of the year before it; `sky` the
+    /// next, within its most years (`cloud_years`), each started from the end of the year before
+    /// it; `sky` the
     /// clouds' sky, `air` the moisture's air and
     /// `heights` each place's ground over the sea, m. A year under the clouds of a year warmer
     /// and wetter than itself runs warm: the Earth-like under its first year's clouds, whose
@@ -3148,7 +3157,7 @@ impl EnergyBalance {
         start: Cycle,
         (sky, air, heights): (&crate::clouds::Sky, &crate::moisture::Air, &[f64]),
     ) -> OwnClouds {
-        let (settled, most) = CLOUD_PASSES;
+        let (settled, most) = (CLOUD_PASSES.0, self.cloud_years);
         let reach = self.circulation.reach;
         let mut means = vec![start.surface_mean()];
         let (mut cycle, mut over) = (start, None);
@@ -9166,6 +9175,21 @@ mod tests {
         missing[0] = f64::NAN;
         assert!(!ice_settles(&missing));
         assert!(ice_settles(&years(&|_| 0.0)));
+    }
+
+    /// M87, M89: a draft holds each of its years to CYCLE_MAX_YEARS and its years under its own
+    /// clouds to CLOUD_DRAFT_PASSES; the renders that are kept run CYCLE_ICE_MAX_YEARS and
+    /// CLOUD_PASSES's.
+    #[test]
+    fn a_draft_s_climate_runs_fewer_years() {
+        let mut graph = crate::presets::preset("Earth").unwrap().to_graph().0;
+        let kept = EnergyBalance::from_graph(&graph);
+        let years = (kept.ice_years, kept.cloud_years);
+        assert_eq!(years, (CYCLE_ICE_MAX_YEARS, CLOUD_PASSES.1));
+        graph.set("detail.draft_climate", true).unwrap();
+        let draft = EnergyBalance::from_graph(&graph);
+        let years = (draft.ice_years, draft.cloud_years);
+        assert_eq!(years, (CYCLE_MAX_YEARS, CLOUD_DRAFT_PASSES));
     }
 
     /// M64: snow on a sea's ice: under a winter's cold air its ice grows the slower under a

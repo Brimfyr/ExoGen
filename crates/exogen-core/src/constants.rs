@@ -2196,6 +2196,10 @@ pub const CLOUD_ABSORPTION: (f64, f64) = (0.142, 0.178);
 /// left (the Earth-like's 296.2, 293.8, 293.1, 292.8 K from its first year's clouds), so that
 /// the last year stands within some 0.3 K of where they would end.
 pub const CLOUD_PASSES: (f64, usize) = (0.3, 6);
+/// M89: a draft's most years under its own clouds (`detail.draft_climate`), in place of
+/// CLOUD_PASSES's six: after its third the Earth's mean stood within 0.1 K of where its fifth
+/// left it, TRAPPIST-1e's within 0.3 K (M88's renders); the settling test still stops it sooner.
+pub const CLOUD_DRAFT_PASSES: usize = 3;
 /// M73: how far the clouds a year runs under, and the cell's air its sky keeps the stability
 /// of, move from those the year before it ran under toward that year's own, each year under
 /// its own clouds (numerical). A year's own clouds and its own cell would answer it within the

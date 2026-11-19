@@ -61,7 +61,8 @@ enum Command {
         #[arg(long)]
         seed: Option<u64>,
         /// A draft for iterating: each climate year held to 40 model years where its sea's
-        /// ice would run it to 80; sets detail.draft_climate.
+        /// ice would run it to 80, and at most 3 years under its own clouds where 6; sets
+        /// detail.draft_climate.
         #[arg(long)]
         draft: bool,
     },
@@ -310,7 +311,9 @@ fn render(
         g.f64("detail.finishing_resolution")
     );
     if g.bool("detail.draft_climate") {
-        println!("draft climate: each climate year held to 40 model years");
+        println!(
+            "draft climate: each climate year held to 40 model years, at most 3 under its own clouds"
+        );
     }
     let sink = ConsoleProgress {
         last: std::sync::Mutex::new((String::new(), -1.0)),

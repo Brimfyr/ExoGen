@@ -3048,7 +3048,7 @@ static NODES: &[NodeDef] = &[
         1.0,
         ValueType::Bool,
         Default::Bool(false),
-        "Holds each of the climate's years to CYCLE_MAX_YEARS, 40, where its sea's ice would run it to CYCLE_ICE_MAX_YEARS, 80 (M87): a quicker look while iterating, its sea's ice not yet settled. Off for the renders that are kept.",
+        "Holds each of the climate's years to CYCLE_MAX_YEARS, 40, where its sea's ice would run it to CYCLE_ICE_MAX_YEARS, 80 (M87), and its years under its own clouds to CLOUD_DRAFT_PASSES, 3, where CLOUD_PASSES allows 6 (M89): a quicker look while iterating, its sea's ice and its clouds not yet settled. Off for the renders that are kept.",
     ),
     root(
         "detail.recipes_enabled",

@@ -27,7 +27,7 @@ exogen validate
 
 Today: equirectangular maps (float EXR and 16-bit PNG) of albedo, height, a shaded preview, a snapshot at the chosen season, the liquid's depth and mask, the year's mean, warmest and coldest temperature, precipitation, aridity, wind, clouds, frost, ice, sea ice, the cryosphere's season and thickness, rivers, lakes, surface age and geological units. A JSON sidecar records every parameter, derived value, seed, legend and unit.
 
-Planned: cube maps beside the equirectangular layout for every map (standard, and equi-angular to match the simulation's grid); roughness, specular and normal maps; cloud layers; an emissive map for surfaces hot enough to glow; ring textures; and an atmosphere profile by height in the sidecar.
+Planned: cube maps beside the equirectangular layout for every map (standard, and equi-angular to match the simulation's grid); roughness, specular and normal maps; cloud layers, and the clouds' climatology through the year for engines that raise their own weather; an emissive map for surfaces hot enough to glow; ring textures; and in the sidecar an atmosphere profile by height, its hazes by height and place, and its glow and aurorae.
 
 ## Intended scope
 
