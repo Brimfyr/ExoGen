@@ -1262,6 +1262,18 @@ How it went:
 - **KNOWN.** As M85's.
 - **The suite.** The whole-body tier: 445 of 445 pass (47.5 minutes, beside two other runs), the fast tier's 401 among them. The own-clouds tier: both pass (53 minutes, beside the others). Clippy clean with each tier's features. FINISH_VERSION 246.
 
+## The eighty-seventh milestone: a draft's climate
+
+- **F401.** A draft's climate (detail.draft_climate).
+
+How it went:
+
+- **The state found.** After M86 the finish's time was spread over its parts, eight tenths of it the three climate years, each run on past its temperatures' settling until its sea's ice settles, at most 80 years: Earth's 43, 36 and 80 years, TRAPPIST-1e's 80 each, its night's ice never settling.
+- **Tried first, in a scratch copy.** A settling that leaves aside ice that only thickens: every year ran as long, every map the same to the byte; what holds the years is other ice. Each year held to 40 years: TRAPPIST-1e's eye's west edge 2 to 3 degrees farther west, its sea's ice over 0.559 where 0.569, its thickest 8.7 m where 12.0, its rain 1.7 percent the more; Earth's thickest sea ice 14.2 m where 19.9, its hyper-arid land 3.3 percent the more, its other measures within half a percent. The eye still closes from its west between its 40th year and its 80th.
+- **The draft (F401).** The user chose the 40 years for drafts alone (2026-11-19): `detail.draft_climate`, the render's `--draft`, read into the balance as its most years with a sea, part of the finish's key. Alone on the machine at 2048, TRAPPIST-1e's draft finish takes 275 s where its full one 369, its three years 40 each where 80; Earth's 454 s where 530, its years 40, 34 and 40 where 43, 36 and 80, its first two barely the shorter. A draft's maps are the 40-year trial's to the byte; off, TRAPPIST-1e's every map is M86's to the byte, its sidecar listing the new parameter.
+- **KNOWN.** As M86's.
+- **The suite.** The whole-body tier: 445 of 445 pass (46 minutes, beside two renders). Clippy clean with each tier's features and on the CLI. FINISH_VERSION 246, as before: off, the finish is M86's to the byte.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

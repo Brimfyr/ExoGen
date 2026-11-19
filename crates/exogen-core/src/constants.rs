@@ -2637,7 +2637,7 @@ pub const CYCLE_SETTLED_K: f64 = 0.05;
 /// year does, by some 2 percent over four years on the Earth-like's own ground. Thick ice
 /// comes to its balance over decades, its year's change shrinking by some a tenth a year: the
 /// cycle runs on past its temperatures' settling until its ice settles, at most
-/// CYCLE_ICE_MAX_YEARS.
+/// CYCLE_ICE_MAX_YEARS; a draft's at most CYCLE_MAX_YEARS (M87, `detail.draft_climate`).
 pub const CYCLE_SETTLED_ICE: (f64, f64) = (1e-3, 1.0);
 pub const CYCLE_ICE_WINDOW: usize = 4;
 pub const CYCLE_ICE_MAX_YEARS: usize = 80;

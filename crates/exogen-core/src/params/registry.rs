@@ -3041,6 +3041,16 @@ static NODES: &[NodeDef] = &[
         "",
     ),
     root(
+        "detail.draft_climate",
+        "detail",
+        "Draft climate",
+        "",
+        1.0,
+        ValueType::Bool,
+        Default::Bool(false),
+        "Holds each of the climate's years to CYCLE_MAX_YEARS, 40, where its sea's ice would run it to CYCLE_ICE_MAX_YEARS, 80 (M87): a quicker look while iterating, its sea's ice not yet settled. Off for the renders that are kept.",
+    ),
+    root(
         "detail.recipes_enabled",
         "detail",
         "Detail recipes",

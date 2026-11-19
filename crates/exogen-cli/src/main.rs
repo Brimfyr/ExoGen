@@ -60,6 +60,10 @@ enum Command {
         /// Master seed; overrides seed.master.
         #[arg(long)]
         seed: Option<u64>,
+        /// A draft for iterating: each climate year held to 40 model years where its sea's
+        /// ice would run it to 80; sets detail.draft_climate.
+        #[arg(long)]
+        draft: bool,
     },
     /// Check the derived values of the reference bodies against measured values.
     Validate,
@@ -106,7 +110,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             quality,
             epoch,
             seed,
-        } => render(project, preset, out, width, quality, epoch, seed),
+            draft,
+        } => render(project, preset, out, width, (quality, draft), epoch, seed),
         Command::Validate => validate(),
         Command::Preset { action } => preset_cmd(action),
         Command::SpikeGrid {
@@ -271,7 +276,7 @@ fn render(
     preset: Option<String>,
     out: PathBuf,
     width: Option<usize>,
-    quality: Option<String>,
+    (quality, draft): (Option<String>, bool),
     epoch: Option<f64>,
     seed: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -281,6 +286,9 @@ fn render(
     }
     if let Some(q) = quality {
         g.set("detail.quality", q.as_str())?;
+    }
+    if draft {
+        g.set("detail.draft_climate", true)?;
     }
     if let Some(e) = epoch {
         g.set("output.epoch", e)?;
@@ -301,6 +309,9 @@ fn render(
         }],
         g.f64("detail.finishing_resolution")
     );
+    if g.bool("detail.draft_climate") {
+        println!("draft climate: each climate year held to 40 model years");
+    }
     let sink = ConsoleProgress {
         last: std::sync::Mutex::new((String::new(), -1.0)),
     };

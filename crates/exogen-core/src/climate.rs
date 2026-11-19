@@ -107,6 +107,9 @@ pub struct EnergyBalance {
     /// Whether the cycle carries its sea ice ahead toward its balance (M64), as it does but
     /// for the checks that run it without.
     pub hasten: bool,
+    /// The most years a year with a sea runs for its ice to settle (M64): CYCLE_ICE_MAX_YEARS,
+    /// or CYCLE_MAX_YEARS for a draft (M87, `detail.draft_climate`).
+    pub ice_years: usize,
     /// The working liquid's vapour, whose latent heat the sea and the wet land give the air
     /// (F269): water's, methane's, any liquid's under an atmosphere.
     pub liquid: Option<&'static crate::constants::Volatile>,
@@ -2521,6 +2524,11 @@ impl EnergyBalance {
                 heat_capacity: heat,
             },
             hasten: true,
+            ice_years: if graph.bool("detail.draft_climate") {
+                CYCLE_MAX_YEARS
+            } else {
+                CYCLE_ICE_MAX_YEARS
+            },
             liquid: if evaporation > 0.0 { liquid } else { None },
             rows: false,
             circulation: crate::wind::Air::from_graph(graph),
@@ -4238,7 +4246,7 @@ impl EnergyBalance {
         let mut carries = vec![0; n];
         let seas = runs.iter().any(|r| r.sea.is_some());
         let most = match seas {
-            true => years.max(CYCLE_ICE_MAX_YEARS),
+            true => years.max(self.ice_years),
             false => years,
         };
         for year in 0..most {

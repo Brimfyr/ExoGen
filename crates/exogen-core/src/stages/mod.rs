@@ -396,6 +396,8 @@ impl Runner {
             graph.hash_of(&[
                 "interior.surface_heat_flux",
                 "detail.finishing_resolution",
+                // The climate's years held for a draft (M87).
+                "detail.draft_climate",
                 "output.epoch",
                 "volatiles.inventory",
                 "volatiles.working_liquid",
