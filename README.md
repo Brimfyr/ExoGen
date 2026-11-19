@@ -6,11 +6,35 @@ ExoGen produces texture sets (albedo, height, materials, masks, climate and ice 
 
 ## Status
 
-In development. The design and roadmap are in [PLAN.md](PLAN.md).
+In development, not yet released. The design and the full roadmap are in [PLAN.md](PLAN.md); progress milestone by milestone is in the phase reports, [docs/phase-reports/](docs/phase-reports/).
 
-- **Built:** airless cratered worlds; interiors, volcanism and stagnant or episodic lids; ice worlds; the climate on every body (energy balance, seasons, days and nights, the star's history); frost, caps and the atmosphere's loss; the wind, moisture, snow, the seas' currents and sea ice; rivers and lakes.
-- **Under way:** water and ice at work (glaciers and slope wasting still to come), then dust and sand, surface physics, Io, and weather and clouds.
-- **Planned:** plate tectonics; equilibrium figures, rings and multiple light sources; magma worlds; deep atmospheres from hycean worlds to gas giants; detail synthesis to 16k and 32k; vegetation.
+**Now:** 5C, water and ice at work.
+
+| Phase | What it builds | State |
+|---|---|---|
+| 0 | Research spikes and decisions | Done |
+| 1 | Foundation: the parameter graph, the grid and its fields, the stage runner, export, the command line and the desktop app | Done |
+| 2 | Airless cratered worlds | Done |
+| 3 | Interiors, volcanism, stagnant and episodic lids | Done |
+| 4 | Ice worlds | Done |
+| 4F | The earlier phases' processes revised for fidelity on every body | Done |
+| 5 | Atmosphere, climate, volatiles and erosion | Under way |
+| 5A | Climate on every body: sunlight, the energy balance, days and seasons, the spin's history | Done |
+| 5B | Volatiles: frost and caps, sea ice, the climate through the star's life, the atmosphere's loss | Done |
+| 5C | Water and ice at work: wind, moisture and clouds, snow, the seas' currents and ice, rivers and lakes, glaciers, slope wasting, Titan's methane cycle | Under way |
+| 5D | Dust, sand and chemistry | Planned |
+| 5E | The icy bodies' first shell from the melt at their birth, dust from outside, and surface physics on every body | Planned |
+| 5F | Io, Thaumasia and molten surfaces | Planned |
+| 5G | The weather model, cloud types and their maps | Planned |
+| 6 | Plate tectonics and the rocky first crust | Planned |
+| 6N | The noise pass: field-modulated noise over every body, calibrated on all of them together | Planned |
+| 6R | Equilibrium figures, rings and multiple light sources | Planned |
+| 6G | Deep atmospheres, from hycean worlds to giants | Planned |
+| 7 | Detail synthesis to 16k and 32k, studio export | Planned |
+| 8 | Vegetation and biomes | Planned |
+| 9 | Polish and release | Planned |
+
+This section changes when a phase's or a sub-phase's gate passes, not with each milestone; a test holds its states to PLAN.md's.
 
 A command-line tool renders the map set for a project or preset. A desktop app shows the parameter graph, a preview globe and the pipeline's state.
 
