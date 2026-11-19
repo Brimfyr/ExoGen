@@ -21,8 +21,9 @@
 //! kinds overlap at random, the higher hiding the lower from space and the lower the higher
 //! from the ground.
 //!
-//! They are a diagnostic for now: the climate keeps the clouds' stated law (F329) until the
-//! planet's albedo and greenhouse come from the clouds themselves (M67; the user, 2026-11-13).
+//! The climate's first years keep the clouds' stated law (F329); its years after them run
+//! under their own clouds, each under the clouds of the year before it (M67, M68), the
+//! finish's too (M88).
 
 use crate::constants::*;
 use crate::params::ParamGraph;

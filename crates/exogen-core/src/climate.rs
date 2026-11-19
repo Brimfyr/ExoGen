@@ -1243,6 +1243,8 @@ pub struct Cycle {
     /// planetary albedo (M67): its ground's, its air's and its clouds'; NaN where its places
     /// run apart, with no air between them.
     pub albedo: f64,
+    /// Whether the year ran under its water's own clouds (M67, M88), not the stated law's.
+    pub clouded: bool,
     /// Each tilt's places' state at the year's end, to start the year after it from (M68).
     ends: Vec<Option<std::sync::Arc<Warm>>>,
 }
@@ -3152,6 +3154,7 @@ impl EnergyBalance {
         let (mut cycle, mut over) = (start, None);
         let mut clouds: Option<Clouds> = None;
         let mut cells: Vec<f64> = Vec::new();
+        let mut last: Option<Coupling> = None;
         let mut water = cycle.moisture(air, heights);
         for _ in 0..most {
             let Some(wet) = water.as_ref() else {
@@ -3175,10 +3178,10 @@ impl EnergyBalance {
             let Some(coupling) = cycle.coupling(Some(wet)) else {
                 break;
             };
-            let coupling = coupling
-                .with_clouds(Some((sky.clone(), &laid)))
-                .from_end_of(&cycle);
-            cycle = self.cycle_with(climate, ground, sea, reservoir, Some(&coupling));
+            let coupling = coupling.with_clouds(Some((sky.clone(), &laid)));
+            let on = coupling.clone().from_end_of(&cycle);
+            cycle = self.cycle_with(climate, ground, sea, reservoir, Some(&on));
+            last = Some(coupling);
             clouds = Some(laid);
             over = Some(sky);
             cells.extend(cell);
@@ -3200,6 +3203,7 @@ impl EnergyBalance {
             means,
             sky: over,
             cells,
+            coupling: last,
         }
     }
 
@@ -3703,6 +3707,7 @@ impl EnergyBalance {
             spread_albedo: rows.iter().map(|y| y.albedo).collect(),
             settled,
             albedo,
+            clouded: self.clouds.is_some(),
             ends,
         }
     }
@@ -6106,7 +6111,9 @@ fn cell_handed_on(kept: Option<f64>, own: Option<f64>) -> Option<f64> {
 
 /// The year under its own clouds (M68): the year it came to, the clouds it last ran under, and
 /// the body's mean surface temperature after each year, K, its start's first; the sky it last
-/// ran under, and the cell's air each year's sky kept the stability of aloft, K (M73).
+/// ran under, and the cell's air each year's sky kept the stability of aloft, K (M73); the
+/// wind, moisture and clouds its last year ran under, which the finish's year over its caps
+/// runs under again (M88), none where it ran none.
 #[derive(Clone, Debug)]
 pub struct OwnClouds {
     pub cycle: Cycle,
@@ -6114,6 +6121,7 @@ pub struct OwnClouds {
     pub means: Vec<f64>,
     pub sky: Option<crate::clouds::Sky>,
     pub cells: Vec<f64>,
+    pub coupling: Option<Coupling>,
 }
 
 impl Cycle {
@@ -6936,8 +6944,8 @@ impl Coupling {
     }
 }
 
-/// The clouds through the cycle's year at its places (M66), a diagnostic the climate does not
-/// read until their means come from the clouds themselves (M67): at each place through each
+/// The clouds through the cycle's year at its places (M66), which the year after it runs under
+/// (M67, M68), the finish's too (M88): at each place through each
 /// step, place after place, each place's steps within, the share they cover, the albedo they
 /// add over its ground, and what they change of what it lets out to space and of what its air
 /// sends down to its ground, W/m², each with them less without; and each place's year-mean

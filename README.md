@@ -19,6 +19,7 @@ cargo build --release -p exogen-cli    # the binary is target/release/exogen
 exogen preset list
 exogen derive --preset Titan
 exogen render --preset Mars --width 2048 --out out/Mars
+exogen render --preset Earth --width 2048 --draft --out out/Earth   # quicker climate for iterating
 exogen validate
 ```
 

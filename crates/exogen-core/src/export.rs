@@ -88,12 +88,14 @@ pub struct WaterInfo {
     pub hyper_arid_land_fraction: f64,
 }
 
-/// The year's water clouds (M66), a diagnostic the climate does not read until their means come
-/// from the clouds themselves (M67): over the body by area, the share of it they cover and the
+/// The year's water clouds (M66), the clouds the finish's last year makes under its own (M67,
+/// M88): over the body by area, the share of it they cover and the
 /// low cloud's, the layers', the anvils' (with the storms' high cloud at their level, M70) and
 /// the towers', which overlap at random; the albedo
 /// they add over the ground; and what they change of what it lets out to space and of what its
-/// air sends down to its ground, W/m², each with them less without.
+/// air sends down to its ground, W/m², each with them less without; the body's mean surface
+/// temperature after its year at its own wind and after each year under its own clouds, K, and
+/// whether the year its maps show ran under them (M88).
 #[derive(Serialize)]
 pub struct CloudsInfo {
     pub cover: f64,
@@ -104,6 +106,8 @@ pub struct CloudsInfo {
     pub albedo_added: f64,
     pub outgoing_change_w_m2: f64,
     pub downward_change_w_m2: f64,
+    pub years_mean_k: Vec<f64>,
+    pub under_own_clouds: bool,
 }
 
 /// The rivers and the lakes of the year's runoff (F277): the runoff of the land about the lakes,
@@ -1459,7 +1463,7 @@ pub fn export(
         .into_iter()
         .collect::<Vec<_>>()
     };
-    let cloud_units = "shares of the place each kind of the water's clouds covers through the year, overlapping at random: the share any covers is 1 - (1 - R)(1 - G)(1 - B)(1 - A); a diagnostic the climate does not yet read; all zero where the working liquid is not water";
+    let cloud_units = "shares of the place each kind of the water's clouds covers through the year, overlapping at random: the share any covers is 1 - (1 - R)(1 - G)(1 - B)(1 - A); the clouds the year makes under its own (M88); all zero where the working liquid is not water";
     write_exr_channels(
         &settings.dir.join("clouds.exr"),
         (width, height_px),
@@ -1690,6 +1694,8 @@ pub fn export(
         albedo_added: c.albedo,
         outgoing_change_w_m2: c.olr,
         downward_change_w_m2: c.down,
+        years_mean_k: out.cloud_years.clone(),
+        under_own_clouds: out.under_own_clouds,
     });
     let wind = out.wind_summary.map(|w| WindInfo {
         mean_speed_m_s: w.speed,

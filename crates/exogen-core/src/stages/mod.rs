@@ -258,6 +258,11 @@ pub struct FinishOutput {
     /// climate's own planetary albedo: its ground's, its air's and its clouds'; NaN where its
     /// places run apart, with no air between them.
     pub planetary_albedo: f64,
+    /// The body's mean surface temperature after its year at its own wind and after each year
+    /// under its own clouds (M88), K; none where its water has no clouds. Whether its last year,
+    /// the one its maps show, ran under them.
+    pub cloud_years: Vec<f64>,
+    pub under_own_clouds: bool,
     /// The rivers and the lakes of the year's runoff over the terrain (F277), where it has
     /// water, and what the rivers' erosion moved (F278).
     pub rivers: Option<crate::rivers::Rivers>,
@@ -458,7 +463,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 246;
+pub const FINISH_VERSION: u64 = 247;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -2903,10 +2908,9 @@ pub fn finish(
     let cycle = balance.cycle(&climate, &ground, ocean.as_ref().zip(share.as_ref()), None);
     // The year again with its air exchanging with its ground at each place's own wind and
     // humidity, and its sea and its wet land giving the air their latent heat (F269), from the
-    // first year's wind and moisture. It can run under its own water clouds, each year under
-    // the clouds of the year before it (M67, M68, `EnergyBalance::cycle_under_own_clouds`); it
-    // waits on the clouds at 30 to 50 degrees, which take some 30 W/m² more of the light than
-    // CERES's, and on the ice clouds of a cold night (the user, 2026-11-18, M81).
+    // first year's wind and moisture; and then under its own water clouds, each year under the
+    // clouds of the year before it until they settle (M67, M68, M88,
+    // `EnergyBalance::cycle_under_own_clouds`).
     let water_share = if ocean.is_some() {
         OCEAN_TRANSPORT_SHARE
     } else {
@@ -2927,7 +2931,8 @@ pub fn finish(
             })
             .collect()
     };
-    let coupling = {
+    // Each place's ground over the full sea, m.
+    let over_sea = {
         let height = layers.height();
         let above = Field::from_fn(grid, |c, _| {
             let h = height.get(c);
@@ -2937,7 +2942,10 @@ pub fn finish(
                 h
             }
         });
-        let first = water_air.and_then(|air| cycle.moisture(&air, &place_heights(&cycle, &above)));
+        place_heights(&cycle, &above)
+    };
+    let coupling = {
+        let first = water_air.and_then(|air| cycle.moisture(&air, &over_sea));
         cycle.coupling(first.as_ref())
     };
     let cycle = match &coupling {
@@ -2946,6 +2954,23 @@ pub fn finish(
             balance.cycle_with(&climate, &ground, sea, None, Some(c))
         }
         None => cycle,
+    };
+    // Under its own water clouds (M88): from the year at its own wind, each year under the
+    // clouds of the year before it, from the end of that year (M68), until the body's mean
+    // and its cell's air change by less than CLOUD_PASSES's kelvin; the years after it, over
+    // its caps, under the wind, the moisture and the clouds its last year ran under.
+    let (cycle, coupling, cloud_years) = match (coupling, sky.as_ref(), water_air.as_ref()) {
+        (Some(stated), Some(sky), Some(air)) => {
+            let sea = ocean.as_ref().zip(share.as_ref());
+            let own = balance.cycle_under_own_clouds(
+                (&climate, &ground),
+                (sea, None),
+                cycle,
+                (sky, air, &over_sea),
+            );
+            (own.cycle, Some(own.coupling.unwrap_or(stated)), own.means)
+        }
+        (coupling, _, _) => (cycle, coupling, Vec::new()),
     };
     // The ground's year-mean temperature at its own albedo where its slope faces, which the
     // ice's lag and frost read (F256).
@@ -3269,6 +3294,7 @@ pub fn finish(
     };
     let mut temperature_range = cycle.extremes();
     let planetary_albedo = cycle.albedo;
+    let under_own_clouds = cycle.clouded;
     // The year's wind at the cycle's places, brought to this grid (F267).
     let wind = cycle.wind.as_ref().map(|w| w.fields(grid));
     let wind_summary = cycle.wind.as_ref().map(crate::wind::Wind::summary);
@@ -3295,8 +3321,8 @@ pub fn finish(
         .filter(|_| moisture.is_some())
         .map(|a| a.vapour.name);
     // The year's water clouds over its places from its air, wind and moisture (M66, M67), as
-    // its maps show them: a diagnostic the climate does not read until the coupling (the user,
-    // 2026-11-18), in its sky over its own cell's air (M73), as its checks read them (M81).
+    // its maps show them: the clouds of the year that ran under its own (M88), in its sky over
+    // its own cell's air (M73), as its checks read them (M81).
     let clouds = sky.as_ref().zip(moisture.as_ref()).and_then(|(sky, m)| {
         let reach = balance.circulation.reach;
         let over = match cycle.cell_air(m, reach) {
@@ -3647,6 +3673,8 @@ pub fn finish(
         clouds,
         cloud_summary,
         planetary_albedo,
+        cloud_years,
+        under_own_clouds,
         rivers,
         erosion,
         rays,
@@ -4692,6 +4720,9 @@ mod tests {
             ("the_sea_shows_its_floor_only_through_its_water", &|| {
                 the_sea_shows_its_floor_only_through_its_water(&earth)
             }),
+            ("the_earth_like_s_finish_runs_under_its_own_clouds", &|| {
+                the_earth_like_s_finish_runs_under_its_own_clouds(&earth)
+            }),
             ("mercury_takes_up_its_contraction_in_scarps", &|| {
                 mercury_takes_up_its_contraction_in_scarps(&mercury, &moon)
             }),
@@ -5052,6 +5083,23 @@ mod tests {
             "liquid fraction {}",
             out.finish.ocean_fraction
         );
+    }
+
+    /// M88: the Earth-like's finish runs under its own clouds, each year under the clouds of
+    /// the year before it until its mean changes by less than CLOUD_PASSES's kelvin or their
+    /// most years have run, and its last year, the one its maps show, under them too; it
+    /// reflects what Earth's measures allow (0.26 to 0.33, the own-clouds tier's; CERES's
+    /// some 0.29).
+    fn the_earth_like_s_finish_runs_under_its_own_clouds(body: &Body) {
+        let out = &body.out.finish;
+        let means = &out.cloud_years;
+        let (settled, most) = crate::constants::CLOUD_PASSES;
+        assert!(out.under_own_clouds, "its last year under the stated law");
+        assert!(means.len() >= 2 && means.len() <= most + 1, "{means:?}");
+        let last = (means[means.len() - 1] - means[means.len() - 2]).abs();
+        assert!(last < settled || means.len() == most + 1, "{means:?}");
+        let albedo = out.planetary_albedo;
+        assert!((0.26..=0.33).contains(&albedo), "{albedo}");
     }
 
     /// ADR 0007: the Earth-like's albedo is its ground's own under its sea, none of it the
