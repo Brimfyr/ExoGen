@@ -2005,8 +2005,14 @@ pub const H2O_CONTINUUM_STATE: (f64, f64, f64) = (224.92, 260.0, 0.02);
 /// radiative-convective column (0.1625 u^0.2346 on F293's left it at 292.2 K), its air then
 /// sending down 342.8 W/m² (342 measured, Kato et al. 2018); and again on M69's column lifting
 /// its surface air with its ozone (0.0914 u^0.3856 on M65's): its clear sky at 291.6 K 266.3
-/// W/m² (CERES 267), its clouds keeping 26.8 (28), its air sending down 339.6.
-pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.16035, 0.1673);
+/// W/m² (CERES 267), its clouds keeping 26.8 (28), its air sending down 339.6; and again on
+/// M93's column, its convection entraining and its levels balanced over their own halves
+/// (0.16035 u^0.1673 on M69's left it at 292.2 K, its air aloft the colder, letting out less),
+/// its b held: its clear sky at 291.6 K 264.5 W/m², its clouds keeping 25.0, its air sending
+/// down 338.7, its slope 1.92. The slope's 2.1 again took b to 0.037, a law that no longer
+/// thins its clouds with its air's vapour: Mars's 0.01 kg/m² held 0.18 of grey depth where
+/// 0.074, and stood 2.3 K the warmer.
+pub const WATER_CLOUD_DEPTH: (f64, f64) = (0.13487, 0.1673);
 /// M66: the raining systems' cloud over a place, a + b ln P, P their rain in mm a day, at most
 /// the third: Slingo (1987)'s convective law as it is quoted, none under 0.14 mm a day and all
 /// of its most from some 85 (its slope and its most read in ECMWF's manual of 1991, eq. 2.50,
@@ -2048,6 +2054,15 @@ pub const CLOUD_LOW_HUMIDITY: (f64, f64) = (0.5, 0.7);
 pub const CLOUD_LEVELS: (f64, f64) = (700.0 / 1013.25, 850.0 / 1013.25);
 pub const CLOUD_SURFACE_HUMIDITY: f64 = 0.8;
 pub const CLOUD_LCL_PER_KELVIN: f64 = 125.0;
+/// M93: the convection's entrainment, Romps's (2016, JAS 73, 3719, eqs. B13 to B19) a, the
+/// rate a rising plume mixes in its drier surroundings for each scale height of its saturated
+/// vapour: its zero-buoyancy plume holds h*_a = c_p T + g z + L q* / (1 + a) where an undilute
+/// one holds its moist static energy (Singh and O'Gorman 2013, GRL 40, 4398), its lapse the
+/// moist adiabat's with its saturated vapour over 1 + a; 0.2, his own for Earth's tropics,
+/// whose cloud-resolving runs from 270 to 370 K it brackets at 0.2 to 0.8 (Seeley and
+/// Wordsworth 2023). Undilute, the Earth-like's air over a 300 K ground stood 5 K warmer than
+/// ERA-Interim's tropics from 300 to 150 hPa.
+pub const CONVECTION_ENTRAINMENT: f64 = 0.2;
 /// M66: the overturning cell's convection gives way to the storms past its reach from the
 /// thermal equator by degrees over this share of the reach, the rain there the convection's
 /// within it and the storms' beyond (the free air's weak temperature gradients ended with it

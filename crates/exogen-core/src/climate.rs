@@ -11045,6 +11045,105 @@ mod tests {
         ]);
     }
 
+    /// M93: a preset's air by its year's places (EXOGEN_AIR_BODY, Earth by default): the
+    /// column's air at standard pressures over grounds from 220 to 310 K, with its air aloft at
+    /// its cell's stability and without, and the bands' of ten degrees' and the body's means, to
+    /// set beside ERA-Interim's zonal means (the research notes, "Reference atmosphere
+    /// profiles").
+    #[test]
+    #[ignore = "diagnostic"]
+    fn print_the_air_by_latitude() {
+        let name = std::env::var("EXOGEN_AIR_BODY").unwrap_or_else(|_| "Earth".into());
+        let y = Year::of(&name);
+        let again = y.again();
+        let eb = EnergyBalance::from_graph(&y.graph);
+        let reach = eb.circulation.reach;
+        let cell = again
+            .water
+            .as_ref()
+            .and_then(|w| again.cycle.cell_air(w, reach));
+        println!("cell {cell:?}");
+        let lifted = air_column(&y.graph, &eb, true, cell).unwrap();
+        let plain = air_column(&y.graph, &eb, true, None).unwrap();
+        let levels = lifted.levels(1.0);
+        let at = |temps: &[f64], p: f64| -> f64 {
+            let k = levels
+                .iter()
+                .position(|&q| q < p)
+                .unwrap_or(levels.len() - 1)
+                .max(1);
+            let w = (p / levels[k - 1]).ln() / (levels[k] / levels[k - 1]).ln();
+            temps[k - 1] + w * (temps[k] - temps[k - 1])
+        };
+        let ps = [
+            925e2, 850e2, 700e2, 500e2, 400e2, 300e2, 250e2, 200e2, 150e2, 100e2,
+        ];
+        println!("curve: t | lifted at {ps:?} | plain");
+        for t in (220..=310).step_by(5) {
+            let t = t as f64;
+            let (a, _) = lifted.air_at(t);
+            let (b, _) = plain.air_at(t);
+            let row: Vec<String> = ps.iter().map(|&p| format!("{:.1}", at(&a, p))).collect();
+            let row2: Vec<String> = ps.iter().map(|&p| format!("{:.1}", at(&b, p))).collect();
+            println!("{t:.0} | {} | {}", row.join(" "), row2.join(" "));
+        }
+        let means = again.cycle.place_means();
+        let sites = &again.cycle.sites;
+        println!("bands: lat | ground | lifted air at ps | plain");
+        let mut global = (vec![0.0; ps.len()], vec![0.0; ps.len()], 0.0, 0.0);
+        for b in 0..18 {
+            let (lo, hi) = (-90.0 + 10.0 * b as f64, -80.0 + 10.0 * b as f64);
+            let (mut sa, mut sb, mut g, mut area) =
+                (vec![0.0; ps.len()], vec![0.0; ps.len()], 0.0, 0.0);
+            for (p, s) in sites.iter().enumerate() {
+                let lat = s.lat.to_degrees();
+                if lat < lo || lat >= hi && b < 17 {
+                    continue;
+                }
+                let (w, t) = means[p];
+                let (a, _) = lifted.air_at(t);
+                let (c, _) = plain.air_at(t);
+                for (i, &q) in ps.iter().enumerate() {
+                    sa[i] += w * at(&a, q);
+                    sb[i] += w * at(&c, q);
+                    global.0[i] += w * at(&a, q);
+                    global.1[i] += w * at(&c, q);
+                }
+                g += w * t;
+                area += w;
+                global.2 += w * t;
+                global.3 += w;
+            }
+            if area <= 0.0 {
+                continue;
+            }
+            let row: Vec<String> = sa.iter().map(|v| format!("{:.1}", v / area)).collect();
+            let row2: Vec<String> = sb.iter().map(|v| format!("{:.1}", v / area)).collect();
+            println!(
+                "{lo:.0}..{hi:.0} | {:.1} | {} | {}",
+                g / area,
+                row.join(" "),
+                row2.join(" ")
+            );
+        }
+        let row: Vec<String> = global
+            .0
+            .iter()
+            .map(|v| format!("{:.1}", v / global.3))
+            .collect();
+        let row2: Vec<String> = global
+            .1
+            .iter()
+            .map(|v| format!("{:.1}", v / global.3))
+            .collect();
+        println!(
+            "global | {:.1} | {} | {}",
+            global.2 / global.3,
+            row.join(" "),
+            row2.join(" ")
+        );
+    }
+
     /// M66: the Earth-like's clouds lie in its belts, as Earth's do (ISCCP, CERES): most over
     /// its deep convection near the equator and in its storm tracks, least over its subtropics
     /// where its air sinks, least of all over their land; over the body some half of it or more

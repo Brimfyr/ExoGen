@@ -1382,6 +1382,38 @@ How it went:
 - **The maps unchanged.** Titan and Earth's draft at 1024, rendered before and after: every map is the same to the byte (43 and 45 files), and the sidecars differ only by the new block.
 - **The suite.** The whole-body tier: 451 of 451 pass (108 minutes, beside the five renders and the plants). On the test Earth-like, its cold tenth's air at half its pressure stands at 234.7 K, where its own column's over its 256.3 K ground stands at 213.7. The own-clouds tier was not run, as nothing it runs changed. Clippy is clean with each tier's features and on the CLI. FINISH_VERSION 248.
 
+## The ninety-third milestone: Earth's air aloft
+
+- **F405.** Each level balanced over its own halves of the layers about it.
+- **F406.** The convection entrains (CONVECTION_ENTRAINMENT); WATER_CLOUD_DEPTH set again.
+
+How it went:
+
+- **The state found.** M92's tables put Earth's mean air 8 to 12 K warm from 5 to 11 km against the US Standard Atmosphere, and its levels above 55 km alternating; the user chose the column's remaining parts in turn, this first (2026-11-20).
+- **The reference.** The US Standard is a mid-latitude profile, some 6 K colder at 5 km than the globe's mean. ERA-Interim's annual means (the M68 download, by ten degrees, the globe and its warmest and coldest tenths; the research notes, "Reference atmosphere profiles") put the warmth at 400 to 250 hPa, 5 to 6 K, and in the warmest tenth, 9 to 15 K.
+- **Where it came from.** The column's air depends only on its ground and its cell's air, so it was read as a curve of its ground against ERA's bands (`print_the_air_by_latitude`). Over a 300 K ground its air at 300 to 150 hPa stood 5 K over ERA's 0 to 10 degrees: its convection lifted its surface air undilute, through a convecting layer aloft mixed on the same lapse. The mid-latitudes took the cell's warmth aloft through M73's law. The tropics' ground itself 3 to 4 K warm adds to the warmest tenth (the equator's peak, in 5C's Open list).
+- **The entrainment (F406).** Romps's (2016) zero-buoyancy plume, a = 0.2, his own for Earth's tropics (the research notes, "Entraining plume lapse rate"): the moist adiabat's lapse with the saturated vapour over 1 + a, the dry adiabat where nothing condenses. Over a 300 K sea (ERA's 0 to 10 degrees' air at 299.2 K, 0.85 K under its sea by the tropical moorings) its air within 0.5 K of ERA's from 850 to 300 hPa and 1.8 K under at 200, where 5.0 and 4.3 warm before. The air aloft at the cell's stability over 40 to 50 and 60 to 70 degrees' annual grounds within 1.4 K of ERA's at 500 and 300 hPa, where 3.8 to 6.5 warm. AFGL's subarctic winter, M73's anchor, now 7 K over its 500 hPa air: its inversion, which a year's mean ground does not hold; the check reads the annual zonal means.
+- **The alternating levels (F405).** In a thin layer the linear source emits at its two levels' mean, so levels warm and cold by turns changed no level's heating over the two whole layers about it: Earth's 288 K column turned 18 times above 80 hPa, by up to 6 K. Each level is now balanced between the middles of the layers about it, the flux at a middle exact for the linear source, the levels' fluxes as before. None alternate; the troposphere over a 300 K ground stands as before to 0.2 K up to 150 hPa. With it Venus's own radiative-convective solve converges in 21 steps where M65 found a slow 2-delta mode: the thick air's own profile next.
+- **The anchors.** The colder air aloft lets out less, and the stated clouds' law left the zero-dimensional Earth at 292.2 K: set again, 0.13487 u^0.1673, its b held. Fitting the slope's 2.1 W/m² a kelvin again took b to 0.037, a law that no longer thins its clouds with its air's vapour: Mars's 0.01 kg/m² of vapour held 0.18 of grey depth where 0.074 and stood 2.3 K warmer. Held, the slope 1.92, within the 1.6 to 2.2 measured (Warren and Schneider 1979); the clear sky at 291.6 K 264.5 W/m² (CERES 267), the clouds keeping 25.0 (28). Venus's and Titan's anchors stand.
+- **The renders** (1024, M92's maps beside them):
+
+| body | | M92 | M93 |
+|---|---|---|---|
+| Earth (draft) | mean, equator, poles | 286.1, 301.2, 243.4 K | 288.0, 302.8, 246.6 K |
+| | sea ice, albedo | 0.095, 0.305 | 0.079, 0.298 |
+| | rain, kg/m² a year | 1,065 | 1,106 |
+| | its years under its own clouds | 291.4, 288.8, 287.9 K | 294.8, 290.6, 289.7 K |
+| | mean air minus ERA at 400 to 250 hPa | +4.7 to +6.4 K | +3.2 to +4.8 K |
+| TRAPPIST-1e (draft) | mean, sea ice, albedo | 249.3 K, 0.5629, 0.239 | 249.3 K, 0.5634, 0.236 |
+| Mars | mean; residual CO2 cap | 204.9 K; 0.030 % | 204.5 K; 0.015 % |
+| Titan | mean; evaporation | 97.44 K; 11.9 kg/m² a year | 97.36 K; 10.8 |
+| Venus | mean | 735.49 K | 735.57 K |
+
+- **What they say.** Earth's surface warms under its own clouds by its air's lapse, its draft's mean now Earth's 288 K, its sea ice nearer the measured 0.069, its rain the more. TRAPPIST-1e's eye keeps its shape. Mars's residual CO2 cap, marginal since 5B's gate, halves with its year 0.4 K the colder. Titan's rivers turn on its 0.09 K: its closed land 0.91 of it where 0.68, its largest river 328 m³/s where 996 (Titan's methane cycle, in 5C's Open list). The derived means: Earth 291.6 K, Venus 737.0, Mars 217.3 (217.6), Titan 97.30 (97.33).
+- **KNOWN.** The warmest tenth 9 to 13 K warm aloft over a ground 3.6 K warm (the equator's peak); the stratosphere's floor at the cell's tropopause everywhere (ERA's 192 K over the tropics, 220 over the poles: the stratosphere's own overturning); the upper stratosphere's warmth (F348).
+- **The checks.** Fast: `a_thin_air_s_levels_do_not_alternate` (Earth's column from 100 hPa up, at most one turn of its curvature); `the_net_flux_s_slopes_meet_its_differences` reads the middles' slopes too; `the_column_lifts_its_surface_air` reads the column's own air over a 300 K sea against ERA's 0 to 10 degrees within 2.5 K to 200 hPa; `an_air_aloft_keeps_its_cell_s_stability` reads ERA's annual 40 to 50 and 60 to 70 degrees within 2.5 K.
+- **The invariants.** Four bugs planted, each caught: the balance over the two whole layers (18 alternating levels); the convection undilute (400 hPa 3.3 K warm over the 300 K sea; 300 hPa 6.5 K warm over 40 to 50 degrees); the middles' slopes' own emission of the wrong sign; the lower half's emission from its base's source alone (the middles' slopes against their differences).
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

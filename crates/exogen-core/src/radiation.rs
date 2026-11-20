@@ -634,8 +634,9 @@ impl Column {
 
     /// The adiabat's exponent, d ln T / d ln p, at `t` K and `p` Pa: the dry air's, slowed where
     /// the column holds water by its saturated vapour's latent heat,
-    /// (1 + L r / (R T)) / (1 + L² r eps / (c_p R T²)), r its mixing ratio; its heat capacity
-    /// its temperature's (M65).
+    /// (1 + L r / (R T)) / (1 + L² r eps / (c_p R T²)), r its mixing ratio over
+    /// 1 + CONVECTION_ENTRAINMENT, the plume's that mixes in its surroundings (M93); its heat
+    /// capacity its temperature's (M65).
     fn lapse(&self, t: f64, p: f64, parcel: f64) -> f64 {
         let heat = self.heat_at(t);
         let dry = self.gas_constant / heat;
@@ -665,6 +666,9 @@ impl Column {
         } else {
             water.l_sub
         };
+        // The zero-buoyancy plume's (M93): its saturated vapour's heat as though it held
+        // 1 / (1 + a) of it, its condensation level the undilute parcel's.
+        let r = r / (1.0 + CONVECTION_ENTRAINMENT);
         let rt = self.gas_constant * t;
         dry * (1.0 + l * r / rt) / (1.0 + l * l * r * self.epsilon / (heat * rt * t))
     }
@@ -1360,6 +1364,19 @@ impl Column {
     /// ground at `t` K under the air's temperatures `temps` (M65), with what it lets out to
     /// space and each layer's emissivity weighted by its own radiation over the spectrum.
     pub fn fluxes_over(&self, t: f64, temps: &[f64]) -> (Vec<f64>, Vec<f64>, f64, Vec<f64>) {
+        let (up, down, olr, emissivity, _) = self.fluxes_and_halves(t, temps);
+        (up, down, olr, emissivity)
+    }
+
+    /// `fluxes_over`'s fluxes, and the net upward flux at each layer's mid-depth, W/m² (M93):
+    /// the layer split in its depth's halves, the source linear through each as through the
+    /// whole, at its middle the mean of its edges' (the split exact for a source linear in the
+    /// depth: the levels' fluxes the same either way).
+    fn fluxes_and_halves(
+        &self,
+        t: f64,
+        temps: &[f64],
+    ) -> (Vec<f64>, Vec<f64>, f64, Vec<f64>, Vec<f64>) {
         let levels = self.levels(1.0);
         let n = levels.len();
         assert_eq!(temps.len(), n);
@@ -1372,6 +1389,11 @@ impl Column {
         let (mut f_up, mut f_dn, mut tr) = (vec![0.0; n], vec![0.0; n], vec![0.0; n - 1]);
         let (mut emit_up, mut emit_dn) = (vec![0.0; n - 1], vec![0.0; n - 1]);
         let (mut emitted, mut black) = (vec![0.0; n - 1], vec![0.0; n - 1]);
+        // Each layer's halves: what each lets through, and the lower's emission up at the
+        // middle and the upper's down there.
+        let (mut half, mut half_up, mut half_dn) =
+            (vec![0.0; n - 1], vec![0.0; n - 1], vec![0.0; n - 1]);
+        let mut halves = vec![0.0; n - 1];
         let mut light = vec![0.0; n];
         for (i, &nu) in spectrum.nu.iter().enumerate() {
             let w = spectrum.width[i];
@@ -1388,6 +1410,11 @@ impl Column {
                 black[k] += weight;
                 emit_up[k] = b1 * emits + (b0 - b1) * slope;
                 emit_dn[k] = b0 * emits + (b1 - b0) * slope;
+                let (emits, slope, through) = linear_source(0.5 * x);
+                let middle = 0.5 * (b0 + b1);
+                half[k] = through;
+                half_up[k] = middle * emits + (b0 - middle) * slope;
+                half_dn[k] = middle * emits + (b1 - middle) * slope;
             }
             f_up[0] = planck(nu, t);
             for k in 0..n - 1 {
@@ -1400,6 +1427,10 @@ impl Column {
             for k in 0..n {
                 up[k] += f_up[k] * w;
                 down[k] += f_dn[k] * w;
+            }
+            for k in 0..n - 1 {
+                halves[k] +=
+                    (f_up[k] * half[k] + half_up[k] - f_dn[k + 1] * half[k] - half_dn[k]) * w;
             }
             // The air above the top level holds back its share of the top's upward stream.
             let above = Self::top_depth(spectrum, i, &top);
@@ -1415,6 +1446,7 @@ impl Column {
                 .zip(&black)
                 .map(|(e, b)| e / b.max(1e-300))
                 .collect(),
+            halves.iter().map(|h| pi * h).collect(),
         )
     }
 
@@ -1422,8 +1454,9 @@ impl Column {
     /// at `t` K under `temps`, W/m², per kelvin of each level's temperature (M65), the air's
     /// absorbers held as they stand: each level's emission into the streams through the layers
     /// about it, their sources linear in their depths, by its Planck function's slope; the
-    /// ground's held.
-    fn net_slopes(&self, t: f64, temps: &[f64]) -> Vec<Vec<f64>> {
+    /// ground's held; and the same at each layer's mid-depth (M93), as `fluxes_and_halves`
+    /// splits the layers.
+    fn slopes_and_halves(&self, t: f64, temps: &[f64]) -> (Vec<Vec<f64>>, Vec<Vec<f64>>) {
         let levels = self.levels(1.0);
         let n = levels.len();
         let (vapour, humid) = self.vapour_of(temps, &levels);
@@ -1431,12 +1464,16 @@ impl Column {
         let (layers, _) = self.optics(&levels, temps, (&vapour, &humid), column, self.thickness());
         let spectrum = spectrum();
         let mut slopes = vec![vec![0.0; n]; n];
+        let mut halves = vec![vec![0.0; n]; n - 1];
         let mut layer = vec![(0.0, 0.0, 0.0); n - 1];
+        let mut half = vec![(0.0, 0.0, 0.0); n - 1];
         let (mut up, mut down) = (vec![0.0; n], vec![0.0; n]);
         let pi = std::f64::consts::PI;
         for (i, &nu) in spectrum.nu.iter().enumerate() {
             for (k, l) in layer.iter_mut().enumerate() {
-                *l = linear_source(DIFFUSIVITY * layers[k].depth(spectrum, i));
+                let x = DIFFUSIVITY * layers[k].depth(spectrum, i);
+                *l = linear_source(x);
+                half[k] = linear_source(0.5 * x);
             }
             for m in 1..n {
                 let db = pi * spectrum.width[i] * planck_slope(nu, temps[m]);
@@ -1462,9 +1499,25 @@ impl Column {
                 for j in 0..n {
                     slopes[j][m] += (up[j] - down[j]) * db;
                 }
+                // At each layer's middle: the streams from its edges through its halves, and
+                // its halves' own emission there, the middle's source the mean of the edges':
+                // the lower half's up by (E + S) / 2 of its base's source and (E - S) / 2 of
+                // its top's, the upper half's down the other way about, E and S its emission
+                // and its slope's.
+                for k in 0..n - 1 {
+                    let (_, slope, through) = half[k];
+                    let mut d = (up[k] - down[k + 1]) * through;
+                    if k == m {
+                        d += slope;
+                    }
+                    if k + 1 == m {
+                        d -= slope;
+                    }
+                    halves[k][m] += d * db;
+                }
             }
         }
-        slopes
+        (slopes, halves)
     }
 
     /// The sunlight each layer over the datum's ground at `t` K under `temps` absorbs, W/m², and
@@ -1590,9 +1643,10 @@ impl Column {
     /// temperatures at the column's levels in radiative equilibrium, each layer's net infrared
     /// heating balancing the sunlight it absorbs (`sun_layers`), save where that would stand
     /// steeper than the adiabat, which convection holds it to from the ground up (Manabe and
-    /// Wetherald 1967), never colder than the bulk gas's frost. Each step relaxes every level
-    /// by its heating over its radiation's change per kelvin, the layers about it emitting by
-    /// their emissivity, halved; the steps are mixed by Anderson's acceleration over the last
+    /// Wetherald 1967), never colder than the bulk gas's frost; each level's balance over its own
+    /// halves of the layers about it (M93). Each step relaxes every level by its heating over
+    /// its radiation's change per kelvin, the layers about it emitting by their emissivity,
+    /// halved; the steps are mixed by Anderson's acceleration over the last
     /// RC_HISTORY of them (Anderson 1965; Walker and Ni 2011), the mixing begun afresh where a
     /// step moves the profile more than the last. Marched from `start`, or the cold start,
     /// until no level moves by `settled` K, at most `rounds` steps; returns the levels, the
@@ -1725,40 +1779,41 @@ impl Column {
             }
             kind
         };
-        // One relaxation step from `x`.
-        let relax = |x: &[f64]| -> Vec<f64> {
-            let (up, down, _, emissivity) = self.fluxes_over(t, x);
+        // Each level's heating, W/m², and the layers' emissivities about it (M93): the net flux
+        // into the air between the middles of the layers about it, the top level's up to the
+        // top, and half the sunlight each of those layers absorbs. Over the two whole layers
+        // about it instead, a thin air's levels warm and cold by turns changed no level's
+        // heating, each thin layer emitting at its edges' mean: the equilibrium held only the
+        // layers' means, and a kink at its tropopause rose through its stratosphere as levels
+        // alternating undamped. Over its own halves a level emits three quarters at its own
+        // source, as a finer column would.
+        let heating = |x: &[f64]| -> (Vec<f64>, Vec<f64>) {
+            let (up, down, _, emissivity, halves) = self.fluxes_and_halves(t, x);
             let (sun, _) = self.sun_layers(t, x);
-            let net: Vec<f64> = up.iter().zip(&down).map(|(u, d)| u - d).collect();
+            let top = up[n - 1] - down[n - 1];
+            let heat = (0..n)
+                .map(|j| match j {
+                    0 => 0.0,
+                    _ if j + 1 < n => halves[j - 1] - halves[j] + 0.5 * (sun[j - 1] + sun[j]),
+                    _ => halves[j - 1] - top + 0.5 * sun[j - 1],
+                })
+                .collect();
+            (heat, emissivity)
+        };
+        // One relaxation step from `x`: each level by its heating over its radiation's change
+        // per kelvin, the halves of the layers about it emitting by their emissivity.
+        let relax = |x: &[f64]| -> Vec<f64> {
+            let (heat, emissivity) = heating(x);
             let mut next = x.to_vec();
             for j in 1..n {
-                let below = net[j - 1] - net[j] + sun[j - 1];
-                let (above, e_above) = if j + 1 < n {
-                    (net[j] - net[j + 1] + sun[j], emissivity[j])
-                } else {
-                    (0.0, 0.0)
-                };
+                let e_above = if j + 1 < n { emissivity[j] } else { 0.0 };
                 let e = (emissivity[j - 1] + e_above).max(1e-9);
                 let stiffness = 4.0 * SIGMA_SB * x[j].powi(3) * e;
-                let step = ((below + above) / stiffness).clamp(-RC_CLAMP, RC_CLAMP);
-                next[j] = x[j] + 0.5 * step;
+                let step = (heat[j] / stiffness).clamp(-RC_CLAMP, RC_CLAMP);
+                next[j] = x[j] + step;
             }
             adjust(&mut next);
             next
-        };
-        // Each level's heating, W/m²: the net flux into the layers about it and the sunlight
-        // they absorb, as the relaxation reads it.
-        let heating = |x: &[f64]| -> Vec<f64> {
-            let (up, down, _, _) = self.fluxes_over(t, x);
-            let (sun, _) = self.sun_layers(t, x);
-            let net: Vec<f64> = up.iter().zip(&down).map(|(u, d)| u - d).collect();
-            (0..n)
-                .map(|j| match j {
-                    0 => 0.0,
-                    _ if j + 1 < n => net[j - 1] - net[j + 1] + sun[j - 1] + sun[j],
-                    _ => net[j - 1] - net[j] + sun[j - 1],
-                })
-                .collect()
         };
         let mut kind = adjust(&mut x);
         let (mut change, mut taken) = (f64::INFINITY, 0);
@@ -1769,13 +1824,13 @@ impl Column {
         let (mut best, mut stalls) = (f64::INFINITY, 0);
         while taken < rounds && stalls < RC_NEWTON_STALLS {
             taken += 1;
-            let r = heating(&x);
-            let slopes = self.net_slopes(t, &x);
+            let (r, _) = heating(&x);
+            let (slopes, halves) = self.slopes_and_halves(t, &x);
             let slope = |j: usize, m: usize| -> f64 {
                 if j + 1 < n {
-                    slopes[j - 1][m] - slopes[j + 1][m]
+                    halves[j - 1][m] - halves[j][m]
                 } else {
-                    slopes[j - 1][m] - slopes[j][m]
+                    halves[j - 1][m] - slopes[j][m]
                 }
             };
             let mut unknowns: Vec<Vec<(usize, f64)>> = Vec::new();
@@ -3449,7 +3504,9 @@ mod tests {
     /// ground Earth's column stands within a few kelvin of ERA-Interim's wet tropical oceans'
     /// 290.6, 283.1, 268.3 and 242.5 K at 850, 700, 500 and 300 hPa (1979 to 2016, rain of 6 mm
     /// a day and more; the research notes), where lifting saturated air from the ground stood
-    /// its 500 hPa some 5 K and its 300 hPa some 10 K warm. And a steam air's surface air is
+    /// its 500 hPa some 5 K and its 300 hPa some 10 K warm. M93: its convection entraining, its
+    /// own air over a 300 K sea within 2.5 K of ERA-Interim's 0 to 10 degrees from 850 to 200
+    /// hPa, where undilute it stood 5 K warm at 300. And a steam air's surface air is
     /// saturated: the column's table over Earth's grounds keeps the outgoing radiation its
     /// streams give at 300 K, rising to 303 K, no runaway's plateau held under it.
     #[test]
@@ -3479,6 +3536,31 @@ mod tests {
             println!("{hpa} hPa: {t:.1} K (ERA-Interim {measured})");
             assert!(
                 (t - measured).abs() < within,
+                "{hpa} hPa: {t} against {measured}"
+            );
+        }
+        // M93: the column's own air, its convection entraining, over the 300 K ground of a sea
+        // whose air at 1000 hPa stands at ERA-Interim's 0 to 10 degrees' 299.2 K, 0.85 K under
+        // its sea (the tropical moorings' mean, the research notes), within 2.5 K of its air
+        // to 200 hPa; undilute, 5.0 K warm at 300 hPa and 4.3 at 200.
+        let levels = column.levels(1.0);
+        let own = column.own_temps(300.0, &levels);
+        for (hpa, measured) in [
+            (850.0, 290.8),
+            (700.0, 282.9),
+            (500.0, 268.1),
+            (400.0, 257.5),
+            (300.0, 242.1),
+            (250.0, 232.1),
+            (200.0, 220.0),
+        ] {
+            let p = hpa * 100.0;
+            let k = levels.iter().position(|&q| q < p).unwrap().max(1);
+            let w = (p / levels[k - 1]).ln() / (levels[k] / levels[k - 1]).ln();
+            let t = own[k - 1] + w * (own[k] - own[k - 1]);
+            println!("{hpa} hPa over 300 K: {t:.1} K (ERA-Interim 0 to 10 N {measured})");
+            assert!(
+                (t - measured).abs() < 2.5,
                 "{hpa} hPa: {t} against {measured}"
             );
         }
@@ -3551,11 +3633,15 @@ mod tests {
     /// the cell's own air's temperature and over warmer ground it stands on its own profile.
     /// Over colder ground it is never colder than its own profile nor than the cell's coldest
     /// air, never warmer than the cell's air at the level, and where the law holds it its
-    /// potential temperature over its ground's is the cell's over the cell's. Measured (AFGL,
-    /// the research notes): over the subarctic winter's 257.4 K ground its air at 500 hPa
-    /// stands within 6 K of 239.4 K and at 300 hPa within 5 of 218.5, where its own profile
-    /// stands over 20 K under the first; over the midlatitude summer's 293.7 K within 6 of
-    /// 262.4 and 5 of 238.2. And it sends more to space, the more the colder its ground.
+    /// potential temperature over its ground's is the cell's over the cell's. Measured (M93,
+    /// ERA-Interim's annual zonal means, the research notes): over 40 to 50 degrees' 284.0 K its
+    /// air at 500 and 300 hPa stands within 2.5 K of 253.7 and 228.4, over 60 to 70 degrees'
+    /// 271.1 K within 2.5 of 244.7 and 222.0; its cell's air undilute (M73), 3.8 to 6.5 K warm
+    /// at 300 hPa. A place's air stands over its year's mean ground, as the annual means do:
+    /// AFGL's subarctic winter (239.4 K at 500 hPa over a 257.4 K ground, where M73 set it
+    /// within 6) stands on its winter's inversion, which a year's mean ground does not hold,
+    /// some 7 K over it. Its own profile stands over 20 K under that winter's air. And it sends
+    /// more to space, the more the colder its ground.
     #[test]
     fn an_air_aloft_keeps_its_cell_s_stability() {
         let g = graph("Earth");
@@ -3610,17 +3696,21 @@ mod tests {
             }
             assert!(lifted > 5, "{t}: {lifted}");
         }
-        for (t, at500, at300) in [(257.4, 239.4, 218.5), (293.7, 262.4, 238.2)] {
+        for (t, at500, at300) in [(284.0, 253.7, 228.4), (271.1, 244.7, 222.0)] {
             let held = aloft.profile(t, &levels).0;
             let (mid, high) = (read(&held, 500.0), read(&held, 300.0));
             println!(
                 "over {t} K ground: {mid:.1} K at 500 hPa ({at500}), {high:.1} at 300 ({at300})"
             );
             assert!(
-                (mid - at500).abs() < 6.0 && (high - at300).abs() < 5.0,
+                (mid - at500).abs() < 2.5 && (high - at300).abs() < 2.5,
                 "{t}"
             );
         }
+        let winter = read(&aloft.profile(257.4, &levels).0, 500.0);
+        println!(
+            "KNOWN (M93): over the subarctic winter's 257.4 K ground {winter:.1} K at 500 hPa (AFGL 239.4, its inversion)"
+        );
         let own = read(&plain.profile(257.4, &levels).0, 500.0);
         assert!(own < 239.4 - 20.0, "{own}");
         let more = |t: f64| aloft.streams(t).olr - plain.streams(t).olr;
@@ -3956,7 +4046,8 @@ mod tests {
 
     /// M65: the net flux's slopes Newton's steps read meet the net flux's own differences: over
     /// a thin dry air of carbon dioxide, whose absorbers change least with the temperature they
-    /// are held at, each level's own and its neighbours' within a fifth wherever they matter.
+    /// are held at, each level's own and its neighbours' within a fifth wherever they matter;
+    /// and the same at the layers' middles (M93), which the levels' balances read.
     #[test]
     fn the_net_flux_s_slopes_meet_its_differences() {
         let composition: BTreeMap<String, f64> =
@@ -3965,29 +4056,77 @@ mod tests {
                 .collect();
         let column = Column::new(&composition, 1e4, 3.71, 0.0, 180.0);
         let (_, x, _, _) = column.radiative_convective(240.0, None, (RC_SETTLED, RC_ROUNDS));
-        let net = |x: &[f64]| -> Vec<f64> {
-            let (up, down, _, _) = column.fluxes_over(240.0, x);
-            up.iter().zip(&down).map(|(u, d)| u - d).collect()
+        let net = |x: &[f64]| -> (Vec<f64>, Vec<f64>) {
+            let (up, down, _, _, halves) = column.fluxes_and_halves(240.0, x);
+            (up.iter().zip(&down).map(|(u, d)| u - d).collect(), halves)
         };
-        let slopes = column.net_slopes(240.0, &x);
+        let (slopes, halves) = column.slopes_and_halves(240.0, &x);
         let base = net(&x);
         let largest = slopes.iter().flatten().fold(0.0f64, |m, v| m.max(v.abs()));
         for m in [2, 8, 16, 24, 32, 40] {
             let mut y = x.clone();
             y[m] += 0.01;
             let moved = net(&y);
-            for j in m.saturating_sub(1)..=(m + 1).min(x.len() - 1) {
-                let difference = (moved[j] - base[j]) / 0.01;
-                if difference.abs() < 1e-3 * largest {
-                    continue;
+            for (which, (slopes, (moved, base))) in [
+                (&slopes, (&moved.0, &base.0)),
+                (&halves, (&moved.1, &base.1)),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                for j in m.saturating_sub(2)..=(m + 1).min(moved.len() - 1) {
+                    let difference = (moved[j] - base[j]) / 0.01;
+                    if difference.abs() < 1e-3 * largest {
+                        continue;
+                    }
+                    assert!(
+                        (slopes[j][m] / difference - 1.0).abs() < 0.2,
+                        "{}: level {m}, net at {j}: {} where {difference}",
+                        ["levels", "middles"][which],
+                        slopes[j][m]
+                    );
                 }
-                assert!(
-                    (slopes[j][m] / difference - 1.0).abs() < 0.2,
-                    "level {m}, net at {j}: {} where {difference}",
-                    slopes[j][m]
-                );
             }
         }
+    }
+
+    /// M93: a thin air's levels stand on a smooth profile, none warm and cold by turns: over
+    /// Earth's datum, each level of its stratosphere and its mesosphere no further from its
+    /// neighbours' mean than the curvature of a profile it shares with them allows, 1 K.
+    #[test]
+    fn a_thin_air_s_levels_do_not_alternate() {
+        let g = graph("Earth");
+        let (column, _) = column_of(&g, g.f64("atmosphere.bond_albedo"));
+        let (levels, x, _, _) = column.radiative_convective(288.0, None, (RC_SETTLED, RC_ROUNDS));
+        let mut worst = (0.0f64, 0);
+        for k in 1..x.len() - 1 {
+            if levels[k] > 1e4 {
+                continue;
+            }
+            // The level against its neighbours' mean at its own place in the logarithm.
+            let (a, b) = (
+                (levels[k - 1] / levels[k]).ln(),
+                (levels[k] / levels[k + 1]).ln(),
+            );
+            let between = (b * x[k - 1] + a * x[k + 1]) / (a + b);
+            let off = x[k] - between;
+            if off.abs() > worst.0.abs() {
+                worst = (off, k);
+            }
+        }
+        // Sign changes of the second difference, level after level, mark an alternation.
+        let mut turns = 0;
+        let curv: Vec<f64> = (1..x.len() - 1)
+            .filter(|&k| levels[k] <= 1e4)
+            .map(|k| x[k + 1] - 2.0 * x[k] + x[k - 1])
+            .collect();
+        for w in curv.windows(3) {
+            if w[0] * w[1] < 0.0 && w[1] * w[2] < 0.0 && w[1].abs() > 0.2 {
+                turns += 1;
+            }
+        }
+        println!("worst {:.2} K at level {}, turns {turns}", worst.0, worst.1);
+        assert!(turns <= 1, "{turns} alternating levels: {x:?}");
     }
 
     /// M65: columns alike share their radiative-convective nodes, found once; a column under
