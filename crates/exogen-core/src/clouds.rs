@@ -267,7 +267,7 @@ pub type Profile = (f64, f64, Vec<f64>, Vec<Vec<f64>>);
 /// ground's temperature and over grounds at each height (F293, M55), without the clouds'
 /// stated law, its vapour held as its year's is (M59); how far its ice brightens toward
 /// ICE_ALBEDO under its star's light (F250); its lapse rate, K/m, its scale height, m, its
-/// tropopause's temperature, its skin's, K; its surface pressure, Pa, gravity, m/s², the air's
+/// skin's temperature, K; its surface pressure, Pa, gravity, m/s², the air's
 /// gas constant and heat capacity, J/kg/K; its water; and the ground under its air (M67), its
 /// land's own albedo, its bedrock's mature colour's, and the share of the light its air's
 /// molecules reflect (F293).
@@ -281,7 +281,9 @@ pub struct Sky {
     pub heights: Heights,
     pub lapse: f64,
     pub scale_height: f64,
-    pub tropopause: f64,
+    /// The temperature its thin air above stands at, its grey skin's (F293), where its
+    /// troposphere ends (M97: `tropopause_on`).
+    pub skin: f64,
     pub pressure: f64,
     pub gravity: f64,
     pub gas_constant: f64,
@@ -294,12 +296,14 @@ pub struct Sky {
     /// What its air's molecules reflect with the sun at heights from the horizon to overhead,
     /// RAYLEIGH_HEIGHTS steps of the height's cosine (M70).
     pub rayleigh_by: std::sync::Arc<Vec<f64>>,
-    /// The air's own profile (M69): its column's adiabat over grounds from the first
-    /// temperature every so many kelvin, its levels' shares of the surface pressure and their
-    /// temperatures over each.
+    /// The air's own profile (M69) over grounds from the first temperature every so many
+    /// kelvin, its levels' shares of the surface pressure and their temperatures over each: its
+    /// column's own (M97), what its convection and its radiation hold, where before M97 its
+    /// convection's adiabat alone, which stood some 1 to 4 K colder from 400 to 200 hPa over
+    /// Earth's tropics than the column's own air and ERA-Interim's.
     pub profile: std::sync::Arc<Profile>,
     /// The share of the surface pressure the tropopause stands at over each of the profile's
-    /// grounds, where its adiabat comes down to its skin (M69).
+    /// grounds (`tropopause_on`, M97).
     pub tropopauses: std::sync::Arc<Vec<f64>>,
     /// Its clear air's column and the grounds' temperatures its tables span, K, from which
     /// its tables are made again over a year's own cell's air (M73).
@@ -354,12 +358,12 @@ impl Sky {
             ));
         let (low, high) = ((t_eq / 3.0).max(5.0), 4.0 * t_eq + 100.0);
         // The air's own profile over grounds of every temperature its clouds may stand over
-        // (M69).
+        // (M69), its column's (M97).
         let (first, step) = (low.max(CLOUD_PROFILE.0), CLOUD_PROFILE.2);
         let count = ((high.min(CLOUD_PROFILE.1) - first) / step).ceil().max(1.0) as usize + 1;
-        let shares = column.adiabat_shares(first).0;
+        let shares = column.own_shares(first).0;
         let temps = (0..count)
-            .map(|i| column.adiabat_shares(first + step * i as f64).1)
+            .map(|i| column.own_shares(first + step * i as f64).1)
             .collect();
         let dry = column.clone().with_vapour_share(VAPOUR_DRY);
         let library = crate::stages::materials::Library::from_graph(graph);
@@ -393,7 +397,7 @@ impl Sky {
             heights: Heights::of(&column, low, high),
             lapse: graph.f64("climate.lapse_rate"),
             scale_height: graph.f64("atmosphere.scale_height"),
-            tropopause: skin,
+            skin,
             pressure,
             gravity,
             gas_constant: GAS_CONSTANT / mean_molecular_mass(composition),
@@ -416,9 +420,11 @@ impl Sky {
 
     /// The sky with the tropopause found over each of its profile's grounds.
     fn with_tropopauses(mut self) -> Self {
-        let (first, step, _, temps) = &*self.profile;
-        let grounds: Vec<f64> = (0..temps.len()).map(|i| first + step * i as f64).collect();
-        let tops = grounds.iter().map(|&t| self.tropopause_search(t)).collect();
+        let (_, _, shares, temps) = &*self.profile;
+        let tops = temps
+            .iter()
+            .map(|row| self.tropopause_on(shares, row, 0.0))
+            .collect();
         self.tropopauses = std::sync::Arc::new(tops);
         self
     }
@@ -433,9 +439,9 @@ impl Sky {
         let dry = column.clone().with_vapour_share(VAPOUR_DRY);
         let (low, high) = self.span;
         let (first, step, _, old) = &*self.profile;
-        let shares = column.adiabat_shares(*first).0;
+        let shares = column.own_shares(*first).0;
         let temps = (0..old.len())
-            .map(|i| column.adiabat_shares(first + step * i as f64).1)
+            .map(|i| column.own_shares(first + step * i as f64).1)
             .collect();
         let mut sky = self.clone();
         sky.clear = std::sync::Arc::new(Outgoing::of(&column, low, high));
@@ -491,21 +497,23 @@ impl Sky {
     }
 
     /// The air's temperature at `ratio` of the surface pressure over air at `air` K at the
-    /// ground: down its lapse rate to its tropopause, and no colder.
+    /// ground: down its own profile to its tropopause, and held there above it (M97).
     pub(crate) fn at(&self, air: f64, ratio: f64) -> f64 {
-        self.adiabat(air, ratio).max(self.tropopause.min(air))
+        let top = self.tropopause_ratio(air);
+        self.own_air(air, ratio.max(top))
     }
 
-    /// The air's adiabat at `ratio` of the surface pressure over air at `air` K at the ground
-    /// (M69): its column's, read between the grounds' temperatures and its levels in the
-    /// pressure's logarithm, held at the ends; down the lapse rate where the profile holds none.
-    fn adiabat(&self, air: f64, ratio: f64) -> f64 {
-        self.adiabat_on(&self.profile, air, ratio)
+    /// The air's own profile at `ratio` of the surface pressure over air at `air` K at the
+    /// ground (M69, M97): its column's, read between the grounds' temperatures and its levels in
+    /// the pressure's logarithm, held at the ends; down the lapse rate where the profile holds
+    /// none.
+    fn own_air(&self, air: f64, ratio: f64) -> f64 {
+        self.own_air_on(&self.profile, air, ratio)
     }
 
     /// `profile`'s air at `ratio` of the surface pressure over air at `air` K at the ground,
-    /// as `adiabat` reads the sky's.
-    fn adiabat_on(&self, profile: &Profile, air: f64, ratio: f64) -> f64 {
+    /// as `own_air` reads the sky's.
+    fn own_air_on(&self, profile: &Profile, air: f64, ratio: f64) -> f64 {
         let (first, step, shares, temps) = profile;
         if temps.is_empty() || shares.len() < 2 {
             let z = -self.scale_height * ratio.max(1e-9).ln();
@@ -528,9 +536,10 @@ impl Sky {
 
     /// The share of the surface pressure the tropopause stands at over air at `air` K.
     fn tropopause_ratio(&self, air: f64) -> f64 {
-        // Where the air's own profile comes down to its tropopause (M69), read between the
-        // profile's grounds in the pressure's logarithm, found anew past them.
-        let (first, step, _, _) = &*self.profile;
+        // Where the air's own profile comes down to its tropopause (M69, M97), read between
+        // the profile's grounds in the pressure's logarithm; past them on the nearest ground's
+        // profile shifted to the air's temperature, as `own_air` reads it there.
+        let (first, step, shares, temps) = &*self.profile;
         let tops = &self.tropopauses;
         let x = (air - first) / step;
         if tops.len() >= 2 && x >= 0.0 && x <= (tops.len() - 1) as f64 {
@@ -539,28 +548,71 @@ impl Sky {
             let (a, b) = (tops[i].max(1e-300).ln(), tops[i + 1].max(1e-300).ln());
             return (a + w * (b - a)).exp();
         }
-        self.tropopause_search(air)
-    }
-
-    /// Where the air's own profile over air at `air` K comes down to its tropopause (M69),
-    /// halved in the pressure's logarithm.
-    fn tropopause_search(&self, air: f64) -> f64 {
-        if air <= self.tropopause {
+        if temps.is_empty() {
             return 1.0;
         }
-        let (mut lo, mut hi) = (1e-6f64.ln(), 0.0f64);
-        if self.adiabat(air, lo.exp()) > self.tropopause {
-            return lo.exp();
+        let i = if x < 0.0 { 0 } else { temps.len() - 1 };
+        self.tropopause_on(shares, &temps[i], air - (first + step * i as f64))
+    }
+
+    /// The share of the surface pressure the tropopause stands at over the air's own profile
+    /// `temps` at the levels `shares`, shifted by `shift` K (M97): where its air first comes
+    /// down to its skin's temperature, read between its levels, the troposphere's top in a grey
+    /// air (F293), the temperature its thin air above stands at; or the lowest level where its
+    /// lapse rate falls under TROPOPAUSE_LAPSE of its dry adiabat's, once its air stands colder
+    /// than its ground's, each layer's lapse read at its middle in the pressure's logarithm
+    /// and the level found between the middles: whichever is the lower; its top where neither
+    /// is found, its ground where its ground is no warmer than its skin. The second where the
+    /// air's own profile stops falling at its convection's rate before it comes down to its
+    /// skin, as over a ground warmer than some 303 K under the Earth-like's air, whose coldest
+    /// stands over its skin; the two meet as the air's skin level rises to where it stops
+    /// falling, so that the tropopause moves by degrees from one to the other.
+    ///
+    /// Before M97 the tropopause stood where its convection's adiabat alone came down to its
+    /// skin. Tried in M97 and not kept: the air's cold point, its coldest, where it never comes
+    /// down to its skin (over 305 K it stands within a layer within a kelvin of isothermal from
+    /// 150 to 70 hPa, its gravest wave 96 m/s where 46 over 300 K); and the lapse alone, which
+    /// over the Earth-like's tropics stands at 156 hPa and 208 K, its gravest wave 51.5 m/s,
+    /// but which carries the overturning cell's coldest air out over its high latitudes
+    /// (`Column::lift_aloft`): over 60 to 70 degrees' 271 K, 200 hPa and 206 K, where
+    /// ERA-Interim's tropopause stands near 300 hPa and its air from 250 to 150 hPa at 219 to
+    /// 221 K, the clouds' tops some 15 K the colder. With the skin there 267 hPa and 214 K;
+    /// over the Earth-like's tropics at 300 K 187 hPa and 214 K, its gravest wave 45.9 m/s
+    /// (Earth's first baroclinic mode 44 to 53, Kiladis et al. 2009; 49 in ERA5).
+    fn tropopause_on(&self, shares: &[f64], temps: &[f64], shift: f64) -> f64 {
+        let n = temps.len().min(shares.len());
+        let t = |k: usize| temps[k] + shift;
+        let skin = self.skin;
+        if n < 3 || t(0) <= skin {
+            return 1.0;
         }
-        for _ in 0..40 {
-            let mid = 0.5 * (lo + hi);
-            if self.adiabat(air, mid.exp()) > self.tropopause {
-                hi = mid;
+        let ln = |k: usize| shares[k].max(1e-300).ln();
+        // Where its air first comes down to its skin.
+        let reached = (1..n).find(|&k| t(k) <= skin).map(|k| {
+            let u = (t(k - 1) - skin) / (t(k - 1) - t(k)).max(1e-12);
+            ln(k - 1) + u.clamp(0.0, 1.0) * (ln(k) - ln(k - 1))
+        });
+        // Each layer's lapse as d ln T / d ln p over the dry adiabat's, R / c_p, at its middle.
+        let kappa = self.gas_constant / self.heat_capacity;
+        let slope = |k: usize| (t(k - 1) / t(k)).ln() / (ln(k - 1) - ln(k)) / kappa;
+        let middle = |k: usize| 0.5 * (ln(k - 1) + ln(k));
+        let least = TROPOPAUSE_LAPSE;
+        let slows = (1..n).find(|&k| t(k) < t(0) && slope(k) < least).map(|k| {
+            if k >= 2 && slope(k - 1) >= least {
+                let (a, b) = (slope(k - 1), slope(k));
+                let u = (a - least) / (a - b).max(1e-12);
+                middle(k - 1) + u.clamp(0.0, 1.0) * (middle(k) - middle(k - 1))
             } else {
-                lo = mid;
+                middle(k)
             }
-        }
-        (0.5 * (lo + hi)).exp()
+        });
+        // The lower of the two: the larger share of the pressure.
+        let found = match (reached, slows) {
+            (Some(a), Some(b)) => a.max(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => ln(n - 1),
+        };
+        found.exp()
     }
 
     /// The share of its saturation over its liquid that air saturated over its ice holds at
@@ -1368,6 +1420,9 @@ mod tests {
             ("the_equatorial_waves_reach_as_earth_s", &|| {
                 the_equatorial_waves_reach_as_earth_s(&sky)
             }),
+            ("the_sky_reads_its_column_s_own_air", &|| {
+                the_sky_reads_its_column_s_own_air(&sky)
+            }),
         ]);
     }
 
@@ -1377,15 +1432,12 @@ mod tests {
     /// m and 15.9 at 500 (Kiladis et al. 2009, their table 1): the free air half way to its
     /// own latitude's by some 15 to 19 degrees and nine tenths of the way by 30. A body spinning
     /// at a sixth of Earth's rate, as TRAPPIST-1e, holds it some two and a half times as far; one
-    /// that does not spin, everywhere. KNOWN (M93): its gravest wave 42 m/s on its
-    /// convection's entraining adiabat.
+    /// that does not spin, everywhere. Its gravest wave read on the column's own air since M97,
+    /// 51.5 m/s, where on its convection's entraining adiabat 42 (M93 to M96).
     fn the_equatorial_waves_reach_as_earth_s(sky: &Sky) {
         let (speed, reach) = (sky.wave_speed(300.0), sky.wave_reach(300.0).to_degrees());
         println!("Earth's gravest wave over 300 K: {speed:.1} m/s, reaching {reach:.1} degrees");
-        // KNOWN (M93): the sky reads its convection's own adiabat, which entrains, some 1 to 5
-        // K under ERA-Interim's tropics aloft where the column's air stands within 2: its
-        // stability the less, its gravest wave 42 m/s; within 44 before.
-        assert!((40.0..62.0).contains(&speed), "{speed}");
+        assert!((44.0..62.0).contains(&speed), "{speed}");
         assert!((12.0..16.5).contains(&reach), "{reach}");
         let held = |deg: f64, reach: f64| held_by_waves(deg.to_radians(), reach.to_radians());
         assert!((held(0.0, reach) - 1.0).abs() < 1e-12);
@@ -1542,6 +1594,121 @@ mod tests {
             let (a, b) = (aloft.eis(t, t), sky.eis(t, t));
             println!("{t} K: its inversion {a:.1} K where {b:.1}");
             assert!(a > b + 1.0, "{t}: {a} {b}");
+        }
+    }
+
+    /// M97: the sky reads its column's own air, what its convection and its radiation hold,
+    /// down to its tropopause, and holds it there above: under its cell's air aloft alike. Over
+    /// the Earth-like's tropics at 300 K its air within 2.5 K of ERA-Interim's annual 0 to 10 N
+    /// from 850 to 200 hPa (the research notes), where its convection's adiabat alone, which it
+    /// read before, stood 1 to 4 K under from 400 to 200 hPa. Its tropopause where its air comes
+    /// down to its skin, or the lowest level where its lapse rate falls under TROPOPAUSE_LAPSE
+    /// of its dry adiabat's, whichever is the lower, every layer under it over its skin and
+    /// falling the faster: over 300 K at its skin between 160 and 200 hPa; over 306 K, whose air
+    /// never comes down to its skin, where its lapse slows; under its cell's air over 60 to 70
+    /// degrees' annual 271.1 K at its skin within 220 to 320 hPa, ERA-Interim's tropopause near
+    /// 300. And it moves by degrees with its ground: from 250 to 310 K, its gravest wave's
+    /// largest step a half kelvin under 2.5 m/s and halved, near enough, a quarter, as no jump
+    /// is.
+    fn the_sky_reads_its_column_s_own_air(sky: &Sky) {
+        let kappa = sky.gas_constant / sky.heat_capacity;
+        for s in [sky.clone(), sky.aloft(299.0)] {
+            for t in [260.0, 284.0, 300.0] {
+                let (shares, own) = s.column.own_shares(t);
+                let top = s.tropopause_ratio(t);
+                let held = s.at(t, top);
+                for (k, &r) in shares.iter().enumerate() {
+                    let read = s.at(t, r);
+                    if r >= top {
+                        assert!((read - own[k]).abs() < 1e-6, "{t} {r}: {read} {}", own[k]);
+                    } else {
+                        assert!((read - held).abs() < 1e-9, "{t} {r}: {read} {held}");
+                    }
+                }
+                // Every layer under the tropopause stands over its skin and falls at least the
+                // share of the dry adiabat's rate, once its air stands colder than its ground's.
+                for k in 1..shares.len() {
+                    let middle = (shares[k - 1] * shares[k]).sqrt();
+                    if middle <= top || own[k] >= own[0] {
+                        continue;
+                    }
+                    assert!(
+                        own[k - 1] >= s.skin - 1e-9,
+                        "{t}: level {} {}",
+                        k - 1,
+                        own[k - 1]
+                    );
+                    let lapse = (own[k - 1] / own[k]).ln() / (shares[k - 1] / shares[k]).ln();
+                    assert!(
+                        lapse / kappa >= TROPOPAUSE_LAPSE - 1e-9,
+                        "{t}: layer {k} at {middle} under {top}: {}",
+                        lapse / kappa
+                    );
+                }
+            }
+        }
+        let x = |hpa: f64| hpa / 1013.25;
+        let era = [
+            (850.0, 290.8),
+            (700.0, 282.9),
+            (500.0, 268.1),
+            (400.0, 257.5),
+            (300.0, 242.1),
+            (250.0, 232.1),
+            (200.0, 220.0),
+        ];
+        let (shares, bare) = sky.column.adiabat_shares(300.0);
+        let read = |r: f64| {
+            let k = shares
+                .partition_point(|&s| s >= r)
+                .clamp(1, shares.len() - 1);
+            let u = ((r / shares[k - 1]).ln() / (shares[k] / shares[k - 1]).ln()).clamp(0.0, 1.0);
+            bare[k - 1] + u * (bare[k] - bare[k - 1])
+        };
+        for (hpa, measured) in era {
+            let own = sky.at(300.0, x(hpa));
+            println!(
+                "{hpa} hPa over 300 K: {own:.1} K, ERA-Interim's {measured}, its convection's adiabat {:.1}",
+                read(x(hpa))
+            );
+            assert!((own - measured).abs() < 2.5, "{hpa}: {own} {measured}");
+        }
+        // Over 300 K where its air comes down to its skin; over 306 K, its coldest over its
+        // skin, where its lapse slows; under its cell's air over 60 to 70 degrees' 271.1 K at
+        // its skin within 220 to 320 hPa, ERA-Interim's tropopause near 300.
+        let top = sky.tropopause_ratio(300.0);
+        let (hpa, temp) = (top * 1013.25, sky.at(300.0, top));
+        println!(
+            "its tropopause over 300 K at {hpa:.1} hPa and {temp:.1} K, its skin {:.1}",
+            sky.skin
+        );
+        assert!((160.0..200.0).contains(&hpa) && (temp - sky.skin).abs() < 1e-6);
+        let top = sky.tropopause_ratio(306.0);
+        let (hpa, temp) = (top * 1013.25, sky.at(306.0, top));
+        println!("over 306 K at {hpa:.1} hPa and {temp:.1} K");
+        assert!((120.0..180.0).contains(&hpa) && temp > sky.skin + 1.0);
+        let aloft = sky.aloft(299.0);
+        let top = aloft.tropopause_ratio(271.1);
+        let (hpa, temp) = (top * 1013.25, aloft.at(271.1, top));
+        println!("under its cell's air over 271.1 K at {hpa:.1} hPa and {temp:.1} K");
+        // Between its tables' grounds, each's skin level read in between.
+        assert!((220.0..320.0).contains(&hpa) && (temp - sky.skin).abs() < 0.2);
+        // Its largest step over grounds every `h` K from 250 to 310 K.
+        let most = |s: &Sky, h: f64| {
+            let n = (60.0 / h).round() as usize;
+            (1..=n)
+                .map(|i| {
+                    let t = 250.0 + h * i as f64;
+                    (s.wave_speed(t) - s.wave_speed(t - h)).abs()
+                })
+                .fold(0.0f64, f64::max)
+        };
+        for s in [sky.clone(), sky.aloft(299.0)] {
+            let (half, quarter) = (most(&s, 0.5), most(&s, 0.25));
+            println!(
+                "its gravest wave's largest step from 250 to 310 K: {half:.2} m/s a half kelvin, {quarter:.2} a quarter"
+            );
+            assert!(half < 2.5 && quarter < 0.6 * half, "{half} {quarter}");
         }
     }
 

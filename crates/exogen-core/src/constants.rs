@@ -2256,9 +2256,14 @@ pub const CLOUD_PASS_SHARE: f64 = 0.5;
 pub const VAPOUR_DRY: f64 = 0.6;
 /// M69: the least and the most of its law's vapour a place's column is read at.
 pub const VAPOUR_SHARES: (f64, f64) = (0.25, 1.6);
-/// M69: the clouds' own profile, their column's adiabat, from the first to the last ground
-/// temperature every so many kelvin.
+/// M69: the clouds' own profile, their column's own air since M97, from the first to the last
+/// ground temperature every so many kelvin.
 pub const CLOUD_PROFILE: (f64, f64, f64) = (100.0, 420.0, 2.0);
+/// M97: the tropopause the lowest level where the air's lapse rate falls under this share of
+/// its dry adiabat's, g / c_p: the World Meteorological Organization's (1957) 2 K/km over
+/// Earth's 9.8, one share for every air. As d ln T / d ln p over R / c_p, which the hydrostatic
+/// balance makes the same share.
+pub const TROPOPAUSE_LAPSE: f64 = 0.2;
 /// M69: an oxygen air's ozone layer in its column: its column OZONE_COLUMN's, spread over the
 /// pressure's logarithm as a Gaussian of the third width about a centre at the first pressure,
 /// Pa, times the oxygen's level to the second power, no deeper than the fourth: WACCM6's layers

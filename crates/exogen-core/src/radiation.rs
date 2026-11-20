@@ -757,6 +757,17 @@ impl Column {
         (levels.iter().map(|&p| p / ground).collect(), temps)
     }
 
+    /// The air's own profile over ground at `t` K (M97): its levels' shares of the surface
+    /// pressure, from the ground up, and the temperatures its own profile gives them, its
+    /// convection's and its radiation's, its air aloft at its cell's stability where it keeps
+    /// one (M73), as `table` reads them.
+    pub fn own_shares(&self, t: f64) -> (Vec<f64>, Vec<f64>) {
+        let levels = self.levels(1.0);
+        let temps = self.profile(t, &levels).0;
+        let ground = levels[0].max(1e-300);
+        (levels.iter().map(|&p| p / ground).collect(), temps)
+    }
+
     /// The ozone above `p` Pa, cm STP (M69): OZONE_LAYER's Gaussian in the pressure's
     /// logarithm about its centre.
     fn ozone_above(&self, p: f64) -> f64 {
