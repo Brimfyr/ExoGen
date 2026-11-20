@@ -2397,7 +2397,8 @@ pub const RC_NEWTON_STALLS: usize = 8;
 /// Venus's does to some 50 km. Venus's 153, Titan's 4.1, Earth's 1.2, Mars's 0.2. In Venus's
 /// air, thick and near its adiabat throughout, its profile solved was no smooth function of its
 /// ground's temperature: from one body to the next along a sweep of its radius its ground
-/// leapt between some 696 and 726 K (the user chose the blend, 2026-11-12).
+/// leapt between some 696 and 726 K (the user chose the blend, 2026-11-12). M94: the thick air's
+/// own radiative zone over its adiabat in place of its skin (`Column::radiative_zone`).
 pub const RC_THICK: (f64, f64) = (10.0, 20.0);
 /// M65: how far over its adiabat, in its share, a level still stands on it and convects: the
 /// adiabat's own slight change with the temperature its levels were mixed at.
@@ -2451,8 +2452,11 @@ pub const SULFURIC_CLOUD_SUNLIGHT: f64 = 6.3e-3;
 /// F293, M65: the sulfuric deck's grey depth in the infrared per kg/m² of the sulfur dioxide:
 /// in a thick air (RC_THICK) well mixed in its mass on F293's profile, in a thinner one spread
 /// evenly in the pressure's logarithm through its deck; set so that Venus's ground stands at its
-/// measured 737 K, as F293 set it, some 95 over its 229 kg/m².
-pub const SULFURIC_CLOUD_DEPTH: f64 = 0.4142;
+/// measured 737 K, as F293 set it, some 95 over its 229 kg/m². M94: set again under the thick
+/// air's radiative zone, its air over its adiabat no longer at its skin's but at the
+/// equilibrium of its sunlight and its infrared, letting out the more: some 330 over its 229
+/// kg/m², a quarter of which left its ground at 624 K and four times at 887.
+pub const SULFURIC_CLOUD_DEPTH: f64 = 1.4375;
 /// F293: the sulfuric clouds' reflection, s per kg/m² of sulfur dioxide, the clouds reflecting
 /// s / (1 + s) of the light over the air below them: set by Venus's measured Bond albedo,
 /// 0.76, over the 0.716 its air's scattering gives: they reflect 0.394.

@@ -872,6 +872,101 @@ impl Column {
             .collect()
     }
 
+    /// A thick air's profile over ground at `t` K through `levels` (M94): up the adiabat, never
+    /// colder than the bulk gas's frost nor its radiative zone (`radiative_zone`), read between
+    /// the datum's levels in the pressure's logarithm, where F293 held it at its skin.
+    fn thick_profile(&self, t: f64, levels: &[f64]) -> Vec<f64> {
+        let datum = self.levels(1.0);
+        let zone = self.radiative_zone(t);
+        let m = datum.len();
+        let at = |p: f64| -> f64 {
+            if p >= datum[0] {
+                return zone[0];
+            }
+            if p <= datum[m - 1] {
+                return zone[m - 1];
+            }
+            let k = datum.iter().position(|&q| q < p).unwrap_or(m - 1).max(1);
+            let w = (p / datum[k - 1]).ln() / (datum[k] / datum[k - 1]).ln();
+            zone[k - 1] + w * (zone[k] - zone[k - 1])
+        };
+        self.adiabat_over(t, levels)
+            .iter()
+            .zip(levels)
+            .map(|(&a, &p)| a.max(self.frost(p)).max(at(p)))
+            .collect()
+    }
+
+    /// The radiative zone of the air over the datum's ground at `t` K, its temperature at each
+    /// of the column's levels, K (M94): the semi-grey radiative equilibrium of its own sunlight
+    /// and its own infrared depths, two streams at the diffusivity D,
+    /// σ T⁴ = (F(0) + D ∫ F dτ - dF/dτ / D) / 2 (after Robinson and Catling 2012, eqs. 18 and 19,
+    /// their channels summed into the sunlight it absorbs layer by layer): τ the grey depth above
+    /// a level its infrared lets through to space, -ln of the share of the light of its
+    /// equilibrium temperature that passes it, over D, on its cold profile (F293); F the net
+    /// infrared flux up through it, what the column lets out, σ T_e⁴, less the sunlight its air
+    /// absorbs above it (`sun_layers`). Where no sunlight is absorbed above, at its top, it is the
+    /// skin's, half of T_e⁴ (SKIN_SHARE); a layer that takes much sunlight for little infrared
+    /// depth stands the warmer, as a deck's upper cloud does. Its ground's convection lifts the
+    /// air under it: the air takes the warmer of the two (`thick_profile`). Found at `t`, whose
+    /// adiabat places the deck its sunlight lights (`deck_span`).
+    fn radiative_zone(&self, t: f64) -> Vec<f64> {
+        let levels = self.levels(1.0);
+        let n = levels.len();
+        let cold = self.cold_profile(t, &levels);
+        let (vapour, humid) = self.vapour_of(&cold, &levels);
+        let column = self.vapour_scale(t, vapour[0]);
+        let (layers, top) =
+            self.optics(&levels, &cold, (&vapour, &humid), column, self.thickness());
+        let te = (self.skin / SKIN_SHARE.powf(0.25)).max(1.0);
+        let spectrum = spectrum();
+        let weights: Vec<f64> = spectrum
+            .nu
+            .iter()
+            .zip(&spectrum.width)
+            .map(|(&nu, &w)| planck(nu, te) * w)
+            .collect();
+        let light: f64 = weights.iter().sum::<f64>().max(1e-300);
+        // The grey depth above each level, from the top down.
+        let mut above: Vec<f64> = (0..weights.len())
+            .map(|i| Self::top_depth(spectrum, i, &top))
+            .collect();
+        let mut tau = vec![0.0; n];
+        for k in (0..n).rev() {
+            if k + 1 < n {
+                for (i, a) in above.iter_mut().enumerate() {
+                    *a += layers[k].depth(spectrum, i);
+                }
+            }
+            let through: f64 = weights
+                .iter()
+                .zip(&above)
+                .map(|(w, a)| w * (-DIFFUSIVITY * a).exp())
+                .sum();
+            tau[k] = -(through / light).max(1e-300).ln() / DIFFUSIVITY;
+        }
+        // The net infrared flux up through each level: what the column lets out less the
+        // sunlight its air absorbs above it.
+        let (sun, _) = self.sun_layers(t, &cold);
+        let out = SIGMA_SB * te.powi(4);
+        let mut flux = vec![out; n];
+        for k in (0..n - 1).rev() {
+            flux[k] = flux[k + 1] - sun[k];
+        }
+        let mut integral = vec![0.0; n];
+        for k in (0..n - 1).rev() {
+            integral[k] = integral[k + 1] + 0.5 * (flux[k] + flux[k + 1]) * (tau[k] - tau[k + 1]);
+        }
+        (0..n)
+            .map(|k| {
+                let (a, b) = (k.saturating_sub(1), (k + 1).min(n - 1));
+                let slope = (flux[a] - flux[b]) / (tau[a] - tau[b]).max(1e-12);
+                let s4 = 0.5 * (flux[n - 1] + DIFFUSIVITY * integral[k] - slope / DIFFUSIVITY);
+                (s4.max(0.0) / SIGMA_SB).powf(0.25)
+            })
+            .collect()
+    }
+
     /// The air's temperatures at `levels` over ground at `t` K, the first level the ground's
     /// (M65): the warmer of the adiabat from the ground and the radiative-convective profile
     /// over the datum read between the nodes of its ground's temperature, never colder than
@@ -890,7 +985,7 @@ impl Column {
     fn own_temps(&self, t: f64, levels: &[f64]) -> Vec<f64> {
         let thick = self.thickness();
         if thick >= 1.0 {
-            let mut temps = self.cold_profile(t, levels);
+            let mut temps = self.thick_profile(t, levels);
             temps[0] = t;
             return temps;
         }
@@ -917,7 +1012,7 @@ impl Column {
             .map(|(&a, &p)| a.max(at(p)).max(self.frost(p)))
             .collect();
         if thick > 0.0 {
-            for (x, f) in temps.iter_mut().zip(self.cold_profile(t, levels)) {
+            for (x, f) in temps.iter_mut().zip(self.thick_profile(t, levels)) {
                 *x += thick * (f - *x);
             }
         }
@@ -4087,6 +4182,85 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Venus's column, its sunlight its climate's, and the light it absorbs, W/m².
+    fn venus_column(f: f64) -> (Column, f64) {
+        let graph = graph("Venus");
+        let eb = crate::climate::EnergyBalance::from_graph(&graph);
+        let (mut column, absorbed) = column_of(&graph, eb.albedo);
+        column.skin *= f.powf(0.25);
+        let column = column.with_sunlight(Sunlight {
+            incident: f * graph.f64("orbit.insolation") / 4.0,
+            absorbed: f * absorbed,
+            haze: eb.haze,
+            methane: eb.methane,
+        });
+        (column, f * absorbed)
+    }
+
+    /// M94: a thick air stands in its own radiative zone over its adiabat. Venus's air over its
+    /// 737 K ground, read at the pressures of Pioneer Venus's probes (the Large probe at 22.1 and
+    /// 10.7 kPa, 268.4 and 246.9 K; the Day probe at 2.9 kPa and 405 Pa, 229.0 and 200.4 K; the
+    /// research notes), within 25 K of each, where F293's at its skin stood 51 to 54 K under the
+    /// first two and 36 under the third; the zone at the column's top its skin's within a
+    /// kelvin, and under the adiabat in its deep air.
+    #[test]
+    fn a_thick_air_stands_in_its_own_radiative_zone() {
+        let (column, _) = venus_column(1.0);
+        assert!(column.thickness() >= 1.0);
+        let levels = column.levels(1.0);
+        let (temps, _, _) = column.profile(737.0, &levels);
+        let read = |p: f64| -> f64 {
+            let k = levels.iter().position(|&q| q < p).unwrap().max(1);
+            let w = (p / levels[k - 1]).ln() / (levels[k] / levels[k - 1]).ln();
+            temps[k - 1] + w * (temps[k] - temps[k - 1])
+        };
+        for (p, measured) in [
+            (22_120.0, 268.4),
+            (10_710.0, 246.9),
+            (2_910.0, 229.0),
+            (405.0, 200.4),
+        ] {
+            let t = read(p);
+            println!("{p} Pa: {t:.1} K (Pioneer Venus {measured})");
+            assert!(
+                (t - measured).abs() < 25.0,
+                "{p} Pa: {t} against {measured}"
+            );
+        }
+        let zone = column.radiative_zone(737.0);
+        let top = zone[zone.len() - 1];
+        assert!((top - column.skin).abs() < 1.0, "{top} {}", column.skin);
+        let adiabat = column.adiabat_over(737.0, &levels);
+        assert!(zone[5] < adiabat[5] - 100.0, "{} {}", zone[5], adiabat[5]);
+    }
+
+    /// M94: a thick air's ground follows its sunlight smoothly, no ground leaping between
+    /// equilibria (M65's sweep found Venus's ground leaping between 696 and 726 K along its
+    /// radius under its own radiative-convective profile): Venus's under 0.7 to 1.3 of its
+    /// sunlight rising at every step, by no more than 12 K a tenth of it; its radiative zone alone
+    /// letting out less than it absorbs, so that a ground balances it.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn a_thick_air_s_ground_follows_its_sunlight() {
+        let mut last: Option<f64> = None;
+        for f in [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3] {
+            let (column, absorbed) = venus_column(f);
+            let ground = column.surface_temperature(absorbed);
+            let zone = column.olr(2.0 * column.skin);
+            println!(
+                "{f}: ground {ground:.1} K, its zone lets out {zone:.1} of {absorbed:.1} W/m²"
+            );
+            assert!(zone < absorbed, "{f}: {zone} {absorbed}");
+            if let Some(before) = last {
+                assert!(
+                    ground > before && ground < before + 12.0,
+                    "{f}: {before} {ground}"
+                );
+            }
+            last = Some(ground);
         }
     }
 
