@@ -931,7 +931,7 @@ Its items run in the order they stand, each reading those before it.
 - The column's profile exported (the user, 2026-11-19: the column's work before anything else): tables by height in the sidecar, the body's mean and its warmest and coldest tenths (section 4.13). Done: F404.
 - Earth's air aloft traced (the user, 2026-11-20: the column's remaining parts in turn): its convection lifted its surface air undilute and now entrains (Romps 2016); each level balanced over its own halves of the layers about it, where the stratosphere's levels alternated undamped. Done: F405, F406.
 - A thick air's own profile: over its adiabat its own radiative zone, the semi-grey equilibrium of its own sunlight and infrared depths, where Venus's stood at F293's skin; its deck's heating with it (after Robinson and Catling 2012). Done: F407.
-- The column's remaining part: the column with no ground assumed, its base an interior's heat at any depth and any species of the inventory condensing along it (for Phase 6G).
+- The column with no ground assumed (for Phase 6G): its base taking up an interior's heat at any depth, a ground or the deep air on its adiabat; every species of its air but its bulk gas condensing along its adiabat as water does. Done: F408. A giant's hydrogen opacity and envelope wait on 6G.
 - Every other condensable's clouds, in their own milestone after the thick air's own profile: each deck where it saturates along the air's own profile, Venus's sulfuric deck (mixed in its thick air's mass since M65), Mars's water-ice and carbon dioxide clouds, Titan's methane clouds.
 
 **Open:**

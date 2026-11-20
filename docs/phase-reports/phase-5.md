@@ -1430,6 +1430,19 @@ How it went:
 - **The checks.** Fast: `a_thick_air_stands_in_its_own_radiative_zone` (Venus's air at the probes' pressures within 25 K, the zone's top at the skin, under the adiabat in its deep air). Whole-body: `a_thick_air_s_ground_follows_its_sunlight` (its ground rising at every tenth of its sunlight by under 12 K, its zone letting out less than it absorbs).
 - **The invariants.** Three bugs planted, each caught by both checks: the thick air back at its skin (217.0 K at 22 kPa, its ground 805 K under 0.7 of its sunlight); its zone without its sunlight; its zone without the sunlight it takes for each depth (240.2 K at 22 kPa).
 
+## The ninety-fifth milestone: the column with no ground assumed
+
+- **F408.** The column with no ground assumed; every condensable along its adiabat.
+
+How it went:
+
+- **The state found.** The column stood on a ground at its surface pressure, its base's temperature where it let out what it absorbed; only water gave its heat along its adiabat. Phase 6G's deep airs want a base anywhere in the air with the interior's heat coming up through it, and their ammonia and water decks condensing along their adiabats (section 4.16; the user's widened scope, 2026-11-10: "the column built with no ground assumed" now, where cheap).
+- **The interior's heat.** `Column::with_interior` takes the heat its base takes up from beneath: the column lets it out over what it absorbs, its skin and radiative zone (F407) warmed by it; its base a ground or the deep air on its adiabat, whatever depth it is set at. A ten-bar nitrogen and methane air with no sunlight and 5 W/m² from beneath balances at 137.9 K, letting out 5.000 W/m², its zone's top at the interior's skin, 81.49 K; heat from beneath and sunlight absorbed balance alike, to a millionth of a kelvin. Today's presets take none through it: their climate adds the body's heat flow (M2), and a giant's hydrogen opacity waits on 6G.
+- **Every condensable.** Each species of the air but its bulk gas (its frost holds the air, F239) and its water (its law's vapour, F235) gives its heat along the adiabat as water does, once the lifted parcel holds more of it than saturates, its vapour over 1 + a (F406). Titan's methane saturates at 108 kPa and 85.9 K over a 93.7 K ground; its lapse above it 0.507 of the dry one (Huygens measured 0.5 to 0.9 K/km from 5 to 30 km, the dry adiabat's 1.3). Earth's carbon dioxide never saturates in its troposphere.
+- **What changes.** Titan's derived mean 97.258 K where 97.295; its render's 0.015 K the colder, its evaporation 10.72 kg/m² a year where 10.84, its tables' shape as before: its troposphere stands on its radiative-convective profile, warmer than either adiabat. The other presets as before.
+- **The checks.** Fast: `a_column_without_a_ground_lets_out_its_interior_s_heat`; `every_condensable_gives_its_heat_along_the_adiabat`.
+- **The invariants.** Three bugs planted, each caught: the interior's heat left out of the balance (the base letting out 2.14 W/m² where 5); the interior not warming the skin; the condensables' saturation never reached.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

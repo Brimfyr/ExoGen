@@ -509,6 +509,14 @@ pub struct Column {
     deck: (f64, f64, f64),
     /// The sunlight it absorbs (M65).
     sunlight: Sunlight,
+    /// The heat its base takes up from beneath it, W/m² (M95): the interior's, which the
+    /// column lets out over what it absorbs, whatever stands at its base, a ground or the deep
+    /// air.
+    interior: f64,
+    /// The species of its air that condense along its adiabat but its bulk gas and its water
+    /// (M95): each with its mass's share over the rest of the air's, what a parcel lifted from
+    /// its base holds of it.
+    condensables: Vec<(&'static Volatile, f64)>,
 }
 
 impl Column {
@@ -544,6 +552,18 @@ impl Column {
             .map(|(k, p)| (k, share(&p.gases.0) * share(&p.gases.1)))
             .filter(|&(_, x)| x > 0.0)
             .collect();
+        // Its condensing species (M95): each of its gases a volatile but its bulk gas, whose
+        // frost holds the air, and its water, whose vapour its law gives.
+        let condensables = composition
+            .keys()
+            .filter_map(|s| volatile(s).filter(|v| v.name != "H2O"))
+            .filter(|v| bulk.is_none_or(|(b, _)| b.name != v.name))
+            .map(|v| {
+                let q = mass(v.name);
+                (v, q / (1.0 - q).max(1e-12))
+            })
+            .filter(|&(_, r)| r > 0.0)
+            .collect();
         Self {
             pressure,
             gravity,
@@ -573,7 +593,19 @@ impl Column {
             haze_ir: 0.0,
             deck,
             sunlight: Sunlight::default(),
+            interior: 0.0,
+            condensables,
         }
+    }
+
+    /// The column with its base taking up `flux` W/m² of its interior's heat (M95): it lets
+    /// out that over what it absorbs, its skin and its radiative zone warmed by it, at whatever
+    /// depth its base stands, a ground or the deep air on its adiabat (section 4.16).
+    pub fn with_interior(mut self, flux: f64) -> Self {
+        let flux = flux.max(0.0);
+        self.skin = (self.skin.powi(4) + SKIN_SHARE * flux / SIGMA_SB).powf(0.25);
+        self.interior = flux;
+        self
     }
 
     /// The column with its vapour no more than the vapour law's column at `most` K, its
@@ -636,41 +668,59 @@ impl Column {
     /// the column holds water by its saturated vapour's latent heat,
     /// (1 + L r / (R T)) / (1 + L² r eps / (c_p R T²)), r its mixing ratio over
     /// 1 + CONVECTION_ENTRAINMENT, the plume's that mixes in its surroundings (M93); its heat
-    /// capacity its temperature's (M65).
+    /// capacity its temperature's (M65). And every other species of its air that condenses
+    /// along it alike (M95), each once the parcel lifted from its base holds more of it than
+    /// saturates, sum L r / (R T) over them above and sum L² r / (c_p R_i T²) below, R_i the
+    /// species' own gas constant: Titan's methane over its condensation level; none that its air
+    /// never saturates in, Earth's carbon dioxide.
     fn lapse(&self, t: f64, p: f64, parcel: f64) -> f64 {
         let heat = self.heat_at(t);
         let dry = self.gas_constant / heat;
-        let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) else {
-            return dry;
-        };
-        let e = vapour_pressure(water, t.min(self.vapour_most)).min(0.5 * p);
-        // Its mixing ratio saturated, no more than the water the air can hold all of makes
-        // (M65): Venus's air, far from saturated, rises on its dry adiabat.
-        let held = self.water * 1_000.0 * self.gravity / self.pressure.max(1e-300);
-        let r = (self.epsilon * e / (p - e)).min(held);
-        // Under its condensation level the air its convection lifts is not yet saturated, and
-        // rises on the dry adiabat (M69): its saturated mixing ratio there more than the air
-        // holds, read without the half of the pressure the vapour is held to (a steam air's
-        // surface air is saturated).
-        let full = vapour_pressure(water, t.min(self.vapour_most));
-        let saturated = if full < p {
-            (self.epsilon * full / (p - full)).min(held)
-        } else {
-            held
-        };
-        if saturated > parcel * (1.0 + 1e-9) {
-            return dry;
-        }
-        let l = if t >= water.t_triple {
-            water.l_vap
-        } else {
-            water.l_sub
-        };
-        // The zero-buoyancy plume's (M93): its saturated vapour's heat as though it held
-        // 1 / (1 + a) of it, its condensation level the undilute parcel's.
-        let r = r / (1.0 + CONVECTION_ENTRAINMENT);
         let rt = self.gas_constant * t;
-        dry * (1.0 + l * r / rt) / (1.0 + l * l * r * self.epsilon / (heat * rt * t))
+        let entrained = 1.0 + CONVECTION_ENTRAINMENT;
+        // Each condensing species' heat over the rising air's, and its vapour's on the lapse.
+        let (mut above, mut below) = (0.0, 0.0);
+        if let Some(water) = volatile("H2O").filter(|_| self.water > 0.0) {
+            let e = vapour_pressure(water, t.min(self.vapour_most)).min(0.5 * p);
+            // Its mixing ratio saturated, no more than the water the air can hold all of makes
+            // (M65): Venus's air, far from saturated, rises on its dry adiabat.
+            let held = self.water * 1_000.0 * self.gravity / self.pressure.max(1e-300);
+            let r = (self.epsilon * e / (p - e)).min(held);
+            // Under its condensation level the air its convection lifts is not yet saturated,
+            // and rises on the dry adiabat (M69): its saturated mixing ratio there more than the
+            // air holds, read without the half of the pressure the vapour is held to (a steam
+            // air's surface air is saturated).
+            let full = vapour_pressure(water, t.min(self.vapour_most));
+            let saturated = if full < p {
+                (self.epsilon * full / (p - full)).min(held)
+            } else {
+                held
+            };
+            if saturated <= parcel * (1.0 + 1e-9) {
+                let l = if t >= water.t_triple {
+                    water.l_vap
+                } else {
+                    water.l_sub
+                };
+                // The zero-buoyancy plume's (M93): its saturated vapour's heat as though it held
+                // 1 / (1 + a) of it, its condensation level the undilute parcel's.
+                let r = r / entrained;
+                above += l * r / rt;
+                below += l * l * r * self.epsilon / (heat * rt * t);
+            }
+        }
+        for &(v, held) in &self.condensables {
+            let e = vapour_pressure(v, t).min(0.5 * p);
+            let r = self.gas_constant / v.r_specific * e / (p - e);
+            if r > held * (1.0 + 1e-9) {
+                continue;
+            }
+            let l = if t >= v.t_triple { v.l_vap } else { v.l_sub };
+            let r = r / entrained;
+            above += l * r / rt;
+            below += l * l * r / (heat * v.r_specific * t * t);
+        }
+        dry * (1.0 + above) / (1.0 + below)
     }
 
     /// The water vapour's mixing ratio of the air a column's convection lifts from its ground at
@@ -1179,10 +1229,14 @@ impl Column {
             self.sunlight.absorbed,
             self.sunlight.haze,
             self.sunlight.methane,
+            self.interior,
         ]
         .iter()
         .map(|v| v.to_bits())
         .collect();
+        for &(v, held) in &self.condensables {
+            key.extend([v as *const Volatile as usize as u64, held.to_bits()]);
+        }
         match self.bulk {
             Some((v, x)) => key.extend([v as *const Volatile as usize as u64, x.to_bits()]),
             None => key.push(u64::MAX),
@@ -2204,11 +2258,13 @@ impl Column {
         }
     }
 
-    /// The ground's temperature at which the column lets out `absorbed` W/m², K: never below
-    /// the frost point of its bulk gas at the surface, where that gas's frost holds it.
+    /// The ground's temperature at which the column lets out `absorbed` W/m² and its
+    /// interior's heat (M95), K: never below the frost point of its bulk gas at the surface,
+    /// where that gas's frost holds it. With no ground, its base's: the deep air's at the depth
+    /// its base stands at, on its adiabat.
     pub fn surface_temperature(&self, absorbed: f64) -> f64 {
         let floor = self.frost(self.pressure);
-        balance(|t| self.olr(t), absorbed).max(floor)
+        balance(|t| self.olr(t), absorbed + self.interior).max(floor)
     }
 }
 
@@ -4198,6 +4254,121 @@ mod tests {
             methane: eb.methane,
         });
         (column, f * absorbed)
+    }
+
+    /// M95: a column with no ground, its base ten bars down a nitrogen and methane air under a
+    /// gravity of 10 m/s² with no sunlight, its interior's 5 W/m² its only heat, lets out that
+    /// heat over its base's temperature, its radiative zone's top at the interior's skin,
+    /// (SKIN_SHARE F / sigma)^(1/4); twice the heat warms its base. And an interior's heat
+    /// stands for that much more sunlight absorbed: a column taking 3 W/m² from beneath and 5
+    /// from its sunlight balances where the same column absorbing 8 does.
+    #[test]
+    fn a_column_without_a_ground_lets_out_its_interior_s_heat() {
+        let composition: BTreeMap<String, f64> =
+            [("N2".to_string(), 0.95), ("CH4".to_string(), 0.05)]
+                .into_iter()
+                .collect();
+        let deep = |f: f64| Column::new(&composition, 1e6, 10.0, 0.0, 0.0).with_interior(f);
+        let column = deep(5.0);
+        let base = column.surface_temperature(0.0);
+        let olr = column.olr(base);
+        let skin = (SKIN_SHARE * 5.0 / SIGMA_SB).powf(0.25);
+        let zone = column.radiative_zone(base);
+        println!(
+            "its base {base:.2} K lets out {olr:.3} W/m²; its zone's top {:.2} K, its skin {skin:.2}; thickness {:.2}",
+            zone[zone.len() - 1],
+            column.thickness()
+        );
+        assert!((olr - 5.0).abs() < 0.05, "{olr}");
+        assert!((zone[zone.len() - 1] - skin).abs() < 1.0);
+        let warmer = deep(10.0).surface_temperature(0.0);
+        assert!(warmer > base + 1.0, "{warmer} {base}");
+        let skin = |a: f64| (SKIN_SHARE * a / SIGMA_SB).powf(0.25);
+        let sunlit = |a: f64, f: f64| {
+            Column::new(&composition, 1e5, 10.0, 0.0, skin(a))
+                .with_interior(f)
+                .with_sunlight(Sunlight {
+                    incident: 4.0 * a,
+                    absorbed: a,
+                    haze: 0.0,
+                    methane: 0.0,
+                })
+        };
+        let (heated, absorbing) = (sunlit(5.0, 3.0).surface_temperature(5.0), sunlit(5.0, 0.0));
+        let mut absorbing = absorbing;
+        absorbing.skin = skin(8.0);
+        let absorbing = absorbing.surface_temperature(8.0);
+        println!("heated from beneath {heated:.3} K, absorbing it {absorbing:.3}");
+        assert!((heated - absorbing).abs() < 1e-6, "{heated} {absorbing}");
+    }
+
+    /// M95: every species of an air that condenses along its adiabat gives its heat there, as
+    /// water does. Titan's column lifts its air dry up to where its methane saturates and on
+    /// methane's moist adiabat above it, the warmer, its lapse there some half the dry one; the
+    /// first level it parts from the dry one at where methane's saturated mixing ratio first
+    /// falls under what the air holds of it. Earth's carbon dioxide never saturates in its
+    /// troposphere: its adiabat the same without it down to 150 K.
+    #[test]
+    fn every_condensable_gives_its_heat_along_the_adiabat() {
+        let g = graph("Titan");
+        let (column, _) = column_of(&g, 0.265);
+        let mut dry = column.clone();
+        dry.condensables.clear();
+        let levels = column.levels(1.0);
+        let t = 93.7;
+        let (moist, plain) = (
+            column.adiabat_over(t, &levels),
+            dry.adiabat_over(t, &levels),
+        );
+        let parted = (0..levels.len())
+            .find(|&k| moist[k] > plain[k] + 1e-9)
+            .expect("its methane condenses");
+        let (methane, held) = column.condensables[0];
+        assert_eq!(methane.name, "CH4");
+        // Methane's saturated mixing ratio along the dry adiabat: the air saturates between
+        // the last level the two share and the first they part at, the step's midpoint the
+        // first whose heat the methane gives.
+        let saturated = |k: usize| {
+            let e = vapour_pressure(methane, plain[k]).min(0.5 * levels[k]);
+            column.gas_constant / methane.r_specific * e / (levels[k] - e)
+        };
+        assert!(
+            saturated(parted - 1) > held && saturated(parted) <= held,
+            "{parted}: {} {} {held}",
+            saturated(parted - 1),
+            saturated(parted)
+        );
+        let k = parted + 2;
+        let (wet, bare) = (
+            column.lapse(moist[k], levels[k], 0.0),
+            dry.lapse(moist[k], levels[k], 0.0),
+        );
+        println!(
+            "methane condenses at {:.0} Pa, {:.1} K; its lapse over it {:.3} of the dry one",
+            levels[parted - 1],
+            moist[parted - 1],
+            wet / bare
+        );
+        assert!((0.3..0.8).contains(&(wet / bare)), "{}", wet / bare);
+        let third = levels.iter().position(|&q| q < levels[0] / 3.0).unwrap();
+        println!(
+            "at a third of its base's pressure {:.1} K where dry {:.1}",
+            moist[third], plain[third]
+        );
+        assert!(moist[third] > plain[third] + 5.0);
+        let earth = graph("Earth");
+        let (column, _) = column_of(&earth, 0.3);
+        assert!(column.condensables.iter().any(|(v, _)| v.name == "CO2"));
+        let mut bare = column.clone();
+        bare.condensables.clear();
+        let levels = column.levels(1.0);
+        let (with, without) = (
+            column.adiabat_over(288.0, &levels),
+            bare.adiabat_over(288.0, &levels),
+        );
+        for (a, b) in with.iter().zip(&without).filter(|(_, b)| **b > 150.0) {
+            assert_eq!(a, b);
+        }
     }
 
     /// M94: a thick air stands in its own radiative zone over its adiabat. Venus's air over its
