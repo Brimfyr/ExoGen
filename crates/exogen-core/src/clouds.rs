@@ -1433,7 +1433,7 @@ mod tests {
     /// own latitude's by some 15 to 19 degrees and nine tenths of the way by 30. A body spinning
     /// at a sixth of Earth's rate, as TRAPPIST-1e, holds it some two and a half times as far; one
     /// that does not spin, everywhere. Its gravest wave read on the column's own air since M97,
-    /// 51.5 m/s, where on its convection's entraining adiabat 42 (M93 to M96).
+    /// 45.9 m/s, where on its convection's entraining adiabat 42 (M93 to M96).
     fn the_equatorial_waves_reach_as_earth_s(sky: &Sky) {
         let (speed, reach) = (sky.wave_speed(300.0), sky.wave_reach(300.0).to_degrees());
         println!("Earth's gravest wave over 300 K: {speed:.1} m/s, reaching {reach:.1} degrees");
