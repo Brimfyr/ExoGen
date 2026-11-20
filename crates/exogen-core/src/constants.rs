@@ -4830,6 +4830,17 @@ pub const ICY_IMPACTOR_END_SLOPES: (f64, f64) = (2.7, 2.5);
 pub const CRATER_PI_SCALING: (f64, f64) = (1.1, 0.55);
 pub const TARGET_STRENGTH_ICE: f64 = 3.5e7;
 pub const TARGET_STRENGTH_ROCK: f64 = 7.6e6;
+/// F412: a liquid standing over the ground keeps its smaller impactors from its floor. The
+/// crater its floor takes is the one the ground would take dry times 1 - 0.14 H / L, H the
+/// liquid's depth and L the impactor's diameter, and none where that is no longer positive
+/// (Davison and Collins 2007, their equation 3: a fit, R² 0.92, to their iSALE models of stony
+/// impactors of 2680 kg/m³ striking crystalline crust under water at 15 km/s, the simple
+/// craters and the complex ones to H/L of 3 or 4; past some 8 no trace on the floor, their
+/// deep-water regime). The water slows the impactor by its drag, which their equation 2 writes
+/// as the liquid's density over the impactor's: H/L read at that ratio over their water's over
+/// their impactor's, LIQUID_SCREEN_REFERENCE.
+pub const LIQUID_SCREEN: f64 = 0.14;
+pub const LIQUID_SCREEN_REFERENCE: f64 = 1_000.0 / 2_680.0;
 /// A moon whose crater record starts after an impact it could not hold is struck at once by
 /// that impact's debris (F136): fragments in orbit about the planet, striking at
 /// DEBRIS_ECCENTRICITY times the moon's orbital speed, their numbers falling as cumulative

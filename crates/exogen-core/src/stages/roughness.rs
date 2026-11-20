@@ -25,7 +25,9 @@ use crate::stages::impacts::CraterInputs;
 /// taking it (F60), across a renewed terrain's edge and halo: the unresolved craters
 /// were taken there in the same measure as the resolved ones. `buried`, where a mantle
 /// lies (F74), is the time before which each cell's unresolved craters lie buried under
-/// it: only those dug since roughen its surface. Returns each cell's share of saturation
+/// it: only those dug since roughen its surface. `screened`, where a liquid has stood
+/// (F412), gives the craters per km² at or above `d_min` its liquid kept from a cell's floor
+/// since a time: those are not among its craters. Returns each cell's share of saturation
 /// at the anchor scale, how rough its unresolved relief is against a saturated surface's.
 #[allow(clippy::too_many_arguments)]
 pub fn apply(
@@ -37,6 +39,7 @@ pub fn apply(
     present: f64,
     keep: Option<&[f32]>,
     buried: Option<&[f32]>,
+    screened: Option<&(dyn Fn(usize, f64) -> f64 + Sync)>,
 ) -> Vec<f32> {
     let grid = layers.grid;
     let depth = dimensions(d_min, &inputs.scaling).depth;
@@ -59,6 +62,13 @@ pub fn apply(
     let table: Vec<f64> = (0..=bins)
         .map(|i| share_at(present * i as f64 / bins as f64).sqrt())
         .collect();
+    // Where a liquid kept some off, the share from what the bombardment made less those.
+    let screened_share = |since: f64, off: f64| -> f64 {
+        let n_prod = inputs
+            .bombardment
+            .density_above(d_km, since.min(present), present);
+        (survivors((n_prod - off).max(0.0), n_eq) / n_eq).sqrt()
+    };
     // The field: octaves from the anchor scale down to two cells, each 2^-H as strong.
     let top_frequency = body_radius / d_min;
     let octaves = (d_min / (2.0 * cell)).log2().ceil().max(1.0) as u32;
@@ -82,10 +92,16 @@ pub fn apply(
         .into_par_iter()
         .map(|k| {
             let since = (ages[k] as f64).max(buried.map_or(0.0, |b| b[k] as f64));
-            let x = since.clamp(0.0, present) / present * bins as f64;
-            let i = (x.floor() as usize).min(bins - 1);
-            let f = x - i as f64;
-            (table[i] + (table[i + 1] - table[i]) * f) as f32 * keep.map_or(1.0, |v| v[k])
+            let off = screened.map_or(0.0, |s| s(k, since));
+            let share = if off > 0.0 && n_eq > 0.0 {
+                screened_share(since, off)
+            } else {
+                let x = since.clamp(0.0, present) / present * bins as f64;
+                let i = (x.floor() as usize).min(bins - 1);
+                let f = x - i as f64;
+                table[i] + (table[i + 1] - table[i]) * f
+            };
+            share as f32 * keep.map_or(1.0, |v| v[k])
         })
         .collect();
     let passes = (d_min / cell).powi(2).round().max(1.0) as usize;
@@ -105,6 +121,92 @@ pub fn apply(
 mod tests {
     use super::*;
     use crate::grid::CubeSphere;
+
+    /// F412: where a liquid kept all its unresolved craters off a floor, the floor stays as
+    /// smooth as a renewed one; where it kept none, as rough as the same age's dry ground.
+    #[test]
+    fn a_floor_its_liquid_kept_its_craters_off_stays_smooth() {
+        let (g, _) = crate::presets::preset("Moon").unwrap().to_graph();
+        let inputs = CraterInputs::from_graph(&g);
+        let grid = CubeSphere::new(16);
+        let body_radius = g.f64("body.radius");
+        let cell = grid.delta() * body_radius;
+        let present = g.f64("body.age");
+        let d_min = 4.0 * cell;
+        let n = grid.cell_count();
+        let fresh = || {
+            let mut layers = LayerSet::new(grid);
+            for a in layers.surface_age.as_mut_slice() {
+                *a = 1.0;
+            }
+            layers
+        };
+        let (mut dry, mut wet) = (fresh(), fresh());
+        apply(
+            &mut dry,
+            body_radius,
+            cell,
+            d_min,
+            &inputs,
+            present,
+            None,
+            None,
+            None,
+        );
+        // Half the cells under a liquid that kept every crater off since the surface formed.
+        let all = |k: usize, since: f64| -> f64 {
+            if k < n / 2 {
+                inputs
+                    .bombardment
+                    .density_above(d_min / 1e3, since, present)
+            } else {
+                0.0
+            }
+        };
+        let shares = apply(
+            &mut wet,
+            body_radius,
+            cell,
+            d_min,
+            &inputs,
+            present,
+            None,
+            None,
+            Some(&all),
+        );
+        // Each half away from the face edges where it meets the other.
+        let interior = |k: usize| {
+            let c = grid.cell(k);
+            (4..12u32).contains(&c.i) && (4..12u32).contains(&c.j)
+        };
+        let rms = |l: &LayerSet, floor: bool| -> f64 {
+            let h = l.bedrock.as_slice();
+            let v: Vec<f64> = (0..n)
+                .filter(|&k| (k < n / 2) == floor && interior(k))
+                .map(|k| (h[k] as f64).powi(2))
+                .collect();
+            (v.iter().sum::<f64>() / v.len().max(1) as f64).sqrt()
+        };
+        let (floor, beside) = (rms(&wet, true), rms(&wet, false));
+        let (dry_floor, dry_beside) = (rms(&dry, true), rms(&dry, false));
+        println!(
+            "rms: dry {dry_floor:.1} and {dry_beside:.1} m; the floor {floor:.2} m beside {beside:.1}"
+        );
+        assert!(dry_floor > 0.0);
+        let mean_share = |floor: bool| -> f64 {
+            let v: Vec<f64> = (0..n)
+                .filter(|&k| (k < n / 2) == floor && interior(k))
+                .map(|k| shares[k] as f64)
+                .collect();
+            v.iter().sum::<f64>() / v.len().max(1) as f64
+        };
+        assert!(mean_share(true) < 0.05 * mean_share(false));
+        assert!(floor < 0.05 * dry_floor, "{floor} against {dry_floor}");
+        assert!(
+            (beside / dry_beside - 1.0).abs() < 0.05,
+            "{beside} {dry_beside}"
+        );
+    }
 
     /// An old surface takes the roughness of its unresolved craters; a renewed one
     /// stays smooth.
@@ -132,6 +234,7 @@ mod tests {
             4.0 * cell,
             &inputs,
             present,
+            None,
             None,
             None,
         );

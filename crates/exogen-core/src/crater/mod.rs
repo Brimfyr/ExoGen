@@ -15,7 +15,7 @@ pub use morphology::{
 };
 pub use production::{
     Bombardment, BombardmentParams, CraterSample, Early, FluxHistory, ImpactorCraters,
-    ImpactorSizes, PopulationConfig, ProductionFunction, Source, Target, hold_diameter,
+    ImpactorSizes, PopulationConfig, ProductionFunction, Screen, Source, Target, hold_diameter,
     sample_population,
 };
 pub use stamp::{

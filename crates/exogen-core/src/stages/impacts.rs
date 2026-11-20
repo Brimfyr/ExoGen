@@ -9,7 +9,7 @@
 use crate::constants::*;
 use crate::crater::Levelling;
 use crate::crater::morphology::transient_diameter;
-use crate::crater::production::{Oblique, Target, expected_count_above, poisson};
+use crate::crater::production::{Oblique, Screen, Target, expected_count_above, poisson};
 use crate::crater::stamp::elliptical_radius;
 use crate::crater::{
     Bombardment, BombardmentParams, CraterRecord, DeepShare, ProfileTable, Scaling, StampParams,
@@ -24,7 +24,7 @@ use crate::units::{
     UNIT_LAVA_CRATER_FLOOR, UNIT_LAVA_EJECTA,
 };
 
-pub const VERSION: u64 = 39;
+pub const VERSION: u64 = 40;
 
 /// Body-level cratering inputs read once from the graph.
 #[derive(Clone, Debug)]
@@ -66,6 +66,9 @@ pub struct CraterInputs {
     pub seed: u64,
     /// The width over which an ejecta deposit levels the ground, by its thickness (F169).
     pub levelling: Levelling,
+    /// What the body's liquid keeps from its floor where it stands (F412); none where no
+    /// liquid ever stands on it (F411).
+    pub screen: Option<Screen>,
 }
 
 impl CraterInputs {
@@ -216,10 +219,36 @@ impl CraterInputs {
             },
             seed: graph.f64("seed.cratering") as u64,
             levelling: Levelling::rings(),
+            screen: screen(graph),
         };
         inputs.levelling = Levelling::new(&inputs.scaling);
         inputs
     }
+}
+
+/// What the body's liquid keeps from its floor (F412): impactors of the body's density struck
+/// at its mean speed through its working liquid; none where no liquid ever stands (F411).
+pub fn screen(graph: &ParamGraph) -> Option<Screen> {
+    let stands = graph
+        .curve("volatiles.liquid_history")
+        .is_some_and(|h| h.points.iter().any(|p| p.1 > 0.0));
+    stands.then(|| {
+        Screen::new(
+            &Target {
+                gravity: graph.f64("body.gravity"),
+                speed: graph.f64("cratering.impact_velocity"),
+                strength: crate::crater::by_ice(
+                    TARGET_STRENGTH_ROCK,
+                    TARGET_STRENGTH_ICE,
+                    graph.f64("cratering.target_ice"),
+                ),
+                density: graph.f64("cratering.target_density"),
+                simple_complex: graph.f64("cratering.simple_complex_transition"),
+            },
+            graph.f64("volatiles.liquid_density"),
+            graph.f64("cratering.impactor_density"),
+        )
+    })
 }
 
 /// Regimes that renew the whole surface within the retention age: plates, global
@@ -373,6 +402,27 @@ impl ImpactProcess {
         }
         batch.sort_by(|a, b| a.time_gyr.total_cmp(&b.time_gyr).then(a.id.cmp(&b.id)));
         batch
+    }
+
+    /// The crater a loop's impact leaves on the floor under the liquid standing at its centre
+    /// as the step began (F412), or none where the liquid keeps it from the floor or leaves
+    /// it under the loop's threshold, which the finish's own population stands for.
+    pub fn screened(&self, layers: &LayerSet, mut rec: CraterRecord) -> Option<CraterRecord> {
+        let Some(screen) = &self.inputs.screen else {
+            return Some(rec);
+        };
+        let depth = layers.liquid.as_slice()[self.grid.index(self.grid.locate(rec.center).0)];
+        if depth <= 0.0 {
+            return Some(rec);
+        }
+        let diameter = rec.diameter * screen.kept(rec.diameter, depth as f64);
+        if diameter < self.d_loop {
+            return None;
+        }
+        rec.diameter = diameter;
+        rec.class = self.inputs.scaling.classify(diameter);
+        rec.ellipticity = self.inputs.oblique.ellipticity(diameter, rec.angle);
+        Some(rec)
     }
 
     /// Emplace one crater on the surface as it is now, and record it.

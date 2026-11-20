@@ -2150,6 +2150,39 @@ static NODES: &[NodeDef] = &[
         "F262",
     ),
     derived(
+        "volatiles.liquid_history",
+        "volatiles",
+        "Liquid history",
+        "m",
+        1.0,
+        ValueType::Curve,
+        &[
+            "volatiles.working_liquid",
+            "volatiles.inventory",
+            "volatiles.water_history",
+            "atmosphere.surface_temperature_history",
+            "atmosphere.surface_temperature_mean",
+            "atmosphere.surface_temperature_warmest",
+            "atmosphere.pressure_history",
+            "atmosphere.runaway_until",
+        ],
+        d::volatiles_liquid_history,
+        "The working liquid standing at the surface over the body's life as a global layer, Gyr since it formed: its inventory then wherever its warmest place then kept it liquid, the temperature history's mean raised by the present's warmest over its mean, under its air's pressure then; none while its star held it past the runaway.",
+        "F411",
+    ),
+    derived(
+        "volatiles.liquid_density",
+        "volatiles",
+        "Liquid density",
+        "kg/m³",
+        1.0,
+        f(0.0, 1e5),
+        &["volatiles.working_liquid", "volatiles.inventory"],
+        d::volatiles_liquid_density,
+        "The working liquid's density, its species' liquids' by their shares of its inventory, which slows the impactors that strike through it.",
+        "F412",
+    ),
+    derived(
         "atmosphere.oxygen_left",
         "atmosphere",
         "Oxygen left by the water's escape",
@@ -4398,6 +4431,64 @@ mod tests {
             "TRAPPIST-1e lost {oceans} oceans"
         );
         assert!(oxygen > 0.0);
+    }
+
+    /// F411: a body's liquid stands at its surface from when its warmest place keeps it
+    /// liquid, its whole inventory then; today the present's, which F249's working liquid
+    /// reads. The Earth's under its faint young Sun and its present air later than it formed,
+    /// TRAPPIST-1e's once its runaway has ended, Titan's methane and ethane once its air is
+    /// warm enough; none on Mars, whose temperature history keeps its present air, nor Venus.
+    #[test]
+    fn a_body_s_liquid_stands_once_its_warmest_place_keeps_it_liquid() {
+        let onset = |g: &ParamGraph| -> Option<f64> {
+            let history = g.curve("volatiles.liquid_history")?;
+            history.points.iter().find(|p| p.1 > 0.0).map(|p| p.0)
+        };
+        let preset = |name: &str| crate::presets::preset(name).unwrap().to_graph().0;
+        // TRAPPIST-1e as THAI's first habitable case: locked, circular, untilted, moonless.
+        let mut t1e = trappist_1e();
+        for (id, v) in [
+            ("orbit.eccentricity", 0.0),
+            ("satellite.mass", 0.0),
+            ("rotation.obliquity", 0.0),
+        ] {
+            t1e.set(id, v).unwrap();
+        }
+        let period = t1e.f64("orbit.period");
+        t1e.set("rotation.period", period).unwrap();
+        let (earth, titan) = (preset("Earth"), preset("Titan"));
+        for (name, g) in [("Earth", &earth), ("Titan", &titan), ("TRAPPIST-1e", &t1e)] {
+            let history = g.curve("volatiles.liquid_history").unwrap();
+            let age = g.f64("body.age");
+            let start = onset(g).expect("a liquid today");
+            let species = crate::stages::caps::liquid_species(g.str("volatiles.working_liquid"));
+            let inventory = g.get("volatiles.inventory");
+            let held: f64 = species
+                .iter()
+                .map(|s| inventory.as_map().unwrap().get(*s).copied().unwrap_or(0.0))
+                .sum();
+            println!(
+                "{name}: its liquid stands from {start:.3} Gyr, {:.1} m then, {:.1} m today; density {:.0} kg/m³",
+                history.eval(start),
+                history.eval(age),
+                g.f64("volatiles.liquid_density")
+            );
+            assert!((history.eval(age) - held).abs() < 1e-6 * held.max(1.0));
+            assert!(start < age);
+            // Once it stands it stands on: its warmest place warms with its star.
+            let after: Vec<f64> = history
+                .points
+                .iter()
+                .filter(|p| p.0 >= start)
+                .map(|p| p.1)
+                .collect();
+            assert!(after.iter().all(|&v| v > 0.0), "{name} {after:?}");
+        }
+        assert!(onset(&t1e).unwrap() >= t1e.f64("atmosphere.runaway_until"));
+        assert!(onset(&earth).unwrap() > 0.0);
+        for name in ["Mars", "Venus", "Moon", "Europa"] {
+            assert_eq!(onset(&preset(name)), None, "{name}");
+        }
     }
 
     /// F260: the Sun shone at some 0.69 of its present light when its planets formed, 50 Myr

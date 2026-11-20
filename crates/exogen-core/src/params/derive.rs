@@ -2457,6 +2457,75 @@ pub fn volatiles_water_history(c: &Ctx) -> Value {
     Curve::new(points).into()
 }
 
+/// F411: the working liquid standing at the surface through the body's life, m of its global
+/// layer, Gyr since it formed: its inventory then (its water's by its history, F262, the other
+/// species' the present's) wherever its warmest place then kept it liquid, as F249 reads it
+/// today, the mean of its temperature history (F260) raised by the present's warmest over its
+/// mean, under its air's pressure then (F263, F264); none while its star held it past the
+/// runaway (F260), its water steam.
+pub fn volatiles_liquid_history(c: &Ctx) -> Value {
+    let species = crate::stages::caps::liquid_species(c.str("volatiles.working_liquid"));
+    let temperatures = c.curve("atmosphere.surface_temperature_history");
+    if temperatures.points.is_empty() {
+        return Curve::new(vec![(0.0, 0.0)]).into();
+    }
+    if species.is_empty() {
+        return Curve::new(temperatures.points.iter().map(|p| (p.0, 0.0)).collect()).into();
+    }
+    let rise = c.f64("atmosphere.surface_temperature_warmest")
+        - c.f64("atmosphere.surface_temperature_mean");
+    let (pressures, water) = (
+        c.curve("atmosphere.pressure_history"),
+        c.curve("volatiles.water_history"),
+    );
+    let until = c.f64("atmosphere.runaway_until");
+    let inventory = c.map("volatiles.inventory");
+    let points = temperatures
+        .points
+        .iter()
+        .map(|&(t, mean)| {
+            let p = pressures.eval(t).max(0.0);
+            let standing: f64 = species
+                .iter()
+                .map(|s| {
+                    let Some(v) = volatile(s) else { return 0.0 };
+                    let held = match *s {
+                        "H2O" if t < until => 0.0,
+                        "H2O" => water.eval(t).max(0.0),
+                        _ => inventory.get(*s).copied().unwrap_or(0.0),
+                    };
+                    let code = phase_state(v, mean + rise, p, held > 0.0);
+                    if code == PHASE_LIQUID || code == PHASE_LIQUID_AND_SOLID {
+                        held
+                    } else {
+                        0.0
+                    }
+                })
+                .sum();
+            (t, standing)
+        })
+        .collect();
+    Curve::new(points).into()
+}
+
+/// F412: the working liquid's density, kg/m³: its species' liquids' by their shares of its
+/// inventory; none where it has no liquid.
+pub fn volatiles_liquid_density(c: &Ctx) -> Value {
+    let species = crate::stages::caps::liquid_species(c.str("volatiles.working_liquid"));
+    let inventory = c.map("volatiles.inventory");
+    let (mut mass, mut volume) = (0.0, 0.0);
+    for s in species {
+        let (Some(v), Some(&held)) = (volatile(s), inventory.get(*s)) else {
+            continue;
+        };
+        if held > 0.0 {
+            mass += held * v.liquid_density;
+            volume += held;
+        }
+    }
+    (if volume > 0.0 { mass / volume } else { 0.0 }).into()
+}
+
 /// F262: the oxygen the water's escape left behind, Pa, as the pressure it would hold: what the
 /// escaping hydrogen did not drag away, its sinks in the crust and a magma ocean aside.
 pub fn atmosphere_oxygen_left(c: &Ctx) -> Value {

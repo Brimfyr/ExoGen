@@ -33,6 +33,7 @@ pub mod relaxation;
 pub mod ridges;
 pub mod rings;
 pub mod roughness;
+pub mod seafloor;
 pub mod strain;
 pub mod stress;
 pub mod tectonics;
@@ -466,7 +467,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 253;
+pub const FINISH_VERSION: u64 = 254;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -606,6 +607,16 @@ pub fn run_coarse_loop(
         (Some(p), Some(f)) => p.schedule(f, &layers, steps, dt),
         _ => Vec::new(),
     };
+    // The liquid its history keeps standing (F411), over the ground as each step leaves it.
+    let liquid_history = graph.curve("volatiles.liquid_history").cloned();
+    let fill = |layers: &mut LayerSet, t: f64| {
+        if let Some(h) = &liquid_history
+            && (h.eval(t) > 0.0 || layers.liquid.as_slice().iter().any(|&d| d > 0.0))
+        {
+            fill_liquid(layers, body_radius, h.eval(t));
+        }
+    };
+    fill(&mut layers, 0.0);
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -910,7 +921,12 @@ pub fn run_coarse_loop(
             scarps.into_iter().map(Some).collect();
         for (_, kind, i) in order {
             match kind {
-                0 => impacts.apply(&mut layers, craters[i].take().unwrap()),
+                0 => {
+                    // What the liquid standing there leaves of it on the floor (F412).
+                    if let Some(c) = impacts.screened(&layers, craters[i].take().unwrap()) {
+                        impacts.apply(&mut layers, c);
+                    }
+                }
                 1 => {
                     if let Some(c) = &mut contraction {
                         c.apply(&mut layers, scarps[i].take().unwrap());
@@ -1088,6 +1104,7 @@ pub fn run_coarse_loop(
                 }
             }
         }
+        fill(&mut layers, t1);
         if s % keep_every == 0 || s == steps {
             keyframes.push(Keyframe {
                 step: s,
@@ -1773,6 +1790,36 @@ pub fn finish(
     }
     let phase_clock = Instant::now();
     let population = sample_population(&grid, &layers.surface_age, present, &cfg);
+    // The liquid's past over this ground before its craters (F411), and the craters its
+    // floors took under it where and when each struck (F412).
+    let liquid_past = inputs.screen.as_ref().and_then(|screen| {
+        let ground = layers.height();
+        let from = layers
+            .surface_age
+            .as_slice()
+            .iter()
+            .fold(present, |a, &b| a.min(b as f64));
+        seafloor::LiquidPast::new(graph, loop_output, keyframe_index, &ground, from)
+            .map(|past| (past, ground, screen))
+    });
+    let population = match &liquid_past {
+        Some((past, ground, screen)) => {
+            let drawn = population.len();
+            let floor: Vec<crate::crater::CraterSample> = population
+                .into_par_iter()
+                .filter_map(|c| seafloor::screened(c, past, screen, ground, d_min, &inputs.oblique))
+                .collect();
+            if std::env::var_os("EXOGEN_DEBUG").is_some() {
+                eprintln!(
+                    "liquid: {} of {drawn} craters kept from the floor under it, over {} keyframes",
+                    drawn - floor.len(),
+                    past.times().count()
+                );
+            }
+            floor
+        }
+        None => population,
+    };
     // The secondaries the loop's craters and the finish's own throw (F129), each with the
     // crater it came from, whose rays draw its fresh ground where it lies (F128).
     let secondaries = if std::env::var_os("EXOGEN_SKIP_SECONDARIES").is_some() {
@@ -1802,13 +1849,23 @@ pub fn finish(
                     }),
             )
             .collect();
-        sample_secondaries(
+        let thrown = sample_secondaries(
             &primaries,
             &inputs,
             d_min,
             present,
             grid.delta() * body_radius,
-        )
+        );
+        match &liquid_past {
+            Some((past, ground, screen)) => thrown
+                .into_par_iter()
+                .filter_map(|(c, parent)| {
+                    seafloor::screened(c, past, screen, ground, d_min, &inputs.oblique)
+                        .map(|c| (c, parent))
+                })
+                .collect(),
+            None => thrown,
+        }
     };
     let mut thrown: HashMap<u64, Vec<crate::crater::CraterSample>> = HashMap::new();
     for (c, parent) in &secondaries {
@@ -2875,6 +2932,22 @@ pub fn finish(
     };
     // The craters the finish does not resolve, as the relief their population leaves on
     // each surface by its age (F54): rough where old, smooth where renewed.
+    // What the liquid kept from the floors of the craters too small to stamp (F412).
+    let kept_off = liquid_past.as_ref().map(|(past, ground, screen)| {
+        (
+            seafloor::KeptOff::new(past, screen, &inputs.bombardment, d_min, present),
+            ground,
+        )
+    });
+    let screened = kept_off.as_ref().map(|(k, ground)| {
+        move |c: usize, since: f64| {
+            k.since(
+                grid.center(grid.cell(c)),
+                ground.as_slice()[c] as f64,
+                since,
+            )
+        }
+    });
     let roughness_share = roughness::apply(
         &mut layers,
         body_radius,
@@ -2884,6 +2957,9 @@ pub fn finish(
         present,
         Some(&renewal.keep),
         buried.as_deref(),
+        screened
+            .as_ref()
+            .map(|f| f as &(dyn Fn(usize, f64) -> f64 + Sync)),
     );
     // The year's climate on its own coarse grid (F235), which reads the graph alone,
     // through its days and seasons (F236); where each ice of the inventory would last on the
@@ -4507,7 +4583,13 @@ pub fn hydrosphere_fill(graph: &ParamGraph, layers: &mut LayerSet, taken: f64) -
     };
     // The working liquid's inventory, less what the caps took (F241).
     let gel = species.iter().map(held).sum::<f64>() - taken;
-    let radius = graph.f64("body.radius");
+    fill_liquid(layers, graph.f64("body.radius"), gel)
+}
+
+/// Fills `gel`, m of a global layer, of a liquid over the ground as it stands, from its lowest
+/// places up (F26): the liquid's level and the share of the body it covers; no level and
+/// nothing covered where there is none.
+pub fn fill_liquid(layers: &mut LayerSet, radius: f64, gel: f64) -> (f64, f64) {
     if gel <= 0.0 {
         layers.liquid = Field::new(layers.grid);
         return (f64::NAN, 0.0);
@@ -4728,6 +4810,9 @@ mod tests {
             }),
             ("earth_gets_an_ocean_covering_most_of_the_surface", &|| {
                 earth_gets_an_ocean_covering_most_of_the_surface(&earth)
+            }),
+            ("the_sea_floor_keeps_fewer_craters", &|| {
+                the_sea_floor_keeps_fewer_craters(&earth)
             }),
             ("the_sea_shows_its_floor_only_through_its_water", &|| {
                 the_sea_shows_its_floor_only_through_its_water(&earth)
@@ -5097,6 +5182,189 @@ mod tests {
             out.finish.ocean_fraction > 0.5 && out.finish.ocean_fraction < 0.9,
             "liquid fraction {}",
             out.finish.ocean_fraction
+        );
+    }
+
+    /// F411: through the loop the Earth-like's sea stands as its history keeps it, filled over
+    /// the ground as each step leaves it, its volume its history's global layer's: none while
+    /// its young Sun kept its warmest place frozen, all of it after. The liquid's past the
+    /// finish reads from the keyframes finds no liquid anywhere before the sea first stood, and
+    /// at the present over the loop's own ground the loop's own sea.
+    #[test]
+    fn the_sea_stands_through_the_loop_as_its_history_keeps_it() {
+        let graph = preset_graph("Earth", "preview");
+        let lo = run_coarse_loop(&graph, &NoProgress).unwrap();
+        let history = graph.curve("volatiles.liquid_history").unwrap();
+        let radius = graph.f64("body.radius");
+        let grid = lo.grid;
+        let (mut dry, mut wet) = (0, 0);
+        for k in &lo.keyframes {
+            let volume = crate::fields::det_sum(grid.cell_count(), |c| {
+                k.layers.liquid.as_slice()[c] as f64
+                    * grid.cell_area(grid.cell(c))
+                    * radius
+                    * radius
+            });
+            let layer = history.eval(k.time_gyr);
+            let expected = layer * 4.0 * std::f64::consts::PI * radius * radius;
+            if layer > 0.0 {
+                wet += 1;
+                assert!(
+                    (volume / expected - 1.0).abs() < 1e-3,
+                    "{:.3} Gyr: {volume:.4e} m³ where {expected:.4e}",
+                    k.time_gyr
+                );
+            } else {
+                dry += 1;
+                assert_eq!(volume, 0.0, "{:.3} Gyr", k.time_gyr);
+            }
+        }
+        println!("Earth-like: its loop's keyframes {dry} without a sea, {wet} with one");
+        assert!(dry > 0 && wet > 0);
+        // The liquid's past over the loop's own ground at the present.
+        let last = lo.keyframes.len() - 1;
+        let now = &lo.keyframes[last];
+        let ground = now.layers.height();
+        let past = seafloor::LiquidPast::new(&graph, &lo, last, &ground, 0.0).unwrap();
+        let onset = history
+            .points
+            .iter()
+            .find(|p| p.1 > 0.0)
+            .map(|p| p.0)
+            .unwrap();
+        let liquid = now.layers.liquid.as_slice();
+        let mut worst = 0.0f64;
+        for (k, &l) in liquid.iter().enumerate() {
+            let d = grid.center(grid.cell(k));
+            let h = ground.as_slice()[k] as f64;
+            assert_eq!(past.depth(d, h, 0.5 * onset), 0.0, "cell {k}");
+            worst = worst.max((past.depth(d, h, now.time_gyr) - l as f64).abs());
+        }
+        assert!(worst < 1.0, "the past's present against the loop's sea: {worst} m");
+    }
+
+    /// F412: the Earth-like's deep sea floor keeps fewer craters than its land: of craters
+    /// struck at random over it through its record's last 0.1 Gyr, at or above 30 km by the
+    /// production's slope there, its floor keeps those the impactors that struck through its
+    /// water left at that size, as many as the screen's law read at the floor's depths today
+    /// leaves; its land keeps them all; the whole body some two thirds, as Davison and Collins
+    /// (2007) find of the Earth's oceans near 30 km. The liquid's past is the finish's own,
+    /// built from the loop's keyframes over the finish's ground; before its sea first stood
+    /// (F411) every place keeps every crater.
+    fn the_sea_floor_keeps_fewer_craters(body: &Body) {
+        let out = &body.out.finish;
+        let graph = &body.graph;
+        let grid = out.grid;
+        let liquid = out.layers.liquid.as_slice();
+        let screen = impacts::screen(graph).expect("a screen");
+        let bombardment = impacts::bombardment(graph);
+        let oblique = impacts::oblique(graph);
+        let present = out.epoch_time_gyr;
+        let ground = out.layers.height();
+        let past = seafloor::LiquidPast::new(
+            graph,
+            &body.out.loop_output,
+            out.keyframe_index,
+            &ground,
+            0.0,
+        )
+        .expect("a liquid's past");
+        let onset = graph
+            .curve("volatiles.liquid_history")
+            .and_then(|h| h.points.iter().find(|p| p.1 > 0.0).map(|p| p.0))
+            .expect("a sea");
+        let d0 = 3e4;
+        let slope = {
+            let (a, b) = (
+                bombardment.cumulative_1gyr(d0 / 1e3),
+                bombardment.cumulative_1gyr(1.1 * d0 / 1e3),
+            );
+            (a / b).ln() / 1.1f64.ln()
+        };
+        // The share of the craters at or above d0 a floor under `depth` keeps: those whose dry
+        // crater leaves d0 there, by the production's slope.
+        let kept = |depth: f64| -> f64 {
+            let (mut lo, mut hi) = (d0, 1e3 * d0);
+            if hi * screen.kept(hi, depth) < d0 {
+                return 0.0;
+            }
+            for _ in 0..60 {
+                let mid = (lo * hi).sqrt();
+                if mid * screen.kept(mid, depth) < d0 {
+                    lo = mid
+                } else {
+                    hi = mid
+                }
+            }
+            (d0 / hi).powf(slope)
+        };
+        let deep = 1_000.0;
+        let (mut area, mut expected) = (0.0, 0.0);
+        for (k, c) in grid.cells().enumerate() {
+            if liquid[k] as f64 > deep {
+                let a = grid.cell_area(c);
+                area += a;
+                expected += a * kept(liquid[k] as f64);
+            }
+        }
+        let expected = expected / area;
+        let rng = crate::rng::Rng::new(0x5EA_F100);
+        let (mut floor, mut floor_kept, mut land, mut land_kept) = (0usize, 0usize, 0usize, 0usize);
+        let mut kept_all = 0usize;
+        for i in 0..20_000u64 {
+            let center = rng.unit_direction(i, 0);
+            let depth = liquid[grid.index(grid.locate(center).0)];
+            let sample = crate::crater::CraterSample {
+                center,
+                diameter: d0 * rng.uniform(i, 2).max(1e-9).powf(-1.0 / slope),
+                time_gyr: present - 0.1 * rng.uniform(i, 3),
+                azimuth: 0.0,
+                angle: std::f64::consts::FRAC_PI_2,
+                ellipticity: 1.0,
+                key: i,
+            };
+            let left = seafloor::screened(sample, &past, &screen, &ground, d0, &oblique).is_some();
+            kept_all += left as usize;
+            if depth as f64 > deep {
+                floor += 1;
+                floor_kept += left as usize;
+            } else if depth <= 0.0 {
+                land += 1;
+                land_kept += left as usize;
+            }
+        }
+        // Struck before the sea first stood, every crater stays where it struck.
+        let before = (0..2_000u64)
+            .filter(|&i| {
+                let sample = crate::crater::CraterSample {
+                    center: rng.unit_direction(i, 10),
+                    diameter: d0 * rng.uniform(i, 12).max(1e-9).powf(-1.0 / slope),
+                    time_gyr: 0.5 * onset,
+                    azimuth: 0.0,
+                    angle: std::f64::consts::FRAC_PI_2,
+                    ellipticity: 1.0,
+                    key: i,
+                };
+                seafloor::screened(sample, &past, &screen, &ground, d0, &oblique).is_none()
+            })
+            .count();
+        assert_eq!(
+            before, 0,
+            "{before} craters screened before the sea at {onset:.3} Gyr"
+        );
+        let share = floor_kept as f64 / floor as f64;
+        let spread = (expected * (1.0 - expected) / floor as f64).sqrt();
+        let whole = kept_all as f64 / 20_000.0;
+        println!(
+            "Earth-like: from {:.0} km its floor deeper than {deep} m keeps {share:.3} of the craters struck on it ({floor_kept} of {floor}), the screen's law at its depths today {expected:.3}; its land {land_kept} of {land}; the whole body {whole:.3}",
+            d0 / 1e3
+        );
+        assert_eq!(land_kept, land);
+        assert!(expected < 0.75, "{expected}");
+        assert!((0.55..0.8).contains(&whole), "{whole}");
+        assert!(
+            (share - expected).abs() < 4.0 * spread + 0.02,
+            "{share} {expected} {spread}"
         );
     }
 

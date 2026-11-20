@@ -131,6 +131,59 @@ impl Target {
     }
 }
 
+/// What a standing liquid keeps from the floor under it (F412): the crater a floor takes under
+/// a depth of the liquid, from the impactor that makes it on the body dry.
+#[derive(Clone, Debug)]
+pub struct Screen {
+    /// The logarithms of the impactors' diameters, m, and of the craters they make dry, m,
+    /// rising together.
+    impactors: Vec<f64>,
+    craters: Vec<f64>,
+    /// LIQUID_SCREEN at the liquid's density over the impactor's, against Davison and
+    /// Collins's water over their impactor's: the share of its diameter a crater loses per
+    /// impactor's diameter of the liquid.
+    per_depth: f64,
+}
+
+impl Screen {
+    /// For impactors of `impactor` kg/m³ striking the body's `target` through a liquid of
+    /// `liquid` kg/m³.
+    pub fn new(target: &Target, liquid: f64, impactor: f64) -> Self {
+        let (from, to, n) = (1e-2f64.ln(), 1e7f64.ln(), 361);
+        let impactors: Vec<f64> = (0..n)
+            .map(|i| from + (to - from) * i as f64 / (n - 1) as f64)
+            .collect();
+        let craters = impactors
+            .iter()
+            .map(|l| target.crater(l.exp()).max(1e-300).ln())
+            .collect();
+        Self {
+            impactors,
+            craters,
+            per_depth: LIQUID_SCREEN * liquid / impactor.max(1.0) / LIQUID_SCREEN_REFERENCE,
+        }
+    }
+
+    /// The impactor that makes a crater of `crater` m on the body dry, m.
+    pub fn impactor(&self, crater: f64) -> f64 {
+        let x = crater.max(1e-300).ln();
+        let n = self.craters.len();
+        let k = self.craters.partition_point(|&c| c <= x).clamp(1, n - 1);
+        let (c0, c1) = (self.craters[k - 1], self.craters[k]);
+        let (l0, l1) = (self.impactors[k - 1], self.impactors[k]);
+        (l0 + (l1 - l0) * (x - c0) / (c1 - c0).max(1e-300)).exp()
+    }
+
+    /// The share of its dry diameter a crater of `crater` m keeps on a floor under `depth` m of
+    /// the liquid, 0 to 1.
+    pub fn kept(&self, crater: f64, depth: f64) -> f64 {
+        if depth <= 0.0 {
+            return 1.0;
+        }
+        (1.0 - self.per_depth * depth / self.impactor(crater)).clamp(0.0, 1.0)
+    }
+}
+
 /// The impact angle below which a body's craters come out elliptical, by their diameter
 /// (F167): from the cratering efficiency, the transient cavity a vertical impact makes over
 /// the impactor's diameter, read from the body's crater scaling at its mean impact speed
@@ -1031,6 +1084,56 @@ pub fn expected_count_above(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F412: under water a stony impactor's crater on the floor loses 0.14 of its dry diameter
+    /// per impactor's diameter of depth, none left past some 7 (Davison and Collins 2007, their
+    /// equation 3 and their deep-water regime past 8); a liquid as dense over its impactors as
+    /// Titan's methane and ethane over its comets slows them the sooner. The impactor the
+    /// screen reads for a crater is the one the body's own scaling makes it from.
+    #[test]
+    fn a_liquid_keeps_its_smaller_impactors_from_its_floor() {
+        let earth = Target {
+            gravity: 9.81,
+            speed: 18_600.0,
+            strength: TARGET_STRENGTH_ROCK,
+            density: 2_700.0,
+            simple_complex: 2_722.0,
+        };
+        let water = Screen::new(&earth, 1_000.0, 2_680.0);
+        for d in [300.0, 3e3, 2e4, 3e5] {
+            let l = water.impactor(d);
+            let back = earth.crater(l);
+            assert!(
+                (back / d - 1.0).abs() < 1e-3,
+                "{d} m from {l} m makes {back}"
+            );
+        }
+        let d = 2e4;
+        let l = water.impactor(d);
+        for (ratio, kept) in [(0.0, 1.0), (1.0, 0.86), (3.5, 0.51), (7.0, 0.02)] {
+            let got = water.kept(d, ratio * l);
+            assert!((got - kept).abs() < 1e-9, "H/L {ratio}: {got} where {kept}");
+        }
+        assert_eq!(water.kept(d, 7.2 * l), 0.0);
+        assert_eq!(water.kept(d, 0.0), 1.0);
+        // Titan: 458 kg/m³ over comets of 600 kg/m³ keeps 2.05 times water's share per depth.
+        let titan = Target {
+            gravity: 1.35,
+            speed: 10_720.0,
+            strength: TARGET_STRENGTH_ICE,
+            density: 920.0,
+            simple_complex: 2_963.0,
+        };
+        let methane = Screen::new(&titan, 458.0, 600.0);
+        let l = methane.impactor(d);
+        let per = (1.0 - methane.kept(d, l)) / LIQUID_SCREEN;
+        println!(
+            "Earth: a 20 km crater from a {:.0} m impactor; Titan's from {l:.0} m, {per:.2} times water's share per depth",
+            water.impactor(d)
+        );
+        assert!((per - 458.0 / 600.0 / LIQUID_SCREEN_REFERENCE).abs() < 1e-9);
+        assert_eq!(methane.kept(d, 3.6 * l), 0.0);
+    }
 
     #[test]
     fn flux_history_matches_the_neukum_chronology() {
