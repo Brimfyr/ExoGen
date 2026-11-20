@@ -127,6 +127,26 @@ pub struct AirProfileInfo {
     pub ground_k: f64,
     pub area_share: f64,
     pub levels: Vec<AirLevelInfo>,
+    pub decks: Vec<DeckInfo>,
+}
+
+/// A condensate deck of an air's table (M96): its species; its base's and its top's pressure,
+/// Pa, and altitude, m; its condensate's column, kg/m²; its grains' effective radius, µm; its
+/// optical depth in the visible; and its condensate's mass over the air's at each of the table's
+/// levels, kg/kg. A deck over all the place all the year (Ackerman and Marley 2001), an upper
+/// bound until the weather's cover (5G): its radiation not yet the climate's.
+#[derive(Serialize)]
+pub struct DeckInfo {
+    pub species: String,
+    pub base_pa: f64,
+    pub top_pa: f64,
+    pub base_altitude_m: f64,
+    pub top_altitude_m: f64,
+    pub condensate_kg_m2: f64,
+    pub effective_radius_um: f64,
+    pub optical_depth: f64,
+    pub full_cover: bool,
+    pub condensate_kg_kg: Vec<f64>,
 }
 
 /// A level of an air's profile (M92): its altitude over the datum's ground, m, by its
@@ -444,6 +464,30 @@ fn atmosphere_info(graph: &ParamGraph, out: &FinishOutput) -> Option<AtmosphereI
                     rayleigh_per_m: AIR_PROFILE_WAVELENGTHS
                         .map(|w| rayleigh_coefficient(composition, l, w)),
                     haze_extinction_per_m: l.haze,
+                })
+                .collect(),
+            decks: p
+                .decks
+                .iter()
+                .map(|d| {
+                    let height = |pressure: f64| {
+                        p.levels
+                            .iter()
+                            .find(|l| l.pressure == pressure)
+                            .map_or(f64::NAN, |l| l.height)
+                    };
+                    DeckInfo {
+                        species: d.species.to_string(),
+                        base_pa: d.base,
+                        top_pa: d.top,
+                        base_altitude_m: height(d.base),
+                        top_altitude_m: height(d.top),
+                        condensate_kg_m2: d.condensate,
+                        effective_radius_um: d.radius * 1e6,
+                        optical_depth: d.depth,
+                        full_cover: true,
+                        condensate_kg_kg: d.levels.clone(),
+                    }
                 })
                 .collect(),
         })

@@ -2063,6 +2063,22 @@ pub const CLOUD_LCL_PER_KELVIN: f64 = 125.0;
 /// Wordsworth 2023). Undilute, the Earth-like's air over a 300 K ground stood 5 K warmer than
 /// ERA-Interim's tropics from 300 to 150 hPa.
 pub const CONVECTION_ENTRAINMENT: f64 = 0.2;
+/// M96: a condensate deck's sedimentation, Ackerman and Marley's (2001) f: the speed its grains
+/// settle at over the air's mixing's, its baseline 3 (Jupiter's ammonia some 1 to 3 by its
+/// clouds' scale heights; brown dwarfs' 1 to 4, Stephens et al. 2009); its grains lognormal,
+/// their width DECK_SPREAD, 2, as theirs; and the least eddy mixing, m²/s, their K_min of
+/// 1e5 cm²/s that stands for breaking buoyancy waves.
+pub const DECK_SEDIMENTATION: f64 = 3.0;
+pub const DECK_SPREAD: f64 = 2.0;
+pub const DECK_MIXING_LEAST: f64 = 10.0;
+/// M96: the least condensate a deck holds anywhere in it, kg/kg: a trace species' (Titan's
+/// water, 1e-21 of its air) none.
+pub const DECK_LEAST: f64 = 1e-12;
+/// M96: an air's viscosity by its bulk gas, eta_0 (T / T_0)^n, Pa s: nitrogen's 6.33 µPa s at
+/// 90 K and carbon dioxide's 10.95 at 216.6 K, their powers through NIST's at 95 K (6.66) and
+/// 241.6 K (12.17) (the research notes, "Condensate decks"); nitrogen's for any other gas.
+pub const AIR_VISCOSITY: [(&str, f64, f64, f64); 2] =
+    [("N2", 6.33e-6, 90.0, 0.94), ("CO2", 10.95e-6, 216.6, 0.97)];
 /// M66: the overturning cell's convection gives way to the storms past its reach from the
 /// thermal equator by degrees over this share of the reach, the rain there the convection's
 /// within it and the storms' beyond (the free air's weak temperature gradients ended with it

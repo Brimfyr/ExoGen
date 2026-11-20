@@ -6134,13 +6134,15 @@ pub struct OwnClouds {
 }
 
 /// An air's profile over one of its groups of places (M92, section 4.13): which, mean, warm or
-/// cold; its places' mean ground temperature, K; the share of the body it stands for; its levels.
+/// cold; its places' mean ground temperature, K; the share of the body it stands for; its levels;
+/// and the condensate decks its air holds over all of them (M96).
 #[derive(Clone, Debug)]
 pub struct AirProfile {
     pub name: &'static str,
     pub ground: f64,
     pub share: f64,
     pub levels: Vec<crate::radiation::Level>,
+    pub decks: Vec<crate::radiation::CondensateDeck>,
 }
 
 /// The body's air as tables by height (M92, section 4.13): over the whole body and over its
@@ -6188,11 +6190,15 @@ pub fn air_profiles(
             let area = area.max(1e-300);
             temps.iter_mut().for_each(|t| *t /= area);
             shares.iter_mut().for_each(|x| *x /= area);
+            let levels = column.table_of(&temps, &shares, radius);
+            // Its decks (M96): its water's too where the year laid no water clouds of its own.
+            let decks = column.decks(&levels, !cycle.clouded);
             AirProfile {
                 name,
                 ground: ground / area,
                 share,
-                levels: column.table_of(&temps, &shares, radius),
+                levels,
+                decks,
             }
         })
         .collect()
@@ -12123,7 +12129,8 @@ mod tests {
     /// M92: an air's tables are its places' mean. Its warm and its cold group each hold
     /// AIR_PROFILE_SHARE of the body's area, every warm place at least as warm as every cold
     /// one; each table's air at a level its group's places' own airs there by their areas, its
-    /// ground their mean ground; and Titan's tables carry its haze.
+    /// ground their mean ground; and Titan's tables carry its haze, and its methane's deck on
+    /// each table's own air (M96).
     fn an_air_s_tables_are_its_places_mean(graph: &ParamGraph, cycle: &Cycle) {
         let eb = EnergyBalance::from_graph(graph);
         let profiles = air_profiles(graph, &eb, cycle, None);
@@ -12176,6 +12183,18 @@ mod tests {
                 profile.name
             );
             assert!(profile.levels[0].haze > 0.0, "{}", profile.name);
+            // Its methane's deck on its own table's air (M96).
+            assert_eq!(
+                profile.decks,
+                column.decks(&profile.levels, !cycle.clouded),
+                "{}",
+                profile.name
+            );
+            assert!(
+                profile.decks.iter().any(|d| d.species == "CH4"),
+                "{}",
+                profile.name
+            );
         }
     }
 

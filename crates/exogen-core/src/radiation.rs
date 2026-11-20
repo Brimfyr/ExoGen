@@ -1379,6 +1379,133 @@ impl Column {
             .collect()
     }
 
+    /// The condensate decks of an air whose table by height is `table` (M96): each species of it
+    /// that saturates along its own profile, its water too where `with_water` (where the
+    /// climate lays no water clouds of its own), by the balance of its mixing up and its
+    /// grains' settling (Ackerman and Marley 2001, eqs. 4 to 17, in the layer form virga
+    /// solves, Rooney et al. 2022): from the vapour its ground's air holds, q_below, up to
+    /// where its saturated mixing ratio q_s first falls under it, the deck's base; above it,
+    /// through each layer of the table, q_t = q_s + (q_t - q_s) e^(-f dz / L) wherever q_t
+    /// stands over its top's q_s, the condensate q_t - q_s, f DECK_SEDIMENTATION and L the
+    /// mixing length, H max(0.1, its lapse over the dry adiabat's). Its grains settle at the
+    /// air's mixing speed w* = K / L, K = (H / 3) (L / H)^(4/3) (R F / (rho c_p))^(1/3) of the
+    /// heat its ground's convection carries, F (its eq. 5), no less than DECK_MIXING_LEAST; their
+    /// effective radius r_w f^(1/alpha) e^(-(alpha + 1) ln^2 sigma / 2) of the radius r_w whose
+    /// fall speed is w*, its rise with the radius alpha there, sigma DECK_SPREAD (eq. 17); its
+    /// optical depth in the visible 3 rho q_c dz / (2 rho_p r_eff) summed (eq. 16). A deck over
+    /// all the place the whole year: what the weather's cover (5G) will take its share of.
+    pub fn decks(&self, table: &[Level], with_water: bool) -> Vec<CondensateDeck> {
+        let n = table.len();
+        if n < 2 || self.pressure <= 0.0 {
+            return Vec::new();
+        }
+        let temps: Vec<f64> = table.iter().map(|l| l.temperature).collect();
+        // The heat the ground's convection carries up, W/m²: what it absorbs of the sunlight
+        // and takes up from beneath less what it radiates net.
+        let t = temps[0];
+        let (up, down, _, _) = self.fluxes_over(t, &temps);
+        let (_, ground_sun) = self.sun_layers(t, &temps);
+        let carried = (ground_sun + self.interior - (up[0] - down[0])).max(0.0);
+        let mut species: Vec<(&'static Volatile, f64)> = Vec::new();
+        if let Some(water) = volatile("H2O").filter(|_| with_water && self.water > 0.0) {
+            let x = table[0].vapour.clamp(0.0, 0.999);
+            species.push((water, self.epsilon * x / (1.0 - x)));
+        }
+        species.extend(self.condensables.iter().copied());
+        let viscosity = air_viscosity(self.bulk.map(|(v, _)| v.name));
+        let molar = GAS_CONSTANT / self.gas_constant;
+        species
+            .into_iter()
+            .filter(|&(_, below)| below > 0.0)
+            .filter_map(|(v, below)| {
+                let ratio = self.gas_constant / v.r_specific;
+                let saturated = |l: &Level| {
+                    let e = vapour_pressure(v, l.temperature).min(0.5 * l.pressure);
+                    ratio * e / (l.pressure - e)
+                };
+                let mixing = |k: usize| -> f64 {
+                    let (a, b) = (&table[k], &table[(k + 1).min(n - 1)]);
+                    let h = self.gas_constant * a.temperature / self.gravity;
+                    let lapse = (a.temperature / b.temperature).ln().max(0.0)
+                        / (a.pressure / b.pressure).ln().max(1e-12);
+                    let dry = self.gas_constant / self.heat_at(a.temperature);
+                    h * (lapse / dry).clamp(0.1, 1.0)
+                };
+                let mut q = below;
+                let mut condensate = vec![0.0; n];
+                let mut base = None;
+                for k in 0..n - 1 {
+                    let top = saturated(&table[k + 1]);
+                    if q > top {
+                        let dz = (table[k + 1].height - table[k].height).max(0.0);
+                        q = top + (q - top) * (-DECK_SEDIMENTATION * dz / mixing(k)).exp();
+                        condensate[k + 1] = q - top;
+                        base.get_or_insert(k + 1);
+                    }
+                }
+                let base = base?;
+                let most = condensate.iter().copied().fold(0.0, f64::max);
+                if most <= DECK_LEAST {
+                    return None;
+                }
+                let top = (base..n)
+                    .rev()
+                    .find(|&k| condensate[k] >= 0.01 * most)
+                    .unwrap_or(base);
+                let mut mass = 0.0;
+                for k in base.max(1)..n {
+                    let (a, b) = (&table[k - 1], &table[k]);
+                    let dz = (b.height - a.height).max(0.0);
+                    mass += 0.5 * (a.density * condensate[k - 1] + b.density * condensate[k]) * dz;
+                }
+                // The air's mixing at the deck's base and the grains that settle at its speed.
+                let at = &table[base];
+                let l = mixing(base);
+                let h = self.gas_constant * at.temperature / self.gravity;
+                let stir = self.gas_constant * carried
+                    / (at.density.max(1e-30) * self.heat_at(at.temperature));
+                let k_mix =
+                    ((h / 3.0) * (l / h).powf(4.0 / 3.0) * stir.cbrt()).max(DECK_MIXING_LEAST);
+                let speed = k_mix / l;
+                let grain = if at.temperature >= v.t_triple {
+                    v.liquid_density
+                } else {
+                    ICE_DENSITIES
+                        .iter()
+                        .find(|(s, _)| *s == v.name)
+                        .map_or(v.liquid_density, |&(_, d)| d)
+                };
+                let eta = viscosity(at.temperature);
+                let air = (at.density, at.temperature, molar);
+                let fall = |r: f64| fall_speed(r, grain, air, eta, self.gravity);
+                let (mut lo, mut hi) = (1e-9f64.ln(), 1e-1f64.ln());
+                for _ in 0..80 {
+                    let mid = 0.5 * (lo + hi);
+                    if fall(mid.exp()) < speed {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                let r_w = (0.5 * (lo + hi)).exp();
+                let alpha = (fall(1.01 * r_w) / fall(r_w)).ln() / 1.01f64.ln();
+                let spread = DECK_SPREAD.ln().powi(2);
+                let radius = r_w
+                    * DECK_SEDIMENTATION.powf(1.0 / alpha.max(1e-3))
+                    * (-(alpha + 1.0) / 2.0 * spread).exp();
+                Some(CondensateDeck {
+                    species: v.name,
+                    base: at.pressure,
+                    top: table[top].pressure,
+                    condensate: mass,
+                    radius,
+                    depth: 1.5 * mass / (grain * radius),
+                    levels: condensate,
+                })
+            })
+            .collect()
+    }
+
     /// The water vapour's column over the datum's ground at `t` K (F235) over what the
     /// profile's saturated levels hold, `datum` of it: the scale its vapour is read by.
     fn vapour_scale(&self, t: f64, datum: f64) -> f64 {
@@ -2854,6 +2981,47 @@ pub struct Level {
     pub haze: f64,
 }
 
+/// A condensate deck of an air (M96, `Column::decks`): its species, its base's and its top's
+/// pressures, Pa, its condensate's column, kg/m², its grains' effective radius, m, its optical
+/// depth in the visible, and its condensate's mass over the air's at each of the table's
+/// levels, kg/kg.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CondensateDeck {
+    pub species: &'static str,
+    pub base: f64,
+    pub top: f64,
+    pub condensate: f64,
+    pub radius: f64,
+    pub depth: f64,
+    pub levels: Vec<f64>,
+}
+
+/// The viscosity of an air whose bulk gas is `bulk` at `t` K, Pa s (M96): AIR_VISCOSITY's
+/// power law for its gas, nitrogen's for any other.
+fn air_viscosity(bulk: Option<&str>) -> impl Fn(f64) -> f64 {
+    let (_, eta, t0, power) = AIR_VISCOSITY
+        .iter()
+        .find(|(s, ..)| Some(*s) == bulk)
+        .copied()
+        .unwrap_or(AIR_VISCOSITY[0]);
+    move |t: f64| eta * (t.max(1.0) / t0).powf(power)
+}
+
+/// A grain's fall speed, m/s (M96): of radius `r` m and density `grain` kg/m³ through air of
+/// density, temperature and molar mass `(rho, t, molar)` and viscosity `eta` Pa s under
+/// `gravity`: Stokes's with Cunningham's slip, 1 + Kn (1.246 + 0.42 e^(-0.87 / Kn)), Kn the
+/// air's mean free path (2 eta / rho) sqrt(pi M / (8 R T)) over r (Gao et al. 2018, eqs. A29 to
+/// A31). Stokes's past a Reynolds number of one too: Titan's 50 µm methane drops, at some 3.6,
+/// fall some 1.4 times too fast by it (the drag's own rise past it held for a later deck).
+fn fall_speed(r: f64, grain: f64, (rho, t, molar): (f64, f64, f64), eta: f64, gravity: f64) -> f64 {
+    let free = 2.0 * eta / rho.max(1e-30)
+        * (std::f64::consts::PI * molar / (8.0 * GAS_CONSTANT * t.max(1.0))).sqrt();
+    let kn = free / r;
+    let slip = 1.0 + kn * (1.246 + 0.42 * (-0.87 / kn).exp());
+    let lift = (grain - rho).max(0.0);
+    2.0 / 9.0 * slip * lift * gravity * r * r / eta
+}
+
 /// A level's molecules' Rayleigh scattering coefficient at `wavelength`, m, per metre (M92):
 /// its molecules a cubic metre, p / (k_B T), times their cross-section, its dry air's of
 /// `composition` and its water vapour's by its share of them.
@@ -4254,6 +4422,81 @@ mod tests {
             methane: eb.methane,
         });
         (column, f * absorbed)
+    }
+
+    /// M96: a condensate deck stands where its species saturates along its air's own profile.
+    /// Titan's methane over its 93.7 K ground: its base the first level whose saturated mixing
+    /// ratio falls under what its ground's air holds, none under it; its condensate nowhere more
+    /// than that, its column no more than the methane above its base; no deck of its trace
+    /// water. Mars's water ice over its 215 and 240 K grounds, its optical depth some 0.05 to a
+    /// few (its aphelion belt's 0.05 to 0.5 in the visible, TES, HST; the research notes,
+    /// "Condensate decks"), its grains of 0.5 to 200 µm. Earth's column, its water clouds the
+    /// climate's own: no deck, its carbon dioxide never saturating along its air.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn a_deck_stands_where_its_species_saturates() {
+        let deck_of = |name: &str, ground: f64, albedo: f64, water: bool| {
+            let g = graph(name);
+            let eb = crate::climate::EnergyBalance::from_graph(&g);
+            let (column, absorbed) = column_of(&g, albedo);
+            let column = column
+                .with_vapour_most(eb.vapour_most)
+                .without_clouds()
+                .with_sunlight(Sunlight {
+                    incident: g.f64("orbit.insolation") / 4.0,
+                    absorbed,
+                    haze: eb.haze,
+                    methane: eb.methane,
+                });
+            let table = column.table(ground, g.f64("body.radius"));
+            let decks = column.decks(&table, water);
+            (column, table, decks)
+        };
+        let (column, table, decks) = deck_of("Titan", 93.7, 0.265, true);
+        assert_eq!(decks.len(), 1, "{decks:?}");
+        let deck = &decks[0];
+        assert_eq!(deck.species, "CH4");
+        let (methane, held) = column.condensables[0];
+        let saturated = |l: &Level| {
+            let e = vapour_pressure(methane, l.temperature).min(0.5 * l.pressure);
+            column.gas_constant / methane.r_specific * e / (l.pressure - e)
+        };
+        let base = table.iter().position(|l| l.pressure == deck.base).unwrap();
+        assert!(saturated(&table[base]) < held && base > 0);
+        assert!(table[..base].iter().all(|l| saturated(l) >= held));
+        assert!(deck.levels[..base].iter().all(|&q| q == 0.0));
+        assert!(deck.levels.iter().all(|&q| (0.0..=held).contains(&q)));
+        let above: f64 = (base + 1..table.len())
+            .map(|k| {
+                let (a, b) = (&table[k - 1], &table[k]);
+                0.5 * (a.density + b.density) * held * (b.height - a.height)
+            })
+            .sum();
+        assert!(deck.condensate <= above, "{} {above}", deck.condensate);
+        println!(
+            "Titan's methane: base {:.0} Pa, top {:.0}, {:.1} kg/m², {:.1} µm, depth {:.0}",
+            deck.base,
+            deck.top,
+            deck.condensate,
+            deck.radius * 1e6,
+            deck.depth
+        );
+        for ground in [215.0, 240.0] {
+            let (_, _, decks) = deck_of("Mars", ground, 0.25, true);
+            let ice = decks.iter().find(|d| d.species == "H2O").expect("its ice");
+            println!(
+                "Mars over {ground} K: base {:.0} Pa, top {:.0}, {:.2e} kg/m², {:.1} µm, depth {:.3}",
+                ice.base,
+                ice.top,
+                ice.condensate,
+                ice.radius * 1e6,
+                ice.depth
+            );
+            assert!((0.05..5.0).contains(&ice.depth), "{}", ice.depth);
+            assert!((0.5e-6..200e-6).contains(&ice.radius), "{}", ice.radius);
+        }
+        let (_, _, decks) = deck_of("Earth", 288.0, 0.3, false);
+        assert!(decks.is_empty(), "{decks:?}");
     }
 
     /// M95: a column with no ground, its base ten bars down a nitrogen and methane air under a

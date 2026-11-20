@@ -49,7 +49,7 @@ exogen validate
 
 ## Outputs
 
-Today: equirectangular maps (float EXR and 16-bit PNG) of albedo, height, a shaded preview, a snapshot at the chosen season, the liquid's depth and mask, the year's mean, warmest and coldest temperature, precipitation, aridity, wind, clouds, frost, ice, sea ice, the cryosphere's season and thickness, rivers, lakes, surface age and geological units. A JSON sidecar records every parameter, derived value, seed, legend and unit, and the atmosphere's profile by height (its mean and its warmest and coldest tenths: pressure, temperature, density, vapour, Rayleigh scattering and haze).
+Today: equirectangular maps (float EXR and 16-bit PNG) of albedo, height, a shaded preview, a snapshot at the chosen season, the liquid's depth and mask, the year's mean, warmest and coldest temperature, precipitation, aridity, wind, clouds, frost, ice, sea ice, the cryosphere's season and thickness, rivers, lakes, surface age and geological units. A JSON sidecar records every parameter, derived value, seed, legend and unit, and the atmosphere's profile by height (its mean and its warmest and coldest tenths: pressure, temperature, density, vapour, Rayleigh scattering and haze, and the condensate decks it holds over all of a place).
 
 Planned: cube maps beside the equirectangular layout for every map (standard, and equi-angular to match the simulation's grid); roughness, specular and normal maps; cloud layers, and the clouds' climatology through the year for engines that raise their own weather; an emissive map for surfaces hot enough to glow; ring textures; and in the sidecar the hazes by height and place, the gases' visible absorption, and the air's glow and aurorae.
 
