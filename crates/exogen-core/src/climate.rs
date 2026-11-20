@@ -6133,6 +6133,111 @@ pub struct OwnClouds {
     pub coupling: Option<Coupling>,
 }
 
+/// An air's profile over one of its groups of places (M92, section 4.13): which, mean, warm or
+/// cold; its places' mean ground temperature, K; the share of the body it stands for; its levels.
+#[derive(Clone, Debug)]
+pub struct AirProfile {
+    pub name: &'static str,
+    pub ground: f64,
+    pub share: f64,
+    pub levels: Vec<crate::radiation::Level>,
+}
+
+/// The body's air as tables by height (M92, section 4.13): over the whole body and over its
+/// warmest and its coldest tenth (`Cycle::ground_groups`), each the area mean of its places' own
+/// airs level by level on the pressures every column shares, each place's over its year's mean
+/// ground, as climatologies average their air; its heights from the mean air's hydrostatic
+/// balance. Its column the one its year's radiation read: the climate's, without the stated
+/// law's clouds and with its air aloft at its cell's stability (`cell`, K) where its year ran
+/// under its own clouds (M73, M88). None without an air.
+pub fn air_profiles(
+    graph: &ParamGraph,
+    balance: &EnergyBalance,
+    cycle: &Cycle,
+    cell: Option<f64>,
+) -> Vec<AirProfile> {
+    let (Some(groups), Some(column)) = (
+        cycle.ground_groups(),
+        air_column(graph, balance, cycle.clouded, cell),
+    ) else {
+        return Vec::new();
+    };
+    let radius = graph.f64("body.radius");
+    // Each place's own air over its year's mean ground, the levels every column shares.
+    let means = cycle.place_means();
+    let airs: Vec<(Vec<f64>, Vec<f64>)> =
+        means.par_iter().map(|&(_, t)| column.air_at(t)).collect();
+    let n = column.levels(1.0).len();
+    ["mean", "warm", "cold"]
+        .into_iter()
+        .zip(groups)
+        .zip([1.0, AIR_PROFILE_SHARE, AIR_PROFILE_SHARE])
+        .map(|((name, group), share)| {
+            // The group's air, its places' by their areas level by level, and its ground's.
+            let (mut temps, mut shares) = (vec![0.0; n], vec![0.0; n]);
+            let (mut ground, mut area) = (0.0, 0.0);
+            for &(p, w) in &group {
+                let (t, x) = &airs[p];
+                for k in 0..n {
+                    temps[k] += w * t[k];
+                    shares[k] += w * x[k];
+                }
+                ground += w * means[p].1;
+                area += w;
+            }
+            let area = area.max(1e-300);
+            temps.iter_mut().for_each(|t| *t /= area);
+            shares.iter_mut().for_each(|x| *x /= area);
+            AirProfile {
+                name,
+                ground: ground / area,
+                share,
+                levels: column.table_of(&temps, &shares, radius),
+            }
+        })
+        .collect()
+}
+
+/// The column a body's year's radiation read (M92): the climate's, at its water and the
+/// warmest its vapour comes off, under its sunlight at its Bond albedo; without the stated
+/// law's clouds and with its air aloft at its cell's stability (`cell`, K) where the year ran
+/// under its own clouds (`clouded`; M73, M88). None without an air.
+pub fn air_column(
+    graph: &ParamGraph,
+    balance: &EnergyBalance,
+    clouded: bool,
+    cell: Option<f64>,
+) -> Option<crate::radiation::Column> {
+    use crate::radiation::{Column, Sunlight};
+    let pressure = graph.f64("atmosphere.surface_pressure");
+    if pressure <= 0.0 {
+        return None;
+    }
+    let empty = std::collections::BTreeMap::new();
+    let composition = graph
+        .get("atmosphere.composition")
+        .as_map()
+        .unwrap_or(&empty);
+    let gravity = graph.f64("body.gravity");
+    let skin = graph.f64("atmosphere.equilibrium_temperature") * SKIN_SHARE.powf(0.25);
+    let mut column = Column::new(composition, pressure, gravity, balance.water, skin)
+        .with_vapour_most(balance.vapour_most)
+        .with_sunlight(Sunlight::of(
+            composition,
+            (pressure, gravity),
+            graph.f64("orbit.insolation") / 4.0,
+            graph.f64("atmosphere.bond_albedo"),
+            graph.f64("star.xuv_relative"),
+        ));
+    if clouded {
+        column = column.without_clouds();
+        if let Some(cell) = cell {
+            column = column.with_aloft(cell);
+        }
+    }
+    Some(column)
+}
+
 impl Cycle {
     /// The body's mean surface temperature through the year, K (M68): each place's land and
     /// its sea by their shares through each step, by area; NaN where the year kept no places.
@@ -6164,6 +6269,78 @@ impl Cycle {
             area += s.weight;
         }
         sum / area.max(1e-30)
+    }
+
+    /// Each place's area and its mean surface temperature through the year, K (M92): its land
+    /// and its sea by their shares through each step, as `surface_mean` reads them; none where
+    /// the year kept no places.
+    pub fn place_means(&self) -> Vec<(f64, f64)> {
+        let n = self.sites.len();
+        let steps = self.surfaces[0].len().checked_div(n).unwrap_or(0);
+        if steps == 0 || self.surfaces[1].len() != n * steps {
+            return Vec::new();
+        }
+        self.sites
+            .iter()
+            .enumerate()
+            .map(|(p, s)| {
+                let sea = s.sea.clamp(0.0, 1.0);
+                let t: f64 = (0..steps)
+                    .map(|k| {
+                        let land = self.surfaces[0][p * steps + k] as f64;
+                        let water = self.surfaces[1][p * steps + k] as f64;
+                        let water = if water.is_finite() && water > 1.0 {
+                            water
+                        } else {
+                            land
+                        };
+                        if sea < 1.0 {
+                            (1.0 - sea) * land + sea * water
+                        } else {
+                            water
+                        }
+                    })
+                    .sum();
+                (s.weight, t / steps as f64)
+            })
+            .collect()
+    }
+
+    /// The places the body's air is read over (M92): every place, and its warmest and its
+    /// coldest AIR_PROFILE_SHARE of the body's area by their year means, each place with the
+    /// area it gives its group, the one where a group ends in part; by one rule the equator's
+    /// and the poles' on a body that spins and the day's and the night's on one locked to its
+    /// star. None where the year kept no places.
+    pub fn ground_groups(&self) -> Option<[Vec<(usize, f64)>; 3]> {
+        let places = self.place_means();
+        let area: f64 = places.iter().map(|p| p.0).sum();
+        if places.is_empty() || area <= 0.0 {
+            return None;
+        }
+        let mut order: Vec<usize> = (0..places.len()).collect();
+        order.sort_by(|&a, &b| places[a].1.total_cmp(&places[b].1));
+        let share = AIR_PROFILE_SHARE * area;
+        // The first `share` of the places' area as `order` takes them.
+        let take = |order: &mut dyn Iterator<Item = &usize>| -> Vec<(usize, f64)> {
+            let (mut taken, mut group) = (0.0, Vec::new());
+            for &p in order {
+                let w = places[p].0.min(share - taken);
+                if w <= 0.0 {
+                    break;
+                }
+                taken += w;
+                group.push((p, w));
+            }
+            group
+        };
+        let all = places
+            .iter()
+            .enumerate()
+            .map(|(p, &(w, _))| (p, w))
+            .collect();
+        let cold = take(&mut order.iter());
+        let warm = take(&mut order.iter().rev());
+        Some([all, warm, cold])
     }
 
     /// How far each latitude stands within the overturning cell at step `k` (M70): all of it
@@ -11834,6 +12011,65 @@ mod tests {
         assert!(worst <= 1.0, "{worst}");
     }
 
+    /// M92: an air's tables are its places' mean. Its warm and its cold group each hold
+    /// AIR_PROFILE_SHARE of the body's area, every warm place at least as warm as every cold
+    /// one; each table's air at a level its group's places' own airs there by their areas, its
+    /// ground their mean ground; and Titan's tables carry its haze.
+    fn an_air_s_tables_are_its_places_mean(graph: &ParamGraph, cycle: &Cycle) {
+        let eb = EnergyBalance::from_graph(graph);
+        let profiles = air_profiles(graph, &eb, cycle, None);
+        let groups = cycle.ground_groups().expect("its places");
+        let means = cycle.place_means();
+        let area: f64 = means.iter().map(|m| m.0).sum();
+        let column = air_column(graph, &eb, cycle.clouded, None).expect("an air");
+        let n = column.levels(1.0).len();
+        for (g, group) in groups.iter().enumerate().skip(1) {
+            let held: f64 = group.iter().map(|&(_, w)| w).sum();
+            assert!(
+                (held / area - AIR_PROFILE_SHARE).abs() < 1e-9,
+                "{g}: {held} {area}"
+            );
+        }
+        let warmest_cold = groups[2]
+            .iter()
+            .map(|&(p, _)| means[p].1)
+            .fold(f64::MIN, f64::max);
+        let coldest_warm = groups[1]
+            .iter()
+            .map(|&(p, _)| means[p].1)
+            .fold(f64::MAX, f64::min);
+        assert!(
+            coldest_warm >= warmest_cold,
+            "{coldest_warm} {warmest_cold}"
+        );
+        for (profile, group) in profiles.iter().zip(&groups) {
+            let k = n / 2;
+            let (mut sum, mut ground, mut w_sum) = (0.0, 0.0, 0.0);
+            for &(p, w) in group {
+                sum += w * column.air_at(means[p].1).0[k];
+                ground += w * means[p].1;
+                w_sum += w;
+            }
+            let (expected, ground) = (sum / w_sum, ground / w_sum);
+            let got = profile.levels[k].temperature;
+            println!(
+                "Titan's {} air over {:.2} K: at {:.0} Pa {got:.3} K",
+                profile.name, profile.ground, profile.levels[k].pressure
+            );
+            assert!(
+                (got - expected).abs() < 1e-9 * expected,
+                "{}: {got} {expected}",
+                profile.name
+            );
+            assert!(
+                (profile.ground - ground).abs() < 1e-9 * ground,
+                "{}",
+                profile.name
+            );
+            assert!(profile.levels[0].haze > 0.0, "{}", profile.name);
+        }
+    }
+
     /// Titan's and Venus's years, read by each check of them; Titan's again at its own wind.
     #[test]
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
@@ -11856,6 +12092,9 @@ mod tests {
             ),
             ("titan_s_ground_stands_farther_from_its_air", &|| {
                 titan_s_ground_stands_farther_from_its_air(&titan, &again)
+            }),
+            ("an_air_s_tables_are_its_places_mean: Titan", &|| {
+                an_air_s_tables_are_its_places_mean(&titan.graph, &again.cycle)
             }),
             (
                 "titan_s_methane_evaporates_within_its_ground_s_sunlight",

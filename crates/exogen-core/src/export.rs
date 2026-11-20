@@ -110,6 +110,42 @@ pub struct CloudsInfo {
     pub under_own_clouds: bool,
 }
 
+/// The air's profile as tables by height (M92, section 4.13): the wavelengths its Rayleigh
+/// scattering is given at, nm; and its profiles over the body's mean ground and over its warmest
+/// and its coldest tenth by area (the equator's and the poles' on a body that spins, the day's
+/// and the night's on one locked to its star), each with its ground's temperature, K, the share
+/// of the body it stands for and its levels from the datum's ground up.
+#[derive(Serialize)]
+pub struct AtmosphereInfo {
+    pub rayleigh_wavelengths_nm: [f64; 3],
+    pub profiles: Vec<AirProfileInfo>,
+}
+
+#[derive(Serialize)]
+pub struct AirProfileInfo {
+    pub name: String,
+    pub ground_k: f64,
+    pub area_share: f64,
+    pub levels: Vec<AirLevelInfo>,
+}
+
+/// A level of an air's profile (M92): its altitude over the datum's ground, m, by its
+/// hydrostatic balance; its pressure, Pa; temperature, K; density, kg/m³; mean molar mass,
+/// kg/mol; water vapour's share of its molecules; its molecules' Rayleigh scattering coefficient
+/// at each of the wavelengths, per metre (their refractive indices at 550 nm, read at the others
+/// by lambda^-4); and its methane haze's extinction at 550 nm, per metre (none without one).
+#[derive(Serialize)]
+pub struct AirLevelInfo {
+    pub altitude_m: f64,
+    pub pressure_pa: f64,
+    pub temperature_k: f64,
+    pub density_kg_m3: f64,
+    pub molar_mass_kg_mol: f64,
+    pub water_vapour_share: f64,
+    pub rayleigh_per_m: [f64; 3],
+    pub haze_extinction_per_m: f64,
+}
+
 /// The rivers and the lakes of the year's runoff (F277): the runoff of the land about the lakes,
 /// what the lakes' surfaces gain over what they lose to the air, and what reaches the sea,
 /// m³/s; the share of the land whose water ends in a lake that does not spill to the sea
@@ -375,6 +411,49 @@ fn largest_floods(
     refs
 }
 
+/// The sidecar's air profiles (M92), each level's Rayleigh scattering at each of
+/// AIR_PROFILE_WAVELENGTHS (`radiation::rayleigh_coefficient`); none without an air.
+fn atmosphere_info(graph: &ParamGraph, out: &FinishOutput) -> Option<AtmosphereInfo> {
+    use crate::constants::AIR_PROFILE_WAVELENGTHS;
+    use crate::radiation::rayleigh_coefficient;
+    if out.air_profiles.is_empty() {
+        return None;
+    }
+    let empty = BTreeMap::new();
+    let composition = graph
+        .get("atmosphere.composition")
+        .as_map()
+        .unwrap_or(&empty);
+    let profiles = out
+        .air_profiles
+        .iter()
+        .map(|p| AirProfileInfo {
+            name: p.name.to_string(),
+            ground_k: p.ground,
+            area_share: p.share,
+            levels: p
+                .levels
+                .iter()
+                .map(|l| AirLevelInfo {
+                    altitude_m: l.height,
+                    pressure_pa: l.pressure,
+                    temperature_k: l.temperature,
+                    density_kg_m3: l.density,
+                    molar_mass_kg_mol: l.molar_mass,
+                    water_vapour_share: l.vapour,
+                    rayleigh_per_m: AIR_PROFILE_WAVELENGTHS
+                        .map(|w| rayleigh_coefficient(composition, l, w)),
+                    haze_extinction_per_m: l.haze,
+                })
+                .collect(),
+        })
+        .collect();
+    Some(AtmosphereInfo {
+        rayleigh_wavelengths_nm: AIR_PROFILE_WAVELENGTHS.map(|l| l * 1e9),
+        profiles,
+    })
+}
+
 fn trough_info(t: &crate::stages::plume::Trough, epoch: f64) -> TroughInfo {
     let (lon, lat) = crate::grid::lon_lat_from_direction(t.midpoint());
     TroughInfo {
@@ -430,6 +509,8 @@ pub struct Sidecar {
     pub water: Option<WaterInfo>,
     /// The year's water clouds (M66), none where its working liquid is not water.
     pub clouds: Option<CloudsInfo>,
+    /// The air's profile as tables by height (M92), none without an air.
+    pub atmosphere: Option<AtmosphereInfo>,
     /// The rivers and the lakes (F277), where the body has water.
     pub rivers: Option<RiversInfo>,
     /// The working liquid's depth and optics (ADR 0007), none where no liquid lies.
@@ -1697,6 +1778,7 @@ pub fn export(
         years_mean_k: out.cloud_years.clone(),
         under_own_clouds: out.under_own_clouds,
     });
+    let atmosphere = atmosphere_info(graph, out);
     let wind = out.wind_summary.map(|w| WindInfo {
         mean_speed_m_s: w.speed,
         fastest_m_s: w.fastest,
@@ -1947,6 +2029,7 @@ pub fn export(
         wind,
         water,
         clouds,
+        atmosphere,
         rivers,
         liquid,
         stage_outputs,

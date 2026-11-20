@@ -1160,6 +1160,72 @@ impl Column {
             .collect()
     }
 
+    /// The air's profile over the datum's ground at `t` K as a table by height (M92, section
+    /// 4.13): the column's levels from its ground up, the temperatures its own profile gives
+    /// them (its air aloft at its cell's stability where it keeps one), the water vapour it
+    /// holds at each as its optics read it (each level's saturated share of the molecules times
+    /// the scale its column is read by, no more than saturated), the heights its hydrostatic
+    /// balance puts them at over a body `radius` m in size, and its methane haze's extinction at
+    /// 550 nm, HAZE_EXTINCTION for each unit of its index by HAZE_SHAPE, the depth above `p` rising
+    /// as p^HAZE_SHAPE, read per metre over the level's ρ g (Tomasko et al. 2008).
+    pub fn table(&self, t: f64, radius: f64) -> Vec<Level> {
+        let (temps, shares) = self.air_at(t);
+        self.table_of(&temps, &shares, radius)
+    }
+
+    /// The air over the datum's ground at `t` K at the column's levels (M92): the temperatures
+    /// its own profile gives them and its water vapour's share of their molecules, as `table`
+    /// reads them; the levels every ground's column shares, so that grounds' airs average level
+    /// by level.
+    pub fn air_at(&self, t: f64) -> (Vec<f64>, Vec<f64>) {
+        let levels = self.levels(1.0);
+        let (temps, vapour, humid) = self.profile(t, &levels);
+        // The share of its saturated vapour the column holds: its vapour's column, kg/m², the
+        // scale times its profile's, over the saturated column, epsilon times its profile's / g.
+        let fill = self.vapour_scale(t, vapour[0]) * self.gravity / self.epsilon;
+        let shares = humid.iter().map(|&h| (h * fill).min(h).max(0.0)).collect();
+        (temps, shares)
+    }
+
+    /// The table by height (M92) of an air whose temperatures and water vapour's shares at the
+    /// column's levels are `temps` and `shares`, over a body `radius` m in size, as `table`
+    /// describes it.
+    pub fn table_of(&self, temps: &[f64], shares: &[f64], radius: f64) -> Vec<Level> {
+        let levels = self.levels(1.0);
+        let (dry, water) = (GAS_CONSTANT / self.gas_constant, molar_mass("H2O"));
+        let molar: Vec<f64> = shares
+            .iter()
+            .map(|&x| dry * (1.0 - x) + water * x)
+            .collect();
+        let heights = hydrostatic_heights(&levels, temps, &molar, (self.gravity, radius));
+        let index = self.sunlight.haze / HAZE_SUNLIGHT;
+        (0..levels.len())
+            .map(|k| {
+                let p = levels[k];
+                let density = p * molar[k] / (GAS_CONSTANT * temps[k]);
+                let r = radius / (radius + heights[k]);
+                let haze = if index > 0.0 {
+                    HAZE_EXTINCTION * index * HAZE_SHAPE * (p / self.pressure).powf(HAZE_SHAPE) / p
+                        * density
+                        * self.gravity
+                        * r
+                        * r
+                } else {
+                    0.0
+                };
+                Level {
+                    height: heights[k],
+                    pressure: p,
+                    temperature: temps[k],
+                    density,
+                    molar_mass: molar[k],
+                    vapour: shares[k],
+                    haze,
+                }
+            })
+            .collect()
+    }
+
     /// The water vapour's column over the datum's ground at `t` K (F235) over what the
     /// profile's saturated levels hold, `datum` of it: the scale its vapour is read by.
     fn vapour_scale(&self, t: f64, datum: f64) -> f64 {
@@ -2536,7 +2602,19 @@ pub fn rayleigh_depth(composition: &BTreeMap<String, f64>, column: f64) -> f64 {
     }
     let mu = mean_molecular_mass(composition);
     let molecules = column / (mu / AVOGADRO);
-    let wavenumber: f64 = 1.0 / 550e-9;
+    rayleigh_cross_section(composition, 550e-9) * molecules
+}
+
+/// The Rayleigh cross-section of a molecule of an air of `composition` by volume at
+/// `wavelength`, m, m² (M92): each gas's from its refractive index at 550 nm and its King
+/// factor, 24 pi³ / (N_L² lambda⁴) ((n² - 1) / (n² + 2))² F_K (Bates 1984; Sneep and Ubachs
+/// 2005), at other wavelengths by lambda^-4 alone, the index's dispersion not held.
+pub fn rayleigh_cross_section(composition: &BTreeMap<String, f64>, wavelength: f64) -> f64 {
+    let total: f64 = composition.values().sum::<f64>();
+    if total <= 0.0 || wavelength <= 0.0 {
+        return 0.0;
+    }
+    let wavenumber: f64 = 1.0 / wavelength;
     composition
         .iter()
         .map(|(s, f)| {
@@ -2553,7 +2631,69 @@ pub fn rayleigh_depth(composition: &BTreeMap<String, f64>, column: f64) -> f64 {
             f / total * sigma
         })
         .sum::<f64>()
-        * molecules
+}
+
+/// One level of an air's profile table (M92, section 4.13): its height over the datum's ground,
+/// m; its pressure, Pa; its temperature, K; its density, kg/m³; its mean molar mass, kg/mol;
+/// its water vapour's share of its molecules; and its methane haze's extinction in the light at
+/// 550 nm, per metre.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Level {
+    pub height: f64,
+    pub pressure: f64,
+    pub temperature: f64,
+    pub density: f64,
+    pub molar_mass: f64,
+    pub vapour: f64,
+    pub haze: f64,
+}
+
+/// A level's molecules' Rayleigh scattering coefficient at `wavelength`, m, per metre (M92):
+/// its molecules a cubic metre, p / (k_B T), times their cross-section, its dry air's of
+/// `composition` and its water vapour's by its share of them.
+pub fn rayleigh_coefficient(
+    composition: &BTreeMap<String, f64>,
+    level: &Level,
+    wavelength: f64,
+) -> f64 {
+    let vapour: BTreeMap<String, f64> = [("H2O".to_string(), 1.0)].into_iter().collect();
+    let (dry, wet) = (
+        rayleigh_cross_section(composition, wavelength),
+        rayleigh_cross_section(&vapour, wavelength),
+    );
+    let molecules = level.pressure * AVOGADRO / (GAS_CONSTANT * level.temperature);
+    molecules * ((1.0 - level.vapour) * dry + level.vapour * wet)
+}
+
+/// The heights of an air's `levels`, Pa from the ground up, by its hydrostatic balance (M92):
+/// each layer at its mean temperature and molar mass, `temps` K and `molar` kg/mol at its
+/// levels, under a gravity falling as the inverse square of the distance from the centre of a
+/// body `radius` m in size whose ground's is `gravity`, so that across the layer 1/r falls by
+/// R T ln(p_k / p_k+1) / (M g r_0²), exactly for its mean; m over the ground, unbounded where the
+/// body cannot hold the layer.
+pub fn hydrostatic_heights(
+    levels: &[f64],
+    temps: &[f64],
+    molar: &[f64],
+    (gravity, radius): (f64, f64),
+) -> Vec<f64> {
+    let n = levels.len();
+    let mut heights = vec![0.0; n];
+    let hold = gravity * radius * radius;
+    let mut r = radius;
+    for k in 0..n.saturating_sub(1) {
+        let t = 0.5 * (temps[k] + temps[k + 1]);
+        let m = 0.5 * (molar[k] + molar[k + 1]);
+        let step = (levels[k] / levels[k + 1]).ln() * GAS_CONSTANT * t / m;
+        let inverse = 1.0 / r - step / hold;
+        r = if inverse > 0.0 {
+            1.0 / inverse
+        } else {
+            f64::INFINITY
+        };
+        heights[k + 1] = r - radius;
+    }
+    heights
 }
 
 /// The albedo of a layer reflecting `r` of the light, conservative, over ground of albedo
@@ -2899,6 +3039,91 @@ mod tests {
                 g.f64("star.xuv_relative"),
             ));
         (column, absorbed)
+    }
+
+    /// M92: an air's heights by its hydrostatic balance. An isothermal air of one gas under a
+    /// gravity falling as the inverse square stands where 1/r = 1/r_0 - R T ln(p_0 / p) /
+    /// (M g_0 r_0²) puts it, and under a body so large that its gravity holds, its pressure falls
+    /// by e over each scale height R T / (M g).
+    #[test]
+    fn an_air_s_heights_follow_its_hydrostatic_balance() {
+        let levels: Vec<f64> = (0..30).map(|k| 1e5 * (-0.4 * k as f64).exp()).collect();
+        let (temps, molar) = (vec![250.0; 30], vec![0.028; 30]);
+        let (g, r0) = (1.35, 2.575e6);
+        let heights = hydrostatic_heights(&levels, &temps, &molar, (g, r0));
+        for (k, &p) in levels.iter().enumerate() {
+            let inverse = 1.0 / r0 - GAS_CONSTANT * 250.0 * (1e5 / p).ln() / (0.028 * g * r0 * r0);
+            let expected = 1.0 / inverse - r0;
+            assert!(
+                (heights[k] - expected).abs() <= 1e-6 * expected.max(1.0),
+                "{k}: {} {expected}",
+                heights[k]
+            );
+        }
+        let flat = hydrostatic_heights(&levels, &temps, &molar, (9.81, 1e12));
+        let scale = GAS_CONSTANT * 250.0 / (0.028 * 9.81);
+        for (k, &p) in levels.iter().enumerate() {
+            let expected = scale * (1e5 / p).ln();
+            assert!(
+                (flat[k] - expected).abs() <= 1e-4 * expected + 1e-3,
+                "{k}: {} {expected}",
+                flat[k]
+            );
+        }
+    }
+
+    /// M92: an air's table stands on its own profile. Earth's from its ground at its surface
+    /// pressure up, its heights rising, its density its gas law's, its ground's vapour a few
+    /// thousandths to a few hundredths of its molecules, and its molecules' Rayleigh scattering
+    /// summed up its heights its whole column's depth at 550 nm (`rayleigh_depth`); Titan's
+    /// methane haze summed up its heights the depth its law gives between its ground and its top,
+    /// HAZE_EXTINCTION times its index times 1 - (p_top / p_s)^HAZE_SHAPE.
+    #[test]
+    fn an_air_s_table_stands_on_its_own_profile() {
+        let trapezoid = |table: &[Level], f: &dyn Fn(&Level) -> f64| -> f64 {
+            table
+                .windows(2)
+                .map(|w| 0.5 * (f(&w[0]) + f(&w[1])) * (w[1].height - w[0].height))
+                .sum()
+        };
+        let g = graph("Earth");
+        let (column, _) = column_of(&g, 0.3);
+        let composition = g.get("atmosphere.composition").as_map().unwrap().clone();
+        let surface = g.f64("atmosphere.surface_pressure");
+        let table = column.table(288.0, g.f64("body.radius"));
+        assert_eq!(table[0].height, 0.0);
+        assert_eq!(table[0].temperature, 288.0);
+        assert!((table[0].pressure - surface).abs() < 1e-6 * surface);
+        for w in table.windows(2) {
+            assert!(
+                w[1].height > w[0].height && w[1].pressure < w[0].pressure,
+                "{w:?}"
+            );
+        }
+        for l in &table {
+            let law = l.pressure * l.molar_mass / (GAS_CONSTANT * l.temperature);
+            assert!((l.density - law).abs() <= 1e-12 * law, "{l:?}");
+        }
+        let vapour = table[0].vapour;
+        assert!(vapour > 0.003 && vapour < 0.03, "{vapour}");
+        let summed = trapezoid(&table, &|l| rayleigh_coefficient(&composition, l, 550e-9));
+        let whole = rayleigh_depth(&composition, surface / g.f64("body.gravity"));
+        println!(
+            "Earth's air at 288 K: Rayleigh depth up its table {summed:.4}, its column's {whole:.4}"
+        );
+        assert!((summed / whole - 1.0).abs() < 0.03, "{summed} {whole}");
+        let g = graph("Titan");
+        let (column, _) = column_of(&g, 0.265);
+        let table = column.table(93.7, g.f64("body.radius"));
+        let index = column.sunlight().haze / HAZE_SUNLIGHT;
+        let top = table[table.len() - 1].pressure / table[0].pressure;
+        let expected = HAZE_EXTINCTION * index * (1.0 - top.powf(HAZE_SHAPE));
+        let summed = trapezoid(&table, &|l| l.haze);
+        println!("Titan's haze up its table {summed:.3}, its law's {expected:.3}");
+        assert!(
+            expected > 1.0 && (summed / expected - 1.0).abs() < 0.05,
+            "{summed} {expected}"
+        );
     }
 
     fn halve(f: impl Fn(f64) -> f64, mut lo: f64, mut hi: f64) -> f64 {

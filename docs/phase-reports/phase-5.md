@@ -1340,6 +1340,48 @@ How it went:
 - **Kept as known (the user).** Earth's sea ice and its poles under their own clouds, recorded in 5C's Open list, to revisit with 5G's cloud types or a measurement that closes the gap. Research notes, untracked: "Cloud reflectance under a low sun", "Cloud water and drops by latitude".
 - **The suite.** No code changed; the roadmap's check passes.
 
+## The ninety-second milestone: the air's profile as tables by height
+
+- **F404.** The air's profile as tables by height (AIR_PROFILE_SHARE, AIR_PROFILE_WAVELENGTHS).
+
+How it went:
+
+- **The state found.** The column (F293, F323 to F330) holds each place's air on its pressure levels, read by its year and its clouds, but the sidecar gave the air one scale height. The user chose the column's work before anything else (2026-11-19), its profile's export first (section 4.13).
+- **The tables (F404).** The sidecar's `atmosphere` block holds three tables: the body's mean, and its warmest and coldest tenths by their year's mean ground. Each is the area mean of its places' airs on the column's levels, each place's air as its year read it. Each level gives its altitude, pressure, temperature, density, molar mass, water vapour's share, Rayleigh scattering at 440, 550 and 680 nm, and a methane haze's extinction. A first design hung one column over each group's mean ground; its Earth's mean stood within 1.6 K of the area mean's from 5 to 11 km. The area mean was kept, as it holds what each place's year read.
+- **Against measured profiles** (research notes, "Reference atmosphere profiles"; the model's mean table by height, the references single soundings but Earth's):
+
+| body | reference | heights | model minus measured |
+|---|---|---|---|
+| Earth | US Standard Atmosphere 1976, a mid-latitude profile | 0 to 2 km | -0.5 to +1.9 K |
+| | | 5 to 11 km | +7.8 to +12.4 K |
+| | | 15 to 25 km | -2.5 to -4.7 K |
+| | | 30 to 60 km | +14 to +63 K |
+| | | 60 to 80 km | +37 to -21 K, levels alternating above 55 km |
+| Venus | Pioneer Venus Large probe | 0 to 35 km | -2.7 to +7.6 K |
+| | | 40 to 64 km | -13 to -72 K |
+| | Pioneer Venus Day probe | 70 to 80 km | -36 to -8 K, the skin's 192.6 K |
+| Titan | Huygens HASI | 0 to 25 km | +5.8 to +8.2 K |
+| | | 44 to 70 km | -3 to -44 K: its coldest 58 K near 60 km, Huygens's 70.4 at 44 |
+| | | 80 to 130 km | +10 to +28 K |
+| | | 146 to 200 km | -6 to +3 K |
+| Mars | Pathfinder's entry, at night | 9 to 10 km | -9 to -10 K |
+| | | 15 to 30 km | -22 to -31 K |
+| | | 60 to 120 km | +49 to +84 K, the skin's 181 K |
+
+- **The light.** Earth's Rayleigh depth up its table 0.0967 at 550 nm where Bodhaine et al. 1999 give 0.0971; 0.2362 at 440 where 0.2426, and 0.0414 at 680 where 0.0410: the inverse fourth power without the refractive index's dispersion. Titan's haze 7.08 deep at 550 nm up its table, its law's 7.03.
+- **What they say.** Earth's air from 5 to 11 km is 8 to 12 K warm, the cause not yet traced. Its warmest tenth's air at 500 hPa stands at 276 K over its 304.5 K ground, and every place's air aloft reads the cell's (M73). Earth's upper stratosphere is warm, as known (F348: carbon dioxide's line cores). Above 55 km its levels alternate warm and cold, likely because each thin layer emits at its two levels' mean, which such a mode leaves unchanged. Venus's 40 to 64 km lack the deck's own heating. Mars's middle air lacks its dust's heating, and its upper air stands at the skin's temperature where carbon dioxide's cooling holds the real one 100 to 130 K. Titan's ground has been known warm since F303. All are in 5C's Open list.
+- **The checks.** Fast: `an_air_s_heights_follow_its_hydrostatic_balance` (the heights against the inverse-square law's closed form to 1e-6, and a flat gravity's scale height); `an_air_s_table_stands_on_its_own_profile` (Earth's table: its ground at the surface pressure, the gas law at every level, its vapour, its Rayleigh depth within 3 percent of the column's; Titan's haze within 5 percent of its law). Whole-body: `an_air_s_tables_are_its_places_mean` on Titan (each tenth's area, the warm places over the cold, each table its places' area mean) and `an_air_s_tables_stand_over_its_grounds` on the Earth-like (cold under mean under warm on the ground and at half the pressure, the cold tenth's air aloft more than 5 K over its own column's, the airless bodies with none).
+- **The invariants.** Six bugs planted, each caught:
+  - the heights under a flat gravity, by the heights' check, and by Titan's haze, 6.52 deep up its table where 7.03;
+  - the density by the dry air's molar mass, by the gas law;
+  - the haze without gravity's fall with height, at 7.81;
+  - the warm and cold tenths swapped, by Titan's warm over cold;
+  - the tenths' airs averaged by place and not by area, by Titan's mean, 0.005 K off;
+  - the tables without the cell's air aloft, by the Earth-like's cold tenth, 213.6 K at half its pressure where its own column's 213.7.
+- **KNOWN.** As above, in 5C's Open list; not yet in the tables: the gases' visible absorption, the hazes' single-scattering albedo and asymmetry, the haze by place (5G).
+- **The maps unchanged.** Titan and Earth's draft at 1024, rendered before and after: every map is the same to the byte (43 and 45 files), and the sidecars differ only by the new block.
+- **The suite.** The whole-body tier: 451 of 451 pass (108 minutes, beside the five renders and the plants). On the test Earth-like, its cold tenth's air at half its pressure stands at 234.7 K, where its own column's over its 256.3 K ground stands at 213.7. The own-clouds tier was not run, as nothing it runs changed. Clippy is clean with each tier's features and on the CLI. FINISH_VERSION 248.
+
 ## The fifty-fifth milestone: the air's spectrum
 
 - **F298.** The ground's own budget (the user's choice, 2026-11-08, for Titan's methane cycle) needs what the air sends down to its ground, which the grey column (F293) got wrong: Earth's ground took 207 W/m² where 342 is measured, Titan's saw space through 0.30 of its radiation where some 0.04 is real. The user chose the published bands first. The column now gives its outgoing, window and downward streams, its layers' source linear in their depth; water vapour absorbs by Williams 2026's bands and continuum, the gases' collisions by HITRAN's tables, the clouds and the air's other absorbers stated and grey until 5G, Titan's haze sending a share of the light it absorbs back to space.

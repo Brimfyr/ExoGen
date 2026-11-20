@@ -263,6 +263,9 @@ pub struct FinishOutput {
     /// the one its maps show, ran under them.
     pub cloud_years: Vec<f64>,
     pub under_own_clouds: bool,
+    /// The air's profile as tables by height (M92, section 4.13): over the body's mean ground
+    /// and its warmest and coldest tenth by area; none without an air.
+    pub air_profiles: Vec<crate::climate::AirProfile>,
     /// The rivers and the lakes of the year's runoff over the terrain (F277), where it has
     /// water, and what the rivers' erosion moved (F278).
     pub rivers: Option<crate::rivers::Rivers>,
@@ -463,7 +466,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 247;
+pub const FINISH_VERSION: u64 = 248;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3333,6 +3336,14 @@ pub fn finish(
     });
     let cloud_summary = clouds.as_ref().map(crate::climate::Clouds::summary);
     let clouds = clouds.map(|c| c.fields(grid));
+    // The air's profile as tables by height (M92, section 4.13): over its mean ground and its
+    // warmest and coldest tenth, in the column its year's radiation read.
+    let air_profiles = {
+        let cell = moisture
+            .as_ref()
+            .and_then(|m| cycle.cell_air(m, balance.circulation.reach));
+        crate::climate::air_profiles(graph, &balance, &cycle, cell)
+    };
     // The land's water over the relief (F277), none shed under the caps' ice; the rivers'
     // erosion of the ground through today's climate's span (F278), its relief held over the
     // lithosphere's flexural wavelength; and the rivers and the lakes on the ground they leave.
@@ -3675,6 +3686,7 @@ pub fn finish(
         planetary_albedo,
         cloud_years,
         under_own_clouds,
+        air_profiles,
         rivers,
         erosion,
         rays,
@@ -4723,6 +4735,9 @@ mod tests {
             ("the_earth_like_s_finish_runs_under_its_own_clouds", &|| {
                 the_earth_like_s_finish_runs_under_its_own_clouds(&earth)
             }),
+            ("an_air_s_tables_stand_over_its_grounds", &|| {
+                an_air_s_tables_stand_over_its_grounds(&earth, &[&moon, &mercury])
+            }),
             ("mercury_takes_up_its_contraction_in_scarps", &|| {
                 mercury_takes_up_its_contraction_in_scarps(&mercury, &moon)
             }),
@@ -5090,6 +5105,73 @@ mod tests {
     /// most years have run, and its last year, the one its maps show, under them too; it
     /// reflects what Earth's measures allow (0.26 to 0.33, the own-clouds tier's; CERES's
     /// some 0.29).
+    /// M92: the Earth-like's air as tables by height stands over its grounds: three tables,
+    /// over its mean ground and over its warmest and its coldest tenth by area, standing for
+    /// the whole body and a tenth of it each, the coldest the coldest and the warmest the
+    /// warmest, each from its ground at its surface pressure up; its year under its own clouds,
+    /// so its tables read the air aloft at its cell's stability (M73): the cold ground's air at
+    /// half the surface pressure over 5 K warmer than the same column's own profile there
+    /// without it. The airless bodies have none.
+    fn an_air_s_tables_stand_over_its_grounds(body: &Body, airless: &[&Body]) {
+        let profiles = &body.out.finish.air_profiles;
+        let names: Vec<&str> = profiles.iter().map(|p| p.name).collect();
+        assert_eq!(names, ["mean", "warm", "cold"]);
+        let (mean, warm, cold) = (&profiles[0], &profiles[1], &profiles[2]);
+        assert_eq!(
+            [mean.share, warm.share, cold.share],
+            [1.0, AIR_PROFILE_SHARE, AIR_PROFILE_SHARE]
+        );
+        assert!(
+            cold.ground < mean.ground && mean.ground < warm.ground,
+            "{} {} {}",
+            cold.ground,
+            mean.ground,
+            warm.ground
+        );
+        let surface = body.graph.f64("atmosphere.surface_pressure");
+        for p in profiles {
+            let first = p.levels[0];
+            assert!(first.height == 0.0 && (first.pressure - surface).abs() < 1e-6 * surface);
+            assert!((first.temperature - p.ground).abs() < 1e-9, "{}", p.name);
+            for w in p.levels.windows(2) {
+                assert!(w[1].height > w[0].height && w[1].pressure < w[0].pressure);
+            }
+        }
+        // The air at half the surface pressure over each ground.
+        let at_half = |levels: &[crate::radiation::Level]| -> f64 {
+            let half = 0.5 * surface;
+            let k = levels
+                .iter()
+                .position(|l| l.pressure < half)
+                .unwrap_or(1)
+                .max(1);
+            let (a, b) = (levels[k - 1], levels[k]);
+            let w = (half / a.pressure).ln() / (b.pressure / a.pressure).ln();
+            a.temperature + w * (b.temperature - a.temperature)
+        };
+        let (m, c, h) = (
+            at_half(&mean.levels),
+            at_half(&cold.levels),
+            at_half(&warm.levels),
+        );
+        // The same column's own profile over the cold ground, no air aloft lifted.
+        let balance = crate::climate::EnergyBalance::from_graph(&body.graph);
+        let own = crate::climate::air_column(&body.graph, &balance, true, None)
+            .expect("an air")
+            .table(cold.ground, body.graph.f64("body.radius"));
+        let own = at_half(&own);
+        println!(
+            "Earth-like's air over its grounds {:.1}, {:.1} and {:.1} K: at half its pressure {c:.1}, {m:.1} and {h:.1} K; the cold ground's own profile {own:.1} K",
+            cold.ground, mean.ground, warm.ground
+        );
+        assert!(body.out.finish.under_own_clouds);
+        assert!(c < m && m < h, "{c} {m} {h}");
+        assert!(c > own + 5.0, "{c} {own}");
+        for b in airless {
+            assert!(b.out.finish.air_profiles.is_empty());
+        }
+    }
+
     fn the_earth_like_s_finish_runs_under_its_own_clouds(body: &Body) {
         let out = &body.out.finish;
         let means = &out.cloud_years;

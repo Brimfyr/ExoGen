@@ -1952,6 +1952,13 @@ pub const RADIATION_BINS: [(f64, f64, f64); 8] = [
 ];
 pub const RADIATION_LEVELS: usize = 48;
 pub const RADIATION_DECADES: f64 = 6.0;
+/// M92: the air's profile tables (section 4.13): the share of the body's area its warm and its
+/// cold profile each stand over, the warmest and the coldest of its places by their year's mean
+/// (a stated choice: the equator's and the poles' on a body that spins, the day's and the
+/// night's on one locked to its star); and the wavelengths the tables give the Rayleigh
+/// scattering at, m, the blue, green and red a renderer's three channels read.
+pub const AIR_PROFILE_SHARE: f64 = 0.1;
+pub const AIR_PROFILE_WAVELENGTHS: [f64; 3] = [440e-9, 550e-9, 680e-9];
 pub const DIFFUSIVITY: f64 = 1.66;
 pub const RADIATION_SOLVE_STEPS: usize = 48;
 pub const OUTGOING_STEP: f64 = 0.01;
