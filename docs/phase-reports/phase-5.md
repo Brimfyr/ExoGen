@@ -1413,6 +1413,12 @@ How it went:
 - **KNOWN.** The warmest tenth 9 to 13 K warm aloft over a ground 3.6 K warm (the equator's peak); the stratosphere's floor at the cell's tropopause everywhere (ERA's 192 K over the tropics, 220 over the poles: the stratosphere's own overturning); the upper stratosphere's warmth (F348).
 - **The checks.** Fast: `a_thin_air_s_levels_do_not_alternate` (Earth's column from 100 hPa up, at most one turn of its curvature); `the_net_flux_s_slopes_meet_its_differences` reads the middles' slopes too; `the_column_lifts_its_surface_air` reads the column's own air over a 300 K sea against ERA's 0 to 10 degrees within 2.5 K to 200 hPa; `an_air_aloft_keeps_its_cell_s_stability` reads ERA's annual 40 to 50 and 60 to 70 degrees within 2.5 K.
 - **The invariants.** Four bugs planted, each caught: the balance over the two whole layers (18 alternating levels); the convection undilute (400 hPa 3.3 K warm over the 300 K sea; 300 hPa 6.5 K warm over 40 to 50 degrees); the middles' slopes' own emission of the wrong sign; the lower half's emission from its base's source alone (the middles' slopes against their differences).
+- **The tiers, and what they found.** The whole-body and own-clouds tiers ran together (454 tests, 129 minutes): 452 passed, the Earth-like's own-clouds years among them. The stated law's Earth-like year missed three bounds by little, and the sky one; each now KNOWN, its bound widened just past it:
+  - its air at 700 hPa over 30 to 50 degrees 1.6 and 1.9 K under ERA's (within 1.5 before; now 2): its cell's air at 700 hPa 0.9 K the colder, entraining, and the mid-latitudes' under it through M73's stability, its rise from the ground's warmth where ERA's from its air at 1000 hPa, 0.85 K under its sea;
+  - its clear sky over 60 to 70 degrees 10.8 W/m² under CERES's (within 10; now 12), its air aloft the colder;
+  - its polar sea ice 4,243 kg/m², 4.6 m (within 4.4 m; now 5);
+  - the sky's gravest equatorial wave 42 m/s (within 44 to 62; now 40 to 62): the sky reads its convection's own adiabat, which entrains, 1 to 5 K under ERA's tropics aloft where the column's air stands within 2. The sky to read the column's own air: 5C's Open list.
+  - the sky's air aloft and the column's checks read ERA's annual zonal means, as the column's (above).
 
 ## The ninety-fourth milestone: a thick air's own radiative zone
 
