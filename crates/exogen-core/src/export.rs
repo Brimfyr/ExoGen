@@ -172,7 +172,10 @@ pub struct AirLevelInfo {
 /// and the share the lakes cover; and the most any one river brings the sea, m³/s, and where,
 /// deg; and what the rivers' erosion moved through today's climate's span (F278): the ground
 /// they cut, what of it they laid in lakes and pits and what they brought the sea, km³, and the
-/// rate they began at over the land, mm a year.
+/// rate they began at over the land, mm a year; what they brought the sea laid on its floor from
+/// their mouths, what full seas held back and the rivers carried on, and what was left over the
+/// liquid's level where no sea or basin had room, km³, and the most the floor sank under it, m
+/// (F414, F415).
 #[derive(Serialize)]
 pub struct RiversInfo {
     pub runoff_m3_s: f64,
@@ -186,6 +189,10 @@ pub struct RiversInfo {
     pub laid_km3: f64,
     pub brought_to_sea_km3: f64,
     pub erosion_mm_yr: f64,
+    pub sea_floor_km3: f64,
+    pub carried_on_km3: f64,
+    pub over_level_km3: f64,
+    pub floor_sank_m: f64,
 }
 
 /// The year's surface wind (F267): its mean speed over the body, m/s, the fastest of its
@@ -1798,6 +1805,10 @@ pub fn export(
             laid_km3: out.erosion.map_or(0.0, |e| e.laid / 1e9),
             brought_to_sea_km3: out.erosion.map_or(0.0, |e| e.to_sea / 1e9),
             erosion_mm_yr: out.erosion.map_or(0.0, |e| 1e3 * e.rate),
+            sea_floor_km3: out.erosion.map_or(0.0, |e| e.floor / 1e9),
+            carried_on_km3: out.erosion.map_or(0.0, |e| e.carried_on / 1e9),
+            over_level_km3: out.erosion.map_or(0.0, |e| e.over / 1e9),
+            floor_sank_m: out.erosion.map_or(0.0, |e| e.sank),
         }
     });
     let water = out.water_summary.map(|w| WaterInfo {

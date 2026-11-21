@@ -3133,6 +3133,20 @@ pub const FLUVIAL_REFERENCE_RUNOFF: f64 = 0.27;
 pub const FLUVIAL_ERODIBILITY: f64 = 2e-6;
 pub const FLUVIAL_SPAN_YR: f64 = 2e6;
 pub const FLUVIAL_STEPS: usize = 10;
+/// F414: the front of the wedge a river's load builds into its sea from its mouth, its gradient
+/// the regional slope Pratson and Haxby (1996) measured on the passive clastic continental
+/// slope off New Jersey and Maryland, 2.5° (their five margins 0.5° to 4.4°, the carbonate
+/// slope off West Florida the steepest): a margin's front is where its sediment stands as
+/// steep as it holds under a liquid, a stated value for every body.
+pub const FORESET_SLOPE: f64 = 0.043_660_942;
+/// F414: the rounds in which all a step's mouths' reaches are found together, at most, a
+/// numerical choice: some ten to rise past a load and some ten more to close on it; a wedge not
+/// found by then laid by its load's share, or the rest of its load held.
+pub const WEDGE_ROUNDS: u32 = 60;
+/// F414: ground within LEVEL_TOLERANCE m under the liquid's level stands at it as the rivers'
+/// steps read the sea, its heights' rounding at an Earth-like's datum some 2e-4 m: a numerical
+/// choice.
+pub const LEVEL_TOLERANCE: f64 = 0.01;
 /// F245: the share of the transport a sea's water carries across the sea's share of the
 /// boundary between two places, the air the rest: some third, the ocean's share of the
 /// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated

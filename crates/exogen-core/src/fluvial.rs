@@ -28,28 +28,42 @@ use crate::rivers::{Drainage, NONE, drain};
 
 /// What the rivers' erosion moved through its span (F278): the ground they cut, what of it they
 /// laid in lakes and what they brought the sea, m³; and the rate they began at, m a year over
-/// the land, the land's mean.
+/// the land, the land's mean. What they brought the sea laid on its floor under its level
+/// (F414), m³; what full seas held back and the rivers carried on, m³, each time they carried
+/// it; what was laid over the level where at the last step no sea had room left, m³; and the
+/// most the floor sank under its load (F415), m.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Erosion {
     pub cut: f64,
     pub laid: f64,
     pub to_sea: f64,
     pub rate: f64,
+    pub floor: f64,
+    pub carried_on: f64,
+    pub over: f64,
+    pub sank: f64,
 }
 
 /// The rivers' erosion of the ground in `layers` on a grid of a body of `radius` m (F278), its
 /// sea where `sea` at `sea_level`, m, under a year whose land sheds `runoff` and whose open
-/// water gains `gain`, kg/m²/s at each cell, of a liquid of `density` kg/m³, the ground
-/// rebounding by `rebound`, the crust's density over the mantle's, of what it lost over `hold`,
-/// the lithosphere's flexural wavelength, m.
+/// water gains `gain`, kg/m²/s at each cell, of a liquid of `density` kg/m³, over `hold`, the
+/// lithosphere's flexural wavelength, m, a crust of `crust` kg/m³ over a mantle of `mantle`:
+/// the ground rebounding by the crust's density over the mantle's of what it lost. What each
+/// step's rivers bring the sea is laid on its floor from their mouths at the step's end (F413,
+/// F414), the floor sinking under it (F415); the sea below the liquid's level as each step leaves
+/// it, so that where the load fills a sea to its level the next step's rivers run over it, and
+/// carry on with them what a full sea held back, into the basins and the seas beyond, steps of
+/// carrying alone after the span's until none is left, the last spreading what no sea has room
+/// for over all the sea it reached.
 pub fn erode(
     grid: CubeSphere,
     layers: &mut LayerSet,
     sea: &[bool],
     water: (&[f32], &[f32]),
     (radius, density, sea_level): (f64, f64, f64),
-    (hold, rebound): (f64, f64),
+    (hold, crust, mantle): (f64, f64, f64),
 ) -> Erosion {
+    let rebound = crust / mantle;
     let n = grid.cell_count();
     let area: Vec<f64> = (0..n)
         .map(|k| grid.cell_area(grid.cell(k)) * radius * radius)
@@ -74,40 +88,207 @@ pub fn erode(
             .map(f64::from)
             .collect()
     };
+    let laying = sea_level.is_finite();
     let mut out = Erosion::default();
     let dt = FLUVIAL_SPAN_YR / FLUVIAL_STEPS as f64;
-    for step in 0..FLUVIAL_STEPS {
-        let h = layers.height();
-        let d = drain(grid, h.as_slice(), sea, water, (radius, density));
-        let z = incise(grid, h.as_slice(), sea, &d, dt, body);
-        // What each land cell lost, carried with its water to its pit's basin, or the sea; and
-        // laid in the basins by their tree.
-        let mut cut = vec![0.0f64; n];
-        for k in (0..n).filter(|&k| !sea[k] && d.lake_of[k] == NONE) {
-            cut[k] = (h.as_slice()[k] as f64 - z[k]).max(0.0);
+    // The sea as each step leaves it; what full seas held back at their mouths, m³; and what
+    // reached the sea, carried on again or not.
+    let mut wet = sea.to_vec();
+    // The seas a load filled to their level: land for the steps after, whatever they sink.
+    let mut filled = vec![false; n];
+    let mut pending = vec![0.0f64; n];
+    let mut reached = 0.0;
+    let (mut routing_time, mut laying_time, mut passes) = (0.0, 0.0, 0);
+    for pass in 0..2 * FLUVIAL_STEPS {
+        let eroding = pass < FLUVIAL_STEPS;
+        let carried: f64 = pending.iter().sum();
+        if !eroding && carried <= 0.0 {
+            break;
         }
-        let (laid, lost) = lay(h.as_slice(), sea, &d, &cut, &area);
-        out.to_sea += lost;
-        if step == 0 {
+        passes += 1;
+        let clock = std::time::Instant::now();
+        let h = layers.height();
+        let d = drain(grid, h.as_slice(), &wet, water, (radius, density));
+        // What each land cell lost, carried with its water to its pit's basin, or the sea, with
+        // what full seas held back; laid in the basins by their tree, and on the sea's floor
+        // from its mouths.
+        let mut cut = vec![0.0f64; n];
+        if eroding {
+            let z = incise(grid, h.as_slice(), &wet, &d, dt, body);
+            for k in (0..n).filter(|&k| !wet[k] && d.lake_of[k] == NONE) {
+                cut[k] = (h.as_slice()[k] as f64 - z[k]).max(0.0);
+            }
+        }
+        // What a full sea held back runs on from where it was held: down the rivers from the
+        // land it filled, into the sea's own floor where that is still under its level.
+        let volumes: Vec<f64> = (0..n)
+            .map(|k| cut[k] * area[k] + if wet[k] { 0.0 } else { pending[k] })
+            .collect();
+        out.carried_on += carried;
+        let (mut mouths, mut astray) = (vec![0.0f64; n], 0.0);
+        for (k, p) in pending.iter_mut().enumerate() {
+            if wet[k] {
+                mouths[k] += *p;
+                reached += *p;
+            }
+            *p = 0.0;
+        }
+        let (laid, lost) = lay(
+            h.as_slice(),
+            &wet,
+            &d,
+            (&volumes, &area),
+            (&mut mouths, &mut astray),
+        );
+        reached += lost;
+        routing_time += clock.elapsed().as_secs_f64();
+        if pass == 0 {
             let (lost, land) = (0..n)
-                .filter(|&k| !sea[k])
+                .filter(|&k| !wet[k])
                 .fold((0.0, 0.0), |(s, w), k| (s + cut[k] * area[k], w + area[k]));
             out.rate = if land > 0.0 { lost / land / dt } else { 0.0 };
         }
-        // The ground's rebound from its net loss over the flexural wavelength; then what it
-        // lost, from its loose cover first, and what it was laid.
+        // What found no way to the sea, given to its mouths by their shares (none is lost); to
+        // the sea's every cell by its area where none took any.
+        let taken: f64 = mouths.iter().sum();
+        if astray > 0.0 && taken > 0.0 {
+            mouths.iter_mut().for_each(|m| *m *= 1.0 + astray / taken);
+        } else if astray > 0.0 {
+            let open: f64 = (0..n).filter(|&k| wet[k]).map(|k| area[k]).sum();
+            for k in (0..n).filter(|&k| wet[k]) {
+                mouths[k] = astray * area[k] / open.max(1e-30);
+            }
+        }
+        // What a full sea cannot hold is held for the next step's rivers. At the last step of
+        // carrying, it is given to the mouths whose seas had room, by their shares, as what
+        // found no way is, and laid from them; what then finds no room is spread over all its
+        // sea reached, over its level.
+        let last = pass + 1 == 2 * FLUVIAL_STEPS;
+        let clock = std::time::Instant::now();
+        let floor = if laying && mouths.iter().any(|&m| m > 0.0) {
+            let (mut floor, rests, full) = crate::stages::seafloor::wedges(
+                grid,
+                h.as_slice(),
+                &wet,
+                &mouths,
+                (sea_level, radius),
+                true,
+            );
+            for &c in &full {
+                filled[c as usize] = true;
+            }
+            if last && !rests.is_empty() {
+                let back: f64 = rests.iter().map(|r| r.1).sum();
+                let open_sea: Vec<bool> = (0..n).map(|k| wet[k] && !filled[k]).collect();
+                let mut open: Vec<f64> = (0..n)
+                    .map(|k| if open_sea[k] { mouths[k] } else { 0.0 })
+                    .collect();
+                let room: f64 = open.iter().sum();
+                if room > 0.0 {
+                    open.iter_mut().for_each(|m| *m *= back / room);
+                } else {
+                    let span: f64 = (0..n).filter(|&k| open_sea[k]).map(|k| area[k]).sum();
+                    for k in (0..n).filter(|&k| open_sea[k]) {
+                        open[k] = back * area[k] / span.max(1e-30);
+                    }
+                }
+                let now: Vec<f32> = (0..n)
+                    .map(|k| (h.as_slice()[k] as f64 + floor[k]) as f32)
+                    .collect();
+                let (more, left, _) = crate::stages::seafloor::wedges(
+                    grid,
+                    &now,
+                    &open_sea,
+                    &open,
+                    (sea_level, radius),
+                    false,
+                );
+                out.over += left.iter().map(|r| r.1).sum::<f64>();
+                for (f, m) in floor.iter_mut().zip(more) {
+                    *f += m;
+                }
+            } else {
+                for (m, rest) in rests {
+                    pending[m] += rest;
+                }
+            }
+            floor
+        } else {
+            vec![0.0f64; n]
+        };
+        laying_time += clock.elapsed().as_secs_f64();
+        // The ground's rebound from its net loss over the flexural wavelength, and its sinking
+        // under what the sea's floor took; then what it lost, from its loose cover first, and
+        // what it was laid.
         let loss: Vec<f64> = (0..n).map(|k| cut[k] - laid[k]).collect();
         let lift: Vec<f64> = held(&loss).into_iter().map(|v| rebound * v).collect();
-        for k in (0..n).filter(|&k| !sea[k]) {
+        let sink = sinking(&floor, &wet, (density, crust, mantle), &held);
+        for k in 0..n {
+            out.sank = out.sank.max(sink[k]);
+            if wet[k] {
+                out.floor += floor[k] * area[k];
+                layers.regolith.as_mut_slice()[k] += floor[k] as f32;
+                layers.bedrock.as_mut_slice()[k] -= sink[k] as f32;
+                continue;
+            }
             out.cut += cut[k] * area[k];
             out.laid += laid[k] * area[k];
             let regolith = layers.regolith.as_slice()[k] as f64;
             let take = regolith.min(cut[k]);
             layers.regolith.as_mut_slice()[k] = (regolith - take + laid[k]) as f32;
-            layers.bedrock.as_mut_slice()[k] += (lift[k] - (cut[k] - take)) as f32;
+            layers.bedrock.as_mut_slice()[k] += (lift[k] - sink[k] - (cut[k] - take)) as f32;
+        }
+        // The sea below the liquid's level as the step leaves it (F26), ground within
+        // LEVEL_TOLERANCE of it standing at it; a sea its load filled land from then on, a
+        // basin that sinks as it fills taking the rest as a lake's would (F278), up to its pass.
+        if laying {
+            let h = layers.height();
+            wet = h
+                .as_slice()
+                .iter()
+                .zip(&filled)
+                .map(|(&g, &f)| (g as f64) < sea_level - LEVEL_TOLERANCE && !f)
+                .collect();
         }
     }
+    // Of what the floor took, what lies over the level where no sea had room left.
+    out.floor -= out.over;
+    out.to_sea = reached - out.carried_on;
+    if std::env::var_os("EXOGEN_DEBUG").is_some() {
+        eprintln!(
+            "seafloor: the sea took {:.6e} m³ net, {:.6e} laid on its floor, {:.4e} carried on from full seas, {:.4e} left over their level; {passes} steps, {routing_time:.1} s routing and cutting, {laying_time:.1} s laying on the floor",
+            out.to_sea, out.floor, out.carried_on, out.over
+        );
+    }
     out
+}
+
+/// How far the ground sinks under what a step laid on the sea's floor (F415), m: `floor` the
+/// depth laid at each cell, m, the sea where `wet`, under a liquid of `density` kg/m³, a crust
+/// of `crust` kg/m³ over a mantle of `mantle` holding it, `held` its load spread over its
+/// flexural wavelength. The load of what is laid where liquid stood is the crust's density less
+/// the liquid's, laid as the ground it was cut from; it sinks the floor by that over the
+/// mantle's less the liquid's, the liquid filling what it sinks, and the land beside it by that
+/// over the mantle's alone.
+fn sinking(
+    floor: &[f64],
+    wet: &[bool],
+    (density, crust, mantle): (f64, f64, f64),
+    held: &dyn Fn(&[f64]) -> Vec<f64>,
+) -> Vec<f64> {
+    if !floor.iter().any(|&f| f > 0.0) {
+        return vec![0.0; floor.len()];
+    }
+    // The load as the crust's own thickness of it.
+    let load: Vec<f64> = floor
+        .iter()
+        .map(|&f| f * (crust - density) / crust)
+        .collect();
+    held(&load)
+        .into_iter()
+        .zip(wet)
+        .map(|(spread, &w)| spread * crust / if w { mantle - density } else { mantle })
+        .collect()
 }
 
 /// The rivers' beds after a step of `dt` years (F278), each cell cut by stream power down to the
@@ -225,22 +406,74 @@ fn fill_level(
     }
 }
 
-/// The ground each catchment cut laid in the flood's basins (F278), `cut` m at each cell: each
-/// pit's basin brought its catchment's, the basins settled as the water's lakes are but by
+/// The ground `volume` m³ the sea takes from the land at `from` (F413), carried down its
+/// receivers to the cell of the sea it enters, added to `mouths`; to `astray` where its way
+/// ends short of the sea.
+fn to_mouth(
+    d: &Drainage,
+    sea: &[bool],
+    from: u32,
+    volume: f64,
+    (mouths, astray): (&mut [f64], &mut f64),
+) {
+    let mut c = from;
+    for _ in 0..sea.len() {
+        if c == NONE {
+            break;
+        }
+        if sea[c as usize] {
+            mouths[c as usize] += volume;
+            return;
+        }
+        let r = d.receiver[c as usize];
+        if r == c {
+            break;
+        }
+        c = r;
+    }
+    *astray += volume;
+}
+
+/// The ground each catchment moved laid in the flood's basins (F278), `moved` m³ at each cell
+/// of cells of `area` m²: each pit's basin brought its catchment's, the basins settled as the water's lakes are but by
 /// volume, from the tops down in the order they settle. Returns the depth laid at each cell, m,
-/// and what reached the sea, m³.
-fn lay(height: &[f32], sea: &[bool], d: &Drainage, cut: &[f64], area: &[f64]) -> (Vec<f64>, f64) {
+/// and what reached the sea, m³; what reached it carried down the rivers to the cell of the sea
+/// each enters, added to `mouths`, m³, and to `astray` where its way ends short of it (F413).
+fn lay(
+    height: &[f32],
+    sea: &[bool],
+    d: &Drainage,
+    (moved, area): (&[f64], &[f64]),
+    (mouths, astray): (&mut [f64], &mut f64),
+) -> (Vec<f64>, f64) {
     let n = height.len();
     let basins = &d.basins;
     let count = basins.len();
     // Each basin's catchment's ground, and the ground below where its halves met: its area and
-    // its heights' sum over it.
+    // its heights' sum over it. What drains to the sea carried down its rivers, each cell
+    // before the one it drains to.
     let mut brought = vec![0.0f64; count];
     let mut to_sea = 0.0;
-    for k in (0..n).filter(|&k| !sea[k]) {
-        let v = cut[k] * area[k];
+    let mut carried = vec![0.0f64; n];
+    for &k in d.order.iter().rev() {
+        let k = k as usize;
+        if sea[k] {
+            continue;
+        }
+        let v = moved[k];
         match d.label[k] {
-            0 | NONE => to_sea += v,
+            0 | NONE => {
+                to_sea += v;
+                carried[k] += v;
+                let r = d.receiver[k];
+                if r == NONE || r as usize == k {
+                    *astray += carried[k];
+                } else if sea[r as usize] {
+                    mouths[r as usize] += carried[k];
+                } else {
+                    carried[r as usize] += carried[k];
+                }
+            }
             l => brought[l as usize] += v,
         }
     }
@@ -315,6 +548,7 @@ fn lay(height: &[f32], sea: &[bool], d: &Drainage, cut: &[f64], area: &[f64]) ->
                             };
                             if next == NONE || next == root {
                                 to_sea += rest;
+                                to_mouth(d, sea, beyond, rest, (&mut *mouths, &mut *astray));
                             } else {
                                 passed[next as usize].push((beyond, rest));
                             }
@@ -408,7 +642,7 @@ mod tests {
                 &sea,
                 (&runoff, &gain),
                 (radius, 1_000.0, 0.0),
-                (hold, rebound),
+                (hold, DENSITY_CRUST_ROCK, DENSITY_ROCK),
             );
             let fell = land_mean(&start) - land_mean(&layers);
             let share = fell / ((moved.cut - moved.laid) / land);
@@ -493,7 +727,7 @@ mod tests {
             &sea,
             (&runoff, &gain),
             (radius, 1_000.0, 0.0),
-            (2e6, DENSITY_CRUST_ROCK / DENSITY_ROCK),
+            (2e6, DENSITY_CRUST_ROCK, DENSITY_ROCK),
         );
         let after = route(&layers);
         println!(
@@ -513,5 +747,222 @@ mod tests {
             "{:?}",
             after.summary
         );
+    }
+
+    /// F413: what the sea takes from a pitted island reaches it at its mouths: the cells of the
+    /// sea its rivers and its full pits' spills enter, each beside the land, all of it, none
+    /// astray.
+    #[test]
+    fn a_catchment_s_ground_reaches_the_sea_at_its_mouths() {
+        let grid = CubeSphere::new(48);
+        let top = [0.0, 0.0, 1.0];
+        let noise = crate::noise::GradientNoise::new(7);
+        let (layers, sea) = ground(grid, |d| {
+            let r = dot(d, top).clamp(-1.0, 1.0).acos();
+            1_000.0 - 2_000.0 * r + 200.0 * noise.fbm(d, 60.0, 3, 2.0, 0.5)
+        });
+        let n = grid.cell_count();
+        let radius = 2e6;
+        let (runoff, gain) = (vec![2e-5f32; n], vec![-1e-6f32; n]);
+        let h = layers.height();
+        let d = drain(
+            grid,
+            h.as_slice(),
+            &sea,
+            (&runoff, &gain),
+            (radius, 1_000.0),
+        );
+        let area: Vec<f64> = (0..n)
+            .map(|k| grid.cell_area(grid.cell(k)) * radius * radius)
+            .collect();
+        // A metre cut from every land cell no lake covers.
+        let moved: Vec<f64> = (0..n)
+            .map(|k| {
+                if sea[k] || d.lake_of[k] != NONE {
+                    0.0
+                } else {
+                    area[k]
+                }
+            })
+            .collect();
+        let (mut mouths, mut astray) = (vec![0.0f64; n], 0.0);
+        let (_, to_sea) = lay(
+            h.as_slice(),
+            &sea,
+            &d,
+            (&moved, &area),
+            (&mut mouths, &mut astray),
+        );
+        let taken: f64 = mouths.iter().sum();
+        let beside_land = |k: usize| {
+            let c = grid.cell(k);
+            [
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1),
+            ]
+            .iter()
+            .any(|&(di, dj)| !sea[grid.index(grid.neighbor(c, di, dj))])
+        };
+        let count = (0..n).filter(|&k| mouths[k] > 0.0).count();
+        let spills = d.outlets.len();
+        println!(
+            "the sea takes {to_sea:.4e} m³, {taken:.4e} at {count} mouths, {astray:.3e} astray; {spills} full lakes spill"
+        );
+        assert!(to_sea > 0.0 && spills > 0);
+        assert!(astray == 0.0, "{astray}");
+        assert!(((taken - to_sea) / to_sea).abs() < 1e-9, "{taken} {to_sea}");
+        assert!((0..n).all(|k| mouths[k] == 0.0 || (sea[k] && beside_land(k))));
+    }
+
+    /// F415: the floor sinks under what is laid on it by its densities: where the plate holds a
+    /// load where it lies, by the load's density less the liquid's over the mantle's less the
+    /// liquid's, the liquid filling what it sinks; where the plate spreads it over a wavelength
+    /// that spans the body, the sea's floor by that spread load over the mantle's less the
+    /// liquid's and the land beside it by it over the mantle's alone.
+    #[test]
+    fn the_floor_sinks_under_its_load_by_its_densities() {
+        let grid = CubeSphere::new(32);
+        let n = grid.cell_count();
+        let (crust, mantle, liquid) = (DENSITY_CRUST_ROCK, DENSITY_ROCK, 1_000.0);
+        let densities = (liquid, crust, mantle);
+        let wet: Vec<bool> = (0..n).map(|k| grid.center(grid.cell(k))[2] < 0.3).collect();
+        let floor: Vec<f64> = wet.iter().map(|&w| if w { 10.0 } else { 0.0 }).collect();
+        // A plate that holds each load where it lies, and one that spreads it over the body.
+        let here = sinking(&floor, &wet, densities, &|v: &[f64]| v.to_vec());
+        let spread = |v: &[f64]| vec![v.iter().sum::<f64>() / v.len() as f64; v.len()];
+        let wide = sinking(&floor, &wet, densities, &spread);
+        let local = 10.0 * (crust - liquid) / (mantle - liquid);
+        let share = wet.iter().filter(|&&w| w).count() as f64 / n as f64;
+        let mean = 10.0 * (crust - liquid) / crust * share;
+        let (under, beside) = (mean * crust / (mantle - liquid), mean * crust / mantle);
+        let at = |f: &[f64], w: bool| f[(0..n).find(|&k| wet[k] == w).unwrap()];
+        println!(
+            "held where it lies the floor sank {:.3} m, {local:.3} by the densities; spread, the floor {:.3} m where {under:.3}, the land {:.3} where {beside:.3}",
+            at(&here, true),
+            at(&wide, true),
+            at(&wide, false)
+        );
+        for (k, &w) in wet.iter().enumerate() {
+            let want = if w { local } else { 0.0 };
+            assert!((here[k] - want).abs() < 1e-9, "{k}: {} {want}", here[k]);
+            let want = if w { under } else { beside };
+            assert!((wide[k] - want).abs() < 1e-9, "{k}: {} {want}", wide[k]);
+        }
+    }
+
+    /// F414, F415: an island's rivers lay what they bring its sea on its floor, step by step,
+    /// all of it: what the sea took, net of what full seas held back and the rivers carried on,
+    /// is what its floor took and what was left over the level.
+    #[test]
+    fn the_sea_s_floor_takes_what_its_rivers_bring() {
+        let grid = CubeSphere::new(48);
+        let top = [0.0, 0.0, 1.0];
+        let noise = crate::noise::GradientNoise::new(7);
+        let (mut layers, sea) = ground(grid, |d| {
+            let r = dot(d, top).clamp(-1.0, 1.0).acos();
+            1_000.0 - 2_000.0 * r + 200.0 * noise.fbm(d, 60.0, 3, 2.0, 0.5)
+        });
+        let n = grid.cell_count();
+        let (runoff, gain) = (vec![2e-5f32; n], vec![-1e-6f32; n]);
+        let moved = erode(
+            grid,
+            &mut layers,
+            &sea,
+            (&runoff, &gain),
+            (2e6, 1_000.0, 0.0),
+            (2e5, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+        );
+        println!("{moved:?}");
+        assert!(moved.to_sea > 0.0 && moved.floor > 0.0);
+        let kept = moved.floor + moved.over;
+        assert!(
+            ((kept - moved.to_sea) / moved.to_sea).abs() < 1e-9,
+            "{moved:?}"
+        );
+        assert!(moved.sank > 0.0);
+    }
+
+    /// A pitted island whose slope holds a hollow `wide` radians across, 300 m below the sea's
+    /// level, filled by the hypsometric liquid (F26), eroded under a plate of flexural wavelength
+    /// `hold`, m: what the rivers moved, the hollow's lowest ground after, m, and what of the
+    /// ground they cut is in neither the lakes nor the sea, m³.
+    fn hollow_island(wide: f64, hold: f64) -> (Erosion, f32, f64) {
+        let grid = CubeSphere::new(48);
+        let top = [0.0, 0.0, 1.0];
+        let hollow = crate::geom::normalize([0.25, 0.0, 1.0]);
+        let noise = crate::noise::GradientNoise::new(7);
+        let (mut layers, sea) = ground(grid, |d| {
+            let r = dot(d, top).clamp(-1.0, 1.0).acos();
+            let off = dot(d, hollow).clamp(-1.0, 1.0).acos();
+            if off < wide {
+                -300.0 * (1.0 - (off / wide).powi(2))
+            } else {
+                1_000.0 - 2_000.0 * r + 200.0 * noise.fbm(d, 60.0, 3, 2.0, 0.5)
+            }
+        });
+        let n = grid.cell_count();
+        let inside: Vec<usize> = (0..n)
+            .filter(|&k| dot(grid.center(grid.cell(k)), hollow).acos() < wide)
+            .collect();
+        assert!(!inside.is_empty() && inside.iter().all(|&k| sea[k]));
+        let (runoff, gain) = (vec![2e-5f32; n], vec![-1e-6f32; n]);
+        let moved = erode(
+            grid,
+            &mut layers,
+            &sea,
+            (&runoff, &gain),
+            (2e6, 1_000.0, 0.0),
+            (hold, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+        );
+        let h = layers.height();
+        let lowest = inside
+            .iter()
+            .map(|&k| h.as_slice()[k])
+            .fold(f32::INFINITY, f32::min);
+        let lost = moved.cut - moved.laid - moved.to_sea;
+        println!("{moved:?}; the hollow's lowest ground {lowest:.4} m; lost {lost:.3e} m³");
+        (moved, lowest, lost)
+    }
+
+    /// F414: a hollow below the sea's level in an island's slope, filled by the hypsometric
+    /// liquid (F26), takes its rivers' load until it stands at the level; then the rivers run
+    /// over it, carry on what it held back into the basin it is above the level and the sea
+    /// beyond, and none is left piled over the level: what left the land is what the floor and
+    /// the basins took.
+    #[test]
+    fn a_full_sea_s_load_is_carried_on() {
+        let (moved, lowest, lost) = hollow_island(0.04, 2e5);
+        assert!(moved.carried_on > 0.0 && moved.over == 0.0, "{moved:?}");
+        assert!(lowest as f64 >= -LEVEL_TOLERANCE, "{lowest}");
+        assert!(lost.abs() < 1e-6 * moved.cut, "{lost}");
+        let kept = moved.floor + moved.over;
+        assert!(
+            ((kept - moved.to_sea) / moved.to_sea).abs() < 1e-9,
+            "{moved:?}"
+        );
+    }
+
+    /// F414: a small hollow under a plate that holds its load where it lies sinks by most of
+    /// what fills it; filled to the level once, it stays land, a basin that takes the rest as
+    /// a lake's would up to its pass and spills the rest to the sea, none left over the level.
+    /// The island's only small sea, it holds back once, the step it fills: what the rivers carry
+    /// on is no more than a step brings the sea. Read as sea again each time it sank, it took its
+    /// rivers' load back step after step.
+    #[test]
+    fn a_full_sea_that_sinks_is_filled_over_its_rim() {
+        let (moved, lowest, lost) = hollow_island(0.03, 1.0);
+        assert!(moved.carried_on > 0.0 && moved.over == 0.0, "{moved:?}");
+        assert!(
+            moved.carried_on < moved.to_sea / FLUVIAL_STEPS as f64,
+            "{moved:?}"
+        );
+        assert!(lowest as f64 >= -LEVEL_TOLERANCE, "{lowest}");
+        assert!(lost.abs() < 1e-6 * moved.cut, "{lost}");
     }
 }

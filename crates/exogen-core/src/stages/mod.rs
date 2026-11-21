@@ -467,7 +467,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 254;
+pub const FINISH_VERSION: u64 = 255;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3444,14 +3444,14 @@ pub fn finish(
             graph.f64("body.gravity"),
         );
         // The ground rebounds by the crust's density over the mantle's (Airy's, F15's pair).
-        let rebound = if ice::is_ice_surface(graph) {
-            DENSITY_CRUST_ICE / DENSITY_ICE
+        let (crust, mantle) = if ice::is_ice_surface(graph) {
+            (DENSITY_CRUST_ICE, DENSITY_ICE)
         } else {
-            DENSITY_CRUST_ROCK / DENSITY_ROCK
+            (DENSITY_CRUST_ROCK, DENSITY_ROCK)
         };
         let water = (shed.as_slice(), gain.as_slice());
         let liquid = (body_radius, *density, sea_level);
-        let lithosphere = (hold, rebound);
+        let lithosphere = (hold, crust, mantle);
         let moved = crate::fluvial::erode(grid, &mut layers, sea, water, liquid, lithosphere);
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             eprintln!(
@@ -3463,17 +3463,37 @@ pub fn finish(
                 1e3 * moved.rate,
                 started.elapsed().as_secs_f64()
             );
+            eprintln!(
+                "seafloor: {:.0} km³ laid on the floor from the rivers' mouths, {:.0} carried on from full seas, {:.0} left over the level where none had room; the floor sank under it by {:.0} m at most",
+                moved.floor / 1e9,
+                moved.carried_on / 1e9,
+                moved.over / 1e9,
+                moved.sank
+            );
         }
         moved
     });
+    // The sea refilled over the floor its rivers' load raised (F415): the liquid it held, over
+    // the ground as it now stands.
+    if erosion.is_some_and(|e| e.floor > 0.0) {
+        let before = sea_level;
+        (sea_level, ocean_fraction) = hydrosphere_fill(graph, &mut layers, taken(&laid));
+        if std::env::var_os("EXOGEN_DEBUG").is_some() {
+            eprintln!(
+                "seafloor: the sea's level from {before:.1} m to {sea_level:.1} m over the floor its load raised, covering {:.2}% of the body",
+                100.0 * ocean_fraction
+            );
+        }
+    }
     let height = if erosion.is_some() {
         layers.height()
     } else {
         height
     };
-    let rivers = land_water.as_ref().map(|(shed, gain, sea, density)| {
+    let rivers = land_water.as_ref().map(|(shed, gain, _, density)| {
         let water = (shed.as_slice(), gain.as_slice());
-        crate::rivers::route(grid, height.as_slice(), sea, water, (body_radius, *density))
+        let sea: Vec<bool> = layers.liquid.as_slice().iter().map(|&l| l > 0.0).collect();
+        crate::rivers::route(grid, height.as_slice(), &sea, water, (body_radius, *density))
     });
     if let (Some(r), true) = (&rivers, std::env::var_os("EXOGEN_DEBUG").is_some()) {
         let s = &r.summary;
@@ -4814,6 +4834,9 @@ mod tests {
             ("the_sea_floor_keeps_fewer_craters", &|| {
                 the_sea_floor_keeps_fewer_craters(&earth)
             }),
+            ("the_rivers_lay_their_load_on_the_sea_floor", &|| {
+                the_rivers_lay_their_load_on_the_sea_floor(&earth)
+            }),
             ("the_sea_shows_its_floor_only_through_its_water", &|| {
                 the_sea_shows_its_floor_only_through_its_water(&earth)
             }),
@@ -5185,6 +5208,28 @@ mod tests {
         );
     }
 
+    /// F413 to F415: the Earth-like's rivers lay all they bring the sea on its floor, and the
+    /// sea stands level over the floor they raised, its liquid refilled over it.
+    fn the_rivers_lay_their_load_on_the_sea_floor(body: &Body) {
+        let finish = &body.out.finish;
+        let e = finish.erosion.expect("the Earth-like's rivers erode");
+        let ground = finish.layers.height();
+        let liquid = finish.layers.liquid.as_slice();
+        let level = finish.sea_level;
+        let (mut most, mut wet) = (0.0f64, 0);
+        for (k, &l) in liquid.iter().enumerate().filter(|(_, l)| **l > 0.0) {
+            wet += 1;
+            most = most.max((ground.as_slice()[k] as f64 + l as f64 - level).abs());
+        }
+        println!(
+            "Earth-like: the rivers brought the sea {:.4e} m³ and laid {:.4e} on its floor, {:.3e} carried on from full seas, {:.3e} over its level; the floor sank {:.0} m at most; its {wet} wet cells' surface within {most:.3} m of its level",
+            e.to_sea, e.floor, e.carried_on, e.over, e.sank
+        );
+        let kept = e.floor + e.over;
+        assert!(e.to_sea > 0.0 && ((kept - e.to_sea) / e.to_sea).abs() < 1e-6, "{e:?}");
+        assert!(most < 0.5, "{most}");
+    }
+
     /// F411: through the loop the Earth-like's sea stands as its history keeps it, filled over
     /// the ground as each step leaves it, its volume its history's global layer's: none while
     /// its young Sun kept its warmest place frozen, all of it after. The liquid's past the
@@ -5313,7 +5358,8 @@ mod tests {
         let mut kept_all = 0usize;
         for i in 0..20_000u64 {
             let center = rng.unit_direction(i, 0);
-            let depth = liquid[grid.index(grid.locate(center).0)];
+            let cell = grid.index(grid.locate(center).0);
+            let depth = liquid[cell];
             let sample = crate::crater::CraterSample {
                 center,
                 diameter: d0 * rng.uniform(i, 2).max(1e-9).powf(-1.0 / slope),
@@ -5323,12 +5369,15 @@ mod tests {
                 ellipticity: 1.0,
                 key: i,
             };
+            // Land where the liquid's past stood none where and when it struck.
+            let h = ground.as_slice()[cell] as f64;
+            let dry = past.depth(center, h, sample.time_gyr) <= 0.0;
             let left = seafloor::screened(sample, &past, &screen, &ground, d0, &oblique).is_some();
             kept_all += left as usize;
             if depth as f64 > deep {
                 floor += 1;
                 floor_kept += left as usize;
-            } else if depth <= 0.0 {
+            } else if dry {
                 land += 1;
                 land_kept += left as usize;
             }

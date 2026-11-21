@@ -108,6 +108,27 @@ impl CubeSphere {
         Self::direction(c.face, a, b)
     }
 
+    /// The tangents of the cell-centre face angles along a face's rows, `0..f`: with
+    /// `center_from`, a cell centre as `center` gives it without its tangents, for code that
+    /// reads many centres.
+    pub fn center_tangents(&self) -> Vec<f64> {
+        let d = self.delta();
+        (0..self.f)
+            .map(|i| (-FRAC_PI_4 + (i as f64 + 0.5) * d).tan())
+            .collect()
+    }
+
+    /// Unit direction of a cell centre from `center_tangents`' table.
+    pub fn center_from(c: Cell, tangents: &[f64]) -> [f64; 3] {
+        let [n, r, t] = FACE_BASIS[c.face as usize];
+        let (u, v) = (tangents[c.i as usize], tangents[c.j as usize]);
+        normalize([
+            n[0] + u * r[0] + v * t[0],
+            n[1] + u * r[1] + v * t[1],
+            n[2] + u * r[2] + v * t[2],
+        ])
+    }
+
     /// The face containing a direction and the face angles of that direction.
     pub fn face_angles(d: [f64; 3]) -> (u8, f64, f64) {
         let (ax, ay, az) = (d[0].abs(), d[1].abs(), d[2].abs());
