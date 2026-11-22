@@ -3139,6 +3139,10 @@ pub const FLUVIAL_STEPS: usize = 10;
 /// slope off West Florida the steepest): a margin's front is where its sediment stands as
 /// steep as it holds under a liquid, a stated value for every body.
 pub const FORESET_SLOPE: f64 = 0.043_660_942;
+/// F414: where a wedge's front ends, its gradient fallen to e^-FRONT_TAIL of FORESET_SLOPE's at
+/// its topset's edge, some 0.12°, the gentle end of the continental rise's gradients: a stated
+/// choice.
+pub const FRONT_TAIL: f64 = 3.0;
 /// F414: the rounds in which all a step's mouths' reaches are found together, at most, a
 /// numerical choice: some ten to rise past a load and some ten more to close on it; a wedge not
 /// found by then laid by its load's share, or the rest of its load held.

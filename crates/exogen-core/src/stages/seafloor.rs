@@ -10,7 +10,7 @@ use std::collections::BinaryHeap;
 
 use rayon::prelude::*;
 
-use crate::constants::{FORESET_SLOPE, WEDGE_ROUNDS};
+use crate::constants::{FORESET_SLOPE, FRONT_TAIL, WEDGE_ROUNDS};
 use crate::crater::production::Oblique;
 use crate::crater::{Bombardment, CraterSample, Screen};
 use crate::fields::Field;
@@ -224,6 +224,10 @@ impl<'a> KeptOff<'a> {
     }
 }
 
+/// The most a walk by the cells about each cell outruns the straight line it follows, along a
+/// line at 22.5° to the grid's: cos 22.5° - sin 22.5° + √2 sin 22.5°.
+const STEP_DETOUR: f64 = 1.082_392_2;
+
 /// The cells about a cell the load spreads to.
 const AROUND: [(i32, i32); 8] = [
     (1, 0),
@@ -252,6 +256,23 @@ impl Ord for Near {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.total_cmp(&other.0).then(self.1.cmp(&other.1))
     }
+}
+
+/// The depth a wedge's front lays over a floor `depth` m under the liquid's level, `x` m past
+/// its topset's edge (F414), none past the front's reach: a front that advances while its load
+/// spreads down it as by diffusion thins as e^(-x/L) (in its own frame, D f'' = -U f'), here
+/// over the floor's depth, its length L that of FORESET_SLOPE at the topset's edge, its tail
+/// cut where its gradient has fallen to e^-FRONT_TAIL of that and lowered to meet the floor
+/// there, so that it falls at the measured slope at its break and flattens into the floor at
+/// its foot, the continental rise's gentle gradients between.
+fn front(x: f64, depth: f64) -> Option<f64> {
+    if depth <= 0.0 {
+        return None;
+    }
+    let tail = (-FRONT_TAIL).exp();
+    let length = depth / (FORESET_SLOPE * (1.0 - tail));
+    let u = x / length;
+    (u < FRONT_TAIL).then(|| depth * ((-u).exp() - tail) / (1.0 - tail))
 }
 
 /// The reach of a wedge whose mouth stands `depth` m under the liquid's level, laying `load` m³
@@ -360,6 +381,15 @@ pub fn wedges(
     ];
     let mut key = vec![0.0f64; n];
     let mut owner = vec![0u32; n];
+    // The way walked from each place's mouth and the surface the load comes to it from, each
+    // mouth's centre, and its reach this round.
+    let mut walked = vec![0.0f64; n];
+    let mut came = vec![0.0f64; n];
+    let centres: Vec<[f64; 3]> = sources
+        .iter()
+        .map(|&m| CubeSphere::center_from(grid.cell(m), &tangents))
+        .collect();
+    let mut reaches = vec![0.0f64; sources.len()];
     let (mut seen, mut done) = (vec![0u32; n], vec![0u32; n]);
     let mut heap: BinaryHeap<Reverse<Near>> = BinaryHeap::new();
     let mut reached: Vec<(u32, u32, f64)> = Vec::new();
@@ -378,9 +408,11 @@ pub fn wedges(
             let s = of[i];
             let reach = reach_of(shares[s].share * mouths[m], level - g(m));
             most[s] = most[s].max(reach);
+            reaches[i] = reach;
             let start = -reach;
             if seen[m] != round || start < key[m] {
-                (seen[m], key[m], owner[m]) = (round, start, i as u32);
+                (seen[m], key[m], owner[m], walked[m]) = (round, start, i as u32, 0.0);
+                came[m] = level;
                 heap.push(Reverse(Near(start, m as u32)));
             }
         }
@@ -391,11 +423,16 @@ pub fn wedges(
             }
             done[k] = round;
             taken += 1;
-            let s = level - FORESET_SLOPE * d.max(0.0);
-            if s < g(k) - 1e-6 {
+            // Its ground over the surface the load comes from holds it back; within its
+            // front's reach, the front's depth over its floor, no higher than that surface.
+            if g(k) > came[k] + 1e-6 {
                 continue;
             }
-            let depth = (s - g(k)).max(0.0);
+            let Some(lies) = front(d.max(0.0), level - g(k)) else {
+                continue;
+            };
+            let depth = lies.min(came[k] - g(k)).max(0.0);
+            let s = g(k) + depth;
             let i = owner[k];
             reached.push((k as u32, i, depth));
             if depth > 0.0 {
@@ -409,16 +446,26 @@ pub fn wedges(
                 if !sea[m] || done[m] == round {
                     continue;
                 }
-                // The chord between the centres: their arc within a part in a million at a
-                // cell's reach.
+                // The way walked from its mouth, step by step between the centres (their chord
+                // their arc within a part in a million at a cell's reach), and the straight
+                // way back to it: the walked way over the steps' most along a straight line
+                // where that is longer, round a headland, else the straight way.
                 let there = CubeSphere::center_from(to, &tangents);
-                let chord = ((here[0] - there[0]).powi(2)
+                let step = ((here[0] - there[0]).powi(2)
                     + (here[1] - there[1]).powi(2)
                     + (here[2] - there[2]).powi(2))
                 .sqrt();
-                let next = d + radius * chord;
+                let way = walked[k] + radius * step;
+                let from = centres[i as usize];
+                let chord = ((from[0] - there[0]).powi(2)
+                    + (from[1] - there[1]).powi(2)
+                    + (from[2] - there[2]).powi(2))
+                .sqrt();
+                let straight = 2.0 * radius * (0.5 * chord).min(1.0).asin();
+                let next = straight.max(way / STEP_DETOUR) - reaches[i as usize];
                 if seen[m] != round || next < key[m] {
-                    (seen[m], key[m], owner[m]) = (round, next, i);
+                    (seen[m], key[m], owner[m], walked[m]) = (round, next, i, way);
+                    came[m] = s;
                     heap.push(Reverse(Near(next, m as u32)));
                 }
             }
@@ -569,9 +616,10 @@ mod tests {
     }
 
     /// F414: a river's load builds a wedge into its sea from its mouth: all of its volume,
-    /// none on the land; its top at the liquid's level at the mouth and no higher anywhere; its
-    /// front falling from that top toward the floor, nowhere steeper than FORESET_SLOPE and as
-    /// steep as that where it falls straight away from the mouth.
+    /// none on the land; its top at the liquid's level at the mouth (within a metre, the sea's
+    /// wedges laid by its load's share of what they laid) and no higher anywhere; its front
+    /// falling from that top toward the floor, nowhere steeper than FORESET_SLOPE and nearly as
+    /// steep as that at its topset's edge.
     #[test]
     fn a_river_s_load_builds_a_wedge_into_its_sea() {
         let (grid, floor, sea) = ground(|d| {
@@ -584,7 +632,7 @@ mod tests {
         let n = grid.cell_count();
         let mouth = grid.index(grid.locate(crate::geom::normalize([0.012, 1.0, 0.0])).0);
         assert!(sea[mouth]);
-        let load = 6e12;
+        let load = 3e13;
         let mut mouths = vec![0.0; n];
         mouths[mouth] = load;
         let (laid, rests, _) = wedges(grid, &floor, &sea, &mouths, (0.0, RADIUS), false);
@@ -593,7 +641,7 @@ mod tests {
         let surface = |k: usize| floor[k] as f64 + laid[k];
         let (mut steepest, mut topset, mut front) = (0.0f64, 0, 0);
         for k in (0..n).filter(|&k| laid[k] > 0.0) {
-            if surface(k) > -1e-6 {
+            if surface(k) > -1.0 {
                 topset += 1;
             } else {
                 front += 1;
@@ -615,23 +663,88 @@ mod tests {
         assert!(over == 0.0);
         assert!((0..n).all(|k| sea[k] || laid[k] == 0.0));
         assert!((0..n).all(|k| surface(k) < 1e-6 || !sea[k]));
-        assert!(surface(mouth).abs() < 1e-6, "{}", surface(mouth));
+        assert!(surface(mouth).abs() < 1.0, "{}", surface(mouth));
         assert!(topset > 1 && front > topset, "{topset} {front}");
         assert!(steepest > 0.9 && steepest < 1.0 + 1e-6, "{steepest}");
     }
 
+    /// F414: a wedge's front flattens into the floor at its foot: where it ends it stands over
+    /// the floor by less than a twentieth of the floor's depth, where a straight front at
+    /// FORESET_SLOPE ended a cell's fall of it, some 210 m, above the floor at its toe.
+    #[test]
+    fn a_front_flattens_into_the_floor_at_its_foot() {
+        let probe = CubeSphere::new(64);
+        let centre = probe.center(probe.locate([0.0, 1.0, 0.0]).0);
+        let (grid, floor, sea) = ground(|_| (-2_000.0, true));
+        let n = grid.cell_count();
+        let mouth = grid.index(grid.locate(centre).0);
+        let mut mouths = vec![0.0; n];
+        mouths[mouth] = 3.45e13;
+        let (laid, _, _) = wedges(grid, &floor, &sea, &mouths, (0.0, RADIUS), true);
+        let mut step = 0.0f64;
+        for k in (0..n).filter(|&k| laid[k] > 0.0) {
+            let c = grid.cell(k);
+            let toe = AROUND
+                .iter()
+                .any(|&(di, dj)| laid[grid.index(grid.neighbor(c, di, dj))] <= 0.0);
+            if toe {
+                step = step.max(laid[k]);
+            }
+        }
+        println!("its foot stands {step:.1} m over the floor at most, the floor 2000 m deep");
+        assert!(step < 0.05 * 2_000.0, "{step}");
+    }
+
+    /// F414: a wedge in an open sea over a flat floor is round: its toe as far from its mouth
+    /// every way round within a cell, where a walk by the grid's steps alone fell
+    /// short by up to 8% along lines at 22.5° to the grid's, its fan an octagon.
+    #[test]
+    fn a_wedge_on_a_flat_floor_is_round() {
+        let probe = CubeSphere::new(64);
+        let centre = probe.center(probe.locate([0.0, 1.0, 0.0]).0);
+        let (grid, floor, sea) = ground(|_| (-2_000.0, true));
+        let n = grid.cell_count();
+        let mouth = grid.index(grid.locate(centre).0);
+        let mut mouths = vec![0.0; n];
+        mouths[mouth] = 3.45e13;
+        let (laid, _, _) = wedges(grid, &floor, &sea, &mouths, (0.0, RADIUS), true);
+        let (east, north) = crate::geom::local_basis(centre);
+        // In narrow sectors, so that none holds both a line of the grid's and one at 22.5° to it.
+        let mut far = [0.0f64; 48];
+        for k in (0..n).filter(|&k| laid[k] > 1.0) {
+            let d = grid.center(grid.cell(k));
+            let off = [d[0] - centre[0], d[1] - centre[1], d[2] - centre[2]];
+            let angle = dot(off, north).atan2(dot(off, east));
+            let bin = ((angle / std::f64::consts::TAU + 1.0) * 48.0).floor() as usize % 48;
+            far[bin] = far[bin].max(apart(d, centre));
+        }
+        let (least, most) = far
+            .iter()
+            .fold((f64::INFINITY, 0.0f64), |(a, b), &f| (a.min(f), b.max(f)));
+        let cell = grid.delta() * RADIUS;
+        println!(
+            "its toe from {:.1} to {:.1} km off its mouth every way round, a cell {:.1} km",
+            least / 1e3,
+            most / 1e3,
+            cell / 1e3
+        );
+        assert!(least > 10.0 * cell, "{least}");
+        assert!(most - least < cell, "{least} {most}");
+    }
+
     /// F414: a wedge's front spreads on over the ground it reaches and stops at a ridge its
-    /// surface does not top: a mound in an open sea within a submerged ring lays nothing on the
-    /// ring nor beyond it, where without the ring it lays beyond.
+    /// surface does not top: a mound in an open sea within a submerged ring its front reaches,
+    /// its crest over the mound's surface there, lays nothing on the ring nor beyond it, where
+    /// without the ring it lays beyond.
     #[test]
     fn a_wedge_stops_at_a_ridge_its_front_does_not_top() {
         let centre = [0.0, 1.0, 0.0];
         let ring = |d: [f64; 3]| (15e3..22.5e3).contains(&apart(d, centre));
-        let (grid, floor, sea) = ground(|d| (if ring(d) { -500.0 } else { -2_000.0 }, true));
+        let (grid, floor, sea) = ground(|d| (if ring(d) { -1_200.0 } else { -2_000.0 }, true));
         let (_, open, _) = ground(|_| (-2_000.0, true));
         let n = grid.cell_count();
         let mouth = grid.index(grid.locate(centre).0);
-        let load = 7.1e11;
+        let load = 3e11;
         let mut mouths = vec![0.0; n];
         mouths[mouth] = load;
         let beyond = |laid: &[f64]| -> f64 {
