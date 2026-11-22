@@ -1,6 +1,6 @@
 # ADR 0007: The liquid apart from the albedo, and the snapshot
 
-Status: accepted, 2026-11-09.
+Status: accepted, 2026-11-09. Decisions 2, 4 and 5 superseded by ADR 0008 (2026-11-22).
 
 ## Context
 

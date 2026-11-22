@@ -1,6 +1,6 @@
 # ADR 0006: The cryosphere's export
 
-Status: accepted, 2026-11-01.
+Status: accepted, 2026-11-01. Decisions 2 and 3 amended by ADR 0008 (2026-11-22): the maps drawn by shares, with `cryosphere_share`.
 
 ## Context
 

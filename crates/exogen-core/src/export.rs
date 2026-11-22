@@ -678,6 +678,7 @@ pub fn export(
         "cryosphere_thickness.exr",
         "cryosphere_thickness.png",
         "cryosphere_ice.png",
+        "cryosphere_share.png",
         "wind.exr",
         "wind.png",
         "clouds.exr",
@@ -808,13 +809,24 @@ pub fn export(
 
     // The liquid (ADR 0007): its depth over the ground, m, its surface flat; an engine draws the
     // ground through it by the optics the sidecar gives, at the sea level it sets. Drawn by
-    // shares (F416, ADR 0008): its mean depth over each cell, its ground spread by the relief
-    // at the cell's scale.
+    // shares (F416, F417, ADR 0008): its mean depth over each cell, the cells about it read as
+    // samples of the ground within it.
     let drawn = crate::shares::Drawn::of(out);
     let liquid_eq = to_equirectangular(&grid, &drawn.sea, width, height_px);
-    let depth: Vec<f32> = liquid_eq.iter().map(|d| d.max(0.0)).collect();
+    // The share of each pixel under the sea (F416, ADR 0008), 0 to 255 for 0 to 1; the depth
+    // stands above none exactly where it does (F417).
+    let share_eq = to_equirectangular(&grid, &drawn.sea_share, width, height_px);
+    let mask: Vec<u8> = share_eq
+        .iter()
+        .map(|s| (s.clamp(0.0, 1.0) * 255.0).round() as u8)
+        .collect();
+    let depth: Vec<f32> = liquid_eq
+        .iter()
+        .zip(&mask)
+        .map(|(d, &m)| if m > 0 { d.max(0.0) } else { 0.0 })
+        .collect();
     let deepest = depth.iter().fold(0.0f32, |a, &d| a.max(d));
-    let depth_units = "m of the working liquid over the ground, its surface flat, its mean depth over each cell, its ground spread by its relief at the cell's scale (ADR 0008); 0 where none lies";
+    let depth_units = "m of the working liquid over the ground, its surface flat, its mean depth over each pixel, the cells about it read as samples of the ground within it (ADR 0008); over the share of the pixel it covers, mask_liquid's, this over that share; 0 where none lies";
     write_exr_f32(
         &settings.dir.join("liquid.exr"),
         width,
@@ -860,7 +872,7 @@ pub fn export(
         deep_reflectance_linear: optics.deep,
         attenuation_per_m: optics.attenuation,
         channel_wavelengths_nm: [612.0, 549.0, 464.0],
-        evaluation: "Where liquid.exr's depth H is above 0, the liquid's surface stands H over the ground, and the ground, of albedo A in albedo.exr, shows through it as R = R_deep + (A - R_deep) exp(-2 K H) in each channel, R_deep its deep reflectance and K its attenuation (Maritorena, Morel and Gentili 1994). At another sea level H is that level less height.exr's ground. snapshot.exr is this at ExoGen's own level, with the ices at the snapshot's phase over it.".into(),
+        evaluation: "Where mask_liquid's share s of a pixel is above 0, the liquid covers that share, its depth there D = H / s, H liquid.exr's mean depth over the pixel, its surface flat; the ground, of albedo A in albedo.exr, shows through it as R = R_deep + (A - R_deep) exp(-2 K D) in each channel, R_deep its deep reflectance and K its attenuation (Maritorena, Morel and Gentili 1994), and the pixel is s R + (1 - s) A. At another sea level D is that level less height.exr's ground, and s 1 where that is above 0. snapshot.exr is this at ExoGen's own level, with each ice at the snapshot's phase over its own kind's share, the sea's over the liquid's, the land's over the rest.".into(),
     });
 
     // The snapshot (ADR 0007): the surface as it looks at the snapshot's season, the albedo
@@ -942,12 +954,7 @@ pub fn export(
         },
     );
 
-    // The share of each pixel under the sea (F416, ADR 0008).
-    let share_eq = to_equirectangular(&grid, &drawn.sea_share, width, height_px);
-    let mask: Vec<u8> = share_eq
-        .iter()
-        .map(|s| (s.clamp(0.0, 1.0) * 255.0).round() as u8)
-        .collect();
+    // The share of each pixel under the sea (F416, ADR 0008), drawn above with the depth.
     write_png8(
         &settings.dir.join("mask_liquid.png"),
         width,
@@ -959,7 +966,7 @@ pub fn export(
         MapInfo {
             file: "mask_liquid.png".into(),
             encoding: "8-bit grey PNG, 0 to 255 for 0 to 1".into(),
-            units: "the share of each pixel under the sea, its ground spread by its relief at the cell's scale (ADR 0008)".into(),
+            units: "the share of each pixel under the sea, the cells about it read as samples of the ground within it (ADR 0008)".into(),
             min: 0.0,
             max: 1.0,
             ..Default::default()
@@ -1101,9 +1108,9 @@ pub fn export(
         }
     }
 
-    // The frost on the ground at the snapshot's season (F239), its mean over each cell by
-    // shares (F416, ADR 0008).
-    let frost_drawn = crate::shares::over_cells(&grid, out.frost.as_slice());
+    // The frost on the ground at the snapshot's season (F239), its mean over each cell by its
+    // share, a cell it covers whole its own (F416, F417, ADR 0008).
+    let frost_drawn = crate::shares::by_share(&grid, out.frost.as_slice()).1;
     let frost_eq = to_equirectangular(&grid, &frost_drawn, width, height_px);
     let (fmin, fmax) = min_max(&frost_eq);
     let frost_units = match out.frost_gas {
@@ -1148,8 +1155,9 @@ pub fn export(
         },
     );
 
-    // The caps' ice, its thickness (F241), its mean over each cell by shares (F416, ADR 0008).
-    let ice_drawn = crate::shares::over_cells(&grid, out.layers.ice.as_slice());
+    // The caps' ice, its thickness (F241), its mean over each cell by its share, a cell it
+    // covers whole its own (F416, F417, ADR 0008).
+    let ice_drawn = crate::shares::by_share(&grid, out.layers.ice.as_slice()).1;
     let ice_eq = to_equirectangular(&grid, &ice_drawn, width, height_px);
     let (imin, imax) = min_max(&ice_eq);
     write_exr_f32(
@@ -1192,7 +1200,7 @@ pub fn export(
 
     // Each ice's caps apart (F253): water's, carbon dioxide's and the rest.
     for (cap, sp) in out.caps.iter().zip(&species) {
-        let thick = crate::shares::over_cells(&grid, cap.thickness.as_slice());
+        let thick = crate::shares::by_share(&grid, cap.thickness.as_slice()).1;
         let eq = to_equirectangular(&grid, &thick, width, height_px);
         let (lo, hi) = min_max(&eq);
         let what = format!("m of the caps' {} ice", cap.ice.species);
@@ -1235,10 +1243,12 @@ pub fn export(
         );
     }
 
-    // The sea's ice at the snapshot's season (F244).
-    let sea_eq = to_equirectangular(&grid, out.sea_ice.as_slice(), width, height_px);
+    // The sea's ice at the snapshot's season (F244), its mean over each cell by its share, a
+    // cell it covers whole its own (F416, F417, ADR 0008).
+    let sea_drawn = crate::shares::by_share(&grid, out.sea_ice.as_slice()).1;
+    let sea_eq = to_equirectangular(&grid, &sea_drawn, width, height_px);
     let (smin, smax) = min_max(&sea_eq);
-    let sea_units = "kg/m² of the sea's ice at the snapshot's season";
+    let sea_units = "kg/m² of the sea's ice at the snapshot's season, its mean over each pixel, the cells about it read as samples of the ground within it (ADR 0008)";
     write_exr_f32(
         &settings.dir.join("sea_ice.exr"),
         width,
@@ -1278,28 +1288,49 @@ pub fn export(
     );
 
     // The ices that come and go through the year (F246, F253), three maps of one meaning
-    // each and no alpha. The window: R the phase of the year an ice freezes at, G the phase it
-    // melts out at, from the northern spring equinox, 0 and 1 where it lies all year, B the
-    // phase of its peak; nearest cell per pixel, so that a window round the year's end is not
-    // blended through its middle. Its thickness at its peak, bilinear, but only where the
-    // nearest cell's window lies, so that it does not bleed past the window at the ice's
-    // margins (F248). Which ice lies, nearest cell, its index among the sidecar's ices.
-    let nearest = |field: &crate::fields::Field<f32>| {
-        to_equirectangular_nearest(&grid, field.as_slice(), width, height_px)
-    };
-    let window: Vec<Vec<f32>> = [0, 1, 3]
+    // each and no alpha, and the share of each pixel they lie over. The window: R the phase of
+    // the year an ice freezes at, G the phase it melts out at, from the northern spring
+    // equinox, 0 and 1 where it lies all year, B the phase of its peak; nearest cell per pixel,
+    // so that a window round the year's end is not blended through its middle. Its thickness at
+    // its peak, bilinear, but only where the nearest cell's window lies, so that it does not
+    // bleed past the window at the ice's margins (F248). Which ice lies, nearest cell, its index
+    // among the sidecar's ices. Drawn by shares (F416, F417, ADR 0008): the share of each pixel
+    // the cells the ices lie on cover; a cell an ice lies on keeps its own window, thickness and
+    // ice, and a cell at their margin takes the window and the ice of the nearest cell an ice
+    // lies on and the mean thickness of those about it; none where the share rounds to none.
+    let seasons = crate::shares::Seasons::of(
+        &grid,
+        [
+            out.cryosphere[0].as_slice(),
+            out.cryosphere[1].as_slice(),
+            out.cryosphere[3].as_slice(),
+        ],
+        out.cryosphere[2].as_slice(),
+        out.cryosphere_ice.as_slice(),
+    );
+    let ice_mask: Vec<u8> = to_equirectangular(&grid, &seasons.share, width, height_px)
         .iter()
-        .map(|&i| nearest(&out.cryosphere[i]))
+        .map(|s| (s.clamp(0.0, 1.0) * 255.0).round() as u8)
         .collect();
-    let mut thickness = nearest(&out.cryosphere[2]);
-    let smooth = to_equirectangular(&grid, out.cryosphere[2].as_slice(), width, height_px);
+    let nearest = |values: &[f32]| {
+        let mut eq = to_equirectangular_nearest(&grid, values, width, height_px);
+        for (v, &m) in eq.iter_mut().zip(&ice_mask) {
+            if m == 0 {
+                *v = 0.0;
+            }
+        }
+        eq
+    };
+    let window: Vec<Vec<f32>> = seasons.window.iter().map(|f| nearest(f)).collect();
+    let mut thickness = nearest(&seasons.thickness);
+    let smooth = to_equirectangular(&grid, &seasons.thickness, width, height_px);
     for (v, s) in thickness.iter_mut().zip(smooth) {
         if *v > 0.0 {
             *v = s.max(0.0);
         }
     }
     let thickest = thickness.iter().fold(0.0f32, |a, &v| a.max(v));
-    let ice_index: Vec<u8> = nearest(&out.cryosphere_ice)
+    let ice_index: Vec<u8> = nearest(&seasons.ice)
         .iter()
         .map(|&v| v.round().clamp(0.0, 255.0) as u8)
         .collect();
@@ -1361,7 +1392,7 @@ pub fn export(
             channels: window_channels(),
         },
     );
-    let thickness_units = "m of the ice at its peak, over the height map, which holds none";
+    let thickness_units = "m of the ice at its peak over the share of the pixel cryosphere_share gives, over the height map, which holds none";
     write_exr_f32(
         &settings.dir.join("cryosphere_thickness.exr"),
         width,
@@ -1418,10 +1449,27 @@ pub fn export(
             ..Default::default()
         },
     );
+    write_png8(
+        &settings.dir.join("cryosphere_share.png"),
+        width,
+        height_px,
+        &ice_mask,
+    )?;
+    maps.insert(
+        "cryosphere_share_png".to_string(),
+        MapInfo {
+            file: "cryosphere_share.png".into(),
+            encoding: "8-bit grey PNG, 0 to 255 for 0 to 1".into(),
+            units: "the share of each pixel the ices that come and go lie over in their windows, the cells about it read as samples of the ground within it (ADR 0008)".into(),
+            min: 0.0,
+            max: 1.0,
+            ..Default::default()
+        },
+    );
     // What an engine draws them by: each ice, the clock and the year step by step.
     let cryosphere = (!out.cryosphere_ices.is_empty()).then(|| CryosphereInfo {
         phase_origin: "the northern spring equinox: phases are shares of the cycle's time after it".into(),
-        evaluation: "Evaluate each texel at the map's resolution, then filter the result: the window and the ice index are nearest-cell and must not be filtered. An ice lies at phase p where p falls in its window, from R round to G; its mass, kg/m², is its thickness at its peak times its density, times (t / rise)^a from R to its peak's phase B, t the time since R and rise the time from R to B, then times 1 - (g / fall)^b from B to G, g the time since B and fall the time from B to G, (a, b) its curve; all year its peak where R is 0 and G 1. It hides 1 - exp(-m / cover_mass) of what lies under it and stands m / density thick.".into(),
+        evaluation: "Evaluate each texel at the map's resolution, then filter the result: the window and the ice index are nearest-cell and must not be filtered. An ice lies at phase p where p falls in its window, from R round to G; its mass, kg/m², is its thickness at its peak times its density, times (t / rise)^a from R to its peak's phase B, t the time since R and rise the time from R to B, then times 1 - (g / fall)^b from B to G, g the time since B and fall the time from B to G, (a, b) its curve; all year its peak where R is 0 and G 1. It hides s (1 - exp(-m / cover_mass)) of what lies under it, s cryosphere_share's share of the pixel, and stands m / density thick over that share.".into(),
         snapshot_phase: out.cryosphere_snapshot.is_finite().then_some(out.cryosphere_snapshot),
         thickest_m: thickest as f64,
         ices: out
@@ -1716,7 +1764,7 @@ pub fn export(
     let widest = rivers_map.iter().fold(0.0f32, |a, &v| a.max(v));
     let deepest = lakes_map.iter().fold(0.0f32, |a, &v| a.max(v));
     let rivers_unit = "m³/s of the working liquid each cell's river carries down from it, the most of the cells in the pixel; zero at sea, in lakes and without the year's water";
-    let lakes_unit = "m of the lakes' water over the ground, its mean depth over each cell, its ground spread by its relief at the cell's scale (ADR 0008); zero where none stands and without the year's water";
+    let lakes_unit = "m of the lakes' water over the ground, its mean depth over each pixel, the cells about it read as samples of the ground within it (ADR 0008); zero where none stands and without the year's water";
     write_exr_f32(
         &settings.dir.join("rivers.exr"),
         width,

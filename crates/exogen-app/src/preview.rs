@@ -182,16 +182,20 @@ pub fn build_equirect(
             }
         }
         Channel::Liquid => {
-            // The liquid's mean depth over each cell, by shares (F416).
+            // The liquid's depth over its share of each cell, by shares (F416, F417), the
+            // land's colour over the rest.
             let drawn = exogen_core::shares::Drawn::of(out);
             let eq = to_equirectangular(&grid, &drawn.sea, width, height);
+            let share = to_equirectangular(&grid, &drawn.sea_share, width, height);
             let hi = eq.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
             range = (0.0, hi);
-            for (k, &d) in eq.iter().enumerate() {
-                rgb[k] = if d > 0.0 {
-                    ramp(1.0 - d / hi, &HEIGHT_SEA)
+            const LAND: [f32; 3] = [0.12, 0.10, 0.08];
+            for (k, (&d, &s)) in eq.iter().zip(&share).enumerate() {
+                rgb[k] = if d > 0.0 && s > 0.0 {
+                    let sea = ramp(1.0 - (d / s).min(hi) / hi, &HEIGHT_SEA);
+                    std::array::from_fn(|ch| s * sea[ch] + (1.0 - s) * LAND[ch])
                 } else {
-                    [0.12, 0.10, 0.08]
+                    LAND
                 };
             }
         }

@@ -3143,7 +3143,7 @@ pub const FORESET_SLOPE: f64 = 0.043_660_942;
 /// its topset's edge, some 0.12°, the gentle end of the continental rise's gradients: a stated
 /// choice.
 pub const FRONT_TAIL: f64 = 3.0;
-/// F416: the cells about a cell its relief at the grid's scale is read over for the maps'
+/// F416: the cells about a cell the maps read as samples of the ground within it for their
 /// shares, a Gaussian of RELIEF_SPREAD_CELLS cells' spread: the finest relief the grid draws as
 /// shape, twice the finest the relief at the cell's scale reaches (F54's octaves to two cells),
 /// a stated choice.
