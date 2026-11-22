@@ -5550,9 +5550,10 @@ mod tests {
     }
 
     /// ADR 0007: the Earth-like's albedo is its ground's own under its sea, none of it the
-    /// water's deep colour; its snapshot the water's deep colour over the open deep sea and the
-    /// albedo itself on its land bare of ice where its sea draws none (F416); and the surface its
-    /// relief is lit over flat at its sea's level wherever its sea covers its cells whole.
+    /// water's deep colour; its snapshot the water's deep colour over the open sea it draws deep
+    /// and the albedo itself on its land bare of ice where its sea draws none (F416); and the
+    /// surface its relief is lit over flat at its sea's level wherever its sea covers its cells
+    /// whole.
     fn the_sea_shows_its_floor_only_through_its_water(body: &Body) {
         use crate::constants::WATER_DEEP_REFLECTANCE;
         let out = &body.out.finish;
@@ -5580,7 +5581,7 @@ mod tests {
                     .any(|(x, w)| (x - w).abs() > 1e-3),
                 "the sea's colour as the ground's at {k}: {a:?}"
             );
-            if liquid[k] > 500.0 && cover[k] <= 0.0 {
+            if drawn.sea[k] > 500.0 && cover[k] <= 0.0 {
                 for (x, w) in s.iter().zip(&WATER_DEEP_REFLECTANCE) {
                     assert!((x - w).abs() < 2e-3, "deep sea at {k}: {s:?}");
                 }
