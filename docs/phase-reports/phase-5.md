@@ -1477,6 +1477,19 @@ How it went:
 - **The checks.** Whole-body: `the_sky_reads_its_column_s_own_air` (the sky's air its column's own to its tropopause and held above, under its cell's air alike; every layer under the tropopause over its skin and falling at least the share; Earth's tropics within 2.5 K of ERA-Interim from 850 to 200 hPa; the tropopause over 300 K at its skin within 160 to 200 hPa, over 306 K where the lapse slows, under the cell's air over 271.1 K within 220 to 320 hPa; the wave's largest step halved as the step is); `the_equatorial_waves_reach_as_earth_s` back to 44 to 62 m/s from M93's 40.
 - **The invariants.** Five bugs planted, each caught: the sky on its convection's adiabat again; no lid at the skin; no lid where the lapse slows; the higher of the two lids; the air not held above its tropopause.
 
+## The hundredth milestone: the maps by shares, not cells
+
+- **F416.** The maps by shares, not cells (RELIEF_SPREAD_CELLS); ADR 0008.
+
+How it went:
+
+- **The state found.** The user saw the Earth-like's lakes, coasts, frost and snow drawn as speckled single pixels (2026-11-21). Every such map drew a threshold cell by cell, all or none, and the ground's relief at the grid's own scale decided each cell's side where the ground hovers near the threshold: the relief at a pixel's scale on the Earth-like's coastal plains 117 m, 82 m of it with the unresolved craters' roughness (F54) taken off for a test render, the rest the other processes'. One rule for every source, not a fix to one: the maps by shares (the user's choice, after M99).
+- **The relief at a cell's scale.** A cell's ground read as spread about its relief's mean, both over a Gaussian of two cells: a 3x3 mean first left the roughness's patches at three to ten cells (95 lone cells of sea where 228), a Gaussian of two cells left 9, of three blurred the coasts.
+- **The drawing.** The sea's share and mean depth by a normal distribution of the ground (its share the mask, its mean depth the liquid and the snapshot's water); the lakes the same, each lake's level carried two cells so that its shore softens and a hollow shallower than the relief about it fades; the snapshot's ices and the caps' and frost's maps by their mean over the same Gaussian, the cells samples of the ground within.
+- **What changes.** On the drafts the Earth-like's sea 9 lone cells and 21 lone holes where 228 and 268, its north-east continent's coasts and snow edge without speckle, its caps' ice 10 and 4 where 262 and 386; Mars's caps 14 and 7 and its frost 97 and 34; Titan's lakes over a tenth of the deepest 597 lone where 1,961, their pinpricks soft spots. The model's own fields are unchanged; the maps draw them.
+- **The checks.** `a_cell_s_relief_is_what_its_grid_does_not_place` (an even slope spreads by none, a ground spread at random by its spread; the share and mean depth at, far under and far over a level); `a_coast_is_placed_by_the_ground_s_shape_not_its_relief` (119 cells apart from their kind all or none, none by shares, half the share within 0.67 cells of where the plain crosses the level); whole-body `the_maps_draw_shares_not_cells` (the Earth-like's sea and its snapshot's ice a fifth as many cells apart by shares at most), and `the_sea_shows_its_floor_only_through_its_water` read against the drawn sea and ices.
+- **The invariants.** Three bugs planted, each caught: the relief's mean the ground itself, each cell's relief deciding it again; the spread with the slope in it; the snapshot's ices each cell's own.
+
 ## The ninety-ninth milestone: the rivers' sediment on the sea's floor
 
 - **F413.** The rivers' load at their mouths.

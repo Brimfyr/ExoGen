@@ -126,9 +126,10 @@ pub fn build_equirect(
         Channel::Snapshot | Channel::Albedo | Channel::Shaded => {
             // The albedo is the ground's own; the snapshot draws its liquid and its ices over
             // it, and the shaded relief lights the snapshot (ADR 0007).
+            let drawn = exogen_core::shares::Drawn::of(out);
             let colour = match channel {
                 Channel::Albedo => out.albedo.clone(),
-                _ => exogen_core::snapshot::snapshot(out, working),
+                _ => exogen_core::snapshot::snapshot(out, working, &drawn),
             };
             for ch in 0..3 {
                 let plane: Vec<f32> = colour.as_slice().iter().map(|c| c[ch]).collect();
@@ -141,7 +142,7 @@ pub fn build_equirect(
                 let eq = to_equirectangular(&grid, out.height.as_slice(), width, height);
                 let exaggeration =
                     exogen_core::shade::preview_exaggeration(&eq, width, height, body_radius);
-                let surface = exogen_core::snapshot::surface(out);
+                let surface = exogen_core::snapshot::surface(out, &drawn);
                 let eq = to_equirectangular(&grid, surface.as_slice(), width, height);
                 let shade =
                     exogen_core::shade::hillshade(&eq, width, height, body_radius, exaggeration);
@@ -181,7 +182,9 @@ pub fn build_equirect(
             }
         }
         Channel::Liquid => {
-            let eq = to_equirectangular(&grid, out.layers.liquid.as_slice(), width, height);
+            // The liquid's mean depth over each cell, by shares (F416).
+            let drawn = exogen_core::shares::Drawn::of(out);
+            let eq = to_equirectangular(&grid, &drawn.sea, width, height);
             let hi = eq.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
             range = (0.0, hi);
             for (k, &d) in eq.iter().enumerate() {

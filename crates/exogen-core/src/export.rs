@@ -806,14 +806,15 @@ pub fn export(
         },
     );
 
-    // The liquid (ADR 0007): its depth over the ground, m, seas and lakes alike, its surface
-    // flat; an engine draws the ground through it by the optics the sidecar gives, at the sea
-    // level it sets.
-    let liquid_eq = to_equirectangular(&grid, out.layers.liquid.as_slice(), width, height_px);
+    // The liquid (ADR 0007): its depth over the ground, m, its surface flat; an engine draws the
+    // ground through it by the optics the sidecar gives, at the sea level it sets. Drawn by
+    // shares (F416, ADR 0008): its mean depth over each cell, its ground spread by the relief
+    // at the cell's scale.
+    let drawn = crate::shares::Drawn::of(out);
+    let liquid_eq = to_equirectangular(&grid, &drawn.sea, width, height_px);
     let depth: Vec<f32> = liquid_eq.iter().map(|d| d.max(0.0)).collect();
     let deepest = depth.iter().fold(0.0f32, |a, &d| a.max(d));
-    let depth_units =
-        "m of the working liquid over the ground, its surface flat; 0 where none lies";
+    let depth_units = "m of the working liquid over the ground, its surface flat, its mean depth over each cell, its ground spread by its relief at the cell's scale (ADR 0008); 0 where none lies";
     write_exr_f32(
         &settings.dir.join("liquid.exr"),
         width,
@@ -865,7 +866,7 @@ pub fn export(
     // The snapshot (ADR 0007): the surface as it looks at the snapshot's season, the albedo
     // under its liquid and the ices over it at the snapshot's phase as the cryosphere's maps
     // draw them, composed on the grid and read between its cells as the albedo is.
-    let composed = crate::snapshot::snapshot(out, working);
+    let composed = crate::snapshot::snapshot(out, working, &drawn);
     let snap: Vec<Vec<f32>> = (0..3)
         .map(|ch| {
             let plane: Vec<f32> = composed.as_slice().iter().map(|c| c[ch]).collect();
@@ -905,7 +906,7 @@ pub fn export(
         crate::shade::preview_exaggeration(&height_eq, width, height_px, graph.f64("body.radius"));
     let surface_eq = to_equirectangular(
         &grid,
-        crate::snapshot::surface(out).as_slice(),
+        crate::snapshot::surface(out, &drawn).as_slice(),
         width,
         height_px,
     );
@@ -941,10 +942,11 @@ pub fn export(
         },
     );
 
-    // Ocean mask.
-    let mask: Vec<u8> = liquid_eq
+    // The share of each pixel under the sea (F416, ADR 0008).
+    let share_eq = to_equirectangular(&grid, &drawn.sea_share, width, height_px);
+    let mask: Vec<u8> = share_eq
         .iter()
-        .map(|d| if *d > 0.0 { 255 } else { 0 })
+        .map(|s| (s.clamp(0.0, 1.0) * 255.0).round() as u8)
         .collect();
     write_png8(
         &settings.dir.join("mask_liquid.png"),
@@ -956,8 +958,8 @@ pub fn export(
         "mask_liquid".to_string(),
         MapInfo {
             file: "mask_liquid.png".into(),
-            encoding: "8-bit grey PNG".into(),
-            units: "mask".into(),
+            encoding: "8-bit grey PNG, 0 to 255 for 0 to 1".into(),
+            units: "the share of each pixel under the sea, its ground spread by its relief at the cell's scale (ADR 0008)".into(),
             min: 0.0,
             max: 1.0,
             ..Default::default()
@@ -1099,8 +1101,10 @@ pub fn export(
         }
     }
 
-    // The frost on the ground at the snapshot's season (F239).
-    let frost_eq = to_equirectangular(&grid, out.frost.as_slice(), width, height_px);
+    // The frost on the ground at the snapshot's season (F239), its mean over each cell by
+    // shares (F416, ADR 0008).
+    let frost_drawn = crate::shares::over_cells(&grid, out.frost.as_slice());
+    let frost_eq = to_equirectangular(&grid, &frost_drawn, width, height_px);
     let (fmin, fmax) = min_max(&frost_eq);
     let frost_units = match out.frost_gas {
         Some(gas) => format!("kg/m² of {gas} frost on the ground at the snapshot's season"),
@@ -1144,8 +1148,9 @@ pub fn export(
         },
     );
 
-    // The caps' ice, its thickness (F241).
-    let ice_eq = to_equirectangular(&grid, out.layers.ice.as_slice(), width, height_px);
+    // The caps' ice, its thickness (F241), its mean over each cell by shares (F416, ADR 0008).
+    let ice_drawn = crate::shares::over_cells(&grid, out.layers.ice.as_slice());
+    let ice_eq = to_equirectangular(&grid, &ice_drawn, width, height_px);
     let (imin, imax) = min_max(&ice_eq);
     write_exr_f32(
         &settings.dir.join("ice.exr"),
@@ -1187,7 +1192,8 @@ pub fn export(
 
     // Each ice's caps apart (F253): water's, carbon dioxide's and the rest.
     for (cap, sp) in out.caps.iter().zip(&species) {
-        let eq = to_equirectangular(&grid, cap.thickness.as_slice(), width, height_px);
+        let thick = crate::shares::over_cells(&grid, cap.thickness.as_slice());
+        let eq = to_equirectangular(&grid, &thick, width, height_px);
         let (lo, hi) = min_max(&eq);
         let what = format!("m of the caps' {} ice", cap.ice.species);
         write_exr_f32(
@@ -1698,18 +1704,19 @@ pub fn export(
     }
     // The rivers (F277): the water each cell's river carries down from it, m³/s, the most of
     // the cells in each pixel so that a river a cell wide keeps its course; and the lakes'
-    // depth, m, nearest-cell; both zero without the year's water.
+    // mean depth over each cell, m, by shares (F416, ADR 0008); both zero without the year's
+    // water.
     let (rivers_map, lakes_map) = match &out.rivers {
         Some(r) => (
             to_equirectangular_most(&grid, r.discharge.as_slice(), width, height_px),
-            to_equirectangular_nearest(&grid, r.lakes.as_slice(), width, height_px),
+            to_equirectangular(&grid, &drawn.lakes, width, height_px),
         ),
         None => (calm(), calm()),
     };
     let widest = rivers_map.iter().fold(0.0f32, |a, &v| a.max(v));
     let deepest = lakes_map.iter().fold(0.0f32, |a, &v| a.max(v));
     let rivers_unit = "m³/s of the working liquid each cell's river carries down from it, the most of the cells in the pixel; zero at sea, in lakes and without the year's water";
-    let lakes_unit = "m of the lakes' water over the ground, nearest-cell; zero where none stands and without the year's water";
+    let lakes_unit = "m of the lakes' water over the ground, its mean depth over each cell, its ground spread by its relief at the cell's scale (ADR 0008); zero where none stands and without the year's water";
     write_exr_f32(
         &settings.dir.join("rivers.exr"),
         width,
@@ -1766,7 +1773,6 @@ pub fn export(
             units: lakes_unit.into(),
             min: 0.0,
             max: deepest as f64,
-            filter: "nearest".into(),
             ..Default::default()
         },
     );
@@ -1786,7 +1792,6 @@ pub fn export(
             units: lakes_unit.into(),
             min: 0.0,
             max: deepest as f64,
-            filter: "nearest".into(),
             ..Default::default()
         },
     );

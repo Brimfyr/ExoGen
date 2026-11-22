@@ -4837,6 +4837,9 @@ mod tests {
             ("the_rivers_lay_their_load_on_the_sea_floor", &|| {
                 the_rivers_lay_their_load_on_the_sea_floor(&earth)
             }),
+            ("the_maps_draw_shares_not_cells", &|| {
+                the_maps_draw_shares_not_cells(&earth)
+            }),
             ("the_sea_shows_its_floor_only_through_its_water", &|| {
                 the_sea_shows_its_floor_only_through_its_water(&earth)
             }),
@@ -5208,6 +5211,51 @@ mod tests {
         );
     }
 
+    /// F416: the Earth-like's maps draw its sea and the ice of its snapshot by their shares of
+    /// its cells: of the cells cut off from their kind, wet or dry, iced or bare, its cells
+    /// decided all or none have many, the shares drawn a fifth as many at most.
+    fn the_maps_draw_shares_not_cells(body: &Body) {
+        let out = &body.out.finish;
+        let grid = out.grid;
+        let n = grid.cell_count();
+        let around = [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+        ];
+        let apart = |side: &dyn Fn(usize) -> bool| {
+            (0..n)
+                .filter(|&k| {
+                    let c = grid.cell(k);
+                    let alike = around
+                        .iter()
+                        .filter(|&&(di, dj)| side(grid.index(grid.neighbor(c, di, dj))) == side(k))
+                        .count();
+                    alike <= 1
+                })
+                .count()
+        };
+        let drawn = crate::shares::Drawn::of(out);
+        let liquid = out.layers.liquid.as_slice();
+        let (own, cover, _) = crate::snapshot::ices(out);
+        let sea = (
+            apart(&|k| liquid[k] > 0.0),
+            apart(&|k| drawn.sea_share[k] >= 0.5),
+        );
+        let ice = (apart(&|k| own[k] >= 0.5), apart(&|k| cover[k] >= 0.5));
+        println!(
+            "Earth-like: cells cut off from their kind, all or none against by shares: the sea {} against {}, the snapshot's ice {} against {}",
+            sea.0, sea.1, ice.0, ice.1
+        );
+        assert!(sea.0 >= 20 && sea.1 * 5 <= sea.0, "{sea:?}");
+        assert!(ice.0 >= 20 && ice.1 * 5 <= ice.0, "{ice:?}");
+    }
+
     /// F413 to F415: the Earth-like's rivers lay all they bring the sea on its floor, and the
     /// sea stands level over the floor they raised, its liquid refilled over it.
     fn the_rivers_lay_their_load_on_the_sea_floor(body: &Body) {
@@ -5503,24 +5551,26 @@ mod tests {
 
     /// ADR 0007: the Earth-like's albedo is its ground's own under its sea, none of it the
     /// water's deep colour; its snapshot the water's deep colour over the open deep sea and the
-    /// albedo itself on its land bare of ice; and the surface its relief is lit over flat at
-    /// its sea's level over all of its liquid but its lakes.
+    /// albedo itself on its land bare of ice where its sea draws none (F416); and the surface its
+    /// relief is lit over flat at its sea's level wherever its sea covers its cells whole.
     fn the_sea_shows_its_floor_only_through_its_water(body: &Body) {
         use crate::constants::WATER_DEEP_REFLECTANCE;
         let out = &body.out.finish;
         let grid = out.grid;
         let liquid = out.layers.liquid.as_slice();
-        let ice = out.cryosphere_ice.as_slice();
-        let snapshot = crate::snapshot::snapshot(out, body.graph.str("volatiles.working_liquid"));
-        let surface = crate::snapshot::surface(out);
+        let drawn = crate::shares::Drawn::of(out);
+        let (_, cover, _) = crate::snapshot::ices(out);
+        let working = body.graph.str("volatiles.working_liquid");
+        let snapshot = crate::snapshot::snapshot(out, working, &drawn);
+        let surface = crate::snapshot::surface(out, &drawn);
         let (mut red, mut sea, mut level, mut whole) = (0.0, 0.0, 0.0, 0.0);
         for k in 0..grid.cell_count() {
             let c = grid.cell(k);
             let (a, s) = (out.albedo.get(c), snapshot.get(c));
+            if drawn.sea[k] <= 0.0 && cover[k] <= 0.0 {
+                assert_eq!(a, s, "bare land at {k}");
+            }
             if liquid[k] <= 0.0 {
-                if ice[k] == 0.0 {
-                    assert_eq!(a, s, "bare land at {k}");
-                }
                 continue;
             }
             let area = grid.cell_area(c);
@@ -5530,18 +5580,20 @@ mod tests {
                     .any(|(x, w)| (x - w).abs() > 1e-3),
                 "the sea's colour as the ground's at {k}: {a:?}"
             );
-            if liquid[k] > 500.0 && ice[k] == 0.0 {
+            if liquid[k] > 500.0 && cover[k] <= 0.0 {
                 for (x, w) in s.iter().zip(&WATER_DEEP_REFLECTANCE) {
                     assert!((x - w).abs() < 2e-3, "deep sea at {k}: {s:?}");
                 }
             }
             red += area * a[0] as f64;
             sea += area;
-            let off = surface.get(c) as f64 - out.sea_level;
-            if off.abs() < 1.0 {
-                level += area;
+            if drawn.sea_share[k] >= 0.99 {
+                let off = surface.get(c) as f64 - out.sea_level;
+                if off.abs() < 1.0 {
+                    level += area;
+                }
+                whole += area;
             }
-            whole += area;
         }
         let red = red / sea;
         assert!(
