@@ -43,6 +43,29 @@ impl Cap {
     }
 }
 
+/// An ice's traps as its exchange answers the turning of the seasons (F259): its gas and its
+/// traps on the latitudes' rows at `levels`, `read_table`'s values (the frost's own gas's
+/// growth, kg/m² a year, the others' saturation pressure over the ice, Pa), which its caps are
+/// laid by on the finer grid (F427).
+#[derive(Clone, Debug)]
+pub struct Turned {
+    pub species: &'static str,
+    pub table: Vec<f64>,
+    pub levels: Vec<f64>,
+}
+
+/// What a cap reads of the ground's own climate on the finer grid: how much warmer each
+/// cell's year peaks at its own height and slope than at its place's, K (F282); the climate's
+/// year-mean temperature on its own grid, K, and the heat the air exchanges with the ground
+/// per kelvin, W/m²/K, which set the share of the sunlight a slope faces its temperature
+/// keeps (F237, F427); and the sea's full level the traps' heights stand above, m, not
+/// finite without a sea, its ground then above the datum.
+pub struct Fine<'a> {
+    pub warmer: Option<&'a Field<f32>>,
+    pub facing: Option<(&'a Field<f32>, f64)>,
+    pub datum: f64,
+}
+
 /// An ice's density, kg/m³.
 pub fn ice_density(species: &str) -> f64 {
     ICE_DENSITIES
@@ -68,23 +91,32 @@ pub fn liquid_species(working: &str) -> &'static [&'static str] {
 /// holding none; its surface stands as the plastic profile of an ice that holds
 /// CAP_YIELD_STRESS (Nye 1951) from the margin of the ground it covers, until its caps hold
 /// its inventory or, a liquid's, until it covers all the ground it can, over the ground under
-/// it rising or falling from its margin's (F418). Each place's trap is
-/// its region's on the climate's grid, read smoothly between its cells: a cap kilometres
-/// thick buries the relief under it, which decides where it stands no more. An ice's
-/// coldest traps are those where it needs the least vapour in the air (F240), the frost's
-/// own gas's those where its ice grows the most (F242); an ice that is the body's working
-/// liquid stands only where it never melts, the frost's own gas's where its ice grows. An ice
-/// `gathered` through the body's age (F259) covers the places it gathered the most at first,
-/// its masses on the climate's grid, then its traps' coldest. A working liquid's ice stands
-/// where its own ground keeps it frozen (F282): its place's warmest, read smoothly between the
-/// climate's places, `warmer` at each cell by its own height and slope than at its place's,
-/// K, so that where the ice thins to its margin the ground under it decides where it melts.
+/// it rising or falling from its margin's (F418). An ice's coldest traps are those where it
+/// needs the least vapour in the air (F240), the frost's own gas's those where its ice grows
+/// the most (F242); an ice that is the body's working liquid stands only where it never
+/// melts, the frost's own gas's where its ice grows.
+///
+/// Each cell's trap is its own on the finer grid (F427): its ice's table on the latitudes'
+/// rows, an ice the orbit's cycles move the one its exchange answers them by (`turned`,
+/// F259), the traps' otherwise, read at the height above the datum of the ground's shape the
+/// grid resolves (F423), the caps already laid on it, and at the latitude that shape's slope
+/// faces, by the share of the sunlight it faces its temperature keeps (F237); where each of
+/// the climate's cells runs its own traps, theirs read smoothly at the point it faces. Read
+/// at their places, smoothly between the climate's cells some 170 km apart on Mars, its
+/// caps' outlines were the contours of their places' traps, blobs about the climate's cells;
+/// and an ice gathered through the body's age covered the places it gathered at the most
+/// first, piled without flowing some 16 km deep on a dozen of Mars's places, cut along the
+/// grid's rows where their traps read alike, the rest of its caps its present season's
+/// traps', not its own. A working liquid's ice stands where its own ground keeps it frozen
+/// (F282): its place's warmest, read smoothly between the climate's places, `fine`'s
+/// `warmer` at each cell by its own height and slope than at its place's, K, so that where
+/// the ice thins to its margin the ground under it decides where it melts.
 pub fn lay(
     graph: &ParamGraph,
     layers: &mut LayerSet,
     traps: &Traps,
-    gathered: &[(&'static str, Field<f32>)],
-    warmer: Option<&Field<f32>>,
+    turned: &[Turned],
+    fine: Option<&Fine>,
 ) -> Vec<Cap> {
     let radius = graph.f64("body.radius");
     let gravity = graph.f64("body.gravity");
@@ -116,22 +148,13 @@ pub fn lay(
         let rank = growth.as_slice().iter().map(|&g| -g).collect();
         ices.push((*ice, rank, growth.as_slice().to_vec()));
     }
-    // An ice gathered covers the places it gathered at, the most first, then, where its caps
-    // need more ground than they gathered on, the coldest of its traps.
-    for (ice, rank, _) in ices.iter_mut() {
-        if let Some((_, mass)) = gathered.iter().find(|(s, _)| *s == ice.species) {
-            let least = rank
-                .iter()
-                .filter(|r| r.is_finite())
-                .fold(f32::MAX, |a, &r| a.min(r));
-            *rank = mass
-                .as_slice()
-                .iter()
-                .zip(rank.iter())
-                .map(|(&m, &r)| if m > 0.0 { -m } else { r - least })
-                .collect();
-        }
-    }
+    let warmer = fine.and_then(|f| f.warmer);
+    let datum = fine.map_or(f64::NAN, |f| f.datum);
+    let scale_height = if graph.f64("atmosphere.surface_pressure") > 0.0 {
+        graph.f64("atmosphere.scale_height")
+    } else {
+        0.0
+    };
     // The least volatile first, its triple point the warmest.
     ices.sort_by(|a, b| b.0.volatile.t_triple.total_cmp(&a.0.volatile.t_triple));
     let grid = layers.grid;
@@ -156,17 +179,63 @@ pub fn lay(
             .as_ref()
             .is_none_or(|(g, _)| g.species != ice.species);
         let ground = standing(layers);
-        // Each place's region's trap, read smoothly on the climate's grid; where its ice may
-        // stand, coldest first.
-        // Read by the monotone cubic (F291): read bilinearly, the edge where the ice may stand
-        // kinked at the climate's cells where their warmest hovers at its melting.
+        // The ice's own traps (F427): the table its exchange answers the orbit's cycles by or
+        // the traps', the frost's own gas's its growth; none where the climate's cells run
+        // their own.
+        let grows = !by_heat;
+        let table = turned
+            .iter()
+            .find(|t| t.species == ice.species)
+            .map(|t| (t.table.as_slice(), t.levels.as_slice()))
+            .or_else(|| {
+                let rows = traps.rows.as_ref()?;
+                let values = rows.values.iter().find(|(s, _)| *s == ice.species)?;
+                Some((values.1.as_slice(), rows.levels.as_slice()))
+            });
+        // The ground's shape the grid resolves above the datum (F423), the caps already laid
+        // on it: a cell's own relief at its scale decides neither its height nor its slope.
+        let land: Vec<f32> = layers
+            .liquid
+            .as_slice()
+            .iter()
+            .map(|&l| if l > 0.0 { 0.0 } else { 1.0 })
+            .collect();
+        let above: Vec<f32> = ground
+            .as_slice()
+            .iter()
+            .map(|&h| {
+                let h = if h.is_finite() { h } else { 0.0 };
+                if datum.is_finite() {
+                    (h - datum as f32).max(0.0)
+                } else {
+                    h
+                }
+            })
+            .collect();
+        let resolved = crate::shares::shape_of(&grid, &above, &land);
+        let resolved = Field::from_fn(grid, |c, _| resolved[grid.index(c)]);
+        let own_trap = OwnTrap {
+            table,
+            grows,
+            coarse,
+            rank: &rank,
+            resolved: &resolved,
+            scale_height,
+            radius,
+            facing: fine.and_then(|f| f.facing),
+        };
+        // Each cell's own trap on the finer grid; where its ice may stand, coldest first.
+        // Its place's warmest read by the monotone cubic (F291): read bilinearly, the edge where
+        // the ice may stand kinked at the climate's cells where their warmest hovers at its
+        // melting.
         let mut ranks: Vec<(usize, f64)> = (0..grid.cell_count())
             .into_par_iter()
             .filter_map(|k| {
                 if layers.liquid.as_slice()[k] > 0.0 {
                     return None;
                 }
-                let d = grid.center(grid.cell(k));
+                let c = grid.cell(k);
+                let d = grid.center(c);
                 let own = match warmer {
                     Some(w) if by_heat => w.as_slice()[k],
                     _ => 0.0,
@@ -174,7 +243,7 @@ pub fn lay(
                 if melts && sample_monotone(&coarse, &stands, d) - own < 0.0 {
                     return None;
                 }
-                let rank = sample_monotone(&coarse, &rank, d) as f64;
+                let rank = own_trap.at(c, d);
                 rank.is_finite().then_some((k, rank))
             })
             .collect();
@@ -256,6 +325,67 @@ fn standing(layers: &LayerSet) -> Field<f32> {
         }
     }
     surface
+}
+
+/// How an ice reads its own trap at a cell of the finer grid (F427), the lower the colder:
+/// its `table` on the latitudes' rows at its levels where it has one, read at the height of
+/// the ground's `resolved` shape, the share of the datum's pressure that height keeps by the
+/// `scale_height`, and at the latitudes the cell and its slope face, by the share of the
+/// sunlight it faces that its temperature keeps (F237) at the climate's year-mean temperature
+/// with the air's exchange, `facing`: the saturation pressure over it, over that share, in the
+/// logarithm, or its growth, `grows`, less; else its places' `rank` on the `coarse` grid, read
+/// smoothly at the cell and at the point it faces.
+struct OwnTrap<'a> {
+    table: Option<(&'a [f64], &'a [f64])>,
+    grows: bool,
+    coarse: CubeSphere,
+    rank: &'a [f32],
+    resolved: &'a Field<f32>,
+    scale_height: f64,
+    radius: f64,
+    facing: Option<(&'a Field<f32>, f64)>,
+}
+
+impl OwnTrap<'_> {
+    fn at(&self, c: crate::grid::Cell, d: [f64; 3]) -> f64 {
+        let (faced, keep) = match self.facing {
+            Some((mean, exchange)) => {
+                let t = sample_monotone(&mean.grid(), mean.as_slice(), d) as f64;
+                let normal = crate::climate::surface_normal(self.resolved, c, d, self.radius);
+                (normal, crate::climate::kept_share(t, exchange))
+            }
+            None => (d, 0.0),
+        };
+        match self.table {
+            Some((values, levels)) => {
+                let h = self.resolved.get(c) as f64;
+                let thin = if self.scale_height > 0.0 {
+                    (-h / self.scale_height).exp()
+                } else {
+                    1.0
+                };
+                // Read within its table's levels: beyond them its traps stood at the last
+                // level's, all alike.
+                assert!(
+                    levels.len() < 2
+                        || (levels[0] * (1.0 - 1e-6)..=levels[levels.len() - 1] * (1.0 + 1e-6))
+                            .contains(&thin),
+                    "a trap read at {h:.0} m, beyond its table's levels"
+                );
+                let read = |p: [f64; 3]| {
+                    let lat = lon_lat_from_direction(p).1;
+                    let v = read_table(values, levels, lat, thin, !self.grows);
+                    if self.grows { -v } else { v.max(1e-300).ln() }
+                };
+                let r = (1.0 - keep) * read(d) + keep * read(faced);
+                if self.grows { r } else { r - thin.ln() }
+            }
+            None => {
+                let read = |p: [f64; 3]| sample_monotone(&self.coarse, self.rank, p) as f64;
+                (1.0 - keep) * read(d) + keep * read(faced)
+            }
+        }
+    }
 }
 
 /// A place on the margin's front, by its surface: the lowest first.
@@ -538,47 +668,46 @@ pub struct Cycled {
     pub mean: Vec<f64>,
 }
 
-/// What the ices gather under (F259): the traps' table's levels, shares of the datum's
-/// pressure; the pressure's scale height, m, none on an airless body; the period over which
-/// the seasons turn, s, none where they hold; the body's year and age, s; its mean surface
-/// temperature, K; and whether it has air.
+/// What an ice's traps answer the turning of the seasons by (F259): the traps' table's
+/// levels, shares of the datum's pressure; the pressure's scale height, m, none on an airless
+/// body; the period over which the seasons turn, s, none where they hold; the body's year, s;
+/// its mean surface temperature, K; and whether it has air.
 #[derive(Clone, Copy, Debug)]
-pub struct Gathering<'a> {
+pub struct Turning<'a> {
     pub levels: &'a [f64],
     pub scale_height: f64,
     pub cycle: f64,
     pub year: f64,
-    pub age: f64,
     pub temperature: f64,
     pub airless: bool,
 }
 
-/// Each ice of the inventory gathered through the body's age (F259), from a layer over the
-/// whole body, on the climate's grid of `heights`, the ground's above the datum, m: what each
-/// place holds at the end, kg/m².
+/// Each ice's traps as its exchange answers the turning of the seasons (F259), on the
+/// latitudes' rows at the levels of `turning`, which its caps are laid by on the finer grid
+/// (F427). An ice follows its traps' departure from their mean through the turning by the
+/// share 1 / sqrt(1 + (2 pi tau / P)^2) a store of exchange time tau answers a cycle of period
+/// P by (the lag left out), its exchange time the time its inventory, a layer over the whole
+/// body on the climate's grid of `heights` (the ground's above the datum, m), takes to move at
+/// its rates there: the frost's own gas, moving in years, the present season's; a slow ice,
+/// moving in millions of years, the turning's mean, so that a pole the present favours does
+/// not take what the other holds. Its rates: the frost's own gas's its growth less its mean
+/// over the body, the air buffered by its caps (F258); every other ice's the saturation
+/// pressure over it against the vapour the air holds, at the air's turbulent exchange,
+/// C_H U / (R_s T) per pascal, or into the vacuum at the Hertz-Knudsen rate on an airless
+/// body, the air's vapour the one at which what all of it gives and takes balances
+/// (Ingersoll 1970).
 ///
-/// An ice exchanges where it lies uppermost, the most volatile on top, and lays itself where
-/// it would grow, at the rate its traps give at its surface's height, the ground's and the
-/// ices' over it. The frost's own gas's ice gains its growth less what holds its gas's whole
-/// mass, the air buffered by its caps (F258); every other ice sublimes into the air or takes
-/// from it by the saturation pressure over it against the vapour the air holds there, at the
-/// air's turbulent exchange, C_H U / (R_s T) per pascal, or into the vacuum at the
-/// Hertz-Knudsen rate on an airless body, the air's vapour the one at which what all of it
-/// gives and takes balances (Ingersoll 1970).
-///
-/// As the seasons turn, an ice follows its traps' departure from their mean through the
-/// turning by the share 1 / sqrt(1 + (2 pi tau / P)^2) a store of exchange time tau answers a
-/// cycle of period P by (the lag left out), its exchange time the time its layer over the
-/// body takes to move at its rates there: the frost's own gas, moving in years, the present
-/// season's; a slow ice, moving in millions of years, the turning's mean, so that a pole the
-/// present favours does not take what the other gathered.
-pub fn gather(
+/// The ice was gathered through the body's age besides, from that layer, without flowing, and
+/// its caps covered the places it gathered at the most first: on Mars it piled 9 to 16 km deep
+/// on a dozen of the climate's places, and its caps were the blocks of those places. Its caps
+/// are now laid by its table on the finer grid, and the gathering is gone (F427).
+pub fn turned(
     graph: &ParamGraph,
     heights: &Field<f32>,
     traps: &[Cycled],
     frost: Option<&'static str>,
-    g: &Gathering,
-) -> Vec<(&'static str, Field<f32>)> {
+    turning: &Turning,
+) -> Vec<Turned> {
     let grid = heights.grid();
     let n = grid.cell_count();
     let empty = std::collections::BTreeMap::new();
@@ -589,249 +718,72 @@ pub fn gather(
         .clone();
     let area: Vec<f64> = (0..n).map(|k| grid.cell_area(grid.cell(k))).collect();
     let whole: f64 = area.iter().sum();
+    let mean = |values: &[f64]| -> f64 {
+        values.iter().zip(&area).map(|(v, a)| v * a).sum::<f64>() / whole
+    };
     let lat: Vec<f64> = (0..n)
         .map(|k| lon_lat_from_direction(grid.center(grid.cell(k))).1)
         .collect();
-    let ground: Vec<f64> = heights
+    let thin: Vec<f64> = heights
         .as_slice()
         .iter()
-        .map(|&h| if h.is_finite() { h as f64 } else { 0.0 })
-        .collect();
-    let thin = |h: f64| {
-        if g.scale_height > 0.0 {
-            (-h / g.scale_height).exp()
-        } else {
-            1.0
-        }
-    };
-    let count = traps.len();
-    let own: Vec<bool> = traps.iter().map(|t| Some(t.ice.species) == frost).collect();
-    let rho: Vec<f64> = traps.iter().map(|t| ice_density(t.ice.species)).collect();
-    // Each ice's exchange per pascal of saturation pressure over the air's, kg/m²/s/Pa.
-    let exchange: Vec<f64> = traps
-        .iter()
-        .map(|t| {
-            let rt = t.ice.volatile.r_specific * g.temperature.max(1.0);
-            if g.airless {
-                (1.0 / (std::f64::consts::TAU * rt)).sqrt()
+        .map(|&h| {
+            let h = if h.is_finite() { h as f64 } else { 0.0 };
+            if turning.scale_height > 0.0 {
+                (-h / turning.scale_height).exp()
             } else {
-                AIR_EXCHANGE_COEFFICIENT * SURFACE_WIND_SPEED / rt
+                1.0
             }
         })
         .collect();
-    // The most volatile uppermost.
-    let mut order: Vec<usize> = (0..count).collect();
-    order.sort_by(|&a, &b| {
-        let (ta, tb) = (
-            traps[a].ice.volatile.t_triple,
-            traps[b].ice.volatile.t_triple,
-        );
-        ta.total_cmp(&tb)
-    });
-    let mut mass: Vec<Vec<f64>> = traps
-        .iter()
-        .map(|t| {
-            let gel = inventory.get(t.ice.species).copied().unwrap_or(0.0);
-            vec![gel.max(0.0) * t.ice.volatile.liquid_density; n]
-        })
-        .collect();
-    // The rates of an ice's table over the places, kg/m²/s, each lying uppermost or not, and
-    // whether each takes part.
-    let rates = |i: usize, table: &[f64], surface: &[f64], exposed: &dyn Fn(usize) -> bool| {
-        let value = |k: usize| read_table(table, g.levels, lat[k], thin(surface[k]), !own[i]);
-        if own[i] {
-            let r: Vec<f64> = (0..n).map(|k| value(k) / g.year).collect();
-            let c = buffer(&r, &area, exposed);
-            (0..n)
-                .map(|k| {
-                    if exposed(k) || r[k] > c {
-                        r[k] - c
-                    } else {
-                        0.0
-                    }
-                })
-                .collect::<Vec<f64>>()
-        } else {
-            let v: Vec<f64> = (0..n).map(value).collect();
-            let th: Vec<f64> = surface.iter().map(|&h| thin(h)).collect();
-            let air = vapour(&v, &th, &area, exposed);
-            (0..n)
-                .map(|k| {
-                    let flux = exchange[i] * (air * th[k] - v[k]);
-                    if exposed(k) || flux > 0.0 { flux } else { 0.0 }
-                })
-                .collect()
-        }
-    };
-    // Each ice's table, its present's departure from its mean followed by the share its
-    // exchange time answers the cycles by.
-    let tables: Vec<Vec<f64>> = (0..count)
-        .map(|i| {
-            let t = &traps[i];
-            if g.cycle <= 0.0 {
-                return t.present.clone();
-            }
-            let layer = mass[i][0];
-            let moved: f64 = rates(i, &t.present, &ground, &|_| true)
-                .iter()
-                .zip(&area)
-                .map(|(r, a)| r.abs() * a)
-                .sum::<f64>()
-                / whole;
-            let tau = if moved > 0.0 {
-                layer / moved
-            } else {
-                f64::INFINITY
-            };
-            let follows = 1.0 / (1.0 + (std::f64::consts::TAU * tau / g.cycle).powi(2)).sqrt();
-            t.mean
-                .iter()
-                .zip(&t.present)
-                .map(|(m, p)| m + follows * (p - m))
-                .collect()
-        })
-        .collect();
-    let mut elapsed = 0.0;
-    let mut steps = 0;
-    for _ in 0..GATHER_MAX_STEPS {
-        if elapsed >= g.age {
-            break;
-        }
-        steps += 1;
-        let surface: Vec<f64> = (0..n)
-            .map(|k| ground[k] + (0..count).map(|i| mass[i][k] / rho[i]).sum::<f64>())
-            .collect();
-        let top: Vec<Option<usize>> = (0..n)
-            .map(|k| order.iter().copied().find(|&i| mass[i][k] > 0.0))
-            .collect();
-        let flows: Vec<Vec<f64>> = (0..count)
-            .map(|i| rates(i, &tables[i], &surface, &|k| top[k] == Some(i)))
-            .collect();
-        // A step moves at most GATHER_STEP_SHARE of what lies.
-        let lying: f64 = (0..count)
-            .map(|i| mass[i].iter().zip(&area).map(|(m, a)| m * a).sum::<f64>())
-            .sum();
-        let moving: f64 = flows
-            .iter()
-            .map(|f| f.iter().zip(&area).map(|(r, a)| r.abs() * a).sum::<f64>())
-            .sum();
-        if moving <= 0.0 || lying <= 0.0 {
-            break;
-        }
-        let dt = (GATHER_STEP_SHARE * lying / moving).min(g.age - elapsed);
-        for i in 0..count {
-            // What each place loses, no more than it holds, and its gains scaled to match.
-            let lost: f64 = (0..n)
-                .map(|k| (-flows[i][k] * dt).clamp(0.0, mass[i][k]) * area[k])
-                .sum();
-            let won: f64 = (0..n).map(|k| (flows[i][k] * dt).max(0.0) * area[k]).sum();
-            let scale = if won > 0.0 { lost / won } else { 0.0 };
-            for k in 0..n {
-                let d = flows[i][k] * dt;
-                if d < 0.0 {
-                    mass[i][k] -= (-d).min(mass[i][k]);
-                } else {
-                    mass[i][k] += d * scale;
-                }
-            }
-        }
-        elapsed += dt;
-        // Settled once what moves through the rest of the age is a sliver of what lies.
-        if moving * (g.age - elapsed) < GATHER_SETTLED * lying {
-            break;
-        }
-    }
-    if std::env::var_os("EXOGEN_DEBUG").is_some() {
-        let bands = [-90.0, -60.0, -40.0, -20.0, 20.0, 40.0, 60.0, 90.0];
-        for (i, t) in traps.iter().enumerate() {
-            let total: f64 = (0..n).map(|k| mass[i][k] * area[k]).sum();
-            let shares: Vec<String> = bands
-                .windows(2)
-                .map(|b| {
-                    let part: f64 = (0..n)
-                        .filter(|&k| (b[0]..b[1]).contains(&lat[k].to_degrees()))
-                        .map(|k| mass[i][k] * area[k])
-                        .sum();
-                    format!("{}..{}: {:.2}", b[0], b[1], part / total.max(1e-300))
-                })
-                .collect();
-            eprintln!(
-                "gather: {} after {:.3e} years in {steps} steps, by band {}",
-                t.ice.species,
-                elapsed / 3.155_76e7,
-                shares.join(" ")
-            );
-        }
-    }
     traps
         .iter()
-        .zip(mass)
-        .map(|(t, m)| {
-            let field = Field::from_fn(grid, |c, _| m[grid.index(c)] as f32);
-            (t.ice.species, field)
+        .map(|t| {
+            let own = Some(t.ice.species) == frost;
+            let table = if turning.cycle <= 0.0 {
+                t.present.clone()
+            } else {
+                // Its rates at the present season's traps over its layer, kg/m²/s.
+                let value =
+                    |k: usize| read_table(&t.present, turning.levels, lat[k], thin[k], !own);
+                let rates: Vec<f64> = if own {
+                    let growth: Vec<f64> = (0..n).map(|k| value(k) / turning.year).collect();
+                    let held = mean(&growth);
+                    growth.iter().map(|g| g - held).collect()
+                } else {
+                    let rt = t.ice.volatile.r_specific * turning.temperature.max(1.0);
+                    let exchange = if turning.airless {
+                        (1.0 / (std::f64::consts::TAU * rt)).sqrt()
+                    } else {
+                        AIR_EXCHANGE_COEFFICIENT * SURFACE_WIND_SPEED / rt
+                    };
+                    let v: Vec<f64> = (0..n).map(value).collect();
+                    let air = mean(&v) / mean(&thin);
+                    (0..n).map(|k| exchange * (air * thin[k] - v[k])).collect()
+                };
+                let moved = mean(&rates.iter().map(|r| r.abs()).collect::<Vec<f64>>());
+                let gel = inventory.get(t.ice.species).copied().unwrap_or(0.0);
+                let layer = gel.max(0.0) * t.ice.volatile.liquid_density;
+                let tau = if moved > 0.0 {
+                    layer / moved
+                } else {
+                    f64::INFINITY
+                };
+                let follows =
+                    1.0 / (1.0 + (std::f64::consts::TAU * tau / turning.cycle).powi(2)).sqrt();
+                t.mean
+                    .iter()
+                    .zip(&t.present)
+                    .map(|(m, p)| m + follows * (p - m))
+                    .collect()
+            };
+            Turned {
+                species: t.ice.species,
+                table,
+                levels: turning.levels.to_vec(),
+            }
         })
         .collect()
-}
-
-/// What holds the frost's gas's whole mass while its caps exchange with its air (F259): the
-/// growth `c` the places' take less of so that what they gain and lose balances, the places
-/// that lie under its ice taking part and the others where they would grow. Exact, the places
-/// that would grow added from the fastest.
-fn buffer(r: &[f64], area: &[f64], exposed: &dyn Fn(usize) -> bool) -> f64 {
-    let (mut sum, mut weight) = (0.0, 0.0);
-    let mut others: Vec<usize> = Vec::new();
-    for (k, (&rk, &a)) in r.iter().zip(area).enumerate() {
-        if exposed(k) {
-            sum += a * rk;
-            weight += a;
-        } else {
-            others.push(k);
-        }
-    }
-    others.sort_by(|&a, &b| r[b].total_cmp(&r[a]));
-    let mut c = if weight > 0.0 {
-        sum / weight
-    } else {
-        f64::NEG_INFINITY
-    };
-    for &k in &others {
-        if r[k] <= c {
-            break;
-        }
-        sum += area[k] * r[k];
-        weight += area[k];
-        c = sum / weight;
-    }
-    c
-}
-
-/// The vapour of the air at the datum, Pa, at which what an ice's places give and take
-/// balances (F259): the places under it taking part, and the others where it would lay
-/// itself, the saturation pressure over it `v` below the air's there, its share `th` of the
-/// datum's. Exact, the places added from the coldest.
-fn vapour(v: &[f64], th: &[f64], area: &[f64], exposed: &dyn Fn(usize) -> bool) -> f64 {
-    let (mut given, mut held) = (0.0, 0.0);
-    let mut others: Vec<usize> = Vec::new();
-    for k in 0..v.len() {
-        if exposed(k) {
-            given += area[k] * v[k];
-            held += area[k] * th[k];
-        } else {
-            others.push(k);
-        }
-    }
-    let level = |k: usize| v[k] / th[k].max(1e-300);
-    others.sort_by(|&a, &b| level(a).total_cmp(&level(b)));
-    let mut air = if held > 0.0 { given / held } else { 0.0 };
-    for &k in &others {
-        if level(k) >= air {
-            break;
-        }
-        given += area[k] * v[k];
-        held += area[k] * th[k];
-        air = given / held;
-    }
-    air
 }
 
 #[cfg(test)]
@@ -1009,101 +961,111 @@ pub(crate) mod tests {
             .unwrap()
     }
 
-    /// The share of what an ice gathered on the places a test picks, and its whole over the
-    /// body, kg/m².
-    fn held(mass: &Field<f32>, pick: impl Fn(f64) -> bool) -> (f64, f64) {
-        let grid = mass.grid();
-        let (mut part, mut all, mut area) = (0.0, 0.0, 0.0);
-        for k in 0..grid.cell_count() {
-            let c = grid.cell(k);
-            let a = grid.cell_area(c);
-            let m = mass.as_slice()[k] as f64 * a;
-            let (_, lat) = lon_lat_from_direction(grid.center(c));
-            if pick(lat.to_degrees()) {
-                part += m;
-            }
-            all += m;
-            area += a;
-        }
-        (part / all, all / area)
-    }
-
     const YEAR: f64 = 3.155_76e7;
 
-    /// F259: the frost's own gas, gathered from a layer over the whole body, lies where its
-    /// ice grows, its whole mass kept: Pluto's nitrogen, its traps growing within 20° of the
-    /// equator and losing beyond.
+    /// F259: an ice follows its traps' departure from their mean through the turning of the
+    /// seasons by how quickly it moves: Mars's water, its inventory moving in millions of
+    /// years, by the turning's mean, so that a pole the present season favours does not take
+    /// what the other holds; the same ice under a turning a million times as slow by the
+    /// present season's; its carbon dioxide, the frost's own gas, moving in years, by the
+    /// present season's.
     #[test]
-    fn the_frost_s_gas_gathers_where_its_ice_grows() {
-        let graph = crate::presets::preset("Pluto").unwrap().to_graph().0;
-        let ice = ice_of(&graph, "N2");
-        let table = rows_table(|lat| 2.0 - 0.1 * lat.abs());
-        let cycled = [Cycled {
-            ice,
-            present: table.clone(),
-            mean: table,
-        }];
-        let gathering = Gathering {
-            levels: &[1.0],
-            scale_height: 0.0,
-            cycle: 0.0,
-            year: YEAR,
-            age: 1e7 * YEAR,
-            temperature: 40.0,
-            airless: false,
-        };
-        let heights = Field::new(CubeSphere::new(16));
-        let gathered = gather(&graph, &heights, &cycled, Some("N2"), &gathering);
-        let (share, whole) = held(&gathered[0].1, |lat| lat.abs() < 20.0);
-        let layer = 30.0 * ice.volatile.liquid_density;
-        assert!(share > 0.95, "{share} within 20°");
-        assert!(
-            (whole / layer - 1.0).abs() < 1e-4,
-            "{whole} against {layer}"
+    fn an_ice_answers_the_turning_by_how_quickly_it_moves() {
+        let mars = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let follows =
+            |graph: &ParamGraph, species: &str, frost: Option<&'static str>, slower: f64| {
+                let ice = ice_of(graph, species);
+                let (present, mean) = if frost.is_some() {
+                    (rows_table(|lat| 100.0 * lat / 90.0), rows_table(|_| 0.0))
+                } else {
+                    (
+                        rows_table(|lat| 1.0e-3 * (1.0 + lat / 90.0) + 1.0e-4),
+                        rows_table(|_| 1.1e-3),
+                    )
+                };
+                let cycled = [Cycled {
+                    ice,
+                    present: present.clone(),
+                    mean: mean.clone(),
+                }];
+                let turning = Turning {
+                    levels: &[1.0],
+                    scale_height: 0.0,
+                    cycle: slower * graph.f64("orbit.precession_period"),
+                    year: YEAR,
+                    temperature: graph.f64("atmosphere.surface_temperature_mean"),
+                    airless: false,
+                };
+                let heights = Field::new(CubeSphere::new(16));
+                let t = &turned(graph, &heights, &cycled, frost, &turning)[0];
+                let pole = CYCLE_LATITUDES - 1;
+                (t.table[pole] - mean[pole]) / (present[pole] - mean[pole])
+            };
+        let slow = follows(&mars, "H2O", None, 1.0);
+        let quick = follows(&mars, "H2O", None, 1.0e6);
+        let frost = follows(&mars, "CO2", Some("CO2"), 1.0);
+        println!(
+            "the share of the present's departure followed: Mars's water {slow:.4}, under a turning a million times as slow {quick:.4}, its carbon dioxide {frost:.4}"
         );
+        assert!(slow < 0.05, "{slow}");
+        assert!(quick > 0.95, "{quick}");
+        assert!(frost > 0.95, "{frost}");
     }
 
-    /// F259: a slow ice, gathered from a layer over the whole body, leaves its warm places and
-    /// keeps both its poles where one is barely the colder, the little it would move between
-    /// them in the body's age; a fast one, as the frost's gas moves, gathers all of it at the
-    /// colder (Mars's polar layered deposits stand at both its poles).
+    /// F259, F427: Mars's water, laid by the traps its exchange answers the turning of the
+    /// seasons by, the turning's mean holding each pole alike, stands at both its poles on flat
+    /// ground, where its present season's traps alone lay all of it at the north (Mars's polar
+    /// layered deposits stand at both its poles).
     #[test]
-    fn a_slow_ice_keeps_both_its_poles() {
-        let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
-        let ice = ice_of(&graph, "H2O");
-        let table = rows_table(|lat| {
-            let polar = if lat > 0.0 { 1.0e-4 } else { 1.05e-4 };
-            polar + 1.0e-2 * (1.0 - (lat.abs() / 90.0).powi(2))
-        });
-        let cycled = [Cycled {
-            ice,
-            present: table.clone(),
-            mean: table,
-        }];
-        let heights = Field::new(CubeSphere::new(16));
-        let run = |temperature: f64, age: f64| {
-            let gathering = Gathering {
-                levels: &[1.0],
-                scale_height: 0.0,
-                cycle: 0.0,
-                year: YEAR,
-                age: age * YEAR,
-                temperature,
-                airless: false,
-            };
-            let gathered = gather(&graph, &heights, &cycled, None, &gathering);
-            let north = held(&gathered[0].1, |lat| lat > 60.0).0;
-            let south = held(&gathered[0].1, |lat| lat < -60.0).0;
-            (north, south)
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn mars_s_water_stands_at_both_its_poles() {
+        let (graph, traps) = traps_of("Mars");
+        let balance = EnergyBalance::from_graph(&graph);
+        let grid = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let ground = Ground::from_graph(&graph);
+        let downscale = Downscale::from_graph(&graph);
+        let ices = Ice::of_inventory(&graph, [0.80, 0.82, 0.86]);
+        let heights = Field::new(grid);
+        let levels = [1.0];
+        let world = (grid, None, &ground, None, None, None);
+        let cycled =
+            super::super::cycled_traps(&graph, &balance, world, &ices, &levels, &downscale);
+        let turning = Turning {
+            levels: &levels,
+            scale_height: downscale.scale_height,
+            cycle: graph.f64("orbit.precession_period"),
+            year: graph.f64("orbit.year"),
+            temperature: graph.f64("atmosphere.surface_temperature_mean"),
+            airless: false,
         };
-        let (north, south) = run(200.0, 4.5e9);
-        println!("slow: north {north:.3}, south {south:.3}");
-        assert!(north + south > 0.9, "{north} {south}");
-        assert!(north > 0.2 && south > 0.2, "{north} {south}");
-        // The same ice a million times as quick: all of it at the colder pole.
-        let (north, south) = run(200.0e-6, 4.5e9);
-        println!("fast: north {north:.3}, south {south:.3}");
-        assert!(north > 0.9, "{north} {south}");
+        let frost = balance.frost.map(|f| f.species);
+        let turned = turned(&graph, &heights, &cycled, frost, &turning);
+        let poles = |turned: &[Turned]| {
+            let mut layers = LayerSet::new(CubeSphere::new(64));
+            let laid = lay(&graph, &mut layers, &traps, turned, None);
+            let cap = laid.iter().find(|c| c.ice.species == "H2O").expect("water");
+            let grid = cap.thickness.grid();
+            let (mut north, mut south, mut all) = (0.0, 0.0, 0.0);
+            for (k, &t) in cap.thickness.as_slice().iter().enumerate() {
+                let v = t as f64 * grid.cell_area(grid.cell(k));
+                let lat = lat_lon(grid, k).0;
+                if lat > 60.0 {
+                    north += v;
+                } else if lat < -60.0 {
+                    south += v;
+                }
+                all += v;
+            }
+            (north / all, south / all)
+        };
+        let (north, south) = poles(&turned);
+        let (now_north, now_south) = poles(&[]);
+        println!(
+            "Mars's water: north {north:.3}, south {south:.3}; by the present season's traps {now_north:.3}, {now_south:.3}"
+        );
+        assert!(north > 0.25 && south > 0.25, "north {north}, south {south}");
+        assert!(north + south > 0.9, "north {north}, south {south}");
+        assert!(now_north > 0.9, "{now_north}");
     }
 
     /// A disc of ice 10 degrees across from the north pole on flat ground on a grid of
@@ -1184,7 +1146,12 @@ pub(crate) mod tests {
         };
         let covered = |warmer: Option<&Field<f32>>| {
             let mut layers = LayerSet::new(grid);
-            let caps = lay(&graph, &mut layers, &traps, &[], warmer);
+            let fine = warmer.map(|w| Fine {
+                warmer: Some(w),
+                facing: None,
+                datum: f64::NAN,
+            });
+            let caps = lay(&graph, &mut layers, &traps, &[], fine.as_ref());
             let Some(water) = caps.iter().find(|c| c.ice.species == "H2O") else {
                 return 0;
             };
@@ -1317,5 +1284,181 @@ pub(crate) mod tests {
             t[pole]
         );
         assert!(nye > 0.9 * most);
+    }
+
+    /// Traps on the climate's grid from a table on the latitudes' rows at one level, the
+    /// saturation pressure over the ice `ln_v` in the logarithm by latitude in degrees.
+    fn rows_traps(ice: Ice, ln_v: impl Fn(f64) -> f64) -> Traps {
+        let coarse = CubeSphere::new(CLIMATE_FACE_SIZE);
+        let table = rows_table(|lat| ln_v(lat).exp());
+        let vapour = Field::from_fn(coarse, |_, d| {
+            read_table(&table, &[1.0], lon_lat_from_direction(d).1, 1.0, true) as f32
+        });
+        Traps {
+            growth: None,
+            vapour: vec![(ice, vapour)],
+            warmest: vec![Field::from_fn(coarse, |_, _| 150.0)],
+            rows: Some(crate::climate::Rows {
+                levels: vec![1.0],
+                values: vec![(ice.species, table)],
+            }),
+        }
+    }
+
+    /// The thickness of a preset's water laid on `layers` under `traps`.
+    fn water_laid(
+        graph: &ParamGraph,
+        layers: &mut LayerSet,
+        traps: &Traps,
+        turned: &[Turned],
+    ) -> Vec<f32> {
+        let caps = lay(graph, layers, traps, turned, None);
+        let cap = caps.iter().find(|c| c.ice.species == "H2O").expect("water");
+        cap.thickness.as_slice().to_vec()
+    }
+
+    /// Latitude and longitude of a cell, degrees.
+    fn lat_lon(grid: CubeSphere, k: usize) -> (f64, f64) {
+        let (lon, lat) = lon_lat_from_direction(grid.center(grid.cell(k)));
+        (lat.to_degrees(), lon.to_degrees())
+    }
+
+    /// F427: a cap's margin follows the ground's own traps on the finer grid: Mars's water,
+    /// under traps colder toward its north pole, covers the floor of a basin 2 km deep beyond
+    /// the margin it reaches over flat ground, the floor's denser air its colder trap, and
+    /// leaves the flat ground at the basin's latitude bare; read at their places' traps on
+    /// the climate's grid, which stand at their heights' means, the basin's cells stood as
+    /// the flat ground's.
+    #[test]
+    fn a_cap_s_margin_follows_its_own_trap_on_the_finer_grid() {
+        let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let traps = rows_traps(ice_of(&graph, "H2O"), |lat| -8.0 + 0.02 * (90.0 - lat));
+        let grid = CubeSphere::new(128);
+        let centre = crate::grid::direction_from_lon_lat(0.0, 70f64.to_radians());
+        let reach = 6f64.to_radians();
+        let mut layers = LayerSet::new(grid);
+        for k in 0..grid.cell_count() {
+            let r = angle_between(centre, grid.center(grid.cell(k)));
+            if r < reach {
+                layers.bedrock.as_mut_slice()[k] = (-2_000.0 * (1.0 - (r / reach).powi(2))) as f32;
+            }
+        }
+        let t = water_laid(&graph, &mut layers, &traps, &[]);
+        let at = |lon: f64, lat: f64| {
+            let d = crate::grid::direction_from_lon_lat(lon.to_radians(), lat.to_radians());
+            t[grid.index(grid.locate(d).0)]
+        };
+        // The margin over flat ground: the lowest latitude covered on the far side.
+        let margin = (0..grid.cell_count())
+            .filter(|&k| t[k] > 0.0 && lat_lon(grid, k).1.abs() > 90.0)
+            .map(|k| lat_lon(grid, k).0)
+            .fold(90.0f64, f64::min);
+        println!(
+            "the margin over flat ground at {margin:.1}°; the basin's floor at 70° under {:.0} m",
+            at(0.0, 70.0)
+        );
+        assert!(margin > 72.0, "{margin}");
+        assert!(at(0.0, 70.0) > 0.0);
+        assert_eq!(at(180.0, 70.0), 0.0);
+    }
+
+    /// F427: a slope reads its trap at the latitude it faces, by the share of the sunlight it
+    /// faces its temperature keeps: ground at 75° falling 2° toward the pole, its air's
+    /// exchange all but none, reads the trap of 77°; with the air holding it at its
+    /// surroundings' its own.
+    #[test]
+    fn a_slope_reads_its_trap_where_it_faces() {
+        let grid = CubeSphere::new(128);
+        let radius = 3.39e6;
+        let tilt = 2f64.to_radians();
+        let resolved = Field::from_fn(grid, |_, d| {
+            let lat = lon_lat_from_direction(d).1;
+            (-(lat - 75f64.to_radians()) * radius * tilt.tan()) as f32
+        });
+        let ln_v = |lat: f64| -8.0 + 0.2 * (90.0 - lat);
+        let table = rows_table(|lat| ln_v(lat).exp());
+        let mean = Field::from_fn(CubeSphere::new(CLIMATE_FACE_SIZE), |_, _| 150.0);
+        let reader = |exchange: f64| OwnTrap {
+            table: Some((table.as_slice(), &[1.0][..])),
+            grows: false,
+            coarse: mean.grid(),
+            rank: &[],
+            resolved: &resolved,
+            scale_height: 0.0,
+            radius,
+            facing: Some((&mean, exchange)),
+        };
+        let c = grid
+            .locate(crate::grid::direction_from_lon_lat(0.3, 75f64.to_radians()))
+            .0;
+        let d = grid.center(c);
+        let lat = lon_lat_from_direction(d).1.to_degrees();
+        let (radiating, held) = (reader(1e-9).at(c, d), reader(1e9).at(c, d));
+        println!(
+            "at {lat:.2}°: {radiating:.3} where it radiates, {held:.3} held by its air; the trap of {:.2}° {:.3}",
+            lat + 2.0,
+            ln_v(lat + 2.0)
+        );
+        assert!((radiating - ln_v(lat + 2.0)).abs() < 0.02, "{radiating}");
+        assert!((held - ln_v(lat)).abs() < 0.02, "{held}");
+    }
+
+    /// F427: a cap's margin is not speckled by each cell's own relief: Mars's water over flat
+    /// ground roughened cell by cell by 400 m, its trap read at the ground's shape the grid
+    /// resolves (F423), keeps no lone covered cell and no lone bare one; read at each cell's
+    /// own height, the roughness moved its trap by as much as a degree and a half of
+    /// latitude and scattered its margin.
+    #[test]
+    fn a_cap_s_margin_is_not_speckled_by_its_cells_own_relief() {
+        let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let traps = rows_traps(ice_of(&graph, "H2O"), |lat| -8.0 + 0.02 * (90.0 - lat));
+        let grid = CubeSphere::new(128);
+        let mut layers = LayerSet::new(grid);
+        for (k, h) in layers.bedrock.as_mut_slice().iter_mut().enumerate() {
+            let u =
+                ((k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as f64 / (1u64 << 24) as f64;
+            *h = (800.0 * (u - 0.5)) as f32;
+        }
+        let t = water_laid(&graph, &mut layers, &traps, &[]);
+        let (mut lone, mut holes) = (0, 0);
+        for k in 0..grid.cell_count() {
+            let c = grid.cell(k);
+            let covered = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .iter()
+                .filter(|&&(di, dj)| t[grid.index(grid.neighbor(c, di, dj))] > 0.0)
+                .count();
+            if t[k] > 0.0 && covered == 0 {
+                lone += 1;
+            }
+            if t[k] <= 0.0 && covered == 4 {
+                holes += 1;
+            }
+        }
+        println!("{lone} lone covered cells and {holes} lone bare ones");
+        assert_eq!(lone + holes, 0);
+    }
+
+    /// F427: an ice the orbit's cycles move lays its caps by the traps its exchange answers
+    /// them by, not its present season's: traps colder toward the north, its turned table
+    /// colder toward the south, Mars's water lies in the south.
+    #[test]
+    fn an_ice_lays_its_caps_by_its_turned_traps() {
+        let graph = crate::presets::preset("Mars").unwrap().to_graph().0;
+        let traps = rows_traps(ice_of(&graph, "H2O"), |lat| -8.0 + 0.02 * (90.0 - lat));
+        let grid = CubeSphere::new(64);
+        let turned = [Turned {
+            species: "H2O",
+            table: rows_table(|lat| (-8.0 + 0.02 * (90.0 + lat)).exp()),
+            levels: vec![1.0],
+        }];
+        let mut layers = LayerSet::new(grid);
+        let t = water_laid(&graph, &mut layers, &traps, &turned);
+        let south = (0..grid.cell_count())
+            .filter(|&k| t[k] > 0.0)
+            .filter(|&k| lat_lon(grid, k).0 < 0.0)
+            .count();
+        let all = t.iter().filter(|&&t| t > 0.0).count();
+        println!("{south} of {all} covered cells in the south");
+        assert!(all > 0 && south == all);
     }
 }

@@ -12,3 +12,5 @@ One file per decision. Each record states the context, the decision and its cons
 | [0006](0006-cryosphere-export.md) | The cryosphere's export | Accepted |
 | [0007](0007-liquid-and-snapshot.md) | The liquid apart from the albedo, and the snapshot | Accepted |
 | [0008](0008-maps-by-shares.md) | The maps by shares, not cells | Accepted |
+| [0009](0009-maps-agree-at-margins.md) | The maps agree at every margin | Accepted |
+| [0010](0010-caps-by-their-own-traps.md) | A cap's outline by its own traps on the finer grid | Accepted |

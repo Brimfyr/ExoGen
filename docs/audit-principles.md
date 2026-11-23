@@ -644,7 +644,7 @@ Each constant here was fitted so that one body comes out right. Each should beco
 | the water's escape only in a runaway, energy-limited with the oxygen's drag (F262) | stated: the steam standing in the upper atmosphere, its photolysis not limiting | the photolysis's and the diffusion's limits; a moist stratosphere's escape |
 | the runaway greenhouse's flux by the star's effective temperature and the body's mass, RUNAWAY_FLUX (F260) | published model: Kopparapu et al. 2014's clear-sky limit, 2600 to 7200 K, 0.1 to 5 Earth masses | a locked world's dayside clouds (Yang et al. 2013); the star's temperature's history |
 | the mean surface temperature's history under the present air and albedo (F260) | stated: the present atmosphere held | the air's history (F261) |
-| GATHER_STEP_SHARE, GATHER_MAX_STEPS, GATHER_SETTLED, GATHER_HEADROOM, CYCLE_PRECESSION_SEASONS (F259) | stated choices: the gathering's steps, its end, its table's reach and the turning's samples | none |
+| TRAP_HEADROOM, CYCLE_PRECESSION_SEASONS (F259, F427) | stated choices: the reach of the table the caps are laid by over the ground's highest, and the turning's samples | none |
 | the caps laid twice, the second time in the traps of the year the first hold (F258) | stated: a step of the caps' fixed point; a third laying agrees on Mars, Triton and Pluto on flat ground | the caps gathered through the history |
 | CYCLE_SPIN_UP_YEARS (F258) | a stated choice: the rows' cycles the seasons are spun up through | none: the places settle from it |
 | CAP_POINT_LEVELS (F258) | a stated choice: the heights the caps' frost point is read between | none |

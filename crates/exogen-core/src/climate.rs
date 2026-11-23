@@ -1082,6 +1082,19 @@ pub struct Traps {
     pub vapour: Vec<(Ice, Field<f32>)>,
     /// Each of `vapour`'s ices' warmest through the year, K (F241).
     pub warmest: Vec<Field<f32>>,
+    /// A fast spinner's traps on the latitudes' rows at each level (F427), which the finer
+    /// grid reads at its own heights and slopes: the levels, shares of the datum's pressure,
+    /// and each ice's values there by its gas, as `read_table` reads them (the frost's own
+    /// gas's its growth, the others' the saturation pressure over them); none where each of
+    /// the climate's cells runs its own.
+    pub rows: Option<Rows>,
+}
+
+/// The traps' table on the latitudes' rows (F427): the levels and each ice's values.
+#[derive(Clone, Debug)]
+pub struct Rows {
+    pub levels: Vec<f64>,
+    pub values: Vec<(&'static str, Vec<f64>)>,
 }
 
 impl Traps {
@@ -4868,18 +4881,37 @@ impl EnergyBalance {
         heights: &Field<f32>,
         downscale: &Downscale,
     ) -> Traps {
+        self.traps_reaching(climate, ground, cycle, ices, heights, downscale, None)
+    }
+
+    /// The traps as `traps` finds them, a fast spinner's levels reaching from the lowest to
+    /// the highest of `reach`, m above the datum, where it reaches beyond the climate's own
+    /// cells (F427): the finer grid's ground, read at its own heights, lies lower and higher
+    /// than its places' means, and read beyond the table's levels its traps stood at the
+    /// last level's, all alike.
+    #[allow(clippy::too_many_arguments)]
+    pub fn traps_reaching(
+        &self,
+        climate: &Climate,
+        ground: &Ground,
+        cycle: &Cycle,
+        ices: &[Ice],
+        heights: &Field<f32>,
+        downscale: &Downscale,
+        reach: Option<(f64, f64)>,
+    ) -> Traps {
         let grid = climate.temperature.grid();
+        let thin_of = |h: f64| {
+            if downscale.scale_height > 0.0 {
+                (-h / downscale.scale_height).exp()
+            } else {
+                1.0
+            }
+        };
         let thins: Vec<f64> = heights
             .as_slice()
             .iter()
-            .map(|&h| {
-                let h = if h.is_finite() { h as f64 } else { 0.0 };
-                if downscale.scale_height > 0.0 {
-                    (-h / downscale.scale_height).exp()
-                } else {
-                    1.0
-                }
-            })
+            .map(|&h| thin_of(if h.is_finite() { h as f64 } else { 0.0 }))
             .collect();
         let (_, n_lon) = cycle.layout;
         let cell_at = |lat: f64, lon: f64, thin: f64| {
@@ -4891,9 +4923,13 @@ impl EnergyBalance {
         // each cell's own.
         let levels: Option<Vec<f64>> = match n_lon {
             1 => {
-                let (lo, hi) = thins
+                let (mut lo, mut hi) = thins
                     .iter()
                     .fold((f64::MAX, f64::MIN), |(a, b), &t| (a.min(t), b.max(t)));
+                if let Some((lowest, highest)) = reach {
+                    lo = lo.min(thin_of(highest));
+                    hi = hi.max(thin_of(lowest));
+                }
                 let k = if frost.is_some() && hi > lo * (1.0 + 1e-6) {
                     TRAP_HEIGHT_LEVELS
                 } else {
@@ -4929,6 +4965,10 @@ impl EnergyBalance {
             growth: None,
             vapour: Vec::new(),
             warmest: Vec::new(),
+            rows: levels.as_ref().map(|levels| Rows {
+                levels: levels.clone(),
+                values: Vec::new(),
+            }),
         };
         for ice in ices {
             let own = frost.filter(|f| f.species == ice.species);
@@ -4938,6 +4978,9 @@ impl EnergyBalance {
                 .collect();
             let values: Vec<f64> = runs.iter().map(|r| r.0).collect();
             let hottest: Vec<f64> = runs.iter().map(|r| r.1).collect();
+            if let Some(rows) = traps.rows.as_mut() {
+                rows.values.push((ice.species, values.clone()));
+            }
             let read = |values: &[f64], c: crate::grid::Cell, d: [f64; 3], log: bool| {
                 let k = grid.index(c);
                 match &levels {
@@ -5713,8 +5756,7 @@ impl Downscale {
     /// surroundings', at a temperature: what the ground radiates per kelvin against what the
     /// air exchanges with it.
     fn keep(&self, t: f64) -> f64 {
-        let radiative = 4.0 * SIGMA_SB * t.powi(3);
-        radiative / (radiative + self.exchange).max(1e-30)
+        kept_share(t, self.exchange)
     }
 
     /// The frost on the ground at the snapshot's season brought to a grid (F239), kg/m²: a
@@ -6067,6 +6109,14 @@ pub fn snow_cover(m: f64) -> f64 {
     1.0 - (-m.max(0.0) / SNOW_COVER_MASS).exp()
 }
 
+/// The share of the sunlight a slope faces that its temperature keeps against its
+/// surroundings' at a temperature, K (F237): what the ground radiates per kelvin against
+/// what the air exchanges with it, `exchange` W/m²/K.
+pub(crate) fn kept_share(t: f64, exchange: f64) -> f64 {
+    let radiative = 4.0 * SIGMA_SB * t.powi(3);
+    radiative / (radiative + exchange).max(1e-30)
+}
+
 /// The share of the ground's colour a frost of `m` kg/m² hides (F239).
 pub fn frost_cover(m: f32) -> f64 {
     1.0 - (-(m.max(0.0) as f64) / FROST_COVER_MASS).exp()
@@ -6074,7 +6124,12 @@ pub fn frost_cover(m: f32) -> f64 {
 
 /// The unit normal of the ground at a cell, from its four neighbours' heights by least
 /// squares in the plane of the cell.
-fn surface_normal(height: &Field<f32>, c: crate::grid::Cell, d: [f64; 3], radius: f64) -> [f64; 3] {
+pub(crate) fn surface_normal(
+    height: &Field<f32>,
+    c: crate::grid::Cell,
+    d: [f64; 3],
+    radius: f64,
+) -> [f64; 3] {
     let grid = height.grid();
     let (east, north) = crate::geom::local_basis(d);
     let h0 = height.get(c) as f64;
