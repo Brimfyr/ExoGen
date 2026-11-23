@@ -67,7 +67,8 @@ pub fn liquid_species(working: &str) -> &'static [&'static str] {
 /// ground the last left: the ice covers the places from its coldest trap on, a sea's floor
 /// holding none; its surface stands as the plastic profile of an ice that holds
 /// CAP_YIELD_STRESS (Nye 1951) from the margin of the ground it covers, until its caps hold
-/// its inventory or, a liquid's, until it covers all the ground it can. Each place's trap is
+/// its inventory or, a liquid's, until it covers all the ground it can, over the ground under
+/// it rising or falling from its margin's (F418). Each place's trap is
 /// its region's on the climate's grid, read smoothly between its cells: a cap kilometres
 /// thick buries the relief under it, which decides where it stands no more. An ice's
 /// coldest traps are those where it needs the least vapour in the air (F240), the frost's
@@ -277,9 +278,14 @@ impl Ord for Front {
 
 /// The thickness of the caps an ice covering `cells` stands in (F241), m: its surface the
 /// lowest of the plastic profiles from every point of the margin of the ground it covers,
-/// the margin's ground plus `rise` times the square root of the distance in from it, found
-/// outward from the margin as distances are, the margin's ground the higher of its edge's own
-/// and the surface beyond it (F287): so that an ice fills a basin toward its rim, and on a
+/// each the ground plus the plastic thickness the distance in from that point gives over the
+/// ground rising or falling from the margin's to its own (F418, `plastic`), on flat ground
+/// `rise` times the square root of the distance: measured from the margin's ground alone, the
+/// profile ran under ground rising inland as fast as its square root, a coast's slope bare
+/// between the ice at its foot and the ice above it, its edges where each cell's own relief
+/// decided; found outward from the margin as distances are, the margin's ground the higher
+/// of its edge's own and the surface beyond it (F287): so that an ice fills a basin toward its
+/// rim, and on a
 /// plateau ending in a cliff stands from the plateau's edge, not from the ground or the sea
 /// below it, which left a high coast bare; each place carrying the point of the margin it
 /// rises from and its distance the true one from it (F280): summed along the grid's steps,
@@ -337,7 +343,7 @@ fn profile(
             let point = normalize([here[0] + there[0], here[1] + there[1], here[2] + there[2]]);
             let d = angle_between(here, point) * radius;
             let base = level(j).max(level(k));
-            let surface = base + rise * d.sqrt();
+            let surface = level(k) + plastic(d, (level(k) - base) / d, rise);
             if surface < best[k].0 {
                 best[k] = (surface, base, point);
             }
@@ -359,7 +365,7 @@ fn profile(
                 continue;
             }
             let d = angle_between(point, grid.center(nb)) * radius;
-            let s = from + rise * d.sqrt();
+            let s = level(j) + plastic(d, (level(j) - from) / d, rise);
             if s < best[j].0 {
                 best[j] = (s, from, point);
                 front.push(Front(s, j));
@@ -370,6 +376,60 @@ fn profile(
         thickness[k] = (best[k].0 - level(k)).max(0.0) as f32;
     }
     thickness
+}
+
+/// The thickness of a perfectly plastic ice `d` m in from its margin over ground rising
+/// `slope` m a metre from the margin's (F418), m: its surface's slope times its thickness the
+/// yield stress over its weight, H (dH/dx + slope) = c, c = rise² / 2 = CAP_YIELD_STRESS /
+/// (ρ g) (Nye 1951), from none at the margin. On flat ground `rise` √d; over ground rising
+/// it thickens toward c / slope and is never none, its surface rising with the ground; over
+/// ground falling it is the thicker. For a uniform slope, with u = slope H / c and y = d
+/// slope² / c, -u - ln(1 - u) = y, solved by Newton's method in w = -ln(1 - u) over rising
+/// ground, w - 1 + e^-w = y, and in v = -u over falling ground, v - ln(1 + v) = y, each
+/// convex and rising from its root's side.
+fn plastic(d: f64, slope: f64, rise: f64) -> f64 {
+    let c = 0.5 * rise * rise;
+    if d <= 0.0 || c <= 0.0 {
+        return 0.0;
+    }
+    let y = d * slope * slope / c;
+    if !y.is_finite() || y < 1e-12 {
+        return rise * d.sqrt();
+    }
+    // Each start from the series near none, s (1 + s / 6) and s (1 + s / 3), s = √(2y), or
+    // the root's growth far from it.
+    let s = (2.0 * y).sqrt();
+    if slope > 0.0 {
+        let mut w = if y < 1.0 {
+            s * (1.0 + s / 6.0)
+        } else {
+            y + 1.0
+        };
+        for _ in 0..CAP_PROFILE_NEWTON {
+            let f = w + (-w).exp_m1() - y;
+            let df = -(-w).exp_m1();
+            if df <= 0.0 {
+                break;
+            }
+            w = (w - f / df).max(f64::MIN_POSITIVE);
+        }
+        c * -(-w).exp_m1() / slope
+    } else {
+        let mut v = if y < 1.0 {
+            s * (1.0 + s / 3.0)
+        } else {
+            y + (1.0 + y).ln()
+        };
+        for _ in 0..CAP_PROFILE_NEWTON {
+            let f = v - v.ln_1p() - y;
+            let df = v / (1.0 + v);
+            if df <= 0.0 {
+                break;
+            }
+            v = (v - f / df).max(f64::MIN_POSITIVE);
+        }
+        c * v / -slope
+    }
 }
 
 /// The ground's colour under the caps (F241), each in the order laid hiding what is under
@@ -1174,5 +1234,88 @@ pub(crate) mod tests {
             );
             assert_eq!(bare, 0, "{high}");
         }
+    }
+
+    /// F418: the plastic thickness over ground rising or falling at a uniform slope is the
+    /// profile Nye's law gives, H (dH/dx + slope) = c, found independently: the distance in at
+    /// which it reaches each thickness, x(H) = ∫ h / (c - slope h) dh from none, by Simpson's
+    /// rule; on flat ground rise √d.
+    #[test]
+    fn a_plastic_ice_thickens_by_nye_s_law_over_sloping_ground() {
+        let rise = 3.34f64;
+        let c = 0.5 * rise * rise;
+        let mut worst = 0.0f64;
+        for slope in [-0.1, -0.01, -1e-4, 1e-4, 0.01, 0.1] {
+            // Thicknesses up to nine tenths of the most a rising slope holds.
+            let top = if slope > 0.0 {
+                0.9 * c / slope
+            } else {
+                3_000.0
+            };
+            for f in [0.05, 0.3, 0.6, 1.0] {
+                let h = f * top;
+                let n = 2_000;
+                let step = h / n as f64;
+                let g = |x: f64| x / (c - slope * x);
+                let x = (0..n)
+                    .map(|i| {
+                        let (a, b) = (i as f64 * step, (i + 1) as f64 * step);
+                        step / 6.0 * (g(a) + 4.0 * g(0.5 * (a + b)) + g(b))
+                    })
+                    .sum::<f64>();
+                let off = (plastic(x, slope, rise) / h - 1.0).abs();
+                worst = worst.max(off);
+                assert!(
+                    off < 1e-6,
+                    "slope {slope}, {h} m at {x} m: {}",
+                    plastic(x, slope, rise)
+                );
+            }
+        }
+        for d in [1.0, 1e3, 1e5, 1e6] {
+            assert!((plastic(d, 0.0, rise) / (rise * d.sqrt()) - 1.0).abs() < 1e-12);
+        }
+        println!("the plastic thickness within {worst:.1e} of Nye's law integrated");
+    }
+
+    /// F418: an ice cap over ground rising inland at a hundredth from the sea about it, 3.5 km
+    /// at its pole 20 degrees in, covers it all, its thickness toward c / slope inland, as
+    /// Nye's law over that ground gives: measured from the margin's ground alone its profile
+    /// ran under the ground from some 250 km in, the inner cap bare.
+    #[test]
+    fn a_cap_covers_ground_rising_inland() {
+        let grid = CubeSphere::new(64);
+        let (radius, rise, slope) = (1.0e6, 5.0, 0.01);
+        let edge = 70f64.to_radians();
+        let mut layers = LayerSet::new(grid);
+        let mut cells = Vec::new();
+        for k in 0..grid.cell_count() {
+            let (_, lat) = lon_lat_from_direction(grid.center(grid.cell(k)));
+            if lat > edge {
+                layers.bedrock.as_mut_slice()[k] = (slope * (lat - edge) * radius) as f32;
+                cells.push((k, 0.0));
+            } else {
+                layers.bedrock.as_mut_slice()[k] = -3_000.0;
+                layers.liquid.as_mut_slice()[k] = 3_000.0;
+            }
+        }
+        let t = profile(grid, &standing(&layers), &cells, rise, radius, 0.0);
+        let bare = cells.iter().filter(|&&(k, _)| t[k] <= 0.0).count();
+        let pole = grid.index(grid.locate([0.0, 0.0, 1.0]).0);
+        let (_, lat) = lon_lat_from_direction(grid.center(grid.cell(pole)));
+        let nye = plastic((lat - edge) * radius, slope, rise);
+        let most = 0.5 * rise * rise / slope;
+        println!(
+            "{bare} of {} cells bare; the pole's ice {:.0} m, Nye's law {nye:.0}, at most {most:.0}",
+            cells.len(),
+            t[pole]
+        );
+        assert_eq!(bare, 0);
+        assert!(
+            (t[pole] as f64 / nye - 1.0).abs() < 0.05,
+            "{} {nye}",
+            t[pole]
+        );
+        assert!(nye > 0.9 * most);
     }
 }

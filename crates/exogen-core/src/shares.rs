@@ -129,6 +129,125 @@ pub fn by_share(grid: &CubeSphere, values: &[f32]) -> (Vec<f32>, Vec<f32>) {
         .unzip()
 }
 
+/// A map of each cell's own value drawn so that its kinds agree with their margins drawn by
+/// shares (F419, ADR 0009): of two kinds of cell, `kind` and `other` as ones and noughts, a
+/// cell of one whose kind holds the lesser share of the cells about it takes the other's mean
+/// of `values` about it; the rest, and cells of neither kind, keep their own. So that a map
+/// drawn cell by cell, the ground's height, divides its kinds where their shares are even, as
+/// the maps drawn by shares do, and only the cells the relief at the cells' scale set apart
+/// from the ground about them change.
+pub fn by_majority(grid: &CubeSphere, kind: &[f32], other: &[f32], values: &[f32]) -> Vec<f32> {
+    let n = values.len();
+    let mean = |flags: &[f32]| {
+        let share = over_cells(grid, flags);
+        let weighted: Vec<f32> = (0..n).map(|k| values[k] * flags[k]).collect();
+        (share, over_cells(grid, &weighted))
+    };
+    let (kind_share, kind_sum) = mean(kind);
+    let (other_share, other_sum) = mean(other);
+    (0..n)
+        .into_par_iter()
+        .map(|k| {
+            if kind[k] > 0.0 && kind_share[k] < other_share[k] {
+                other_sum[k] / other_share[k]
+            } else if other[k] > 0.0 && other_share[k] < kind_share[k] {
+                kind_sum[k] / kind_share[k]
+            } else {
+                values[k]
+            }
+        })
+        .collect()
+}
+
+/// Values of kinds that cannot be blended, a unit's id, drawn as `by_majority` draws a cell's
+/// own (F419): a cell of one kind holding the lesser share of the cells about it takes the
+/// nearest cell's of the other kind (`carried`), its own where none is reached.
+pub fn by_majority_nearest(
+    grid: &CubeSphere,
+    kind: &[f32],
+    other: &[f32],
+    values: &[f32],
+) -> Vec<f32> {
+    let n = values.len();
+    let (kind_share, other_share) = (over_cells(grid, kind), over_cells(grid, other));
+    let lesser = |of: &[f32], own: &[f32], theirs: &[f32]| -> Vec<bool> {
+        (0..n).map(|k| of[k] > 0.0 && own[k] < theirs[k]).collect()
+    };
+    let kind_lesser = lesser(kind, &kind_share, &other_share);
+    let other_lesser = lesser(other, &other_share, &kind_share);
+    let ones = vec![1.0f32; n];
+    // From the other kind's cells on their greater side to the kind's on its lesser, and back.
+    let from = |of: &[f32], skip: &[bool], to: &[bool]| {
+        let on: Vec<bool> = (0..n).map(|k| of[k] > 0.0 && !skip[k]).collect();
+        carried(grid, &on, to, &[values, &ones])
+    };
+    let to_kind = from(other, &other_lesser, &kind_lesser);
+    let to_other = from(kind, &kind_lesser, &other_lesser);
+    (0..n)
+        .map(|k| {
+            let taken = if kind_lesser[k] {
+                &to_kind
+            } else if other_lesser[k] {
+                &to_other
+            } else {
+                return values[k];
+            };
+            if taken[1][k] > 0.0 {
+                taken[0][k]
+            } else {
+                values[k]
+            }
+        })
+        .collect()
+}
+
+/// The rivers as the maps draw them (F421, ADR 0009), each cell's `discharge`, m³/s, none under
+/// the water, drawn where the land is drawn over more than half of each cell, `share` the sea's
+/// and the lakes' shares of each cell together and `water` 1 on the cells under them: a river
+/// cell the water is drawn over half of or more is cut, the river reaching the water before it;
+/// and a river cell beside the water carries its river on through the water's cells, to the
+/// one beside it the water is drawn over most of, until it reaches one the water is drawn over
+/// half of, so that a river meets the water where the water is drawn and not a cell or two
+/// short of it, at a narrow inlet's head or a lake's outlet.
+pub fn rivers(grid: &CubeSphere, discharge: &[f32], water: &[f32], share: &[f32]) -> Vec<f32> {
+    let n = discharge.len();
+    let mut drawn: Vec<f32> = (0..n)
+        .map(|k| {
+            if water[k] <= 0.0 && share[k] < 0.5 {
+                discharge[k]
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    for k in 0..n {
+        let q = discharge[k];
+        if q <= 0.0 || water[k] > 0.0 || share[k] >= 0.5 {
+            continue;
+        }
+        let mut at = k;
+        for _ in 0..RIVER_CARRY_CELLS {
+            let c = grid.cell(at);
+            let next = AROUND
+                .iter()
+                .map(|&(di, dj)| grid.index(grid.neighbor(c, di, dj)))
+                .filter(|&j| water[j] > 0.0 && share[j] > share[at])
+                .max_by(|&a, &b| share[a].total_cmp(&share[b]).then(b.cmp(&a)));
+            let Some(j) = next else { break };
+            if share[j] >= 0.5 {
+                break;
+            }
+            drawn[j] = drawn[j].max(q);
+            at = j;
+        }
+    }
+    drawn
+}
+
+/// The most cells a river is carried on through the water's cells at a margin (F421): eight of
+/// the shares' Gaussian's spreads, RELIEF_SPREAD_CELLS cells each, past which it holds nothing.
+const RIVER_CARRY_CELLS: usize = 16;
+
 /// The ices that come and go through the year as the maps draw them (F417), from each cell's
 /// window, `window` (the phases it freezes at, melts out at and peaks at), its thickness at its
 /// peak, `thickness`, m, and which ice lies, `ice`: the share of each cell the cells an ice
@@ -175,58 +294,156 @@ impl Seasons {
     }
 }
 
-/// A finish's liquids as its maps draw them (F416, F417), each by `by_share`: the sea's share
-/// of each cell, its cells' about it under the sea; the sea's mean depth over each cell, m, its
-/// depth over the share it covers this over that share, a wet cell's own; the lakes' mean depth
-/// over each cell, m; and the surface the maps are lit over, m, the sea's flat level over the
-/// sea's share of each cell and the land's ground over the rest, a dry cell's own, a wet cell's
-/// its dry cells' about it.
+/// A quantity of one kind of cell over that kind's share of each cell (F417, F420), `kind` 1 on
+/// the kind's cells and 0 on the rest: a cell's own `values` where the cell is of the kind, and
+/// where not the mean of the kind's cells' about it, each read as a sample of the ground within
+/// it; its own where none of the kind lies about it.
+pub fn of_kind(grid: &CubeSphere, values: &[f32], kind: &[f32]) -> Vec<f32> {
+    let share = over_cells(grid, kind);
+    let weighted: Vec<f32> = values.iter().zip(kind).map(|(v, w)| v * w).collect();
+    let sum = over_cells(grid, &weighted);
+    (0..values.len())
+        .into_par_iter()
+        .map(|k| {
+            if kind[k] > 0.0 || share[k] < LEAST_SHARE {
+                values[k]
+            } else {
+                sum[k] / share[k]
+            }
+        })
+        .collect()
+}
+
+/// The shape the grid resolves of a quantity over one kind of cell (F423), `kind` 1 on the
+/// kind's cells and 0 on the rest: at a cell of the kind, the mean of the kind's cells about
+/// it, each read as a sample of the ground within it (the land's ground at a coast not drawn
+/// down by the sea's floor beside it); at another, its own.
+pub fn shape_of(grid: &CubeSphere, values: &[f32], kind: &[f32]) -> Vec<f32> {
+    let share = over_cells(grid, kind);
+    let weighted: Vec<f32> = values.iter().zip(kind).map(|(v, w)| v * w).collect();
+    let sum = over_cells(grid, &weighted);
+    (0..values.len())
+        .into_par_iter()
+        .map(|k| {
+            if kind[k] > 0.0 && share[k] > 0.0 {
+                sum[k] / share[k]
+            } else {
+                values[k]
+            }
+        })
+        .collect()
+}
+
+/// A finish's liquids and ground as its maps draw them (F416, F417, F419, F420), each liquid by
+/// `by_share`. Each cell's kind, 1 or 0: under the sea (`wet`), under a lake (`lake`), or land,
+/// neither (`land`). The sea's share of each cell and its mean depth over each cell, m, its
+/// depth over the share it covers this over that share, a wet cell's own; the lakes' share and
+/// mean depth likewise. The surface the maps are lit over, m: the sea's flat level over the
+/// sea's share of each cell, each lake's flat surface over the lakes' share, a lake cell's own
+/// and the mean of the lake cells' about it, and the land's ground over the rest, a land cell's
+/// own, another's the land cells' about it. And the ground's height as the maps draw it, m, a
+/// cell's own but for a cell on the lesser side of the cells about it, between the sea and the
+/// land and then between a lake and the land, drawn at the greater side's mean (F419,
+/// `by_majority`): so that the ground crosses the sea's level where the sea's share is a half,
+/// as the mask does, and a lake's where the lakes' is (`agreeing` draws other such maps alike).
+/// And the rivers, m³/s, drawn where the land is drawn over more than half of each cell (F421,
+/// `rivers`), none without them.
 pub struct Drawn {
+    pub grid: CubeSphere,
+    pub rivers: Vec<f32>,
+    pub wet: Vec<f32>,
+    pub lake: Vec<f32>,
+    pub land: Vec<f32>,
     pub sea_share: Vec<f32>,
     pub sea: Vec<f32>,
+    pub lake_share: Vec<f32>,
     pub lakes: Vec<f32>,
     pub surface: Vec<f32>,
+    pub height: Vec<f32>,
 }
 
 impl Drawn {
+    /// A map of each cell's own `values` of the kinds of cell, the sea's floor and the land
+    /// (the temperature, the surface's age), drawn as the height is (F419): a cell on the
+    /// lesser side of the cells about it, between the sea and the land and then between a lake
+    /// and the land, at the greater side's mean; the rest their own.
+    pub fn agreeing(&self, values: &[f32]) -> Vec<f32> {
+        let dry: Vec<f32> = self.wet.iter().map(|&w| 1.0 - w).collect();
+        let values = by_majority(&self.grid, &self.wet, &dry, values);
+        by_majority(&self.grid, &self.lake, &self.land, &values)
+    }
+
+    /// As `agreeing`, for values that cannot be blended, a unit's id: a cell on the lesser
+    /// side takes the nearest cell's of the greater (`by_majority_nearest`).
+    pub fn agreeing_nearest(&self, values: &[f32]) -> Vec<f32> {
+        let dry: Vec<f32> = self.wet.iter().map(|&w| 1.0 - w).collect();
+        let values = by_majority_nearest(&self.grid, &self.wet, &dry, values);
+        by_majority_nearest(&self.grid, &self.lake, &self.land, &values)
+    }
+
     pub fn of(out: &FinishOutput) -> Self {
         let grid = out.grid;
         let n = grid.cell_count();
         let ground = out.height.as_slice();
         let wet = wet(out);
         let (sea_share, sea) = by_share(&grid, out.layers.liquid.as_slice());
-        let lakes = match &out.rivers {
-            Some(r) => by_share(&grid, r.lakes.as_slice()).1,
+        let depth = match &out.rivers {
+            Some(r) => r.lakes.as_slice().to_vec(),
             None => vec![0.0; n],
         };
-        let dry: Vec<f32> = (0..n)
-            .map(|k| if wet[k] > 0.0 { 0.0 } else { ground[k] })
+        let lake = wet_of(&depth);
+        let (lake_share, lakes) = by_share(&grid, &depth);
+        let land: Vec<f32> = (0..n)
+            .map(|k| {
+                if wet[k] > 0.0 || lake[k] > 0.0 {
+                    0.0
+                } else {
+                    1.0
+                }
+            })
             .collect();
-        let dry = over_cells(&grid, &dry);
+        let dry: Vec<f32> = wet.iter().map(|&w| 1.0 - w).collect();
+        let height = by_majority(&grid, &wet, &dry, ground);
+        let height = by_majority(&grid, &lake, &land, &height);
+        let on_land = of_kind(&grid, ground, &land);
+        let lake_level: Vec<f32> = ground.iter().zip(&depth).map(|(g, d)| g + d).collect();
+        let lake_level = of_kind(&grid, &lake_level, &lake);
         let level = out.sea_level as f32;
         let surface = (0..n)
             .into_par_iter()
             .map(|k| {
-                let share = sea_share[k];
-                let land = if wet[k] <= 0.0 {
-                    ground[k]
-                } else if share < 1.0 {
-                    dry[k] / (1.0 - share)
-                } else {
-                    level
-                };
-                if share > 0.0 {
-                    share * level + (1.0 - share) * land
-                } else {
-                    land
+                let (s, l) = (sea_share[k], lake_share[k]);
+                let rest = (1.0 - s - l).max(0.0);
+                let mut h = rest * on_land[k];
+                if s > 0.0 {
+                    h += s * level;
                 }
+                if l > 0.0 {
+                    h += l * lake_level[k];
+                }
+                h / (s + l + rest).max(f32::MIN_POSITIVE)
             })
             .collect();
+        let rivers = match &out.rivers {
+            Some(r) => {
+                let water: Vec<f32> = (0..n).map(|k| wet[k].max(lake[k])).collect();
+                let share: Vec<f32> = (0..n).map(|k| sea_share[k] + lake_share[k]).collect();
+                rivers(&grid, r.discharge.as_slice(), &water, &share)
+            }
+            None => vec![0.0; n],
+        };
         Drawn {
+            grid,
+            rivers,
+            wet,
+            lake,
+            land,
             sea_share,
             sea,
+            lake_share,
             lakes,
             surface,
+            height,
         }
     }
 }
@@ -236,7 +453,6 @@ mod tests {
     use super::*;
     use crate::fields::Field;
 
-    /// The cells about a cell.
     /// A sea's depth over each cell, m, its level at none over the `ground`.
     fn under(ground: &Field<f32>) -> Vec<f32> {
         ground.as_slice().iter().map(|&g| (-g).max(0.0)).collect()
@@ -345,6 +561,269 @@ mod tests {
         );
         assert!(count > 0 && off.abs() < 0.5, "{off}");
         assert!(inland < 0.01, "{inland}");
+    }
+
+    /// F419: the ground's height drawn so that it crosses the sea's level where the sea's share
+    /// is a half: over the plain the relief at the cells' scale speckles, each cell's drawn
+    /// ground stands under the level exactly where more than half the cells about it are under
+    /// the sea; the cells that change are those the relief set on the lesser side, each drawn
+    /// at the greater side's mean, and every other keeps its own height.
+    #[test]
+    fn the_ground_crosses_the_level_where_the_sea_s_share_is_a_half() {
+        let grid = CubeSphere::new(128);
+        let n = grid.cell_count();
+        let rng = crate::rng::Rng::new(5);
+        let ground = Field::from_fn(grid, |c, d| {
+            let noise = 100.0 * (rng.uniform(grid.index(c) as u64, 0) - 0.5) * 12f64.sqrt();
+            (1_500.0 * d[1] + noise) as f32
+        });
+        let ground = ground.as_slice();
+        let wet: Vec<f32> = ground
+            .iter()
+            .map(|&g| if g < 0.0 { 1.0 } else { 0.0 })
+            .collect();
+        let land: Vec<f32> = wet.iter().map(|&w| 1.0 - w).collect();
+        let drawn = by_majority(&grid, &wet, &land, ground);
+        let share = over_cells(&grid, &wet);
+        let inner = inner(&grid);
+        let (mut disagree, mut changed, mut stray, mut kept) = (0, 0, 0, 0);
+        for k in (0..n).filter(|&k| inner(k).is_some()) {
+            if (share[k] - 0.5).abs() < 1e-6 {
+                continue;
+            }
+            let sea = share[k] > 0.5;
+            disagree += usize::from((drawn[k] < 0.0) != sea);
+            if drawn[k] != ground[k] {
+                changed += 1;
+                // Only a cell its own ground set on the lesser side changes.
+                stray += usize::from((ground[k] < 0.0) == sea);
+            } else {
+                kept += usize::from((ground[k] < 0.0) == sea);
+            }
+        }
+        println!(
+            "{disagree} cells' drawn ground on the other side of the level from the sea's half share; {changed} cells drawn at the greater side's mean, {stray} of them on it already; {kept} kept their own"
+        );
+        assert_eq!(disagree, 0);
+        assert!(changed > 50, "{changed}");
+        assert_eq!(stray, 0);
+    }
+
+    /// F419: a unit's id, which no mean can blend, drawn as the height is: over the plain the
+    /// relief at the cells' scale speckles, the floor's unit 7 and the land's 3, each cell's
+    /// drawn unit is the floor's exactly where more than half the cells about it are under the
+    /// sea, a cell set on the lesser side taking its nearest cell's on the greater.
+    #[test]
+    fn a_unit_is_drawn_where_its_kind_holds_the_greater_share() {
+        let grid = CubeSphere::new(128);
+        let n = grid.cell_count();
+        let rng = crate::rng::Rng::new(5);
+        let wet: Vec<f32> = (0..n)
+            .map(|k| {
+                let d = grid.center(grid.cell(k));
+                let noise = 100.0 * (rng.uniform(k as u64, 0) - 0.5) * 12f64.sqrt();
+                if 1_500.0 * d[1] + noise < 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let land: Vec<f32> = wet.iter().map(|&w| 1.0 - w).collect();
+        let ids: Vec<f32> = wet
+            .iter()
+            .map(|&w| if w > 0.0 { 7.0 } else { 3.0 })
+            .collect();
+        let drawn = by_majority_nearest(&grid, &wet, &land, &ids);
+        let share = over_cells(&grid, &wet);
+        let inner = inner(&grid);
+        let (mut disagree, mut changed) = (0, 0);
+        for k in (0..n).filter(|&k| inner(k).is_some()) {
+            if (share[k] - 0.5).abs() < 1e-6 {
+                continue;
+            }
+            disagree += usize::from((drawn[k] == 7.0) != (share[k] > 0.5));
+            changed += usize::from(drawn[k] != ids[k]);
+        }
+        println!(
+            "{disagree} cells' units on the lesser side; {changed} cells drawn with their nearest's"
+        );
+        assert_eq!(disagree, 0);
+        assert!(changed > 50, "{changed}");
+    }
+
+    /// F421: a river meets the water where the water is drawn. A river down the land to the
+    /// head of an inlet two cells wide and eight long, the sea beyond, the inlet drawn under
+    /// half its cells: the river is carried down it to where the sea is drawn over half, where
+    /// as the model leaves it it stops at the inlet's head, cells short of the sea. And a river
+    /// along a spit a cell wide out into the sea, drawn as the sea, is cut: no river is drawn
+    /// where the water is drawn over half of a cell.
+    #[test]
+    fn a_river_meets_the_water_where_it_is_drawn() {
+        let grid = CubeSphere::new(128);
+        let n = grid.cell_count();
+        let cell = grid.delta();
+        let at = |k: usize| {
+            let c = grid.cell(k);
+            let d = grid.center(c);
+            (c.face == 0, d[1] / cell, d[2] / cell)
+        };
+        let (inlet, river, spit) = (
+            |k: usize| {
+                let (face, y, x) = at(k);
+                face && (0.0..8.0).contains(&y) && x.abs() < 1.0
+            },
+            |k: usize| {
+                let (face, y, x) = at(k);
+                face && (8.0..30.0).contains(&y) && (0.0..1.0).contains(&x)
+            },
+            |k: usize| {
+                let (face, y, x) = at(k);
+                face && (-6.0..0.0).contains(&y) && (10.0..11.0).contains(&x)
+            },
+        );
+        let wet: Vec<f32> = (0..n)
+            .map(|k| {
+                let (_, y, _) = at(k);
+                if (y < 0.0 && !spit(k)) || inlet(k) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let discharge: Vec<f32> = (0..n)
+            .map(|k| if river(k) || spit(k) { 1_000.0 } else { 0.0 })
+            .collect();
+        let share = over_cells(&grid, &wet);
+        let drawn = rivers(&grid, &discharge, &wet, &share);
+        let meets = |q: &[f32]| {
+            (0..n).any(|k| {
+                q[k] > 0.0
+                    && AROUND.iter().any(|&(di, dj)| {
+                        share[grid.index(grid.neighbor(grid.cell(k), di, dj))] >= 0.5
+                    })
+            })
+        };
+        let under = (0..n)
+            .filter(|&k| drawn[k] > 0.0 && share[k] >= 0.5)
+            .count();
+        let carried = (0..n).filter(|&k| drawn[k] > 0.0 && wet[k] > 0.0).count();
+        let cut = (0..n).filter(|&k| spit(k) && drawn[k] <= 0.0).count();
+        // The inland river alone, as the model leaves it and as it is drawn.
+        let inland =
+            |q: &[f32]| -> Vec<f32> { (0..n).map(|k| if spit(k) { 0.0 } else { q[k] }).collect() };
+        let (model, shown) = (meets(&inland(&discharge)), meets(&inland(&drawn)));
+        println!(
+            "the model's river meets the drawn sea: {model}; drawn: {shown}, carried through {carried} of the inlet's cells; {under} cells drawn under the water; {cut} of the spit's cells cut"
+        );
+        assert!(!model);
+        assert!(shown);
+        assert!(carried >= 3, "{carried}");
+        assert_eq!(under, 0);
+        assert!(cut > 0, "{cut}");
+    }
+
+    /// F420: a quantity of the land read over the land's share: flats wet and dry at random, the
+    /// land's aridity 0.3 and the open water's 2. Over the land's share every cell reads the
+    /// land's 0.3, a wet cell its land cells' about it; read cell by cell, half the flats' cells
+    /// gave the land's share of a pixel the water's.
+    #[test]
+    fn the_land_s_share_reads_the_land_s_values() {
+        let grid = CubeSphere::new(64);
+        let n = grid.cell_count();
+        let rng = crate::rng::Rng::new(11);
+        let land: Vec<f32> = (0..n)
+            .map(|k| {
+                if rng.uniform(k as u64, 0) < 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let values: Vec<f32> = land
+            .iter()
+            .map(|&l| if l > 0.0 { 0.3 } else { 2.0 })
+            .collect();
+        let read = of_kind(&grid, &values, &land);
+        let worst = read.iter().fold(0.0f32, |a, &v| a.max((v - 0.3).abs()));
+        let water = values.iter().filter(|&&v| v > 1.0).count();
+        println!(
+            "the land's share reads off the land's by {worst:.1e} at most; {water} of {n} cells hold the water's own"
+        );
+        assert!(worst < 1e-5, "{worst}");
+        assert!(water > n / 3, "{water}");
+    }
+
+    /// F423: the land's shape the grid resolves at a coast: land 100 m over the level, each
+    /// cell's ground spread at random by 100 m, against a sea 3,000 m deep. The land's shape is
+    /// the mean of the land cells about each, within a few tens of metres of the land's 100 m
+    /// to the coast, not drawn down toward the sea's floor as the mean of every cell about it
+    /// is; the sea's cells keep their own.
+    #[test]
+    fn the_land_s_shape_is_its_own_cells_mean() {
+        let grid = CubeSphere::new(128);
+        let n = grid.cell_count();
+        let rng = crate::rng::Rng::new(13);
+        let cell = grid.delta();
+        let ground: Vec<f32> = (0..n)
+            .map(|k| {
+                if grid.center(grid.cell(k))[1] / cell < 0.0 {
+                    -3_000.0
+                } else {
+                    (100.0 + 100.0 * (rng.uniform(k as u64, 0) - 0.5) * 12f64.sqrt()) as f32
+                }
+            })
+            .collect();
+        let land: Vec<f32> = ground
+            .iter()
+            .map(|&g| if g > -1_000.0 { 1.0 } else { 0.0 })
+            .collect();
+        let shape = shape_of(&grid, &ground, &land);
+        let all = over_cells(&grid, &ground);
+        let inner = inner(&grid);
+        let (mut off, mut pulled, mut sea) = (0.0f32, 0.0f32, 0.0f32);
+        for k in (0..n).filter(|&k| inner(k).is_some()) {
+            if land[k] > 0.0 {
+                off = off.max((shape[k] - 100.0).abs());
+                pulled = pulled.max(100.0 - all[k]);
+            } else {
+                sea = sea.max((shape[k] - ground[k]).abs());
+            }
+        }
+        println!(
+            "the land's shape off its 100 m by {off:.0} m at most, the mean of every cell about it by {pulled:.0}; the sea's cells off their own by {sea}"
+        );
+        assert!(off < 60.0, "{off}");
+        assert!(pulled > 500.0, "{pulled}");
+        assert_eq!(sea, 0.0);
+    }
+
+    /// F419: a steep coast's ground is drawn as it stands: where the cells meet along a coast
+    /// the grid resolves, no cell stands on the lesser side of the cells about it, and none
+    /// changes.
+    #[test]
+    fn a_steep_coast_s_ground_is_drawn_as_it_stands() {
+        let grid = CubeSphere::new(128);
+        let cell = grid.delta();
+        let ground = Field::from_fn(grid, |c, _| {
+            let y = grid.center(c)[1] / cell;
+            if y < 0.0 {
+                -3_000.0
+            } else {
+                (1_300.0 + 1_200.0 * (std::f64::consts::TAU * y / 4.0).cos()) as f32
+            }
+        });
+        let wet = wet_of(&under(&ground));
+        let land: Vec<f32> = wet.iter().map(|&w| 1.0 - w).collect();
+        let drawn = by_majority(&grid, &wet, &land, ground.as_slice());
+        let inner = inner(&grid);
+        let changed = (0..grid.cell_count())
+            .filter(|&k| inner(k).is_some() && drawn[k] != ground.as_slice()[k])
+            .count();
+        println!("{changed} cells of a steep coast drawn other than they stand");
+        assert_eq!(changed, 0);
     }
 
     /// F417: a sea's shallows keep their depth: a sea 2,000 m deep off a coast, a shelf 10 m

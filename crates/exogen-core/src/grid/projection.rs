@@ -194,7 +194,11 @@ pub fn sample_bilinear_sparse(grid: &CubeSphere, field: &SparseField, d: [f64; 3
     sample_bilinear_with(grid, &|face, i, j| field.get(face, i, j), d)
 }
 
-/// Resample a field to an equirectangular image of `width x height` samples.
+/// Resample a field to an equirectangular image of `width x height` pixels, each the mean of
+/// the field over its footprint (F424): read between the cells at as many points across the
+/// pixel, each way, as cells cross it, so that a pixel wider than the cells holds their mean
+/// and not the few nearest its centre, the cells' own variation aliased into the pixels as
+/// speckle; a pixel a cell wide or less read at its centre alone.
 pub fn to_equirectangular(
     grid: &CubeSphere,
     values: &[f32],
@@ -202,12 +206,25 @@ pub fn to_equirectangular(
     height: usize,
 ) -> Vec<f32> {
     let field = PaddedField::new(grid, values);
+    let cell = FRAC_PI_2 / grid.face_size() as f64;
+    let (dlon, dlat) = (2.0 * PI / width as f64, PI / height as f64);
+    let across = |angle: f64| ((angle / cell) - 1e-9).ceil().max(1.0) as usize;
     let mut out = vec![0.0f32; width * height];
     out.par_chunks_mut(width).enumerate().for_each(|(py, row)| {
-        let lat = FRAC_PI_2 - PI * (py as f64 + 0.5) / height as f64;
+        let top = FRAC_PI_2 - dlat * py as f64;
+        let middle = top - 0.5 * dlat;
+        let (rows, columns) = (across(dlat), across(dlon * middle.cos()));
         for (px, o) in row.iter_mut().enumerate() {
-            let lon = -PI + 2.0 * PI * (px as f64 + 0.5) / width as f64;
-            *o = sample_bilinear(grid, &field, direction_from_lon_lat(lon, lat));
+            let left = -PI + dlon * px as f64;
+            let mut sum = 0.0f64;
+            for i in 0..rows {
+                let lat = top - dlat * (i as f64 + 0.5) / rows as f64;
+                for j in 0..columns {
+                    let lon = left + dlon * (j as f64 + 0.5) / columns as f64;
+                    sum += sample_bilinear(grid, &field, direction_from_lon_lat(lon, lat)) as f64;
+                }
+            }
+            *o = (sum / (rows * columns) as f64) as f32;
         }
     });
     out
@@ -272,6 +289,53 @@ mod tests {
             previous = max_err;
         }
         assert!(previous < 2e-3, "max error at f=128 is {previous}");
+    }
+
+    /// F424: a pixel wider than the cells holds their mean: a field alternating +1 and -1
+    /// from cell to cell over a 128-cell face, resampled to 64 by 32 pixels, some eight cells
+    /// across each at the equator. Read at each pixel's centre alone, the pixels speckle near
+    /// the cells' own +1 and -1; read over its footprint, each holds their mean, near none.
+    /// And a smooth field so resampled stands within its own variation over a pixel.
+    #[test]
+    fn a_pixel_wider_than_the_cells_holds_their_mean() {
+        let grid = CubeSphere::new(128);
+        let checker: Vec<f32> = grid
+            .cells()
+            .map(|c| if (c.i + c.j) % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let (w, h) = (64, 32);
+        let img = to_equirectangular(&grid, &checker, w, h);
+        let field = PaddedField::new(&grid, &checker);
+        let rms = |v: &mut dyn Iterator<Item = f64>| {
+            let (sum, count) = v.fold((0.0, 0), |(s, n), x| (s + x * x, n + 1));
+            (sum / count as f64).sqrt()
+        };
+        let point = rms(&mut (0..w * h).map(|k| {
+            let (px, py) = (k % w, k / w);
+            let lat = FRAC_PI_2 - PI * (py as f64 + 0.5) / h as f64;
+            let lon = -PI + 2.0 * PI * (px as f64 + 0.5) / w as f64;
+            sample_bilinear(&grid, &field, direction_from_lon_lat(lon, lat)) as f64
+        }));
+        let mean = rms(&mut img.iter().map(|&v| v as f64));
+        let smooth: Vec<f32> = grid
+            .cells()
+            .map(|c| test_field(grid.center(c)) as f32)
+            .collect();
+        let read = to_equirectangular(&grid, &smooth, w, h);
+        let off = (0..w * h)
+            .map(|k| {
+                let (px, py) = (k % w, k / w);
+                let lat = FRAC_PI_2 - PI * (py as f64 + 0.5) / h as f64;
+                let lon = -PI + 2.0 * PI * (px as f64 + 0.5) / w as f64;
+                (read[k] as f64 - test_field(direction_from_lon_lat(lon, lat))).abs()
+            })
+            .fold(0.0f64, f64::max);
+        println!(
+            "cells alternating by one: the pixels' spread {point:.3} read at their centres, {mean:.3} over their footprints; a smooth field off its value at the pixels' centres by {off:.3} at most"
+        );
+        assert!(point > 0.15, "{point}");
+        assert!(mean < 0.25 * point, "{mean} {point}");
+        assert!(off < 0.1, "{off}");
     }
 
     /// Worst error of the edge ghosts (corners excluded) against the analytic field.

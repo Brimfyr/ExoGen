@@ -467,7 +467,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 256;
+pub const FINISH_VERSION: u64 = 258;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3079,7 +3079,10 @@ pub fn finish(
     let ices = crate::climate::Ice::of_inventory(graph, water);
     let mut traps = balance.traps(&climate, &ground, &cycle, &ices, &heights, &downscale);
     // How much warmer each cell's year peaks at its own height and slope than at its place's
-    // (F282): a working liquid's ice stands where its own ground keeps it frozen.
+    // (F282): a working liquid's ice stands where its own ground keeps it frozen. Its height
+    // and slope the land's shape the grid resolves (F423), the land cells about it read as
+    // samples of the ground within it, so that where its ice melts follows the terrain and not
+    // the relief at the cells' own scale.
     let warmer = {
         let level = if full_sea.is_finite() { 0.0 } else { f64::NAN };
         let coarse = climate.temperature.grid();
@@ -3087,7 +3090,20 @@ pub fn finish(
         let place = Field::from_fn(grid, |_, d| {
             crate::grid::projection::sample_bilinear(&coarse, &padded, d)
         });
-        let own = downscale.apply(&cycle.max, &above, level);
+        let land: Vec<f32> = above
+            .as_slice()
+            .iter()
+            .map(|&h| {
+                if h > 0.0 || !full_sea.is_finite() {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let shape = crate::shares::shape_of(&grid, above.as_slice(), &land);
+        let shape = Field::from_fn(grid, |c, _| shape[grid.index(c)]);
+        let own = downscale.apply(&cycle.max, &shape, level);
         let theirs = downscale.apply(&cycle.max, &place, level);
         Field::from_fn(grid, |c, _| own.get(c) - theirs.get(c))
     };
@@ -3392,10 +3408,15 @@ pub fn finish(
     let moisture = water_air
         .zip(above.as_ref())
         .and_then(|(air, above)| cycle.moisture(&air, &place_heights(&cycle, above)));
-    let water = moisture
-        .as_ref()
-        .zip(above.as_ref())
-        .map(|(m, above)| m.fields(above, graph.f64("body.radius")));
+    // Over the ground's shape the grid resolves (F422): the cells about each cell read as
+    // samples of the ground within it, as the maps read them (ADR 0008), its slope theirs. Over
+    // each cell's own ground, the relief at the cells' own scale lifted the air cell by cell and
+    // speckled the rain and the snow it feeds, a fifth to a third from pixel to pixel.
+    let water = moisture.as_ref().zip(above.as_ref()).map(|(m, above)| {
+        let shape = crate::shares::over_cells(&grid, above.as_slice());
+        let shape = Field::from_fn(grid, |c, _| shape[grid.index(c)]);
+        m.fields(&shape, graph.f64("body.radius"))
+    });
     let water_vapour = water_air
         .filter(|_| moisture.is_some())
         .map(|a| a.vapour.name);
@@ -3538,17 +3559,33 @@ pub fn finish(
             climate.iterations, temperature_range.0, temperature_range.1
         );
     }
+    // The land's shape the grid resolves (F423): at each land cell the mean of the land cells
+    // about it, each read as a sample of the ground within it, and the sea's cells their own.
+    // The climate brought to this grid reads its height and slope, as the rain (F422) and the
+    // caps' melting do, so that the snow's, the frost's and the temperatures' margins follow
+    // the terrain and not the relief at the cells' own scale; the poles' shadows read the
+    // ground itself, whose craters hold them.
+    let shape = {
+        let land: Vec<f32> = layers
+            .liquid
+            .as_slice()
+            .iter()
+            .map(|&l| if l > 0.0 { 0.0 } else { 1.0 })
+            .collect();
+        let shape = crate::shares::shape_of(&grid, height.as_slice(), &land);
+        Field::from_fn(grid, |c, _| shape[grid.index(c)])
+    };
     // Brought to this grid by each place's height and slope (F237), the poles' shadows in
     // it (F243), and the frost at the snapshot's season with them, over the ground's colour
     // (F239).
-    let mut temperature = downscale.apply(&cycle.mean, &height, sea_level);
+    let mut temperature = downscale.apply(&cycle.mean, &shape, sea_level);
     let lit = temperature.clone();
     let shade = crate::climate::Shade::from_graph(graph, &balance);
     let shadow_fraction = downscale.shade(&mut temperature, &height, &climate.absorbed, &shade);
     // The year's coldest and warmest at each cell (F253), brought to the grid as its mean
     // is; where the poles' shadows hold a cell, its mean all year.
-    let mut temperature_min = downscale.apply(&cycle.min, &height, sea_level);
-    let mut temperature_max = downscale.apply(&cycle.max, &height, sea_level);
+    let mut temperature_min = downscale.apply(&cycle.min, &shape, sea_level);
+    let mut temperature_max = downscale.apply(&cycle.max, &shape, sea_level);
     for k in 0..grid.cell_count() {
         let t = temperature.as_slice()[k];
         if t < lit.as_slice()[k] {
@@ -3653,7 +3690,7 @@ pub fn finish(
         Some(cryo) => {
             let frost_density = cycle.frost.map_or(1.0, |f| caps::ice_density(f.species));
             let densities = (frost_density, caps::ice_density("H2O"));
-            let ground = (&height, &layers.liquid, sea_level);
+            let ground = (&shape, &layers.liquid, sea_level);
             let rain = water.as_ref().map(|w| &w[0]);
             let [freeze, melt, peak, at, kind] =
                 downscale.seasons(cryo, &cycle.mean, ground, densities, rain);
@@ -3711,7 +3748,7 @@ pub fn finish(
     // The frost at the snapshot's season, exported apart from the ground's colour (F248).
     let frost = match cycle.frost {
         Some(f) => {
-            let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &height, sea_level);
+            let frost = downscale.frost(&cycle.frost_now, &cycle.mean, &shape, sea_level);
             if std::env::var_os("EXOGEN_DEBUG").is_some() {
                 let (mean, ..) = crate::climate::bands(&frost);
                 let range = cycle.pressure_range.unwrap_or((f64::NAN, f64::NAN));
@@ -5214,7 +5251,9 @@ mod tests {
     /// F416, F417: the Earth-like's maps draw its sea, the ice of its snapshot and the windows
     /// of its ices that come and go by their shares of its cells: of the cells cut off from
     /// their kind, wet or dry, iced or bare, its cells decided all or none have many, the
-    /// shares drawn a fifth as many at most.
+    /// shares drawn a fifth as many at most. F419: its ground as the maps draw it crosses the
+    /// sea's level where the sea's share is a half. F422: its rain over the land smooth over
+    /// the ground's resolved shape.
     fn the_maps_draw_shares_not_cells(body: &Body) {
         let out = &body.out.finish;
         let grid = out.grid;
@@ -5261,6 +5300,48 @@ mod tests {
         assert!(sea.0 >= 20 && sea.1 * 5 <= sea.0, "{sea:?}");
         assert!(ice.0 >= 20 && ice.1 * 5 <= ice.0, "{ice:?}");
         assert!(window.0 >= 20 && window.1 * 5 <= window.0, "{window:?}");
+        // F419: the ground as the maps draw it stands under the sea's level exactly where the
+        // sea's share is over a half, dry hollows under the level apart.
+        let level = out.sea_level as f32;
+        let ground = out.height.as_slice();
+        let crossing = (0..n)
+            .filter(|&k| {
+                let hollow = liquid[k] <= 0.0 && ground[k] < level;
+                let s = drawn.sea_share[k];
+                !hollow && (s - 0.5).abs() > 1e-6 && (drawn.height[k] < level) != (s > 0.5)
+            })
+            .count();
+        let own = (0..n)
+            .filter(|&k| (ground[k] < level) != (drawn.sea_share[k] > 0.5))
+            .count();
+        // F422: the rain over the land read over the ground's resolved shape, each land cell's
+        // off the mean of the land cells about it by a twentieth at most on the median, where
+        // each cell's own relief scattered it cell by cell.
+        let rain = out.water.as_ref().expect("the Earth-like's rain")[0].as_slice();
+        let land = |k: usize| liquid[k] <= 0.0;
+        let mut spread: Vec<f32> = (0..n)
+            .filter(|&k| land(k))
+            .filter_map(|k| {
+                let c = grid.cell(k);
+                let about: Vec<usize> = around
+                    .iter()
+                    .map(|&(di, dj)| grid.index(grid.neighbor(c, di, dj)))
+                    .collect();
+                if !about.iter().all(|&j| land(j)) {
+                    return None;
+                }
+                let mean = about.iter().map(|&j| rain[j]).sum::<f32>() / about.len() as f32;
+                (mean > 0.0).then(|| (rain[k] - mean).abs() / mean)
+            })
+            .collect();
+        spread.sort_by(f32::total_cmp);
+        let (median, high) = (spread[spread.len() / 2], spread[spread.len() * 9 / 10]);
+        println!(
+            "Earth-like: cells whose drawn ground stands on the other side of the level from the sea's half share {crossing}, by their own ground {own}; the land's rain off its neighbours' mean {median:.4} on the median, {high:.4} at the ninetieth percentile"
+        );
+        assert_eq!(crossing, 0);
+        assert!(own > 0, "{own}");
+        assert!(median < 0.05, "{median} {high}");
     }
 
     /// F413 to F415: the Earth-like's rivers lay all they bring the sea on its floor, and the
@@ -5558,9 +5639,9 @@ mod tests {
 
     /// ADR 0007: the Earth-like's albedo is its ground's own under its sea, none of it the
     /// water's deep colour; its snapshot the water's deep colour over the open sea it draws deep
-    /// over its cells whole and the albedo itself on its land bare of ice where its sea draws
-    /// none (F416, F417); and the surface its relief is lit over flat at its sea's level
-    /// wherever its sea covers its cells whole.
+    /// over its cells whole and the albedo itself on its land bare of ice where its sea and its
+    /// lakes draw none (F416, F417, F420); and the surface its relief is lit over flat at its
+    /// sea's level wherever its sea covers its cells whole.
     fn the_sea_shows_its_floor_only_through_its_water(body: &Body) {
         use crate::constants::WATER_DEEP_REFLECTANCE;
         let out = &body.out.finish;
@@ -5575,7 +5656,7 @@ mod tests {
         for k in 0..grid.cell_count() {
             let c = grid.cell(k);
             let (a, s) = (out.albedo.get(c), snapshot.get(c));
-            if drawn.sea[k] <= 0.0 && cover[k] <= 0.0 {
+            if drawn.sea[k] <= 0.0 && drawn.lake_share[k] <= 0.0 && cover[k] <= 0.0 {
                 assert_eq!(a, s, "bare land at {k}");
             }
             if liquid[k] <= 0.0 {

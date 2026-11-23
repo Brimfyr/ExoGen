@@ -386,7 +386,8 @@ impl Moisture {
 
     /// The year's precipitation, kg/m² a year, and its aridity index, held under
     /// ARIDITY_MAP_MOST, over the relief `above`, the ground's height over the sea, m, of a
-    /// body of `radius` m (F270), the potential evaporation read between the places.
+    /// body of `radius` m (F270), the potential evaporation read between the places; `above`
+    /// the shape the grid resolves, the cells about each cell its samples (F422).
     pub fn fields(&self, above: &Field<f32>, radius: f64) -> [Field<f32>; 2] {
         let year = SECONDS_PER_DAY * 365.25;
         let n_lon = self.layout.1;

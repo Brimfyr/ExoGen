@@ -653,6 +653,9 @@ pub fn export(
         "height.png",
         "albedo.exr",
         "albedo.png",
+        "water.exr",
+        "water.png",
+        "mask_lakes.png",
         "liquid.exr",
         "liquid.png",
         "snapshot.exr",
@@ -722,10 +725,20 @@ pub fn export(
         0.0
     };
 
-    // Height.
+    // The finish's liquids and ground as the maps draw them, by shares (F416, F417, ADR 0008),
+    // and the colours the snapshot is composed of, each over its own kind's share (F420).
+    let drawn = crate::shares::Drawn::of(out);
+    let working = graph.str("volatiles.working_liquid");
+    let parts = crate::snapshot::Parts::of(out, working, &drawn);
+
+    // Height: the ground drawn so that it crosses the sea's level and each lake's where their
+    // shares are a half, as mask_liquid does (F419, ADR 0009): a cell the relief at the cells'
+    // scale set apart from the ground about it, on the lesser side of the sea's margin or a
+    // lake's, at the greater side's mean height; every other cell its own.
     let grid = out.grid;
-    let height_eq = to_equirectangular(&grid, out.height.as_slice(), width, height_px);
+    let height_eq = to_equirectangular(&grid, &drawn.height, width, height_px);
     let height_rel: Vec<f32> = height_eq.iter().map(|h| h - datum_offset as f32).collect();
+    let height_unit = "m above datum, the solid surface with the caps' ice on it; at the sea's margin and the lakes', a cell the relief at the cells' scale set apart from the ground about it at the greater side's mean (ADR 0009), so that it crosses the sea's level where mask_liquid's share is a half";
     let (hmin, hmax) = min_max(&height_rel);
     write_exr_f32(
         &settings.dir.join("height.exr"),
@@ -739,7 +752,7 @@ pub fn export(
         MapInfo {
             file: "height.exr".into(),
             encoding: "float32 EXR, channel height".into(),
-            units: "m above datum".into(),
+            units: height_unit.into(),
             min: hmin as f64,
             max: hmax as f64,
             ..Default::default()
@@ -758,60 +771,72 @@ pub fn export(
         MapInfo {
             file: "height.png".into(),
             encoding: "16-bit grey PNG, linear from min to max".into(),
-            units: "m above datum".into(),
+            units: height_unit.into(),
             min: hmin as f64,
             max: hmax as f64,
             ..Default::default()
         },
     );
 
-    // Albedo.
-    let channels: Vec<Vec<f32>> = (0..3)
-        .map(|ch| {
-            let plane: Vec<f32> = out.albedo.as_slice().iter().map(|c| c[ch]).collect();
-            to_equirectangular(&grid, &plane, width, height_px)
-        })
-        .collect();
-    write_exr_rgb(
-        &settings.dir.join("albedo.exr"),
-        width,
-        height_px,
-        &channels,
-    )?;
-    maps.insert(
-        "albedo".to_string(),
-        MapInfo {
-            file: "albedo.exr".into(),
-            encoding: "float16 EXR RGB, linear reflectance".into(),
-            units: "reflectance of the ground itself, under its liquid too (ADR 0007)".into(),
-            min: 0.0,
-            max: 1.0,
-            ..Default::default()
-        },
-    );
-    write_png_srgb(
-        &settings.dir.join("albedo.png"),
-        width,
-        height_px,
-        &channels,
-    )?;
-    maps.insert(
-        "albedo_png".to_string(),
-        MapInfo {
-            file: "albedo.png".into(),
-            encoding: "8-bit sRGB PNG".into(),
-            units: "reflectance of the ground itself, under its liquid too (ADR 0007)".into(),
-            min: 0.0,
-            max: 1.0,
-            ..Default::default()
-        },
-    );
+    // Albedo: the land's ground over the land's share of each cell (F420, ADR 0009), so that
+    // the land's share of a pixel at a coast or a lake's shore shows the land's ground, not the
+    // floor's sediment the model laid on the wet cells beside it; under the open sea, its floor.
+    // And the water as it shows over the liquids' share, the sea's and the lakes'.
+    let planes = |colours: &[[f32; 3]]| -> Vec<Vec<f32>> {
+        (0..3)
+            .map(|ch| {
+                let plane: Vec<f32> = colours.iter().map(|c| c[ch]).collect();
+                to_equirectangular(&grid, &plane, width, height_px)
+            })
+            .collect()
+    };
+    let albedo_unit = "reflectance of the land's ground over the land's share of each pixel, neither sea nor lake: a land cell's own, a cell under the sea or a lake the mean of the land cells' about it, each a sample of the ground within it, and under the open sea, past them, the floor's own (ADR 0009)";
+    let water_unit = "reflectance of the working liquid as it shows over the share of each pixel the sea and the lakes cover, mask_liquid's and mask_lakes': a cell under it its own floor under its own depth by the sidecar's optics, another the mean of the colours of those about it (ADR 0009); zero where none lies";
+    for (name, colours, unit) in [
+        ("albedo", &parts.ground, albedo_unit),
+        ("water", &parts.water, water_unit),
+    ] {
+        let channels = planes(colours);
+        write_exr_rgb(
+            &settings.dir.join(format!("{name}.exr")),
+            width,
+            height_px,
+            &channels,
+        )?;
+        maps.insert(
+            name.to_string(),
+            MapInfo {
+                file: format!("{name}.exr"),
+                encoding: "float16 EXR RGB, linear reflectance".into(),
+                units: unit.into(),
+                min: 0.0,
+                max: 1.0,
+                ..Default::default()
+            },
+        );
+        write_png_srgb(
+            &settings.dir.join(format!("{name}.png")),
+            width,
+            height_px,
+            &channels,
+        )?;
+        maps.insert(
+            format!("{name}_png"),
+            MapInfo {
+                file: format!("{name}.png"),
+                encoding: "8-bit sRGB PNG".into(),
+                units: unit.into(),
+                min: 0.0,
+                max: 1.0,
+                ..Default::default()
+            },
+        );
+    }
 
     // The liquid (ADR 0007): its depth over the ground, m, its surface flat; an engine draws the
     // ground through it by the optics the sidecar gives, at the sea level it sets. Drawn by
     // shares (F416, F417, ADR 0008): its mean depth over each cell, the cells about it read as
     // samples of the ground within it.
-    let drawn = crate::shares::Drawn::of(out);
     let liquid_eq = to_equirectangular(&grid, &drawn.sea, width, height_px);
     // The share of each pixel under the sea (F416, ADR 0008), 0 to 255 for 0 to 1; the depth
     // stands above none exactly where it does (F417).
@@ -864,7 +889,6 @@ pub fn export(
             ..Default::default()
         },
     );
-    let working = graph.str("volatiles.working_liquid");
     let optics = crate::stages::materials::LiquidOptics::of(working);
     let liquid = (deepest > 0.0).then(|| LiquidInfo {
         working_liquid: working.to_string(),
@@ -872,20 +896,20 @@ pub fn export(
         deep_reflectance_linear: optics.deep,
         attenuation_per_m: optics.attenuation,
         channel_wavelengths_nm: [612.0, 549.0, 464.0],
-        evaluation: "Where mask_liquid's share s of a pixel is above 0, the liquid covers that share, its depth there D = H / s, H liquid.exr's mean depth over the pixel, its surface flat; the ground, of albedo A in albedo.exr, shows through it as R = R_deep + (A - R_deep) exp(-2 K D) in each channel, R_deep its deep reflectance and K its attenuation (Maritorena, Morel and Gentili 1994), and the pixel is s R + (1 - s) A. At another sea level D is that level less height.exr's ground, and s 1 where that is above 0. snapshot.exr is this at ExoGen's own level, with each ice at the snapshot's phase over its own kind's share, the sea's over the liquid's, the land's over the rest.".into(),
+        evaluation: "The sea covers mask_liquid's share s of a pixel, its depth there D = H / s, H liquid.exr's mean depth over the pixel, its surface flat; the lakes cover mask_lakes' share l, their depth lakes.exr's mean over l, each lake's surface flat. The liquid shows over its share as water.exr's W, each cell under it its floor of reflectance A under its own depth, R = R_deep + (A - R_deep) exp(-2 K D) in each channel, R_deep the liquid's deep reflectance and K its attenuation (Maritorena, Morel and Gentili 1994); the land's ground over the rest as albedo.exr's G. Each ice lies over its own kind's share: the sea's over s, the land's over 1 - s, over the lakes' water and the land's ground alike. The pixel is s (W under the sea's ice) + (1 - s) (L under the land's ice), L = (l W + (1 - s - l) G) / (1 - s); snapshot.exr is this at the snapshot's phase, composed on the model's cells and read between them. At another sea level, D is that level less height.exr's ground, s 1 where that is above 0, and the floor albedo.exr's: under the open sea the floor's own, nearer the coast the land's ground.".into(),
     });
 
     // The snapshot (ADR 0007): the surface as it looks at the snapshot's season, the albedo
     // under its liquid and the ices over it at the snapshot's phase as the cryosphere's maps
     // draw them, composed on the grid and read between its cells as the albedo is.
-    let composed = crate::snapshot::snapshot(out, working, &drawn);
+    let composed = crate::snapshot::composed(out, &drawn, &parts);
     let snap: Vec<Vec<f32>> = (0..3)
         .map(|ch| {
             let plane: Vec<f32> = composed.as_slice().iter().map(|c| c[ch]).collect();
             to_equirectangular(&grid, &plane, width, height_px)
         })
         .collect();
-    let snapshot_units = "reflectance of the surface at the snapshot's season: the albedo under its liquid, the ices over it at the snapshot's phase (ADR 0007)";
+    let snapshot_units = "reflectance of the surface at the snapshot's season: the sea's water, the lakes' and the land's ground, each over its own share, the ices over them at the snapshot's phase (ADR 0007, ADR 0009)";
     write_exr_rgb(&settings.dir.join("snapshot.exr"), width, height_px, &snap)?;
     maps.insert(
         "snapshot".to_string(),
@@ -973,8 +997,11 @@ pub fn export(
         },
     );
 
-    // Surface age.
-    let age_eq = to_equirectangular(&grid, out.layers.surface_age.as_slice(), width, height_px);
+    // Surface age, and below the temperatures and the units: maps of each cell's own of the
+    // kinds of cell, the sea's floor and the land, drawn as the height is so that their kinds
+    // divide where the maps drawn by shares divide them (F419, ADR 0009).
+    let age = drawn.agreeing(out.layers.surface_age.as_slice());
+    let age_eq = to_equirectangular(&grid, &age, width, height_px);
     let (amin, amax) = min_max(&age_eq);
     write_exr_f32(
         &settings.dir.join("surface_age.exr"),
@@ -1015,7 +1042,8 @@ pub fn export(
     );
 
     // The year's mean surface temperature (F235).
-    let temperature_eq = to_equirectangular(&grid, out.temperature.as_slice(), width, height_px);
+    let temperature = drawn.agreeing(out.temperature.as_slice());
+    let temperature_eq = to_equirectangular(&grid, &temperature, width, height_px);
     let (tmin, tmax) = min_max(&temperature_eq);
     write_exr_f32(
         &settings.dir.join("temperature.exr"),
@@ -1068,7 +1096,7 @@ pub fn export(
             "K, the warmest the surface stands through its days and seasons",
         ),
     ] {
-        let eq = to_equirectangular(&grid, field.as_slice(), width, height_px);
+        let eq = to_equirectangular(&grid, &drawn.agreeing(field.as_slice()), width, height_px);
         let (lo, hi) = min_max(&eq);
         write_exr_f32(
             &settings.dir.join(format!("{key}.exr")),
@@ -1688,11 +1716,21 @@ pub fn export(
     );
     // The year's water (F268): its precipitation, kg/m² a year, and its aridity index, its
     // precipitation over its potential evaporation, held under ARIDITY_MAP_MOST, bilinear; all
-    // zero without a working liquid under an atmosphere.
+    // zero without a working liquid under an atmosphere. The aridity, the land's index and the
+    // open water's, drawn over the land's share as the albedo is (F420, ADR 0009): the land's
+    // share of a pixel at a coast or a lake's shore reads the land's, not the water's beside it.
     let water_maps: Vec<Vec<f32>> = match &out.water {
         Some(fields) => fields
             .iter()
-            .map(|f| to_equirectangular(&grid, f.as_slice(), width, height_px))
+            .enumerate()
+            .map(|(i, f)| {
+                let values = if i == 1 {
+                    crate::shares::of_kind(&grid, f.as_slice(), &drawn.land)
+                } else {
+                    f.as_slice().to_vec()
+                };
+                to_equirectangular(&grid, &values, width, height_px)
+            })
             .collect(),
         None => vec![calm(), calm()],
     };
@@ -1705,7 +1743,7 @@ pub fn export(
         ),
         (
             "aridity",
-            "the year's precipitation over its potential evaporation, the aridity index (UNEP 1992: under 0.05 hyper-arid, 0.2 arid, 0.5 semi-arid), held under 4; over the sea its open water's; zero without a working liquid under an atmosphere",
+            "the year's precipitation over its potential evaporation, the aridity index (UNEP 1992: under 0.05 hyper-arid, 0.2 arid, 0.5 semi-arid), held under 4; the land's over the land's share of each pixel, as albedo.exr's ground (ADR 0009), and under the open sea, past it, its open water's; zero without a working liquid under an atmosphere",
             crate::constants::ARIDITY_MAP_MOST as f32,
         ),
     ]
@@ -1754,17 +1792,45 @@ pub fn export(
     // the cells in each pixel so that a river a cell wide keeps its course; and the lakes'
     // mean depth over each cell, m, by shares (F416, ADR 0008); both zero without the year's
     // water.
+    // And the lakes' share of each pixel (F420, ADR 0009), 0 to 255 for 0 to 1, as the sea's in
+    // mask_liquid: their depth stands above none exactly where it does.
     let (rivers_map, lakes_map) = match &out.rivers {
-        Some(r) => (
-            to_equirectangular_most(&grid, r.discharge.as_slice(), width, height_px),
+        Some(_) => (
+            to_equirectangular_most(&grid, &drawn.rivers, width, height_px),
             to_equirectangular(&grid, &drawn.lakes, width, height_px),
         ),
         None => (calm(), calm()),
     };
+    let lakes_mask: Vec<u8> = to_equirectangular(&grid, &drawn.lake_share, width, height_px)
+        .iter()
+        .map(|s| (s.clamp(0.0, 1.0) * 255.0).round() as u8)
+        .collect();
+    let lakes_map: Vec<f32> = lakes_map
+        .iter()
+        .zip(&lakes_mask)
+        .map(|(d, &m)| if m > 0 { d.max(0.0) } else { 0.0 })
+        .collect();
     let widest = rivers_map.iter().fold(0.0f32, |a, &v| a.max(v));
     let deepest = lakes_map.iter().fold(0.0f32, |a, &v| a.max(v));
-    let rivers_unit = "m³/s of the working liquid each cell's river carries down from it, the most of the cells in the pixel; zero at sea, in lakes and without the year's water";
-    let lakes_unit = "m of the lakes' water over the ground, its mean depth over each pixel, the cells about it read as samples of the ground within it (ADR 0008); zero where none stands and without the year's water";
+    let rivers_unit = "m³/s of the working liquid each cell's river carries down from it, the most of the cells in the pixel; drawn where the land is drawn over more than half of each cell, carried on through the cells of a sea's or a lake's margin until the water is drawn over half and cut where it is (ADR 0009); zero under the water and without the year's water";
+    let lakes_unit = "m of the lakes' water over the ground, its mean depth over each pixel, the cells about it read as samples of the ground within it (ADR 0008); over the share of the pixel it covers, mask_lakes', this over that share; zero where none stands and without the year's water";
+    write_png8(
+        &settings.dir.join("mask_lakes.png"),
+        width,
+        height_px,
+        &lakes_mask,
+    )?;
+    maps.insert(
+        "mask_lakes".into(),
+        MapInfo {
+            file: "mask_lakes.png".into(),
+            encoding: "8-bit grey PNG, 0 to 255 for 0 to 1".into(),
+            units: "the share of each pixel under the lakes, the cells about it read as samples of the ground within it (ADR 0009); zero without the year's water".into(),
+            min: 0.0,
+            max: 1.0,
+            ..Default::default()
+        },
+    );
     write_exr_f32(
         &settings.dir.join("rivers.exr"),
         width,
@@ -1895,8 +1961,20 @@ pub fn export(
         trades_end_deg: [w.ridges.0, w.ridges.1],
     });
 
-    // Units, nearest cell per pixel, as an index map: the id times 8.
-    let unit_ids = out.layers.unit_id.as_slice();
+    // Units, nearest cell per pixel, as an index map: the id times 8; a cell on the lesser side
+    // of a sea's or a lake's margin its nearest cell's on the greater (F419, ADR 0009).
+    let ids: Vec<f32> = out
+        .layers
+        .unit_id
+        .as_slice()
+        .iter()
+        .map(|&u| u as f32)
+        .collect();
+    let unit_ids: Vec<u16> = drawn
+        .agreeing_nearest(&ids)
+        .iter()
+        .map(|&u| u.round() as u16)
+        .collect();
     let unit_eq: Vec<u8> = (0..width * height_px)
         .map(|k| {
             let (x, y) = (k % width, k / width);

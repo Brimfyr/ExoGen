@@ -21,30 +21,74 @@ pub fn surface(out: &FinishOutput, drawn: &Drawn) -> Field<f32> {
     Field::from_fn(grid, |c, _| drawn.surface[grid.index(c)])
 }
 
+/// The colours the snapshot is composed of, each over its own kind's share of each cell (F417,
+/// F420, ADR 0009), linear reflectance, as the albedo and water maps hold them: the liquids'
+/// water as it shows, the sea's and the lakes' (`waters`), each cell under a liquid its own
+/// floor under its own depth of the working liquid (`LiquidOptics::over`), another's the mean
+/// of the colours of those about it, the sea's and the lakes' by their shares; none beyond
+/// them. And the land's ground, a land cell's own albedo, another's the mean of the land
+/// cells' about it (`own_kind`), the floor's own beyond them.
+pub struct Parts {
+    pub water: Vec<[f32; 3]>,
+    pub ground: Vec<[f32; 3]>,
+}
+
+impl Parts {
+    pub fn of(out: &FinishOutput, working: &str, drawn: &Drawn) -> Self {
+        let optics = LiquidOptics::of(working);
+        let grid = out.grid;
+        let albedo = out.albedo.as_slice();
+        let sea = waters(
+            &grid,
+            &optics,
+            albedo,
+            out.layers.liquid.as_slice(),
+            &drawn.wet,
+        );
+        let lake_depth: Vec<f32> = match &out.rivers {
+            Some(r) => r.lakes.as_slice().to_vec(),
+            None => vec![0.0; albedo.len()],
+        };
+        let lakes = waters(&grid, &optics, albedo, &lake_depth, &drawn.lake);
+        let water = (0..albedo.len())
+            .map(|k| {
+                let (s, l) = (drawn.sea_share[k], drawn.lake_share[k]);
+                if s + l <= 0.0 {
+                    return [0.0; 3];
+                }
+                std::array::from_fn(|ch| (s * sea[k][ch] + l * lakes[k][ch]) / (s + l))
+            })
+            .collect();
+        Parts {
+            water,
+            ground: own_kind(&grid, albedo, &drawn.land),
+        }
+    }
+}
+
 /// The colour of the surface at the snapshot's season, linear reflectance: each cell the sea's
-/// share of it and the land's (F416), each its own kind's colour under its own ice (F417). The
-/// sea's share its water as it shows (`waters`), each wet cell's floor under its working
-/// liquid, `working`, at its own depth (`LiquidOptics::over`), under the sea's ice; the land's
-/// its ground, its albedo (`own_kind`), under the land's ice. Each ice is the one that lies on
-/// its cells at the snapshot's phase as `Window::at_phase` reads the cryosphere's maps, hiding
-/// 1 - exp(-m / cover mass) of what lies under it: its cover and its colour each a mean over
-/// the cells of its kind about the cell, so that an ice's edge the ground's relief at the
-/// cell's scale decides cell by cell is drawn by its share of the cell, and a sea's ice covers
-/// the sea's share of a cell and a land's snow the land's.
+/// share of it, the lakes' and the land's (F416, F420), each its own kind's colour (`Parts`)
+/// under its own ice (F417): the sea's water under the sea's ice; the lakes' water and the
+/// land's ground, over their shares of the rest, under the land's ice. Each ice is the one that
+/// lies on its cells at the snapshot's phase as `Window::at_phase` reads the cryosphere's
+/// maps, hiding 1 - exp(-m / cover mass) of what lies under it: its cover and its colour each a
+/// mean over the cells of its kind about the cell, so that an ice's edge the ground's relief at
+/// the cell's scale decides cell by cell is drawn by its share of the cell, and a sea's ice
+/// covers the sea's share of a cell and a land's snow the rest. The sidecar's evaluation from
+/// the maps, cell by cell.
 pub fn snapshot(out: &FinishOutput, working: &str, drawn: &Drawn) -> Field<[f32; 3]> {
-    let optics = LiquidOptics::of(working);
+    composed(out, drawn, &Parts::of(out, working, drawn))
+}
+
+/// The snapshot from its `parts`, as `snapshot`.
+pub fn composed(out: &FinishOutput, drawn: &Drawn, parts: &Parts) -> Field<[f32; 3]> {
     let grid = out.grid;
     let ices = ices(out);
-    let wet = wet(out);
-    let dry: Vec<f32> = wet.iter().map(|w| 1.0 - w).collect();
-    let albedo = out.albedo.as_slice();
-    let water = waters(&grid, &optics, albedo, out.layers.liquid.as_slice(), &wet);
-    let land = own_kind(&grid, albedo, &dry);
     Field::from_fn(grid, |c, _| {
         let k = grid.index(c);
         by_shares(
-            (water[k], land[k]),
-            drawn.sea_share[k],
+            (parts.water[k], parts.ground[k]),
+            (drawn.sea_share[k], drawn.lake_share[k]),
             |under, share| ices.sea.over(k, under, share),
             |under, share| ices.land.over(k, under, share),
         )
@@ -74,11 +118,11 @@ fn own_kind(grid: &CubeSphere, values: &[[f32; 3]], kind: &[f32]) -> Vec<[f32; 3
         .collect()
 }
 
-/// The sea's water as it shows over the sea's share of each cell (F417), each cell under it,
+/// A liquid's water as it shows over its share of each cell (F417, F420), each cell under it,
 /// 1, or not, 0, by `wet`: a wet cell's own floor, its `albedo`, under its own depth of the
-/// liquid, `liquid`, m, by the liquid's `optics`; a dry cell's the mean of the wet cells'
-/// colours about it, each a sample of the water within it, so that a shore beside its shallows
-/// shows them and not the colour of the mean depth of the shallows and the deep beyond.
+/// liquid, `liquid`, m, by the liquid's `optics`; another's the mean of the wet cells' colours
+/// about it, each a sample of the water within it, so that a shore beside its shallows shows
+/// them and not the colour of the mean depth of the shallows and the deep beyond.
 fn waters(
     grid: &CubeSphere,
     optics: &LiquidOptics,
@@ -94,22 +138,30 @@ fn waters(
     own_kind(grid, &shown, wet)
 }
 
-/// A cell's colour, linear reflectance, `share` of it under the sea (F417): the sea's share
-/// its water as it shows under the sea's ice, `sea_ice`, and the rest the land's ground under
-/// the land's, `land_ice`, `(water, ground)` the colours under them, each ice given the colour
+/// A cell's colour, linear reflectance, `sea` of it under the sea and `lakes` under the lakes
+/// (F417, F420): the sea's share its water as it shows under the sea's ice, `sea_ice`; the rest
+/// the lakes' water over their share of it and the land's ground over the land's, under the
+/// land's ice, `land_ice`; `(water, ground)` the colours under them, each ice given the colour
 /// under it and its kind's share.
 fn by_shares(
     (water, ground): ([f32; 3], [f32; 3]),
-    share: f32,
+    (sea, lakes): (f32, f32),
     sea_ice: impl Fn([f32; 3], f32) -> [f32; 3],
     land_ice: impl Fn([f32; 3], f32) -> [f32; 3],
 ) -> [f32; 3] {
-    let land = land_ice(ground, 1.0 - share);
-    if share <= 0.0 {
+    let rest = (1.0 - sea).max(0.0);
+    let wet = if rest > 0.0 {
+        (lakes / rest).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let under: [f32; 3] = std::array::from_fn(|ch| wet * water[ch] + (1.0 - wet) * ground[ch]);
+    let land = land_ice(under, rest);
+    if sea <= 0.0 {
         return land;
     }
-    let sea = sea_ice(water, share);
-    std::array::from_fn(|ch| share * sea[ch] + (1.0 - share) * land[ch])
+    let sea_colour = sea_ice(water, sea);
+    std::array::from_fn(|ch| sea * sea_colour[ch] + rest * land[ch])
 }
 
 /// An ice over one kind's share of each cell (F417): the share of each cell it hides and its
@@ -208,13 +260,39 @@ mod tests {
         let bare = |under: [f32; 3], _: f32| under;
         let ground = [0.4f32, 0.35, 0.3];
         let water = optics.over(ground, 500.0);
-        let colour = by_shares((water, ground), 0.2, bare, bare);
+        let colour = by_shares((water, ground), (0.2, 0.0), bare, bare);
         let want: [f32; 3] = std::array::from_fn(|ch| 0.2 * water[ch] + 0.8 * ground[ch]);
         println!("a fifth under 500 m: {colour:?}, its shares {want:?}; the sea {water:?}");
         for ch in 0..3 {
             assert!((colour[ch] - want[ch]).abs() < 1e-6, "{colour:?} {want:?}");
         }
         assert!(colour[0] > 0.75 * ground[0], "{colour:?}");
+    }
+
+    /// F420: the lakes are drawn over their share of a cell, their water as it shows and the
+    /// land's ground over the rest, the sea's over its own; and the land's ice, a snow lying on
+    /// the land and on its frozen lakes, over all but the sea's share: a cell under a lake shows
+    /// its water, a cell three tenths lake those tenths its water, and under snow neither the
+    /// lake's water nor the land's ground shows, the sea's water beside them uncovered.
+    #[test]
+    fn a_lake_is_drawn_over_its_share() {
+        let optics = LiquidOptics::of("water");
+        let bare = |under: [f32; 3], _: f32| under;
+        let snow = |_: [f32; 3], _: f32| [0.9f32; 3];
+        let ground = [0.4f32, 0.35, 0.3];
+        let water = optics.over(ground, 5.0);
+        let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|ch| (a[ch] - b[ch]).abs() < 1e-6);
+        let whole = by_shares((water, ground), (0.0, 1.0), bare, bare);
+        let part = by_shares((water, ground), (0.0, 0.3), bare, bare);
+        let want: [f32; 3] = std::array::from_fn(|ch| 0.3 * water[ch] + 0.7 * ground[ch]);
+        let snowy = by_shares((water, ground), (0.2, 0.3), bare, snow);
+        let beside: [f32; 3] = std::array::from_fn(|ch| 0.2 * water[ch] + 0.8 * 0.9);
+        println!(
+            "a lake {whole:?}, three tenths of one {part:?}, under snow beside the sea {snowy:?}"
+        );
+        assert!(close(whole, water), "{whole:?} {water:?}");
+        assert!(close(part, want), "{part:?} {want:?}");
+        assert!(close(snowy, beside), "{snowy:?} {beside:?}");
     }
 
     /// F417: a shore shows its shallows: land beside a shelf 10 m deep two cells wide, a sea

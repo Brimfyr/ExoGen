@@ -2946,6 +2946,9 @@ pub const ICE_DENSITIES: [(&str, f64); 5] = [
 /// shear stress under the ice sheets, 50 to 150 kPa (Cuffey and Paterson 2010), the least a
 /// stated choice for every ice until its flow comes with 5C.
 pub const CAP_YIELD_STRESS: f64 = 50_000.0;
+/// F418: the rounds of Newton's method that find a cap's plastic thickness over the ground
+/// rising or falling under it, each from a start within a few per cent of it.
+pub const CAP_PROFILE_NEWTON: usize = 8;
 
 /// The caps and the sea they take from (F288): the most rounds of laying the caps on the land
 /// the sea leaves and refilling the sea with what they leave it, and the move of the sea's

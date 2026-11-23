@@ -15,7 +15,7 @@
 //! surface loses to the air over what falls on it, at the year's steady state (Fill-Spill-Merge,
 //! Barnes, Callaghan and Wickert 2021, its volumes the year's fluxes): filled to its pass, it
 //! spills into the basin beyond, and two basins both filled to the pass between them fill
-//! together past it. The rivers carry their catchments' runoff and the lakes' spill down to the
+//! together past it; a basin brought no water holds none (F425). The rivers carry their catchments' runoff and the lakes' spill down to the
 //! lakes and the sea.
 
 use crate::fields::Field;
@@ -590,8 +590,10 @@ fn merge(
 /// The lakes in the basins on `stack` and below (F277), each with what it is brought at the
 /// cells it enters by: where a basin's water, with all its halves' ranges flooded, keeps it
 /// filled past their meeting, its lake stands in its own range, filling it from the bottom
-/// while what floods each cell leaves its balance at least none, full at its pass if all of
-/// them; else each half apart, a full one spilling into the other at their pass.
+/// while water is left to flood each cell and what floods it leaves its balance at least none,
+/// full at its pass if all of them; else each half apart, a full one spilling into the other at
+/// their pass. A basin brought no water holds none, though its surface lose none (F425): the
+/// caps' ice, which sheds none, keeps the year's snow as its ice.
 fn settle(
     stack: &mut Vec<(u32, Vec<(u32, f64)>)>,
     basins: &[Basin],
@@ -606,7 +608,7 @@ fn settle(
         let brought: f64 = inflows.iter().map(|i| i.1).sum();
         let start = basin.catchment + basin.below + brought;
         match basin.halves {
-            Some((x, y)) if start < 0.0 => {
+            Some((x, y)) if start <= 0.0 => {
                 let (mut into_x, mut into_y): (Vec<_>, Vec<_>) = inflows
                     .into_iter()
                     .partition(|&(cell, _)| holds_pit(&basins[x as usize], cell));
@@ -636,7 +638,7 @@ fn settle(
                 };
                 for (i, &c) in basin.own.iter().enumerate() {
                     let d = rise[c as usize] as f64;
-                    if balance + d < 0.0 {
+                    if balance <= 0.0 || balance + d < 0.0 {
                         lake.level = height[c as usize];
                         (lake.count, lake.full) = (i, false);
                         lake.share = if d < 0.0 { balance / -d } else { 0.0 };
@@ -825,6 +827,98 @@ mod tests {
         assert!(lake_in(&together, false) > lake_in(&alone, false));
         assert!(lake_in(&together, true) > 0);
         assert!(together.summary.closed > 0.9, "{:?}", together.summary);
+    }
+
+    /// F425: a lake holds only the water brought to it. A cup, the basin of one pit, and two
+    /// bowls side by side under a closed plain, basins of many, whose ground sheds nothing and
+    /// whose surface would lose nothing or gain, as the caps' ice, which keeps the year's snow
+    /// as its ice, hold no lake; brought water, its surface losing none, the cup fills to its
+    /// rim.
+    #[test]
+    fn a_basin_brought_no_water_holds_no_lake() {
+        let grid = CubeSphere::new(64);
+        let n = grid.cell_count();
+        let centre = [0.0, 0.0, 1.0];
+        let off = |d: [f64; 3], p: [f64; 3]| dot(d, p).clamp(-1.0, 1.0).acos();
+        // A cup, its rim 0.2 rad out, falling beyond to the sea; centred off the grid's
+        // symmetries, its lowest cell its one pit, the basin of a pit alone.
+        let cup_centre = crate::geom::normalize([0.011, 0.007, 1.0]);
+        let bowl = |d: [f64; 3]| {
+            let r = off(d, cup_centre);
+            if r < 0.2 {
+                500.0 + 300.0 * (r / 0.2).powi(2)
+            } else {
+                800.0 - 2_000.0 * (r - 0.2)
+            }
+        };
+        {
+            let (heights, sea) = terrain(grid, bowl);
+            let drainage = drain(
+                grid,
+                &heights,
+                &sea,
+                (&vec![0.0; n], &vec![0.0; n]),
+                (1e6, 1e3),
+            );
+            // The sea's basin first, then the pits' own; the basins they join have halves.
+            let pits = drainage.basins[1..]
+                .iter()
+                .filter(|b| b.halves.is_none())
+                .count();
+            assert_eq!(pits, 1, "the cup the basin of a pit alone");
+        }
+        // The two bowls under a closed plain, as a_full_lake_spills_into_its_neighbour.
+        let (a, b) = (
+            [0.0, 0.12f64.sin(), 0.12f64.cos()],
+            [0.0, -0.12f64.sin(), 0.12f64.cos()],
+        );
+        let pair = |d: [f64; 3]| {
+            let r = off(d, centre);
+            if r > 1.2 {
+                return -2_000.0;
+            }
+            let well = |p: [f64; 3]| -400.0 * (-(off(d, p) / 0.08).powi(2)).exp();
+            500.0 + 4_000.0 * (r - 0.5).max(0.0) + well(a) + well(b)
+        };
+        let none = vec![0.0f32; n];
+        let gaining = vec![1e-6f32; n];
+        type Shape<'a> = (&'a str, &'a dyn Fn([f64; 3]) -> f64);
+        let shapes: [Shape; 2] = [("a cup", &bowl), ("two bowls", &pair)];
+        for (name, shape) in shapes {
+            let (heights, sea) = terrain(grid, shape);
+            for (year, gain) in [("losing none", &none), ("gaining", &gaining)] {
+                let rivers = route(grid, &heights, &sea, (&none, gain), (1e6, 1_000.0));
+                let wet = rivers.lakes.as_slice().iter().filter(|&&d| d > 0.0).count();
+                println!(
+                    "{name}, brought nothing, its surface {year}: {wet} cells under lakes, {:?}",
+                    rivers.summary
+                );
+                assert!(
+                    wet == 0 && rivers.summary.lakes == 0.0,
+                    "{name}, {year}: {wet}"
+                );
+            }
+        }
+        let (heights, sea) = terrain(grid, bowl);
+        let runoff = vec![1e-6f32; n];
+        let rivers = route(grid, &heights, &sea, (&runoff, &gaining), (1e6, 1_000.0));
+        let inside: Vec<usize> = (0..n)
+            .filter(|&k| off(grid.center(grid.cell(k)), cup_centre) < 0.15)
+            .collect();
+        let under = inside
+            .iter()
+            .filter(|&&k| rivers.lakes.as_slice()[k] > 0.0)
+            .count();
+        println!(
+            "brought water, losing none: {under} of the cup's {} cells under its lake, {:?}",
+            inside.len(),
+            rivers.summary
+        );
+        assert!(
+            under as f64 > 0.95 * inside.len() as f64,
+            "{under} {}",
+            inside.len()
+        );
     }
 
     /// The rivers keep the water: on rough ground of many nested basins, under a wet year, a
