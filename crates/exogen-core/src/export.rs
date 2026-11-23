@@ -16,7 +16,7 @@ use exr::prelude::{
 };
 use serde::Serialize;
 
-use crate::grid::projection::to_equirectangular;
+use crate::grid::projection::{to_equirectangular, to_equirectangular_by_sides};
 use crate::params::{Kind, ParamGraph};
 use crate::stages::FinishOutput;
 
@@ -734,11 +734,15 @@ pub fn export(
     // Height: the ground drawn so that it crosses the sea's level and each lake's where their
     // shares are a half, as mask_liquid does (F419, ADR 0009): a cell the relief at the cells'
     // scale set apart from the ground about it, on the lesser side of the sea's margin or a
-    // lake's, at the greater side's mean height; every other cell its own.
+    // lake's, at the greater side's mean height; every other cell its own. Each pixel the
+    // mean over its footprint of the cells on its own greater side (F426), the sea's where
+    // mask_liquid draws it over half, a lake's where mask_lakes does, else the land's: so that
+    // the pixels cross the levels where the masks' shares are a half, as the cells do.
     let grid = out.grid;
-    let height_eq = to_equirectangular(&grid, &drawn.height, width, height_px);
+    let shares: [&[f32]; 2] = [&drawn.sea_share, &drawn.lake_share];
+    let height_eq = to_equirectangular_by_sides(&grid, &drawn.height, &shares, width, height_px);
     let height_rel: Vec<f32> = height_eq.iter().map(|h| h - datum_offset as f32).collect();
-    let height_unit = "m above datum, the solid surface with the caps' ice on it; at the sea's margin and the lakes', a cell the relief at the cells' scale set apart from the ground about it at the greater side's mean (ADR 0009), so that it crosses the sea's level where mask_liquid's share is a half";
+    let height_unit = "m above datum, the solid surface with the caps' ice on it; at the sea's margin and the lakes', a cell the relief at the cells' scale set apart from the ground about it at the greater side's mean, and each pixel the mean of the cells on its own greater side, the sea's where mask_liquid's share is a half or more, a lake's where mask_lakes' is, else the land's (ADR 0009), so that it crosses the sea's level where mask_liquid's share is a half";
     let (hmin, hmax) = min_max(&height_rel);
     write_exr_f32(
         &settings.dir.join("height.exr"),

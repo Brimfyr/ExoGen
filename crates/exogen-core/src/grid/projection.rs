@@ -230,6 +230,62 @@ pub fn to_equirectangular(
     out
 }
 
+/// Resample a map of each cell's own that crosses a threshold where its kinds' shares are a half
+/// (F419), the height crossing the sea's level, to an equirectangular image of `width x height`
+/// pixels, each the mean over its footprint (F424) of the cells on its greater side (F426, ADR
+/// 0009). `shares`: the kinds' shares of each cell in their order, the sea's and then the
+/// lakes', the rest the land's. A cell is on the first kind's side whose share of it is over a
+/// half, else on the rest's; a pixel on the first kind's whose share of it, over its footprint,
+/// is a half or more, as the masks draw it, else on the rest's. So that a pixel the sea covers
+/// over half holds its shelf's floor and not that floor's mean with the land beside it, and the
+/// map crosses its threshold where the masks' shares are a half and not a pixel off. A pixel
+/// whose side has no cell within its reach holds the mean of all of them.
+pub fn to_equirectangular_by_sides(
+    grid: &CubeSphere,
+    values: &[f32],
+    shares: &[&[f32]],
+    width: usize,
+    height: usize,
+) -> Vec<f32> {
+    let side: Vec<usize> = (0..values.len())
+        .map(|c| {
+            shares
+                .iter()
+                .position(|s| s[c] > 0.5)
+                .unwrap_or(shares.len())
+        })
+        .collect();
+    let drawn: Vec<Vec<f32>> = shares
+        .iter()
+        .map(|s| to_equirectangular(grid, s, width, height))
+        .collect();
+    let pixel_side: Vec<usize> = (0..width * height)
+        .map(|p| {
+            drawn
+                .iter()
+                .position(|s| s[p] >= 0.5)
+                .unwrap_or(shares.len())
+        })
+        .collect();
+    let mut out = to_equirectangular(grid, values, width, height);
+    for kind in 0..=shares.len() {
+        if !pixel_side.contains(&kind) {
+            continue;
+        }
+        let on: Vec<f32> = side
+            .iter()
+            .map(|&s| if s == kind { 1.0 } else { 0.0 })
+            .collect();
+        let weighted: Vec<f32> = values.iter().zip(&on).map(|(v, w)| v * w).collect();
+        let sum = to_equirectangular(grid, &weighted, width, height);
+        let weight = to_equirectangular(grid, &on, width, height);
+        for p in (0..width * height).filter(|&p| pixel_side[p] == kind && weight[p] > 0.0) {
+            out[p] = sum[p] / weight[p];
+        }
+    }
+    out
+}
+
 /// Angular distance in radians from a direction to the nearest cube corner.
 pub fn angle_to_nearest_cube_corner(d: [f64; 3]) -> f64 {
     let s = 1.0 / 3f64.sqrt();
@@ -336,6 +392,77 @@ mod tests {
         assert!(point > 0.15, "{point}");
         assert!(mean < 0.25 * point, "{mean} {point}");
         assert!(off < 0.1, "{off}");
+    }
+
+    /// F426: each pixel its greater side's mean. A coast along a great circle off the grid's
+    /// axes, its sea a shelf 10 m deep against land 200 m high, and within the land a lake 5 m
+    /// deep over a floor at 150 m, each cell's share of each its distance from its margin
+    /// through a logistic over a cell, each cell its own side's height (F419); resampled to
+    /// pixels some four cells across. Over its footprint's mean a pixel the sea covers over
+    /// half stands over the level where its shelf's floor meets the land's height, a pixel the
+    /// lake covers over half over the lake's; over its greater side's, every pixel stands
+    /// under the sea's level exactly where the sea's share of it is a half or more, and under
+    /// the lake's where the lake's is; a pixel wholly of one kind as before.
+    #[test]
+    fn a_pixel_holds_its_greater_side_s_mean() {
+        use crate::geom::{angle_between, cross, dot, normalize};
+        let grid = CubeSphere::new(64);
+        let cell = FRAC_PI_2 / 64.0;
+        let coast = normalize([0.31, 0.17, 0.93]);
+        let along = normalize(cross(coast, [0.0, 0.0, 1.0]));
+        let inland = 12.0 * cell;
+        let centre = normalize([
+            coast[0] * inland.sin() + along[0] * inland.cos(),
+            coast[1] * inland.sin() + along[1] * inland.cos(),
+            coast[2] * inland.sin() + along[2] * inland.cos(),
+        ]);
+        let logistic = |x: f64| (1.0 / (1.0 + (2.0 * x).exp())) as f32;
+        let (mut sea, mut lake, mut ground) = (vec![], vec![], vec![]);
+        for c in grid.cells() {
+            let d = grid.center(c);
+            let s = logistic(dot(d, coast).asin() / cell);
+            let l = logistic((angle_between(d, centre) - 4.0 * cell) / cell);
+            sea.push(s);
+            lake.push(l);
+            ground.push(if s > 0.5 {
+                -10.0
+            } else if l > 0.5 {
+                150.0
+            } else {
+                200.0
+            });
+        }
+        let (w, h) = (64, 32);
+        let shares: [&[f32]; 2] = [&sea, &lake];
+        let mean = to_equirectangular(&grid, &ground, w, h);
+        let sides = to_equirectangular_by_sides(&grid, &ground, &shares, w, h);
+        let sea_px = to_equirectangular(&grid, &sea, w, h);
+        let lake_px = to_equirectangular(&grid, &lake, w, h);
+        let apart = |img: &[f32]| {
+            let at_sea = (0..w * h)
+                .filter(|&p| (img[p] < 0.0) != (sea_px[p] >= 0.5))
+                .count();
+            let at_lake = (0..w * h)
+                .filter(|&p| sea_px[p] < 0.5 && (img[p] < 155.0) != (lake_px[p] >= 0.5))
+                .count();
+            (at_sea, at_lake)
+        };
+        let whole = (0..w * h)
+            .filter(|&p| {
+                let one = |s: f32| s <= 1e-6 || s >= 1.0 - 1e-6;
+                one(sea_px[p]) && one(lake_px[p])
+            })
+            .map(|p| (sides[p] - mean[p]).abs())
+            .fold(0.0f32, f32::max);
+        println!(
+            "pixels apart from their shares' half, the sea's and the lake's: {:?} over the footprint's mean, {:?} over the greater side's; a pixel wholly of one kind off by {whole}",
+            apart(&mean),
+            apart(&sides)
+        );
+        let (sea_mean, lake_mean) = apart(&mean);
+        assert!(sea_mean >= 5 && lake_mean >= 2, "{sea_mean} {lake_mean}");
+        assert_eq!(apart(&sides), (0, 0));
+        assert!(whole < 1e-3, "{whole}");
     }
 
     /// Worst error of the edge ghosts (corners excluded) against the analytic field.
