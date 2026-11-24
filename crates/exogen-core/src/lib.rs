@@ -43,6 +43,7 @@ pub(crate) mod testkit;
 pub mod thermal;
 pub mod units;
 pub mod validate;
+pub mod waves;
 pub mod wind;
 mod sweeps;
 

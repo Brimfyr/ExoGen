@@ -208,6 +208,16 @@ pub struct WindInfo {
     pub trades_end_deg: [f64; 2],
 }
 
+/// The waves the year's wind raises on the sea (F428): their year-mean significant height over
+/// the sea, m, and at its coasts the median and the most of the height exceeded 12 hours a
+/// year, m.
+#[derive(Serialize)]
+pub struct WavesInfo {
+    pub mean_m: f64,
+    pub coast_exceeded_median_m: f64,
+    pub coast_exceeded_most_m: f64,
+}
+
 /// An ice of the cryosphere's maps (F253): its index in cryosphere_ice.png, its name and its
 /// species, where it lies, its colour, linear reflectance, its density, the mass that hides
 /// 1 - 1/e of what lies under it, the mass it lies at, past which half is hidden, which
@@ -556,6 +566,8 @@ pub struct Sidecar {
     pub cryosphere: Option<CryosphereInfo>,
     /// The year's surface wind (F267), none without an atmosphere.
     pub wind: Option<WindInfo>,
+    /// The waves the year's wind raises on the sea (F428), none without wind or sea.
+    pub waves: Option<WavesInfo>,
     /// The year's water (F268), none without a working liquid under an atmosphere.
     pub water: Option<WaterInfo>,
     /// The year's water clouds (M66), none where its working liquid is not water.
@@ -684,6 +696,8 @@ pub fn export(
         "cryosphere_share.png",
         "wind.exr",
         "wind.png",
+        "waves.exr",
+        "waves.png",
         "clouds.exr",
         "clouds.png",
         "precipitation.exr",
@@ -1650,6 +1664,98 @@ pub fn export(
             ..Default::default()
         },
     );
+    // The waves the year's wind raises on the sea (F428): R the year's mean significant height,
+    // G the height exceeded 12 hours a year (Hallermeier's H_e), m, B its period, s; read from
+    // the grid they were raised on, the sea's over the sea's share of each pixel, as the
+    // aridity is the land's (ADR 0009); all zero without wind or sea.
+    let wave_maps: Vec<Vec<f32>> = match &out.waves {
+        Some(w) => {
+            let sea: Vec<bool> = out
+                .layers
+                .liquid
+                .as_slice()
+                .iter()
+                .map(|&l| l > 0.0)
+                .collect();
+            [&w.mean, &w.exceeded, &w.exceeded_period]
+                .iter()
+                .map(|values| {
+                    let fine = w.on(grid, &sea, values);
+                    let drawn_values = crate::shares::of_kind(&grid, &fine, &drawn.wet);
+                    to_equirectangular(&grid, &drawn_values, width, height_px)
+                })
+                .collect()
+        }
+        None => vec![calm(), calm(), calm()],
+    };
+    let most = |m: &[f32]| m.iter().fold(0.0f32, |a, &v| a.max(v)) as f64;
+    let (highest, longest) = (
+        most(&wave_maps[1]).max(most(&wave_maps[0])),
+        most(&wave_maps[2]),
+    );
+    let wave_channels = || {
+        [
+            ("R", "the year's mean significant height", "m", highest),
+            ("G", "the height exceeded 12 hours a year", "m", highest),
+            (
+                "B",
+                "the period of the height exceeded 12 hours a year",
+                "s",
+                longest,
+            ),
+        ]
+        .map(|(name, holds, unit, max)| ChannelInfo {
+            name: name.into(),
+            holds: holds.into(),
+            unit: unit.into(),
+            min: 0.0,
+            max,
+        })
+        .into_iter()
+        .collect::<Vec<_>>()
+    };
+    let wave_units = "the waves the year's wind raises on the sea over its fetch, by the Coastal Engineering Manual's growth (F428): R the year's mean significant height, m; G the height exceeded 12 hours a year, Hallermeier's H_e, m; B its period, s; the sea's over the sea's share of each pixel; all zero without wind or sea";
+    write_exr_channels(
+        &settings.dir.join("waves.exr"),
+        (width, height_px),
+        "waves",
+        &["R", "G", "B"],
+        &wave_maps,
+    )?;
+    maps.insert(
+        "waves".to_string(),
+        MapInfo {
+            file: "waves.exr".into(),
+            encoding: "float32 EXR, channels R, G, B".into(),
+            units: wave_units.into(),
+            min: 0.0,
+            max: highest,
+            channels: wave_channels(),
+            ..Default::default()
+        },
+    );
+    let wave_png: Vec<Vec<f32>> = [highest, highest, longest]
+        .iter()
+        .zip(&wave_maps)
+        .map(|(&top, m)| m.iter().map(|&v| v / top.max(1e-6) as f32).collect())
+        .collect();
+    write_png_rgb16(
+        &settings.dir.join("waves.png"),
+        (width, height_px),
+        &wave_png,
+    )?;
+    maps.insert(
+        "waves_png".to_string(),
+        MapInfo {
+            file: "waves.png".into(),
+            encoding: "16-bit RGB PNG, each channel linear from 0 to its max".into(),
+            units: wave_units.into(),
+            min: 0.0,
+            max: highest,
+            channels: wave_channels(),
+            ..Default::default()
+        },
+    );
     // The year's water clouds (M66): R the low cloud's year-mean cover, G the layers', B the
     // anvils', A the towers', shares of the place, bilinear; they overlap at random, so that
     // the share any covers is 1 - (1 - R)(1 - G)(1 - B)(1 - A). All zero where the working
@@ -1957,6 +2063,14 @@ pub fn export(
         under_own_clouds: out.under_own_clouds,
     });
     let atmosphere = atmosphere_info(graph, out);
+    let waves = out.waves.as_ref().map(|w| {
+        let s = w.summary();
+        WavesInfo {
+            mean_m: s.mean,
+            coast_exceeded_median_m: s.coast_exceeded_median,
+            coast_exceeded_most_m: s.coast_exceeded_most,
+        }
+    });
     let wind = out.wind_summary.map(|w| WindInfo {
         mean_speed_m_s: w.speed,
         fastest_m_s: w.fastest,
@@ -2217,6 +2331,7 @@ pub fn export(
             .collect(),
         cryosphere,
         wind,
+        waves,
         water,
         clouds,
         atmosphere,

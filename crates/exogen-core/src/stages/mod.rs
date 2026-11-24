@@ -244,6 +244,8 @@ pub struct FinishOutput {
     /// speed, m/s, none without an atmosphere; and the year in brief.
     pub wind: Option<[Field<f32>; 3]>,
     pub wind_summary: Option<crate::wind::Summary>,
+    /// The waves the year's wind raises on the liquid (F428), none without wind or liquid.
+    pub waves: Option<crate::waves::Waves>,
     /// The year's water where the body has a working liquid under an atmosphere (F268): its
     /// precipitation over its relief (F270), kg/m² a year, and its aridity index; its liquid's
     /// vapour; and the year in brief.
@@ -467,7 +469,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 259;
+pub const FINISH_VERSION: u64 = 260;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3475,6 +3477,34 @@ pub fn finish(
             let sea: Vec<bool> = layers.liquid.as_slice().iter().map(|&l| l > 0.0).collect();
             (shed, gain, sea, air.vapour.liquid_density)
         });
+    // The waves the year's wind raises on the liquid (F428).
+    let waves = cycle.wind.as_ref().and_then(|w| {
+        let started = std::time::Instant::now();
+        let sea: Vec<bool> = layers.liquid.as_slice().iter().map(|&l| l > 0.0).collect();
+        let raised = crate::waves::raise(
+            grid,
+            &sea,
+            (
+                body_radius,
+                graph.f64("body.gravity"),
+                graph.f64("rotation.angular_velocity").abs(),
+            ),
+            (w.layout.0, w.layout.1, w.steps),
+            (&w.east, &w.north, &w.speed),
+            &cycle.masses[1],
+        );
+        if let (Some(r), true) = (&raised, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+            let s = r.summary();
+            eprintln!(
+                "waves: {:.2} m significant over the liquid in the year's mean; at its coasts {:.2} m exceeded 12 hours a year in the median, {:.2} m at most; {:.1} s",
+                s.mean,
+                s.coast_exceeded_median,
+                s.coast_exceeded_most,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        raised
+    });
     let erosion = land_water.as_ref().map(|(shed, gain, sea, density)| {
         let started = std::time::Instant::now();
         let hold = stress::StressField::flexural_wavelength(
@@ -3490,7 +3520,9 @@ pub fn finish(
         let water = (shed.as_slice(), gain.as_slice());
         let liquid = (body_radius, *density, sea_level);
         let lithosphere = (hold, crust, mantle);
-        let moved = crate::fluvial::erode(grid, &mut layers, sea, water, liquid, lithosphere);
+        let carried = waves.as_ref().map(|w| (w, graph.f64("body.gravity")));
+        let moved =
+            crate::fluvial::erode(grid, &mut layers, sea, water, liquid, lithosphere, carried);
         if std::env::var_os("EXOGEN_DEBUG").is_some() {
             eprintln!(
                 "fluvial: the rivers cut {:.0} km³ through {:.1} Myr, laying {:.0} in lakes and pits and bringing {:.0} to the sea; begun at {:.3} mm a year over the land; {:.1} s",
@@ -3507,6 +3539,12 @@ pub fn finish(
                 moved.carried_on / 1e9,
                 moved.over / 1e9,
                 moved.sank
+            );
+            eprintln!(
+                "waves: of {} mouths through the span, {} laid along their coasts by their waves, {:.0} km³ moved from them",
+                moved.mouths,
+                moved.waved,
+                moved.along / 1e9
             );
         }
         moved
@@ -3828,6 +3866,7 @@ pub fn finish(
         cryosphere_series: cycle.series.clone(),
         wind,
         wind_summary,
+        waves,
         water,
         water_vapour,
         water_summary,
@@ -4845,6 +4884,9 @@ mod tests {
             ("the_rivers_lay_their_load_on_the_sea_floor", &|| {
                 the_rivers_lay_their_load_on_the_sea_floor(&earth)
             }),
+            ("the_waves_rise_with_the_wind_and_carry_the_deltas", &|| {
+                the_waves_rise_with_the_wind_and_carry_the_deltas(&earth)
+            }),
             ("the_maps_draw_shares_not_cells", &|| {
                 the_maps_draw_shares_not_cells(&earth)
             }),
@@ -5335,6 +5377,48 @@ mod tests {
         let kept = e.floor + e.over;
         assert!(e.to_sea > 0.0 && ((kept - e.to_sea) / e.to_sea).abs() < 1e-6, "{e:?}");
         assert!(most < 0.5, "{most}");
+    }
+
+    /// F428, F429: the Earth-like's waves stand at heights the Earth's seas know, their year's
+    /// mean over the sea within 0.5 to 3 m and the height its coasts exceed 12 hours a year in
+    /// the median within 2 to 8 m, higher under the westerlies than at the equator; its waves
+    /// lay most of its rivers' mouths' load along their coasts, a share of all it brings the
+    /// sea moved from them.
+    fn the_waves_rise_with_the_wind_and_carry_the_deltas(body: &Body) {
+        let finish = &body.out.finish;
+        let w = finish.waves.as_ref().expect("the Earth-like's waves");
+        let s = w.summary();
+        let e = finish.erosion.expect("the Earth-like's rivers erode");
+        let g = w.grid;
+        let band = |lo: f64, hi: f64| {
+            let mut v: Vec<f64> = (0..g.cell_count())
+                .filter(|&k| w.sea[k])
+                .filter(|&k| {
+                    let (_, lat) = crate::grid::lon_lat_from_direction(g.center(g.cell(k)));
+                    (lo..hi).contains(&lat.to_degrees().abs())
+                })
+                .map(|k| w.mean[k] as f64)
+                .collect();
+            v.sort_by(f64::total_cmp);
+            v.get(v.len() / 2).copied().unwrap_or(0.0)
+        };
+        let (equator, westerlies) = (band(0.0, 15.0), band(35.0, 55.0));
+        println!(
+            "Earth-like: waves {:.2} m over the sea in the year's mean, {:.2} m at the equator's median and {:.2} m under the westerlies'; its coasts {:.2} m exceeded 12 hours a year in the median, {:.2} m at most; {} of {} mouths laid along their coasts, {:.3e} m³ of {:.3e} moved",
+            s.mean,
+            equator,
+            westerlies,
+            s.coast_exceeded_median,
+            s.coast_exceeded_most,
+            e.waved,
+            e.mouths,
+            e.along,
+            e.to_sea
+        );
+        assert!((0.5..3.0).contains(&s.mean), "{s:?}");
+        assert!((2.0..8.0).contains(&s.coast_exceeded_median), "{s:?}");
+        assert!(westerlies > equator, "{equator} {westerlies}");
+        assert!(e.waved * 2 > e.mouths && e.along > 0.01 * e.to_sea, "{e:?}");
     }
 
     /// F411: through the loop the Earth-like's sea stands as its history keeps it, filled over

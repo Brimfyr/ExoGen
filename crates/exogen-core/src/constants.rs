@@ -3153,6 +3153,56 @@ pub const WEDGE_ROUNDS: u32 = 60;
 /// steps read the sea, its heights' rounding at an Earth-like's datum some 2e-4 m: a numerical
 /// choice.
 pub const LEVEL_TOLERANCE: f64 = 0.01;
+/// F428: the waves a wind raises over a fetch, by the Coastal Engineering Manual (EM
+/// 1110-2-1100, Part II, Chapter 2, 2003, read from its printed pages): the drag of a wind of
+/// U10 m/s at 10 m, C_D = WAVE_DRAG.0 (WAVE_DRAG.1 + WAVE_DRAG.2 U10), u*² = C_D U10²; the
+/// fetch-limited growth, g H_m0 / u*² = WAVE_GROWTH.0 (g X / u*²)^(1/2) and g T_p / u* =
+/// WAVE_GROWTH.1 (g X / u*²)^(1/3) (eq. II-2-36); and the fully developed sea, g H_m0 / u*² =
+/// WAVE_DEVELOPED.0 and g T_p / u* = WAVE_DEVELOPED.1 (eq. II-2-37). Measured fits, on the
+/// Earth's air over its water.
+pub const WAVE_DRAG: (f64, f64, f64) = (0.001, 1.1, 0.035);
+pub const WAVE_GROWTH: (f64, f64) = (4.13e-2, 0.651);
+pub const WAVE_DEVELOPED: (f64, f64) = (211.5, 239.8);
+/// F428: the duration-limited growth's equivalent fetch, g X / u*² = WAVE_DURATION (g t /
+/// u*)^(3/2), of a wind blowing for t s (the manual's eq. II-2-38).
+pub const WAVE_DURATION: f64 = 5.23e-3;
+/// F428: an eddy of the weather turns its wind through half the compass as it passes a place,
+/// so that it blows within a quarter turn of one way, as the manual's growth reads a wind of
+/// constant direction, for its passage over WAVE_EDDY_TURNS: a stated geometric choice.
+pub const WAVE_EDDY_TURNS: f64 = 4.0;
+/// F428: the directions the waves' fetch and energy are read in, clockwise from north; the
+/// grid their fetch is walked on, the finish's face over WAVE_FACE_SHARE, at least
+/// WAVE_LEAST_FACE; and the rings of its cells a place on the land looks through for the
+/// liquid's nearest: numerical choices.
+pub const WAVE_DIRECTIONS: usize = 16;
+pub const WAVE_FACE_SHARE: u32 = 4;
+pub const WAVE_LEAST_FACE: u32 = 8;
+pub const WAVE_COAST_RINGS: usize = 2;
+/// F428: the hours of a year the waves' effective height is exceeded, Hallermeier's (1981)
+/// H_e, as Udo, Ranasinghe and Takeda (2020) give his depth of closure, h_c = 2.28 H_e -
+/// 68.5 H_e² / (g T_e²): the same share of the time on any body.
+pub const WAVE_EXCEEDED_HOURS: f64 = 12.0;
+/// F428: the bins of height a place's waves through its year are gathered into to read the
+/// height they exceed for a share of the time: a numerical choice.
+pub const WAVE_HEIGHT_BINS: usize = 256;
+/// F429: the waves' carrying along a coast, K1 H^(12/5) T^(1/5) cos^(6/5)(x) sin(x) m³/s of
+/// the ground (Ashton and Murray 2006's deep-water form of the CERC formula): K1
+/// WAVE_CARRY.0 m^(3/5)/s^(6/5) at the Earth's gravity, WAVE_CARRY.1 m/s², the value Nienhuis,
+/// Ashton and Giosan (2015, Supplemental Methods eq. 2) take with the fluvial dominance ratio,
+/// within the measured spread of such constants (Ashton and Murray's 0.34 from Komar's 0.4).
+pub const WAVE_CARRY: (f64, f64) = (0.06, 9.81);
+/// F429: Hallermeier's (1981) depth of closure, h_c = WAVE_CLOSURE.0 H_e - WAVE_CLOSURE.1
+/// H_e² / (g T_e²) (as Udo, Ranasinghe and Takeda 2020 give it, their eq. 2): the depth over
+/// which the waves move the shore's sand, the shoreface one-line models spread a coast's
+/// change over (Ashton and Murray 2006's D_sf).
+pub const WAVE_CLOSURE: (f64, f64) = (2.28, 68.5);
+/// F429: the cells about a mouth its coast's facing is read over; the turns of a delta's flank
+/// its waves' carrying is read at, from along the coast to across it; and the least a flank
+/// turns, rad, where the waves carry away along the coast itself all the river brings, so that
+/// its delta's reach along the coast stays bounded: numerical choices.
+pub const WAVE_FACING_CELLS: usize = 3;
+pub const WAVE_FLANK_SAMPLES: usize = 46;
+pub const WAVE_FLANK_LEAST: f64 = 0.017_453_292_519_943_295;
 /// F245: the share of the transport a sea's water carries across the sea's share of the
 /// boundary between two places, the air the rest: some third, the ocean's share of the
 /// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated

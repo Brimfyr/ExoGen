@@ -30,8 +30,9 @@ use crate::rivers::{Drainage, NONE, drain};
 /// laid in lakes and what they brought the sea, m³; and the rate they began at, m a year over
 /// the land, the land's mean. What they brought the sea laid on its floor under its level
 /// (F414), m³; what full seas held back and the rivers carried on, m³, each time they carried
-/// it; what was laid over the level where at the last step no sea had room left, m³; and the
-/// most the floor sank under its load (F415), m.
+/// it; what was laid over the level where at the last step no sea had room left, m³; the
+/// most the floor sank under its load (F415), m; and the mouths whose load their waves laid
+/// along their coasts and what of it they moved from them, m³, through the span (F429).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Erosion {
     pub cut: f64,
@@ -42,6 +43,9 @@ pub struct Erosion {
     pub carried_on: f64,
     pub over: f64,
     pub sank: f64,
+    pub mouths: usize,
+    pub waved: usize,
+    pub along: f64,
 }
 
 /// The rivers' erosion of the ground in `layers` on a grid of a body of `radius` m (F278), its
@@ -54,7 +58,9 @@ pub struct Erosion {
 /// it, so that where the load fills a sea to its level the next step's rivers run over it, and
 /// carry on with them what a full sea held back, into the basins and the seas beyond, steps of
 /// carrying alone after the span's until none is left, the last spreading what no sea has room
-/// for over all the sea it reached.
+/// for over all the sea it reached. Where the sea has `waves` under gravity `g`, each step's
+/// mouths' load is laid along their coasts as their waves carry it before it is built out
+/// (F429).
 pub fn erode(
     grid: CubeSphere,
     layers: &mut LayerSet,
@@ -62,6 +68,7 @@ pub fn erode(
     water: (&[f32], &[f32]),
     (radius, density, sea_level): (f64, f64, f64),
     (hold, crust, mantle): (f64, f64, f64),
+    waves: Option<(&crate::waves::Waves, f64)>,
 ) -> Erosion {
     let rebound = crust / mantle;
     let n = grid.cell_count();
@@ -165,6 +172,20 @@ pub fn erode(
         // sea reached, over its level.
         let last = pass + 1 == 2 * FLUVIAL_STEPS;
         let clock = std::time::Instant::now();
+        // The waves lay each mouth's load along its coast (F429).
+        if let (Some((w, g)), true) = (waves, laying) {
+            let (all, waved, along) = w.spread(
+                grid,
+                &wet,
+                (h.as_slice(), sea_level),
+                &mut mouths,
+                (dt * year, FLUVIAL_STEPS),
+                (radius, g),
+            );
+            out.mouths += all;
+            out.waved += waved;
+            out.along += along;
+        }
         let floor = if laying && mouths.iter().any(|&m| m > 0.0) {
             let (mut floor, rests, full) = crate::stages::seafloor::wedges(
                 grid,
@@ -643,6 +664,7 @@ mod tests {
                 (&runoff, &gain),
                 (radius, 1_000.0, 0.0),
                 (hold, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+                None,
             );
             let fell = land_mean(&start) - land_mean(&layers);
             let share = fell / ((moved.cut - moved.laid) / land);
@@ -728,6 +750,7 @@ mod tests {
             (&runoff, &gain),
             (radius, 1_000.0, 0.0),
             (2e6, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+            None,
         );
         let after = route(&layers);
         println!(
@@ -877,6 +900,7 @@ mod tests {
             (&runoff, &gain),
             (2e6, 1_000.0, 0.0),
             (2e5, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+            None,
         );
         println!("{moved:?}");
         assert!(moved.to_sea > 0.0 && moved.floor > 0.0);
@@ -919,6 +943,7 @@ mod tests {
             (&runoff, &gain),
             (2e6, 1_000.0, 0.0),
             (hold, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+            None,
         );
         let h = layers.height();
         let lowest = inside
