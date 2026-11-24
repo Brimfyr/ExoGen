@@ -218,6 +218,25 @@ pub struct WavesInfo {
     pub coast_exceeded_most_m: f64,
 }
 
+/// The coasts the waves work (F430): the share of the cells on the land beside the sea under ice
+/// or without waves, behind beaches, standing, cut into cliffs in loose ground and in rock; the
+/// median and the most of the platforms and the cliffs where the waves cut, m; and what they
+/// cut, km³.
+#[derive(Serialize)]
+pub struct CoastInfo {
+    pub cells: usize,
+    pub none_share: f64,
+    pub beach_share: f64,
+    pub standing_share: f64,
+    pub loose_cliff_share: f64,
+    pub rock_cliff_share: f64,
+    pub platform_median_m: f64,
+    pub platform_most_m: f64,
+    pub cliff_median_m: f64,
+    pub cliff_most_m: f64,
+    pub cut_km3: f64,
+}
+
 /// An ice of the cryosphere's maps (F253): its index in cryosphere_ice.png, its name and its
 /// species, where it lies, its colour, linear reflectance, its density, the mass that hides
 /// 1 - 1/e of what lies under it, the mass it lies at, past which half is hidden, which
@@ -568,6 +587,8 @@ pub struct Sidecar {
     pub wind: Option<WindInfo>,
     /// The waves the year's wind raises on the sea (F428), none without wind or sea.
     pub waves: Option<WavesInfo>,
+    /// The coasts the waves work (F430), none without waves.
+    pub coast: Option<CoastInfo>,
     /// The year's water (F268), none without a working liquid under an atmosphere.
     pub water: Option<WaterInfo>,
     /// The year's water clouds (M66), none where its working liquid is not water.
@@ -698,6 +719,8 @@ pub fn export(
         "wind.png",
         "waves.exr",
         "waves.png",
+        "coast.exr",
+        "coast.png",
         "clouds.exr",
         "clouds.png",
         "precipitation.exr",
@@ -1756,6 +1779,99 @@ pub fn export(
             ..Default::default()
         },
     );
+    // The coasts the waves work (F430): R the width of the platform they cut, G the height of
+    // the cliff behind it, B the width of the beach before it, m, A its kind, 0 none (no coast,
+    // under ice or without waves), 1 behind a beach, 2 standing, 3 a cliff in loose ground, 4 a
+    // cliff in rock; on the land's cells beside the sea, each pixel the most of the cells in it
+    // as the rivers' lines are, so that a coast a cell wide stays unbroken; all zero without
+    // waves. Context for the detail pass (PLAN section 4.11): the platforms lie below the cells.
+    let coast_maps: Vec<Vec<f32>> = match &out.coast {
+        Some(c) => {
+            let on_coast = |f: &dyn Fn(usize) -> f32| -> Vec<f32> {
+                let values: Vec<f32> = (0..c.kind.len())
+                    .map(|k| if c.coastal[k] { f(k) } else { 0.0 })
+                    .collect();
+                to_equirectangular_most(&grid, &values, width, height_px)
+            };
+            vec![
+                on_coast(&|k| c.platform[k]),
+                on_coast(&|k| c.cliff[k]),
+                on_coast(&|k| c.beach[k]),
+                on_coast(&|k| c.kind[k] as f32),
+            ]
+        }
+        None => vec![calm(), calm(), calm(), calm()],
+    };
+    let coast_most = [
+        most(&coast_maps[0]),
+        most(&coast_maps[1]),
+        most(&coast_maps[2]),
+        crate::cliffs::COAST_ROCK_CLIFF as f64,
+    ];
+    let coast_channels = || {
+        [
+            ("R", "the width of the platform the waves cut", "m"),
+            ("G", "the height of the cliff behind the platform", "m"),
+            ("B", "the width of the beach before the cliff", "m"),
+            (
+                "A",
+                "the coast's kind: 0 none, 1 behind a beach, 2 standing, 3 a cliff in loose ground, 4 a cliff in rock",
+                "",
+            ),
+        ]
+        .iter()
+        .zip(coast_most)
+        .map(|(&(name, holds, unit), max)| ChannelInfo {
+            name: name.into(),
+            holds: holds.into(),
+            unit: unit.into(),
+            min: 0.0,
+            max,
+        })
+        .collect::<Vec<_>>()
+    };
+    let coast_units = "the coasts the waves work at the sea's level (F430), on the land's cells beside the sea, each pixel the most of the cells in it: R the width of the platform the waves cut, m; G the height of the cliff behind it, m; B the width of the beach before it, m; A the coast's kind, 0 none (under ice or without waves), 1 behind a beach, 2 standing, 3 a cliff in loose ground, 4 a cliff in rock; all zero without waves; the platforms lie below the cells, context for the detail pass";
+    write_exr_channels(
+        &settings.dir.join("coast.exr"),
+        (width, height_px),
+        "coast",
+        &["R", "G", "B", "A"],
+        &coast_maps,
+    )?;
+    maps.insert(
+        "coast".to_string(),
+        MapInfo {
+            file: "coast.exr".into(),
+            encoding: "float32 EXR, channels R, G, B, A".into(),
+            units: coast_units.into(),
+            min: 0.0,
+            max: coast_most[0].max(coast_most[1]).max(coast_most[2]),
+            channels: coast_channels(),
+            ..Default::default()
+        },
+    );
+    let coast_png: Vec<Vec<f32>> = coast_most
+        .iter()
+        .zip(&coast_maps)
+        .map(|(&top, m)| m.iter().map(|&v| v / top.max(1e-6) as f32).collect())
+        .collect();
+    write_png_rgba16(
+        &settings.dir.join("coast.png"),
+        (width, height_px),
+        &coast_png,
+    )?;
+    maps.insert(
+        "coast_png".to_string(),
+        MapInfo {
+            file: "coast.png".into(),
+            encoding: "16-bit RGBA PNG, each channel linear from 0 to its max".into(),
+            units: coast_units.into(),
+            min: 0.0,
+            max: coast_most[0].max(coast_most[1]).max(coast_most[2]),
+            channels: coast_channels(),
+            ..Default::default()
+        },
+    );
     // The year's water clouds (M66): R the low cloud's year-mean cover, G the layers', B the
     // anvils', A the towers', shares of the place, bilinear; they overlap at random, so that
     // the share any covers is 1 - (1 - R)(1 - G)(1 - B)(1 - A). All zero where the working
@@ -2071,6 +2187,22 @@ pub fn export(
             coast_exceeded_most_m: s.coast_exceeded_most,
         }
     });
+    let coast = out.coast.as_ref().map(|c| {
+        let s = c.summary();
+        CoastInfo {
+            cells: s.cells,
+            none_share: s.shares[crate::cliffs::COAST_NONE as usize],
+            beach_share: s.shares[crate::cliffs::COAST_BEACH as usize],
+            standing_share: s.shares[crate::cliffs::COAST_STANDING as usize],
+            loose_cliff_share: s.shares[crate::cliffs::COAST_LOOSE_CLIFF as usize],
+            rock_cliff_share: s.shares[crate::cliffs::COAST_ROCK_CLIFF as usize],
+            platform_median_m: s.platform_median,
+            platform_most_m: s.platform_most,
+            cliff_median_m: s.cliff_median,
+            cliff_most_m: s.cliff_most,
+            cut_km3: s.cut / 1e9,
+        }
+    });
     let wind = out.wind_summary.map(|w| WindInfo {
         mean_speed_m_s: w.speed,
         fastest_m_s: w.fastest,
@@ -2332,6 +2464,7 @@ pub fn export(
         cryosphere,
         wind,
         waves,
+        coast,
         water,
         clouds,
         atmosphere,

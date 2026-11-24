@@ -246,6 +246,9 @@ pub struct FinishOutput {
     pub wind_summary: Option<crate::wind::Summary>,
     /// The waves the year's wind raises on the liquid (F428), none without wind or liquid.
     pub waves: Option<crate::waves::Waves>,
+    /// The cliffs the waves cut at the liquid's level and the platforms at their feet (F430),
+    /// none without waves.
+    pub coast: Option<crate::cliffs::Coast>,
     /// The year's water where the body has a working liquid under an atmosphere (F268): its
     /// precipitation over its relief (F270), kg/m² a year, and its aridity index; its liquid's
     /// vapour; and the year in brief.
@@ -469,7 +472,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 260;
+pub const FINISH_VERSION: u64 = 261;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3505,6 +3508,8 @@ pub fn finish(
         }
         raised
     });
+    // The loose cover before the rivers' erosion, against which what it laid is read (F430).
+    let cover_before = waves.as_ref().map(|_| layers.regolith.as_slice().to_vec());
     let erosion = land_water.as_ref().map(|(shed, gain, sea, density)| {
         let started = std::time::Instant::now();
         let hold = stress::StressField::flexural_wavelength(
@@ -3561,7 +3566,62 @@ pub fn finish(
             );
         }
     }
-    let height = if erosion.is_some() {
+    // The cliffs the waves cut at the liquid's level and the platforms at their feet (F430),
+    // through the span the finish holds the liquid at its level: what the rivers laid before
+    // them through it their beaches, what they cut laid at their feet.
+    let coast = match (&waves, &land_water, &cover_before) {
+        (Some(w), Some((.., density)), Some(before)) if sea_level.is_finite() => {
+            let laid: Vec<f32> = layers
+                .regolith
+                .as_slice()
+                .iter()
+                .zip(before)
+                .map(|(&now, &then)| (now - then).max(0.0))
+                .collect();
+            let coast = crate::cliffs::cut(
+                grid,
+                &mut layers,
+                &laid,
+                w,
+                (sea_level, body_radius),
+                crate::cliffs::rock_strength(graph.str("materials.bedrock")),
+                (*density, graph.f64("body.gravity")),
+            );
+            if std::env::var_os("EXOGEN_DEBUG").is_some() {
+                let s = coast.summary();
+                let mut covers: Vec<f32> = (0..coast.coastal.len())
+                    .filter(|&k| coast.coastal[k])
+                    .map(|k| layers.regolith.as_slice()[k])
+                    .collect();
+                covers.sort_by(f32::total_cmp);
+                let covered = covers.iter().filter(|&&c| c > 0.0).count();
+                eprintln!(
+                    "cliffs: of {} cells on the coast, {:.1}% under ice or without waves, {:.1}% beaches, {:.1}% standing, {:.1}% cliffs in loose ground, {:.1}% in rock; platforms {:.0} m in the median where cut, {:.0} at most; cliffs {:.1} m, {:.1} at most; {:.3} km³ cut and laid at their feet; {:.1}% of the coast's cells under a loose cover, {:.1} m in its median",
+                    s.cells,
+                    100.0 * s.shares[0],
+                    100.0 * s.shares[1],
+                    100.0 * s.shares[2],
+                    100.0 * s.shares[3],
+                    100.0 * s.shares[4],
+                    s.platform_median,
+                    s.platform_most,
+                    s.cliff_median,
+                    s.cliff_most,
+                    s.cut / 1e9,
+                    100.0 * covered as f64 / covers.len().max(1) as f64,
+                    covers
+                        .iter()
+                        .filter(|&&c| c > 0.0)
+                        .nth(covered / 2)
+                        .copied()
+                        .unwrap_or(0.0)
+                );
+            }
+            Some(coast)
+        }
+        _ => None,
+    };
+    let height = if erosion.is_some() || coast.is_some() {
         layers.height()
     } else {
         height
@@ -3867,6 +3927,7 @@ pub fn finish(
         wind,
         wind_summary,
         waves,
+        coast,
         water,
         water_vapour,
         water_summary,
@@ -4887,6 +4948,9 @@ mod tests {
             ("the_waves_rise_with_the_wind_and_carry_the_deltas", &|| {
                 the_waves_rise_with_the_wind_and_carry_the_deltas(&earth)
             }),
+            ("the_waves_cut_the_loose_coasts_and_leave_the_rock", &|| {
+                the_waves_cut_the_loose_coasts_and_leave_the_rock(&earth)
+            }),
             ("the_maps_draw_shares_not_cells", &|| {
                 the_maps_draw_shares_not_cells(&earth)
             }),
@@ -5419,6 +5483,38 @@ mod tests {
         assert!((2.0..8.0).contains(&s.coast_exceeded_median), "{s:?}");
         assert!(westerlies > equator, "{equator} {westerlies}");
         assert!(e.waved * 2 > e.mouths && e.along > 0.01 * e.to_sea, "{e:?}");
+    }
+
+    /// F430: the Earth-like's waves cut cliffs only in the loose ground its rivers laid, its
+    /// felsic crust standing under any wave its seas raise; each platform no wider than its
+    /// strongest coast's waves cut, some hundreds of metres, below the cells; most of its
+    /// coasts worked by waves; what they cut a trace of what its rivers bring the sea, all laid
+    /// at the cliffs' feet.
+    fn the_waves_cut_the_loose_coasts_and_leave_the_rock(body: &Body) {
+        use crate::cliffs::*;
+        let finish = &body.out.finish;
+        let c = finish.coast.as_ref().expect("the Earth-like's coasts");
+        let w = finish.waves.as_ref().expect("the Earth-like's waves");
+        let e = finish.erosion.expect("the Earth-like's rivers erode");
+        let s = c.summary();
+        println!("Earth-like: coasts {s:?}");
+        assert!(s.cells > 1000, "{s:?}");
+        assert!((s.shares.iter().sum::<f64>() - 1.0).abs() < 1e-9, "{s:?}");
+        assert_eq!(s.shares[COAST_ROCK_CLIFF as usize], 0.0, "{s:?}");
+        assert!(s.shares[COAST_NONE as usize] < 0.5, "{s:?}");
+        // The widest platform the strongest coast's waves cut in loose ground.
+        let strongest = w.exceeded.iter().fold(0.0f32, |a, &v| a.max(v)) as f64;
+        let widest = still_width(strongest, CLIFF_LOOSE_STRENGTH, (1025.0, 9.81));
+        assert!(s.platform_most <= 1.05 * widest, "{s:?} {widest:.0}");
+        assert!(
+            s.platform_median == 0.0 || (20.0..500.0).contains(&s.platform_median),
+            "{s:?}"
+        );
+        assert!(s.cut < 1e-6 * e.to_sea, "{s:?} {:.3e}", e.to_sea);
+        for k in (0..c.kind.len()).filter(|&k| c.platform[k] > 0.0) {
+            assert_eq!(c.kind[k], COAST_LOOSE_CLIFF);
+            assert!(c.coastal[k]);
+        }
     }
 
     /// F411: through the loop the Earth-like's sea stands as its history keeps it, filled over

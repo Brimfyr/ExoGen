@@ -3203,6 +3203,31 @@ pub const WAVE_CLOSURE: (f64, f64) = (2.28, 68.5);
 pub const WAVE_FACING_CELLS: usize = 3;
 pub const WAVE_FLANK_SAMPLES: usize = 46;
 pub const WAVE_FLANK_LEAST: f64 = 0.017_453_292_519_943_295;
+/// F430: the waves cut a cliff's toe while their force there, rho g H_f, over the rock's
+/// uniaxial compressive strength S_c, exceeds CLIFF_THRESHOLD, dX/dt = K (rho g H_f / S_c -
+/// CLIFF_THRESHOLD) (Sunamura 2015, eq. 7; Sunamura, Tsujimoto and Aoki 2014's fit to wave-tank
+/// cliffs, his Fig. 6): 0.0040 for broken waves, as cross a platform to its cliff (0.0015 for
+/// waves breaking at the cliff itself; K 9.56 and 26.4 cm/h).
+pub const CLIFF_THRESHOLD: f64 = 0.0040;
+/// F430: the waves' height across the platform a cliff cuts falls as exp(-y x) from where they
+/// break at its edge (the rocky profile model of Matsumoto et al. 2016, as Shadrick et al. 2021
+/// describe it): y 0.02 per metre, a stated value among those its fits to two shore platforms'
+/// profiles and their 10Be found, 0.01 to 0.015 at Scalby and 0.02 to 0.04 at Bideford
+/// (Shadrick et al. 2021, Table 3), Ogawa et al. (2011) measuring some 93% of the height lost
+/// over a platform 250 m wide at its lowest tide (y some 0.011).
+pub const CLIFF_WAVE_DECAY: f64 = 0.02;
+/// F430: the uniaxial compressive strength of a cliff's material, Pa. The loose ground the
+/// rivers laid: the weak till of the bluffs on Lake Erie's Ohio shore, 0.26 MPa (Carter and
+/// Guy 1988, as Sunamura 2015 gives it), within Hoek and Brown's (1997) extremely weak grade,
+/// 0.25 to 1 MPa. The body's rock by its bedrock's kind, the middle (geometric) of the grade
+/// Hoek and Brown's field estimates give it (Premaillon et al. 2018, Table 1): the silicate
+/// crusts their very strong grade, 100 to 250 MPa (basalt, gabbro, gneiss, granodiorite);
+/// the salts their weak grade, 5 to 25 MPa (rock salt, potash); ice 5 to 25 MPa between -10
+/// and -20 C (Petrovic 2003), its strength rising as it cools.
+pub const CLIFF_LOOSE_STRENGTH: f64 = 0.26e6;
+pub const CLIFF_ROCK_STRENGTH: f64 = 158.1e6;
+pub const CLIFF_SALT_STRENGTH: f64 = 11.18e6;
+pub const CLIFF_ICE_STRENGTH: f64 = 11.18e6;
 /// F245: the share of the transport a sea's water carries across the sea's share of the
 /// boundary between two places, the air the rest: some third, the ocean's share of the
 /// poleward transport at 20 to 30 degrees of latitude (Trenberth and Caron 2001), a stated
