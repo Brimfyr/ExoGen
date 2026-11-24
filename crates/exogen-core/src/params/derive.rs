@@ -2871,7 +2871,9 @@ fn liquid_of(states: &BTreeMap<String, f64>, inv: &BTreeMap<String, f64>) -> &'s
         }
         Some("CH4") | Some("C2H6") => "methane_ethane",
         Some("N2") => "nitrogen",
-        Some("NH3") => "ammonia_water",
+        // F432: ammonia its own liquid, its cycle on its own constants; water with ammonia
+        // in it is water's.
+        Some("NH3") => "ammonia",
         Some("SO2") => "sulfur_dioxide",
         Some("CO2") => "carbon_dioxide",
         _ => "none",
@@ -3700,7 +3702,10 @@ pub fn materials_lava(c: &Ctx) -> Value {
     let lava = match c.str("body.composition_class") {
         "rock" | "iron_rich" => "basalt",
         _ => {
-            if c.str("volatiles.working_liquid") == "ammonia_water" {
+            if matches!(
+                c.str("volatiles.working_liquid"),
+                "ammonia_water" | "ammonia"
+            ) {
                 "ammonia_water_ice"
             } else {
                 "water_ice"

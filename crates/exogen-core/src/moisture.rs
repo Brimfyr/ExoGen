@@ -90,6 +90,10 @@ pub struct Air {
     /// How far the overturning cell reaches from the equator, rad (F32), within which the
     /// eddies carry the less of the transport (M74) and the overturning the more (M75).
     pub reach: f64,
+    /// The time a column takes to rain its saturated vapour at the law's onset, s: Earth's,
+    /// RAIN_TIMESCALE_DAYS, over the share of Earth's measured sunlight its ground absorbs
+    /// (F431), set by the year that carries it.
+    pub rain_time: f64,
 }
 
 impl Air {
@@ -121,7 +125,18 @@ impl Air {
             transport,
             water,
             reach: circulation.reach,
+            rain_time: RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY,
         })
+    }
+
+    /// The air's rain time over ground that absorbs `sunlight` W/m² over the body through its
+    /// year (F431): Earth's, RAIN_TIMESCALE_DAYS, over its share of Earth's measured
+    /// RAIN_SUNLIGHT_REFERENCE. The sunlight its ground absorbs is what its ground gives its
+    /// air to drive the convection that rains a column, its evaporation's bound; none, no
+    /// rain but near saturation.
+    pub fn rain_time_under(sunlight: f64) -> f64 {
+        RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY * RAIN_SUNLIGHT_REFERENCE
+            / sunlight.max(RAIN_SUNLIGHT_LEAST)
     }
 
     /// The latent heat at `t`, J/kg: of vaporisation above the triple point, of sublimation
@@ -159,14 +174,23 @@ impl Air {
     }
 
     /// The precipitation from a column of `w` kg/m² whose saturation holds `saturated`,
-    /// kg/m²/s (Bretherton et al. 2004).
+    /// kg/m²/s (Bretherton et al. 2004), over the air's rain time (F431).
     pub fn rain(&self, w: f64, saturated: f64) -> f64 {
+        if saturated <= 0.0 || w <= 0.0 {
+            return 0.0;
+        }
+        self.rain_over(w, saturated, self.rain_time)
+    }
+
+    /// The precipitation from a column of `w` kg/m² whose saturation holds `saturated`,
+    /// kg/m²/s, over the rain time `time`, s.
+    pub fn rain_over(&self, w: f64, saturated: f64, time: f64) -> f64 {
         if saturated <= 0.0 || w <= 0.0 {
             return 0.0;
         }
         let r = w / saturated;
         let rise = (RAIN_SATURATION_SLOPE * (r - RAIN_SATURATION_ONSET)).min(MOISTURE_MOST_RISE);
-        saturated / (RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY) * rise.exp()
+        saturated / time * rise.exp()
     }
 
     /// The share of the precipitation at `t` that falls as snow: half at a kelvin above the
@@ -210,11 +234,19 @@ impl Air {
     /// under saturation. A wet ground's own evaporation, where the ground is wet; none where
     /// the ground takes heat from its air.
     pub fn penman(&self, (t, p): (f64, f64), sensible: f64, latent: f64, power: f64) -> f64 {
+        let (heat, drying) = self.penman_shares(t, p);
+        (heat * (sensible + latent) + drying * power).max(0.0)
+    }
+
+    /// The shares Penman's (1948) wet surface gives the heat its ground has for its air and
+    /// its air's drying power at the air's temperature `t` K and pressure `p` Pa: the slope of
+    /// the saturated humidity and c_p / L, each over their sum.
+    fn penman_shares(&self, t: f64, p: f64) -> (f64, f64) {
         let t = t.max(1.0);
         let l = self.latent(t);
         let slope = self.saturated_humidity(t, p) * l / (self.vapour.r_specific * t * t);
         let psychro = self.heat_capacity / l;
-        ((slope * (sensible + latent) + psychro * power) / (slope + psychro)).max(0.0)
+        (slope / (slope + psychro), psychro / (slope + psychro))
     }
 
     /// The latent heat a kilogram of air at `t` under `p` Pa and saturation `r` carries a
@@ -322,12 +354,20 @@ pub struct Moisture {
     /// Each place's share of the sphere and of its land.
     pub weights: Vec<f64>,
     pub land: Vec<f64>,
+    /// The air's rain time its year ran under, s (F431).
+    pub rain_time: f64,
+    /// The share of each place's land its lakes cover through the year where its runoff
+    /// reaches no sea (F433), none where it does; and what spills into them from its
+    /// neighbours' lakes less what spills out of them, kg/m²/s over its land.
+    pub lakes: Vec<f64>,
+    pub spill: Vec<f64>,
 }
 
 /// The year's moisture in brief (F268), kg/m² a year: precipitation and evaporation over the
 /// body; over its land, precipitation, evaporation and runoff; and the shares of the land whose
 /// precipitation over its potential evaporation stands under 0.2, arid, and under 0.05,
-/// hyper-arid (UNEP 1992).
+/// hyper-arid (UNEP 1992); its air's rain time, days (F431), and the share of its land its
+/// lakes cover in the year (F433).
 #[derive(Clone, Copy, Debug)]
 pub struct Summary {
     pub precipitation: f64,
@@ -337,6 +377,8 @@ pub struct Summary {
     pub runoff: f64,
     pub arid: f64,
     pub hyper_arid: f64,
+    pub rain_time_days: f64,
+    pub lakes: f64,
 }
 
 impl Moisture {
@@ -345,7 +387,7 @@ impl Moisture {
         let year = SECONDS_PER_DAY * 365.25;
         let (mut whole, mut land) = (0.0, 0.0);
         let (mut p, mut e, mut lp, mut le, mut ro) = (0.0, 0.0, 0.0, 0.0, 0.0);
-        let (mut arid, mut hyper) = (0.0, 0.0);
+        let (mut arid, mut hyper, mut lakes) = (0.0, 0.0, 0.0);
         for k in 0..self.precipitation.len() {
             let (w, l) = (self.weights[k], self.weights[k] * self.land[k]);
             whole += w;
@@ -356,6 +398,7 @@ impl Moisture {
                 lp += l * self.precipitation[k];
                 le += l * self.land_evaporation(k);
                 ro += l * self.runoff[k];
+                lakes += l * self.lakes.get(k).copied().unwrap_or(0.0);
                 let index = self.aridity(k);
                 if index < ARID_INDEX {
                     arid += l;
@@ -374,6 +417,8 @@ impl Moisture {
             runoff: over(ro, land),
             arid: if land > 0.0 { arid / land } else { 0.0 },
             hyper_arid: if land > 0.0 { hyper / land } else { 0.0 },
+            rain_time_days: self.rain_time / SECONDS_PER_DAY,
+            lakes: if land > 0.0 { lakes / land } else { 0.0 },
         }
     }
 
@@ -741,10 +786,16 @@ pub fn rain<'a>(
         saturated: vec![0.0; n],
         weights: sites.iter().map(|s| s.weight).collect(),
         land: land.clone(),
+        rain_time: air.rain_time,
+        lakes: vec![0.0; n],
+        spill: vec![0.0; n],
     };
     let (mut diag, mut rhs) = (vec![0.0; n], vec![0.0; n]);
     let (mut gives, mut takes) = (vec![0.0; n], vec![0.0; n]);
     let (mut exchange, mut beta) = (vec![0.0; n], vec![0.0; n]);
+    // What each bucket gives through the step, its share of the wet land's, no more than it
+    // holds (F433): beta's, the ground's wetness, as its heat for its air reads it.
+    let mut draw = vec![0.0; n];
     let mut store = vec![0.0; n];
     // The surface layer over each place's sea and its land (M63), its exchange over its
     // neutral.
@@ -763,6 +814,14 @@ pub fn rain<'a>(
     let mut rained_last = vec![0.0; n];
     let mut flows: Vec<(usize, usize, f64)> = Vec::new();
     let mut last = years <= 1;
+    let rain_time = air.rain_time;
+    // The lakes (F433): where no place holds a sea its runoff reaches, the share of each
+    // place's land its lakes cover, and the year's sums that set it.
+    let closed = !sites.iter().any(|s| s.sea > 0.0) && land.iter().any(|&l| l > 0.0);
+    let mut lake = vec![0.0; n];
+    let mut kept = vec![0.0; n];
+    let mut sums = vec![[0.0f64; 3]; n];
+    let mut pond = vec![(0.0f64, 0.0f64); n];
     for round in 0.. {
         // The body's rain and evaporation through the year, kg/s.
         let (mut rained, mut gave) = (0.0, 0.0);
@@ -783,6 +842,7 @@ pub fn rain<'a>(
                 let rho = pressure[p] * air.molar_mass / (GAS_CONSTANT * ground[p].max(1.0));
                 exchange[p] = rho * AIR_EXCHANGE_COEFFICIENT * speed;
                 beta[p] = bucket_gives(bucket[p] / capacity);
+                draw[p] = beta[p];
                 humid[p] = air.saturated_humidity(ground[p], pressure[p]);
                 sea_q[p] = air.saturated_humidity(now.sea[p], air.pressure);
                 let soil = now.land[p] - air.lapse * heights[p];
@@ -792,17 +852,45 @@ pub fn rain<'a>(
                 if sites[p].sea > 0.0 {
                     over_sea[p] = layer.exchange(now.sea[p], now.air[p], speed);
                 }
+                pond[p] = (0.0, 0.0);
                 if land[p] > 0.0 {
                     over_land[p] = layer.exchange(soil, ground[p], speed);
+                    // A bucket gives no more through the step than it holds as the step
+                    // begins (F433), into air however dry, where its floor gave back what it
+                    // lacked.
+                    let r = w[p] / saturated[p].max(1e-30);
+                    let x = exchange[p] * over_land[p];
+                    let most = x * soil_q[p];
+                    if most > 0.0 {
+                        draw[p] = beta[p].min(bucket[p] / (most * dt));
+                    }
+                    // Its lakes give their air what a wet ground would (F433), Penman's: the
+                    // heat its ground has for its air and its air's drying power shared as a
+                    // wet surface shares them, the land's potential (M75), as the finish's
+                    // lakes give it; linear in the column's saturation, a - b r, none where
+                    // that gives none as the step begins.
+                    if closed {
+                        let l = air.latent(ground[p].max(1.0));
+                        let sensible = air.heat_capacity / l * x * (soil - ground[p]);
+                        let (heat, drying) = air.penman_shares(ground[p], pressure[p]);
+                        let a = heat * (sensible + x * beta[p] * soil_q[p]) + drying * x * humid[p];
+                        let b = (heat * beta[p] + drying) * x * humid[p];
+                        if a - b * r > 0.0 {
+                            pond[p] = (a, b);
+                        }
+                    }
                 }
                 // The open sea into its surface air, at CLOUD_SURFACE_HUMIDITY of saturation
                 // whatever its column holds, none into air that holds more than the sea's
-                // own; the wet land into air at its column's saturation (M74).
+                // own; the wet land into air at its column's saturation (M74), its buckets'
+                // share of it; its lakes theirs (F433).
                 let open = sites[p].sea * (-now.ice[p] / SEA_ICE_COVER_MASS).exp() * over_sea[p];
-                let wet = land[p] * beta[p] * over_land[p];
+                let wet = land[p] * (1.0 - lake[p]) * draw[p] * over_land[p];
                 let sea = (sea_q[p] - marine * humid[p]).max(0.0);
-                gives[p] = exchange[p] * (open * sea + wet * soil_q[p]);
-                takes[p] = exchange[p] * wet * humid[p] / saturated[p].max(1e-30);
+                let ponds = land[p] * lake[p];
+                gives[p] = exchange[p] * (open * sea + wet * soil_q[p]) + ponds * pond[p].0;
+                takes[p] =
+                    (exchange[p] * wet * humid[p] + ponds * pond[p].1) / saturated[p].max(1e-30);
                 // Its surface air's vapour a kilogram of its column's (M74).
                 carries[p] = humid[p] / saturated[p].max(1e-30);
             }
@@ -959,7 +1047,9 @@ pub fn rain<'a>(
                 // The root lies between no rain and all of the column: Newton's steps kept
                 // within the bracket, halved where they leave it; the rain the column's balance.
                 let start = w[p].max(0.0) + dt * gives[p];
-                let balance = |x: f64| x + dt * (takes[p] * x + air.rain(x, saturated[p])) - start;
+                let balance = |x: f64| {
+                    x + dt * (takes[p] * x + air.rain_over(x, saturated[p], rain_time)) - start
+                };
                 let (mut lo, mut hi) = (0.0, start.max(0.0));
                 let mut x = w[p].clamp(lo, hi);
                 for _ in 0..MOISTURE_NEWTON {
@@ -969,7 +1059,7 @@ pub fn rain<'a>(
                     } else {
                         lo = x;
                     }
-                    let rate = air.rain(x, saturated[p]);
+                    let rate = air.rain_over(x, saturated[p], rain_time);
                     let rising = RAIN_SATURATION_SLOPE
                         * (x / saturated[p].max(1e-30) - RAIN_SATURATION_ONSET)
                         < MOISTURE_MOST_RISE;
@@ -1004,7 +1094,8 @@ pub fn rain<'a>(
                 // deeper than SNOW_MOST_MASS: the bucket takes the rain and the melt.
                 let mut ran = 0.0;
                 if land[p] > 0.0 {
-                    let dried = exchange[p] * over_land[p] * beta[p] * (soil_q[p] - r * humid[p]);
+                    let deficit = soil_q[p] - r * humid[p];
+                    let dried = exchange[p] * over_land[p] * draw[p] * deficit;
                     let pack = now
                         .snow
                         .as_ref()
@@ -1032,6 +1123,14 @@ pub fn rain<'a>(
                         ran += (bucket[p] - capacity) / dt;
                         bucket[p] = capacity;
                     }
+                    // Where its runoff reaches no sea, the lakes' year (F433): the rain on
+                    // its land, what its buckets shed and what its lakes would give the air.
+                    if closed {
+                        let sum = &mut sums[p];
+                        sum[0] += wet;
+                        sum[1] += ran;
+                        sum[2] += (pond[p].0 - pond[p].1 * r).max(0.0);
+                    }
                 }
                 if last {
                     out.falling[k * n + p] = fell as f32;
@@ -1039,11 +1138,11 @@ pub fn rain<'a>(
                     out.saturations[k * n + p] = r as f32;
                     out.precipitation[p] += fell / steps as f64;
                     out.evaporation[p] += given / steps as f64;
-                    out.runoff[p] += ran / steps as f64;
+                    out.runoff[p] += (1.0 - lake[p]) * ran / steps as f64;
                     out.saturation[p] += r / steps as f64;
                     out.column[p] += x / steps as f64;
                     out.saturated[p] += saturated[p] / steps as f64;
-                    out.wetness[p] += beta[p] / steps as f64;
+                    out.wetness[p] += (lake[p] + (1.0 - lake[p]) * draw[p]) / steps as f64;
                     // The potential evaporation: the open sea's, and what the land would
                     // give wet (M75): Penman's, by the heat its ground has for its air, as
                     // the vapour it would evaporate, and its air's drying power.
@@ -1087,12 +1186,78 @@ pub fn rain<'a>(
             }
         }
         if last {
+            out.lakes = lake;
+            out.spill = kept;
             break;
         }
-        // The year the moisture keeps once the spin-up's years have run and the column
-        // neither fills nor empties over the year, or the run's steps are spent.
+        // Each place's lakes cover the share of its land that gives its air what its buckets
+        // shed into them and what spills into them, less the rain on them, f A (E - P) =
+        // (1 - f) A R + I (F433), A its land; a place whose lakes would gain all lake, its
+        // gain spilling to its land's neighbours, on until lakes that can give it take it;
+        // what finds none is kept out of the air's cycle, until its air rains no more.
+        let mut moved = 0.0f64;
+        if closed {
+            let year: Vec<[f64; 3]> = sums.iter().map(|s| s.map(|x| x / steps as f64)).collect();
+            let reach: Vec<f64> = (0..n).map(|p| land[p] * area[p]).collect();
+            // What a place's lakes gain over what they give, kg/s, all lake under its
+            // inflow `into`.
+            let gain = |p: usize, into: f64| {
+                let [fell, _, gives] = year[p];
+                into - reach[p] * (gives - fell)
+            };
+            let neighbours: Vec<Vec<usize>> = carried
+                .iter()
+                .map(|links| {
+                    links
+                        .iter()
+                        .map(|&(q, _)| q)
+                        .filter(|&q| land[q] > 0.0)
+                        .collect()
+                })
+                .collect();
+            let whole: f64 = (0..n).map(|p| reach[p] * year[p][0]).sum();
+            let mut inflow = vec![0.0; n];
+            let mut passed = vec![0.0; n];
+            for _ in 0..LAKE_SPILL_PASSES {
+                let mut spilt = false;
+                for p in (0..n).filter(|&p| reach[p] > 0.0) {
+                    let fresh = gain(p, inflow[p]).max(0.0) - passed[p];
+                    if fresh > LAKE_SPILL_LEAST * whole && !neighbours[p].is_empty() {
+                        let each = fresh / neighbours[p].len() as f64;
+                        for &q in &neighbours[p] {
+                            inflow[q] += each;
+                        }
+                        passed[p] += fresh;
+                        spilt = true;
+                    }
+                }
+                if !spilt {
+                    break;
+                }
+            }
+            for p in 0..n {
+                let next = if reach[p] > 0.0 {
+                    let [fell, shed, gives] = year[p];
+                    let net = gives - fell;
+                    let into = (inflow[p] - passed[p]) / reach[p];
+                    kept[p] = into;
+                    if net > 0.0 {
+                        ((shed + into) / (shed + net)).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    }
+                } else {
+                    0.0
+                };
+                moved = moved.max((next - lake[p]).abs());
+                lake[p] = next;
+            }
+            sums.iter_mut().for_each(|s| *s = [0.0; 3]);
+        }
+        // The year the moisture keeps once the spin-up's years have run, the column neither
+        // fills nor empties over the year and its lakes hold, or the run's steps are spent.
         let settled = (rained - gave).abs() <= MOISTURE_SETTLED * rained.abs().max(gave.abs());
-        last = (round + 2 >= years && settled) || round + 2 >= most;
+        last = (round + 2 >= years && settled && moved <= MOISTURE_SETTLED) || round + 2 >= most;
     }
     Some(out)
 }
@@ -1114,6 +1279,7 @@ mod tests {
             transport: 0.58,
             water: OCEAN_TRANSPORT_SHARE,
             reach: 32f64.to_radians(),
+            rain_time: RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY,
         }
     }
 
@@ -1154,6 +1320,9 @@ mod tests {
             saturated: vec![25.0; n],
             weights: vec![1.0 / n as f64; n],
             land: vec![1.0; n],
+            rain_time: RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY,
+            lakes: vec![0.0; n],
+            spill: vec![0.0; n],
         };
         let grid = CubeSphere::new(64);
         let radius = 6.371e6;
@@ -1409,6 +1578,17 @@ mod tests {
         wind: impl Fn(f64) -> f64,
         drifts: bool,
     ) -> Moisture {
+        strip_over(air, ground, wind, drifts, 1.0)
+    }
+
+    /// The strip over a year `years` Earth years long, its 360 steps the longer.
+    fn strip_over(
+        air: &Air,
+        ground: impl Fn(f64) -> (f64, f64),
+        wind: impl Fn(f64) -> f64,
+        drifts: bool,
+        years: f64,
+    ) -> Moisture {
         let (n_lat, steps) = (46usize, 360usize);
         let dphi = PI / (n_lat - 1) as f64;
         let sites: Vec<Site> = (0..n_lat)
@@ -1470,7 +1650,7 @@ mod tests {
                 x[p] = (r[p] - c[p] * x[p + 1]) / b[p];
             }
         };
-        let year = 365.25 * SECONDS_PER_DAY;
+        let year = years * 365.25 * SECONDS_PER_DAY;
         let heights = vec![0.0; n_lat];
         rain(
             air,
@@ -1482,6 +1662,70 @@ mod tests {
             &solve,
         )
         .expect("a year")
+    }
+
+    /// F431: a column rains its saturated vapour over Earth's time where its ground absorbs
+    /// Earth's measured sunlight, the longer as its ground absorbs the less: Titan's some
+    /// 0.35 W/m² some 460 times; and the law's rise its own at any time.
+    #[test]
+    fn a_column_rains_by_the_sunlight_its_ground_absorbs() {
+        let earth = Air::rain_time_under(RAIN_SUNLIGHT_REFERENCE);
+        assert!((earth / (RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY) - 1.0).abs() < 1e-12);
+        let titan = Air::rain_time_under(0.35);
+        assert!(
+            (titan / earth - 161.0 / 0.35).abs() < 1e-9,
+            "{}",
+            titan / earth
+        );
+        assert!(Air::rain_time_under(0.0).is_finite());
+        let air = earth_air();
+        for (w, saturated) in [(30.0, 65.0), (5.0, 8.0), (4_000.0, 8_000.0)] {
+            let rain = air.rain_over(w, saturated, titan);
+            assert!((rain / air.rain_over(w, saturated, earth) - earth / titan).abs() < 1e-12);
+            assert!(
+                (air.rain(w, saturated) / air.rain_over(w, saturated, earth) - 1.0).abs() < 1e-12
+            );
+        }
+    }
+
+    /// F433: where no sea takes its runoff, a land's runoff stands in its lakes and its lakes
+    /// give it back to the air, no more than its rain over the year at any place: a strip of
+    /// land under Earth's air, its year balanced, its lakes standing where its buckets shed
+    /// and under its rain where they would gain, each a share of its land; where its buckets'
+    /// floor gave back the runoff, the land gave its air its rain and its runoff besides.
+    /// Over a strip with a sea, none.
+    #[test]
+    fn a_land_s_runoff_stands_in_its_lakes_where_no_sea_takes_it() {
+        let air = earth_air();
+        // Its year Earth's, its steps a day; and thirty years long, its steps a month, as
+        // coarse as Titan's, where a bucket's step could take more than it holds.
+        for years in [1.0, 30.0] {
+            let dry = strip_over(&air, |_| (0.0, 0.0), |_| 0.0, false, years);
+            let brief = dry.summary();
+            println!("a strip of land over {years} years: {brief:?}");
+            let (p, e) = (brief.precipitation, brief.evaporation);
+            assert!(
+                p > 0.0 && (p - e).abs() <= 2.0 * MOISTURE_SETTLED * p.max(e),
+                "{p} {e}"
+            );
+            assert!(dry.lakes.iter().all(|&f| (0.0..=1.0).contains(&f)));
+            assert!(dry.lakes.iter().any(|&f| f > 0.0), "{:?}", dry.lakes);
+            // Each place gives its air its rain and what spills in, less what spills out,
+            // neither more, liquid from nothing, nor less, liquid lost.
+            for k in 0..dry.precipitation.len() {
+                assert!(
+                    dry.wetness[k] >= dry.lakes[k] - 1e-12,
+                    "{k}: the year's wetness without its lakes"
+                );
+                let (fell, gave, into) = (dry.precipitation[k], dry.evaporation[k], dry.spill[k]);
+                assert!(
+                    (gave - fell - into).abs() <= 0.05 * fell + 1e-12,
+                    "{years} years, {k}: gave {gave} of {fell} and {into}"
+                );
+            }
+        }
+        let wet = strip(&air, |_| (0.3, 0.0), |_| 0.0, false);
+        assert!(wet.lakes.iter().all(|&f| f == 0.0));
     }
 
     /// M74: the wind carries a place's vapour to the place downwind of it, and a land sheds

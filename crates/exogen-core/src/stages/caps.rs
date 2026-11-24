@@ -78,6 +78,7 @@ pub fn ice_density(species: &str) -> f64 {
 pub fn liquid_species(working: &str) -> &'static [&'static str] {
     match working {
         "water" | "ammonia_water" => &["H2O"],
+        "ammonia" => &["NH3"],
         "methane_ethane" => &["CH4", "C2H6"],
         "nitrogen" => &["N2"],
         "sulfur_dioxide" => &["SO2"],

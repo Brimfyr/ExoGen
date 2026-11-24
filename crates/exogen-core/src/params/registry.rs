@@ -288,6 +288,7 @@ const WORKING_LIQUID: &[&str] = &[
     "water",
     "methane_ethane",
     "ammonia_water",
+    "ammonia",
     "nitrogen",
     "sulfur_dioxide",
     "carbon_dioxide",

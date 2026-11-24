@@ -38,7 +38,7 @@ use std::f64::consts::{PI, TAU};
 use rayon::prelude::*;
 
 use crate::constants::*;
-use crate::fields::Field;
+use crate::fields::{Field, det_sum};
 use crate::grid::projection::{PaddedField, sample_bilinear};
 use crate::grid::{CubeSphere, direction_from_lon_lat, lon_lat_from_direction};
 use crate::insolation::{
@@ -1261,6 +1261,9 @@ pub struct Cycle {
     pub albedo: f64,
     /// Whether the year ran under its water's own clouds (M67, M88), not the stated law's.
     pub clouded: bool,
+    /// The sunlight the body's ground absorbs through the year, W/m² over the body, by which
+    /// its air's convection rains (F431).
+    pub ground_sunlight: f64,
     /// Each tilt's places' state at the year's end, to start the year after it from (M68).
     ends: Vec<Option<std::sync::Arc<Warm>>>,
 }
@@ -3730,8 +3733,35 @@ impl EnergyBalance {
             settled,
             albedo,
             clouded: self.clouds.is_some(),
+            ground_sunlight: self.ground_sunlight(climate),
             ends,
         }
+    }
+
+    /// The sunlight the body's ground absorbs through the year, W/m² over the body (F431):
+    /// each cell's absorbed sunlight, its ground's share of it, its air's taken out over its
+    /// year's air at RAIN_SUN_HEIGHT, the sunlight-weighted mean of the sun's height over a
+    /// lit hemisphere.
+    fn ground_sunlight(&self, climate: &Climate) -> f64 {
+        let grid = climate.absorbed.grid();
+        let (absorbed, albedo, air) = (
+            climate.absorbed.as_slice(),
+            climate.albedo.as_slice(),
+            climate.temperature.as_slice(),
+        );
+        let n = grid.cell_count();
+        let ground = det_sum(n, |k| {
+            let (kept, taken) = self
+                .light(1.0, RAIN_SUN_HEIGHT, (air[k] as f64, 1.0))
+                .split(albedo[k] as f64);
+            let share = if kept + taken > 0.0 {
+                kept / (kept + taken)
+            } else {
+                1.0
+            };
+            absorbed[k] as f64 * share * grid.cell_area(grid.cell(k))
+        });
+        ground / det_sum(n, |k| grid.cell_area(grid.cell(k)))
     }
 
     /// The seas' currents the year's `wind` drives at the cycle's places (F272): its stress on
@@ -6687,8 +6717,13 @@ impl Cycle {
         let solve = |links: &[Vec<(usize, f64)>], diag: &[f64], rhs: &[f64], x: &mut [f64]| {
             transport_solve(&layout, links, (diag, rhs), x, true);
         };
+        // Its air rains by the sunlight its ground absorbs through the year (F431).
+        let air = crate::moisture::Air {
+            rain_time: crate::moisture::Air::rain_time_under(self.ground_sunlight),
+            ..*air
+        };
         crate::moisture::rain(
-            air,
+            &air,
             &self.sites,
             (n_lat, n_lon),
             heights,
@@ -10057,6 +10092,96 @@ mod tests {
         println!("methane: {:?}", again.water.as_ref().map(|m| m.summary()));
     }
 
+    /// Diagnostic: Titan's methane through its year at its own wind, by latitude and season:
+    /// its rain, its columns' saturation and its ground's temperature in each eighth of its
+    /// year; and the year's means of its column, its saturated column, its evaporation, its
+    /// potential, its runoff and its buckets' wetness (the methane cycle, M106). Any preset
+    /// by EXOGEN_DIAG_BODY.
+    #[test]
+    #[ignore = "diagnostic: Titan's methane by season"]
+    fn print_titan_s_methane_by_season() {
+        let body = std::env::var("EXOGEN_DIAG_BODY").unwrap_or_else(|_| "Titan".into());
+        let y = Year::of(&body);
+        let again = y.again();
+        let Some(m) = again.water.as_ref() else {
+            println!("{body}: no moisture");
+            return;
+        };
+        let cycle = &again.cycle;
+        let n = cycle.sites.len();
+        let steps = m.steps;
+        let year_s = 365.25 * 86400.0;
+        let seasons = 8usize;
+        println!("{body}: {:?}", m.summary());
+        println!(
+            "ground's sunlight {:.3} W/m2; rain time {:.1} days, {:.2} times Earth's",
+            cycle.ground_sunlight,
+            m.rain_time / SECONDS_PER_DAY,
+            m.rain_time / (RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY)
+        );
+        println!(
+            "band     | rain kg/m2/yr by eighth of the year | saturation by eighth | ground K by eighth"
+        );
+        for band in 0..9 {
+            let (lo, hi) = (-90.0 + 20.0 * band as f64, -70.0 + 20.0 * band as f64);
+            let inside = |p: usize| {
+                let lat = cycle.sites[p].lat.to_degrees();
+                lat >= lo && (lat < hi || band == 8)
+            };
+            let mut w = 0.0;
+            let mut rain = vec![0.0; seasons];
+            let mut sat = vec![0.0; seasons];
+            let mut ground = vec![0.0; seasons];
+            let (mut col, mut satcol, mut evap, mut pot, mut run, mut wet, mut fall) =
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            let mut lakes = 0.0;
+            for p in (0..n).filter(|&p| inside(p)) {
+                let sw = cycle.sites[p].weight;
+                w += sw;
+                for k in 0..steps {
+                    let s = k * seasons / steps;
+                    let share = sw * seasons as f64 / steps as f64;
+                    rain[s] += share * m.falling[k * n + p] as f64 * year_s;
+                    sat[s] += share * m.saturations[k * n + p] as f64;
+                    let ks = k * cycle.surfaces[0].len() / n / steps;
+                    ground[s] +=
+                        share * cycle.surfaces[0][p * (cycle.surfaces[0].len() / n) + ks] as f64;
+                }
+                col += sw * m.column[p];
+                satcol += sw * m.saturated[p];
+                evap += sw * m.evaporation[p] * year_s;
+                pot += sw * m.potential[p] * year_s;
+                run += sw * m.runoff[p] * year_s;
+                wet += sw * m.wetness[p];
+                fall += sw * m.precipitation[p] * year_s;
+                lakes += sw * m.lakes[p];
+            }
+            if w <= 0.0 {
+                continue;
+            }
+            let row = |v: &[f64], f: &dyn Fn(f64) -> String| {
+                v.iter().map(|x| f(x / w)).collect::<Vec<_>>().join(" ")
+            };
+            println!(
+                "{lo:+3.0}..{hi:+3.0} | {} | {} | {}",
+                row(&rain, &|x| format!("{x:5.1}")),
+                row(&sat, &|x| format!("{x:.3}")),
+                row(&ground, &|x| format!("{x:.2}")),
+            );
+            println!(
+                "          year: rain {:.2}, evaporation {:.2}, potential {:.2}, runoff {:.2}, wetness {:.3}, lakes {:.3}, column {:.0}, saturated {:.0}",
+                fall / w,
+                evap / w,
+                pot / w,
+                run / w,
+                wet / w,
+                lakes / w,
+                col / w,
+                satcol / w
+            );
+        }
+    }
+
     /// Diagnostic: each preset's regime, working liquid and whether its air carries its
     /// liquid's vapour, for the loop's erosion.
     #[test]
@@ -10290,7 +10415,11 @@ mod tests {
 
     impl Year {
         fn of(name: &str) -> Self {
-            let graph = crate::presets::preset(name).unwrap().to_graph().0;
+            Self::from_graph(crate::presets::preset(name).unwrap().to_graph().0)
+        }
+
+        /// A world's year from its graph.
+        fn from_graph(graph: ParamGraph) -> Self {
             let (cycle, climate) = graph_cycle(&graph);
             Self {
                 graph,
@@ -12283,6 +12412,9 @@ mod tests {
                 "titan_s_methane_evaporates_within_its_ground_s_sunlight",
                 &|| titan_s_methane_evaporates_within_its_ground_s_sunlight(&again),
             ),
+            ("titan_s_methane_rains_by_its_ground_s_sunlight", &|| {
+                titan_s_methane_rains_by_its_ground_s_sunlight(&again)
+            }),
             ("a_thick_atmosphere_keeps_its_steady_mean: Venus", &|| {
                 a_thick_atmosphere_keeps_its_steady_mean("Venus", 0.5, &venus, &venus.cycle)
             }),
@@ -14300,11 +14432,20 @@ mod tests {
         // methane rains nearer where it rose. And its ground has no sea for its runoff, 17 of
         // the 33: its buckets' floor at none gives it back, its evaporation over its rain
         // less its runoff by the runoff year on year (the bucket's step and a sea-less
-        // body's lakes: its methane's own cycle). Held under 0.6 W/m² until then; to restore:
-        // 0.5, then its ground's sunlight's 0.35.
-        assert!(brief.evaporation > 0.0 && heat < 0.6, "{brief:?}");
-        if heat > 0.35 {
-            eprintln!("KNOWN SHORTFALL (M65): Titan's evaporation takes {heat:.3} W/m², over 0.35");
+        // body's lakes: its methane's own cycle). Its own cycle (F431 to F433), its rain by its
+        // ground's sunlight, its lakes giving Penman's, its buckets' floor nothing: 0.36 W/m²,
+        // 22 kg/m² a year, at Robinson and Catling's 0.35 absorbed at its surface, over the
+        // 0.26 its own ground absorbs, the rest its warm troposphere's (M65). Held under half
+        // a watt, the first step back; to restore: its own ground's sunlight.
+        let sunlight = again.cycle.ground_sunlight;
+        assert!(
+            brief.evaporation > 0.0 && heat < 0.5,
+            "{heat} of {sunlight}: {brief:?}"
+        );
+        if heat > sunlight {
+            eprintln!(
+                "KNOWN SHORTFALL (M65): Titan's evaporation takes {heat:.3} W/m², over its ground's {sunlight:.3}"
+            );
         }
         let (p, e) = (brief.precipitation, brief.evaporation);
         assert!(
@@ -14319,6 +14460,162 @@ mod tests {
         if p < 5.0 {
             eprintln!("KNOWN SHORTFALL (M63): Titan's rain {p:.2} kg/m² a year, under 5 to 45");
         }
+    }
+
+    /// A band's rain through the year, kg/m² a year: its year's, and its wettest and driest
+    /// eighth's, and its columns' mean saturation, of the places from latitude `lo` to `hi`.
+    fn rain_band(
+        cycle: &Cycle,
+        m: &crate::moisture::Moisture,
+        (lo, hi): (f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        let n = cycle.sites.len();
+        let year_s = 365.25 * SECONDS_PER_DAY;
+        let (mut w, mut year, mut saturation) = (0.0, 0.0, 0.0);
+        let mut eighths = [0.0; 8];
+        for (p, site) in cycle.sites.iter().enumerate() {
+            let lat = site.lat.to_degrees();
+            if lat < lo || lat > hi {
+                continue;
+            }
+            w += site.weight;
+            year += site.weight * m.precipitation[p] * year_s;
+            saturation += site.weight * m.saturation[p];
+            for k in 0..m.steps {
+                eighths[k * 8 / m.steps] +=
+                    site.weight * m.falling[k * n + p] as f64 * year_s * 8.0 / m.steps as f64;
+            }
+        }
+        let w = w.max(1e-30);
+        let most = eighths.iter().fold(0.0f64, |a, &b| a.max(b)) / w;
+        let least = eighths.iter().fold(f64::INFINITY, |a, &b| a.min(b)) / w;
+        (year / w, most, least, saturation / w)
+    }
+
+    /// F431: Titan's methane rains by the sunlight its ground absorbs, some 0.26 W/m² in the
+    /// model where some 0.35 measured (Robinson and Catling 2012), Earth's 161 (Wild et al.
+    /// 2013): its air holds its methane as Huygens found it, some 48 percent saturated near
+    /// its ground at 10° south (the methane's 5.65 percent of its 1.467 bar, Niemann et al.
+    /// 2010, over methane's 17.1 kPa at 93.65 K by NIST's Antoine fit), its column some
+    /// 3,100 kg/m² in the moist GCMs (seven metres of liquid, Schneider et al. 2012); its rain
+    /// within their 5 to 45 kg/m² a year (Mitchell 2012; Lora et al. 2015, 2019), falling
+    /// over its summer pole and little in its winter, the more over its north, whose summer
+    /// is the longer (Schneider et al. 2012), where at Earth's rain time it rained evenly
+    /// everywhere, its air 9 percent saturated.
+    fn titan_s_methane_rains_by_its_ground_s_sunlight(again: &Again) {
+        let m = again.water.as_ref().expect("Titan's methane");
+        let cycle = &again.cycle;
+        let sunlight = cycle.ground_sunlight;
+        let time = crate::moisture::Air::rain_time_under(sunlight);
+        let weights: f64 = m.weights.iter().sum();
+        let column = det_sum(m.column.len(), |p| m.column[p] * m.weights[p]) / weights;
+        let (rain, _, _, saturation) = rain_band(cycle, m, (-90.0, 90.0));
+        let north = rain_band(cycle, m, (60.0, 90.0));
+        let south = rain_band(cycle, m, (-90.0, -60.0));
+        println!(
+            "Titan: its ground's sunlight {sunlight:.3} W/m², its rain time {:.0} times Earth's; its rain {rain:.1} kg/m² a year, its columns {column:.0} kg/m² at {saturation:.3} of saturation; north of 60 {:.1} ({:.1} to {:.1} by its eighths), south {:.1} ({:.1} to {:.1})",
+            time / (RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY),
+            north.0,
+            north.2,
+            north.1,
+            south.0,
+            south.2,
+            south.1
+        );
+        assert!((0.1..0.6).contains(&sunlight), "{sunlight}");
+        assert!((m.rain_time / time - 1.0).abs() < 1e-12, "{}", m.rain_time);
+        assert!((0.35..0.65).contains(&saturation), "{saturation}");
+        assert!((2_000.0..6_000.0).contains(&column), "{column}");
+        assert!((5.0..45.0).contains(&rain), "{rain}");
+        for (pole, (_, most, least, _)) in [("north", north), ("south", south)] {
+            assert!(most > 4.0 * least, "{pole}: {least} to {most}");
+        }
+        assert!(north.0 > 1.5 * south.0, "{} {}", north.0, south.0);
+    }
+
+    /// The test world with a sea of ammonia (the user, 2026-11-24): the Earth-like's body and
+    /// star, `distance` AU out, under 3 bar of nitrogen holding 3 percent of ammonia's vapour,
+    /// its inventory 500 m of ammonia and no water.
+    fn ammonia_world(distance: f64) -> ParamGraph {
+        let mut project = crate::presets::preset("Earth").unwrap();
+        let map = |pairs: &[(&str, f64)]| {
+            crate::params::Value::Map(pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect())
+        };
+        let values = &mut project.values;
+        values.insert(
+            "orbit.semi_major_axis".into(),
+            (distance * 1.495_978_707e11).into(),
+        );
+        values.insert("atmosphere.surface_pressure".into(), 300_000.0.into());
+        values.insert(
+            "atmosphere.composition".into(),
+            map(&[("N2", 0.97), ("NH3", 0.03)]),
+        );
+        values.insert("volatiles.inventory".into(), map(&[("NH3", 500.0)]));
+        project.to_graph().0
+    }
+
+    /// Diagnostic: the ammonia world by its distance, its working liquid and its temperatures.
+    #[test]
+    #[ignore = "diagnostic: an ammonia world by its distance"]
+    fn print_an_ammonia_world() {
+        for distance in [1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8] {
+            let g = ammonia_world(distance);
+            println!(
+                "{distance} AU: liquid {}, mean {:.1} K, warmest {:.1} K, phases {}",
+                g.str("volatiles.working_liquid"),
+                g.f64("atmosphere.surface_temperature_mean"),
+                g.f64("atmosphere.surface_temperature_warmest"),
+                g.str("volatiles.phase_summary"),
+            );
+        }
+    }
+
+    /// F432: a world whose sea is ammonia runs the working liquid's cycle on ammonia's own
+    /// constants (the user, 2026-11-24), where its liquid was named ammonia and water and its
+    /// cycle ran on water's: 1.4 AU from the Earth-like's star, its mean some 215 K, ammonia
+    /// liquid from 195.4 K to its boiling point near 240 K at its 3 bar. Its air carries
+    /// ammonia's vapour; its rain and its evaporation over its year agree within twice
+    /// MOISTURE_SETTLED; the latent heat its evaporation takes, at ammonia's own, stays within
+    /// the sunlight its ground absorbs; its rain time is its ground's sunlight's (F431); every
+    /// column holds what it can and some, and its rain falls everywhere it is carried.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn an_ammonia_sea_runs_its_own_cycle() {
+        let year = Year::from_graph(ammonia_world(1.4));
+        assert_eq!(year.graph.str("volatiles.working_liquid"), "ammonia");
+        let eb = EnergyBalance::from_graph(&year.graph);
+        let air = crate::moisture::Air::from_graph(&year.graph, eb.transport, 0.0)
+            .expect("its air carries its liquid's vapour");
+        assert_eq!(air.vapour.name, "NH3");
+        let again = year.again();
+        let m = again.water.as_ref().expect("its moisture");
+        let brief = m.summary();
+        let sunlight = again.cycle.ground_sunlight;
+        let latent = air.vapour.l_vap * brief.evaporation / (365.25 * SECONDS_PER_DAY);
+        let weights: f64 = m.weights.iter().sum();
+        let column = det_sum(m.column.len(), |p| m.column[p] * m.weights[p]) / weights;
+        let (rain, _, _, saturation) = rain_band(&again.cycle, m, (-90.0, 90.0));
+        println!(
+            "the ammonia world: {brief:?}; its evaporation's latent heat {latent:.2} W/m² of its ground's {sunlight:.1}; its rain time {:.2} times Earth's; its columns {column:.0} kg/m² at {saturation:.3} of saturation; its mean {:.1} K",
+            m.rain_time / (RAIN_TIMESCALE_DAYS * SECONDS_PER_DAY),
+            again.cycle.mean.area_mean()
+        );
+        let (p, e) = (brief.precipitation, brief.evaporation);
+        assert!(
+            p > 0.0 && (p - e).abs() <= 2.0 * MOISTURE_SETTLED * p.max(e),
+            "{p} {e}"
+        );
+        assert!(rain > 0.0 && (rain / p - 1.0).abs() < 1e-6, "{rain} {p}");
+        assert!(latent > 0.0 && latent < sunlight, "{latent} {sunlight}");
+        let time = crate::moisture::Air::rain_time_under(sunlight);
+        assert!((m.rain_time / time - 1.0).abs() < 1e-12, "{}", m.rain_time);
+        assert!(m.column.iter().all(|&w| w.is_finite() && w > 0.0));
+        assert!((0.0..1.0).contains(&saturation), "{saturation}");
+        assert!(
+            m.precipitation.iter().all(|&f| f > 0.0),
+            "a place without rain"
+        );
     }
 
     /// F269: exploration, THAI's measures of the locked ocean world, coupled.

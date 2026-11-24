@@ -2766,6 +2766,23 @@ pub const RAIN_SATURATION_SLOPE: f64 = 15.6;
 pub const RAIN_SATURATION_ONSET: f64 = 0.603;
 pub const RAIN_TIMESCALE_DAYS: f64 = 65.0;
 pub const MOISTURE_MOST_RISE: f64 = 50.0;
+/// F431: the rain time over the body's own convection: RAIN_TIMESCALE_DAYS is Earth's, whose
+/// ground absorbs RAIN_SUNLIGHT_REFERENCE W/m² of sunlight over the globe, 161 in Wild et
+/// al.'s (2013) surface balance, 106 of it net of the ground's own radiation for its
+/// sensible and latent heat (some 20 and 85); a body whose ground absorbs less drives its
+/// convection the more slowly, its rain time the longer by Earth's over its own, the
+/// sunlight no less than RAIN_SUNLIGHT_LEAST W/m² (a body whose ground takes none rains only
+/// near saturation). Its ground's sunlight the year's absorbed at each place times its
+/// ground's share of it, its air's taken out at RAIN_SUN_HEIGHT, the sunlight-weighted mean
+/// of the sun's height over a lit hemisphere, 2/3.
+pub const RAIN_SUNLIGHT_REFERENCE: f64 = 161.0;
+pub const RAIN_SUNLIGHT_LEAST: f64 = 1e-6;
+pub const RAIN_SUN_HEIGHT: f64 = 2.0 / 3.0;
+/// F433: the lakes' spill, where a body's runoff reaches no sea, passed on from a place
+/// whose lakes gain to its land's neighbours in at most LAKE_SPILL_PASSES passes over the
+/// places, until no place passes on more than LAKE_SPILL_LEAST of the rain on the land.
+pub const LAKE_SPILL_PASSES: usize = 2_000;
+pub const LAKE_SPILL_LEAST: f64 = 1e-9;
 pub const SECONDS_PER_DAY: f64 = 86_400.0;
 /// F268: the share of the precipitation that falls as snow, half at RAIN_SNOW_OFFSET kelvin
 /// above the liquid's freezing point, the 1 °C Jennings et al. 2018 found over the northern

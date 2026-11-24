@@ -75,7 +75,10 @@ pub struct CryosphereInfo {
 /// The year's water (F268), where the body has a working liquid under an atmosphere: its
 /// liquid's vapour; kg/m² a year over the body, precipitation and evaporation; over its land,
 /// precipitation, evaporation and runoff; and the shares of the land arid and hyper-arid, its
-/// precipitation under 0.2 and 0.05 of its potential evaporation (UNEP 1992).
+/// precipitation under 0.2 and 0.05 of its potential evaporation (UNEP 1992); its air's rain
+/// time, days, the time a column takes to rain its saturated vapour at the onset of
+/// Bretherton et al.'s law, by the sunlight its ground absorbs (F431); and the share of its
+/// land its lakes cover in the year where its runoff reaches no sea (F433).
 #[derive(Serialize)]
 pub struct WaterInfo {
     pub vapour: String,
@@ -86,6 +89,8 @@ pub struct WaterInfo {
     pub land_runoff_kg_m2_yr: f64,
     pub arid_land_fraction: f64,
     pub hyper_arid_land_fraction: f64,
+    pub rain_time_days: f64,
+    pub year_lake_land_fraction: f64,
 }
 
 /// The year's water clouds (M66), the clouds the finish's last year makes under its own (M67,
@@ -2165,6 +2170,8 @@ pub fn export(
         land_runoff_kg_m2_yr: w.runoff,
         arid_land_fraction: w.arid,
         hyper_arid_land_fraction: w.hyper_arid,
+        rain_time_days: w.rain_time_days,
+        year_lake_land_fraction: w.lakes,
     });
     let clouds = out.cloud_summary.map(|c| CloudsInfo {
         cover: c.cover,
