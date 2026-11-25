@@ -3171,7 +3171,12 @@ impl EnergyBalance {
         (climate, ground): (&Climate, &Ground),
         (sea, reservoir): (Option<(&Ocean, &Field<f32>)>, Option<&Reservoir>),
         start: Cycle,
-        (sky, air, heights): (&crate::clouds::Sky, &crate::moisture::Air, &[f64]),
+        (sky, air, heights, drains): (
+            &crate::clouds::Sky,
+            &crate::moisture::Air,
+            &[f64],
+            Option<&crate::moisture::Drains>,
+        ),
     ) -> OwnClouds {
         let (settled, most) = (CLOUD_PASSES.0, self.cloud_years);
         let reach = self.circulation.reach;
@@ -3180,7 +3185,7 @@ impl EnergyBalance {
         let mut clouds: Option<Clouds> = None;
         let mut cells: Vec<f64> = Vec::new();
         let mut last: Option<Coupling> = None;
-        let mut water = cycle.moisture(air, heights);
+        let mut water = cycle.moisture_over(air, heights, drains);
         for _ in 0..most {
             let Some(wet) = water.as_ref() else {
                 break;
@@ -3213,7 +3218,7 @@ impl EnergyBalance {
             let mean = cycle.surface_mean();
             let change = (mean - means[means.len() - 1]).abs();
             means.push(mean);
-            water = cycle.moisture(air, heights);
+            water = cycle.moisture_over(air, heights, drains);
             // Under its own: its mean where the year before left it, and its own cell's air
             // the one its sky kept.
             let own = water.as_ref().and_then(|wet| cycle.cell_air(wet, reach));
@@ -6667,16 +6672,34 @@ impl Cycle {
         })
     }
 
+    /// The cycle's layout, its latitudes and its longitudes.
+    pub fn layout(&self) -> (usize, usize) {
+        self.layout
+    }
+
     /// The moisture through the cycle (F268) of the air `air`, each place's ground standing
-    /// `heights` m over the sea: none without the cycle's wind.
+    /// `heights` m over the sea: none without the cycle's wind. Its land rises from its
+    /// coasts, the ground's shape not known (`moisture_over`).
     pub fn moisture(
         &self,
         air: &crate::moisture::Air,
         heights: &[f64],
     ) -> Option<crate::moisture::Moisture> {
+        self.moisture_over(air, heights, None)
+    }
+
+    /// The moisture through the cycle (F268) of the air `air`, each place's ground standing
+    /// `heights` m over the sea, its runoff running down `drains` (F434): none without the
+    /// cycle's wind.
+    pub fn moisture_over(
+        &self,
+        air: &crate::moisture::Air,
+        heights: &[f64],
+        drains: Option<&crate::moisture::Drains>,
+    ) -> Option<crate::moisture::Moisture> {
         // From within the threads' pool, as the year runs (`cycle_with`).
         if rayon::current_thread_index().is_none() {
-            return rayon::scope(|_| self.moisture(air, heights));
+            return rayon::scope(|_| self.moisture_over(air, heights, drains));
         }
         let wind = self.wind.as_ref()?;
         let (n_lat, n_lon) = self.layout;
@@ -6730,6 +6753,7 @@ impl Cycle {
             (year, steps),
             &weather,
             &solve,
+            drains,
         )
     }
 
@@ -10491,7 +10515,7 @@ mod tests {
                         (&self.climate, &ground),
                         (sea, None),
                         cycle.clone(),
-                        (sky, air, &heights),
+                        (sky, air, &heights, None),
                     )
                 });
             let water = air.and_then(|a| cycle.moisture(&a, &heights));
@@ -13137,7 +13161,7 @@ mod tests {
                 (&climate, &ground),
                 (sea, None),
                 cycle.clone(),
-                (&sky, &air, &heights),
+                (&sky, &air, &heights, None),
             );
             Self {
                 world,

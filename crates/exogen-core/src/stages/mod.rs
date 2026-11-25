@@ -472,7 +472,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 262;
+pub const FINISH_VERSION: u64 = 263;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3015,6 +3015,27 @@ pub fn finish(
             })
             .collect()
     };
+    // The ground the year's runoff runs down to the sea or to its lakes (F434): the terrain
+    // and its liquid as they stand, brought to YEAR_DRAINAGE_FACE.
+    let drains_of = |layers: &LayerSet, cycle: &crate::climate::Cycle| {
+        water_air.as_ref().map(|air| {
+            let coarse = CubeSphere::new(YEAR_DRAINAGE_FACE.min(grid.face_size()));
+            let height = crate::climate::coarsen(&layers.height(), coarse);
+            let wet = Field::from_fn(grid, |c, _| {
+                if layers.liquid.get(c) > 0.0 { 1.0 } else { 0.0 }
+            });
+            let wet = crate::climate::coarsen(&wet, coarse);
+            crate::moisture::Drains::new(
+                coarse,
+                (
+                    height.as_slice().to_vec(),
+                    wet.as_slice().iter().map(|&w| w >= 0.5).collect(),
+                ),
+                cycle.layout(),
+                (body_radius, air.vapour.liquid_density),
+            )
+        })
+    };
     // Each place's ground over the full sea, m.
     let over_sea = {
         let height = layers.height();
@@ -3028,8 +3049,10 @@ pub fn finish(
         });
         place_heights(&cycle, &above)
     };
+    let drains = drains_of(&layers, &cycle);
     let coupling = {
-        let first = water_air.and_then(|air| cycle.moisture(&air, &over_sea));
+        let first = water_air
+            .and_then(|air| cycle.moisture_over(&air, &over_sea, drains.as_ref()));
         cycle.coupling(first.as_ref())
     };
     let cycle = match &coupling {
@@ -3050,7 +3073,7 @@ pub fn finish(
                 (&climate, &ground),
                 (sea, None),
                 cycle,
-                (sky, air, &over_sea),
+                (sky, air, &over_sea, drains.as_ref()),
             );
             (own.cycle, Some(own.coupling.unwrap_or(stated)), own.means)
         }
@@ -3427,9 +3450,10 @@ pub fn finish(
             }
         })
     });
-    let moisture = water_air
-        .zip(above.as_ref())
-        .and_then(|(air, above)| cycle.moisture(&air, &place_heights(&cycle, above)));
+    let drains = drains_of(&layers, &cycle);
+    let moisture = water_air.zip(above.as_ref()).and_then(|(air, above)| {
+        cycle.moisture_over(&air, &place_heights(&cycle, above), drains.as_ref())
+    });
     // Over the ground's shape the grid resolves (F422): the cells about each cell read as
     // samples of the ground within it, as the maps read them (ADR 0008), its slope theirs. Over
     // each cell's own ground, the relief at the cells' own scale lifted the air cell by cell and
@@ -4960,6 +4984,12 @@ mod tests {
             ("the_earth_like_s_finish_runs_under_its_own_clouds", &|| {
                 the_earth_like_s_finish_runs_under_its_own_clouds(&earth)
             }),
+            ("the_year_s_lakes_stand_where_the_finish_s_do: Earth", &|| {
+                the_year_s_lakes_stand_where_the_finish_s_do("the Earth-like", &earth)
+            }),
+            ("the_earth_like_s_land_drains_to_its_sea_as_earth_s", &|| {
+                the_earth_like_s_land_drains_to_its_sea_as_earth_s(&earth)
+            }),
             ("an_air_s_tables_stand_over_its_grounds", &|| {
                 an_air_s_tables_stand_over_its_grounds(&earth, &[&moon, &mercury])
             }),
@@ -4970,6 +5000,54 @@ mod tests {
                 the_ground_stands_on_the_mantle_s_flow(&mercury)
             }),
         ]);
+    }
+
+    /// Titan's run, read by each check of it.
+    #[test]
+    #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
+    fn titan_s_body() {
+        let body = Body::of("Titan");
+        crate::testkit::checks(&[(
+            "the_year_s_lakes_stand_where_the_finish_s_do: Titan",
+            &|| the_year_s_lakes_stand_where_the_finish_s_do("Titan", &body),
+        )]);
+    }
+
+    /// F434: a body's year runs its runoff down the ground its finish's rivers run down, its
+    /// lakes where the finish's stand: the share of its land its year's lakes cover within a
+    /// factor of two of the share its finish's lakes cover, on the Earth-like and on Titan,
+    /// where the year's lakes stood nowhere on a body with a sea and over every place
+    /// poleward of 30 degrees on Titan; its year balanced.
+    fn the_year_s_lakes_stand_where_the_finish_s_do(name: &str, body: &Body) {
+        let finish = &body.out.finish;
+        let year = finish.water_summary.expect("its year's water");
+        let rivers = &finish.rivers.as_ref().expect("its rivers").summary;
+        let (own, finish_s) = (year.lakes, rivers.lakes);
+        println!(
+            "{name}: its year's lakes {:.2}% of its land, its finish's {:.2}%; {:.1}% of its land closed; its rain {:.2} kg/m² a year, its evaporation {:.2}",
+            100.0 * own,
+            100.0 * finish_s,
+            100.0 * rivers.closed,
+            year.precipitation,
+            year.evaporation
+        );
+        assert!(own > 0.0 && finish_s > 0.0, "{own} {finish_s}");
+        assert!((0.5..2.0).contains(&(own / finish_s)), "{own} {finish_s}");
+        let (p, e) = (year.precipitation, year.evaporation);
+        assert!(
+            (p - e).abs() <= 2.0 * MOISTURE_SETTLED * p.max(e),
+            "{p} {e}"
+        );
+    }
+
+    /// F434: the Earth-like's land drains to its sea as Earth's does, a tenth to three tenths
+    /// of it to no sea, Earth's a fifth (Wang et al. 2018, from HydroSHEDS's landlocked
+    /// watersheds), where its closed basins' lakes stood out of its year and their water left
+    /// it for the sea, a third of its land closed.
+    fn the_earth_like_s_land_drains_to_its_sea_as_earth_s(body: &Body) {
+        let rivers = &body.out.finish.rivers.as_ref().expect("its rivers").summary;
+        println!("the Earth-like: {:.1}% of its land drains to no sea", 100.0 * rivers.closed);
+        assert!((0.1..0.3).contains(&rivers.closed), "{}", rivers.closed);
     }
 
     /// The icy moons' runs, Enceladus's, Europa's and Ganymede's, each read by each check of

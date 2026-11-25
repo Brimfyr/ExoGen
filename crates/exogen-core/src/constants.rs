@@ -2783,6 +2783,12 @@ pub const RAIN_SUN_HEIGHT: f64 = 2.0 / 3.0;
 /// places, until no place passes on more than LAKE_SPILL_LEAST of the rain on the land.
 pub const LAKE_SPILL_PASSES: usize = 2_000;
 pub const LAKE_SPILL_LEAST: f64 = 1e-9;
+/// F434: the ground the year's runoff runs down, the finish's brought to a grid of
+/// YEAR_DRAINAGE_FACE cells a face's side (its own where finer), some 0.7 degrees a cell, a
+/// few cells to each place of the year's layout; found again each year of the run over its
+/// last year's runoff and lakes (numerical: a cost bound; the finish's rivers and lakes stand
+/// on its own grid).
+pub const YEAR_DRAINAGE_FACE: u32 = 128;
 pub const SECONDS_PER_DAY: f64 = 86_400.0;
 /// F268: the share of the precipitation that falls as snow, half at RAIN_SNOW_OFFSET kelvin
 /// above the liquid's freezing point, the 1 °C Jennings et al. 2018 found over the northern

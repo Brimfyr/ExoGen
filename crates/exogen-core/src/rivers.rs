@@ -138,15 +138,16 @@ struct Lake {
 /// The drainage of a year's runoff (F277, F278): each cell's receiver, the cell its water runs
 /// to, itself at sea and at a dry pit; the cells in the order the flood took them, each after
 /// its receiver; the lake that covers each cell, NONE where none does, and each lake's level, m;
-/// the lakes' depth at each cell, m; the water each land cell carries down, kg/s; each full
-/// lake's outlet, the cells either side of its pass, its own first, and what it spills over it,
-/// kg/s (F278); and the year in brief.
+/// the lakes' depth at each cell, m, and the share of each cell they cover (F434); the water
+/// each land cell carries down, kg/s; each full lake's outlet, the cells either side of its
+/// pass, its own first, and what it spills over it, kg/s (F278); and the year in brief.
 pub struct Drainage {
     pub receiver: Vec<u32>,
     pub order: Vec<u32>,
     pub lake_of: Vec<u32>,
     pub levels: Vec<f32>,
     pub depth: Vec<f32>,
+    pub cover: Vec<f32>,
     pub carried: Vec<f64>,
     pub outlets: Vec<(u32, u32, f64)>,
     pub summary: Summary,
@@ -378,6 +379,7 @@ pub fn drain(
     }
     // The lakes' cells: their own flooded, and all their halves'.
     let mut depth = vec![0.0f32; n];
+    let mut cover = vec![0.0f32; n];
     let mut lake_of = vec![NONE; n];
     let (mut lake_area, mut lakes_gain) = (0.0, 0.0);
     for (i, lake) in lakes.iter().enumerate() {
@@ -394,6 +396,7 @@ pub fn drain(
         for &c in &cells {
             let c = c as usize;
             depth[c] = (lake.level - height[c]).max(0.0);
+            cover[c] = 1.0;
             lake_of[c] = i as u32;
             lake_area += area(c);
             lakes_gain += (shed[c] + rise[c]) as f64;
@@ -401,6 +404,7 @@ pub fn drain(
         if let Some(&c) = basin.own.get(lake.count).filter(|_| lake.share > 0.0) {
             let c = c as usize;
             lake_of[c] = i as u32;
+            cover[c] = lake.share as f32;
             lake_area += lake.share * area(c);
             lakes_gain += shed[c] as f64 + lake.share * rise[c] as f64;
         }
@@ -521,6 +525,7 @@ pub fn drain(
         levels: lakes.iter().map(|l| l.level).collect(),
         lake_of,
         depth,
+        cover,
         carried,
         outlets,
         basins,
