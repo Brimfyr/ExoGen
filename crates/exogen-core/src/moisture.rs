@@ -682,7 +682,8 @@ impl Moisture {
 /// The ground the year's runoff runs down (F434): a grid coarser than the finish's, the
 /// ground's height at each of its cells, m, where its liquid stands, and the place of the
 /// year's layout each cell lies nearest, and the cell under each place; the body's radius, m,
-/// and its liquid's density, kg/m³.
+/// and its liquid's density, kg/m³; and the ground the runoff soaks into and flows through
+/// (F435), where it is known: its cells' sides, each cell's profile and the sea's level, m.
 pub struct Drains {
     pub grid: CubeSphere,
     pub height: Vec<f32>,
@@ -691,6 +692,7 @@ pub struct Drains {
     under: Vec<u32>,
     radius: f64,
     density: f64,
+    ground: Option<(crate::ground::Sides, Vec<crate::ground::Profile>, f64)>,
 }
 
 impl Drains {
@@ -730,29 +732,76 @@ impl Drains {
             under,
             radius,
             density,
+            ground: None,
         }
     }
 
-    /// Each place's lakes (F434): the share of its land they cover, where the rain on each
-    /// place's land, what its buckets shed and what its lakes give their air, `year`'s, kg/m²
-    /// of its land a second, run down the ground to the sea or to a lake that stands where
-    /// what it is brought balances what its surface gives the air over what falls on it
-    /// (`rivers::drain`); its liquid the year's sea, where the year runs one (`sea`), and a
-    /// lake where it does not, its working liquid's sea not yet run in the year (every
-    /// liquid's sea, next), its extent the finish's. A place with no cell reads the cell
-    /// under it.
-    pub fn lakes(&self, year: &[[f64; 3]], sea: bool) -> Vec<f64> {
+    /// The place of the year's layout cell `k` lies nearest.
+    pub fn place_of(&self, k: usize) -> usize {
+        self.place[k] as usize
+    }
+
+    /// The same ground, its runoff soaking into it and flowing through it (F435): each cell's
+    /// `profile`, the sea's `level`, m.
+    pub fn with_ground(mut self, profile: Vec<crate::ground::Profile>, level: f64) -> Self {
+        self.ground = Some((crate::ground::Sides::new(self.grid), profile, level));
+        self
+    }
+
+    /// Each place's lakes (F434), first: the share of its land they cover, where the rain on
+    /// each place's land, what its buckets shed and what its lakes give their air, `year`'s
+    /// first three, kg/m² of its land a second, run down the ground to the sea or to a lake that
+    /// stands where what it is brought balances what its surface gives the air over what falls
+    /// on it (`rivers::drain`); its liquid the year's sea, where the year runs one (`sea`), and
+    /// a lake where it does not, its working liquid's sea not yet run in the year, its extent
+    /// the finish's. A place with no cell reads the cell under it. Where the ground is known,
+    /// what the buckets shed soaks into it and flows through it to where its table meets the
+    /// surface (`ground::drain_through`, F435), from where the last year left the `table`,
+    /// where this year's leaves it; and the air takes from the ground where its table lies near
+    /// the surface what it would take from the land wet beyond what its buckets give, `year`'s
+    /// fourth (F436): each place's share of that its ground gives, over its land its lakes do
+    /// not cover, second.
+    pub fn lakes(
+        &self,
+        year: &[[f64; 4]],
+        sea: bool,
+        table: &mut Option<crate::ground::Start>,
+    ) -> Vec<[f64; 2]> {
         let n = self.grid.cell_count();
         let at = |k: usize| year[self.place[k] as usize];
         let runoff: Vec<f32> = (0..n).map(|k| at(k)[1] as f32).collect();
         let gain: Vec<f32> = (0..n).map(|k| (at(k)[0] - at(k)[2]) as f32).collect();
-        let drained = crate::rivers::drain(
-            self.grid,
-            &self.height,
-            &self.liquid,
-            (&runoff, &gain),
-            (self.radius, self.density),
-        );
+        let demand: Vec<f32> = (0..n).map(|k| at(k)[3] as f32).collect();
+        let (drained, dried) = match &self.ground {
+            Some((sides, profile, level)) => {
+                let ground = crate::ground::Ground {
+                    sides,
+                    profile,
+                    level: *level,
+                };
+                let (drained, found, end) = crate::ground::drain_through(
+                    self.grid,
+                    &self.height,
+                    &self.liquid,
+                    (&runoff, &gain, &demand),
+                    (self.radius, self.density),
+                    &ground,
+                    table.as_ref(),
+                );
+                *table = Some(end);
+                (drained, Some(found.dried))
+            }
+            None => (
+                crate::rivers::drain(
+                    self.grid,
+                    &self.height,
+                    &self.liquid,
+                    (&runoff, &gain),
+                    (self.radius, self.density),
+                ),
+                None,
+            ),
+        };
         let cover = |k: usize| match (self.liquid[k], sea) {
             (true, true) => None,
             (true, false) => Some(1.0),
@@ -760,21 +809,33 @@ impl Drains {
         };
         let places = year.len();
         let (mut land, mut lakes) = (vec![0.0; places], vec![0.0; places]);
+        let (mut wanted, mut given) = (vec![0.0; places], vec![0.0; places]);
+        let r2 = self.radius * self.radius;
         for k in 0..n {
             if let Some(c) = cover(k) {
                 let p = self.place[k] as usize;
                 let a = self.grid.cell_area(self.grid.cell(k));
                 land[p] += a;
                 lakes[p] += a * c;
+                if let Some(dried) = dried.as_ref().filter(|_| !self.liquid[k] && c < 0.5) {
+                    wanted[p] += demand[k].max(0.0) as f64 / self.density * a * r2;
+                    given[p] += dried[k];
+                }
             }
         }
         (0..places)
             .map(|p| {
-                if land[p] > 0.0 {
+                let lake = if land[p] > 0.0 {
                     lakes[p] / land[p]
                 } else {
                     cover(self.under[p] as usize).unwrap_or(0.0)
-                }
+                };
+                let ground = if wanted[p] > 0.0 {
+                    (given[p] / wanted[p]).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                [lake, ground]
             })
             .collect()
     }
@@ -926,9 +987,14 @@ pub fn rain<'a>(
         drains.is_none() && !sites.iter().any(|s| s.sea > 0.0) && land.iter().any(|&l| l > 0.0);
     let standing = closed || drains.is_some();
     let runs_sea = sites.iter().any(|s| s.sea > 0.0);
+    // The ground's table the last year left, where the runoff soaks into the ground (F435).
+    let mut table: Option<crate::ground::Start> = None;
     let mut lake = vec![0.0; n];
+    // The share of what the air would take from each place's land wet, beyond what its
+    // buckets give, that its ground gives from its table near the surface (F436).
+    let mut damp = vec![0.0; n];
     let mut kept = vec![0.0; n];
-    let mut sums = vec![[0.0f64; 3]; n];
+    let mut sums = vec![[0.0f64; 4]; n];
     let mut pond = vec![(0.0f64, 0.0f64); n];
     for round in 0.. {
         // The body's rain and evaporation through the year, kg/s.
@@ -993,7 +1059,10 @@ pub fn rain<'a>(
                 // own; the wet land into air at its column's saturation (M74), its buckets'
                 // share of it; its lakes theirs (F433).
                 let open = sites[p].sea * (-now.ice[p] / SEA_ICE_COVER_MASS).exp() * over_sea[p];
-                let wet = land[p] * (1.0 - lake[p]) * draw[p] * over_land[p];
+                let wet = land[p]
+                    * (1.0 - lake[p])
+                    * (draw[p] + (1.0 - draw[p]) * damp[p])
+                    * over_land[p];
                 let sea = (sea_q[p] - marine * humid[p]).max(0.0);
                 let ponds = land[p] * lake[p];
                 gives[p] = exchange[p] * (open * sea + wet * soil_q[p]) + ponds * pond[p].0;
@@ -1200,10 +1269,14 @@ pub fn rain<'a>(
                 // lies on the land until it melts (F277), in the step by the share of what lay on
                 // the snowpack that its melt took, by the air's warmth where none lay, and no
                 // deeper than SNOW_MOST_MASS: the bucket takes the rain and the melt.
-                let mut ran = 0.0;
+                let (mut ran, mut drawn) = (0.0, 0.0);
                 if land[p] > 0.0 {
                     let deficit = soil_q[p] - r * humid[p];
                     let dried = exchange[p] * over_land[p] * draw[p] * deficit;
+                    // What the air would take from the land wet beyond what its bucket
+                    // gives, and what its ground gives of that from its table (F436).
+                    let wanted = exchange[p] * over_land[p] * (1.0 - draw[p]) * deficit;
+                    drawn = wanted * damp[p];
                     let pack = now
                         .snow
                         .as_ref()
@@ -1238,6 +1311,7 @@ pub fn rain<'a>(
                         sum[0] += wet;
                         sum[1] += ran;
                         sum[2] += (pond[p].0 - pond[p].1 * r).max(0.0);
+                        sum[3] += wanted.max(0.0);
                     }
                 }
                 if last {
@@ -1246,11 +1320,13 @@ pub fn rain<'a>(
                     out.saturations[k * n + p] = r as f32;
                     out.precipitation[p] += fell / steps as f64;
                     out.evaporation[p] += given / steps as f64;
-                    out.runoff[p] += (1.0 - lake[p]) * ran / steps as f64;
+                    out.runoff[p] += (1.0 - lake[p]) * (ran - drawn) / steps as f64;
                     out.saturation[p] += r / steps as f64;
                     out.column[p] += x / steps as f64;
                     out.saturated[p] += saturated[p] / steps as f64;
-                    out.wetness[p] += (lake[p] + (1.0 - lake[p]) * draw[p]) / steps as f64;
+                    out.wetness[p] += (lake[p]
+                        + (1.0 - lake[p]) * (draw[p] + (1.0 - draw[p]) * damp[p]))
+                        / steps as f64;
                     // The potential evaporation: the open sea's, and what the land would
                     // give wet (M75): Penman's, by the heat its ground has for its air, as
                     // the vapour it would evaporate, and its air's drying power.
@@ -1306,24 +1382,30 @@ pub fn rain<'a>(
         let mut moved = 0.0f64;
         if let Some(drains) = drains {
             // Down the ground's own shape (F434): the lakes Fill-Spill-Merge finds on it.
-            let year: Vec<[f64; 3]> = sums.iter().map(|s| s.map(|x| x / steps as f64)).collect();
-            for (p, next) in drains.lakes(&year, runs_sea).into_iter().enumerate() {
+            let year: Vec<[f64; 4]> = sums.iter().map(|s| s.map(|x| x / steps as f64)).collect();
+            for (p, [next, ground]) in drains
+                .lakes(&year, runs_sea, &mut table)
+                .into_iter()
+                .enumerate()
+            {
                 let next = if land[p] > 0.0 {
                     next.clamp(0.0, 1.0)
                 } else {
                     0.0
                 };
                 moved = moved.max((next - lake[p]).abs());
+                moved = moved.max((ground - damp[p]).abs());
                 lake[p] = next;
+                damp[p] = ground;
             }
-            sums.iter_mut().for_each(|s| *s = [0.0; 3]);
+            sums.iter_mut().for_each(|s| *s = [0.0; 4]);
         } else if closed {
-            let year: Vec<[f64; 3]> = sums.iter().map(|s| s.map(|x| x / steps as f64)).collect();
+            let year: Vec<[f64; 4]> = sums.iter().map(|s| s.map(|x| x / steps as f64)).collect();
             let reach: Vec<f64> = (0..n).map(|p| land[p] * area[p]).collect();
             // What a place's lakes gain over what they give, kg/s, all lake under its
             // inflow `into`.
             let gain = |p: usize, into: f64| {
-                let [fell, _, gives] = year[p];
+                let [fell, _, gives, _] = year[p];
                 into - reach[p] * (gives - fell)
             };
             let neighbours: Vec<Vec<usize>> = carried
@@ -1358,7 +1440,7 @@ pub fn rain<'a>(
             }
             for p in 0..n {
                 let next = if reach[p] > 0.0 {
-                    let [fell, shed, gives] = year[p];
+                    let [fell, shed, gives, _] = year[p];
                     let net = gives - fell;
                     let into = (inflow[p] - passed[p]) / reach[p];
                     kept[p] = into;
@@ -1373,7 +1455,7 @@ pub fn rain<'a>(
                 moved = moved.max((next - lake[p]).abs());
                 lake[p] = next;
             }
-            sums.iter_mut().for_each(|s| *s = [0.0; 3]);
+            sums.iter_mut().for_each(|s| *s = [0.0; 4]);
         }
         // The year the moisture keeps once the spin-up's years have run, the column neither
         // fills nor empties over the year and its lakes hold, or the run's steps are spent.
@@ -1916,7 +1998,11 @@ mod tests {
         let lat = |p: usize| -90.0 + 4.0 * p as f64;
         let (fell, shed) = (1e-5, 5e-6);
         for (gives, sea) in [(4e-5, false), (4e-5, true), (0.5e-5, false)] {
-            let lakes = drains.lakes(&vec![[fell, shed, gives]; 46], sea);
+            let lakes: Vec<f64> = drains
+                .lakes(&vec![[fell, shed, gives, 0.0]; 46], sea, &mut None)
+                .iter()
+                .map(|l| l[0])
+                .collect();
             println!("gives {gives:e}, the sea run {sea}: {lakes:.3?}");
             for p in (0..46).filter(|&p| (-26.0..=18.0).contains(&lat(p))) {
                 assert_eq!(lakes[p], 0.0, "the slope at {}", lat(p));
@@ -2025,6 +2111,88 @@ mod tests {
         }
     }
 
+    /// F435: the year's runoff soaks into the ground: over a ground that carries what soaks
+    /// into it to the liquid, the bowl's table below its floor, the bowl holds no lake; over a
+    /// ground that carries next to none, its table at the surface, the lakes stand as the
+    /// runoff alone stands them, within a thousandth of each place's land.
+    #[test]
+    fn a_ground_that_carries_its_runoff_drains_the_bowl_s_lakes() {
+        let radius = 1e6;
+        let lat = |p: usize| -90.0 + 4.0 * p as f64;
+        let year = vec![[1e-5, 5e-6, 4e-5, 0.0]; 46];
+        let first = |l: Vec<[f64; 2]>| l.iter().map(|l| l[0]).collect::<Vec<f64>>();
+        let plain = first(slope_and_bowl(radius).lakes(&year, false, &mut None));
+        let n = slope_and_bowl(radius).grid.cell_count();
+        for (name, k) in [("carrying", 10.0), ("tight", 1e-15)] {
+            let profile = vec![
+                crate::ground::Profile {
+                    cover: 1000.0,
+                    cover_conductivity: k,
+                    rock_conductivity: k,
+                    knee: 100.0,
+                };
+                n
+            ];
+            let drains = slope_and_bowl(radius).with_ground(profile, 0.0);
+            let mut table = None;
+            let lakes = first(drains.lakes(&year, false, &mut table));
+            println!("{name}: {lakes:.3?}");
+            let bowl: Vec<usize> = (0..46)
+                .filter(|&p| (26.0..=78.0).contains(&lat(p)))
+                .collect();
+            assert!(bowl.iter().any(|&p| plain[p] > 0.0));
+            for &p in &bowl {
+                if name == "carrying" {
+                    assert_eq!(lakes[p], 0.0, "{}", lat(p));
+                } else {
+                    assert!((lakes[p] - plain[p]).abs() < 1e-3, "{}", lat(p));
+                }
+            }
+            assert!(table.is_some());
+        }
+    }
+
+    /// F436: the year's land keeps its water where its ground gives its air from its table:
+    /// over a ground that carries next to none, its table near the surface, each place of the
+    /// slope without lakes gives its air and runs off what falls on it within a thousandth
+    /// through the year, and its land gives its air more than it gives over the ground alone.
+    #[test]
+    fn a_ground_that_gives_its_air_keeps_the_land_s_water() {
+        let air = earth_air();
+        let n = slope_and_bowl(air.radius).grid.cell_count();
+        let profile = vec![
+            crate::ground::Profile {
+                cover: 0.0,
+                cover_conductivity: 1e-9,
+                rock_conductivity: 1e-9,
+                knee: 100.0,
+            };
+            n
+        ];
+        let plain = slope_and_bowl(air.radius);
+        let drains = slope_and_bowl(air.radius).with_ground(profile, 0.0);
+        let before = strip_draining(&air, |_| (0.0, 0.0), |_| 0.0, false, 1.0, Some(&plain));
+        let year = strip_draining(&air, |_| (0.0, 0.0), |_| 0.0, false, 1.0, Some(&drains));
+        let lat = |p: usize| -90.0 + 4.0 * p as f64;
+        let slope: Vec<usize> = (0..46)
+            .filter(|&p| (-26.0..=18.0).contains(&lat(p)) && year.lakes[p] == 0.0)
+            .collect();
+        assert!(!slope.is_empty());
+        let (mut gave, mut gave_before) = (0.0, 0.0);
+        for &p in &slope {
+            let (fell, given, ran) = (year.precipitation[p], year.evaporation[p], year.runoff[p]);
+            println!(
+                "{}: falls {fell:.3e}, gives {given:.3e} (over the ground alone {:.3e}), runs off {ran:.3e}",
+                lat(p),
+                before.evaporation[p]
+            );
+            assert!((fell - given - ran).abs() <= 1e-3 * fell, "{}", lat(p));
+            gave += given * year.weights[p];
+            gave_before += before.evaporation[p] * before.weights[p];
+        }
+        assert!(gave > 1.01 * gave_before, "{gave} {gave_before}");
+    }
+
     /// F434: a ground that falls everywhere to the year's sea holds no lake, and its year is
     /// the year without the ground's shape: a strip a third sea at each place, its land rising
     /// from its liquid south of 30 degrees south to the north pole.
@@ -2083,7 +2251,10 @@ mod tests {
                     "{k}: {lat} {}",
                     row(p)
                 );
-                assert!(n_lon == 1 || off.abs() <= dlon / 2.0 + 1e-9, "{k}: {lon} {column}");
+                assert!(
+                    n_lon == 1 || off.abs() <= dlon / 2.0 + 1e-9,
+                    "{k}: {lon} {column}"
+                );
             }
         }
     }

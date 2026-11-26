@@ -172,6 +172,12 @@ pub fn route(
     (radius, density): (f64, f64),
 ) -> Rivers {
     let drainage = drain(grid, height, sea, water, (radius, density));
+    from_drainage(grid, sea, &drainage, density)
+}
+
+/// The rivers and the lakes of a `drainage` found on `grid` (`drain`), the sea where `sea`, of
+/// a liquid of `density` kg/m³ (F277): each land cell's discharge, m³/s, and each lake's depth.
+pub fn from_drainage(grid: CubeSphere, sea: &[bool], drainage: &Drainage, density: f64) -> Rivers {
     let discharge = Field::from_fn(grid, |c, _| {
         let k = grid.index(c);
         if sea[k] || drainage.lake_of[k] != NONE {

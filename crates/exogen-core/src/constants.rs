@@ -2789,6 +2789,46 @@ pub const LAKE_SPILL_LEAST: f64 = 1e-9;
 /// last year's runoff and lakes (numerical: a cost bound; the finish's rivers and lakes stand
 /// on its own grid).
 pub const YEAR_DRAINAGE_FACE: u32 = 128;
+/// F435: the ground's permeability, m², by its kind, the geometric means of Gleeson et al.'s
+/// (2011) hydrolithologies as GLHYMPS (Gleeson et al. 2014, Table 1) gives them for the units
+/// of a region whose tops lie within some 100 m of the surface: the loose cover the rivers
+/// laid as their unconsolidated sediments, 10^-13.0 (sigma 2.0 in the log); a felsic or
+/// anorthositic crust, a graphite-bearing one and an ice crust as their crystalline rock,
+/// 10^-14.1 (sigma 1.5; ice no class of its own, a stated choice: a brittle solid's fractures
+/// carry its liquid as the crystalline rock's do); a basaltic crust and sulfur's as their
+/// volcanic rock, 10^-12.5 (sigma 1.8); and ground frozen through, its pores' liquid solid, as
+/// their continuous permafrost, 10^-20.
+pub const GROUND_LOOSE_PERMEABILITY: f64 = 1e-13;
+pub const GROUND_CRYSTALLINE_PERMEABILITY: f64 = 7.943e-15;
+pub const GROUND_VOLCANIC_PERMEABILITY: f64 = 3.162e-13;
+pub const GROUND_FROZEN_PERMEABILITY: f64 = 1e-20;
+/// F435: the crust's permeability with depth, k = GROUND_CRUST_PERMEABILITY (z / 1 km)^-
+/// GROUND_CRUST_FALL, m², Manning and Ingebritsen's (1999) log k = -14 - 3.2 log z, z in km,
+/// from the continental crust's geothermal systems and, from 5 to 12 km, its metamorphic ones
+/// (k next to constant below; the crust's transmissivity summed through the law regardless, a
+/// stated choice: the deep crust's share of it small). The depth z is read at the pressure
+/// the Earth's gravity, GROUND_CRUST_GRAVITY, gives it, a body's at its own gravity's, as
+/// Clifford and Parker (2001, eq. 2b) read it on Mars, log k = -14 - 3.2 log(z g / g_Earth),
+/// a rock's permeability "similar under equivalent conditions of effective stress" (a stated
+/// choice: by gravity alone, the crust's and its liquid's densities the Earth's). Above it,
+/// where the law's authors find it fails (Ingebritsen and Gleeson 2017: "risky to extrapolate
+/// crustal-scale k-z relations to the uppermost crust", the top 2 km), the rock stands at its
+/// kind's own permeability near the surface, down to where the law comes down to it (a
+/// stated choice of the join: some 1.07 km for crystalline rock under the Earth's gravity).
+pub const GROUND_CRUST_PERMEABILITY: f64 = 1e-14;
+pub const GROUND_CRUST_FALL: f64 = 3.2;
+pub const GROUND_CRUST_GRAVITY: f64 = 9.81;
+/// F436: the depth of the table below the surface over which what the ground gives the air
+/// falls e-fold, m: Faulk et al.'s (Faulk 2018, ch. 4) ground methane evaporation on Titan, E
+/// exp(A (h - z)), A one per metre, after the Earth's bare ground's extinction depths of 1 to
+/// 5 m, nearer 1 in deserts; Shah, Nachabe and Ross (2007) finding the evaporation from a
+/// table to fall better as an exponential than as the linear decline commonly used (their
+/// bare ground's extinction depths 0.5 m for sand to 6.2 m for clay).
+pub const GROUND_DRYING_DEPTH: f64 = 1.0;
+/// F435: the ground the finish's table stands in, brought to a grid of GROUND_FACE cells a
+/// face's side (its own where coarser), its lakes and rivers on the finish's own (numerical:
+/// a cost bound, the conjugate gradients' steps growing with the grid's side).
+pub const GROUND_FACE: u32 = 256;
 pub const SECONDS_PER_DAY: f64 = 86_400.0;
 /// F268: the share of the precipitation that falls as snow, half at RAIN_SNOW_OFFSET kelvin
 /// above the liquid's freezing point, the 1 °C Jennings et al. 2018 found over the northern
@@ -3262,7 +3302,13 @@ pub const OCEAN_TRANSPORT_SHARE: f64 = 0.3;
 /// Triple point temperature (K), triple point pressure (Pa), latent heat of vaporisation
 /// (J/kg), latent heat of sublimation (J/kg), latent heat of fusion at the triple point (J/kg,
 /// F271: measured, NIST WebBook's enthalpies of fusion over the molar masses), specific gas
-/// constant (J/kg/K), liquid density (kg/m³), for each volatile species.
+/// constant (J/kg/K), liquid density (kg/m³), for each volatile species; and the liquid's
+/// viscosity, Pa s (F435), A exp(B / (T - C)), (A, B, C) in Pa s, K and K, fitted to the NIST
+/// WebBook's saturated liquid (Lemmon, McLinden and Friend): water 273 to
+/// 373 K within 0.5 percent (Vogel's form; Andrade's, C = 0, misses by 9), methane 91 to 111 K
+/// within 0.3, nitrogen 64 to 77 within 0.4, ammonia 196 to 240 within 0.3, sulfur dioxide 200
+/// to 265 within 1.1, ethane 91 to 186 within 2.2, carbon dioxide 217 to 272 within 3.4 (its
+/// critical point at 304 K, past which no fit holds).
 #[derive(Debug)]
 pub struct Volatile {
     pub name: &'static str,
@@ -3273,6 +3319,7 @@ pub struct Volatile {
     pub l_fus: f64,
     pub r_specific: f64,
     pub liquid_density: f64,
+    pub liquid_viscosity: [f64; 3],
 }
 
 pub const VOLATILES: [Volatile; 7] = [
@@ -3288,6 +3335,7 @@ pub const VOLATILES: [Volatile; 7] = [
         l_fus: 3.34e5,
         r_specific: 461.5,
         liquid_density: 1_000.0,
+        liquid_viscosity: [2.8699e-5, 512.7, 149.0],
     },
     Volatile {
         name: "CO2",
@@ -3298,6 +3346,7 @@ pub const VOLATILES: [Volatile; 7] = [
         l_fus: 1.96e5,
         r_specific: 188.9,
         liquid_density: 1_100.0,
+        liquid_viscosity: [3.1168e-6, 958.9, 0.0],
     },
     Volatile {
         name: "CH4",
@@ -3308,6 +3357,7 @@ pub const VOLATILES: [Volatile; 7] = [
         l_fus: 5.86e4,
         r_specific: 518.3,
         liquid_density: 423.0,
+        liquid_viscosity: [1.3406e-5, 242.07, 0.0],
     },
     Volatile {
         name: "N2",
@@ -3318,6 +3368,7 @@ pub const VOLATILES: [Volatile; 7] = [
         l_fus: 2.55e4,
         r_specific: 296.8,
         liquid_density: 808.0,
+        liquid_viscosity: [8.4280e-6, 228.29, 0.0],
     },
     Volatile {
         name: "NH3",
@@ -3328,6 +3379,7 @@ pub const VOLATILES: [Volatile; 7] = [
         l_fus: 3.32e5,
         r_specific: 488.2,
         liquid_density: 682.0,
+        liquid_viscosity: [6.7765e-6, 866.36, 0.0],
     },
     Volatile {
         name: "SO2",
@@ -3338,6 +3390,7 @@ pub const VOLATILES: [Volatile; 7] = [
         l_fus: 1.16e5,
         r_specific: 129.8,
         liquid_density: 1_460.0,
+        liquid_viscosity: [2.9177e-5, 700.72, 0.0],
     },
     Volatile {
         name: "C2H6",
@@ -3348,6 +3401,7 @@ pub const VOLATILES: [Volatile; 7] = [
         l_fus: 9.51e4,
         r_specific: 276.5,
         liquid_density: 544.0,
+        liquid_viscosity: [2.3962e-5, 361.69, 0.0],
     },
 ];
 

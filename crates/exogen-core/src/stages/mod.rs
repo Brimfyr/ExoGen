@@ -276,6 +276,8 @@ pub struct FinishOutput {
     /// water, and what the rivers' erosion moved (F278).
     pub rivers: Option<crate::rivers::Rivers>,
     pub erosion: Option<crate::fluvial::Erosion>,
+    /// The ground's year in brief under the rivers and the lakes (F435), where it has water.
+    pub ground: Option<crate::ground::Brief>,
     /// Ray brightening, 0 to 1.
     pub rays: Field<f32>,
     /// Liquid surface level relative to the mean radius, metres; NaN without a liquid.
@@ -472,7 +474,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 263;
+pub const FINISH_VERSION: u64 = 264;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -3017,7 +3019,11 @@ pub fn finish(
     };
     // The ground the year's runoff runs down to the sea or to its lakes (F434): the terrain
     // and its liquid as they stand, brought to YEAR_DRAINAGE_FACE.
-    let drains_of = |layers: &LayerSet, cycle: &crate::climate::Cycle| {
+    // The ground the year's runoff runs down (F434), and soaks into and flows through to the
+    // sea at `level`, m (F435): each cell's cover of the rivers' sediments over the body's rock,
+    // frozen through where its place's land stands below its liquid's melting point through
+    // the year, its liquid's viscosity that land's.
+    let drains_of = |layers: &LayerSet, cycle: &crate::climate::Cycle, level: f64| {
         water_air.as_ref().map(|air| {
             let coarse = CubeSphere::new(YEAR_DRAINAGE_FACE.min(grid.face_size()));
             let height = crate::climate::coarsen(&layers.height(), coarse);
@@ -3025,7 +3031,8 @@ pub fn finish(
                 if layers.liquid.get(c) > 0.0 { 1.0 } else { 0.0 }
             });
             let wet = crate::climate::coarsen(&wet, coarse);
-            crate::moisture::Drains::new(
+            let cover = crate::climate::coarsen(&layers.regolith, coarse);
+            let drains = crate::moisture::Drains::new(
                 coarse,
                 (
                     height.as_slice().to_vec(),
@@ -3033,7 +3040,22 @@ pub fn finish(
                 ),
                 cycle.layout(),
                 (body_radius, air.vapour.liquid_density),
-            )
+            );
+            let places = cycle.sites.len();
+            let steps = cycle.surfaces[0].len().checked_div(places).unwrap_or(0);
+            let land: Vec<f64> = (0..places)
+                .map(|p| {
+                    let year = &cycle.surfaces[0][p * steps..(p + 1) * steps];
+                    year.iter().map(|&t| t as f64).sum::<f64>() / steps.max(1) as f64
+                })
+                .collect();
+            let profile = crate::ground::profiles(
+                cover.as_slice(),
+                &|k| land.get(drains.place_of(k)).copied().unwrap_or(f64::NAN),
+                graph.str("materials.bedrock"),
+                (air.vapour, air.gravity),
+            );
+            drains.with_ground(profile, level)
         })
     };
     // Each place's ground over the full sea, m.
@@ -3049,7 +3071,7 @@ pub fn finish(
         });
         place_heights(&cycle, &above)
     };
-    let drains = drains_of(&layers, &cycle);
+    let drains = drains_of(&layers, &cycle, full_sea);
     let coupling = {
         let first = water_air
             .and_then(|air| cycle.moisture_over(&air, &over_sea, drains.as_ref()));
@@ -3450,7 +3472,7 @@ pub fn finish(
             }
         })
     });
-    let drains = drains_of(&layers, &cycle);
+    let drains = drains_of(&layers, &cycle, sea_level);
     let moisture = water_air.zip(above.as_ref()).and_then(|(air, above)| {
         cycle.moisture_over(&air, &place_heights(&cycle, above), drains.as_ref())
     });
@@ -3650,11 +3672,51 @@ pub fn finish(
     } else {
         height
     };
-    let rivers = land_water.as_ref().map(|(shed, gain, _, density)| {
-        let water = (shed.as_slice(), gain.as_slice());
-        let sea: Vec<bool> = layers.liquid.as_slice().iter().map(|&l| l > 0.0).collect();
-        crate::rivers::route(grid, height.as_slice(), &sea, water, (body_radius, *density))
-    });
+    // The rivers and the lakes with the ground between them (F435): its table on a grid of
+    // GROUND_FACE cells a face's side, each cell's cover of the rivers' sediments over the
+    // body's rock, frozen through where the year's land stands below its liquid's melting
+    // point.
+    let (rivers, ground) = match (land_water.as_ref(), water_air.as_ref()) {
+        (Some((shed, gain, _, density)), Some(air)) => {
+            let water = (shed.as_slice(), gain.as_slice());
+            let sea: Vec<bool> = layers.liquid.as_slice().iter().map(|&l| l > 0.0).collect();
+            let coarse = CubeSphere::new(GROUND_FACE.min(grid.face_size()));
+            let cover = crate::climate::coarsen(&layers.regolith, coarse);
+            let land = cycle.mean.resample(coarse);
+            let profile = crate::ground::profiles(
+                cover.as_slice(),
+                &|c| land.as_slice()[c] as f64,
+                graph.str("materials.bedrock"),
+                (air.vapour, air.gravity),
+            );
+            let (rivers, table) = crate::ground::route_through(
+                grid,
+                height.as_slice(),
+                &sea,
+                water,
+                (body_radius, *density),
+                (coarse, &profile, sea_level),
+            );
+            if std::env::var_os("EXOGEN_DEBUG").is_some() {
+                let b = table.brief;
+                eprintln!(
+                    "ground: {:.0} m³/s soaks in, {:.0} of it from lakes over its table, where the rivers' lakes give it {:.0}; {:.0} seeps out, {:+.0} flows into the lakes and {:.0} into the sea through it; its table at the surface over {:.1}% of the land; {} rounds with the lakes, {} of the active set, {} steps",
+                    b.soaked,
+                    b.leaked,
+                    b.drawn,
+                    b.seeped,
+                    b.to_lakes,
+                    b.to_sea,
+                    100.0 * b.wet,
+                    b.coupled,
+                    table.rounds,
+                    table.steps
+                );
+            }
+            (Some(rivers), Some(table.brief))
+        }
+        _ => (None, None),
+    };
     if let (Some(r), true) = (&rivers, std::env::var_os("EXOGEN_DEBUG").is_some()) {
         let s = &r.summary;
         let (lon, lat) = crate::grid::lon_lat_from_direction(s.mouth);
@@ -3963,6 +4025,7 @@ pub fn finish(
         air_profiles,
         rivers,
         erosion,
+        ground,
         rays,
         sea_level,
         ocean_fraction,
@@ -4990,6 +5053,9 @@ mod tests {
             ("the_earth_like_s_land_drains_to_its_sea_as_earth_s", &|| {
                 the_earth_like_s_land_drains_to_its_sea_as_earth_s(&earth)
             }),
+            ("the_ground_s_year_balances: Earth", &|| {
+                the_ground_s_year_balances("the Earth-like", &earth)
+            }),
             ("an_air_s_tables_stand_over_its_grounds", &|| {
                 an_air_s_tables_stand_over_its_grounds(&earth, &[&moon, &mercury])
             }),
@@ -5007,10 +5073,76 @@ mod tests {
     #[cfg_attr(not(feature = "whole-body"), ignore = "whole body")]
     fn titan_s_body() {
         let body = Body::of("Titan");
-        crate::testkit::checks(&[(
-            "the_year_s_lakes_stand_where_the_finish_s_do: Titan",
-            &|| the_year_s_lakes_stand_where_the_finish_s_do("Titan", &body),
-        )]);
+        crate::testkit::checks(&[
+            ("the_year_s_lakes_stand_where_the_finish_s_do: Titan", &|| {
+                the_year_s_lakes_stand_where_the_finish_s_do("Titan", &body)
+            }),
+            ("the_ground_s_year_balances: Titan", &|| {
+                the_ground_s_year_balances("Titan", &body)
+            }),
+            ("titan_s_lakes_stand_poleward", &|| titan_s_lakes_stand_poleward(&body)),
+        ]);
+    }
+
+    /// F435: the ground's year under the finish's rivers and lakes balances: what soaks into
+    /// it seeps out, flows into the lakes and the sea through it and goes to the air, within a
+    /// hundredth.
+    fn the_ground_s_year_balances(name: &str, body: &Body) {
+        let b = body.out.finish.ground.expect("its ground");
+        let gone = b.dried + b.seeped + b.to_lakes + b.to_sea;
+        println!(
+            "{name}: {:.0} m³/s soaks into its ground, {:.0} of it from lakes over its table, where its rivers' lakes give it {:.0}; {:.0} goes to the air, {:.0} seeps out, {:+.0} flows into its lakes and {:.0} into its sea; its table at the surface over {:.1}% of its land",
+            b.soaked,
+            b.leaked,
+            b.drawn,
+            b.dried,
+            b.seeped,
+            b.to_lakes,
+            b.to_sea,
+            100.0 * b.wet
+        );
+        assert!(b.soaked > 0.0, "{b:?}");
+        assert!(((gone - b.soaked) / b.soaked).abs() < 0.01, "{b:?}");
+    }
+
+    /// F435, F436: Titan's sea and lakes north of 50 degrees cover a share of its area there
+    /// within a factor of two of the 12 percent its liquid covers (Birch, Hayes and Perron's
+    /// 2025 review, from Cassini's radar, after Hayes 2016 and Birch et al. 2017), where its
+    /// lakes stood over a third to three fifths of its land as its runoff alone stood them;
+    /// and under 3 percent of its area within 30 degrees of its equator, where Titan holds next
+    /// to none.
+    fn titan_s_lakes_stand_poleward(body: &Body) {
+        let finish = &body.out.finish;
+        let lakes = &finish.rivers.as_ref().expect("its rivers").lakes;
+        let grid = lakes.grid();
+        let liquid = finish.layers.liquid.as_slice();
+        let (mut north, mut low) = ([0.0f64; 2], [0.0f64; 2]);
+        for (k, &sea) in liquid.iter().enumerate() {
+            let c = grid.cell(k);
+            let (_, lat) = crate::grid::lon_lat_from_direction(grid.center(c));
+            let lat = lat.to_degrees();
+            let a = grid.cell_area(c);
+            let wet = if sea > 0.0 || lakes.as_slice()[k] > 0.0 {
+                a
+            } else {
+                0.0
+            };
+            if lat >= 50.0 {
+                north[0] += wet;
+                north[1] += a;
+            } else if lat.abs() <= 30.0 {
+                low[0] += wet;
+                low[1] += a;
+            }
+        }
+        let (north, low) = (north[0] / north[1], low[0] / low[1]);
+        println!(
+            "Titan: its sea and lakes over {:.1}% of its area north of 50 degrees, {:.2}% within 30 of its equator",
+            100.0 * north,
+            100.0 * low
+        );
+        assert!((0.06..0.24).contains(&north), "{north}");
+        assert!(low < 0.03, "{low}");
     }
 
     /// F434: a body's year runs its runoff down the ground its finish's rivers run down, its
