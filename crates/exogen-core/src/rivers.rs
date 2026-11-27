@@ -292,12 +292,14 @@ pub fn drain(
     let mut next = 0;
     for &k in &order {
         let k = k as usize;
+        // The sea's cells, taken first whatever their heights (a lake its history keeps over a
+        // plateau among them), pass no level: only the flood's, by height, meet the passes.
+        if label[k] == SEA {
+            continue;
+        }
         while next < passes.len() && passes[next].0 <= height[k] {
             merge((passes[next], next), &mut basins, &mut parent, &mut holds);
             next += 1;
-        }
-        if label[k] == SEA {
-            continue;
         }
         let root = find(&mut parent, label[k]);
         if root == SEA {
@@ -990,5 +992,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// F277: each basin's own cells lie between its halves' meeting and its pass, by height,
+    /// whatever the heights of the cells the liquid covers: on a pitted plain, a sea standing at
+    /// 800 m over its hollows outside a ring of mountains, those within it dry, the passes
+    /// between them below the sea's level (the sea's cells, taken first, merged the hollows
+    /// within the ring at its level before their cells were given them, their cells below the
+    /// passes they met at; the rivers laid ground in them none had cut, on Titan's loop, where a
+    /// step's craters left hollows dry below its sea's level).
+    #[test]
+    fn each_basin_holds_its_own_range_whatever_the_liquid_s_heights() {
+        let grid = CubeSphere::new(48);
+        let top = [0.0, 0.0, 1.0];
+        let noise = crate::noise::GradientNoise::new(7);
+        let ring = |r: f64| 2_500.0 * (-((r - 0.45) / 0.03).powi(2)).exp();
+        let angle = |d: [f64; 3]| dot(d, top).clamp(-1.0, 1.0).acos();
+        let (heights, _) = terrain(grid, |d| {
+            500.0 + 400.0 * noise.fbm(d, 30.0, 4, 2.0, 0.6) + ring(angle(d))
+        });
+        let level = 800.0f32;
+        let sea: Vec<bool> = (0..heights.len())
+            .map(|k| angle(grid.center(grid.cell(k))) > 0.5 && heights[k] < level)
+            .collect();
+        let n = heights.len();
+        let (runoff, gain) = (vec![1e-6f32; n], vec![-1e-6f32; n]);
+        let d = drain(grid, &heights, &sea, (&runoff, &gain), (2e6, 1_000.0));
+        let (mut astray, mut under) = (0, 0);
+        for b in &d.basins {
+            if b.halves.is_some() && b.joined < level {
+                under += 1;
+            }
+            let mut last = f32::NEG_INFINITY;
+            for &c in &b.own {
+                let h = heights[c as usize];
+                if h < b.joined || h > b.spill || h < last {
+                    astray += 1;
+                }
+                last = h;
+            }
+        }
+        println!(
+            "a sea of {} cells at {level} m; {} basins, {under} met below its level; {astray} cells out of their range",
+            sea.iter().filter(|&&s| s).count(),
+            d.basins.len()
+        );
+        assert!(under > 10, "{under}");
+        assert!(astray == 0, "{astray}");
     }
 }

@@ -60,8 +60,39 @@ pub struct Erosion {
 /// carrying alone after the span's until none is left, the last spreading what no sea has room
 /// for over all the sea it reached. Where the sea has `waves` under gravity `g`, each step's
 /// mouths' load is laid along their coasts as their waves carry it before it is built out
-/// (F429).
+/// (F429). Through today's climate's span, FLUVIAL_SPAN_YR in FLUVIAL_STEPS steps (`erode_over`).
 pub fn erode(
+    grid: CubeSphere,
+    layers: &mut LayerSet,
+    sea: &[bool],
+    water: (&[f32], &[f32]),
+    liquid: (f64, f64, f64),
+    lithosphere: (f64, f64, f64),
+    waves: Option<(&crate::waves::Waves, f64)>,
+) -> Erosion {
+    let span = (FLUVIAL_SPAN_YR, FLUVIAL_STEPS);
+    erode_over(
+        grid,
+        layers,
+        sea,
+        water,
+        liquid,
+        lithosphere,
+        waves,
+        span,
+        None,
+    )
+}
+
+/// The rivers' erosion as `erode`'s through `span` years in `steps` steps, the drainage routed
+/// again at each (F278): the finish's through today's climate, the loop's through each of its
+/// steps (F437). Where `carry` is given, what full seas held back at their mouths, m³ at each
+/// cell, is carried on from it and back into it, held for the rivers of the span after, as the
+/// liquid stands again over the floor the load raised, where the finish's last step spreads it
+/// over the sea it reached: through a step of the loop's history a small sea took too little of
+/// what its rivers brought, and the rest stood over its few cells by kilometres.
+#[allow(clippy::too_many_arguments)]
+pub fn erode_over(
     grid: CubeSphere,
     layers: &mut LayerSet,
     sea: &[bool],
@@ -69,6 +100,8 @@ pub fn erode(
     (radius, density, sea_level): (f64, f64, f64),
     (hold, crust, mantle): (f64, f64, f64),
     waves: Option<(&crate::waves::Waves, f64)>,
+    (span, steps): (f64, usize),
+    carry: Option<&mut Vec<f64>>,
 ) -> Erosion {
     let rebound = crust / mantle;
     let n = grid.cell_count();
@@ -97,17 +130,22 @@ pub fn erode(
     };
     let laying = sea_level.is_finite();
     let mut out = Erosion::default();
-    let dt = FLUVIAL_SPAN_YR / FLUVIAL_STEPS as f64;
+    let steps = steps.max(1);
+    let dt = span / steps as f64;
     // The sea as each step leaves it; what full seas held back at their mouths, m³; and what
     // reached the sea, carried on again or not.
     let mut wet = sea.to_vec();
     // The seas a load filled to their level: land for the steps after, whatever they sink.
     let mut filled = vec![false; n];
-    let mut pending = vec![0.0f64; n];
+    let mut pending = match carry.as_deref() {
+        Some(c) if c.len() == n => c.clone(),
+        _ => vec![0.0f64; n],
+    };
+    let holding = carry.is_some();
     let mut reached = 0.0;
     let (mut routing_time, mut laying_time, mut passes) = (0.0, 0.0, 0);
-    for pass in 0..2 * FLUVIAL_STEPS {
-        let eroding = pass < FLUVIAL_STEPS;
+    for pass in 0..2 * steps {
+        let eroding = pass < steps;
         let carried: f64 = pending.iter().sum();
         if !eroding && carried <= 0.0 {
             break;
@@ -170,7 +208,7 @@ pub fn erode(
         // carrying, it is given to the mouths whose seas had room, by their shares, as what
         // found no way is, and laid from them; what then finds no room is spread over all its
         // sea reached, over its level.
-        let last = pass + 1 == 2 * FLUVIAL_STEPS;
+        let last = !holding && pass + 1 == 2 * steps;
         let clock = std::time::Instant::now();
         // The waves lay each mouth's load along its coast (F429).
         if let (Some((w, g)), true) = (waves, laying) {
@@ -179,7 +217,7 @@ pub fn erode(
                 &wet,
                 (h.as_slice(), sea_level),
                 &mut mouths,
-                (dt * year, FLUVIAL_STEPS),
+                (dt * year, steps),
                 (radius, g),
             );
             out.mouths += all;
@@ -271,6 +309,9 @@ pub fn erode(
                 .map(|(&g, &f)| (g as f64) < sea_level - LEVEL_TOLERANCE && !f)
                 .collect();
         }
+    }
+    if let Some(c) = carry {
+        *c = pending;
     }
     // Of what the floor took, what lies over the level where no sea had room left.
     out.floor -= out.over;
@@ -703,6 +744,113 @@ mod tests {
             ((moved.laid + moved.to_sea - moved.cut) / moved.cut).abs() < 0.05,
             "{moved:?}"
         );
+    }
+
+    /// F437: the rivers through a span of the loop's history erode alike whatever their steps:
+    /// on the pitted island under a dry year, 200 Myr in steps of LOOP_FLUVIAL_STEP_YR cut
+    /// within 15 percent of what steps four times finer cut, and more than twice what today's
+    /// span cuts; what they cut laid or brought to the sea within a twentieth.
+    #[test]
+    fn the_history_s_rivers_wear_alike_whatever_their_steps() {
+        let grid = CubeSphere::new(48);
+        let top = [0.0, 0.0, 1.0];
+        let noise = crate::noise::GradientNoise::new(7);
+        let (start, sea) = ground(grid, |d| {
+            let r = dot(d, top).clamp(-1.0, 1.0).acos();
+            1_000.0 - 2_000.0 * r + 200.0 * noise.fbm(d, 60.0, 3, 2.0, 0.5)
+        });
+        let n = grid.cell_count();
+        let (runoff, gain) = (vec![2e-7f32; n], vec![-1e-7f32; n]);
+        let wear = |span: f64, steps: usize| {
+            let mut layers = start.clone();
+            erode_over(
+                grid,
+                &mut layers,
+                &sea,
+                (&runoff, &gain),
+                (2e6, 1_000.0, 0.0),
+                (2e5, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+                None,
+                (span, steps),
+                None,
+            )
+        };
+        let steps = (2e8 / LOOP_FLUVIAL_STEP_YR).ceil() as usize;
+        let (few, many) = (wear(2e8, steps), wear(2e8, 4 * steps));
+        let today = wear(FLUVIAL_SPAN_YR, FLUVIAL_STEPS);
+        println!(
+            "200 Myr: cut {:.3e} m³ in {steps} steps, {:.3e} in four times as many; today's span {:.3e}; laid {:.3e} and {:.3e}, to the sea {:.3e} and {:.3e}",
+            few.cut, many.cut, today.cut, few.laid, many.laid, few.to_sea, many.to_sea
+        );
+        assert!(
+            today.cut > 0.0 && many.cut > 2.0 * today.cut,
+            "{today:?} {many:?}"
+        );
+        assert!(
+            ((few.cut - many.cut) / many.cut).abs() < 0.15,
+            "{few:?} {many:?}"
+        );
+        for m in [few, many] {
+            assert!(((m.laid + m.to_sea - m.cut) / m.cut).abs() < 0.05, "{m:?}");
+        }
+    }
+
+    /// F437: a small sea its rivers fill through a long step of the loop's history, what it has no
+    /// room for held at its mouths for the step after (`erode_over`'s `carry`): on a smooth
+    /// plateau draining to a sea of a few cells, through 50 Myr in one step, what the rivers cut
+    /// is laid, brought to the sea or held, within a twentieth; the ground rises nowhere over the
+    /// plateau's highest.
+    #[test]
+    fn a_full_sea_holds_its_rivers_load_for_the_step_after() {
+        let grid = CubeSphere::new(48);
+        let top = [0.0, 0.0, 1.0];
+        let (start, _) = ground(grid, |d| {
+            let r = dot(d, top).clamp(-1.0, 1.0).acos();
+            let pit = if r < 0.08 {
+                -800.0 * (1.0 - (r / 0.08).powi(2))
+            } else {
+                0.0
+            };
+            500.0 + 200.0 * r + pit
+        });
+        let n = grid.cell_count();
+        let height = start.height();
+        let sea: Vec<bool> = height.as_slice().iter().map(|&h| h < 0.0).collect();
+        let highest = height.as_slice().iter().copied().fold(f32::MIN, f32::max);
+        let (runoff, gain) = (vec![2e-5f32; n], vec![-1e-6f32; n]);
+        let mut layers = start.clone();
+        let mut held = vec![0.0f64; n];
+        let m = erode_over(
+            grid,
+            &mut layers,
+            &sea,
+            (&runoff, &gain),
+            (2e6, 1_000.0, 0.0),
+            (2e5, DENSITY_CRUST_ROCK, DENSITY_ROCK),
+            None,
+            (5e7, 1),
+            Some(&mut held),
+        );
+        let kept: f64 = held.iter().sum();
+        let most = layers
+            .height()
+            .as_slice()
+            .iter()
+            .copied()
+            .fold(f32::MIN, f32::max);
+        println!(
+            "a sea of {} cells: cut {:.3e} m³, laid {:.3e}, to the sea {:.3e}, held {kept:.3e}, carried on {:.3e}; the ground's highest {most:.0} m where {highest:.0}",
+            sea.iter().filter(|&&s| s).count(),
+            m.cut,
+            m.laid,
+            m.to_sea,
+            m.carried_on
+        );
+        assert!(
+            ((m.laid + m.to_sea + kept - m.cut) / m.cut).abs() < 0.05,
+            "{m:?} {kept}"
+        );
+        assert!(most <= highest, "{most} {highest}");
     }
 
     /// F278: on a dry plain sloping to the sea, a broad basin 600 m deep stays closed through

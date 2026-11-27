@@ -276,6 +276,9 @@ pub struct Table {
     pub held: Vec<f64>,
     /// What the ground gives the air at each cell, m³/s.
     pub dried: Vec<f64>,
+    /// What the lakes over the table below them give it at each cell, m³/s, where the lakes
+    /// stand on it (`drain_through`); none from `table` alone.
+    pub leak: Vec<f64>,
     /// The ground's year in brief, where the lakes stand on it (`drain_through`).
     pub brief: Brief,
     /// The active set's rounds through all the passes, and the conjugate gradients' steps
@@ -447,6 +450,7 @@ pub fn table(
         wet,
         held: held.to_vec(),
         dried,
+        leak: vec![0.0; n],
         brief: Brief::default(),
         rounds,
         steps,
@@ -641,7 +645,16 @@ pub fn drain_through(
             focused[k] = 0.5 * (focused[k] + leaked[k]);
         }
         let mut table = table;
-        table.brief = brief(&table, sea, (&recharge, &soak), &area, round + 1);
+        table.leak = (0..n)
+            .map(|k| {
+                if held[k].is_finite() {
+                    0.0
+                } else {
+                    (recharge[k] - soak[k]) * area[k]
+                }
+            })
+            .collect();
+        table.brief = brief(&table, sea, &recharge, &area, round + 1);
         held = next;
         head = Some(table.head.clone());
         result = Some((drainage, table));
@@ -659,15 +672,9 @@ pub fn drain_through(
 }
 
 /// The ground's year in brief (F435) from its `table` on cells of `area`, m², the sea where
-/// `sea`, under `recharge`, m/s, of which `soak` soaked in from its surface, the rest what the
-/// lakes over a table below them give it; found with the lakes over `coupled` rounds.
-fn brief(
-    table: &Table,
-    sea: &[bool],
-    (recharge, soak): (&[f64], &[f64]),
-    area: &[f64],
-    coupled: usize,
-) -> Brief {
+/// `sea`, under `recharge`, m/s, what soaked in from its surface and what the lakes over a
+/// table below them give it (its `leak`); found with the lakes over `coupled` rounds.
+fn brief(table: &Table, sea: &[bool], recharge: &[f64], area: &[f64], coupled: usize) -> Brief {
     let n = area.len();
     let land_of = |k: usize| !sea[k] && !table.held[k].is_finite();
     let sum = |f: &dyn Fn(usize) -> f64| (0..n).map(f).sum::<f64>();
@@ -690,13 +697,7 @@ fn brief(
             }
         }),
         to_sea: sum(&|k| if sea[k] { table.exchange[k] } else { 0.0 }),
-        leaked: sum(&|k| {
-            if land_of(k) {
-                (recharge[k] - soak[k]) * area[k]
-            } else {
-                0.0
-            }
-        }),
+        leaked: table.leak.iter().sum(),
         drawn: 0.0,
         wet: sum(&|k| {
             if land_of(k) && table.wet[k] {
@@ -718,9 +719,14 @@ fn brief(
 /// covers them or not: where the coarse cell is held at the sea's or a lake's level, its share
 /// of what its lake gives the ground or the ground gives it, a cell's land giving at most what
 /// it sheds; elsewhere what each cell sheds soaking in as far as its coarse cell's ground takes
-/// it in, and its share of what seeps out; and a lake over a cell above the table, where its
-/// coarse cell's lakes give their ground what it takes in (F435), giving it that. Its table, on
-/// `coarse`.
+/// it in, and its share of what seeps out; and the lakes over the cells above the table, where
+/// the coarse cells' own lakes stood over it, giving their ground in all what those gave it
+/// (F435), each at the same share of what its ground takes in: at first all of it; where they
+/// give more, the share at which they would give no more over all the land above the table;
+/// then between the two shares at which they gave less and more (a lake the wider for giving
+/// less), by regula falsi on their logarithms, until what they give it is the coarse grid's
+/// lakes' within GROUND_SETTLED_SHARE of what soaks in, or GROUND_COUPLING passes have run.
+/// Its table, on `coarse`.
 pub fn route_through(
     grid: CubeSphere,
     height: &[f32],
@@ -782,7 +788,7 @@ pub fn route_through(
     };
     let m = coarse.cell_count();
     let none = vec![0.0f32; m];
-    let (_, first, end) = drain_through(
+    let (_, first, _) = drain_through(
         coarse,
         &coarse_height,
         &coarse_sea,
@@ -801,9 +807,6 @@ pub fn route_through(
         .into_par_iter()
         .map(|k| grid.cell_area(grid.cell(k)) * r2)
         .collect();
-    // Where the ground's grid's lakes stand over its table, giving it what it takes in: there
-    // the lakes over a cell above the table give it that.
-    let perched: Vec<bool> = (0..m).map(|c| end.focused[c] > 0.0).collect();
     let mut table = first;
     // What the ground gives each coarse cell's land, kg/m²/s, less what its lake gives the
     // ground: none where the sea holds it.
@@ -834,35 +837,87 @@ pub fn route_through(
         })
         .collect();
     // What each cell's surface gains as a lake: what its surface gains and its share of what
-    // the ground gives its coarse cell or takes from it; and what a lake over it gives its
-    // ground, kg/m²/s, over a table below it where its coarse cell's lakes stand over the
-    // table.
-    let leak = |k: usize| {
-        let c = to[k];
-        let above = !table.held[c].is_finite() && !table.wet[c] && height[k] as f64 > table.head[c];
-        if perched[c] && above {
-            profile[c].intake() * density
-        } else {
-            0.0
-        }
-    };
+    // the ground gives its coarse cell or takes from it.
     let open: Vec<f64> = (0..n).map(|k| gain[k] as f64 + given(to[k])).collect();
-    let surface_gain: Vec<f32> = (0..n).map(|k| (open[k] - leak(k)) as f32).collect();
-    let drainage =
-        crate::rivers::drain(grid, height, sea, (&run, &surface_gain), (radius, density));
-    // What the lakes give their ground, m³/s: what each cell a lake covers gives its lake the
-    // less for it (`rivers::drain` holding a lake's cell to its surface's gain where that is
-    // the less than what it sheds).
-    let drawn: f64 = (0..n)
-        .filter(|&k| !sea[k] && drainage.cover[k] > 0.0)
+    // The cells above the table where the coarse cell's own lakes stood over it, and what the
+    // ground takes in there, kg/m²/s.
+    let above: Vec<bool> = (0..n)
         .map(|k| {
-            let a = fine_area[k];
-            let shed = run[k] as f64 * a;
-            let without = (open[k] * a - shed).min(0.0);
-            let with = ((open[k] - leak(k)) * a - shed).min(0.0);
-            drainage.cover[k] as f64 * (without - with) / density
+            let c = to[k];
+            !sea[k] && table.leak[c] > 0.0 && height[k] as f64 > table.head[c]
         })
+        .collect();
+    let intake: Vec<f64> = (0..m).map(|c| profile[c].intake() * density).collect();
+    // What the ground's grid's lakes gave it, m³/s, and what the lakes over all the land above
+    // the table would give it at what it takes in: at that share of it they give no more.
+    let own = table.brief.leaked;
+    let reach: f64 = (0..n)
+        .filter(|&k| above[k])
+        .map(|k| intake[to[k]] * fine_area[k] / density)
         .sum();
+    // The share of what the ground takes in, by its logarithm, and how much more or less the
+    // lakes gave it than its grid's did, by its logarithm, where they gave less and more; the
+    // side found last.
+    let mut share = 1.0f64;
+    let mut less: Option<(f64, f64)> = None;
+    let mut more: Option<(f64, f64)> = None;
+    let mut side = 0i8;
+    let mut found = None;
+    for _ in 0..GROUND_COUPLING {
+        let leak = |k: usize| {
+            if above[k] { share * intake[to[k]] } else { 0.0 }
+        };
+        let surface_gain: Vec<f32> = (0..n).map(|k| (open[k] - leak(k)) as f32).collect();
+        let drainage =
+            crate::rivers::drain(grid, height, sea, (&run, &surface_gain), (radius, density));
+        // What the lakes give their ground, m³/s: what each cell a lake covers gives its lake the
+        // less for it (`rivers::drain` holding a lake's cell to its surface's gain where that is
+        // the less than what it sheds).
+        let drawn: f64 = (0..n)
+            .filter(|&k| above[k] && drainage.cover[k] > 0.0)
+            .map(|k| {
+                let a = fine_area[k];
+                let shed = run[k] as f64 * a;
+                let without = (open[k] * a - shed).min(0.0);
+                let with = ((open[k] - leak(k)) * a - shed).min(0.0);
+                drainage.cover[k] as f64 * (without - with) / density
+            })
+            .sum();
+        found = Some((drainage, drawn));
+        // Settled where what they give it is its grid's lakes' within GROUND_SETTLED_SHARE of
+        // what soaks in, or where they give it less at what it takes in.
+        if (drawn - own).abs() < GROUND_SETTLED_SHARE * table.brief.soaked
+            || (drawn < own && share >= 1.0)
+        {
+            break;
+        }
+        // The next share: where they gave more, the least first, then between the shares at
+        // which they gave less and more, where the line between them by their logarithms meets
+        // its grid's (regula falsi, the Illinois way).
+        let at = (share.ln(), (drawn.max(1e-9 * own) / own).ln());
+        if drawn > own {
+            more = Some(at);
+            if side > 0
+                && let Some((x, y)) = less
+            {
+                less = Some((x, 0.5 * y));
+            }
+            side = 1;
+        } else {
+            less = Some(at);
+            if side < 0
+                && let Some((x, y)) = more
+            {
+                more = Some((x, 0.5 * y));
+            }
+            side = -1;
+        }
+        share = match (less, more) {
+            (Some((xl, yl)), Some((xm, ym))) => (xl - yl * (xm - xl) / (ym - yl)).exp(),
+            _ => (own / reach).min(1.0),
+        };
+    }
+    let (drainage, drawn) = found.expect("at least one pass");
     table.brief.drawn = drawn;
     let rivers = crate::rivers::from_drainage(grid, sea, &drainage, density);
     (rivers, table)
@@ -972,12 +1027,15 @@ fn solve(
     (x, steps)
 }
 
-/// The most rounds of the table found with the last round's lakes in a call (F435), a
-/// numerical bound: the year's calls go on from where the last left off.
+/// The most rounds of the table found with the last round's lakes in a call, and of the
+/// finish's lakes found with what they give the ground spread over them (F435), a numerical
+/// bound: the year's calls go on from where the last left off.
 const GROUND_COUPLING: usize = 8;
 /// The lakes settled when their cover of the land moves less than this share of it in a
 /// round, what they give the ground less than this share of what soaks in, and no level held
-/// both rounds moves more than GROUND_LEVEL_SETTLED, m (F435), numerical tolerances.
+/// both rounds moves more than GROUND_LEVEL_SETTLED, m; the finish's when what they give the
+/// ground is off its grid's by less than this share of what soaks in (F435), numerical
+/// tolerances.
 const GROUND_SETTLED_SHARE: f64 = 1e-4;
 const GROUND_LEVEL_SETTLED: f64 = 0.01;
 /// The share of the way a lake's level held the round before moves to the one found (F435),
@@ -1216,7 +1274,8 @@ mod tests {
     /// hundredth; their surfaces gaining nothing, the lakes give the ground no more than its own
     /// lakes give it, within a hundredth, the pits', which stand on the fine grid alone, giving
     /// it nothing; and a hollow by the coast below the table, over a kilometre of gravel, its
-    /// lake fed by the ground, all the land sheds reaching the sea within a hundredth.
+    /// lake fed by the ground, all the land sheds reaching the sea within a hundredth, its lakes
+    /// on the rivers' grid giving the ground what its own grid's gave it within a hundredth.
     #[test]
     fn the_finish_keeps_the_land_s_water() {
         let (grid, coarse) = (CubeSphere::new(96), CubeSphere::new(24));
@@ -1318,7 +1377,7 @@ mod tests {
             s.lakes
         );
         assert!(s.lakes > 0.0 && b.seeped + b.to_lakes > 0.1 * given);
-        assert!(b.leaked > 0.0 && b.drawn < 3.0 * b.leaked && b.leaked < 3.0 * b.drawn);
+        assert!(b.leaked > 0.0 && (b.drawn / b.leaked - 1.0).abs() < 0.01);
         assert!(((reached + b.drawn - b.leaked) / given - 1.0).abs() < 0.01);
     }
 

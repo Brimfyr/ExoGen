@@ -24,6 +24,7 @@ pub mod impacts;
 pub mod io;
 pub mod lineae;
 pub mod load;
+pub mod loop_rivers;
 pub mod materials;
 pub mod mega;
 pub mod plume;
@@ -174,6 +175,8 @@ pub struct LoopOutput {
     /// The share of the surface the lanes, the coronae and the polar terrains, present
     /// and past, renewed between them, by area.
     pub renewed_fraction: f64,
+    /// What the loop's rivers wore through the history (F437), none where they did not run.
+    pub rivers: Option<loop_rivers::Worn>,
     pub hash: u64,
 }
 
@@ -379,7 +382,14 @@ impl Runner {
                 "multiplier.relief",
                 "multiplier.crater_density",
                 "materials.deep_bedrock_depth",
+                // The year the loop's rivers run under (F437).
+                "detail.draft_climate",
             ]),
+            graph.hash_of_group("climate"),
+            graph.hash_of_group("materials"),
+            graph.hash_of_group("surface"),
+            loop_rivers::VERSION,
+            FINISH_VERSION,
             primordial_crust::VERSION,
             relaxation::VERSION,
             impacts::VERSION,
@@ -474,7 +484,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 264;
+pub const FINISH_VERSION: u64 = 266;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -616,14 +626,28 @@ pub fn run_coarse_loop(
     };
     // The liquid its history keeps standing (F411), over the ground as each step leaves it.
     let liquid_history = graph.curve("volatiles.liquid_history").cloned();
-    let fill = |layers: &mut LayerSet, t: f64| {
-        if let Some(h) = &liquid_history
-            && (h.eval(t) > 0.0 || layers.liquid.as_slice().iter().any(|&d| d > 0.0))
-        {
-            fill_liquid(layers, body_radius, h.eval(t));
+    let fill = |layers: &mut LayerSet, t: f64| -> f64 {
+        match &liquid_history {
+            Some(h) if h.eval(t) > 0.0 || layers.liquid.as_slice().iter().any(|&d| d > 0.0) => {
+                fill_liquid(layers, body_radius, h.eval(t)).0
+            }
+            _ => f64::NAN,
         }
     };
-    fill(&mut layers, 0.0);
+    let mut level = fill(&mut layers, 0.0);
+    // The rivers through the history (F437): the year's water on the ground the loop begins
+    // on, where the loop raises the ground they wear.
+    let water = loop_rivers::runs(graph)
+        .then(|| loop_rivers::year(graph, grid, &layers, level))
+        .flatten();
+    let mut worn = water.as_ref().map(|w| loop_rivers::Worn {
+        start: layers.height().as_slice().to_vec(),
+        level,
+        shed: w.shed.clone(),
+        gain: w.gain.clone(),
+        density: w.density,
+        ..Default::default()
+    });
     let mut keyframes = Vec::with_capacity(MAX_KEYFRAMES + 1);
     keyframes.push(Keyframe {
         step: 0,
@@ -1111,7 +1135,12 @@ pub fn run_coarse_loop(
                 }
             }
         }
-        fill(&mut layers, t1);
+        // The rivers wear the ground as the step leaves it through its span (F437), its liquid
+        // as it stood.
+        if let (Some(w), Some(worn)) = (&water, &mut worn) {
+            loop_rivers::erode(graph, grid, &mut layers, w, level, dt * 1e9, worn);
+        }
+        level = fill(&mut layers, t1);
         if s % keep_every == 0 || s == steps {
             keyframes.push(Keyframe {
                 step: s,
@@ -1129,6 +1158,22 @@ pub fn run_coarse_loop(
         });
     }
 
+    if let (Some(w), true) = (&worn, std::env::var_os("EXOGEN_DEBUG").is_some()) {
+        let land: Vec<usize> = (0..w.start.len())
+            .filter(|&k| w.level.is_nan() || w.start[k] as f64 > w.level)
+            .collect();
+        let mean = land.iter().map(|&k| w.lowered[k] as f64).sum::<f64>() / land.len().max(1) as f64;
+        let most = land.iter().map(|&k| w.lowered[k]).fold(0.0f32, f32::max);
+        eprintln!(
+            "loop's rivers: they cut {:.0} km³ through {age:.2} Gyr, laying {:.0} in lakes and pits and bringing {:.0} to the sea, {:.0} laid on its floor; the land lowered {mean:.0} m in the mean, {most:.0} at most; {:.0} held at full seas' mouths at its end; {:.1} s",
+            w.cut / 1e9,
+            w.laid / 1e9,
+            w.to_sea / 1e9,
+            w.floor / 1e9,
+            w.held.iter().sum::<f64>() / 1e9,
+            w.seconds
+        );
+    }
     let hashes: Vec<u64> = keyframes.iter().map(|k| k.layers.hash()).collect();
     let hash = hash_words(&hashes);
     let loop_threshold = impacts.loop_threshold();
@@ -1315,6 +1360,7 @@ pub fn run_coarse_loop(
         polar_start,
         ice_coronae,
         renewed_fraction,
+        rivers: worn,
         hash,
     })
 }
@@ -3007,15 +3053,7 @@ pub fn finish(
     let sky = crate::clouds::Sky::from_graph(graph, &balance);
     let coarse_grid = climate.temperature.grid();
     let place_heights = |cycle: &crate::climate::Cycle, above: &Field<f32>| -> Vec<f64> {
-        let coarse = crate::climate::coarsen(above, coarse_grid);
-        cycle
-            .sites
-            .iter()
-            .map(|s| {
-                let d = crate::grid::direction_from_lon_lat(s.lon, s.lat);
-                coarse.get(coarse.grid().locate(d).0) as f64
-            })
-            .collect()
+        loop_rivers::place_heights(cycle, above, coarse_grid)
     };
     // The ground the year's runoff runs down to the sea or to its lakes (F434): the terrain
     // and its liquid as they stand, brought to YEAR_DRAINAGE_FACE.
@@ -3025,37 +3063,7 @@ pub fn finish(
     // the year, its liquid's viscosity that land's.
     let drains_of = |layers: &LayerSet, cycle: &crate::climate::Cycle, level: f64| {
         water_air.as_ref().map(|air| {
-            let coarse = CubeSphere::new(YEAR_DRAINAGE_FACE.min(grid.face_size()));
-            let height = crate::climate::coarsen(&layers.height(), coarse);
-            let wet = Field::from_fn(grid, |c, _| {
-                if layers.liquid.get(c) > 0.0 { 1.0 } else { 0.0 }
-            });
-            let wet = crate::climate::coarsen(&wet, coarse);
-            let cover = crate::climate::coarsen(&layers.regolith, coarse);
-            let drains = crate::moisture::Drains::new(
-                coarse,
-                (
-                    height.as_slice().to_vec(),
-                    wet.as_slice().iter().map(|&w| w >= 0.5).collect(),
-                ),
-                cycle.layout(),
-                (body_radius, air.vapour.liquid_density),
-            );
-            let places = cycle.sites.len();
-            let steps = cycle.surfaces[0].len().checked_div(places).unwrap_or(0);
-            let land: Vec<f64> = (0..places)
-                .map(|p| {
-                    let year = &cycle.surfaces[0][p * steps..(p + 1) * steps];
-                    year.iter().map(|&t| t as f64).sum::<f64>() / steps.max(1) as f64
-                })
-                .collect();
-            let profile = crate::ground::profiles(
-                cover.as_slice(),
-                &|k| land.get(drains.place_of(k)).copied().unwrap_or(f64::NAN),
-                graph.str("materials.bedrock"),
-                (air.vapour, air.gravity),
-            );
-            drains.with_ground(profile, level)
+            loop_rivers::drains_of(graph, (grid, body_radius), air, layers, cycle, level)
         })
     };
     // Each place's ground over the full sea, m.
@@ -5023,6 +5031,9 @@ mod tests {
                 let lo = &moon.out.loop_output;
                 assert!(lo.rises.is_empty() && lo.shields.is_empty());
             }),
+            ("a_mobile_lid_s_rivers_wait_for_its_plates", &|| {
+                a_mobile_lid_s_rivers_wait_for_its_plates(&earth, &moon)
+            }),
             ("earth_gets_an_ocean_covering_most_of_the_surface", &|| {
                 earth_gets_an_ocean_covering_most_of_the_surface(&earth)
             }),
@@ -5081,7 +5092,82 @@ mod tests {
                 the_ground_s_year_balances("Titan", &body)
             }),
             ("titan_s_lakes_stand_poleward", &|| titan_s_lakes_stand_poleward(&body)),
+            ("titan_s_rivers_wore_its_history", &|| {
+                titan_s_rivers_wore_its_history(&body)
+            }),
         ]);
+    }
+
+    /// F437: Titan's rivers wore its ground through its history: under the year's water the
+    /// loop's rivers ran under and the liquid as the loop ended, the share of its land that
+    /// drains to no sea on the ground the loop ended on below that on the same ground with what
+    /// its rivers moved given back; what they cut and did not lay again over its land, between a
+    /// two-hundredth and a half of its land's mean height over its liquid as the loop ended
+    /// (Titan's rivers wore 4 to 31 percent of the relief about its seas' margins, Tewelde et
+    /// al. 2013, a local measure where this is the whole land's); its sea's floor laid where its
+    /// liquid stood as the loop ended; and its ground at the loop's end nowhere 5 km over the
+    /// highest it began with, where a full sea's load stood over its few cells by kilometres.
+    fn titan_s_rivers_wore_its_history(body: &Body) {
+        let lo = &body.out.loop_output;
+        let w = lo.rivers.as_ref().expect("its loop's rivers");
+        let grid = lo.grid;
+        let radius = body.graph.f64("body.radius");
+        let closed = |height: &[f32], sea: &[bool]| {
+            let water = (w.shed.as_slice(), w.gain.as_slice());
+            crate::rivers::route(grid, height, sea, water, (radius, w.density)).summary.closed
+        };
+        let last = &lo.keyframes.last().expect("its last keyframe").layers;
+        let height = last.height();
+        let (ground, liquid) = (height.as_slice(), last.liquid.as_slice());
+        let now: Vec<bool> = liquid.iter().map(|&l| l > 0.0).collect();
+        // The same ground with what the rivers cut, laid and rebounded through the history given
+        // back.
+        let unworn: Vec<f32> = (0..ground.len())
+            .map(|k| ground[k] + w.lowered.get(k).copied().unwrap_or(0.0))
+            .collect();
+        let (before, after) = (closed(&unworn, &now), closed(ground, &now));
+        // The liquid's level as the loop ended, its lowest surface; where none stood, the lowest
+        // ground the loop began on.
+        let level = (0..ground.len())
+            .filter(|&k| now[k])
+            .map(|k| (ground[k] + liquid[k]) as f64)
+            .fold(f64::INFINITY, f64::min);
+        let base = if level.is_finite() {
+            level
+        } else {
+            w.start.iter().copied().fold(f32::INFINITY, f32::min) as f64
+        };
+        let (mut land, mut relief) = (0.0, 0.0);
+        for (k, &h) in w.start.iter().enumerate() {
+            if h as f64 > base {
+                let a = grid.cell_area(grid.cell(k)) * radius * radius;
+                land += a;
+                relief += a * (h as f64 - base);
+            }
+        }
+        let worn = (w.cut - w.laid) / land;
+        let share = worn / (relief / land);
+        println!(
+            "Titan: its loop's rivers cut {:.0} km³ and laid {:.0} again on its land, {worn:.1} m over it, {share:.4} of its land's mean height over its liquid at {base:.0} m; {:.0} laid on its sea's floor; its land closed {after:.3} as the loop ended, {before:.3} with what its rivers moved given back",
+            w.cut / 1e9,
+            w.laid / 1e9,
+            w.floor / 1e9
+        );
+        assert!(after < before, "{before} {after}");
+        assert!((0.005..0.5).contains(&share), "{share}");
+        assert!(!now.contains(&true) || w.floor > 0.0, "{}", w.floor);
+        let highest = w.start.iter().copied().fold(f32::MIN, f32::max);
+        let top = ground.iter().copied().fold(f32::MIN, f32::max);
+        assert!(top < highest + 5_000.0, "{top} {highest}");
+    }
+
+    /// F437: the loop raises no ground on a mobile lid until Phase 6's plates, so its rivers
+    /// wait for them (the user's choice, 2026-11-26): the Earth-like's loop runs none; nor does
+    /// the Moon's, which holds no liquid in its air.
+    fn a_mobile_lid_s_rivers_wait_for_its_plates(earth: &Body, moon: &Body) {
+        assert_eq!(earth.graph.str("interior.tectonic_regime"), "mobile_lid");
+        assert!(earth.out.loop_output.rivers.is_none());
+        assert!(moon.out.loop_output.rivers.is_none());
     }
 
     /// F435: the ground's year under the finish's rivers and lakes balances: what soaks into
@@ -5106,11 +5192,12 @@ mod tests {
     }
 
     /// F435, F436: Titan's sea and lakes north of 50 degrees cover a share of its area there
-    /// within a factor of two of the 12 percent its liquid covers (Birch, Hayes and Perron's
+    /// within two and a half times the 12 percent its liquid covers (Birch, Hayes and Perron's
     /// 2025 review, from Cassini's radar, after Hayes 2016 and Birch et al. 2017), where its
-    /// lakes stood over a third to three fifths of its land as its runoff alone stood them;
-    /// and under 3 percent of its area within 30 degrees of its equator, where Titan holds next
-    /// to none.
+    /// lakes stood over a third to three fifths of its land as its runoff alone stood them (the
+    /// user's choice, 2026-11-26: two and a half where twice, its liquid kept, its lakes its
+    /// polar plain's hollows its rivers fill; known); and under 3 percent of its area within 30
+    /// degrees of its equator, where Titan holds next to none.
     fn titan_s_lakes_stand_poleward(body: &Body) {
         let finish = &body.out.finish;
         let lakes = &finish.rivers.as_ref().expect("its rivers").lakes;
@@ -5141,7 +5228,7 @@ mod tests {
             100.0 * north,
             100.0 * low
         );
-        assert!((0.06..0.24).contains(&north), "{north}");
+        assert!((0.06..0.30).contains(&north), "{north}");
         assert!(low < 0.03, "{low}");
     }
 

@@ -3193,6 +3193,12 @@ pub const FLUVIAL_REFERENCE_RUNOFF: f64 = 0.27;
 pub const FLUVIAL_ERODIBILITY: f64 = 2e-6;
 pub const FLUVIAL_SPAN_YR: f64 = 2e6;
 pub const FLUVIAL_STEPS: usize = 10;
+/// F437: the longest step of the loop's rivers, years, the drainage routed again at each: some
+/// 450 through 4.5 Gyr whatever the loop's own steps, so that a preview's history and a
+/// standard run's erode alike (numerical): what the ground rebounds the step after is cut again
+/// only then, a pitted island's 200 Myr cut 0.48 of what steps forty times finer cut in steps of
+/// 50 Myr, 0.90 in steps of 10 Myr, 0.97 in steps of 5.
+pub const LOOP_FLUVIAL_STEP_YR: f64 = 1e7;
 /// F414: the front of the wedge a river's load builds into its sea from its mouth, its gradient
 /// the regional slope Pratson and Haxby (1996) measured on the passive clastic continental
 /// slope off New Jersey and Maryland, 2.5° (their five margins 0.5° to 4.4°, the carbonate
