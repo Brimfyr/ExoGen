@@ -484,7 +484,7 @@ impl Runner {
 }
 
 /// Version of the finishing pass itself, bumped when its behaviour changes.
-pub const FINISH_VERSION: u64 = 266;
+pub const FINISH_VERSION: u64 = 267;
 
 fn trim<T>(cache: &mut HashMap<u64, T>) {
     if cache.len() >= CACHE_ENTRIES {
@@ -1962,6 +1962,33 @@ pub fn finish(
         }
         kept
     };
+    // What a relief, m, at a wavelength keeps since its time (F195 over F70): no more than
+    // the lid's strength holds up through the steps since, the flow leaving its share of
+    // the rest, and each later episode's thinned shell its own share.
+    let crater_relief = |relief: f64, wavelength: f64, time: f64, center: [f64; 3]| -> f64 {
+        let Some(shell_at) = &shell_history else {
+            return relief;
+        };
+        let mut kept = relaxation::relief_since(
+            relief,
+            wavelength,
+            time,
+            present,
+            &**shell_at,
+            shell_map.factor(center),
+        );
+        for ((e, map), shell) in episodes.iter().zip(&episode_maps).zip(&episode_shells) {
+            if e.end > time {
+                kept *= relaxation::thinned_survival(
+                    wavelength,
+                    e.end - e.start.max(time),
+                    shell,
+                    map.factor(center),
+                );
+            }
+        }
+        kept
+    };
     // A crater relaxes by wavelength when the longest band its table carries loses any
     // of its relief.
     let band_relaxation = std::env::var_os("EXOGEN_SKIP_BAND_RELAX").is_none();
@@ -2013,7 +2040,7 @@ pub fn finish(
                         return None;
                     }
                     let inflow = 1.0 - relaxation::survival(diameter, RING_INFLOW_GYR, &local);
-                    let kept = |l: f64| crater_kept(l, time, center);
+                    let relief = |r: f64, l: f64| crater_relief(r, l, time, center);
                     // The share of a graben no later crater as wide has struck out: the
                     // equilibrium the craters themselves come to, at the graben's width
                     // (F97).
@@ -2032,7 +2059,7 @@ pub fn finish(
                             seed,
                             lithosphere,
                             inflow,
-                            kept: &kept,
+                            relief: &relief,
                             survives: &survives,
                         },
                         &inputs.scaling,
@@ -2046,8 +2073,10 @@ pub fn finish(
     };
     if std::env::var_os("EXOGEN_DEBUG").is_some() {
         for r in &ring_systems {
+            let deepest = r.faults.iter().fold(0.0f64, |m, f| m.max(f.depth));
+            let highest = r.faults.iter().fold(0.0f64, |m, f| m.max(-f.depth));
             eprintln!(
-                "ring system at {:.2} Gyr: transient {:.0} km on a {:.1} km lithosphere, gamma {:.1}, graben from {:.0} to {:.0} km, {} rings in {} arcs",
+                "ring system at {:.2} Gyr: transient {:.0} km on a {:.1} km lithosphere, gamma {:.1}, graben from {:.0} to {:.0} km, {} rings in {} arcs, graben to {:.0} m deep and ridges to {:.0} m",
                 r.time_gyr,
                 r.transient / 1e3,
                 r.lithosphere / 1e3,
@@ -2055,7 +2084,9 @@ pub fn finish(
                 r.inner / 1e3,
                 r.reach / 1e3,
                 r.rings,
-                r.faults.len()
+                r.faults.len(),
+                deepest,
+                highest
             );
         }
     }

@@ -271,6 +271,46 @@ pub fn survival_since(
     kept
 }
 
+/// The relief of a wavelength, m, left from its formation to the present by the steps of
+/// `survival_since` (F195): at each step an ice lid holds its share up to its strength and
+/// the rest keeps what the ductile ice's flow leaves, as the loop's bands do; under a
+/// strength past any load, the relief times `survival_since`.
+pub fn relief_since(
+    relief: f64,
+    wavelength: f64,
+    formed_gyr: f64,
+    present: f64,
+    shell_at: &dyn Fn(f64) -> Shell,
+    local_factor: f64,
+) -> f64 {
+    if present <= formed_gyr {
+        return relief;
+    }
+    let steps = 24;
+    let dt = (present - formed_gyr) / steps as f64;
+    let mut kept = relief;
+    for i in 0..steps {
+        let t = formed_gyr + (i as f64 + 0.5) * dt;
+        let s = shell_at(t);
+        let local = Shell {
+            thickness: s.thickness * local_factor,
+            elastic: s.elastic * local_factor,
+            ..s
+        };
+        let held = (1.0 - ductile_share(wavelength, &local)) * kept;
+        let most = lid_relief(wavelength, &local);
+        let carried = if most.is_finite() && most > 0.0 {
+            most * (held / most).tanh()
+        } else if most.is_finite() {
+            0.0
+        } else {
+            held
+        };
+        kept = carried + (kept - carried) * unflowed(wavelength, dt, &local);
+    }
+    kept
+}
+
 /// The field low-passed over a length, m: the Gaussian pyramid's first level at least
 /// that long, expanded back to the grid; that level alone, the levels above it built only
 /// to reach it.
@@ -1387,6 +1427,49 @@ mod tests {
             ..enceladus
         };
         assert!(lid_relief(200e3, &rock).is_infinite());
+    }
+
+    /// F195 over F70's steps: a relief born past what the lid holds keeps no more than
+    /// that by the present where the ice under the lid flows, a ridge as a trough; where the
+    /// ice does not flow it keeps what it was born with, the lid's strength aside, as the
+    /// loop's bands do; and under a strength past any load the same law keeps its share alone.
+    #[test]
+    fn a_relief_since_its_time_stands_no_higher_than_its_lid_holds() {
+        let europa = Shell {
+            thickness: 20e3,
+            elastic: 3e3,
+            surface_temperature: 100.0,
+            basal_temperature: 273.0,
+            gravity: 1.31,
+            viscosity_scale: 1.0,
+            rock: false,
+            strength: STRENGTH_ICE,
+        };
+        let titan = Shell {
+            thickness: 85e3,
+            elastic: 15e3,
+            surface_temperature: 94.0,
+            basal_temperature: 255.0,
+            gravity: 1.35,
+            ..europa
+        };
+        let (l, born) = (60e3, 2e3);
+        let cold = |_: f64| titan;
+        assert!(lid_relief(l, &titan) < born && unflowed(l, 0.62 / 24.0, &titan) > 0.999);
+        assert!((relief_since(born, l, 3.9, 4.52, &cold, 1.0) - born).abs() < 1.0);
+        let at = |_: f64| europa;
+        let most = lid_relief(l, &europa);
+        let kept = relief_since(born, l, 3.9, 4.52, &at, 1.0);
+        assert!(kept > 0.0 && kept <= most, "{kept} of {most}");
+        assert!((relief_since(-born, l, 3.9, 4.52, &at, 1.0) + kept).abs() < 1e-9);
+        let strong = Shell {
+            strength: f64::INFINITY,
+            ..europa
+        };
+        let at_strong = |_: f64| strong;
+        let free = relief_since(born, l, 3.9, 4.52, &at_strong, 1.0);
+        let share = survival_since(l, 3.9, 4.52, &at_strong, 1.0);
+        assert!((free / born - share).abs() < 1e-9, "{free} {share}");
     }
 
     /// F197: the lid that holds a load reaches down to where the ice's Maxwell time is the

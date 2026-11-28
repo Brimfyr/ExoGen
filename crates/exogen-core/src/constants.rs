@@ -4031,10 +4031,16 @@ pub const RING_RIDGE_SPACING: f64 = 0.6;
 pub const RING_RIDGE_WIDTH: f64 = 0.5;
 /// A graben's depth takes up the radial strain the inflow imposes, its two walls shifting
 /// the ground by about its depth at a 62 degree dip: this strain at the annulus's inner
-/// edge (Tyre's and Callanish's inner graben carry 1 to 1.5 percent cumulated, Singer et
-/// al. 2023), falling outward as the distance to minus this power (a stated choice between
-/// a channelled inflow's slow decay and an unchannelled one's fourth power).
-pub const RING_STRAIN: f64 = 0.02;
+/// edge, a graben's depth over its spacing as Tyre's and Callanish's measure, 1.06 and
+/// 1.04 percent (107 m over 10.1 km and 75 m over 7.2 km on the mean; their cumulated
+/// strain at most 1 to 1.5 and 0.6 to 1.2 percent: Singer et al. 2023), so that a graben
+/// at the inner edge is a twentieth of its lithosphere deep, as theirs are and as Valhalla's
+/// outer graben are, some 1 km on 15 to 20 km (Schenk et al. 2025, as a 2026 review gives
+/// it; the primary not read); falling
+/// outward as the distance to minus this power (a stated choice between a channelled
+/// inflow's slow decay and an unchannelled one's fourth power). The blocks' ridges inside
+/// the annulus stand by the same strain over their own spacing.
+pub const RING_STRAIN: f64 = 0.01;
 pub const RING_STRAIN_DECAY: f64 = 2.0;
 /// A graben's flanks stand raised by this share of its depth, its faults' footwalls
 /// rebounding, falling away over this share of its width (stated choices: Ganymede's

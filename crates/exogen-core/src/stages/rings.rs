@@ -91,9 +91,10 @@ pub struct Basin<'a> {
     /// The share of the basin's own relief the substrate relaxed by flowing in during the
     /// collapse and its aftermath: what drags the lithosphere (0 where nothing flows).
     pub inflow: f64,
-    /// The share of a wavelength's relief, m, that survives from the impact to the
-    /// present, for the graben's own relaxation.
-    pub kept: &'a (dyn Fn(f64) -> f64 + Sync),
+    /// What survives from the impact to the present of a relief, m, at a wavelength, m,
+    /// for the graben's own relaxation: the share the flow leaves, no more than the lid's
+    /// strength holds up (F195).
+    pub relief: &'a (dyn Fn(f64, f64) -> f64 + Sync),
     /// The share of a graben of a width, m, that no later crater as wide has struck out
     /// (F97).
     pub survives: &'a (dyn Fn(f64) -> f64 + Sync),
@@ -159,7 +160,9 @@ pub fn ring_system(
                 let length = length.min(end - along);
                 let shift = RING_OFFSET * spacing * (2.0 * rng.uniform(id, 2) - 1.0);
                 let arc_width = width * rng.range(id, 3, 0.8, 1.2);
-                let arc_depth = depth * rng.range(id, 4, 0.6, 1.4);
+                // The relief the arc was born with, and what its relaxation has left of
+                // it since, at the wavelength of its trough or ridge.
+                let arc_depth = (basin.relief)(depth * rng.range(id, 4, 0.6, 1.4), 2.0 * arc_width);
                 let pieces = ((length / (RING_SURVIVAL_PIECE * width)).ceil() as usize).max(1);
                 let mut first: Option<usize> = None;
                 for k in 0..=pieces {
@@ -234,7 +237,7 @@ pub fn ring_system(
     // closely spaced ridges, no farther apart outward (Valhalla's sinuous ridge zone).
     let ridge_spacing = RING_RIDGE_SPACING * spacing0;
     let ridge_width = RING_RIDGE_WIDTH * width0;
-    let ridge_height = RING_STRAIN * ridge_spacing * basin.inflow * (basin.kept)(2.0 * ridge_width);
+    let ridge_height = RING_STRAIN * ridge_spacing * basin.inflow;
     let mut r = RING_RIDGE_INNER * a;
     while r < inner - 0.5 * ridge_spacing {
         lay(
@@ -256,7 +259,6 @@ pub fn ring_system(
         // The throw takes up the radial strain the inflow imposes here: each graben's two
         // walls shift the ground by about its depth.
         let depth = RING_STRAIN * spacing * x.powf(-RING_STRAIN_DECAY) * basin.inflow;
-        let depth = depth * (basin.kept)(2.0 * width);
         if depth > 0.0 {
             lay(&mut faults, ring, r, spacing, width, depth);
         }
@@ -371,7 +373,7 @@ mod tests {
     fn basin<'a>(
         diameter: f64,
         lithosphere: f64,
-        kept: &'a (dyn Fn(f64) -> f64 + Sync),
+        relief: &'a (dyn Fn(f64, f64) -> f64 + Sync),
     ) -> Basin<'a> {
         Basin {
             center: [0.0, 0.0, 1.0],
@@ -380,7 +382,7 @@ mod tests {
             seed: 7,
             lithosphere,
             inflow: 1.0,
-            kept,
+            relief,
             survives: &|_| 1.0,
         }
     }
@@ -390,7 +392,7 @@ mod tests {
         // F97: a ring system whose graben a fifth survive keeps about a fifth of their
         // length, in stretches, and one untouched keeps all of it.
         let scaling = callisto();
-        let kept = |_: f64| 1.0;
+        let kept = |r: f64, _: f64| r;
         let length = |survival: f64| -> f64 {
             let survives = move |_: f64| survival;
             let b = Basin {
@@ -424,7 +426,7 @@ mod tests {
 
     #[test]
     fn a_thick_lithosphere_holds_and_a_thin_one_breaks_into_rings() {
-        let keep = |_: f64| 1.0;
+        let keep = |r: f64, _: f64| r;
         let s = callisto();
         let r = 2_410e3;
         // A 1,000 km basin, Valhalla's size, on a lithosphere of 19 km: an annulus of graben from
@@ -455,7 +457,7 @@ mod tests {
 
     #[test]
     fn graben_widen_apart_and_shallow_outward() {
-        let keep = |_: f64| 1.0;
+        let keep = |r: f64, _: f64| r;
         let v = ring_system(&basin(1_000e3, 19e3, &keep), &callisto(), 2_410e3, 2e3).unwrap();
         let near = |f: &Trough| angle_between([0.0, 0.0, 1.0], f.points[0]) * 2_410e3;
         let inner: Vec<&Trough> = v
@@ -478,5 +480,56 @@ mod tests {
         // the tangent of a 62 degree dip at the annulus's inner edge.
         let w = mean(&inner, &|f| f.width);
         assert!((17e3..24e3).contains(&w), "{w}");
+    }
+
+    #[test]
+    fn a_graben_at_the_inner_edge_is_a_twentieth_of_its_lithosphere_deep() {
+        // Tyre's and Callanish's graben are 0.06 and 0.055 of the depth their faults meet at,
+        // Valhalla's outer graben 0.05 to 0.07 of its lithosphere (Singer et al. 2023): the
+        // strain each takes up, its depth over its spacing, about a percent.
+        let keep = |r: f64, _: f64| r;
+        for (diameter, lithosphere) in [(1_000e3, 19e3), (1_217e3, 63e3)] {
+            let v = ring_system(
+                &basin(diameter, lithosphere, &keep),
+                &callisto(),
+                2_410e3,
+                2e3,
+            )
+            .unwrap();
+            let near = |f: &Trough| angle_between([0.0, 0.0, 1.0], f.points[0]) * 2_410e3;
+            let inner: Vec<f64> = v
+                .faults
+                .iter()
+                .filter(|f| f.depth > 0.0 && near(f) < 1.2 * v.inner)
+                .map(|f| f.depth / lithosphere)
+                .collect();
+            assert!(!inner.is_empty());
+            let mean = inner.iter().sum::<f64>() / inner.len() as f64;
+            assert!(
+                (0.035..0.07).contains(&mean),
+                "{diameter}: {mean:.3} of the lithosphere"
+            );
+        }
+    }
+
+    #[test]
+    fn each_arc_keeps_what_its_relaxation_leaves() {
+        // Every arc, graben or ridge, stands by what its own relaxation leaves of the relief
+        // it was born with, at its own wavelength.
+        let keep = |r: f64, _: f64| r;
+        let half = |r: f64, l: f64| if l > 0.0 { 0.5 * r } else { r };
+        let s = callisto();
+        let whole = ring_system(&basin(1_000e3, 19e3, &keep), &s, 2_410e3, 2e3).unwrap();
+        let halved = ring_system(&basin(1_000e3, 19e3, &half), &s, 2_410e3, 2e3).unwrap();
+        assert_eq!(whole.faults.len(), halved.faults.len());
+        assert!(whole.faults.iter().any(|f| f.depth < 0.0));
+        for (a, b) in whole.faults.iter().zip(&halved.faults) {
+            assert!(
+                (b.depth - 0.5 * a.depth).abs() <= 1e-9 * a.depth.abs(),
+                "{} {}",
+                a.depth,
+                b.depth
+            );
+        }
     }
 }
