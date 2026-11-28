@@ -3218,6 +3218,13 @@ pub const RELIEF_SPREAD_CELLS: f64 = 2.0;
 /// numerical choice: some ten to rise past a load and some ten more to close on it; a wedge not
 /// found by then laid by its load's share, or the rest of its load held.
 pub const WEDGE_ROUNDS: u32 = 60;
+/// F414: a sea's share is quartered from one while no share has laid less than its mouths
+/// bring; once it falls below this, the least share the quartering reaches in WEDGE_ROUNDS is
+/// tried, once: where even that lays at least what they bring, its mouths' floors falling to
+/// the deep beside them take it whatever its share, and it is laid there as the whole
+/// quartering would leave it; else the quartering goes on (M110: such seas ran all
+/// WEDGE_ROUNDS, two thirds of the loop's searches on Titan's draft). A numerical choice.
+pub const WEDGE_QUARTERED_TO: f64 = 1e-6;
 /// F414: ground within LEVEL_TOLERANCE m under the liquid's level stands at it as the rivers'
 /// steps read the sea, its heights' rounding at an Earth-like's datum some 2e-4 m: a numerical
 /// choice.

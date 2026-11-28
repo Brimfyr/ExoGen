@@ -105,8 +105,9 @@ pub fn erode_over(
 ) -> Erosion {
     let rebound = crust / mantle;
     let n = grid.cell_count();
+    let areas = grid.face_areas();
     let area: Vec<f64> = (0..n)
-        .map(|k| grid.cell_area(grid.cell(k)) * radius * radius)
+        .map(|k| areas[k % areas.len()] * radius * radius)
         .collect();
     let year = SECONDS_PER_DAY * 365.25;
     // The runoff the stream power's erodibility is taken at, kg/m²/s: the water a cell

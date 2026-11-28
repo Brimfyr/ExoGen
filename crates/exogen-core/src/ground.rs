@@ -321,9 +321,10 @@ pub fn table(
     start: Option<&[f64]>,
 ) -> Table {
     let n = grid.cell_count();
+    let areas = grid.face_areas();
     let area: Vec<f64> = (0..n)
         .into_par_iter()
-        .map(|k| grid.cell_area(grid.cell(k)) * radius * radius)
+        .map(|k| areas[k % areas.len()] * radius * radius)
         .collect();
     let fixed: Vec<bool> = held.iter().map(|h| h.is_finite()).collect();
     let mut head: Vec<f64> = (0..n)
@@ -501,9 +502,10 @@ pub fn drain_through(
     start: Option<&Start>,
 ) -> (crate::rivers::Drainage, Table, Start) {
     let n = grid.cell_count();
+    let areas = grid.face_areas();
     let area: Vec<f64> = (0..n)
         .into_par_iter()
-        .map(|k| grid.cell_area(grid.cell(k)) * radius * radius)
+        .map(|k| areas[k % areas.len()] * radius * radius)
         .collect();
     let surface: Vec<f64> = height.iter().map(|&h| h as f64).collect();
     let intake: Vec<f64> = ground.profile.iter().map(|p| p.intake()).collect();
@@ -740,11 +742,12 @@ pub fn route_through(
         .into_par_iter()
         .map(|k| coarse.index(coarse.locate(grid.center(grid.cell(k))).0))
         .collect();
+    let areas = grid.face_areas();
     let mean = |values: &dyn Fn(usize) -> f64| -> Vec<f64> {
         let m = coarse.cell_count();
         let (mut sum, mut area) = (vec![0.0; m], vec![0.0; m]);
         for k in 0..n {
-            let a = grid.cell_area(grid.cell(k));
+            let a = areas[k % areas.len()];
             sum[to[k]] += values(k) * a;
             area[to[k]] += a;
         }
@@ -798,14 +801,15 @@ pub fn route_through(
         None,
     );
     let r2 = radius * radius;
+    let coarse_areas = coarse.face_areas();
     let coarse_area: Vec<f64> = (0..m)
-        .map(|c| coarse.cell_area(coarse.cell(c)) * r2)
+        .map(|c| coarse_areas[c % coarse_areas.len()] * r2)
         .collect();
     // Each coarse cell's land, m².
     let coarse_land: Vec<f64> = (0..m).map(|c| coarse_area[c] * land_share[c]).collect();
     let fine_area: Vec<f64> = (0..n)
         .into_par_iter()
-        .map(|k| grid.cell_area(grid.cell(k)) * r2)
+        .map(|k| areas[k % areas.len()] * r2)
         .collect();
     let mut table = first;
     // What the ground gives each coarse cell's land, kg/m²/s, less what its lake gives the

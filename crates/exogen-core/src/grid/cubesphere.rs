@@ -15,7 +15,9 @@
 //! cell toward the corners. Stencil operators that need higher accuracy at edges interpolate
 //! from ghost cells; that belongs to the field operators, not the grid.
 
+use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::{dot, normalize};
 
@@ -188,6 +190,32 @@ impl CubeSphere {
         rect_solid_angle(a0.tan(), (a0 + delta).tan(), b0.tan(), (b0 + delta).tan())
     }
 
+    /// Each cell's solid angle, steradians, by its place on its face, `index % (f * f)`: on
+    /// every face as `cell_area` gives it, kept once for each face size, so that a stage that
+    /// reads every cell's area at each pass reads it from a table.
+    pub fn face_areas(&self) -> Arc<Vec<f64>> {
+        static TABLES: OnceLock<Mutex<HashMap<u32, Arc<Vec<f64>>>>> = OnceLock::new();
+        let tables = TABLES.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut tables = tables.lock().unwrap_or_else(|e| e.into_inner());
+        tables
+            .entry(self.f)
+            .or_insert_with(|| {
+                let f = self.f as usize;
+                Arc::new(
+                    (0..f * f)
+                        .map(|r| {
+                            self.cell_area(Cell {
+                                face: 0,
+                                i: (r % f) as u32,
+                                j: (r / f) as u32,
+                            })
+                        })
+                        .collect(),
+                )
+            })
+            .clone()
+    }
+
     /// Iterate over all cells in index order.
     pub fn cells(&self) -> impl Iterator<Item = Cell> + '_ {
         (0..self.cell_count()).map(move |k| self.cell(k))
@@ -251,6 +279,23 @@ mod tests {
         }
         // A whole face is one sixth of the sphere.
         assert!((rect_solid_angle(-1.0, 1.0, -1.0, 1.0) - 4.0 * PI / 6.0).abs() < 1e-12);
+    }
+
+    /// The face's table of areas gives every cell on every face its own `cell_area`, to the
+    /// bit (M110), the table kept for each face size apart.
+    #[test]
+    fn the_face_s_areas_are_each_cell_s() {
+        for f in [3u32, 16, 17] {
+            let g = CubeSphere::new(f);
+            let areas = g.face_areas();
+            assert_eq!(areas.len(), (f * f) as usize);
+            for k in 0..g.cell_count() {
+                assert!(
+                    areas[k % areas.len()] == g.cell_area(g.cell(k)),
+                    "f={f} cell {k}"
+                );
+            }
+        }
     }
 
     #[test]

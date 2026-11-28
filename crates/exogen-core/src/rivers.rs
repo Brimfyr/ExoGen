@@ -82,6 +82,28 @@ impl Ord for Key {
     }
 }
 
+/// The hash of a pair of basins' key, multiplied through as the Fx hash does it: the flood
+/// keeps the lowest pass between each pair in a map whose order nothing reads, the passes
+/// sorted after (M110: the map's default hash some 16 percent of the flood's time).
+#[derive(Default)]
+struct PairHash(u64);
+
+impl std::hash::Hasher for PairHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.0 = (self.0.rotate_left(5) ^ i).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
 /// A basin of the flood, a pit's or the merger of two (F277): the level at which it meets
 /// another, m, and the cells either side of the pass there, its own first, its level infinite
 /// where it never does; whether beyond that pass lies the sea's region, the sea or the basins
@@ -205,7 +227,8 @@ pub fn drain(
     (radius, density): (f64, f64),
 ) -> Drainage {
     let n = grid.cell_count();
-    let area = |k: usize| grid.cell_area(grid.cell(k)) * radius * radius;
+    let areas = grid.face_areas();
+    let area = |k: usize| areas[k % areas.len()] * radius * radius;
     let around = |k: usize| {
         let c = grid.cell(k);
         AROUND.map(|(di, dj)| grid.index(grid.neighbor(c, di, dj)))
@@ -251,7 +274,8 @@ pub fn drain(
             heap.push(Reverse(Key(height[k], k as u32)));
         }
     }
-    let mut passes: HashMap<u64, (f32, u32, u32)> = HashMap::new();
+    let mut passes: HashMap<u64, (f32, u32, u32), std::hash::BuildHasherDefault<PairHash>> =
+        HashMap::default();
     while let Some(Reverse(Key(h, k))) = heap.pop() {
         let k = k as usize;
         order.push(k as u32);

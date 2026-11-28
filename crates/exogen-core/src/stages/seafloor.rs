@@ -10,7 +10,7 @@ use std::collections::BinaryHeap;
 
 use rayon::prelude::*;
 
-use crate::constants::{FORESET_SLOPE, FRONT_TAIL, WEDGE_ROUNDS};
+use crate::constants::{FORESET_SLOPE, FRONT_TAIL, WEDGE_QUARTERED_TO, WEDGE_ROUNDS};
 use crate::crater::production::Oblique;
 use crate::crater::{Bombardment, CraterSample, Screen};
 use crate::fields::Field;
@@ -294,7 +294,8 @@ fn reach_of(load: f64, depth: f64) -> f64 {
 /// A sea's search for the share its mouths' wedges are built at (F414): the share, the share
 /// that laid less than its mouths brought and the one that laid at least that, each with what it
 /// laid less what they brought, weighed as the false position keeps them (the Illinois rule);
-/// which end was kept last; and whether it is found.
+/// which end was kept last; whether it is found; and the share its quartering goes on from
+/// while it tries the least, and whether it has.
 #[derive(Clone, Copy)]
 struct Share {
     share: f64,
@@ -302,6 +303,8 @@ struct Share {
     high: Option<(f64, f64)>,
     kept: i8,
     found: bool,
+    probe: Option<f64>,
+    probed: bool,
 }
 
 /// The rivers' load laid on the floor of the sea each enters (F414): each mouth's wedge built
@@ -338,7 +341,8 @@ pub fn wedges(
     }
     let g = |k: usize| ground[k] as f64;
     let tangents = grid.center_tangents();
-    let area = |k: usize| grid.cell_area(grid.cell(k)) * radius * radius;
+    let areas = grid.face_areas();
+    let area = |k: usize| areas[k % areas.len()] * radius * radius;
     // Each mouth's sea: the sea's cells joined by their neighbours, from each mouth.
     let mut basin = vec![u32::MAX; n];
     let mut seas = 0u32;
@@ -376,9 +380,13 @@ pub fn wedges(
             high: None,
             kept: 0,
             found: false,
+            probe: None,
+            probed: false,
         };
         seas
     ];
+    // The share the quartering reaches at the last of its rounds.
+    let least = 0.25f64.powi(WEDGE_ROUNDS as i32 - 1);
     let mut key = vec![0.0f64; n];
     let mut owner = vec![0u32; n];
     // The way walked from each place's mouth and the surface the load comes to it from, each
@@ -480,6 +488,19 @@ pub fn wedges(
             }
             let (load, volume) = (brought[s], volumes[s]);
             let off = volume - load;
+            // At the least share: where even that lays at least what they bring, its mouths'
+            // floors falling to the deep beside them take it whatever its share, and it is laid
+            // there as the whole quartering would leave it; else the quartering goes on where it
+            // stopped, the least forgotten.
+            if let Some(resume) = sh.probe.take() {
+                if off >= 0.0 {
+                    sh.found = true;
+                } else {
+                    sh.share = resume;
+                    settled = false;
+                }
+                continue;
+            }
             if off >= 0.0 {
                 if sh.kept == 1 {
                     sh.low.1 *= 0.5;
@@ -519,7 +540,13 @@ pub fn wedges(
                         0.5 * (lo + h)
                     }
                 }
-                // No share yet that laid less: a quarter of the least that laid more.
+                // No share yet that laid less: a quarter of the least that laid more; once that
+                // falls below WEDGE_QUARTERED_TO, the least share first, once.
+                Some((h, _)) if 0.25 * h < WEDGE_QUARTERED_TO && !sh.probed => {
+                    sh.probed = true;
+                    sh.probe = Some(0.25 * h);
+                    least
+                }
                 Some((h, _)) => 0.25 * h,
             };
         }

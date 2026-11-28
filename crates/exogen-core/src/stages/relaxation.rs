@@ -272,7 +272,8 @@ pub fn survival_since(
 }
 
 /// The field low-passed over a length, m: the Gaussian pyramid's first level at least
-/// that long, expanded back to the grid.
+/// that long, expanded back to the grid; that level alone, the levels above it built only
+/// to reach it.
 pub fn low_pass(field: &Field<f32>, cell: f64, length: f64) -> Vec<f32> {
     let grid = field.grid();
     let levels = ((grid.face_size() as f64).log2().floor() as usize)
@@ -281,9 +282,11 @@ pub fn low_pass(field: &Field<f32>, cell: f64, length: f64) -> Vec<f32> {
     let level = (0..levels)
         .find(|&l| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64) >= length)
         .unwrap_or(levels - 1);
-    let lows = pyramid(field, level + 1);
-    match lows.last() {
-        Some(low) => low.as_slice().to_vec(),
+    let (grids, coarse) = pyramid_coarse(field, level + 1);
+    match coarse.last() {
+        Some(low) => pyramid_expand(&grids, low, coarse.len() - 1)
+            .as_slice()
+            .to_vec(),
         None => field.as_slice().to_vec(),
     }
 }
@@ -775,7 +778,13 @@ fn relax_deviation(
                     / of.len().max(1) as f32
             };
             (0..wavelengths.len())
-                .map(|l| if l + 1 < wavelengths.len() { 1.0 } else { longest(l) })
+                .map(|l| {
+                    if l + 1 < wavelengths.len() {
+                        1.0
+                    } else {
+                        longest(l)
+                    }
+                })
                 .collect()
         }
         _ => wavelengths
@@ -925,7 +934,11 @@ mod tests {
     #[test]
     fn the_relaxing_flow_s_potential_has_the_relaxed_relief_for_its_laplacian() {
         let grid = CubeSphere::new(64);
-        let center = grid.center(crate::grid::Cell { face: 0, i: 32, j: 32 });
+        let center = grid.center(crate::grid::Cell {
+            face: 0,
+            i: 32,
+            j: 32,
+        });
         let sigma = 6.0 * grid.delta();
         let mut h = Field::<f32>::new(grid);
         for (k, v) in h.as_mut_slice().iter_mut().enumerate() {
@@ -993,6 +1006,32 @@ mod tests {
         }
     }
 
+    /// A field low-passed over a length is the whole pyramid's first level at least that long,
+    /// to the bit, though the levels above it are no longer expanded (M110): at lengths from
+    /// under a cell to past the pyramid's depth.
+    #[test]
+    fn a_low_pass_is_its_pyramid_s_level() {
+        let grid = CubeSphere::new(64);
+        let noise = crate::noise::GradientNoise::new(3);
+        let field = Field::from_fn(grid, |_, d| noise.fbm(d, 8.0, 5, 2.0, 0.5) as f32);
+        let cell = 10_000.0;
+        for length in [5_000.0, 40_000.0, 150_000.0, 700_000.0, 1e8] {
+            let levels = ((grid.face_size() as f64).log2().floor() as usize)
+                .saturating_sub(2)
+                .max(1);
+            let level = (0..levels)
+                .find(|&l| 2.0 * cell * (2u32.pow(l as u32 + 1) as f64) >= length)
+                .unwrap_or(levels - 1);
+            let whole = pyramid(&field, level + 1);
+            let low = low_pass(&field, cell, length);
+            assert!(
+                whole.last().unwrap().as_slice() == low.as_slice(),
+                "{length}: level {level} of {}",
+                whole.len()
+            );
+        }
+    }
+
     /// F170: a rocky lid's lower crust flows where it is warm. Under a crust 60 km thick on
     /// Mars whose base stands at 1,550 K, a wavelength of 1,000 km loses most of its relief
     /// in a hundred million years, one of 10,000 km keeps nearly all of it, and the elastic
@@ -1010,14 +1049,26 @@ mod tests {
             rock: true,
             strength: STRENGTH_ROCK,
         };
-        assert!(survival(1_000e3, 0.1, &hot) < 0.5, "{}", survival(1_000e3, 0.1, &hot));
-        assert!(survival(10_000e3, 0.1, &hot) > 0.95, "{}", survival(10_000e3, 0.1, &hot));
+        assert!(
+            survival(1_000e3, 0.1, &hot) < 0.5,
+            "{}",
+            survival(1_000e3, 0.1, &hot)
+        );
+        assert!(
+            survival(10_000e3, 0.1, &hot) > 0.95,
+            "{}",
+            survival(10_000e3, 0.1, &hot)
+        );
         assert_eq!(survival(200e3, 0.1, &hot), 1.0);
         let cold = Shell {
             basal_temperature: 900.0,
             ..hot
         };
-        assert!(survival(1_000e3, 1.0, &cold) > 0.999, "{}", survival(1_000e3, 1.0, &cold));
+        assert!(
+            survival(1_000e3, 1.0, &cold) > 0.999,
+            "{}",
+            survival(1_000e3, 1.0, &cold)
+        );
         // The viscosity falls with the temperature, to the floor near the solidus.
         assert!(crust_viscosity(1_100.0, 3.71) > 1e3 * crust_viscosity(1_400.0, 3.71));
         assert_eq!(crust_viscosity(2_000.0, 3.71), CRUST_FLOW_MIN_VISCOSITY);
@@ -1162,7 +1213,9 @@ mod tests {
                     held = Bands::default();
                 }
                 held.absorb(&h, depth);
-                held.decay(&mut h, &[], |l, _, _, v| v * factors[l.min(factors.len() - 1)]);
+                held.decay(&mut h, &[], |l, _, _, v| {
+                    v * factors[l.min(factors.len() - 1)]
+                });
             }
             h.as_slice().to_vec()
         };
